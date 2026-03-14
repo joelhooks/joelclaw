@@ -16,6 +16,7 @@ import * as typesense from "../../lib/typesense";
 import { TodoistTaskAdapter } from "../../tasks";
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
+import { buildEmailThreadCacheDocument } from "./vip-email-cache";
 import { isVipSender } from "./vip-utils";
 
 const FRONT_API = "https://api2.frontapp.com";
@@ -25,7 +26,7 @@ const VIP_MODEL = process.env.JOELCLAW_VIP_EMAIL_MODEL ?? "anthropic/claude-opus
 const BRIEF_MODEL = process.env.JOELCLAW_VIP_TRIAGE_MODEL ?? "anthropic/claude-sonnet-4-6";
 const ENABLE_GITHUB_SEARCH = (process.env.JOELCLAW_VIP_ENABLE_GITHUB_SEARCH ?? "0") === "1";
 const ENABLE_OPUS_ESCALATION = (process.env.JOELCLAW_VIP_ENABLE_OPUS_ESCALATION ?? "1") === "1";
-const TOTAL_BUDGET_MS = Number(process.env.JOELCLAW_VIP_TOTAL_BUDGET_MS ?? "60000");
+const TOTAL_BUDGET_MS = Number(process.env.JOELCLAW_VIP_TOTAL_BUDGET_MS ?? "90000");
 const FRONT_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_FRONT_TIMEOUT_MS ?? "2000");
 const GRANOLA_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GRANOLA_TIMEOUT_MS ?? "2500");
 const MEMORY_RECALL_TIMEOUT_MS = Number(
@@ -33,9 +34,11 @@ const MEMORY_RECALL_TIMEOUT_MS = Number(
   ?? "15000"
 );
 const GITHUB_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GITHUB_TIMEOUT_MS ?? "1500");
-const BRIEF_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_TRIAGE_TIMEOUT_MS ?? "15000");
-const OPUS_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_OPUS_TIMEOUT_MS ?? "20000");
-const MIN_OPUS_TIME_REMAINING_MS = Number(process.env.JOELCLAW_VIP_MIN_OPUS_REMAINING_MS ?? "15000");
+const BRIEF_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_TRIAGE_TIMEOUT_MS ?? "20000");
+const OPUS_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_OPUS_TIMEOUT_MS ?? "45000");
+const MIN_OPUS_TIME_REMAINING_MS = Number(process.env.JOELCLAW_VIP_MIN_OPUS_REMAINING_MS ?? "30000");
+const MIN_MODEL_BUDGET_MS = 2_000;
+const MODEL_BUDGET_RESERVE_MS = 1_000;
 const GRANOLA_RANGES = (process.env.JOELCLAW_VIP_GRANOLA_RANGES ?? "year")
   .split(",")
   .map((range) => range.trim())
@@ -44,6 +47,17 @@ const MAX_FRONT_MESSAGES = 50;
 const FRONT_MESSAGES_PAGE_SIZE = 25;
 const MAX_LINKS_TO_FOLLOW = 5;
 const MAX_FOLLOWED_LINK_CONTENT_CHARS = 2000;
+const MAX_FRONT_PROMPT_MESSAGES = Number(process.env.JOELCLAW_VIP_PROMPT_FRONT_MESSAGES ?? "12");
+const MAX_FRONT_PROMPT_HEAD_MESSAGES = Number(process.env.JOELCLAW_VIP_PROMPT_FRONT_HEAD_MESSAGES ?? "3");
+const MAX_FRONT_MESSAGE_PROMPT_CHARS = Number(process.env.JOELCLAW_VIP_PROMPT_FRONT_MESSAGE_CHARS ?? "320");
+const MAX_FOLLOWED_LINKS_FOR_PROMPT = Number(process.env.JOELCLAW_VIP_PROMPT_LINKS ?? "2");
+const MAX_FOLLOWED_LINK_PROMPT_CHARS = Number(process.env.JOELCLAW_VIP_PROMPT_LINK_CHARS ?? "360");
+const MAX_MEMORY_LINES_FOR_PROMPT = Number(process.env.JOELCLAW_VIP_PROMPT_MEMORY_LINES ?? "6");
+const MAX_MEMORY_LINE_PROMPT_CHARS = Number(process.env.JOELCLAW_VIP_PROMPT_MEMORY_CHARS ?? "180");
+const MAX_REPOS_FOR_PROMPT = Number(process.env.JOELCLAW_VIP_PROMPT_GITHUB_REPOS ?? "4");
+const MAX_REPO_LINE_PROMPT_CHARS = Number(process.env.JOELCLAW_VIP_PROMPT_GITHUB_CHARS ?? "160");
+const MAX_ACCESS_GAPS_FOR_PROMPT = Number(process.env.JOELCLAW_VIP_PROMPT_ACCESS_GAPS ?? "6");
+const MAX_ACCESS_GAP_PROMPT_CHARS = Number(process.env.JOELCLAW_VIP_PROMPT_ACCESS_GAP_CHARS ?? "180");
 const URL_EXTRACT_RE = /https?:\/\/[^\s<>"'`)\]]+/giu;
 const HREF_EXTRACT_RE = /href=["']([^"'#]+)["']/giu;
 const TRACKING_HOST_FRAGMENTS = [
@@ -88,6 +102,14 @@ const AUTO_ARCHIVE_NEWSLETTER_SENDERS = new Set([]);
 
 const VIP_ANALYSIS_SYSTEM_PROMPT = `You are a relationship intelligence analyst for Joel Hooks.
 
+You are analyzing a VIP email for an executive's AI system. Extract structured data that will feed into a narrative brief and task creation.
+
+Focus on:
+- Concrete action items with deadlines
+- Questions that need Joel's input
+- Entities (people, companies, projects) mentioned
+- Signals about relationship health (response time expectations, tone shifts, escalation language)
+
 Goal: produce the highest-value action plan for a VIP email.
 
 Rules:
@@ -108,33 +130,36 @@ Respond ONLY with valid JSON:
   "questions_for_human": ["string"]
 }`;
 
-const VIP_BRIEF_SYSTEM_PROMPT = `You are Joel Hooks' VIP email analyst.
+const VIP_BRIEF_SYSTEM_PROMPT = `You are briefing an executive who's been away for a day. Write a concise narrative — not bullets, not a report. Prose that a busy person reads on their phone.
 
-Produce a concise operator brief in markdown for Telegram delivery.
+Structure:
+1. Open with what this email IS and why it matters (1 sentence)
+2. Situate it: what happened before this, what's the arc, what's open/unresolved (1-2 sentences)
+3. Note what's changed or new since the last touchpoint (1 sentence)
+4. End with calibrated urgency and recommended action
 
-Rules:
-- Use the exact section order shown below.
-- The executive summary must be 2-3 sentences that you derive from the raw thread/context in this prompt.
-- Mention why the thread matters now.
-- Write your own judgment from the full context; do not parrot any prior triage summary or default "no action required" phrasing when the thread clearly needs action.
-- If any prior suggestion conflicts with the raw thread/context, override it.
-- "Needs your attention" must start with yes or no, then a short why.
-- "Key links" should be "none" when there are no useful links.
-- Never invent facts. If context is missing, say so briefly.
-- Do not output JSON, XML, code fences, or extra sections.
+Urgency scale — use exactly one:
+- 🔴 Reply now — deadline within 24h, blocking someone
+- 🟠 Reply today — needs response, not immediately blocking
+- 🟡 Reply this week — important but not time-pressured
+- 🟢 FYI — informational, no response needed
+- ✅ Already handled — Joel already replied or action taken
 
 Output format:
-## VIP: {sender} — {subject}
+## VIP: {sender name} — {short subject}
 
-{2-3 sentence executive summary of what's happening and why it matters}
+{3-5 sentence narrative prose}
 
-**Thread**: {message count} messages, last activity {relative time}
-**Your last reply**: {relative time or "none"}
-**Key links**: {1-line summary, or "none"}
+{urgency emoji} {one-line action recommendation}
 
-**Needs your attention**: {yes/no + why}
+[View in Front](https://app.frontapp.com/open/{conversationId})
 
-[View in Front](https://app.frontapp.com/open/{conversationId})`;
+Rules:
+- Be specific: use dates, names, amounts, deadlines from the thread
+- Reference prior threads if the email history shows them
+- Say "you haven't replied yet" or "you replied 2 days ago" — Joel needs to know his reply state
+- Never use bullet points in the narrative section
+- Keep total output under 200 words`;
 
 type GranolaMeeting = {
   id: string;
@@ -322,6 +347,27 @@ async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: n
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/gu, " ").trim();
+}
+
+function resolveVipRemainingBudgetMs(startedAt: number, now = Date.now()): number {
+  return TOTAL_BUDGET_MS - (now - startedAt);
+}
+
+function resolveVipModelTimeoutMs(startedAt: number, requestedTimeoutMs: number): number | null {
+  const remainingBudgetMs = resolveVipRemainingBudgetMs(startedAt) - MODEL_BUDGET_RESERVE_MS;
+  if (!Number.isFinite(remainingBudgetMs) || remainingBudgetMs < MIN_MODEL_BUDGET_MS) {
+    return null;
+  }
+
+  return Math.min(requestedTimeoutMs, Math.max(MIN_MODEL_BUDGET_MS, Math.floor(remainingBudgetMs)));
+}
+
+function clipPromptText(value: string, maxChars: number): string {
+  const normalized = normalizeWhitespace(value);
+  if (!normalized) return "";
+  if (!Number.isFinite(maxChars) || maxChars <= 0) return normalized;
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`;
 }
 
 function stripHtmlToText(value: string): string {
@@ -756,6 +802,7 @@ async function runModelAnalysis(
     const result = await infer(prompt, {
       task: "json",
       model,
+      maxAttempts: 1,
       system: systemPrompt,
       component: "vip-email-received",
       action: "vip-email.analysis",
@@ -763,6 +810,13 @@ async function runModelAnalysis(
       print: true,
       noTools: true,
       timeout: timeoutMs,
+      metadata: {
+        promptChars: prompt.length,
+        systemPromptChars: systemPrompt.length,
+        timeoutMs,
+        maxAttempts: 1,
+        requestedModel: model,
+      },
       env: { ...process.env, TERM: "dumb" },
     });
 
@@ -797,6 +851,7 @@ async function runOperatorBrief(prompt: string, timeoutMs: number): Promise<{
     const result = await infer(prompt, {
       task: "summary",
       model: BRIEF_MODEL,
+      maxAttempts: 1,
       system: VIP_BRIEF_SYSTEM_PROMPT,
       component: "vip-email-received",
       action: "vip-email.brief",
@@ -804,6 +859,13 @@ async function runOperatorBrief(prompt: string, timeoutMs: number): Promise<{
       noTools: true,
       requireTextOutput: true,
       timeout: timeoutMs,
+      metadata: {
+        promptChars: prompt.length,
+        systemPromptChars: VIP_BRIEF_SYSTEM_PROMPT.length,
+        timeoutMs,
+        maxAttempts: 1,
+        requestedModel: BRIEF_MODEL,
+      },
       env: { ...process.env, TERM: "dumb" },
     });
 
@@ -892,24 +954,68 @@ function buildAnalysisPrompt(input: {
   githubRepos: GitHubRepo[];
   accessGaps: MissingInfo[];
 }): string {
-  const messageLines = input.frontContext.messages.map((message) =>
-    `- [${message.createdAtIso}] ${message.senderDisplay}: ${message.text || "(no text available)"}`
+  const promptMessageCount = Number.isFinite(MAX_FRONT_PROMPT_MESSAGES)
+    ? Math.max(1, Math.floor(MAX_FRONT_PROMPT_MESSAGES))
+    : 14;
+  const promptHeadCount = Number.isFinite(MAX_FRONT_PROMPT_HEAD_MESSAGES)
+    ? Math.max(0, Math.min(promptMessageCount, Math.floor(MAX_FRONT_PROMPT_HEAD_MESSAGES)))
+    : 3;
+  const promptTailCount = Math.max(0, promptMessageCount - promptHeadCount);
+  const promptMessages = input.frontContext.messages.length <= promptMessageCount
+    ? input.frontContext.messages
+    : [
+        ...input.frontContext.messages.slice(0, promptHeadCount),
+        ...(promptTailCount > 0 ? input.frontContext.messages.slice(-promptTailCount) : []),
+      ];
+  const omittedMessageCount = Math.max(0, input.frontContext.messages.length - promptMessages.length);
+  const messageLines = promptMessages.map((message) =>
+    `- [${message.createdAtIso}] ${message.senderDisplay}: ${
+      clipPromptText(message.text || "(no text available)", MAX_FRONT_MESSAGE_PROMPT_CHARS)
+    }`
   );
+  if (omittedMessageCount > 0) {
+    const insertAt = Math.min(promptHeadCount, messageLines.length);
+    messageLines.splice(insertAt, 0, `- … ${omittedMessageCount} middle thread message(s) omitted for prompt budget`);
+  }
   const relatedMeetingLines = input.granolaMeetings.map((meeting) => {
     const when = meeting.date ? ` (${meeting.date})` : "";
     return `- ${meeting.title}${when} [${meeting.id}]`;
   });
-  const followedLinkLines = input.followedLinks.flatMap((link) => [
+  const promptLinks = input.followedLinks.slice(0, Math.max(1, MAX_FOLLOWED_LINKS_FOR_PROMPT));
+  const followedLinkLines = promptLinks.flatMap((link) => [
     `- URL: ${link.url}`,
-    `  Content: ${link.content}`,
+    `  Content: ${clipPromptText(link.content, MAX_FOLLOWED_LINK_PROMPT_CHARS)}`,
   ]);
+  if (input.followedLinks.length > promptLinks.length) {
+    followedLinkLines.push(`- … ${input.followedLinks.length - promptLinks.length} additional link(s) omitted for prompt budget`);
+  }
 
-  const repoLines = input.githubRepos.map((repo) => {
+  const repoLines = input.githubRepos.slice(0, Math.max(1, MAX_REPOS_FOR_PROMPT)).map((repo) => {
     const name = repo.name ?? "unknown";
     const description = repo.description ?? "";
     const url = repo.url ?? "";
-    return `- ${name}: ${description} ${url}`.trim();
+    return clipPromptText(`- ${name}: ${description} ${url}`.trim(), MAX_REPO_LINE_PROMPT_CHARS);
   });
+  if (input.githubRepos.length > repoLines.length) {
+    repoLines.push(`- … ${input.githubRepos.length - repoLines.length} additional repo(s) omitted for prompt budget`);
+  }
+
+  const memoryLines = input.memoryContext
+    .slice(0, Math.max(1, MAX_MEMORY_LINES_FOR_PROMPT))
+    .map((line) => clipPromptText(line, MAX_MEMORY_LINE_PROMPT_CHARS));
+  if (input.memoryContext.length > memoryLines.length) {
+    memoryLines.push(`- … ${input.memoryContext.length - memoryLines.length} additional memory hit(s) omitted for prompt budget`);
+  }
+
+  const gapLines = input.accessGaps
+    .slice(0, Math.max(1, MAX_ACCESS_GAPS_FOR_PROMPT))
+    .map((gap) => clipPromptText(
+      `- ${gap.item}: ${gap.why_missing}. How to get: ${gap.how_to_get_it}`,
+      MAX_ACCESS_GAP_PROMPT_CHARS,
+    ));
+  if (input.accessGaps.length > gapLines.length) {
+    gapLines.push(`- … ${input.accessGaps.length - gapLines.length} additional access gap(s) omitted for prompt budget`);
+  }
 
   return [
     `VIP sender: ${input.senderDisplay}`,
@@ -930,73 +1036,163 @@ function buildAnalysisPrompt(input: {
     ...(relatedMeetingLines.length > 0 ? relatedMeetingLines : ["- none found"]),
     "",
     "Memory recall excerpts:",
-    ...(input.memoryContext.length > 0 ? input.memoryContext : ["- none found"]),
+    ...(memoryLines.length > 0 ? memoryLines : ["- none found"]),
     "",
     "GitHub repositories:",
     ...(repoLines.length > 0 ? repoLines : ["- none found"]),
     "",
     "Access gaps detected before analysis:",
-    ...(input.accessGaps.length > 0
-      ? input.accessGaps.map((gap) => `- ${gap.item}: ${gap.why_missing}. How to get: ${gap.how_to_get_it}`)
-      : ["- none"]),
+    ...(gapLines.length > 0 ? gapLines : ["- none"]),
   ].join("\n");
 }
 
-function deriveNeedsAttention(input: {
+export const __vipEmailReceivedTestUtils = {
+  clipPromptText,
+  buildAnalysisPrompt,
+};
+
+type VipUrgencyLabel =
+  | "🔴 Reply now"
+  | "🟠 Reply today"
+  | "🟡 Reply this week"
+  | "🟢 FYI"
+  | "✅ Already handled";
+
+function ensureSentence(value: string, fallback: string): string {
+  const normalized = normalizeWhitespace(value);
+  if (!normalized) return fallback;
+  return /[.!?]$/u.test(normalized) ? normalized : `${normalized}.`;
+}
+
+function extractFirstSentence(value: string): string {
+  const normalized = normalizeWhitespace(value);
+  if (!normalized) return "";
+
+  const match = normalized.match(/^.*?[.!?](?:\s|$)/u);
+  return (match?.[0] ?? normalized).trim();
+}
+
+function buildReplyStateSentence(frontContext: FrontThreadContext): string {
+  const latestMessageAt = frontContext.latestMessage?.createdAt;
+  const lastJoelReplyAt = frontContext.lastJoelReplyAt;
+
+  if (lastJoelReplyAt == null) {
+    return "You haven't replied yet.";
+  }
+
+  if (latestMessageAt != null && lastJoelReplyAt < latestMessageAt) {
+    return `You replied ${formatRelativeTime(lastJoelReplyAt)}, and they followed up ${formatRelativeTime(latestMessageAt)}.`;
+  }
+
+  return `You replied ${formatRelativeTime(lastJoelReplyAt)}.`;
+}
+
+function normalizeActionLine(value: string): string {
+  return normalizeWhitespace(value).replace(/[.!?]+$/u, "");
+}
+
+function deriveVipUrgency(input: {
+  preview: string;
+  subject: string;
   analysis: VipAnalysis;
   frontContext: FrontThreadContext;
   accessGaps: MissingInfo[];
-}): { value: "yes" | "no"; reason: string } {
-  if (input.analysis.todos.length > 0) {
-    return { value: "yes", reason: input.analysis.todos[0]?.title ?? "there are concrete follow-ups" };
+}): { label: VipUrgencyLabel; action: string } {
+  const latestMessageAt = input.frontContext.latestMessage?.createdAt ?? 0;
+  const lastJoelReplyAt = input.frontContext.lastJoelReplyAt ?? 0;
+  const awaitingJoel = !input.frontContext.joelReplied || lastJoelReplyAt < latestMessageAt;
+  const cueText = [
+    input.subject,
+    input.preview,
+    input.frontContext.latestMessage?.text ?? "",
+    input.analysis.executive_summary,
+    ...input.analysis.todos.flatMap((todo) => [todo.title, todo.description, todo.due ?? ""]),
+    ...input.analysis.questions_for_human,
+  ].join(" ").toLowerCase();
+  const topAction = normalizeActionLine(
+    input.analysis.todos[0]?.title
+    ?? input.analysis.questions_for_human[0]
+    ?? input.accessGaps[0]?.item
+    ?? (awaitingJoel
+      ? "Reply with the next decision, answer, or confirmation they need"
+      : "No reply needed unless the thread changes")
+  );
+  const hasImmediateCue = /\b(within 24h|today|tomorrow|tonight|asap|urgent|deadline|blocking|eod|end of day)\b/u.test(
+    cueText
+  );
+  const hasNearTermCue = /\b(this week|soon|review|follow up|decision|confirm|approval)\b/u.test(cueText);
+
+  if (!awaitingJoel && input.analysis.todos.length === 0 && input.analysis.questions_for_human.length === 0) {
+    return {
+      label: "✅ Already handled",
+      action: "No reply needed unless the thread changes",
+    };
   }
-  if (input.analysis.questions_for_human.length > 0) {
-    return { value: "yes", reason: input.analysis.questions_for_human[0] ?? "there are unresolved questions" };
+
+  if (awaitingJoel && hasImmediateCue) {
+    return {
+      label: "🔴 Reply now",
+      action: topAction || "Reply now so the thread stops blocking",
+    };
   }
-  if (!input.frontContext.joelReplied) {
-    return { value: "yes", reason: "Joel has not replied in the cached thread yet" };
+
+  if (awaitingJoel && (input.analysis.todos.length > 0 || input.analysis.questions_for_human.length > 0 || hasNearTermCue)) {
+    return {
+      label: "🟠 Reply today",
+      action: topAction || "Reply today with the next decision or answer",
+    };
   }
-  if (input.accessGaps.length > 0) {
-    return { value: "yes", reason: input.accessGaps[0]?.why_missing ?? "some context could not be retrieved" };
+
+  if (awaitingJoel || input.analysis.todos.length > 0 || input.analysis.questions_for_human.length > 0 || input.accessGaps.length > 0) {
+    return {
+      label: "🟡 Reply this week",
+      action: topAction || "Reply this week after you review the thread",
+    };
   }
-  return { value: "no", reason: "the thread appears informational and already covered" };
+
+  return {
+    label: "🟢 FYI",
+    action: "No response needed; keep this for context",
+  };
 }
 
-function buildFallbackExecutiveSummary(input: {
-  preview: string;
+function buildOpenLoopSentence(input: {
   analysis: VipAnalysis;
   frontContext: FrontThreadContext;
   followedLinks: FollowedLink[];
-  needsAttention: { value: "yes" | "no"; reason: string };
   accessGaps: MissingInfo[];
 }): string {
-  const latestSnippetSource = normalizeWhitespace(
-    input.frontContext.latestMessage?.text
-    ?? input.preview
-    ?? ""
-  );
-  const latestSnippet = latestSnippetSource
-    ? latestSnippetSource.length > 180
-      ? `${latestSnippetSource.slice(0, 177)}...`
-      : latestSnippetSource
-    : "Latest message content was unavailable in the cached thread.";
+  const topTodo = input.analysis.todos[0];
+  if (topTodo) {
+    const dueSuffix = topTodo.due ? ` (${topTodo.due})` : "";
+    return ensureSentence(`What's still open is ${topTodo.title}${dueSuffix}`, "What's still open is the next requested follow-up.");
+  }
 
-  const threadSentence = `${input.frontContext.messages.length} messages are in the cached thread, and Joel last replied ${formatRelativeTime(input.frontContext.lastJoelReplyAt)}.`;
-  const attentionLead = input.needsAttention.value === "yes"
-    ? "This needs attention now"
-    : "This does not appear urgent right now";
+  const question = input.analysis.questions_for_human[0];
+  if (question) {
+    return ensureSentence(`What's still open is ${question}`, "What's still open is Joel's input.");
+  }
 
-  const supportReason = input.analysis.todos[0]?.title
-    ?? input.analysis.questions_for_human[0]
-    ?? input.needsAttention.reason;
+  if (input.accessGaps.length > 0) {
+    const gap = input.accessGaps[0];
+    return ensureSentence(
+      `Context is still incomplete because ${gap?.item ?? "some context"} could not be verified`,
+      "Context is still incomplete because some related context could not be verified.",
+    );
+  }
 
-  const contextTail = input.followedLinks.length > 0
-    ? ` ${input.followedLinks.length} linked resource${input.followedLinks.length === 1 ? " was" : "s were"} pulled for extra context.`
-    : input.accessGaps.length > 0
-      ? ` Context gaps remain: ${input.accessGaps[0]?.item ?? "additional context"} could not be verified yet.`
-      : "";
+  if (input.followedLinks.length > 0) {
+    return ensureSentence(
+      `A linked document adds context: ${summarizeFollowedLinkContent(input.followedLinks[0]!)}`,
+      "A linked document adds context to this thread.",
+    );
+  }
 
-  return `${latestSnippet} ${threadSentence} ${attentionLead} because ${supportReason}.${contextTail}`.trim();
+  if (!input.frontContext.joelReplied) {
+    return "What's changed is that you still haven't replied.";
+  }
+
+  return "Nothing materially new appears beyond the latest thread activity.";
 }
 
 function buildFallbackOperatorBrief(input: {
@@ -1009,35 +1205,43 @@ function buildFallbackOperatorBrief(input: {
   followedLinks: FollowedLink[];
   accessGaps: MissingInfo[];
 }): string {
-  const keyLinks = input.followedLinks.length > 0
-    ? input.followedLinks
-        .map((link) => `${link.url} — ${summarizeFollowedLinkContent(link)}`)
-        .join("; ")
-    : "none";
-  const needsAttention = deriveNeedsAttention({
+  const urgency = deriveVipUrgency({
+    preview: input.preview,
+    subject: input.subject,
     analysis: input.analysis,
     frontContext: input.frontContext,
     accessGaps: input.accessGaps,
   });
-  const executiveSummary = buildFallbackExecutiveSummary({
-    preview: input.preview,
+  const primaryReason = normalizeActionLine(
+    input.analysis.todos[0]?.title
+    ?? input.analysis.questions_for_human[0]
+    ?? input.accessGaps[0]?.why_missing
+    ?? "the thread is still active"
+  );
+  const opening = ensureSentence(
+    extractFirstSentence(input.analysis.executive_summary)
+      || `This email is about ${input.subject}, and it matters because ${primaryReason}`,
+    `This email is about ${input.subject}, and it matters because ${primaryReason}.`,
+  );
+  const threadArc = ensureSentence(
+    `This thread has ${input.frontContext.messages.length} messages, last moved ${formatRelativeTime(input.frontContext.latestMessage?.createdAt)}, is currently ${input.frontContext.summary.status || "open"}, and ${buildReplyStateSentence(input.frontContext).replace(/[.!?]+$/u, "")}`,
+    `This thread is still active, and ${buildReplyStateSentence(input.frontContext).toLowerCase()}`,
+  );
+  const openLoop = buildOpenLoopSentence({
     analysis: input.analysis,
     frontContext: input.frontContext,
     followedLinks: input.followedLinks,
-    needsAttention,
     accessGaps: input.accessGaps,
   });
 
   return [
     `## VIP: ${input.senderDisplay} — ${input.subject}`,
     "",
-    executiveSummary,
+    opening,
+    threadArc,
+    openLoop,
     "",
-    `**Thread**: ${input.frontContext.messages.length} messages, last activity ${formatRelativeTime(input.frontContext.latestMessage?.createdAt)}`,
-    `**Your last reply**: ${formatRelativeTime(input.frontContext.lastJoelReplyAt)}`,
-    `**Key links**: ${keyLinks}`,
-    "",
-    `**Needs your attention**: ${needsAttention.value} — ${needsAttention.reason}`,
+    `${urgency.label} ${urgency.action}`,
     "",
     `[View in Front](${frontConversationUrl(input.conversationId)})`,
   ].join("\n");
@@ -1045,49 +1249,8 @@ function buildFallbackOperatorBrief(input: {
 
 function isWellFormedOperatorBrief(value: string): boolean {
   return value.startsWith("## VIP:")
-    && value.includes("**Thread**:")
-    && value.includes("**Your last reply**:")
-    && value.includes("**Needs your attention**:")
+    && /(🔴 Reply now|🟠 Reply today|🟡 Reply this week|🟢 FYI|✅ Already handled)/u.test(value)
     && value.includes("[View in Front]");
-}
-
-function buildEmailThreadCacheDocument(input: {
-  conversationId: string;
-  subject: string;
-  vipSender: string;
-  frontContext: FrontThreadContext;
-  followedLinks: FollowedLink[];
-  summary?: string;
-}): Record<string, unknown> {
-  const participants = uniqueStrings([
-    input.vipSender,
-    ...input.frontContext.messages.flatMap((message) => [message.senderEmail, message.senderName]),
-  ]);
-  const messages = input.frontContext.messages.map((message) => ({
-    id: message.id,
-    sender: message.senderDisplay,
-    sender_email: message.senderEmail,
-    timestamp: message.createdAt,
-    text: message.text,
-    is_inbound: message.isInbound,
-  }));
-
-  return {
-    id: input.conversationId,
-    conversation_id: input.conversationId,
-    subject: input.subject,
-    participants,
-    vip_sender: input.vipSender,
-    status: input.frontContext.summary.status || "unknown",
-    last_message_at: input.frontContext.latestMessage?.createdAt ?? Date.now(),
-    ...(input.frontContext.lastJoelReplyAt != null ? { last_joel_reply_at: input.frontContext.lastJoelReplyAt } : {}),
-    message_count: input.frontContext.messages.length,
-    messages_json: JSON.stringify(messages),
-    ...(input.followedLinks.length > 0 ? { followed_links_json: JSON.stringify(input.followedLinks) } : {}),
-    ...(input.frontContext.summary.tags.length > 0 ? { tags: input.frontContext.summary.tags } : {}),
-    ...(input.summary ? { summary: input.summary } : {}),
-    updated_at: Date.now(),
-  };
 }
 
 /**
@@ -1428,6 +1591,7 @@ export const vipEmailReceived = inngest.createFunction(
       githubRepos,
       accessGaps,
     });
+    const analysisPromptChars = analysisPrompt.length;
 
     const briefResult = await step.run("generate-operator-brief", async () => {
       const t0 = Date.now();
@@ -1664,6 +1828,7 @@ export const vipEmailReceived = inngest.createFunction(
       githubRepos: githubRepos.length,
       todosCreated: createdTodos.created.length,
       missingInfoCount: allMissingInfo.length,
+      analysisPromptChars,
       ranOpus: shouldRunOpus,
       opusReason: opusDecision.reason,
       cacheStored: cacheResult.cached,

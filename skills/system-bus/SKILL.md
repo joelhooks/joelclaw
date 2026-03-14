@@ -189,6 +189,8 @@ await gateway?.progress("Step 3/5 complete");
 
 ## Hard Rules
 
+- VIP email history now has a dedicated backfill path: `vip/email-threads.backfill` (host worker) walks Front contact history for configured VIP sender emails and hydrates Typesense `email_threads` before narrative briefs rely on prior thread arcs. Default VIP sender aliases now include Alex Hillman's `alex@indyhall.org` address so the backfill can resolve the canonical Front contact.
+- `vip/email-received` operator output is narrative-first now: expect 3-5 sentence prose plus one calibrated urgency line (`🔴🟠🟡🟢✅`), not the old `Thread / Your last reply / Needs your attention` block format.
 - **NEVER set `retries: 0`** — Inngest defaults handle retries. This has caused multiple production failures.
 - **Events silently dropped if functions not registered.** Verify `joelclaw functions` returns >0 before sending events. `joelclaw refresh` forces re-registration.
 - **Inngest server function registry goes stale** on worker restart. Always `curl -X PUT http://127.0.0.1:3111/api/inngest` after restart.

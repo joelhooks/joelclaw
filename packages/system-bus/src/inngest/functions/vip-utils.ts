@@ -1,9 +1,19 @@
 const DEFAULT_VIP_SENDERS = [
   "alex hillman",
+  "alex@indyhall.org",
 ];
 
 function normalize(value: string): string {
   return value.trim().toLowerCase();
+}
+
+export function extractVipSenderEmail(value: string): string {
+  const normalized = normalize(value);
+  if (!normalized) return "";
+
+  const match = normalized.match(/<([^>]+)>/u);
+  const candidate = normalize(match?.[1] ?? normalized);
+  return candidate.includes("@") ? candidate : "";
 }
 
 function parseVipSendersFromEnv(): string[] {
@@ -21,7 +31,14 @@ export function getVipSenders(): string[] {
 }
 
 export function isVipSender(from: string, fromName?: string): boolean {
-  const haystack = `${fromName ?? ""} ${from}`.toLowerCase();
-  return getVipSenders().some((vip) => haystack.includes(vip));
-}
+  const haystack = normalize(`${fromName ?? ""} ${from}`);
+  const fromEmail = extractVipSenderEmail(from);
 
+  return getVipSenders().some((vip) => {
+    const normalizedVip = normalize(vip);
+    if (normalizedVip && haystack.includes(normalizedVip)) return true;
+
+    const vipEmail = extractVipSenderEmail(vip);
+    return Boolean(vipEmail && fromEmail && vipEmail === fromEmail);
+  });
+}

@@ -117,6 +117,7 @@ export {
   vercelDeploySucceeded,
 } from "./vercel-notify";
 export { videoDownload } from "./video-download";
+export { vipEmailThreadsBackfill } from "./vip-email-backfill";
 export { vipEmailReceived } from "./vip-email-received";
 export { vipEmailBrief } from "./vip-morning-brief";
 export { voiceCallCompleted } from "./voice-call-completed";

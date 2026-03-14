@@ -1545,6 +1545,12 @@ export type Events = {
       source: "front-webhook" | "manual";
     };
   };
+  "vip/email-threads.backfill": {
+    data: {
+      senders?: string[];
+      source?: "manual" | "scheduled";
+    };
+  };
 
   // --- Granola / Meetings (ADR-0055, ADR-0056) ---
   "meeting/noted": {

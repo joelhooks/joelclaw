@@ -22,6 +22,8 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 - Long-form content-review inference (`content/review.submitted`) must set an explicit timeout budget on every `infer()` call instead of inheriting the shared 120s default. Current contract: rewrite/retry/verify all use a 300s budget so long posts do not die in `agent-edit` after the bookkeeping steps already succeeded.
 - Post content-review cache invalidation must revalidate the markdown twin as well as the human page. Current contract for `post` content: tags `post:<slug>`, `article:<slug>`, `articles`; paths `/`, `/<slug>`, `/<slug>.md`, `/<slug>/md`, `/feed.xml`, `/sitemap.md`.
 - VIP delivery functions (`vip/email-received`, `vip/email-brief`) now send the operator brief directly to Telegram via `packages/system-bus/src/lib/telegram.ts`. `vip/email-received` no longer pushes a duplicate gateway event for operator delivery, and the generic Front notifier skips VIP senders so one VIP email produces exactly one operator-facing notification. Strip relay-only instructions before direct delivery and return `telegramDelivered`/`telegramError` in function output so failures are visible in run traces.
+- `vip/email-received` analysis/brief inference must stay inside bounded prompt and timeout budgets: compact the prompt to head+tail thread context plus clipped link/memory/repo/access-gap excerpts, include prompt-size metadata on the `infer()` calls, and use `maxAttempts: 1` when a caller-specific fallback plan is better than spending an overall request budget on a toothless router fallback chain.
+- `vip/email-threads.backfill` is the one-shot Front history hydrator for Typesense `email_threads`: ensure the collection first, resolve VIP sender emails from `getVipSenders()`, walk `/contacts/alt:email:{email}/conversations` with `_pagination.next`, fetch each conversation's messages, and upsert canonical thread docs so narrative VIP briefs can refer to prior email arcs.
 - For inference calls that must return machine-readable output, set `json: true` plus `requireJson: true` (and `requireTextOutput: true` where needed) so null/empty outputs are treated as failures, not successes.
 - ADR pitch automation now has a closed funnel: `system-heartbeat` emits `adr/pitch.requested` once per local morning window (8:00–10:00 America/Los_Angeles) behind Redis key `adr:pitch:last-fired` with a 20h TTL; `adr-daily-pitch` emits OTEL `pitch.sent`; `telegram-callback` emits OTEL `pitch.responded`; `adr-pitch-execute` handles `adr/pitch.approved` by reading the ADR file from `~/Vault/docs/decisions`, running `codex exec --full-auto -C <repo> "<prompt>"` (prompt is positional; `-p` is Codex profile, not prompt), verifying `bunx tsc --noEmit`, storing rollback metadata at `adr:pitch:rollback:<adr_number>`, and sending Telegram success/failure notifications via `pushGatewayEvent`.
 - Worker code must not import `packages/cli/src/*` via relative paths. Keep recovery-runbook helpers local to `packages/system-bus` (or move them to a leaf package) and avoid introducing `@joelclaw/system-bus` ↔ `@joelclaw/sdk` dependency cycles that break Turbo/Vercel builds.
@@ -289,10 +291,23 @@ Do **not** mutate `main.db` without a point-in-time backup.
   1. keeps newsletter detection + auto-archive unchanged for low-signal VIP senders
   2. fetches the full Front thread via pagination (up to 50 messages) with sender + timestamp + full text, then caches the thread in Typesense `email_threads`
   3. follows up to 5 interesting links from the latest email via `defuddle` and persists extracted content into `followed_links_json`
-  4. uses quality-first default budgets (60s overall, 15s Sonnet/recall windows, 20s Opus window) while still honoring env-var overrides
-  5. builds context-rich analysis + brief prompts from the full thread, followed links, Granola matches, recall hits, Front status/tags, and optional GitHub repo search
-  6. sends a direct Telegram operator brief with its own executive summary derived from raw context (not blindly from prior triage output), plus relative activity, reply state, key links, and a direct Front deep link; the relay now suppresses `vip.email.received` so the direct send stays single-delivery, and timing data stays in function output for observability only
-  7. preserves Todoist task extraction and memory `echo-fizzle` dispatch after analysis
+  4. compacts prompt-only context before `infer()` runs: head/tail thread sampling, clipped message/link/memory/repo/access-gap excerpts, and prompt-budget omission markers keep VIP analysis inside realistic `pi` latency bounds without changing cached source data
+  5. uses quality-first default budgets (90s overall, 20s brief window, 45s Opus window) while still honoring env-var overrides
+  6. pins each `infer()` call to a single router attempt because the function already has deterministic fallbacks (`buildFallbackOperatorBrief`, empty-analysis degradation) and should not burn the full budget on hidden router retries
+  7. sends a direct Telegram operator brief as concise narrative prose with calibrated urgency (`🔴🟠🟡🟢✅`), explicit reply-state language, and a direct Front deep link; the relay now suppresses `vip.email.received` so the direct send stays single-delivery, and timing data stays in function output for observability only
+  8. preserves Todoist task extraction and memory `echo-fizzle` dispatch after analysis
+
+### VIP email thread backfill contract
+
+- function: `vip/email-threads.backfill`
+- file: `packages/system-bus/src/inngest/functions/vip-email-backfill.ts`
+- trigger: `vip/email-threads.backfill`
+- behavior:
+  1. ensures Typesense `email_threads` exists before any Front fetches
+  2. resolves configured VIP senders to concrete sender emails (defaults now include Alex Hillman's `alex@indyhall.org` alias so the backfill can find the canonical Front contact)
+  3. paginates Front contact conversations via `GET /contacts/alt:email:{email}/conversations`
+  4. fetches each conversation's messages via `GET /conversations/{id}/messages`, normalizes sender/text/timestamps, and derives Joel reply state
+  5. upserts each thread into `email_threads` with the shared cache-document builder so live VIP email ingestion and historical backfill use the same schema
 
 ### Channel intelligence triage to Todoist
 
