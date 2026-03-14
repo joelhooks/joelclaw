@@ -71,7 +71,7 @@ export type OperatorRelayEvent = {
   ts?: number;
 };
 
-export type OperatorSignalBucket = "immediate" | "batched" | "suppressed";
+export type OperatorSignalBucket = "immediate" | "batched" | "suppressed" | "ingested";
 
 export type OperatorSignalDecision = {
   bucket: OperatorSignalBucket;
@@ -270,7 +270,7 @@ export function classifyOperatorSignal(
   }
 
   if (event.type === "vip.email.received") {
-    return { bucket: "suppressed", reason: "suppressed.vip-delivered-direct", score, summary, projectKeys, contactKeys, correlationKeys };
+    return { bucket: "ingested", reason: "ingested.vip-delivered-direct", score, summary, projectKeys, contactKeys, correlationKeys };
   }
 
   if (score <= -2) {
@@ -311,7 +311,7 @@ function formatCorrelationGroupLabel(key: string): string {
 export function buildSignalDigestPrompt(events: OperatorRelayEvent[]): string {
   const decisions = events
     .map((event) => ({ event, decision: classifyOperatorSignal(event) }))
-    .filter(({ decision }) => decision.bucket !== "suppressed");
+    .filter(({ decision }) => decision.bucket !== "suppressed" && decision.bucket !== "ingested");
 
   if (decisions.length === 0) return "";
 

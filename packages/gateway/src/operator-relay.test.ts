@@ -35,7 +35,7 @@ describe("normalizeOperatorRelayText", () => {
 });
 
 describe("classifyOperatorSignal", () => {
-  test("suppresses VIP email events that are delivered directly to Telegram", () => {
+  test("ingests VIP email events that are delivered directly to Telegram", () => {
     const decision = classifyOperatorSignal(
       makeEvent({
         type: "vip.email.received",
@@ -50,8 +50,8 @@ describe("classifyOperatorSignal", () => {
       }),
     );
 
-    expect(decision.bucket).toBe("suppressed");
-    expect(decision.reason).toBe("suppressed.vip-delivered-direct");
+    expect(decision.bucket).toBe("ingested");
+    expect(decision.reason).toBe("ingested.vip-delivered-direct");
     expect(decision.projectKeys).toContain("ai-hero");
     expect(decision.correlationKeys).toContain("conversation:cnv_123");
   });
@@ -106,7 +106,7 @@ describe("isImmediateOperatorPriorityEvent", () => {
 });
 
 describe("signal digest and guidance", () => {
-  test("omits directly delivered VIP email events from the digest", () => {
+  test("omits ingested VIP email events from the digest", () => {
     const prompt = buildSignalDigestPrompt([
       makeEvent({
         type: "vip.email.received",

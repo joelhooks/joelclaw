@@ -8,6 +8,7 @@ import {
   buildSignalDigestPrompt,
   buildSignalRelayGuidance,
   classifyOperatorSignal,
+  type OperatorSignalBucket,
 } from "../operator-relay";
 import type { OutboundEnvelope } from "../outbound/envelope";
 import { type InlineButton, send as sendTelegram } from "./telegram";
@@ -469,7 +470,7 @@ function isHumanInboundMessageEvent(event: SystemEvent): boolean {
   return event.type.endsWith(".message.received");
 }
 
-type TriageBucket = "immediate" | "batched" | "suppressed";
+type TriageBucket = OperatorSignalBucket;
 
 function incrementCount(counter: Record<string, number>, key: string): void {
   counter[key] = (counter[key] ?? 0) + 1;
@@ -582,20 +583,24 @@ async function drainEvents(): Promise<void> {
     //
     // 🔺 IMMEDIATE — forward to agent now (actionable, needs response)
     // 🔸 BATCHED   — accumulate in Redis, flush as correlated signal digest
+    // 🟪 INGESTED  — keep for relay bookkeeping/context without operator delivery
     // ⬛ SUPPRESSED — drop silently (echoes, telemetry, noise)
     //
     const suppressed: SystemEvent[] = [];
+    const ingested: SystemEvent[] = [];
     const batched: SystemEvent[] = [];
     const immediate: SystemEvent[] = [];
     const triageReasonCounts: Record<TriageBucket, Record<string, number>> = {
       immediate: {},
       batched: {},
+      ingested: {},
       suppressed: {},
     };
 
     const assign = (bucket: TriageBucket, event: SystemEvent, reason: string) => {
       if (bucket === "immediate") immediate.push(event);
       if (bucket === "batched") batched.push(event);
+      if (bucket === "ingested") ingested.push(event);
       if (bucket === "suppressed") suppressed.push(event);
       incrementCount(triageReasonCounts[bucket], reason);
     };
@@ -621,6 +626,9 @@ async function drainEvents(): Promise<void> {
     if (suppressed.length > 0) {
       console.log(`[redis] suppressed ${suppressed.length} noise event(s): ${suppressed.map(e => e.type).join(", ")}`);
     }
+    if (ingested.length > 0) {
+      console.log(`[redis] ingested ${ingested.length} context-only event(s): ${ingested.map((event) => event.type).join(", ")}`);
+    }
     void emitGatewayOtel({
       level: "debug",
       component: "redis-channel",
@@ -630,10 +638,12 @@ async function drainEvents(): Promise<void> {
         total: events.length,
         immediate: immediate.length,
         batched: batched.length,
+        ingested: ingested.length,
         suppressed: suppressed.length,
         reasons: triageReasonCounts,
         immediateTypes: summarizeTypeCounts(immediate),
         batchedTypes: summarizeTypeCounts(batched),
+        ingestedTypes: summarizeTypeCounts(ingested),
         suppressedTypes: summarizeTypeCounts(suppressed),
       },
     });
