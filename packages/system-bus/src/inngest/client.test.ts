@@ -127,7 +127,7 @@ describe("MEM-2 client event schema acceptance tests", () => {
   test("supports pipeline/book.downloaded with selection metadata", async () => {
     const downloaded: Events["pipeline/book.downloaded"]["data"] = {
       title: "Designing Data-Intensive Applications",
-      nasPath: "/Users/joel/clawd/data/pdf-brain/incoming/ddia.pdf",
+      nasPath: "/volume1/home/joel/books/2026/ddia.pdf",
       md5: "0123456789abcdef0123456789abcdef",
       query: "designing data-intensive applications",
       selectedBy: "inference",

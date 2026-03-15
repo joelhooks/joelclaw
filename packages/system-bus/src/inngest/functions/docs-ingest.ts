@@ -1303,7 +1303,7 @@ export const docsIngest = inngest.createFunction(
     const explicitStorageCategory =
       typeof event.data.storageCategory === "string" ? event.data.storageCategory.trim() : undefined;
     const requestedNasPath =
-      [event.data.nasPath, event.data.filePath].find(
+      [event.data.filePath, event.data.nasPath].find(
         (path): path is string => typeof path === "string" && path.trim().length > 0
       ) ?? "";
     const addedAt = Date.now();

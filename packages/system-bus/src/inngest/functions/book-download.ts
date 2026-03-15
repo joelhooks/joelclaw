@@ -25,6 +25,9 @@ const BOOK_DOWNLOAD_TIMEOUT_MS = Math.max(
   60_000,
   Number.parseInt(process.env.JOELCLAW_BOOK_DOWNLOAD_TIMEOUT_MS ?? "900000", 10)
 );
+const NAS_HOST = process.env.JOELCLAW_NAS_HOST?.trim() || "joel@three-body";
+const NAS_BOOKS_DIR = process.env.JOELCLAW_NAS_BOOKS_DIR?.trim() || "/volume1/home/joel/books";
+const NAS_BACKUP_TIMEOUT_MS = 30_000;
 const BOOK_SELECTION_SYSTEM_PROMPT = `You select the best Anna's Archive MD5 candidate for a requested book.
 
 Rules:
@@ -65,6 +68,16 @@ type OutputEntry = {
   path: string;
   mtimeMs: number;
 };
+
+type NasBackupResult =
+  | {
+      backedUp: true;
+      nasPath: string;
+    }
+  | {
+      backedUp: false;
+      reason: string;
+    };
 
 function normalizeMd5(value: string | undefined): string | null {
   if (!value) return null;
@@ -723,6 +736,55 @@ export const bookDownload = inngest.createFunction(
         });
       });
 
+      const nasBackup: NasBackupResult = await step.run("backup-to-nas", async () => {
+        try {
+          const year = new Date().getFullYear().toString();
+          const filename = basename(downloadResult.filePath);
+          const nasDir = `${NAS_BOOKS_DIR}/${year}`;
+          const nasFullPath = `${NAS_HOST}:${nasDir}/${filename}`;
+
+          const mkdirResult = await runProcess(
+            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", NAS_HOST, `mkdir -p '${nasDir}'`],
+            NAS_BACKUP_TIMEOUT_MS
+          );
+          if (mkdirResult.exitCode !== 0) {
+            return { backedUp: false, reason: `mkdir failed: ${mkdirResult.stderr.trim()}` };
+          }
+
+          const scpResult = await runProcess(
+            ["scp", "-o", "ConnectTimeout=10", downloadResult.filePath, nasFullPath],
+            NAS_BACKUP_TIMEOUT_MS
+          );
+          if (scpResult.exitCode !== 0) {
+            return { backedUp: false, reason: `scp failed: ${scpResult.stderr.trim()}` };
+          }
+
+          return { backedUp: true, nasPath: `${nasDir}/${filename}` };
+        } catch (error) {
+          return {
+            backedUp: false,
+            reason: error instanceof Error ? error.message : String(error),
+          };
+        }
+      });
+      const backupNasPath = nasBackup.backedUp ? nasBackup.nasPath : undefined;
+
+      await step.run("otel-nas-backup", async () => {
+        await emitOtelEvent({
+          level: nasBackup.backedUp ? "info" : "warn",
+          source: "worker",
+          component: "book-download",
+          action: nasBackup.backedUp ? "book.nas.backed_up" : "book.nas.backup_failed",
+          success: nasBackup.backedUp,
+          error: nasBackup.backedUp ? undefined : nasBackup.reason,
+          metadata: {
+            md5: selected.md5,
+            localPath: downloadResult.filePath,
+            nasPath: backupNasPath,
+          },
+        });
+      });
+
       const resolvedTitle =
         event.data.title?.trim()
         || selected.candidate?.title?.trim()
@@ -735,7 +797,8 @@ export const bookDownload = inngest.createFunction(
         {
           name: "docs/ingest.requested",
           data: {
-            nasPath: downloadResult.filePath,
+            nasPath: backupNasPath,
+            filePath: downloadResult.filePath,
             title: resolvedTitle,
             tags: baseTags,
             storageCategory: event.data.storageCategory,
@@ -747,7 +810,7 @@ export const bookDownload = inngest.createFunction(
           name: "pipeline/book.downloaded",
           data: {
             title: resolvedTitle,
-            nasPath: downloadResult.filePath,
+            nasPath: backupNasPath,
             query: query || undefined,
             md5: selected.md5,
             reason,
@@ -768,7 +831,8 @@ export const bookDownload = inngest.createFunction(
           success: true,
           metadata: {
             md5: selected.md5,
-            nasPath: downloadResult.filePath,
+            localPath: downloadResult.filePath,
+            nasPath: backupNasPath,
             idempotencyKey,
             tags: baseTags,
           },

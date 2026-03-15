@@ -15,6 +15,11 @@ joelclaw send pipeline/book.download -d '{
 }'
 ```
 
+Current runtime behavior:
+- `aa-book download` keeps the local file in `outputDir` for docs ingest.
+- The workflow then attempts a non-fatal NAS backup to `/volume1/home/joel/books/<year>/...`.
+- `docs/ingest.requested` prefers the local `filePath` when present, so NAS outages do not block ingest.
+
 Optional direct MD5 (skip search/inference):
 
 ```bash

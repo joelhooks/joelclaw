@@ -134,8 +134,9 @@ joelclaw send pipeline/book.download -d '{
 Behavior:
 - Runs `aa-book search`
 - Uses `pi` inference (Sonnet 4.6 model alias from system-bus model registry) to select MD5
-- Runs `aa-book download <md5> <outputDir>`
-- Emits `docs/ingest.requested`
+- Runs `aa-book download <md5> <outputDir> --keep-local`
+- Attempts a non-fatal NAS backup to `/volume1/home/joel/books/<year>/...` via SSH/SCP
+- Emits `docs/ingest.requested` with the local `filePath` for immediate ingest and `nasPath` when backup succeeds
 - Emits `pipeline/book.downloaded`
 
 Optional direct MD5 mode:

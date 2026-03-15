@@ -107,7 +107,7 @@ export type Events = {
     data: {
       title: string;
       author?: string;
-      nasPath: string;
+      nasPath?: string;
       md5?: string;
       query?: string;
       reason?: string;
