@@ -368,17 +368,37 @@ function extractExistingPathFromOutput(raw: string): string | null {
   return null;
 }
 
+function formatResolvedPathDiagnostics(input: {
+  outputDir: string;
+  stdoutHint: string | null;
+  beforeCount: number;
+  afterCount: number;
+  newCount: number;
+}): string {
+  return (
+    `Unable to resolve downloaded file path in ${input.outputDir}. ` +
+    `stdout hint: ${input.stdoutHint ?? "none"}. ` +
+    `Files before: ${input.beforeCount}, after: ${input.afterCount}, new: ${input.newCount}`
+  );
+}
+
 async function resolveDownloadedPath(
   rawOutput: string,
   outputDir: string,
   beforeEntries: OutputEntry[]
 ): Promise<string> {
+  const resolveStartedAt = Date.now();
+  const staleCutoffMs = resolveStartedAt - 5 * 60_000;
   const existingFromOutput = extractExistingPathFromOutput(rawOutput);
+  let outputCandidate: OutputEntry | null = null;
   if (existingFromOutput) {
     for (let i = 0; i < 2; i += 1) {
       try {
         const details = await stat(existingFromOutput);
-        if (details.isFile()) return existingFromOutput;
+        if (details.isFile()) {
+          outputCandidate = { path: existingFromOutput, mtimeMs: details.mtimeMs };
+          break;
+        }
       } catch {
         if (i === 0) {
           await new Promise((resolve) => setTimeout(resolve, 500));
@@ -394,16 +414,31 @@ async function resolveDownloadedPath(
       const prev = beforeMap.get(entry.path);
       if (prev == null) return true;
       return entry.mtimeMs > prev + 1;
-    })
+      })
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
 
+  const diagnostics = formatResolvedPathDiagnostics({
+    outputDir,
+    stdoutHint: existingFromOutput,
+    beforeCount: beforeEntries.length,
+    afterCount: afterEntries.length,
+    newCount: newEntries.length,
+  });
+  const assertFresh = (entry: OutputEntry, source: "stdout" | "directory-diff"): string => {
+    if (entry.mtimeMs < staleCutoffMs) {
+      throw new Error(
+        `Resolved downloaded file from ${source} is stale: ${entry.path} (mtime ${new Date(entry.mtimeMs).toISOString()}). ${diagnostics}`
+      );
+    }
+    return entry.path;
+  };
+
+  if (outputCandidate) return assertFresh(outputCandidate, "stdout");
+
   const newestNewEntry = newEntries[0];
-  if (newestNewEntry) return newestNewEntry.path;
+  if (newestNewEntry) return assertFresh(newestNewEntry, "directory-diff");
 
-  const newest = [...afterEntries].sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
-  if (newest) return newest.path;
-
-  throw new Error(`Unable to resolve downloaded file path in ${outputDir}`);
+  throw new Error(diagnostics);
 }
 
 function inferTitle(candidateTitle: string | undefined, fallbackPath: string): string {
