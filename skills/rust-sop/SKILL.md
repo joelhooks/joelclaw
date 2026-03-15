@@ -399,6 +399,7 @@ Load these for deeper guidance on specific topics:
 | Topic | File |
 |-------|------|
 | Ownership & lifetimes | `references/ownership.md` |
-| Async patterns | `references/async.md` |
+| **Async / Tokio patterns** | **`references/async.md`** — graceful shutdown, cancellable loops, channels, shared state, WebSocket, retries |
+| **Axum HTTP server** | **`references/axum.md`** — routing, extractors, custom auth, error→response, WebSocket firehose, middleware, testing |
 | Common compiler errors | `references/compiler-errors.md` |
 | **pdf-brain search playbook** | **`references/library.md`** |
