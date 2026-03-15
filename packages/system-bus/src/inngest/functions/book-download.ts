@@ -362,11 +362,15 @@ async function resolveDownloadedPath(
 ): Promise<string> {
   const existingFromOutput = extractExistingPathFromOutput(rawOutput);
   if (existingFromOutput) {
-    try {
-      const details = await stat(existingFromOutput);
-      if (details.isFile()) return existingFromOutput;
-    } catch {
-      // continue with directory diff
+    for (let i = 0; i < 2; i += 1) {
+      try {
+        const details = await stat(existingFromOutput);
+        if (details.isFile()) return existingFromOutput;
+      } catch {
+        if (i === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
     }
   }
 
@@ -671,7 +675,7 @@ export const bookDownload = inngest.createFunction(
 
       const downloadResult = await step.run("download-book", async () => {
         const beforeEntries = await listOutputEntries(outputPath);
-        const command = [aaBookBin, "download", selected.md5, outputPath];
+        const command = [aaBookBin, "download", selected.md5, outputPath, "--keep-local"];
         const result = await runProcess(command, BOOK_DOWNLOAD_TIMEOUT_MS);
         const combinedOutput = `${result.stdout}\n${result.stderr}`;
 
