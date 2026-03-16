@@ -75,16 +75,19 @@ metadata:
   labels:
     app: restate
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app: restate
   ports:
     - name: ingress
       port: 8080
       targetPort: ingress
+      nodePort: 8080
     - name: admin
       port: 9070
       targetPort: admin
+      nodePort: 9070
     - name: metrics
       port: 9071
       targetPort: metrics
+      nodePort: 9071
