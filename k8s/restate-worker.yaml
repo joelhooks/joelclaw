@@ -23,19 +23,22 @@ spec:
         - name: ghcr-pull
       containers:
         - name: restate-worker
-          image: ghcr.io/joelhooks/restate-worker:latest
+          image: ghcr.io/joelhooks/restate-worker:20260316-091650
           imagePullPolicy: Always
           securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-            allowPrivilegeEscalation: false
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: true
             readOnlyRootFilesystem: false
-            capabilities:
-              drop:
-                - ALL
+            privileged: true
             seccompProfile:
-              type: RuntimeDefault
+              type: Unconfined
+          volumeMounts:
+            - name: dev-kvm
+              mountPath: /dev/kvm
+            - name: firecracker-data
+              mountPath: /tmp/firecracker-test
           envFrom:
             - secretRef:
                 name: system-bus-env
@@ -89,8 +92,17 @@ spec:
               cpu: 100m
               memory: 256Mi
             limits:
-              cpu: "1"
-              memory: 1Gi
+              cpu: "2"
+              memory: 2Gi
+      volumes:
+        - name: dev-kvm
+          hostPath:
+            path: /dev/kvm
+            type: CharDevice
+        - name: firecracker-data
+          hostPath:
+            path: /tmp/firecracker-test
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service

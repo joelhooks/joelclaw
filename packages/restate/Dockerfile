@@ -20,8 +20,26 @@ COPY apps/ apps/
 # Install all deps (full workspace — ensures all cross-package deps resolve)
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
+# Firecracker binary stage
+FROM alpine:3.20 AS firecracker
+ARG FC_VERSION=v1.15.0
+ARG FC_ARCH=aarch64
+RUN apk add --no-cache curl tar \
+    && curl -sL "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}/firecracker-${FC_VERSION}-${FC_ARCH}.tgz" \
+       -o /tmp/fc.tgz \
+    && tar xzf /tmp/fc.tgz -C /tmp \
+    && cp /tmp/release-${FC_VERSION}-${FC_ARCH}/firecracker-${FC_VERSION}-${FC_ARCH} /usr/local/bin/firecracker \
+    && chmod +x /usr/local/bin/firecracker \
+    && rm -rf /tmp/fc.tgz /tmp/release-*
+
 # Runtime stage — bun
 FROM oven/bun:1.3.9 AS runtime
+
+# Install curl for Firecracker API socket calls
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# Copy Firecracker binary
+COPY --from=firecracker /usr/local/bin/firecracker /usr/local/bin/firecracker
 
 WORKDIR /app
 
