@@ -1,0 +1,163 @@
+[
+  {
+    "id": "fix-admin-port",
+    "name": "Fix Restate admin reachability",
+    "executionMode": "manual",
+    "phase": "A",
+    "acceptance": [
+      "joelclaw jobs status reports restate as healthy without manual port-forward",
+      "NodePort 30970 added to k8s/restate.yaml Service for admin API (9070)"
+    ],
+    "files": ["k8s/restate.yaml"],
+    "notes": "5-minute fix. One line in the Service spec."
+  },
+  {
+    "id": "triage-queue",
+    "name": "Triage stale queue",
+    "executionMode": "manual",
+    "phase": "A",
+    "acceptance": [
+      "Queue depth < 10",
+      "No items older than 1 hour",
+      "Unhandled event families documented"
+    ],
+    "notes": "Inspect 58 items, ack/drain dead webhook events."
+  },
+  {
+    "id": "worker-to-k8s",
+    "name": "Move Restate worker into k8s",
+    "executionMode": "codex",
+    "dependsOn": ["fix-admin-port"],
+    "phase": "A",
+    "acceptance": [
+      "kubectl get pods -n joelclaw | grep restate-worker shows 1/1 Running",
+      "Services still registered in Restate server via admin API",
+      "Queue drainer consuming events",
+      "launchd com.joel.restate-worker disabled"
+    ],
+    "files": [
+      "k8s/restate-worker.yaml",
+      "k8s/publish-restate-worker.sh",
+      "packages/restate/Dockerfile"
+    ],
+    "artifacts": ["Dockerfile", "k8s manifest", "publish script"],
+    "tool": "codex"
+  },
+  {
+    "id": "install-firecracker",
+    "name": "Enable nested virt in Colima + install Firecracker",
+    "executionMode": "sandbox",
+    "phase": "B",
+    "acceptance": [
+      "firecracker --version works inside Colima VM",
+      "/dev/kvm accessible inside Colima VM",
+      "Colima running with nestedVirtualization=true"
+    ],
+    "files": ["infra/firecracker/"],
+    "notes": "May require Colima restart. Firecracker v1.13.0 aarch64 binary."
+  },
+  {
+    "id": "build-rootfs",
+    "name": "Build agent rootfs + guest kernel",
+    "executionMode": "sandbox",
+    "dependsOn": ["install-firecracker"],
+    "phase": "B",
+    "acceptance": [
+      "microVM boots from rootfs",
+      "bun --version succeeds inside microVM",
+      "node --version succeeds inside microVM",
+      "git --version succeeds inside microVM",
+      "pi --version succeeds inside microVM"
+    ],
+    "files": [
+      "infra/firecracker/Dockerfile.rootfs",
+      "infra/firecracker/build-rootfs.sh",
+      "infra/firecracker/kernel/"
+    ],
+    "artifacts": ["rootfs.ext4", "vmlinux"],
+    "tool": "codex"
+  },
+  {
+    "id": "create-snapshot",
+    "name": "Create warm snapshot",
+    "executionMode": "sandbox",
+    "dependsOn": ["build-rootfs"],
+    "phase": "B",
+    "acceptance": [
+      "Restore from snapshot boots in < 200ms",
+      "All tools verified post-restore",
+      "Snapshot artifacts stored in infra/firecracker/snapshots/"
+    ],
+    "files": ["infra/firecracker/snapshot.sh"],
+    "artifacts": ["vm-snapshot", "mem-snapshot"]
+  },
+  {
+    "id": "microvm-runner",
+    "name": "Build microVM runner in agent-execution",
+    "executionMode": "sandbox",
+    "dependsOn": ["install-firecracker", "build-rootfs", "create-snapshot"],
+    "phase": "C",
+    "acceptance": [
+      "Unit tests pass for microvm.ts",
+      "Integration test: boot microVM, run command, collect output, destroy VM",
+      "API socket management works",
+      "Workspace volume mount via virtio-block works"
+    ],
+    "files": [
+      "packages/agent-execution/src/microvm.ts",
+      "packages/agent-execution/__tests__/microvm.test.ts"
+    ],
+    "tool": "codex"
+  },
+  {
+    "id": "wire-dagworker",
+    "name": "Wire dagWorker executionMode: microvm",
+    "executionMode": "sandbox",
+    "dependsOn": ["worker-to-k8s", "microvm-runner"],
+    "phase": "C",
+    "acceptance": [
+      "joelclaw workload run plan.json --execution-mode microvm --dry-run produces valid request",
+      "dagWorker handles executionMode microvm alongside host and sandbox",
+      "Same contract: identity, env, artifacts, inbox writeback"
+    ],
+    "files": [
+      "packages/restate/src/workflows/dag-orchestrator.ts",
+      "packages/restate/src/queue-drainer.ts"
+    ],
+    "tool": "codex"
+  },
+  {
+    "id": "canary",
+    "name": "Deterministic canary through full path",
+    "executionMode": "microvm",
+    "dependsOn": ["wire-dagworker"],
+    "phase": "C",
+    "acceptance": [
+      "Canary completes: CLI → queue → Restate → Firecracker microVM → artifacts → inbox terminal",
+      "Artifacts present in sandbox directory",
+      "microVM cleaned up after completion",
+      "joelclaw jobs status reflects completion"
+    ],
+    "files": ["scripts/verify-microvm-canary.ts"],
+    "notes": "Self-proving: first microVM workload validates the microVM infrastructure."
+  },
+  {
+    "id": "docs-api-consumer",
+    "name": "ADR-0228/0229 as first real consumer",
+    "executionMode": "microvm",
+    "dependsOn": ["canary"],
+    "phase": "D",
+    "acceptance": [
+      "At least one ADR-0228 phase completes end-to-end through the microVM rig",
+      "Produces merge-ready patch",
+      "Real code changes, real isolation, real Restate durability"
+    ],
+    "files": [
+      "apps/docs-api/src/index.ts",
+      "packages/system-bus/src/lib/book-chunk.ts",
+      "packages/system-bus/src/taxonomy/core-v1.ts",
+      "packages/system-bus/src/inngest/functions/docs-ingest.ts"
+    ],
+    "tool": "codex"
+  }
+]
