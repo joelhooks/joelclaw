@@ -37,6 +37,25 @@ kubectl exec -n joelclaw clickhouse-0 -- clickhouse-client --query "CREATE DATAB
 kubectl exec -n joelclaw clickhouse-0 -- clickhouse-client --query "SHOW DATABASES"
 ```
 
+## Restate worker (k8s deployment path)
+
+The Restate worker now has a repo-managed k8s deployment surface alongside the existing host launchd runtime:
+
+- manifest: `k8s/restate-worker.yaml`
+- publish script: `k8s/publish-restate-worker.sh`
+- container image: `ghcr.io/joelhooks/restate-worker:<tag>`
+- in-cluster service URL: `http://restate-worker:9080`
+
+Deploy + verify:
+
+```bash
+~/Code/joelhooks/joelclaw/k8s/publish-restate-worker.sh
+kubectl rollout status deployment/restate-worker -n joelclaw
+kubectl get svc restate-worker -n joelclaw
+```
+
+Important cutover note: this only publishes the worker. The Restate server still needs the deployment registered at `http://restate-worker:9080`, and the old host deployment (`http://host.lima.internal:9080`) should be deregistered after the cluster worker is healthy.
+
 ## Canonical launchd sources
 
 Host launchd assets that are part of joelclaw runtime behavior belong in `infra/launchd/`, not as hand-edited one-offs under `~/Library/LaunchAgents`.
