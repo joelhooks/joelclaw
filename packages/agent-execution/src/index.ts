@@ -97,6 +97,37 @@ export {
   writeLocalSandboxRegistry,
 } from "./local.js";
 
+export type {
+  FirecrackerRequest,
+  MicroVmConfig,
+  MicroVmExecResult,
+  MicroVmInstance,
+  ValidatedMicroVmConfig,
+} from "./microvm.js";
+export {
+  bootMicroVm,
+  buildBootMicroVmRequests,
+  buildRestoreMicroVmRequests,
+  DEFAULT_MICROVM_API_TIMEOUT_MS,
+  DEFAULT_MICROVM_BOOT_ARGS,
+  DEFAULT_MICROVM_EXEC_TIMEOUT_MS,
+  DEFAULT_MICROVM_MEM_SIZE_MIB,
+  DEFAULT_MICROVM_ROOT,
+  DEFAULT_MICROVM_VCPU_COUNT,
+  defaultMicroVmRoot,
+  destroyMicroVm,
+  execInMicroVm,
+  MICROVM_POLL_INTERVAL_MS,
+  MICROVM_PROTOCOL_DIRNAME,
+  MicroVmError,
+  pauseMicroVm,
+  resolveMicroVmSnapshotPaths,
+  resolveMicroVmSocketPath,
+  restoreMicroVm,
+  snapshotMicroVm,
+  validateMicroVmConfig,
+} from "./microvm.js";
+
 export type { MaterializeRepoOptions, MaterializeRepoResult } from "./repo.js";
 export {
   getTouchedFiles,
