@@ -15,6 +15,7 @@
     "dag": "bun run src/trigger-dag.ts"
   },
   "dependencies": {
+    "@joelclaw/agent-execution": "workspace:*",
     "@joelclaw/queue": "workspace:*",
     "@restatedev/restate-sdk": "^1.10.4",
     "@restatedev/restate-sdk-clients": "^1.10.4",

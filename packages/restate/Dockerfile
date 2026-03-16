@@ -27,6 +27,7 @@ WORKDIR /app
 
 # Copy resolved workspace deps + only the packages needed at runtime
 COPY --from=deps /app/node_modules /app/node_modules
+COPY --from=deps /app/packages/agent-execution /app/packages/agent-execution
 COPY --from=deps /app/packages/queue /app/packages/queue
 COPY --from=deps /app/packages/restate /app/packages/restate
 COPY --from=deps /app/packages/telemetry /app/packages/telemetry

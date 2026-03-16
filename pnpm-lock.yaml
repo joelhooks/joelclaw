@@ -534,6 +534,9 @@ importers:
 
   packages/restate:
     dependencies:
+      '@joelclaw/agent-execution':
+        specifier: workspace:*
+        version: link:../agent-execution
       '@joelclaw/queue':
         specifier: workspace:*
         version: link:../queue

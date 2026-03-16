@@ -19,7 +19,7 @@ const PI_PATH_DIRS = [
 
 // --- Types ---
 
-export type DagHandler = "noop" | "shell" | "http" | "infer";
+export type DagHandler = "noop" | "shell" | "http" | "infer" | "microvm";
 
 export interface DagNodeInput {
   id: string;
@@ -99,7 +99,7 @@ const normalizeNode = (node: DagNodeInput): DagNodeNormalized => {
   if (!task) throw new Error(`DAG node ${id} requires a non-empty task`);
 
   const handler = node.handler ?? "noop";
-  const validHandlers: DagHandler[] = ["noop", "shell", "http", "infer"];
+  const validHandlers: DagHandler[] = ["noop", "shell", "http", "infer", "microvm"];
   if (!validHandlers.includes(handler)) {
     throw new Error(`DAG node ${id} has invalid handler: ${handler}`);
   }
@@ -345,6 +345,63 @@ async function executeInfer(
   }
 }
 
+async function executeMicroVm(
+  config: Record<string, unknown>,
+  _depEnv: Record<string, string>,
+  timeoutMs: number,
+): Promise<string> {
+  const { bootMicroVm, restoreMicroVm, execInMicroVm, destroyMicroVm } =
+    await import("@joelclaw/agent-execution");
+
+  const sandboxId = `dag-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const kernelPath =
+    (config.kernelPath as string | undefined)?.trim() || "/tmp/firecracker-test/vmlinux";
+  const rootfsPath =
+    (config.rootfsPath as string | undefined)?.trim() ||
+    "/tmp/firecracker-test/agent-rootfs.ext4";
+  const snapshotDir = (config.snapshotDir as string | undefined)?.trim() || undefined;
+  const command =
+    (config.command as string | undefined)?.trim() || 'echo "no command specified"';
+  const workspaceDir = (config.workspaceDir as string | undefined)?.trim() || undefined;
+  if (!workspaceDir) {
+    throw new Error("microvm handler requires config.workspaceDir");
+  }
+  const vcpuCount =
+    typeof config.vcpuCount === "number" && Number.isFinite(config.vcpuCount)
+      ? config.vcpuCount
+      : 2;
+  const memSizeMib =
+    typeof config.memSizeMib === "number" && Number.isFinite(config.memSizeMib)
+      ? config.memSizeMib
+      : 512;
+
+  const vmConfig = {
+    sandboxId,
+    kernelPath,
+    rootfsPath,
+    snapshotDir,
+    vcpuCount,
+    memSizeMib,
+    workspacePath: workspaceDir,
+  };
+
+  const instance = snapshotDir
+    ? await restoreMicroVm(vmConfig)
+    : await bootMicroVm(vmConfig);
+
+  try {
+    const result = await execInMicroVm(instance, command, timeoutMs);
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `microvm command failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+      );
+    }
+    return truncate(result.stdout.trimEnd());
+  } finally {
+    await destroyMicroVm(instance).catch(() => {});
+  }
+}
+
 // --- dagWorker service (with OTEL instrumentation) ---
 
 export const dagWorker = restate.service({
@@ -407,6 +464,8 @@ export const dagWorker = restate.service({
               return executeHttp(resolvedConfig, handlerTimeoutMs);
             case "infer":
               return executeInfer(resolvedConfig, input.dependencyOutputs, handlerTimeoutMs);
+            case "microvm":
+              return executeMicroVm(resolvedConfig, depEnv, handlerTimeoutMs);
             case "noop":
             default:
               return `completed:${input.nodeId}:${input.task}`;
