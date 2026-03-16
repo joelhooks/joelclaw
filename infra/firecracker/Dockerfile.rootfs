@@ -1,0 +1,50 @@
+# Firecracker agent rootfs — Alpine-based aarch64 userspace with agent tooling
+#
+# NOT run as a container. Exported as filesystem → ext4 image for Firecracker.
+
+FROM alpine:3.20
+
+ENV HOME=/root
+ENV PATH="/root/.bun/bin:/usr/local/bin:$PATH"
+
+# Base system
+RUN apk add --no-cache \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    openssh-client \
+    sudo \
+    jq \
+    wget \
+    unzip \
+    # Build tools for native modules
+    build-base \
+    python3 \
+    linux-headers \
+    # Init (busybox provides /sbin/init natively in Alpine) \
+    # Networking
+    iptables \
+    iproute2 \
+    && rm -rf /var/cache/apk/*
+
+# Install bun (Alpine-compatible)
+RUN curl -fsSL https://bun.sh/install | bash
+
+# Install Node.js via Alpine package (simpler than fnm in Alpine)
+RUN apk add --no-cache nodejs npm
+
+# Verify tools
+RUN echo "=== Tool verification ===" && \
+    bun --version && \
+    node --version && \
+    npm --version && \
+    git --version && \
+    python3 --version && \
+    echo "=== All tools verified ==="
+
+# Create workspace and artifacts directories
+RUN mkdir -p /workspace /artifacts
+
+WORKDIR /workspace
+SHELL ["/bin/bash", "-c"]
