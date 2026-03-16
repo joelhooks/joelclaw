@@ -164,6 +164,7 @@ joelclaw workload
 │   [--repo /abs/path/or/owner/repo]
 │   [--paths docs/workloads.md,docs/cli.md]
 │   [--paths-from status|head|recent:<n>]
+│   [--stages-from /abs/path/to/stages.json]
 │   [--write-plan ~/.joelclaw/workloads/]
 │   [--requested-by Joel]
 ├── dispatch <plan-artifact>
@@ -177,6 +178,7 @@ joelclaw workload
     [--tool pi|codex|claude]
     [--execution-mode auto|host|sandbox]
     [--sandbox-backend local|k8s]
+    [--skip-dep-check]
     [--repo-url <repo-url>]
     [--dry-run]
 ```
@@ -201,6 +203,8 @@ joelclaw workload
 - `deploy-allowed` is inferred only from explicit release/deploy intent; nouns like `published skills` do not count as deploy requests
 - `proof=canary|soak` no longer forces supervised repo work onto `durable` / `restate` by itself
 - `--paths-from` can seed file scope from local git activity, and `--write-plan` writes the full envelope to a reusable JSON artifact
+- `--stages-from <file>` loads an explicit JSON stage DAG, validates dependencies/cycles, carries per-stage acceptance into plan verification, and adds DAG metadata to the plan result
+- when `--shape auto` is still in effect, an explicit stage DAG now decides whether the plan is `serial`, `parallel`, or `chained`
 - chained repo.patch/refactor work can decompose a `Goal:` section into explicit milestones and add a reflection/update stage when the prompt asks for it
 - defaults `--repo` to the current working directory and infers `branch` / `baseSha` when that target is a local git repo; if the cwd is not a git repo, it warns and points the caller at `--repo`
 - does **not** execute code or mutate repos
@@ -224,6 +228,7 @@ joelclaw workload
 - emits the queue family `workload/requested`, which the registry maps to `system/agent.requested`
 - defaults to `--tool pi`, with `codex|claude` as explicit opt-ins
 - supports `--sandbox-backend local|k8s` plus `--sandbox-mode minimal|full` when sandbox execution is the point
+- explicit-stage plans now gate stage execution on dependency inbox truth; use `--skip-dep-check` only for deliberate manual recovery or replay
 - supports `--dry-run` for request inspection before queue admission
 - returns queue admission details once the request is enqueued
 - if queue admission fails before the runtime request is accepted, `workload run` now writes a terminal inbox snapshot for that `requestId` immediately instead of leaving operators with no truth artifact to inspect

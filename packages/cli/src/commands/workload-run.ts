@@ -1,11 +1,11 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { InboxResult } from "@joelclaw/agent-execution";
 import type { NextAction } from "../response";
-import { WORKLOAD_INBOX_DIR, WORKLOAD_VERSION, type WorkloadDispatchResult, type WorkloadPlanningResult, type WorkloadRequest, type WorkloadRunResult, type WorkloadRuntimeRequest, type WorkloadTarget } from "./workload-types";
 import { buildDispatchContract } from "./workload-dispatch";
-import { runGit } from "./workload-utils";
+import { WORKLOAD_INBOX_DIR, WORKLOAD_VERSION, type WorkloadDispatchResult, type WorkloadPlanningResult, type WorkloadRequest, type WorkloadRunResult, type WorkloadRuntimeRequest, type WorkloadStage, type WorkloadTarget } from "./workload-types";
+import { dedupe, runGit } from "./workload-utils";
 
 export function writeQueueAdmissionFailureInbox(
   runtimeRequest: WorkloadRuntimeRequest,
@@ -69,6 +69,158 @@ export const resolveRepoUrlForRun = (
   }
 
   return runGit(target.repo, ["config", "--get", "remote.origin.url"]);
+};
+
+export type WorkloadDependencyStatus = {
+  dependencyId: string;
+  status: "completed" | "failed" | "cancelled" | "running" | "missing";
+  requestId?: string;
+  inboxPath?: string;
+  updatedAt?: string;
+  error?: string;
+};
+
+export type WorkloadDependencyCheck = {
+  workflowId: string;
+  stageId: string;
+  satisfied: WorkloadDependencyStatus[];
+  failed: WorkloadDependencyStatus[];
+  pending: WorkloadDependencyStatus[];
+  all: WorkloadDependencyStatus[];
+};
+
+const WORKLOAD_TASK_PATTERN = /^Execute workload (\S+) (\S+)\./u;
+
+export const parseWorkloadTaskIdentity = (
+  task: string | undefined,
+): { workflowId: string; stageId: string } | undefined => {
+  if (!task) return undefined;
+  const match = task.match(WORKLOAD_TASK_PATTERN);
+  if (!match?.[1] || !match[2]) return undefined;
+
+  return {
+    workflowId: match[1],
+    stageId: match[2],
+  };
+};
+
+const dependencyStatusSortKey = (result: InboxResult): number => {
+  const timestamp = result.completedAt ?? result.updatedAt ?? result.startedAt;
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const dependencyStatusRank = (result: InboxResult): number => {
+  switch (result.status) {
+    case "completed":
+      return 5;
+    case "failed":
+      return 4;
+    case "cancelled":
+      return 3;
+    case "running":
+      return 2;
+    default:
+      return 1;
+  }
+};
+
+export const inspectWorkloadStageDependencies = (options: {
+  workflowId: string;
+  stage: WorkloadStage;
+  inboxDir?: string;
+}): WorkloadDependencyCheck => {
+  const dependencyIds = dedupe(options.stage.dependsOn ?? []);
+
+  if (dependencyIds.length === 0) {
+    return {
+      workflowId: options.workflowId,
+      stageId: options.stage.id,
+      satisfied: [],
+      failed: [],
+      pending: [],
+      all: [],
+    };
+  }
+
+  const inboxDir = options.inboxDir ?? WORKLOAD_INBOX_DIR;
+  const latestByDependency = new Map<
+    string,
+    { result: InboxResult; inboxPath: string }
+  >();
+
+  if (existsSync(inboxDir)) {
+    for (const entry of readdirSync(inboxDir)) {
+      if (!entry.endsWith(".json")) continue;
+
+      const inboxPath = join(inboxDir, entry);
+      let parsed: InboxResult;
+
+      try {
+        parsed = JSON.parse(readFileSync(inboxPath, "utf8")) as InboxResult;
+      } catch {
+        continue;
+      }
+
+      const identity = parseWorkloadTaskIdentity(parsed.task);
+      if (!identity) continue;
+      if (identity.workflowId !== options.workflowId) continue;
+      if (!dependencyIds.includes(identity.stageId)) continue;
+
+      const existing = latestByDependency.get(identity.stageId);
+      if (!existing) {
+        latestByDependency.set(identity.stageId, { result: parsed, inboxPath });
+        continue;
+      }
+
+      const currentKey = dependencyStatusSortKey(parsed);
+      const existingKey = dependencyStatusSortKey(existing.result);
+      if (
+        currentKey > existingKey ||
+        (currentKey === existingKey &&
+          dependencyStatusRank(parsed) > dependencyStatusRank(existing.result))
+      ) {
+        latestByDependency.set(identity.stageId, { result: parsed, inboxPath });
+      }
+    }
+  }
+
+  const all = dependencyIds.map((dependencyId) => {
+    const latest = latestByDependency.get(dependencyId);
+    if (!latest) {
+      return {
+        dependencyId,
+        status: "missing",
+      } satisfies WorkloadDependencyStatus;
+    }
+
+    return {
+      dependencyId,
+      status: latest.result.status,
+      requestId: latest.result.requestId,
+      inboxPath: latest.inboxPath,
+      updatedAt:
+        latest.result.completedAt ??
+        latest.result.updatedAt ??
+        latest.result.startedAt,
+      ...(latest.result.error ? { error: latest.result.error } : {}),
+    } satisfies WorkloadDependencyStatus;
+  });
+
+  return {
+    workflowId: options.workflowId,
+    stageId: options.stage.id,
+    satisfied: all.filter((dependency) => dependency.status === "completed"),
+    failed: all.filter(
+      (dependency) =>
+        dependency.status === "failed" || dependency.status === "cancelled",
+    ),
+    pending: all.filter(
+      (dependency) =>
+        dependency.status === "missing" || dependency.status === "running",
+    ),
+    all,
+  };
 };
 
 export const buildWorkloadRunTask = (options: {

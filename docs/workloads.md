@@ -175,6 +175,7 @@ joelclaw workload plan "<intent>" \
   [--repo /abs/path/or/owner/repo] \
   [--paths docs/workloads.md,docs/cli.md] \
   [--paths-from status|head|recent:<n>] \
+  [--stages-from /abs/path/to/stages.json] \
   [--write-plan ~/.joelclaw/workloads/] \
   [--requested-by Joel]
 
@@ -190,6 +191,7 @@ joelclaw workload run <plan-artifact> \
   [--tool pi|codex|claude] \
   [--execution-mode auto|host|sandbox] \
   [--sandbox-backend local|k8s] \
+  [--skip-dep-check] \
   [--repo-url git@github.com:owner/repo.git] \
   [--dry-run]
 ```
@@ -214,6 +216,8 @@ Semantics:
 - `deploy-allowed` is inferred only from explicit release/deploy intent; nouns like `published skills` do not count as a deploy request
 - supervised repo work can use `proof=canary|soak` without being forced into `durable` / `restate`; proof posture alone is not a runtime decision
 - `--paths-from status|head|recent:<n>` can seed path scope from local git activity when explicit `--paths` would be tedious
+- `--stages-from <file>` loads an explicit JSON stage DAG, validates dependencies/cycles, carries stage acceptance into plan verification, and exposes DAG metadata under `result.metadata`
+- when `--shape auto` is still in effect, an explicit stage DAG now decides whether the plan is `serial`, `parallel`, or `chained`
 - chained `repo.patch` / `repo.refactor` plans can decompose a `Goal:` section into explicit milestones and add a `reflect and update plan` stage when the prompt asks for it
 - `--write-plan <path>` writes the full CLI envelope to a reusable JSON artifact for handoff or later dispatch prep
 - treats a missing `--repo` as the current working directory and infers `branch` / `baseSha` when that target is a local git repo; if the cwd is not a git repo, the planner warns and tells the caller to pass `--repo`
@@ -245,6 +249,7 @@ Semantics:
 - defaults to `--tool pi`; `--tool codex|claude` is opt-in
 - infers `executionMode=host|sandbox` from the planned workload unless the operator overrides it
 - when sandbox execution is selected, the canonical front door can also carry `--sandbox-backend local|k8s` and `--sandbox-mode minimal|full`
+- explicit-stage plans now refuse to run a stage until each `dependsOn` stage has terminal inbox truth; use `--skip-dep-check` only for deliberate manual recovery or replay
 - nested workflow-rig execution from inside a sandboxed stage is blocked by default; stage work should use direct local proof commands inside the current sandbox instead of launching another `joelclaw workload run`
 - supports `--dry-run` so the operator can inspect the normalized runtime request before enqueueing it
 - returns queue admission details (`streamId`, `eventId`, priority, triage mode) once enqueued
@@ -474,6 +479,48 @@ Recommended optional fields:
 - `estimatedBlastRadius` (small/medium/large if useful)
 
 The shipped planner now uses `reservedPaths` on scoped implementation stages so the file boundary survives handoff instead of disappearing into prose.
+
+### Explicit stage file schema
+
+`joelclaw workload plan --stages-from <file>` accepts a JSON array of explicit stages:
+
+```json
+[
+  {
+    "id": "build-rootfs",
+    "name": "Build agent rootfs + guest kernel",
+    "executionMode": "sandbox",
+    "dependsOn": ["install-firecracker"],
+    "acceptance": [
+      "microVM boots from rootfs",
+      "bun --version succeeds inside microVM"
+    ],
+    "files": [
+      "infra/firecracker/Dockerfile.rootfs",
+      "infra/firecracker/build-rootfs.sh"
+    ],
+    "artifacts": ["rootfs.ext4", "vmlinux"],
+    "owner": "worker",
+    "tool": "codex",
+    "timeout": 1800,
+    "phase": "B",
+    "notes": "Build inside the isolated prep environment."
+  }
+]
+```
+
+Rules:
+
+- required fields: `id`, `name`, `acceptance`
+- `dependsOn` is a true DAG edge list, not just a linear previous-stage pointer
+- planner validation now rejects unknown dependencies, duplicate stage ids, self-dependencies, and cycles before any runtime work starts
+- DAG analysis returns:
+  - `topologicalOrder`
+  - `criticalPath`
+  - `hasParallel`
+  - `isLinear`
+  - `inferredShape`
+  - `phases` grouped by the explicit `phase` labels in the file
 
 ## Handoff schema
 

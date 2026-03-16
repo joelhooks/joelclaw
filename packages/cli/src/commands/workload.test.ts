@@ -635,6 +635,83 @@ describe("workload CLI command", () => {
     ).toBe(false);
   });
 
+  it("inspects workload stage dependency results from inbox snapshots", () => {
+    const inboxDir = rememberTempDir(
+      mkdtempSync(join(tmpdir(), "workload-dependency-inbox-")),
+    );
+    const workflowId = "WL_20260316_120000";
+
+    writeFileSync(
+      join(inboxDir, "req-stage-1.json"),
+      `${JSON.stringify(
+        {
+          requestId: "req-stage-1",
+          status: "completed",
+          task: `Execute workload ${workflowId} stage-1.\n\nGoal: stage 1`,
+          tool: "pi",
+          startedAt: "2026-03-16T12:00:00.000Z",
+          updatedAt: "2026-03-16T12:01:00.000Z",
+          completedAt: "2026-03-16T12:01:00.000Z",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    writeFileSync(
+      join(inboxDir, "req-stage-2.json"),
+      `${JSON.stringify(
+        {
+          requestId: "req-stage-2",
+          status: "failed",
+          task: `Execute workload ${workflowId} stage-2.\n\nGoal: stage 2`,
+          tool: "pi",
+          error: "tests failed",
+          startedAt: "2026-03-16T12:02:00.000Z",
+          updatedAt: "2026-03-16T12:03:00.000Z",
+          completedAt: "2026-03-16T12:03:00.000Z",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const dependencyCheck = __workloadTestUtils.inspectWorkloadStageDependencies({
+      workflowId,
+      stage: {
+        id: "stage-3",
+        name: "Stage 3",
+        owner: "worker",
+        mode: "durable",
+        inputs: [],
+        outputs: [],
+        verification: [],
+        stopConditions: [],
+        dependsOn: ["stage-1", "stage-2", "stage-4"],
+      },
+      inboxDir,
+    });
+
+    expect(dependencyCheck.satisfied.map((entry) => entry.dependencyId)).toEqual([
+      "stage-1",
+    ]);
+    expect(dependencyCheck.failed).toEqual([
+      expect.objectContaining({
+        dependencyId: "stage-2",
+        status: "failed",
+        requestId: "req-stage-2",
+        error: "tests failed",
+      }),
+    ]);
+    expect(dependencyCheck.pending).toEqual([
+      expect.objectContaining({
+        dependencyId: "stage-4",
+        status: "missing",
+      }),
+    ]);
+  });
+
   it("warns that dispatch is overkill for bounded inline stage-1 work", () => {
     const artifactDir = rememberTempDir(
       mkdtempSync(join(tmpdir(), "workload-dispatch-inline-")),

@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, test } from "bun:test"
 import { __recallTestUtils } from "./recall"
 
 const { runRewriteQueryWith, trustPassFilter } = __recallTestUtils
+
+beforeEach(() => {
+  __recallTestUtils.resetCircuit()
+})
 
 type RankedHit = Parameters<typeof trustPassFilter>[0][number]
 

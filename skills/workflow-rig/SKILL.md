@@ -61,7 +61,7 @@ Do not push runtime choice back onto the caller unless the runtime tradeoff is t
 
 ### Plan only
 ```bash
-joelclaw workload plan "<intent>" --repo <repo> [--paths a,b,c] [--write-plan <path>]
+joelclaw workload plan "<intent>" --repo <repo> [--paths a,b,c] [--stages-from <path>] [--write-plan <path>]
 ```
 
 ### Real runtime canary / dogfood
@@ -71,7 +71,8 @@ joelclaw workload run <plan-artifact> \
   --tool pi|codex|claude \
   --execution-mode host|sandbox \
   --sandbox-backend local|k8s \
-  --sandbox-mode minimal|full
+  --sandbox-mode minimal|full \
+  [--skip-dep-check]
 ```
 
 ### Handoff, not execution
@@ -88,6 +89,10 @@ Use `--sandbox-mode full` when the proof needs real runtime surfaces:
 - cleanup evidence
 
 Use `--sandbox-mode minimal` for cheap code/doc/test slices where runtime provisioning is overkill.
+
+Use `--stages-from` when the project already has a real stage DAG (for example an ADR phase plan or hand-authored rollout JSON). The planner will validate the DAG, infer `serial|parallel|chained` when `--shape auto` is still open, and preserve stage acceptance/dependsOn truth instead of collapsing everything into generated template stages.
+
+Use `--skip-dep-check` only for deliberate manual recovery. Normal `joelclaw workload run` now blocks a stage until each explicit dependency has terminal inbox truth.
 
 ## When to reach for compatibility skills
 

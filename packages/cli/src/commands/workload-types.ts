@@ -394,6 +394,7 @@ export type WorkloadPlanningResult = {
   request: WorkloadRequest;
   plan: WorkloadPlan;
   guidance: WorkloadGuidance;
+  metadata?: Record<string, unknown>;
   inference: {
     kind: { value: WorkloadKind; inferred: boolean; reason: string };
     shape: { value: WorkloadShape; inferred: boolean; reason: string };
