@@ -396,6 +396,13 @@ async function executeMicroVm(
 
 export const dagWorker = restate.service({
   name: "dagWorker",
+  options: {
+    defaultRetryPolicy: {
+      initialInterval: { seconds: 1 },
+      maxInterval: { seconds: 30 },
+      maxAttempts: 5,
+    },
+  },
   handlers: {
     execute: async (
       ctx: restate.Context,
@@ -531,6 +538,13 @@ export const dagWorker = restate.service({
 
 export const dagOrchestrator = restate.workflow({
   name: "dagOrchestrator",
+  options: {
+    defaultRetryPolicy: {
+      initialInterval: { seconds: 2 },
+      maxInterval: { seconds: 60 },
+      maxAttempts: 3,
+    },
+  },
   handlers: {
     run: async (
       ctx: restate.WorkflowContext,
