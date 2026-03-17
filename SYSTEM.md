@@ -108,7 +108,40 @@ These are `joelclaw` CLI commands. Each defines an interface contract with ports
 - **`joelclaw deploy`** — Trigger explicit, logged, verifiable deployments. No magic — every deploy is scripted and auditable.
 - **`joelclaw notify`** — Push alerts, progress packets, and reports to the gateway for operator delivery. Use this for operator-facing relay; use `joelclaw mail` for agent coordination.
 - **`joelclaw heal`** — Detect and fix system issues autonomously. All fixes must be revertable (git commits) and the operator must be notified.
-- **`joelclaw log`** — Write structured entries to the system log. Log deploys, config changes, debug findings, service restarts. Bias toward logging.
+- **`joelclaw log`** — Write structured entries to the system log. Log deploys, config changes, debug findings, service restarts. Bias toward logging. See **Slog Usage** below for the required provenance contract.
+
+## Slog Usage (ADR-0233)
+
+Every slog entry **must** have provenance — no anonymous writes. Two fields are required:
+
+- **`sessionId`** — the session that produced this entry. Use your session handle (e.g. `SleepyMagpie`), codex task ID, `gateway`, `system-bus`, `manual`, etc.
+- **`systemId`** — the machine that produced this entry: `panda`, `restate-worker`, `vercel`, etc.
+
+### CLI
+
+```bash
+# Explicit flags (preferred)
+slog write --session SleepyMagpie --system panda --action configure --tool redis --detail "bumped maxmemory to 2gb"
+
+# Env var fallback (set once per shell/harness)
+export SLOG_SESSION_ID=SleepyMagpie
+export SLOG_SYSTEM_ID=panda
+slog write --action configure --tool redis --detail "bumped maxmemory to 2gb"
+```
+
+### Via joelclaw CLI
+
+```bash
+joelclaw log write --sessionId SleepyMagpie --systemId panda --action configure --tool redis --detail "bumped maxmemory to 2gb"
+```
+
+### Rules
+
+- If neither `--session` flag nor `SLOG_SESSION_ID` env var is set, **slog errors** — this is intentional.
+- Same for `--system` / `SLOG_SYSTEM_ID`.
+- Gateway daemon should set `SLOG_SESSION_ID=gateway` and `SLOG_SYSTEM_ID=panda` in its environment.
+- System-bus worker should set `SLOG_SESSION_ID=system-bus` and `SLOG_SYSTEM_ID=panda` (or pod name).
+- Interactive pi sessions: use your session handle as sessionId.
 
 ## Non-Negotiable
 
