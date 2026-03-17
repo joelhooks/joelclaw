@@ -1,0 +1,111 @@
+{
+  "name": "Firecracker MicroVM Exec Gap Closure",
+  "description": "Close the gap between 'Firecracker boots in k8s' and 'DAG workloads execute inside microVMs'. The host-side exec protocol exists (microvm.ts writes command.sh + run.signal, polls for result.json) but nothing inside the guest VM runs those commands. This PRD adds the guest-side runner, rebuilds the rootfs, deploys to PVC, and proves end-to-end execution through the Restate DAG pipeline.",
+  "adr": "0230",
+  "priority": 1,
+  "stories": [
+    {
+      "id": "guest-runner",
+      "title": "Guest-side command runner",
+      "priority": 1,
+      "description": "Write infra/firecracker/guest-runner.sh — a shell script that runs inside the Firecracker microVM at boot. It mounts the workspace virtio-block device at /workspace, then enters a poll loop watching /workspace/.joelclaw-microvm/run.signal. When the signal file appears, it executes /workspace/.joelclaw-microvm/command.sh, captures stdout to stdout.log and stderr to stderr.log, writes result.json with the exit code, removes run.signal, and loops back to polling. Must handle: missing workspace device gracefully (exit with error logged), command timeout (kill after reading timeoutMs from request.json), and cleanup between runs. The script should be POSIX sh compatible (Alpine busybox).",
+      "acceptance": [
+        "infra/firecracker/guest-runner.sh exists and is executable",
+        "Script mounts /dev/vdb at /workspace on startup (mkdir -p + mount)",
+        "Script polls /workspace/.joelclaw-microvm/run.signal at ~100ms intervals",
+        "On signal: reads request.json for timeoutMs, runs command.sh with timeout, writes stdout.log + stderr.log + result.json",
+        "result.json format: {\"exitCode\": <int>, \"stdout\": \"...\", \"stderr\": \"...\"}",
+        "Script handles missing /dev/vdb by logging error and exiting non-zero",
+        "Script cleans up signal + result files between runs (ready for next command)",
+        "Script runs correctly under busybox sh (no bashisms)"
+      ],
+      "files": [
+        "infra/firecracker/guest-runner.sh"
+      ]
+    },
+    {
+      "id": "rootfs-init",
+      "title": "Wire guest-runner into rootfs init",
+      "priority": 2,
+      "dependsOn": ["guest-runner"],
+      "description": "Update infra/firecracker/build-rootfs.sh to: (1) copy guest-runner.sh into the rootfs at /usr/local/bin/guest-runner.sh, (2) add a sysinit line in /etc/inittab that mounts /dev/vdb at /workspace, (3) add a respawn line that runs guest-runner.sh instead of (or alongside) the bare bash shell. The respawn ensures if guest-runner crashes it restarts automatically. Also update Dockerfile.rootfs to COPY the guest-runner.sh into the image so it's included in the exported filesystem.",
+      "acceptance": [
+        "build-rootfs.sh copies guest-runner.sh to rootfs at /usr/local/bin/guest-runner.sh with +x",
+        "inittab includes: ::sysinit:/bin/mount /dev/vdb /workspace (or equivalent with mkdir -p)",
+        "inittab includes: ::respawn:/usr/local/bin/guest-runner.sh",
+        "Dockerfile.rootfs includes COPY for guest-runner.sh",
+        "Bare bash respawn is removed or moved to ttyS0 for debug console access"
+      ],
+      "files": [
+        "infra/firecracker/build-rootfs.sh",
+        "infra/firecracker/Dockerfile.rootfs"
+      ]
+    },
+    {
+      "id": "rebuild-rootfs",
+      "title": "Rebuild rootfs image and deploy to PVC",
+      "priority": 3,
+      "dependsOn": ["rootfs-init"],
+      "description": "Run build-rootfs.sh to produce a new agent-rootfs.ext4 with the guest runner baked in. Then copy the new rootfs to the restate-worker pod's PVC at /tmp/firecracker-test/agent-rootfs.ext4. Verify the file is present and the correct size. This is an operational step, not a code change — but the acceptance criteria must be verified.",
+      "acceptance": [
+        "./infra/firecracker/build-rootfs.sh completes without error",
+        "infra/firecracker/images/agent-rootfs.ext4 exists and is ~1GB",
+        "kubectl cp copies the rootfs to the restate-worker pod's PVC mount",
+        "kubectl exec ls -la /tmp/firecracker-test/agent-rootfs.ext4 shows updated timestamp and correct size"
+      ],
+      "files": []
+    },
+    {
+      "id": "microvm-canary",
+      "title": "Trivial microVM exec canary via Restate DAG",
+      "priority": 4,
+      "dependsOn": ["rebuild-rootfs"],
+      "description": "Send a DAG workload with handler: microvm that runs a trivial command (echo 'hello from microvm' && uname -a && cat /etc/os-release). This proves the full chain: CLI → Redis queue → Restate dagOrchestrator → dagWorker microvm handler → Firecracker boot → guest-runner.sh executes command → result.json written → host polls and reads result → dagWorker returns output → OTEL dag.node.completed emitted with handler=microvm. The canary must NOT use the shell handler — it must go through executeMicroVm in dag-orchestrator.ts.",
+      "acceptance": [
+        "curl to Restate dagOrchestrator with a single node: handler=microvm, config.command='echo hello-from-microvm && uname -a'",
+        "DAG completes (not timeout) within 30 seconds",
+        "dagWorker output contains 'hello-from-microvm' and 'Linux' from uname",
+        "OTEL event dag.node.completed has handler=microvm in metadata",
+        "OTEL event dag.node.completed has success=true (no error field)",
+        "microVM is destroyed after execution (no orphan firecracker processes)"
+      ],
+      "files": []
+    },
+    {
+      "id": "multi-command-canary",
+      "title": "Multi-node DAG with microVM handler",
+      "priority": 5,
+      "dependsOn": ["microvm-canary"],
+      "description": "Send a 3-node DAG where all nodes use handler: microvm. Node A writes a file, Node B (depends on A) reads a different command but proves parallel independence from shell handler, Node C (depends on A+B) combines outputs. This proves microVM lifecycle works across multiple sequential boots — each node gets a fresh VM, the workspace is shared via the protocol dir, and dependency output interpolation works through the microvm handler the same as shell/infer.",
+      "acceptance": [
+        "3-node DAG with handler=microvm on all nodes completes without timeout",
+        "Dependency resolution works (Node C receives outputs from A and B via {{A}} / {{B}} interpolation)",
+        "Each node runs in a separate microVM instance (3 total boots, 3 total destroys)",
+        "Total DAG duration < 60 seconds (cold boot ~2.1s per VM + command execution)",
+        "All 3 OTEL dag.node.completed events show handler=microvm",
+        "No orphan firecracker processes after DAG completion"
+      ],
+      "files": []
+    },
+    {
+      "id": "update-adr-status",
+      "title": "Reconcile ADR-0230 status and update docs",
+      "priority": 6,
+      "dependsOn": ["multi-command-canary"],
+      "description": "Update ADR-0230 frontmatter status from 'proposed' to 'accepted' (or 'shipped' if all canaries pass). Update the Execution Sequence section to mark Steps 1-9 as complete with dates and evidence. Update AUDIT-firecracker-execution-path.md to reflect the closed gaps. Update TODO-session-firecracker.md to check off completed items. Update infra/firecracker/README.md with the guest-runner protocol documentation.",
+      "acceptance": [
+        "ADR-0230 frontmatter status is 'accepted' or 'shipped'",
+        "ADR-0230 Execution Sequence has completion dates for Steps 1-9",
+        "AUDIT-firecracker-execution-path.md Layer 3 updated from '⚠️ UNTESTED' to '✅ PROVEN'",
+        "infra/firecracker/README.md documents the guest-runner protocol",
+        "TODO-session-firecracker.md has items 1-6 checked off",
+        "All changes committed with descriptive message"
+      ],
+      "files": [
+        "AUDIT-firecracker-execution-path.md",
+        "TODO-session-firecracker.md",
+        "infra/firecracker/README.md"
+      ]
+    }
+  ]
+}
