@@ -47,24 +47,25 @@ The workflow rig chooses the narrowest honest execution path.
 
 Do not push Redis vs Restate vs sandbox trivia back onto the caller unless that tradeoff is the actual decision.
 
-## Current proven state (as of 2026-03-17)
+## Current proven state (as of 2026-03-17, session StubbornFerret)
 
 - `joelclaw workload plan`, `joelclaw workload dispatch`, and `joelclaw workload run` are real.
 - Proven durable path: `joelclaw workload plan` → Redis queue → Restate `dagOrchestrator` → `dagWorker` → execution.
 - Multi-stage DAGs with `dependsOn` are proven across 3-5 stage pipelines. Downstream stages can consume earlier outputs via `{{nodeId}}` interpolation.
 - `--stages-from stages.json` is proven: duplicate ids, unknown deps, self-deps, and cycles are rejected before runtime admission; critical path and phase grouping are calculated.
 - `shell` handler ✅ runs commands in the k8s `restate-worker` pod. Git clone, pi agent file writes, git commit, and git push are proven.
-- `infer` handler ✅ runs `pi -p` in-cluster for research, planning, review, and other text work.
-- `microvm` handler ⚠️ boots/restores Firecracker v1.15.0 inside the pod via `/dev/kvm` with ~9ms snapshot restore, but the exec-in-VM workspace protocol is not wired yet.
-- The `restate-worker` image is a full agent environment: pi 0.58.4, 76 skills, Firecracker, `/dev/kvm`, GitHub push auth from a k8s secret, and pi auth mounted from the host so it stays fresh.
-- Autonomous codegen is proven with pi agent mode (not `-p`): the shell handler can clone a repo, let pi write files via tools, then commit and push the result.
-- Performance truth: pre-cloned repo cache at `/app/repo-cache` cuts workspace setup to ~200ms instead of ~3s for a fresh clone. `dagWorker` uses a 15m inactivity timeout and 30m hard abort; the worker heartbeat pi extension keeps active runs alive.
+- `infer` handler ✅ **full pi agent with tools** — read, edit, write, bash. `pi -p` mode enables all tools. It can read files, edit them, run commands, and produce working code changes. Not just text generation — full agent-style codegen.
+- `microvm` handler ⏸️ code works (one-shot exec model proven via bun test in pod) but ADR-0230 is **paused** — Colima nestedVirtualization crashes the VM under load. Don't use.
+- The `restate-worker` image is a full agent environment: pi 0.58.4, 76 skills, GitHub push auth from k8s secret, pi auth mounted from host (stays fresh).
+- Autonomous codegen proven: infer handler reads files + edits them via pi tools. Shell handler handles git clone/commit/push. Chain them in a DAG for full autonomous coding loops.
+- Pre-cloned repo cache at `/app/repo-cache` (~200ms copy vs ~3s clone). `dagWorker` uses 15m inactivity timeout and 30m hard abort.
+- Retry caps: dagWorker maxAttempts=5, dagOrchestrator maxAttempts=3. No more infinite retry poisoning.
 
 ## What does not work yet
 
-- `microvm` stage execution inside the guest
-- automatic DAG completion notifications to the gateway; operators still have to poll
-- large-file pi agent edits are slow (often 3–5 minutes) even when they succeed
+- `microvm` handler paused (ADR-0230) — needs dedicated Linux hardware with native KVM
+- DAG completion notifications to the gateway not wired (operators poll or check OTEL)
+- large-file pi agent edits can be slow (3-5 minutes) but succeed within the 15m timeout
 
 ## Canonical operator flow
 
@@ -124,7 +125,7 @@ Use `--stages-from` when you already have a real stage DAG. The planner preserve
 
 Use `--skip-dep-check` only for deliberate manual recovery. Normal `joelclaw workload run` blocks a stage until its explicit dependencies have terminal truth.
 
-Do **not** choose `microvm` just because Firecracker boots. Today that proves guest bring-up, not general command execution inside the VM.
+Do **not** use `microvm` — ADR-0230 is paused. Colima nestedVirtualization is unstable. Use `shell` + `infer` for all work.
 
 ## Current runtime truth
 
@@ -132,9 +133,10 @@ Do **not** choose `microvm` just because Firecracker boots. Today that proves gu
 - The durable path is Redis queue admission → Restate `dagOrchestrator` → `dagWorker`.
 - `dagOrchestrator` resolves dependency waves correctly for chained multi-stage DAGs.
 - `{{nodeId}}` interpolation is proven for passing upstream outputs into downstream stages.
-- The `shell` handler is the only proven path for autonomous repo mutation today.
-- The `infer` handler is the proven text-only path for planning, research, and analysis.
-- The `microvm` handler proves Firecracker boots and snapshot restore, but not workspace execution.
+- The `shell` handler is the proven path for git operations (clone, commit, push) and arbitrary CLI work.
+- The `infer` handler is a **full pi agent** — it reads, edits, and writes files via tools. Use it for codegen, analysis, and any task that benefits from LLM + file access.
+- Chain `infer` (edit files) → `shell` (git commit + push) for autonomous coding loops.
+- The `microvm` handler is paused (ADR-0230). Do not use.
 - Completion is poll-based for now. No gateway finish event is emitted when a DAG lands.
 
 ## Real chained example
@@ -204,6 +206,6 @@ When proving runtime work:
 
 - do not invent new workload vocabulary when `docs/workloads.md` already defines it
 - do not force the operator to choose queue vs Restate vs sandbox when `joelclaw workload run` is the right bridge
-- do not claim `microvm` can run general stage commands yet
+- do not use `microvm` — ADR-0230 paused
 - do not claim a dogfood proof succeeded unless the real runtime path moved and produced evidence
 - do not imply automatic completion notifications exist when they do not
