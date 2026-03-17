@@ -114,6 +114,38 @@ const DOCS_INCLUDE_FIELDS =
   "id,title,filename,summary,tags,added_at,nas_path,nas_paths,storage_category,document_type,file_type,primary_concept_id,concept_ids,taxonomy_version";
 const CONCEPT_COUNTS_TTL_MS = 5 * 60 * 1000;
 
+// Simple TTL-based cache for Typesense responses
+class TTLCache<T> {
+  private store = new Map<string, { value: T; expiresAt: number }>();
+
+  constructor(readonly ttlMs: number) {}
+
+  get(key: string): T | null {
+    const entry = this.store.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+
+  set(key: string, value: T): void {
+    this.store.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+  }
+
+  clear(): void {
+    this.store.clear();
+  }
+}
+
+// Cache instances (10-minute TTL for document metadata and TOC)
+const docByIdCache = new TTLCache<Record<string, unknown>>(10 * 60 * 1000);
+const docTocCache = new TTLCache<Record<string, unknown>[]>(10 * 60 * 1000);
+const parentSectionsCache = new TTLCache<
+  Map<string, { id: string; headingPath: string[]; content: string }>
+>(10 * 60 * 1000);
+
 const TAXONOMY_CONCEPTS: TaxonomyConcept[] = [
   {
     id: "jc:docs:general",
@@ -317,38 +349,6 @@ const TAXONOMY_CONCEPTS: TaxonomyConcept[] = [
 const CONCEPTS_BY_ID = new Map<string, TaxonomyConcept>(
   TAXONOMY_CONCEPTS.map((concept) => [concept.id, concept]),
 );
-
-// Simple TTL-based cache
-class TTLCache<T> {
-  private store = new Map<string, { value: T; expiresAt: number }>();
-
-  constructor(readonly ttlMs: number) {}
-
-  get(key: string): T | null {
-    const entry = this.store.get(key);
-    if (!entry) return null;
-    if (Date.now() > entry.expiresAt) {
-      this.store.delete(key);
-      return null;
-    }
-    return entry.value;
-  }
-
-  set(key: string, value: T): void {
-    this.store.set(key, { value, expiresAt: Date.now() + this.ttlMs });
-  }
-
-  clear(): void {
-    this.store.clear();
-  }
-}
-
-// Cache instances (5-minute TTL)
-const docByIdCache = new TTLCache<Record<string, unknown>>(5 * 60 * 1000);
-const docTocCache = new TTLCache<Record<string, unknown>[]>(5 * 60 * 1000);
-const parentSectionsCache = new TTLCache<
-  Map<string, { id: string; headingPath: string[]; content: string }>
->(5 * 60 * 1000);
 
 let cachedConceptCountsAt = 0;
 let cachedConceptCounts: ConceptCountsCache | null = null;
