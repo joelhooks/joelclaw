@@ -109,7 +109,7 @@ spec:
         - name: dev-kvm
           hostPath:
             path: /dev/kvm
-            type: CharDevice
+            type: ""  # CharDevice when nestedVirtualization enabled; empty allows pod to start without /dev/kvm
         - name: firecracker-data
           persistentVolumeClaim:
             claimName: firecracker-images
