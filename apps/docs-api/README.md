@@ -5,10 +5,13 @@ Typesense-backed docs REST API for joelclaw.
 ## Routes
 
 - `GET /health`
-- `GET /search?q=<query>[&limit=10][&semantic=true|false]`
-- `GET /docs[?page=1][&limit=20]`
+- `GET /search?q=<query>[&page=1][&perPage=10][&semantic=true|false]`
+- `GET /docs[?page=1][&perPage=20]`
 - `GET /docs/:id`
-- `GET /chunks/:id`
+- `GET /chunks/:id[?lite=true][&includeEmbedding=false]`
+- `GET /concepts`
+- `GET /concepts/:id`
+- `GET /concepts/:id/docs[?page=1][&perPage=20]`
 
 Also supports optional mounted prefix:
 - `/api/docs/*`
