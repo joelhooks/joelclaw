@@ -1,25 +1,36 @@
 # Workloads
 
-Canonical design doc for **ADR-0217 Phase 4.1–4.3**.
+Canonical operator/design doc for **ADR-0217 Phase 4** as currently shipped.
 
-This document defines the canonical vocabulary, schema, and planner surface for **agent-first coding/repo workloads** in joelclaw.
+This document defines the canonical vocabulary, schema, and front door for **agent-first coding/repo workloads** in joelclaw, plus the proven runtime behavior as of **2026-03-17**. When design intent and shipped runtime behavior diverge, shipped truth wins.
 
 ## Status
 
 - **Canonical for planning:** yes
-- **Implemented as CLI/runtime contract:** `joelclaw workload plan`, `joelclaw workload dispatch`, and `joelclaw workload run`
+- **Shipped front door:** `joelclaw workload plan`, `joelclaw workload dispatch`, `joelclaw workload run`, and `joelclaw workload sandboxes ...`
 - **Still planned:** `joelclaw workload status|explain|cancel`
-- **Current use:** planning, saved plan artifacts, dispatch/handoff contracts, canonical runtime normalization, and queue-backed workload admission
+- **Current use:** planning, saved plan artifacts, dispatch/handoff contracts, queue-backed runtime admission, and real `shell`/`infer` stage execution in the `restate-worker` pod
 
-Do not pretend the whole workload command family already ships. `plan`, `dispatch`, and `run` are real right now; `status|explain|cancel` are still not.
+Do not pretend the whole workload command family already ships. `plan`, `dispatch`, `run`, and `sandboxes` are real right now; `status|explain|cancel` are still not. DAG completion is still poll-based because no finish event is emitted to the gateway yet.
 
-### Current runtime truth
+### Current runtime truth (as of 2026-03-17)
 
-- `shell` handler: ✅ proven in `dagWorker`
-- `infer` handler: ✅ proven in `dagWorker`; it runs `pi` inside the `restate-worker` pod with mounted auth, 76 skills, and the joelclaw identity chain
-- `microvm` handler: ⚠️ boots/restores Firecracker VMs in-cluster, but the broader exec-in-VM workspace drive wiring is still incomplete
-- Multi-stage DAG with `dependsOn`: ✅ proven; Restate executes dependency waves and chained gates correctly
-- Explicit stage DAGs from file: ✅ `--stages-from` validates duplicate ids, unknown deps, self-deps, and cycles before runtime admission
+- Proven pipeline: `joelclaw workload plan` → Redis queue → Restate `dagOrchestrator` → `dagWorker` → execution
+- `shell` handler: ✅ runs real commands inside the `restate-worker` pod. Git clone, pi agent edits, git commit, and git push are proven.
+- `infer` handler: ✅ runs `pi -p` inside the pod for research, review, planning, and analysis.
+- `microvm` handler: ⚠️ Firecracker v1.15.0 boots/restores inside the pod via `/dev/kvm` with ~9ms snapshot restore, but the exec-in-VM workspace protocol is not wired yet.
+- Multi-stage DAG with `dependsOn`: ✅ proven across 3-5 stage pipelines.
+- Stage outputs: ✅ upstream outputs can flow into downstream stages via `{{nodeId}}` interpolation.
+- Explicit stage DAGs from file: ✅ `--stages-from` validates duplicate ids, unknown deps, self-deps, and cycles before runtime admission; critical path and phase grouping are calculated.
+- `restate-worker` image: ✅ pi 0.58.4, 76 skills, Firecracker, `/dev/kvm`, git push auth from a k8s secret, and pi auth mounted from the host so sessions stay fresh.
+- Autonomous codegen: ✅ pi agent mode can write files directly via tools inside `shell` stages, then commit and push.
+- Performance truth: ✅ `/app/repo-cache` cuts workspace setup to ~200ms vs ~3s fresh clone fallback. `dagWorker` inactivity timeout is 15m and hard abort is 30m; the worker heartbeat pi extension keeps active runs alive.
+
+### Known gaps
+
+- `microvm` cannot execute stage commands inside the guest yet
+- no gateway completion notification when a DAG finishes; the operator must poll
+- large-file pi agent edits can take 3-5 minutes even when successful
 
 ## Why this exists
 
@@ -253,16 +264,25 @@ Semantics:
 - reads a saved `joelclaw workload plan --write-plan ...` envelope and normalizes it into one canonical runtime request
 - uses the queue family `workload/requested`, which is registry-routed to the real runtime event `system/agent.requested`
 - current durable execution path is `Redis queue → Restate dagOrchestrator → dagWorker`
-- the proven handler set is `shell` + `infer`; `microvm` can boot Firecracker VMs but is still incomplete for general workspace execution
+- proven handler truth today:
+  - `shell` ✅ executes in the `restate-worker` pod and can clone repos, run pi agent mode, write files, commit, and push
+  - `infer` ✅ runs `pi -p` in-cluster for research, planning, review, and analysis
+  - `microvm` ⚠️ boots/restores Firecracker guests, but guest command execution is not wired yet
+- the `restate-worker` image is a full agent environment: pi 0.58.4, 76 skills, Firecracker, `/dev/kvm`, git push auth from a k8s secret, and pi auth mounted from the host
+- workspace setup uses the pre-cloned `/app/repo-cache` when available (~200ms) and falls back to a fresh clone (~3s)
+- `dagWorker` uses a 15m inactivity timeout and 30m hard abort; the worker heartbeat pi extension keeps active agent runs alive
+- stage outputs can flow into downstream stages via `{{nodeId}}` interpolation
 - chooses the first stage by default, or a caller-selected stage via `--stage`
 - reuses the dispatch/handoff contract so the runtime payload carries explicit scope, acceptance, remaining gates, and closeout expectations instead of vague chat sludge
 - defaults to `--tool pi`; `--tool codex|claude` is opt-in
 - infers `executionMode=host|sandbox` from the planned workload unless the operator overrides it
 - when sandbox execution is selected, the canonical front door can also carry `--sandbox-backend local|k8s` and `--sandbox-mode minimal|full`
-- explicit-stage plans now refuse to run a stage until each `dependsOn` stage has terminal inbox truth; use `--skip-dep-check` only for deliberate manual recovery or replay
-- nested workflow-rig execution from inside a sandboxed stage is blocked by default; stage work should use direct local proof commands inside the current sandbox instead of launching another `joelclaw workload run`
+- explicit-stage plans refuse to run a stage until each `dependsOn` stage has terminal inbox truth; use `--skip-dep-check` only for deliberate manual recovery or replay
+- nested workflow-rig execution from inside a sandboxed stage is blocked by default; stage work should use direct proof commands inside the current sandbox instead of launching another `joelclaw workload run`
 - supports `--dry-run` so the operator can inspect the normalized runtime request before enqueueing it
 - returns queue admission details (`streamId`, `eventId`, priority, triage mode) once enqueued
+- completion is still poll-based: there is no automatic gateway finish event when a DAG lands
+- large-file pi agent edits can take 3-5 minutes even when the run succeeds
 - **does not pretend queue emit is the only front door anymore** — raw `joelclaw queue emit` remains the substrate escape hatch, while `workload run` is the canonical bridge from workload artifacts to runtime admission
 
 `joelclaw workload sandboxes` semantics:
@@ -714,19 +734,19 @@ Choose `chained` when:
 }
 ```
 
-## Manual use until the rest of the CLI exists
+## Operator use until status/cancel/notifications exist
 
-Use `joelclaw workload plan` first whenever it fits, then use `joelclaw workload dispatch` when a saved plan should become an explicit handoff contract.
+Use `joelclaw workload plan` first whenever it fits. Use `joelclaw workload dispatch` when a saved plan should become an explicit handoff contract. Use `joelclaw workload run` when the work should enter the real durable runtime.
 
-For everything beyond planning/dispatch, stay manual until more of the command family ships:
+Because `status|explain|cancel` and automatic completion notifications are still missing, operate with this posture:
 
 1. capture Joel steering in the request fields
-2. run `joelclaw workload plan` or mirror its request fields manually
-3. if the plan should be handed to another worker, save it with `--write-plan` and turn it into a dispatch contract with `joelclaw workload dispatch`
-4. choose `mode` and `backend` only after the shape is clear
-5. define the artifacts and verification gates
+2. run `joelclaw workload plan` and save the artifact with `--write-plan` when another worker or the durable runtime may need it
+3. if the plan should be handed to another worker, turn it into a dispatch contract with `joelclaw workload dispatch`
+4. when the work should really execute, use `joelclaw workload run`
+5. poll progress with `joelclaw runs`, `joelclaw run <run-id>`, and OTEL until the DAG lands
 6. use `clawmail` for reservation and handoff
-7. keep the final summary in the same vocabulary
+7. keep the final summary in the same vocabulary, including any known gaps that affected the run
 
 ## Phase 4.3 scheduling helpers
 
