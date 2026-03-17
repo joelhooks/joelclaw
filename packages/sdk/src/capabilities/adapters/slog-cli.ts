@@ -3,6 +3,8 @@ import { parseJsonFromMixedOutput, runCommandSync } from "../../lib/shell"
 import { type CapabilityPort, capabilityError } from "../contract"
 
 const LogWriteArgsSchema = Schema.Struct({
+  sessionId: Schema.String,
+  systemId: Schema.String,
   action: Schema.String,
   tool: Schema.String,
   detail: Schema.String,
@@ -13,6 +15,8 @@ const LogWriteResultSchema = Schema.Struct({
   backend: Schema.String,
   exitCode: Schema.Number,
   output: Schema.String,
+  sessionId: Schema.String,
+  systemId: Schema.String,
   action: Schema.String,
   tool: Schema.String,
   detail: Schema.String,
@@ -22,7 +26,7 @@ const LogWriteResultSchema = Schema.Struct({
 
 const commands = {
   write: {
-    summary: "Write a structured system log entry via slog",
+    summary: "Write a structured system log entry via slog (requires session + system provenance)",
     argsSchema: LogWriteArgsSchema,
     resultSchema: LogWriteResultSchema,
   },
@@ -66,6 +70,10 @@ export const slogCliAdapter: CapabilityPort<typeof commands> = {
           const command = [
             "slog",
             "write",
+            "--session",
+            args.sessionId,
+            "--system",
+            args.systemId,
             "--action",
             args.action,
             "--tool",
@@ -95,7 +103,7 @@ export const slogCliAdapter: CapabilityPort<typeof commands> = {
               capabilityError(
                 "LOG_WRITE_FAILED",
                 (message ?? proc.stderr) || (proc.stdout || "Failed to write system log entry"),
-                "Retry with valid --action/--tool/--detail values or run `slog write --help`."
+                "Retry with valid --session/--system/--action/--tool/--detail values or run `slog write --help`."
               )
             )
           }
@@ -104,6 +112,8 @@ export const slogCliAdapter: CapabilityPort<typeof commands> = {
             backend: "slog-cli",
             exitCode: proc.exitCode,
             output: proc.stdout || proc.stderr || "slog write completed",
+            sessionId: args.sessionId,
+            systemId: args.systemId,
             action: args.action,
             tool: args.tool,
             detail: args.detail,
