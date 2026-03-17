@@ -304,12 +304,30 @@ function buildOtelCollectionSchema(): Record<string, unknown> {
   };
 }
 
+async function patchOtelProvenanceFields(): Promise<void> {
+  try {
+    const resp = await typesense.typesenseRequest(`/collections/${OTEL_COLLECTION}`, { method: "GET" });
+    if (!resp.ok) return;
+    const schema = (await resp.json()) as { fields?: Array<{ name: string }> };
+    const existing = new Set((schema.fields ?? []).map((f) => f.name));
+    const missing: Array<Record<string, unknown>> = [];
+    if (!existing.has("sessionId")) missing.push({ name: "sessionId", type: "string", facet: true, optional: true });
+    if (!existing.has("systemId")) missing.push({ name: "systemId", type: "string", facet: true, optional: true });
+    if (missing.length === 0) return;
+    await typesense.typesenseRequest(`/collections/${OTEL_COLLECTION}`, {
+      method: "PATCH",
+      body: JSON.stringify({ fields: missing }),
+    });
+  } catch {}
+}
+
 async function ensureOtelCollection(deps: OtelStoreDeps): Promise<void> {
   if (collectionReady) return;
   if (collectionReadyPromise) return collectionReadyPromise;
 
   collectionReadyPromise = deps
     .ensureCollection(OTEL_COLLECTION, buildOtelCollectionSchema())
+    .then(() => patchOtelProvenanceFields())
     .then(() => {
       collectionReady = true;
     })
