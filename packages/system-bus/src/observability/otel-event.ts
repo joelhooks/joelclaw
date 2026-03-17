@@ -9,6 +9,8 @@ export type OtelMetadata = Record<string, unknown>;
 export type OtelEvent = {
   id: string;
   timestamp: number;
+  sessionId: string;
+  systemId: string;
   level: OtelLevel;
   source: string;
   component: string;
@@ -19,9 +21,11 @@ export type OtelEvent = {
   metadata: OtelMetadata;
 };
 
-export type OtelEventInput = Omit<OtelEvent, "id" | "timestamp" | "metadata"> & {
+export type OtelEventInput = Omit<OtelEvent, "id" | "timestamp" | "metadata" | "sessionId" | "systemId"> & {
   id?: string;
   timestamp?: number;
+  sessionId?: string;
+  systemId?: string;
   metadata?: OtelMetadata;
 };
 
@@ -68,6 +72,21 @@ export function isHighSeverity(level: OtelLevel): boolean {
   return level === "warn" || level === "error" || level === "fatal";
 }
 
+// ADR-0233: resolve provenance from input → env var → default
+function resolveSessionId(input?: string): string {
+  if (input && input.trim().length > 0) return input.trim();
+  const env = process.env.SLOG_SESSION_ID?.trim();
+  if (env && env.length > 0) return env;
+  return "unknown";
+}
+
+function resolveSystemId(input?: string): string {
+  if (input && input.trim().length > 0) return input.trim();
+  const env = process.env.SLOG_SYSTEM_ID?.trim();
+  if (env && env.length > 0) return env;
+  return "unknown";
+}
+
 export function createOtelEvent(input: OtelEventInput): OtelEvent {
   const level = isLevel(input.level)
     ? input.level
@@ -78,6 +97,8 @@ export function createOtelEvent(input: OtelEventInput): OtelEvent {
   const event: OtelEvent = {
     id: typeof input.id === "string" && input.id.trim().length > 0 ? input.id.trim() : randomUUID(),
     timestamp: normalizeTimestamp(input.timestamp),
+    sessionId: resolveSessionId(input.sessionId),
+    systemId: resolveSystemId(input.systemId),
     level,
     source: assertNonEmptyString(input.source, "source"),
     component: assertNonEmptyString(input.component, "component"),
@@ -111,6 +132,13 @@ export function assertOtelEvent(value: unknown): asserts value is OtelEvent {
   }
   if (typeof event.timestamp !== "number" || !Number.isFinite(event.timestamp)) {
     throw new Error("otel_event.timestamp must be a finite number");
+  }
+  // ADR-0233: sessionId/systemId are required but may have been backfilled as "unknown"
+  if (typeof event.sessionId !== "string") {
+    (event as Record<string, unknown>).sessionId = "unknown";
+  }
+  if (typeof event.systemId !== "string") {
+    (event as Record<string, unknown>).systemId = "unknown";
   }
   if (!isLevel(event.level)) {
     throw new Error(`otel_event.level must be one of: ${OTEL_LEVELS.join(", ")}`);
