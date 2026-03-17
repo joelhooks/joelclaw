@@ -1,3 +1,28 @@
+class LRUCache<T> {
+  private cache = new Map<string, {value: T, ts: number}>();
+  constructor(private maxSize: number, private ttlMs: number) {}
+  get(key: string): T | undefined {
+    const e = this.cache.get(key);
+    if (!e) return undefined;
+    if (Date.now() - e.ts > this.ttlMs) {
+      this.cache.delete(key);
+      return undefined;
+    }
+    return e.value;
+  }
+  set(key: string, value: T) {
+    if (this.cache.size >= this.maxSize) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest) this.cache.delete(oldest);
+    }
+    this.cache.set(key, {value, ts: Date.now()});
+  }
+}
+
+const docCache = new LRUCache<Record<string, unknown>>(200, 600000);
+const chunkCache = new LRUCache<Record<string, unknown>>(500, 600000);
+const tocCache = new LRUCache<unknown>(100, 600000);
+
 type NextAction = {
   command: string;
   description: string;
@@ -937,11 +962,17 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
   }
 
   if (assemble) {
-    const parents = await fetchParentSections(
-      mergedHits
-        .filter((hit) => hit.chunkType === "snippet" && hit.parentChunkId)
-        .map((hit) => hit.parentChunkId || ""),
-    );
+    const parentChunkIds = mergedHits
+      .filter((hit) => hit.chunkType === "snippet" && hit.parentChunkId)
+      .map((hit) => hit.parentChunkId || "");
+    
+    const cacheKey = parentChunkIds.sort().join("|");
+    let parents = chunkCache.get(cacheKey) as Map<string, { id: string; headingPath: string[]; content: string }> | undefined;
+    
+    if (!parents) {
+      parents = await fetchParentSections(parentChunkIds);
+      chunkCache.set(cacheKey, parents);
+    }
 
     mergedHits = mergedHits.map((hit) => {
       if (hit.chunkType !== "snippet" || !hit.parentChunkId) {
@@ -1155,7 +1186,7 @@ async function handleDocById(id: string, path: string): Promise<Response> {
   const command = `GET ${path}`;
 
   // Check cache first
-  const cachedDoc = docByIdCache.get(id);
+  const cachedDoc = docCache.get(id);
   if (cachedDoc) {
     const docId = asString(cachedDoc.id) || id;
     return jsonResponse(
@@ -1185,7 +1216,7 @@ async function handleDocById(id: string, path: string): Promise<Response> {
   }
 
   const doc = response.body || {};
-  docByIdCache.set(id, doc);
+  docCache.set(id, doc);
 
   const docId = asString(doc.id) || id;
   return jsonResponse(
@@ -1307,7 +1338,7 @@ async function handleDocToc(docId: string, path: string): Promise<Response> {
   const command = `GET ${path}`;
 
   // Check cache first
-  const cachedSections = docTocCache.get(docId);
+  const cachedSections = tocCache.get(docId);
   if (cachedSections) {
     const toc: Array<{
       depth: number;
@@ -1364,7 +1395,7 @@ async function handleDocToc(docId: string, path: string): Promise<Response> {
   }
 
   const sections = await listDocSectionChunks(docId);
-  docTocCache.set(docId, sections);
+  tocCache.set(docId, sections);
 
   const toc: Array<{
     depth: number;
