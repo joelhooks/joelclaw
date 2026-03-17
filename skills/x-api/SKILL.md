@@ -155,6 +155,20 @@ r = client.post(f"https://api.twitter.com/2/users/{my_id}/following",
 r = client.delete("https://api.twitter.com/2/tweets/TWEET_ID")
 ```
 
+## X Articles (Long-form Posts)
+
+X Articles are NOT accessible via the v2 tweets API — the tweet body is just a `t.co` link and the article endpoint returns 500. **Use agent-browser to read them:**
+
+```bash
+agent-browser open "https://x.com/USERNAME/status/TWEET_ID"
+agent-browser snapshot
+agent-browser close
+```
+
+The snapshot returns the full article text in the DOM. Use this for any tweet where `article.title` is present in the API response or the `expanded_url` points to `x.com/i/article/...`.
+
+For capturing X posts/articles as discoveries, use `joelclaw discover URL -c "context"` — the discovery pipeline will handle enrichment. If the pipeline can't extract content (auth-gated), fall back to agent-browser + manual vault note.
+
 ## Rate Limits
 
 - Mentions: 180 requests / 15 min
