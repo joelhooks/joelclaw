@@ -168,6 +168,12 @@ timeout_secs = 10
 - Talon hot-reloads service probes when `services.toml` mtime changes (no restart required)
 - `kill -HUP $(launchctl print gui/$(id -u)/com.joel.talon | awk '/pid =/{print $3; exit}')` forces immediate reload
 
+Recent dynamic probes added for the 2026-03-17 Colima/Restate incident:
+- `script.redis_aof_health` — critical after 3 failures; checks `aof_last_bgrewrite_status:ok` to catch Redis AOF rewrite/persistence corruption.
+- `script.colima_vm_uptime` — critical after 2 failures; requires VM uptime >120s to catch Colima crash loops after force-cycles.
+- `script.restate_worker_ready` — critical after 3 failures; verifies the `restate-worker` pod reports `Ready=true` before workloads are trusted.
+- `script.kvm_device_present` — non-critical witness probe; records whether `/dev/kvm` is present inside Colima for nested-virt / Firecracker diagnosis.
+
 ### Health endpoint
 
 - `GET http://127.0.0.1:9999/health` returns Talon state JSON
