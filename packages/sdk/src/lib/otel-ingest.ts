@@ -14,6 +14,8 @@ export type OtelEventPayloadInput = {
   component: string
   action: string
   success: boolean
+  sessionId?: string
+  systemId?: string
   durationMs?: number
   error?: string
   metadata?: Record<string, unknown>
@@ -56,6 +58,8 @@ export function createOtelEventPayload(input: OtelEventPayloadInput): Record<str
   return {
     id: input.id ?? randomUUID(),
     timestamp: input.timestamp ?? Date.now(),
+    sessionId: input.sessionId || process.env.SLOG_SESSION_ID || "unknown",
+    systemId: input.systemId || process.env.SLOG_SYSTEM_ID || "unknown",
     level: input.level,
     source: input.source,
     component: input.component,

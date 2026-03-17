@@ -244,6 +244,8 @@ function buildEmitPayload(args: Schema.Schema.Type<typeof EmitArgsSchema>): Emit
     ...baseEvent,
     id: asNonEmptyString(args.id) ?? asNonEmptyString(baseEvent.id) ?? randomUUID(),
     timestamp: asFiniteNumber(args.timestamp) ?? asFiniteNumber(baseEvent.timestamp) ?? Date.now(),
+    sessionId: asNonEmptyString(baseEvent.sessionId) ?? process.env.SLOG_SESSION_ID ?? "unknown",
+    systemId: asNonEmptyString(baseEvent.systemId) ?? process.env.SLOG_SYSTEM_ID ?? "unknown",
     level,
     source: asNonEmptyString(args.source) ?? asNonEmptyString(baseEvent.source) ?? "cli",
     component: asNonEmptyString(args.component) ?? asNonEmptyString(baseEvent.component) ?? "otel-cli",
