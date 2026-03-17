@@ -36,6 +36,34 @@ type TypesenseSearchResponse = {
   facet_counts?: TypesenseFacetCount[];
 };
 
+type SearchHitResult = {
+  id: string;
+  docId: string;
+  title: string;
+  chunkType: string;
+  chunkIndex: number | null;
+  score: number | null;
+  snippet: string;
+  headingPath?: string[];
+  conceptIds?: string[];
+  expanded?: boolean;
+  parentSection?: {
+    id: string;
+    headingPath: string[];
+    content: string;
+  };
+};
+
+type SearchHitResultInternal = SearchHitResult & {
+  parentChunkId?: string;
+};
+
+type SearchConceptFacet = {
+  concept: string;
+  count: number;
+  label: string;
+};
+
 type ConceptId =
   | "jc:docs:general"
   | "jc:docs:programming"
@@ -64,7 +92,7 @@ type ConceptCountsCache = {
 };
 
 const PROTOCOL_VERSION = 1 as const;
-const SERVICE_VERSION = "0.1.2";
+const SERVICE_VERSION = "0.1.3";
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number.parseInt(process.env.PORT || "3838", 10);
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://typesense:8108";
@@ -266,6 +294,23 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function parseCsv(value: string | null): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
 function buildTypesenseUrl(path: string, params?: URLSearchParams): string {
   const base = TYPESENSE_URL.endsWith("/") ? TYPESENSE_URL.slice(0, -1) : TYPESENSE_URL;
   const query = params && [...params.keys()].length > 0 ? `?${params.toString()}` : "";
@@ -275,6 +320,10 @@ function buildTypesenseUrl(path: string, params?: URLSearchParams): string {
 function quoteFilterValue(value: string): string {
   const escaped = value.replace(/`/g, "\\`");
   return `\`${escaped}\``;
+}
+
+function quoteFilterValues(values: string[]): string {
+  return values.map((value) => quoteFilterValue(value)).join(",");
 }
 
 function getFacetCounts(response: TypesenseSearchResponse, fieldName: string): Record<string, number> {
@@ -302,6 +351,174 @@ function buildConceptResponse(concept: TaxonomyConcept, counts: ConceptCountsCac
     docCount: counts.docCounts[concept.id] || 0,
     chunkCount: counts.chunkCounts[concept.id] || 0,
   };
+}
+
+function buildDocsChunksSearchParams(options: {
+  q: string;
+  page: number;
+  perPage: number;
+  semantic: boolean;
+  filterBy?: string;
+}): URLSearchParams {
+  const params = new URLSearchParams({
+    q: options.q,
+    page: String(options.page),
+    query_by: options.semantic
+      ? "retrieval_text,content,title,embedding"
+      : "retrieval_text,content,title",
+    per_page: String(options.perPage),
+    include_fields:
+      "id,doc_id,title,chunk_type,chunk_index,heading_path,context_prefix,parent_chunk_id,prev_chunk_id,next_chunk_id,primary_concept_id,concept_ids,taxonomy_version,evidence_tier,parent_evidence_id,source_entity_id,content",
+    exclude_fields: "retrieval_text,embedding",
+    highlight_full_fields: "content,retrieval_text",
+    facet_by: "primary_concept_id",
+    max_facet_values: "50",
+  });
+
+  if (options.filterBy) {
+    params.set("filter_by", options.filterBy);
+  }
+
+  if (options.semantic) {
+    params.set(
+      "vector_query",
+      `embedding:([], k:${Math.max(options.perPage * 3, 20)}, alpha:0.75)`,
+    );
+  }
+
+  return params;
+}
+
+function buildSearchFilterBy(options: {
+  concept?: string;
+  concepts?: string[];
+  docId?: string;
+}): string | undefined {
+  const filters: string[] = [];
+
+  if (options.concept) {
+    filters.push(`primary_concept_id:=${quoteFilterValue(options.concept)}`);
+  }
+
+  if (options.concepts && options.concepts.length > 0) {
+    filters.push(`concept_ids:=[${quoteFilterValues(options.concepts)}]`);
+  }
+
+  if (options.docId) {
+    filters.push(`doc_id:=${quoteFilterValue(options.docId)}`);
+  }
+
+  return filters.length > 0 ? filters.join(" && ") : undefined;
+}
+
+function mergeCountRecords(...records: Array<Record<string, number>>): Record<string, number> {
+  const merged: Record<string, number> = {};
+
+  for (const record of records) {
+    for (const [key, value] of Object.entries(record)) {
+      merged[key] = (merged[key] || 0) + value;
+    }
+  }
+
+  return merged;
+}
+
+function buildConceptFacetsFromCounts(counts: Record<string, number>): SearchConceptFacet[] {
+  return Object.entries(counts)
+    .map(([concept, count]) => ({
+      concept,
+      count,
+      label: getConceptById(concept)?.prefLabel || concept,
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+function mapSearchHit(hit: TypesenseSearchHit, expanded = false): SearchHitResultInternal {
+  const doc = hit.document || {};
+  const snippet = hit.highlights?.find((entry) => entry.field === "content")?.snippet;
+  const headingPath = asStringArray(doc.heading_path);
+  const conceptIds = asStringArray(doc.concept_ids);
+  const parentChunkId = asString(doc.parent_chunk_id);
+
+  return {
+    id: asString(doc.id) || "",
+    docId: asString(doc.doc_id) || "",
+    title: asString(doc.title) || "",
+    chunkType: asString(doc.chunk_type) || "",
+    chunkIndex: asNumber(doc.chunk_index),
+    score: hit.hybrid_search_info?.rank_fusion_score ?? hit.text_match_info?.score ?? null,
+    snippet: snippet || asString(doc.content)?.slice(0, 320) || "",
+    ...(headingPath.length > 0 ? { headingPath } : {}),
+    ...(conceptIds.length > 0 ? { conceptIds } : {}),
+    ...(expanded ? { expanded: true } : {}),
+    ...(parentChunkId ? { parentChunkId } : {}),
+  };
+}
+
+async function fetchParentSections(parentChunkIds: string[]): Promise<
+  Map<string, { id: string; headingPath: string[]; content: string }>
+> {
+  const uniqueParentIds = [...new Set(parentChunkIds.filter((id) => id.length > 0))];
+  if (uniqueParentIds.length === 0) {
+    return new Map();
+  }
+
+  const response = await typesenseSearch(
+    "docs_chunks",
+    new URLSearchParams({
+      q: "*",
+      query_by: "content",
+      filter_by: `id:=[${quoteFilterValues(uniqueParentIds)}]`,
+      per_page: String(uniqueParentIds.length),
+      include_fields: "id,heading_path,content",
+      exclude_fields: "retrieval_text,embedding",
+    }),
+  );
+
+  const parents = new Map<string, { id: string; headingPath: string[]; content: string }>();
+
+  for (const hit of response.hits || []) {
+    const doc = hit.document || {};
+    const id = asString(doc.id);
+    if (!id) continue;
+
+    parents.set(id, {
+      id,
+      headingPath: asStringArray(doc.heading_path),
+      content: asString(doc.content) || "",
+    });
+  }
+
+  return parents;
+}
+
+function buildSearchCommand(options: {
+  q: string;
+  perPage: number;
+  semantic: boolean;
+  concept?: string;
+  docId?: string;
+  assemble: boolean;
+}): string {
+  const params = new URLSearchParams({
+    q: options.q,
+    perPage: String(options.perPage),
+    semantic: String(options.semantic),
+  });
+
+  if (options.concept) {
+    params.set("concept", options.concept);
+  }
+
+  if (options.docId) {
+    params.set("doc_id", options.docId);
+  }
+
+  if (options.assemble) {
+    params.set("assemble", "true");
+  }
+
+  return `GET /search?${params.toString()}`;
 }
 
 async function typesenseRequest(path: string, init: RequestInit = {}): Promise<Response> {
@@ -483,36 +700,106 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
     50,
   );
   const semantic = parseBoolean(firstQueryParam(url.searchParams, "semantic"), true);
-
-  const params = new URLSearchParams({
-    q,
-    page: String(page),
-    query_by: semantic ? "retrieval_text,content,title,embedding" : "retrieval_text,content,title",
-    per_page: String(perPage),
-    include_fields:
-      "id,doc_id,title,chunk_type,chunk_index,heading_path,context_prefix,parent_chunk_id,prev_chunk_id,next_chunk_id,primary_concept_id,concept_ids,taxonomy_version,evidence_tier,parent_evidence_id,source_entity_id,content",
-    exclude_fields: "retrieval_text,embedding",
-    highlight_full_fields: "content,retrieval_text",
+  const concept = firstQueryParam(url.searchParams, "concept")?.trim() || undefined;
+  const conceptsRaw = firstQueryParam(url.searchParams, "concepts")?.trim() || undefined;
+  const conceptIds = parseCsv(conceptsRaw || null);
+  const docId = firstQueryParam(url.searchParams, "doc_id")?.trim() || undefined;
+  const expand = parseBoolean(firstQueryParam(url.searchParams, "expand"), false);
+  const assemble = parseBoolean(firstQueryParam(url.searchParams, "assemble"), false);
+  const filterBy = buildSearchFilterBy({
+    concept,
+    concepts: conceptIds,
+    docId,
   });
 
-  if (semantic) {
-    params.set("vector_query", `embedding:([], k:${Math.max(perPage * 3, 20)}, alpha:0.75)`);
+  const response = await typesenseSearch(
+    "docs_chunks",
+    buildDocsChunksSearchParams({
+      q,
+      page,
+      perPage,
+      semantic,
+      filterBy,
+    }),
+  );
+
+  const initialFacetCounts = getFacetCounts(response, "primary_concept_id");
+  const initialHits = (response.hits || []).map((hit) => mapSearchHit(hit));
+  let mergedHits = [...initialHits];
+  let combinedFacetCounts = initialFacetCounts;
+  let found = response.found || 0;
+  let expandedConcepts: string[] = [];
+
+  if (expand && initialHits.length < perPage) {
+    const seedConceptIds = buildConceptFacetsFromCounts(initialFacetCounts).map((facet) => facet.concept);
+    const relatedConceptIds = [...new Set(
+      seedConceptIds.flatMap((conceptId) => getConceptById(conceptId)?.related || []),
+    )].filter((conceptId) => !seedConceptIds.includes(conceptId));
+
+    if (relatedConceptIds.length > 0) {
+      expandedConcepts = relatedConceptIds;
+      const expandedBaseFilter = buildSearchFilterBy({
+        docId,
+      });
+      const expandedConceptFilter = `primary_concept_id:=[${quoteFilterValues(relatedConceptIds)}]`;
+      const expandedFilterBy = [expandedBaseFilter, expandedConceptFilter]
+        .filter((value): value is string => Boolean(value))
+        .join(" && ");
+
+      const expandedResponse = await typesenseSearch(
+        "docs_chunks",
+        buildDocsChunksSearchParams({
+          q,
+          page: 1,
+          perPage,
+          semantic,
+          filterBy: expandedFilterBy,
+        }),
+      );
+
+      combinedFacetCounts = mergeCountRecords(
+        initialFacetCounts,
+        getFacetCounts(expandedResponse, "primary_concept_id"),
+      );
+      found += expandedResponse.found || 0;
+
+      const existingIds = new Set(initialHits.map((hit) => hit.id));
+      const expandedHits = (expandedResponse.hits || [])
+        .map((hit) => mapSearchHit(hit, true))
+        .filter((hit) => !existingIds.has(hit.id));
+
+      if (expandedHits.length > 0) {
+        mergedHits = [...initialHits, ...expandedHits].slice(0, perPage);
+      }
+    }
   }
 
-  const response = await typesenseSearch("docs_chunks", params);
-  const hits = (response.hits || []).map((hit) => {
-    const doc = hit.document || {};
-    const snippet = hit.highlights?.find((entry) => entry.field === "content")?.snippet;
-    return {
-      id: asString(doc.id) || "",
-      docId: asString(doc.doc_id) || "",
-      title: asString(doc.title) || "",
-      chunkType: asString(doc.chunk_type) || "",
-      chunkIndex: doc.chunk_index,
-      score: hit.hybrid_search_info?.rank_fusion_score || hit.text_match_info?.score || null,
-      snippet: snippet || asString(doc.content)?.slice(0, 320) || "",
-    };
-  });
+  if (assemble) {
+    const parents = await fetchParentSections(
+      mergedHits
+        .filter((hit) => hit.chunkType === "snippet" && hit.parentChunkId)
+        .map((hit) => hit.parentChunkId || ""),
+    );
+
+    mergedHits = mergedHits.map((hit) => {
+      if (hit.chunkType !== "snippet" || !hit.parentChunkId) {
+        return hit;
+      }
+
+      const parentSection = parents.get(hit.parentChunkId);
+      if (!parentSection) {
+        return hit;
+      }
+
+      return {
+        ...hit,
+        parentSection,
+      };
+    });
+  }
+
+  const hits: SearchHitResult[] = mergedHits.map(({ parentChunkId: _parentChunkId, ...hit }) => hit);
+  const conceptFacets = buildConceptFacetsFromCounts(combinedFacetCounts);
 
   const first = hits[0];
   const nextActions: NextAction[] = [
@@ -536,6 +823,20 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
     });
   }
 
+  for (const facet of conceptFacets.slice(0, 3)) {
+    nextActions.push({
+      command: buildSearchCommand({
+        q,
+        perPage,
+        semantic,
+        concept: facet.concept,
+        docId,
+        assemble,
+      }),
+      description: `Drill into ${facet.label} results`,
+    });
+  }
+
   return jsonResponse(
     ok(
       command,
@@ -543,9 +844,18 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
         query: q,
         semantic,
         perPage,
-        found: response.found || 0,
+        found,
         page: response.page || page,
         hits,
+        conceptFacets,
+        ...(expand ? { expandedConcepts } : {}),
+        filters: {
+          ...(concept ? { concept } : {}),
+          ...(conceptIds.length > 0 ? { concepts: conceptIds.join(",") } : {}),
+          ...(docId ? { docId } : {}),
+          expand,
+          assemble,
+        },
       },
       nextActions,
     ),
@@ -579,6 +889,10 @@ async function handleDocsList(url: URL, path: string): Promise<Response> {
       command: "GET /search?q=<query>",
       description: "Search chunk content",
     },
+    {
+      command: "GET /docs/search?q=<query>",
+      description: "Search document metadata",
+    },
   ];
 
   if (firstId) {
@@ -592,6 +906,79 @@ async function handleDocsList(url: URL, path: string): Promise<Response> {
     ok(
       command,
       {
+        found: response.found || 0,
+        page: response.page || page,
+        perPage,
+        docs,
+      },
+      nextActions,
+    ),
+  );
+}
+
+async function handleDocsSearch(url: URL, path: string): Promise<Response> {
+  const command = `GET ${path}`;
+  const q = url.searchParams.get("q")?.trim() || "";
+  if (!q) {
+    return jsonResponse(
+      fail(command, "INVALID_QUERY", "Missing q query parameter"),
+      400,
+    );
+  }
+
+  const concept = firstQueryParam(url.searchParams, "concept");
+  const page = requirePositiveInt(firstQueryParam(url.searchParams, "page"), 1);
+  const perPage = Math.min(
+    requirePositiveInt(firstQueryParam(url.searchParams, "perPage", "per_page"), 20),
+    100,
+  );
+
+  const params = new URLSearchParams({
+    q,
+    query_by: "title,filename,summary,tags",
+    page: String(page),
+    per_page: String(perPage),
+    include_fields:
+      "id,title,filename,summary,tags,storage_category,document_type,file_type,primary_concept_id,concept_ids,added_at",
+  });
+
+  if (concept) {
+    params.set("filter_by", `primary_concept_id:=${quoteFilterValue(concept)}`);
+  }
+
+  const response = await typesenseSearch("docs", params);
+  const docs = (response.hits || []).map((hit) => hit.document || {});
+  const firstDocId = asString(docs[0]?.id);
+  const nextActions: NextAction[] = [
+    {
+      command: `GET /search?q=${encodeURIComponent(q)}`,
+      description: "Search chunk content for the same query",
+    },
+    {
+      command: "GET /docs",
+      description: "List indexed documents",
+    },
+  ];
+
+  if (firstDocId) {
+    nextActions.push(
+      {
+        command: `GET /docs/${firstDocId}`,
+        description: "Fetch the first matching document",
+      },
+      {
+        command: `GET /docs/${firstDocId}/toc`,
+        description: "Browse the first document table of contents",
+      },
+    );
+  }
+
+  return jsonResponse(
+    ok(
+      command,
+      {
+        query: q,
+        concept: concept || null,
         found: response.found || 0,
         page: response.page || page,
         perPage,
@@ -620,7 +1007,170 @@ async function handleDocById(id: string, path: string): Promise<Response> {
         command: `GET /search?q=${encodeURIComponent(asString(doc.title) || docId)}`,
         description: "Search related chunks",
       },
+      {
+        command: `GET /docs/${docId}/toc`,
+        description: "Browse the document table of contents",
+      },
+      {
+        command: `GET /docs/${docId}/chunks`,
+        description: "List document chunks",
+      },
     ]),
+  );
+}
+
+async function handleDocChunks(docId: string, url: URL, path: string): Promise<Response> {
+  const command = `GET ${path}`;
+  const page = requirePositiveInt(firstQueryParam(url.searchParams, "page"), 1);
+  const perPage = Math.min(
+    requirePositiveInt(firstQueryParam(url.searchParams, "perPage", "per_page"), 50),
+    200,
+  );
+  const chunkType = firstQueryParam(url.searchParams, "type");
+
+  const filters = [`doc_id:=${quoteFilterValue(docId)}`];
+  if (chunkType === "section" || chunkType === "snippet") {
+    filters.push(`chunk_type:=${chunkType}`);
+  }
+
+  const response = await typesenseSearch(
+    "docs_chunks",
+    new URLSearchParams({
+      q: "*",
+      query_by: "content",
+      filter_by: filters.join(" && "),
+      sort_by: "chunk_index:asc",
+      page: String(page),
+      per_page: String(perPage),
+      include_fields:
+        "id,doc_id,title,chunk_type,chunk_index,heading_path,context_prefix,parent_chunk_id,prev_chunk_id,next_chunk_id,primary_concept_id,concept_ids,content",
+      exclude_fields: "retrieval_text,embedding",
+    }),
+  );
+
+  const chunks = (response.hits || []).map((hit) => hit.document || {});
+  const firstChunkId = asString(chunks[0]?.id);
+  const nextActions: NextAction[] = [
+    {
+      command: `GET /docs/${docId}`,
+      description: "Fetch parent document metadata",
+    },
+    {
+      command: `GET /docs/${docId}/toc`,
+      description: "Browse the document table of contents",
+    },
+  ];
+
+  if (firstChunkId) {
+    nextActions.push({
+      command: `GET /chunks/${firstChunkId}`,
+      description: "Fetch the first listed chunk",
+    });
+  }
+
+  return jsonResponse(
+    ok(
+      command,
+      {
+        docId,
+        chunkType: chunkType === "section" || chunkType === "snippet" ? chunkType : null,
+        found: response.found || 0,
+        page: response.page || page,
+        perPage,
+        chunks,
+      },
+      nextActions,
+    ),
+  );
+}
+
+async function listDocSectionChunks(docId: string): Promise<Record<string, unknown>[]> {
+  const perPage = 250;
+  const sections: Record<string, unknown>[] = [];
+  let page = 1;
+
+  while (true) {
+    const response = await typesenseSearch(
+      "docs_chunks",
+      new URLSearchParams({
+        q: "*",
+        query_by: "content",
+        filter_by: `doc_id:=${quoteFilterValue(docId)} && chunk_type:=section`,
+        sort_by: "chunk_index:asc",
+        page: String(page),
+        per_page: String(perPage),
+        include_fields: "id,chunk_index,heading_path",
+      }),
+    );
+
+    const hits = response.hits || [];
+    sections.push(...hits.map((hit) => hit.document || {}));
+
+    if (hits.length === 0 || hits.length < perPage || sections.length >= (response.found || 0)) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return sections;
+}
+
+async function handleDocToc(docId: string, path: string): Promise<Response> {
+  const command = `GET ${path}`;
+  const sections = await listDocSectionChunks(docId);
+
+  const toc: Array<{
+    depth: number;
+    title: string;
+    path: string[];
+    chunkId: string;
+    chunkIndex: number | null;
+  }> = [];
+  const seen = new Set<string>();
+
+  for (const doc of sections) {
+    const headingPath = asStringArray(doc.heading_path);
+    const key = headingPath.length > 0 ? headingPath.join(" > ") : "__document__";
+    if (seen.has(key)) continue;
+    seen.add(key);
+    toc.push({
+      depth: headingPath.length,
+      title: headingPath[headingPath.length - 1] || "Document",
+      path: headingPath,
+      chunkId: asString(doc.id) || "",
+      chunkIndex: asNumber(doc.chunk_index),
+    });
+  }
+
+  const nextActions: NextAction[] = [
+    {
+      command: `GET /docs/${docId}`,
+      description: "Fetch document metadata",
+    },
+    {
+      command: `GET /docs/${docId}/chunks?type=section`,
+      description: "List section chunks for this document",
+    },
+  ];
+
+  if (toc[0]?.chunkId) {
+    nextActions.push({
+      command: `GET /chunks/${toc[0].chunkId}`,
+      description: "Fetch the first TOC section chunk",
+    });
+  }
+
+  return jsonResponse(
+    ok(
+      command,
+      {
+        docId,
+        entries: toc.length,
+        toc,
+      },
+      nextActions,
+    ),
   );
 }
 
@@ -861,13 +1411,16 @@ const server = Bun.serve({
         return jsonResponse(
           ok(`GET ${path}`, {
             routes: [
-              "GET /search?q=<query>[&page=1][&perPage=10][&semantic=true|false]",
-              "GET /docs[&page=1][&perPage=20]",
+              "GET /search?q=<query>[&page=1][&perPage=10][&semantic=true|false][&concept=<id>][&concepts=<id1>,<id2>][&doc_id=<id>][&expand=true|false][&assemble=true|false]",
+              "GET /docs/search?q=<query>[&concept=<id>][&page=1][&perPage=20]",
+              "GET /docs/:id/toc",
+              "GET /docs/:id/chunks[?type=section|snippet][&page=1][&perPage=50]",
               "GET /docs/:id",
+              "GET /docs[?page=1][&perPage=20]",
               "GET /chunks/:id[?lite=true][&includeEmbedding=false]",
               "GET /concepts",
               "GET /concepts/:id",
-              "GET /concepts/:id/docs[&page=1][&perPage=20]",
+              "GET /concepts/:id/docs[?page=1][&perPage=20]",
               "GET /health",
             ],
             mountedPrefixes: ["/", OPTIONAL_PATH_PREFIX],
@@ -879,8 +1432,8 @@ const server = Bun.serve({
         return await handleSearch(url, path);
       }
 
-      if (path === "/docs") {
-        return await handleDocsList(url, path);
+      if (path === "/docs/search") {
+        return await handleDocsSearch(url, path);
       }
 
       if (path === "/concepts") {
@@ -897,9 +1450,23 @@ const server = Bun.serve({
         return await handleConceptById(decodeURIComponent(conceptMatch[1] || ""), path);
       }
 
+      const docsTocMatch = path.match(/^\/docs\/([^/]+)\/toc$/);
+      if (docsTocMatch) {
+        return await handleDocToc(decodeURIComponent(docsTocMatch[1] || ""), path);
+      }
+
+      const docsChunksMatch = path.match(/^\/docs\/([^/]+)\/chunks$/);
+      if (docsChunksMatch) {
+        return await handleDocChunks(decodeURIComponent(docsChunksMatch[1] || ""), url, path);
+      }
+
       const docsMatch = path.match(/^\/docs\/([^/]+)$/);
       if (docsMatch) {
         return await handleDocById(decodeURIComponent(docsMatch[1] || ""), path);
+      }
+
+      if (path === "/docs") {
+        return await handleDocsList(url, path);
       }
 
       const chunksMatch = path.match(/^\/chunks\/([^/]+)$/);
