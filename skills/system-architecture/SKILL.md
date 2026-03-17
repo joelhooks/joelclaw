@@ -85,7 +85,7 @@ Mac Mini "Panda" (host macOS)
 │        └─ aistor-s3 object store (StatefulSet + NodePort 31000/31001)
 ├─ Caddy reverse proxy (tailnet HTTPS fan-in)
 ├─ Gateway daemon (embedded pi session)
-├─ Firecracker substrate via Colima VZ nested virtualization (`/dev/kvm`)
+├─ Firecracker substrate (requires Colima nestedVirtualization=true for /dev/kvm; OFF by default — unstable under load)
 └─ NAS "three-body" (NFS tiers per ADR-0088)
 ```
 
@@ -184,8 +184,10 @@ Source: `infra/worker-supervisor/src/main.rs`
 
 - `deployment/restate-worker` is the current durable execution worker. The image bundles Bun + Node + `pi` + `codex`, the full repo checkout, and 76 symlinked skills.
 - Runtime auth/identity come from `secret/pi-auth` and `configmap/agent-identity`, which recreate `/root/.pi/agent/auth.json` plus the joelclaw identity chain inside the pod.
-- Firecracker is enabled in-pod via privileged access to `/dev/kvm` on Colima VZ.
+- Firecracker is enabled in-pod via privileged access to `/dev/kvm` on Colima VZ. The `/dev/kvm` hostPath mount uses type `""` (optional) so the pod starts without it when nestedVirtualization is off.
 - Persistent microVM assets live on PVC `firecracker-images`, mounted at `/tmp/firecracker-test` for kernel, rootfs, and snapshot files.
+- **Retry caps (2026-03-17)**: dagWorker maxAttempts=5, dagOrchestrator maxAttempts=3. Prevents Restate journal poisoning from infinite retries after code changes or infrastructure failures.
+- **Colima stability**: nestedVirtualization is OFF by default (crashes VM under Docker build load). Toggle ON only for Firecracker testing sessions, then toggle OFF. See k8s skill for recovery procedures.
 
 ### Control-plane access
 - kube API exposed locally at `127.0.0.1:64784` (forwarded)

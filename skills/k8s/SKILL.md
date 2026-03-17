@@ -22,14 +22,74 @@ tags: [joelclaw, kubernetes, talos, colima, infrastructure]
 ```
 Mac Mini (localhost ports)
   └─ Lima SSH mux (~/.colima/_lima/colima/ssh.sock) ← NEVER KILL
-      └─ Colima VM (4 CPU, 8 GiB, 60 GiB, VZ framework, aarch64)
-          └─ Docker 29.x
+      └─ Colima VM (8 CPU, 16 GiB, 100 GiB, VZ framework, aarch64)
+          └─ Docker 29.x + buildx (joelclaw-builder, docker-container driver)
               └─ Talos v1.12.4 container (joelclaw-controlplane-1)
                   └─ k8s v1.35.0 (single node, Flannel CNI)
                       └─ joelclaw namespace (privileged PSA)
 ```
 
 **⚠️ Talos has NO shell.** No bash, no /bin/sh, nothing. You cannot `docker exec` into the Talos container. Use `talosctl` for node operations and the Colima VM (`ssh lima-colima`) for host-level operations like `modprobe`.
+
+### Colima Stability Rules (2026-03-17 incident)
+
+| Setting | Value | Reason |
+|---------|-------|--------|
+| CPU | 8 | Match k8s workload requests (~2.8 CPU, 72%) |
+| Memory | 16 GiB | 32GB causes macOS memory pressure → VM kill |
+| nestedVirtualization | **OFF by default** | Crashes VM under load (image builds, heavy scheduling). Toggle ON only for Firecracker testing |
+| vmType | vz | Required for Apple Silicon |
+| mountType | virtiofs | Fastest option with VZ |
+
+**`nestedVirtualization: true` is unstable on M4 Pro under load.** It causes the Colima VM to silently crash during Docker builds/pushes. Each crash:
+- Kills the Talos container mid-operation
+- Corrupts Redis AOF (if caught mid-write) → crash-loop on restart
+- Breaks Lima socket forwarding → `docker` CLI on macOS disconnects
+- Creates stale k8s pods that re-pull images → amplifies pressure
+
+**Recovery from Colima crash-loop:**
+1. `colima stop && colima start` — basic restart
+2. If Redis crash-loops: `redis-check-aof --fix` (see Redis AOF Recovery below)
+3. If Restate has stuck invocations: purge PVC or kill via admin API
+4. If native Docker socket dead: use SSH tunnel `ssh -L /tmp/docker.sock:/var/run/docker.sock`
+
+**Docker image builds** should use the buildx container builder (`docker buildx build --builder joelclaw-builder`) to isolate build IO from k8s workloads.
+
+### Redis AOF Recovery
+
+If Redis crash-loops after a VM restart with `Bad file format reading the append only file`:
+```bash
+# 1. Scale down Redis (or use a temp pod if StatefulSet can't mount PVC concurrently)
+kubectl -n joelclaw apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis-fix
+  namespace: joelclaw
+spec:
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  containers:
+    - name: fix
+      image: redis:7-alpine
+      command: ["sh", "-c", "cd /data/appendonlydir && echo y | redis-check-aof --fix *.incr.aof && redis-check-aof *.incr.aof"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  restartPolicy: Never
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data-redis-0
+EOF
+# 2. Wait, check logs, then clean up
+kubectl -n joelclaw logs redis-fix
+kubectl -n joelclaw delete pod redis-fix --force
+# 3. Restart Redis
+kubectl -n joelclaw delete pod redis-0
+```
 
 For port mappings, recovery procedures, and cluster recreation steps, read [references/operations.md](references/operations.md).
 
@@ -67,9 +127,13 @@ joelclaw restate cron status                           # Dkron scheduler → hea
 
 ### Restate / Firecracker runtime notes
 
-- `deployment/restate-worker` is intentionally **privileged** and mounts `/dev/kvm`; Firecracker will not work in a normal restricted pod.
-- PVC `firecracker-images` is mounted at `/tmp/firecracker-test` and stores the kernel, rootfs, and snapshot artifacts used by the microVM handler.
-- This path depends on Colima running with VZ + nested virtualization enabled. If `/dev/kvm` is missing, the pod may still start but Firecracker work will fail.
+- `deployment/restate-worker` is intentionally **privileged** and mounts `/dev/kvm` (hostPath type `""` — optional).
+- PVC `firecracker-images` at `/tmp/firecracker-test` stores kernel, rootfs, and snapshot artifacts.
+- When `nestedVirtualization` is OFF: `/dev/kvm` absent, `microvm` DAG handler fails, but `shell`/`infer`/`noop` handlers work normally.
+- When `nestedVirtualization` is ON: Firecracker one-shot exec works (create workspace ext4 → write command → boot VM → guest executes → poweroff → read results).
+- **Restate retry caps**: dagWorker maxAttempts=5, dagOrchestrator maxAttempts=3. Prevents journal poisoning.
+- **Restate journal purge** (if stuck invocations block work): scale down Restate, mount PVC with temp pod, `rm -rf /restate-data/*`, scale back up, re-register worker.
+- Re-register worker: `curl -X POST http://localhost:9070/deployments -H 'content-type: application/json' -d '{"uri":"http://restate-worker:9080"}'`
 
 **⚠️ PDS port trap**: Docker maps `9627→3000` (host→container). NodePort must be **3000** to match the container-side port. If set to 9627, traffic won't route.
 

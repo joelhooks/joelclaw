@@ -247,6 +247,36 @@ colima stop --force && colima start
 ~/Code/joelhooks/joelclaw/infra/voice-agent/cleanup-stale.sh
 ```
 
+## Colima Stability Monitoring (2026-03-17)
+
+Talon now monitors failure modes discovered during the Firecracker development incident:
+
+| Probe | What it detects | Critical? |
+|-------|----------------|-----------|
+| `script:redis_aof_health` | Corrupted Redis AOF from VM crash mid-write | Yes (after 3) |
+| `script:colima_vm_uptime` | VM crash-loop (uptime < 120s = just restarted) | Yes (after 2) |
+| `script:restate_worker_ready` | Restate worker pod not 1/1 Ready | Yes (after 3) |
+| `script:kvm_available` | Whether /dev/kvm exists (nested virt status) | No (informational) |
+
+### Known failure chain: nestedVirtualization → cascade
+
+```
+nestedVirtualization ON + heavy Docker build
+  → Colima VZ VM crash (silent, no crash report)
+    → Docker daemon restart → Talos container killed
+      → Redis mid-write → AOF corruption → crash-loop
+      → Restate mid-journal → stale invocations → infinite retries
+      → Lima socket forwarding broken → docker CLI dead on macOS
+```
+
+Talon detects each stage:
+1. `colima_vm_uptime` < 120s → VM just crashed
+2. `redis` probe fails → Redis down
+3. `redis_aof_health` fails → AOF corrupted (needs manual fix)
+4. `restate_worker_ready` fails → worker can't start (may be /dev/kvm mount or image pull)
+
+**Talon cannot auto-fix Redis AOF corruption** (requires `redis-check-aof --fix`). It WILL escalate to the pi agent (Tier 2) which should load the `k8s` skill's Redis AOF Recovery procedure.
+
 ## Key Design Decisions
 
 - **Zero external deps** — no tokio, no serde, no reqwest. Pure std. Keeps binary at ~444KB.
