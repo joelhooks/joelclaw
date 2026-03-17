@@ -80,6 +80,11 @@ RUN for s in /app/skills/*/; do \
       ln -sf "$s" "/root/.pi/agent/skills/$name"; \
     done 2>/dev/null || true
 
+# Install worker-heartbeat pi extension
+RUN mkdir -p /root/.pi/agent/extensions/worker-heartbeat \
+    && ln -sf /app/packages/restate/src/extensions/worker-heartbeat/index.ts \
+       /root/.pi/agent/extensions/worker-heartbeat/index.ts
+
 # Copy AGENTS.md
 COPY AGENTS.md /app/AGENTS.md
 
