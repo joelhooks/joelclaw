@@ -355,8 +355,7 @@ async function executeMicroVm(
   _depEnv: Record<string, string>,
   timeoutMs: number,
 ): Promise<string> {
-  const { bootMicroVm, restoreMicroVm, execInMicroVm, destroyMicroVm } =
-    await import("@joelclaw/agent-execution");
+  const { execInMicroVm } = await import("@joelclaw/agent-execution");
 
   const sandboxId = `dag-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const kernelPath =
@@ -364,13 +363,8 @@ async function executeMicroVm(
   const rootfsPath =
     (config.rootfsPath as string | undefined)?.trim() ||
     "/tmp/firecracker-test/agent-rootfs.ext4";
-  const snapshotDir = (config.snapshotDir as string | undefined)?.trim() || undefined;
   const command =
     (config.command as string | undefined)?.trim() || 'echo "no command specified"';
-  const workspaceDir = (config.workspaceDir as string | undefined)?.trim() || undefined;
-  if (!workspaceDir) {
-    throw new Error("microvm handler requires config.workspaceDir");
-  }
   const vcpuCount =
     typeof config.vcpuCount === "number" && Number.isFinite(config.vcpuCount)
       ? config.vcpuCount
@@ -380,31 +374,22 @@ async function executeMicroVm(
       ? config.memSizeMib
       : 512;
 
-  const vmConfig = {
+  // One-shot model: execInMicroVm handles the full lifecycle
+  // (create workspace image → write command → boot VM → wait for exit → read results)
+  const result = await execInMicroVm(null, command, timeoutMs, {
     sandboxId,
     kernelPath,
     rootfsPath,
-    snapshotDir,
     vcpuCount,
     memSizeMib,
-    workspacePath: workspaceDir,
-  };
+  });
 
-  const instance = snapshotDir
-    ? await restoreMicroVm(vmConfig)
-    : await bootMicroVm(vmConfig);
-
-  try {
-    const result = await execInMicroVm(instance, command, timeoutMs);
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `microvm command failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
-      );
-    }
-    return truncate(result.stdout.trimEnd());
-  } finally {
-    await destroyMicroVm(instance).catch(() => {});
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `microvm command failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+    );
   }
+  return truncate(result.stdout.trimEnd());
 }
 
 // --- dagWorker service (with OTEL instrumentation) ---

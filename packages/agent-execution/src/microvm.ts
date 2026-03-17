@@ -245,22 +245,27 @@ export async function restoreMicroVm(config: MicroVmConfig): Promise<MicroVmInst
   return startMicroVm(validated, buildRestoreMicroVmRequests(validated));
 }
 
+/**
+ * One-shot microVM execution (Lambda model):
+ *
+ * 1. Create a workspace ext4 image
+ * 2. Mount it on host, write protocol files (command.sh, request.json)
+ * 3. Unmount on host
+ * 4. Boot microVM with workspace image as /dev/vdb
+ * 5. Guest-runner.sh auto-executes command, writes results, powers off
+ * 6. Wait for VM process to exit
+ * 7. Mount workspace on host, read result.json
+ * 8. Clean up
+ *
+ * This avoids the dual-mount page cache problem — host and guest never
+ * access the workspace image simultaneously.
+ */
 export async function execInMicroVm(
-  instance: MicroVmInstance,
+  _instance: MicroVmInstance | null,
   command: string,
   timeoutMs = DEFAULT_MICROVM_EXEC_TIMEOUT_MS,
+  config?: MicroVmConfig,
 ): Promise<MicroVmExecResult> {
-  const tracked = getTrackedMicroVm(instance);
-  const workspacePath = tracked?.config.workspacePath?.trim();
-
-  if (!workspacePath) {
-    throw new MicroVmError(
-      `microVM ${instance.sandboxId} does not have a workspacePath; execInMicroVm requires a host-visible workspace directory`,
-    );
-  }
-  if (instance.status !== "running") {
-    throw new MicroVmError(`microVM ${instance.sandboxId} is not running`);
-  }
   if (!command.trim()) {
     throw new MicroVmError("command is required");
   }
@@ -268,60 +273,166 @@ export async function execInMicroVm(
     throw new MicroVmError("timeoutMs must be a positive number");
   }
 
-  const protocolDir = join(workspacePath, MICROVM_PROTOCOL_DIRNAME);
-  const commandPath = join(protocolDir, "command.sh");
-  const requestPath = join(protocolDir, "request.json");
-  const signalPath = join(protocolDir, "run.signal");
-  const resultPath = join(protocolDir, "result.json");
-  const stdoutPath = join(protocolDir, "stdout.log");
-  const stderrPath = join(protocolDir, "stderr.log");
+  const sandboxId = config?.sandboxId ?? `exec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const kernelPath = config?.kernelPath?.trim() || "/tmp/firecracker-test/vmlinux";
+  const rootfsPath = config?.rootfsPath?.trim() || "/tmp/firecracker-test/agent-rootfs.ext4";
+  const vcpuCount = config?.vcpuCount ?? DEFAULT_MICROVM_VCPU_COUNT;
+  const memSizeMib = config?.memSizeMib ?? DEFAULT_MICROVM_MEM_SIZE_MIB;
 
-  await mkdir(protocolDir, { recursive: true });
-  await Promise.all([
-    rm(signalPath, { force: true }),
-    rm(resultPath, { force: true }),
-    rm(stdoutPath, { force: true }),
-    rm(stderrPath, { force: true }),
-  ]);
+  const workDir = join(defaultMicroVmRoot(), `workspace-${sandboxId}`);
+  const workspaceImage = join(workDir, "workspace.ext4");
+  const mountDir = join(workDir, "mnt");
 
-  const request = {
-    version: "2026-03-16",
-    sandboxId: instance.sandboxId,
-    command,
-    timeoutMs,
-    createdAt: new Date().toISOString(),
-    files: {
-      command: "command.sh",
-      stdout: "stdout.log",
-      stderr: "stderr.log",
-      result: "result.json",
-      signal: "run.signal",
-    },
-  };
+  await mkdir(workDir, { recursive: true });
 
-  await writeFile(commandPath, `#!/bin/sh\nset -eu\n${command.trim()}\n`, "utf8");
-  await writeFile(requestPath, `${JSON.stringify(request, null, 2)}\n`, "utf8");
-  await writeFile(signalPath, `${Date.now()}\n`, "utf8");
+  try {
+    // 1. Create workspace ext4 image (64MB — enough for protocol files + output)
+    await createWorkspaceImage(workspaceImage, 64);
 
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
-    const result = await tryReadCommandResult(resultPath, stdoutPath, stderrPath);
-    if (result) {
-      return result;
+    // 2. Mount on host, write protocol files
+    await mkdir(mountDir, { recursive: true });
+    await mountExt4(workspaceImage, mountDir);
+
+    try {
+      const protocolDir = join(mountDir, MICROVM_PROTOCOL_DIRNAME);
+      await mkdir(protocolDir, { recursive: true });
+
+      const request = {
+        version: "2026-03-17",
+        sandboxId,
+        command,
+        timeoutMs,
+        createdAt: new Date().toISOString(),
+      };
+
+      await writeFile(
+        join(protocolDir, "command.sh"),
+        `#!/bin/sh\nset -eu\n${command.trim()}\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(protocolDir, "request.json"),
+        `${JSON.stringify(request, null, 2)}\n`,
+        "utf8",
+      );
+    } finally {
+      // 3. Unmount before boot — critical for one-shot model
+      await unmountExt4(mountDir);
     }
 
-    await sleep(MICROVM_POLL_INTERVAL_MS);
+    // 4. Boot VM with workspace as /dev/vdb
+    const vmConfig: MicroVmConfig = {
+      sandboxId,
+      kernelPath,
+      rootfsPath,
+      vcpuCount,
+      memSizeMib,
+      workspacePath: workspaceImage,
+    };
+    const instance = await bootMicroVm(vmConfig);
+
+    // 5. Wait for VM process to exit (guest-runner powers off after command)
+    const tracked = getTrackedMicroVm(instance);
+    if (tracked) {
+      const exitCode = await Promise.race([
+        tracked.child.exited,
+        sleep(timeoutMs).then(() => {
+          tracked.child.kill("SIGKILL");
+          return -1;
+        }),
+      ]);
+      trackedMicroVms.delete(instance.sandboxId);
+      trackedMicroVmPids.delete(instance.pid);
+      if (exitCode === -1) {
+        return {
+          exitCode: 124,
+          stdout: "",
+          stderr: `microVM timed out after ${timeoutMs}ms`,
+        };
+      }
+    }
+
+    // 6. Mount workspace again, read results
+    await mountExt4(workspaceImage, mountDir);
+    try {
+      const resultPath = join(mountDir, MICROVM_PROTOCOL_DIRNAME, "result.json");
+      const stdoutPath = join(mountDir, MICROVM_PROTOCOL_DIRNAME, "stdout.log");
+      const stderrPath = join(mountDir, MICROVM_PROTOCOL_DIRNAME, "stderr.log");
+
+      const result = await tryReadCommandResult(resultPath, stdoutPath, stderrPath);
+      if (result) {
+        return result;
+      }
+
+      // No result.json — VM exited without writing results
+      const stdout = (await readOptionalText(stdoutPath)) ?? "";
+      const stderr = (await readOptionalText(stderrPath)) ?? "";
+      return {
+        exitCode: 1,
+        stdout,
+        stderr: stderr || "microVM exited without writing result.json",
+      };
+    } finally {
+      await unmountExt4(mountDir);
+    }
+  } finally {
+    // 7. Clean up workspace
+    await rm(workDir, { recursive: true, force: true }).catch(() => {});
+    // Clean up socket
+    const socketPath = resolveMicroVmSocketPath({ sandboxId });
+    await unlink(socketPath).catch(() => {});
   }
+}
 
-  const stdout = (await readOptionalText(stdoutPath)) ?? "";
-  const stderrBase = (await readOptionalText(stderrPath)) ?? "";
-  await destroyMicroVm(instance).catch(() => {});
+/** Create a small ext4 image for the workspace protocol files. */
+async function createWorkspaceImage(imagePath: string, sizeMB: number): Promise<void> {
+  // Use dd + mkfs.ext4
+  const dd = Bun.spawn(["dd", "if=/dev/zero", `of=${imagePath}`, "bs=1M", `count=${sizeMB}`], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await dd.exited;
 
-  return {
-    exitCode: 124,
-    stdout,
-    stderr: [stderrBase, `microVM command timed out after ${timeoutMs}ms`].filter(Boolean).join("\n"),
-  };
+  const mkfs = Bun.spawn(["mkfs.ext4", "-F", "-q", "-L", "workspace", imagePath], {
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const mkfsExit = await mkfs.exited;
+  if (mkfsExit !== 0) {
+    const stderr = await new Response(mkfs.stderr).text();
+    throw new MicroVmError(`mkfs.ext4 failed (exit ${mkfsExit}): ${stderr}`);
+  }
+}
+
+/** Loop-mount an ext4 image. Requires privileges (the pod is privileged). */
+async function mountExt4(imagePath: string, mountPoint: string): Promise<void> {
+  await mkdir(mountPoint, { recursive: true });
+  const proc = Bun.spawn(["mount", "-o", "loop", imagePath, mountPoint], {
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text();
+    throw new MicroVmError(`mount failed (exit ${exitCode}): ${stderr}`);
+  }
+}
+
+/** Unmount a loop-mounted filesystem. */
+async function unmountExt4(mountPoint: string): Promise<void> {
+  const proc = Bun.spawn(["umount", mountPoint], {
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    // Try lazy unmount as fallback
+    const lazy = Bun.spawn(["umount", "-l", mountPoint], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await lazy.exited;
+  }
 }
 
 export async function pauseMicroVm(instance: MicroVmInstance): Promise<void> {
