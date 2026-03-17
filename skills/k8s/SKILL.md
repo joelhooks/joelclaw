@@ -41,6 +41,7 @@ curl -s localhost:3111/api/inngest                     # system-bus-worker → 2
 curl -s localhost:7880/                                # LiveKit → "OK"
 curl -s localhost:8108/health                          # Typesense → {"ok":true}
 curl -s localhost:8288/health                          # Inngest → {"status":200}
+curl -s localhost:9070/deployments                     # Restate admin → deployments list
 curl -s localhost:9627/xrpc/_health                    # PDS → {"version":"..."}
 kubectl exec -n joelclaw redis-0 -- redis-cli ping     # → PONG
 joelclaw restate cron status                           # Dkron scheduler → healthy via temporary CLI tunnel
@@ -53,12 +54,22 @@ joelclaw restate cron status                           # Dkron scheduler → hea
 | Redis | StatefulSet | redis-0 | 6379→6379 | No |
 | Typesense | StatefulSet | typesense-0 | 8108→8108 | No |
 | Inngest | StatefulSet | inngest-0 | 8288→8288, 8289→8289 | No |
+| Restate | StatefulSet | restate-0 | 8080→8080, 9070→9070, 9071→9071 | No |
 | system-bus-worker | Deployment | system-bus-worker-* | 3111→3111 | No |
+| restate-worker | Deployment | restate-worker-* | in-cluster only (`restate-worker:9080`) | No |
+| docs-api | Deployment | docs-api-* | 3838→3838 | No |
 | LiveKit | Deployment | livekit-server-* | 7880→7880, 7881→7881 | Yes (livekit/livekit-server 1.9.0) |
 | PDS | Deployment | bluesky-pds-* | 9627→**3000** | Yes (nerkho/bluesky-pds 0.4.2) |
+| MinIO | StatefulSet | minio-0 | 30900→30900, 30901→30901 | No |
 | Dkron | StatefulSet | dkron-0 | in-cluster only (`dkron-svc:8080`) | No |
 | AIStor Operator (`aistor` ns) | Deployments | adminjob-operator, object-store-operator | n/a | Yes (`minio/aistor-operator`) |
 | AIStor ObjectStore (`aistor` ns) | StatefulSet | aistor-s3-pool-0-0 | 31000 (S3 TLS), 31001 (console) | Yes (`minio/aistor-objectstore`) |
+
+### Restate / Firecracker runtime notes
+
+- `deployment/restate-worker` is intentionally **privileged** and mounts `/dev/kvm`; Firecracker will not work in a normal restricted pod.
+- PVC `firecracker-images` is mounted at `/tmp/firecracker-test` and stores the kernel, rootfs, and snapshot artifacts used by the microVM handler.
+- This path depends on Colima running with VZ + nested virtualization enabled. If `/dev/kvm` is missing, the pod may still start but Firecracker work will fail.
 
 **⚠️ PDS port trap**: Docker maps `9627→3000` (host→container). NodePort must be **3000** to match the container-side port. If set to 9627, traffic won't route.
 
@@ -177,6 +188,13 @@ kubectl get jobs -n joelclaw --show-all
 # Manifests (redis, typesense, inngest, dkron)
 kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/
 
+# Restate runtime
+kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/restate.yaml
+kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/firecracker-pvc.yaml
+kubectl rollout status statefulset/restate -n joelclaw
+~/Code/joelhooks/joelclaw/k8s/publish-restate-worker.sh
+curl -fsS http://localhost:9070/deployments
+
 # Dkron phase-1 scheduler (ClusterIP API + CLI-managed short-lived tunnel access)
 kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/dkron.yaml
 kubectl rollout status statefulset/dkron -n joelclaw
@@ -239,9 +257,10 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 2. **All workloads MUST have liveness + readiness + startup probes.** Missing probes = silent hangs that never recover.
 3. **After any Docker/Colima/node restart**: remove control-plane taint, **uncordon node**, verify flannel, check all pods reach Running.
 4. **PVC reclaimPolicy is Delete** — deleting a PVC = permanent data loss. Never delete PVCs without backup.
-5. **Colima VM disk is limited (19GB).** Monitor with `colima ssh -- df -h /`. Alert at >80%.
-6. **All launchd plists MUST set PATH including `/opt/homebrew/bin`.** Colima shells to `limactl`, kubectl/talosctl live in homebrew. launchd's default PATH is `/usr/bin:/bin:/usr/sbin:/sbin` — no homebrew. The canonical PATH for infra plists is: `/opt/homebrew/bin:/Users/joel/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`. Discovered Feb 2026: missing PATH caused 6 days of silent recovery failures.
-7. **Shell scripts run by launchd MUST export PATH at the top.** Even if the plist sets EnvironmentVariables, belt-and-suspenders — add `export PATH="/opt/homebrew/bin:..."` to the script itself.
+5. **`firecracker-images` is stateful runtime data.** Treat it like a real runtime PVC: kernel, rootfs, and snapshot loss will break the microVM path.
+6. **Colima VM disk is limited (19GB).** Monitor with `colima ssh -- df -h /`. Alert at >80%.
+7. **All launchd plists MUST set PATH including `/opt/homebrew/bin`.** Colima shells to `limactl`, kubectl/talosctl live in homebrew. launchd's default PATH is `/usr/bin:/bin:/usr/sbin:/sbin` — no homebrew. The canonical PATH for infra plists is: `/opt/homebrew/bin:/Users/joel/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`. Discovered Feb 2026: missing PATH caused 6 days of silent recovery failures.
+8. **Shell scripts run by launchd MUST export PATH at the top.** Even if the plist sets EnvironmentVariables, belt-and-suspenders — add `export PATH="/opt/homebrew/bin:..."` to the script itself.
 
 ### Current Probe Gaps (fix when touching these services)
 - Typesense: missing liveness probe (hangs won't be detected)
@@ -258,8 +277,9 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 6. **AIStor service-name collision** — if AIStor objectstore is deployed in `joelclaw`, it can claim `svc/minio` and break legacy MinIO assumptions. Keep AIStor objectstore in isolated namespace (`aistor`) unless intentionally cutting over.
 7. **AIStor operator webhook SSA conflict** — repeated `helm upgrade` can fail on `MutatingWebhookConfiguration` `caBundle` ownership conflict. Current mitigation in this cluster: set `operators.object-store.webhook.enabled=false` in `k8s/aistor-operator-values.yaml`.
 8. **MinIO pinned tag trap** — `minio/minio:RELEASE.2025-10-15T17-29-55Z` is not available on Docker Hub in this environment (ErrImagePull). Legacy fallback currently relies on `minio/minio:latest`.
-9. **Dkron service-name collision** — never create a bare `svc/dkron`. Kubernetes injects `DKRON_*` env vars into pods, which collides with Dkron's own config parsing. Use `dkron-peer` and `dkron-svc`.
-10. **Dkron PVC permissions** — upstream `dkron/dkron:latest` currently needs root on the local-path PVC. Non-root hardening caused `permission denied` under `/data/raft/snapshots/permTest` and CrashLoopBackOff.
+9. **`restate-worker` privilege is intentional.** Do not “harden” away `/dev/kvm`, `privileged: true`, or the unconfined seccomp profile unless you are simultaneously changing the Firecracker runtime contract.
+10. **Dkron service-name collision** — never create a bare `svc/dkron`. Kubernetes injects `DKRON_*` env vars into pods, which collides with Dkron's own config parsing. Use `dkron-peer` and `dkron-svc`.
+11. **Dkron PVC permissions** — upstream `dkron/dkron:latest` currently needs root on the local-path PVC. Non-root hardening caused `permission denied` under `/data/raft/snapshots/permTest` and CrashLoopBackOff.
 
 ## Key Files
 

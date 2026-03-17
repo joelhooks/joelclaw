@@ -29,7 +29,11 @@ joelclaw is a personal AI infrastructure monorepo built around event-driven work
 │            ├─ inngest-0          (StatefulSet, ports 8288/8289)     │
 │            ├─ redis-0            (StatefulSet, port 6379)          │
 │            ├─ typesense-0        (StatefulSet, port 8108)          │
+│            ├─ restate-0          (StatefulSet, ports 8080/9070/9071) │
 │            ├─ system-bus-worker  (Deployment, port 3111)           │
+│            ├─ restate-worker     (Deployment, port 9080)           │
+│            ├─ dkron-0            (StatefulSet, port 8080)          │
+│            ├─ minio-0            (StatefulSet, ports 9000/9001)    │
 │            ├─ docs-api           (Deployment, port 3838)           │
 │            ├─ livekit-server     (Deployment, ports 7880/7881)     │
 │            └─ bluesky-pds        (Deployment, port 3000)           │
@@ -72,14 +76,57 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 
 **@joelclaw/restate**
 - Restate worker package for durable DAG/workflow execution
-- Hosts deploy gate, DAG orchestrator, and the deterministic queue drainer
+- Hosts deploy gate, `dagOrchestrator`, `dagWorker`, and the deterministic queue drainer
 - Owns the execution-adjacent queue → Restate `/send` bridge for ADR-0217 Story 3
+- Restate server runs in k8s as `statefulset/restate` and is exposed on NodePort `8080/9070/9071`
+- `deployment/restate-worker` is the current durable runtime on port `9080`
+- `dagWorker` handlers now cover `shell`, `infer`, and `microvm`
 - The drainer now self-pulses immediately when backlog remains and a dispatch slot frees, so `QUEUE_DRAIN_INTERVAL_MS` is an idle poll heartbeat instead of a fixed per-message tax
-- If Redis backlog remains but the drainer stops making progress for `QUEUE_DRAIN_STALL_AFTER_MS`, it emits `queue.drainer.stalled` and exits non-zero so launchd can restart the worker and replay the backlog instead of silently wedging pilot traffic behind a still-listening Bun process
-- The canonical long-running host runtime is launchd service `com.joel.restate-worker` via `scripts/restate/start.sh`; ad-hoc `nohup bun run ...` launches are for short debugging only because opaque restarts contaminate queue soak evidence
+- If Redis backlog remains but the drainer stops making progress for `QUEUE_DRAIN_STALL_AFTER_MS`, it emits `queue.drainer.stalled` and exits non-zero so k8s can restart the pod and replay the backlog instead of silently wedging pilot traffic behind a still-listening Bun process
+- The worker image is a full agent environment: Bun + Node + `pi` + `codex`, the full repo checkout, 76 skills, mounted pi auth, and the joelclaw identity chain
 - Provides the current operator-facing sandbox orchestration surface
 - The repo-managed launchd service `com.joel.local-sandbox-janitor` now runs `joelclaw workload sandboxes janitor` at load and every 30 minutes so ADR-0221 retained local sandbox cleanup is scheduled instead of purely manual
 - Hosts the pi-mono research/indexing sync that materializes GitHub docs/issues/PRs/comments/commits/releases into Typesense collection `pi_mono_artifacts` via a Restate DAG + host runner
+
+### Workload Runtime (Restate + Firecracker)
+
+`joelclaw workload` is now the durable runtime front door for staged work:
+
+```text
+joelclaw workload plan --stages-from stages.json
+  ↓ writes plan artifact
+joelclaw workload run <plan.json>
+  ↓
+Redis queue admission
+  ↓
+Restate dagOrchestrator
+  ↓
+dagWorker wave execution
+  ├─ shell   → subprocess work in the restate-worker pod
+  ├─ infer   → pi inference in the pod
+  └─ microvm → Firecracker boot/restore in the pod
+  ↓
+Artifacts + inbox truth + OTEL
+```
+
+Firecracker is the isolation substrate for the new microVM path:
+
+- nested virtualization rides the Colima VZ stack and `/dev/kvm`
+- the `restate-worker` pod mounts PVC `firecracker-images`
+- kernel, rootfs, and snapshot files live on that PVC
+- snapshot restore is currently operator-proven at ~9ms
+
+### Restate agent image composition
+
+The `restate-worker` image contains:
+
+- Bun + Node.js
+- global `pi` CLI
+- global `codex` CLI
+- the monorepo `packages/` and `apps/` checkout
+- 76 canonical skills symlinked into pi's discovery path
+- Firecracker binary
+- mounted pi auth secret and mounted joelclaw identity files at runtime
 
 #### Contract Packages
 
@@ -318,6 +365,24 @@ OTEL Telemetry → Typesense
 Gateway Notification (if needed)
   ↓
 Channel Delivery (Telegram, etc.)
+```
+
+### Workload Execution Flow
+
+```text
+workload plan artifact
+  ↓
+joelclaw workload run
+  ↓
+Redis queue (`workload/requested`)
+  ↓
+Restate `dagOrchestrator`
+  ↓
+dependency-aware waves
+  ↓
+`dagWorker` handler (`shell` | `infer` | `microvm`)
+  ↓
+terminal outputs + OTEL + inbox truth
 ```
 
 ### Sandboxed Story Execution Flow

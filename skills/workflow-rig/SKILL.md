@@ -94,6 +94,55 @@ Use `--stages-from` when the project already has a real stage DAG (for example a
 
 Use `--skip-dep-check` only for deliberate manual recovery. Normal `joelclaw workload run` now blocks a stage until each explicit dependency has terminal inbox truth.
 
+## Current runtime truth
+
+- `joelclaw workload plan --stages-from <file>` is proven for explicit stage DAGs: it validates unknown dependencies, self-dependencies, duplicates, and cycles before runtime admission.
+- Multi-stage chained execution with dependency resolution is proven. `dagOrchestrator` fans out ready waves and waits for every `dependsOn` stage before advancing.
+- `joelclaw workload run` is the real runtime bridge: Redis queue admission → Restate `dagOrchestrator` → `dagWorker`.
+- `dagWorker` handler truth:
+  - `shell` ✅ runs real subprocess work in the `restate-worker` pod
+  - `infer` ✅ runs `pi` inside the pod; auth, 76 skills, and the joelclaw identity chain are mounted in-cluster
+  - `microvm` ⚠️ boots/restores Firecracker VMs in-cluster, but the broader exec-in-VM workspace drive wiring still needs finishing
+- The `restate-worker` image is a full agent environment: Bun + Node + `pi` + `codex`, the monorepo checkout, skill symlinks, mounted pi auth, and mounted agent identity files.
+
+## Real chained example
+
+This is the honest three-stage shape the rig can run today:
+
+```json
+[
+  {
+    "id": "inspect-runtime",
+    "name": "Inspect Restate and queue state",
+    "acceptance": ["Queue + Restate health captured"],
+    "executionMode": "manual"
+  },
+  {
+    "id": "update-docs",
+    "name": "Apply the bounded docs patch",
+    "dependsOn": ["inspect-runtime"],
+    "acceptance": ["Requested docs updated"],
+    "executionMode": "codex"
+  },
+  {
+    "id": "verify-closeout",
+    "name": "Verify diff and close out",
+    "dependsOn": ["update-docs"],
+    "acceptance": ["Diff checked", "summary ready"],
+    "executionMode": "manual"
+  }
+]
+```
+
+Run it through the front door:
+
+```bash
+joelclaw workload plan "Update the runtime docs, then verify and close out" \
+  --repo ~/Code/joelhooks/joelclaw \
+  --stages-from stages.json \
+  --write-plan plan.json
+```
+
 ## When to reach for compatibility skills
 
 - `agent-workloads` — only when an older prompt already names it; treat it as a compatibility alias

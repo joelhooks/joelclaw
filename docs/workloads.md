@@ -13,6 +13,14 @@ This document defines the canonical vocabulary, schema, and planner surface for 
 
 Do not pretend the whole workload command family already ships. `plan`, `dispatch`, and `run` are real right now; `status|explain|cancel` are still not.
 
+### Current runtime truth
+
+- `shell` handler: ✅ proven in `dagWorker`
+- `infer` handler: ✅ proven in `dagWorker`; it runs `pi` inside the `restate-worker` pod with mounted auth, 76 skills, and the joelclaw identity chain
+- `microvm` handler: ⚠️ boots/restores Firecracker VMs in-cluster, but the broader exec-in-VM workspace drive wiring is still incomplete
+- Multi-stage DAG with `dependsOn`: ✅ proven; Restate executes dependency waves and chained gates correctly
+- Explicit stage DAGs from file: ✅ `--stages-from` validates duplicate ids, unknown deps, self-deps, and cycles before runtime admission
+
 ## Why this exists
 
 The runtime substrate got legible before the workload model did.
@@ -244,6 +252,8 @@ Semantics:
 
 - reads a saved `joelclaw workload plan --write-plan ...` envelope and normalizes it into one canonical runtime request
 - uses the queue family `workload/requested`, which is registry-routed to the real runtime event `system/agent.requested`
+- current durable execution path is `Redis queue → Restate dagOrchestrator → dagWorker`
+- the proven handler set is `shell` + `infer`; `microvm` can boot Firecracker VMs but is still incomplete for general workspace execution
 - chooses the first stage by default, or a caller-selected stage via `--stage`
 - reuses the dispatch/handoff contract so the runtime payload carries explicit scope, acceptance, remaining gates, and closeout expectations instead of vague chat sludge
 - defaults to `--tool pi`; `--tool codex|claude` is opt-in

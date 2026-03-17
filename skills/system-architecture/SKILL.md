@@ -26,6 +26,11 @@ Use it for:
 ## Ground-Truth Scope + Evidence Snapshot
 
 This document is grounded in direct reads of:
+- `apps/docs-api/src/index.ts`
+- `packages/restate/Dockerfile`
+- `packages/restate/src/index.ts`
+- `packages/restate/src/workflows/dag-orchestrator.ts`
+- `packages/agent-execution/src/microvm.ts`
 - `packages/system-bus/src/serve.ts`
 - `packages/system-bus/src/inngest/functions/index.host.ts`
 - `packages/system-bus/src/inngest/functions/index.cluster.ts`
@@ -48,10 +53,11 @@ This document is grounded in direct reads of:
 - ADRs in `~/Vault/docs/decisions/` (required + topology-adjacent)
 - last 50 lines of `~/Vault/system/system-log.jsonl`
 
-### Missing requested docs (at capture time)
-- `docs/architecture.md` — **UNKNOWN — needs manual verification**
-- `docs/deploy.md` — present; includes Dkron phase-1 deployment and verification notes
-- `docs/observability.md` — **UNKNOWN — needs manual verification**
+### Related docs verified
+- `docs/architecture.md` — Restate/Firecracker runtime + workload execution flow
+- `docs/deploy.md` — Restate worker deploy + auth/identity/PVC procedures
+- `docs/cli.md` — workload command tree + runtime bridge
+- `docs/observability.md` — **not inspected in this update**
 
 ---
 
@@ -66,7 +72,9 @@ Mac Mini "Panda" (host macOS)
 │     │  ├─ inngest (StatefulSet + NodePort 8288/8289)
 │     │  ├─ redis (StatefulSet + NodePort 6379)
 │     │  ├─ typesense (StatefulSet + ClusterIP 8108)
+│     │  ├─ restate (StatefulSet + NodePort 8080/9070/9071)
 │     │  ├─ system-bus-worker (Deployment + ClusterIP 3111)
+│     │  ├─ restate-worker (Deployment + ClusterIP 9080; full agent image + Firecracker)
 │     │  ├─ dkron (StatefulSet + ClusterIP 8080)
 │     │  ├─ docs-api (Deployment + NodePort 3838)
 │     │  ├─ livekit-server (Deployment + NodePort 7880/7881)
@@ -77,6 +85,7 @@ Mac Mini "Panda" (host macOS)
 │        └─ aistor-s3 object store (StatefulSet + NodePort 31000/31001)
 ├─ Caddy reverse proxy (tailnet HTTPS fan-in)
 ├─ Gateway daemon (embedded pi session)
+├─ Firecracker substrate via Colima VZ nested virtualization (`/dev/kvm`)
 └─ NAS "three-body" (NFS tiers per ADR-0088)
 ```
 
@@ -101,7 +110,7 @@ Mac Mini "Panda" (host macOS)
 | Launchd label | State | PID (snapshot) | Role | Ports / endpoints |
 |---|---:|---:|---|---|
 | `com.joel.system-bus-worker` | running | 75292 | Host worker supervisor (`worker-supervisor`) | supervises child bun on 3111 |
-| `com.joel.restate-worker` | running | 22103 | Host Restate worker (`scripts/restate/start.sh` → `packages/restate/src/index.ts`) | Bun service on 9080; deterministic queue drainer + DAG/deploy workflows |
+| `com.joel.restate-worker` | retired / rollback-only | — | Historical host Restate wrapper (`scripts/restate/start.sh`) | superseded by `deployment/restate-worker` on 9080 |
 | `com.joel.gateway` | running | 81275 | Gateway daemon (`packages/gateway/src/daemon.ts`) | WS `:3018`, Redis bridge |
 | `com.joel.caddy` | running | 9347 | Reverse proxy | 3443, 5443, 6443, 7443, 8290, 8443, 9443 |
 | `com.joel.talon` | running | 96359 | Infra watchdog | health `127.0.0.1:9999` |
@@ -160,14 +169,23 @@ Source: `infra/worker-supervisor/src/main.rs`
 | Inngest | StatefulSet `inngest` | NodePort (`inngest-svc`) | 8288, 8289 | 8288, 8289 | Event API + connect ws |
 | Redis | StatefulSet `redis` | NodePort | 6379 | 6379 | Queue/state/pubsub |
 | Typesense | StatefulSet `typesense` | ClusterIP | 8108 | host via launchd port-forward 8108 | Search + telemetry store |
+| Restate | StatefulSet `restate` | NodePort | 8080, 9070, 9071 | 8080, 9070, 9071 | Durable workflow ingress + admin + metrics |
 | system-bus-worker | Deployment | ClusterIP | 3111 | in-cluster only | Cluster-role worker (12 functions) |
-| docs-api | Deployment | NodePort | 3838 | 3838 | PDF/docs API |
+| restate-worker | Deployment | ClusterIP | 9080 | in-cluster only | `dagOrchestrator` + `dagWorker` + queue drainer in full agent image |
+| docs-api | Deployment | NodePort | 3838 | 3838 | PDF/docs API + agentic search + taxonomy graph |
 | dkron | StatefulSet | ClusterIP (`dkron-svc`) + headless peer svc (`dkron-peer`) | 8080, 8946, 6868 | in-cluster only; operator access via short-lived CLI-managed tunnel | Distributed cron scheduler for Restate pipelines |
 | livekit-server | Deployment (Helm) | NodePort | 80, 7881 | 7880 (for svc port 80), 7881 | LiveKit signaling + rtc tcp |
 | bluesky-pds | Deployment (Helm-managed) | NodePort | 3000 | 3000 | AT Proto PDS |
 | minio | StatefulSet | ClusterIP + NodePort | 9000, 9001 | 30900, 30901 | Legacy local S3-compatible runtime |
 | aistor-s3-api (`aistor` ns) | NodePort service (operator-managed) | NodePort | 443, 9000 | 31000 (+ dynamic management NodePort) | AIStor S3 API (TLS + management) |
 | aistor-s3-console (`aistor` ns) | NodePort service (operator-managed) | NodePort | 9443 | 31001 | AIStor web console |
+
+### Restate / Firecracker runtime note
+
+- `deployment/restate-worker` is the current durable execution worker. The image bundles Bun + Node + `pi` + `codex`, the full repo checkout, and 76 symlinked skills.
+- Runtime auth/identity come from `secret/pi-auth` and `configmap/agent-identity`, which recreate `/root/.pi/agent/auth.json` plus the joelclaw identity chain inside the pod.
+- Firecracker is enabled in-pod via privileged access to `/dev/kvm` on Colima VZ.
+- Persistent microVM assets live on PVC `firecracker-images`, mounted at `/tmp/firecracker-test` for kernel, rootfs, and snapshot files.
 
 ### Control-plane access
 - kube API exposed locally at `127.0.0.1:64784` (forwarded)
@@ -250,14 +268,27 @@ From index comments + function lists:
 ## Queue flow: `joelclaw queue emit` → Restate drainer → durable dispatch
 
 1. CLI `joelclaw queue emit <event>` persists a `QueueEventEnvelope` into Redis stream `joelclaw:queue:events` and indexes it in sorted set `joelclaw:queue:priority`.
-2. The host Restate worker (`com.joel.restate-worker` → `scripts/restate/start.sh` → `packages/restate/src/index.ts`) starts a deterministic queue drainer beside the channel callback listener.
+2. The `restate-worker` k8s deployment (`packages/restate/src/index.ts`) starts a deterministic queue drainer beside the channel callback listener.
 3. On startup, the drainer claims pending + never-delivered entries via `@joelclaw/queue#getUnacked()`, reindexes replayable entries, and emits OTEL replay evidence.
 4. Each drain tick selects the next priority candidate from the sorted set, resolves its static registry target from `packages/queue/src/registry.ts`, and POSTs a one-node DAG request to Restate `/dagOrchestrator/{workflowId}/run/send`.
 5. When backlog remains and a dispatch slot frees, the drainer self-pulses immediately instead of waiting for the next `QUEUE_DRAIN_INTERVAL_MS` heartbeat. That interval is now the idle poll / retry cadence, not a mandatory 2-second tax between successful sends.
 6. The current Story-3 bridge re-emits the queue item to its registered Inngest event target inside that one-node DAG request. This is deliberate: the deterministic queue/drainer is proven first; per-family Restate cutovers remain Story 4 work.
 7. On accepted Restate dispatch, the drainer acks the queue message; on failure it leaves the message in Redis, applies retry cooldown, and emits `queue.dispatch.failed` OTEL evidence.
-8. If backlog remains in Redis but the drainer stops making progress past `QUEUE_DRAIN_STALL_AFTER_MS`, it emits `queue.drainer.stalled` and exits non-zero so launchd can restart `com.joel.restate-worker`. That is the self-heal path for a wedged drainer inside an otherwise-running Bun process.
-9. Crash recovery comes from the Redis stream + consumer-group replay path, not from vibes: restart the Restate worker, let `getUnacked()` reclaim the inflight entries, then drain resumes.
+8. If backlog remains in Redis but the drainer stops making progress past `QUEUE_DRAIN_STALL_AFTER_MS`, it emits `queue.drainer.stalled` and exits non-zero so k8s restarts `deployment/restate-worker`. That is the self-heal path for a wedged drainer inside an otherwise-running Bun process.
+9. Crash recovery comes from the Redis stream + consumer-group replay path, not from vibes: restart the `restate-worker` pod, let `getUnacked()` reclaim the inflight entries, then drain resumes.
+
+## Workload flow: `joelclaw workload run` → Redis → Restate DAG → execution
+
+1. `joelclaw workload plan ... --stages-from <file>` can load an explicit stage DAG, validate unknown deps/self-deps/duplicates/cycles, and preserve per-stage acceptance gates.
+2. `joelclaw workload run <plan-artifact>` normalizes the selected stage into the canonical `workload/requested` runtime request.
+3. Queue admission writes the request into Redis, where the deterministic drainer forwards it into Restate as a `dagOrchestrator/{workflowId}/run/send` request.
+4. `dagOrchestrator` executes dependency waves: ready nodes in parallel, chained nodes only after every `dependsOn` node has terminal output.
+5. `dagWorker` executes the node handler:
+   - `shell` → subprocess work inside the `restate-worker` pod
+   - `infer` → `pi -p --no-session --no-extensions` inside the pod, using the mounted auth + identity + skill set
+   - `microvm` → Firecracker boot/restore through `/dev/kvm` with kernel/rootfs/snapshot files on PVC `firecracker-images`
+6. Each node emits OTEL (`dag.node.*`), and the workflow emits `dag.workflow.*` so queue → Restate → execution remains observable.
+7. Current truthful limit: the microVM runtime boots and restores snapshots in-cluster, but the broader exec-in-VM workspace drive protocol is still incomplete for general coding slices.
 
 ## Webhook flow
 
@@ -285,10 +316,14 @@ From index comments + function lists:
 | Port | Listener / owner | What it is | Exposure path |
 |---:|---|---|---|
 | 3111 | host bun worker | host system-bus worker HTTP (`/`, `/api/inngest`, `/webhooks`, `/observability/emit`) | local host; proxied via Caddy 3443 + webhook path via 8443 |
+| 8080 | ssh forward (Colima) -> restate | Restate ingress / workflow API | NodePort + host forward |
 | 8288 | ssh forward (Colima) -> Inngest svc | Inngest API + dashboard backend | NodePort + host forward; proxied via Caddy 9443 |
 | 8289 | ssh forward (Colima) -> Inngest ws | Inngest connect websocket | NodePort + host forward; proxied via Caddy 8290 |
 | 6379 | ssh forward (Colima) -> Redis | Redis | NodePort + host forward |
 | 8108 | ssh forward / kubectl port-forward | Typesense API | ClusterIP; exposed locally by port-forward |
+| 9070 | ssh forward (Colima) -> restate | Restate admin API | NodePort + host forward |
+| 9071 | ssh forward (Colima) -> restate | Restate metrics | NodePort + host forward |
+| 9080 | k8s `restate-worker` service | Restate worker HTTP (`dagOrchestrator`, `dagWorker`, queue drainer) | ClusterIP only |
 | random high local port | transient `kubectl port-forward` (CLI-managed) -> `svc/dkron-svc:8080` | Dkron HTTP API | ClusterIP only; short-lived operator tunnel |
 | 3838 | ssh forward (Colima) -> docs-api | docs-api HTTP | NodePort + host forward; proxied via Caddy 5443 |
 | 7880 | ssh forward (Colima) -> livekit-server | LiveKit signaling | NodePort 7880; proxied via Caddy 7443 |
@@ -333,9 +368,36 @@ From observability code:
 - `memory_observations` collection (vector-aware memory index; schema validated at startup)
 - docs-api also points at `http://typesense:8108` for docs search/index surfaces.
 
+## Firecracker runtime storage
+
+- PVC: `firecracker-images`
+- Mounted in `deployment/restate-worker` at `/tmp/firecracker-test`
+- Stores:
+  - kernel (`vmlinux`)
+  - rootfs (`agent-rootfs.ext4`)
+  - snapshots (`snapshots/vm.snap`, `snapshots/vm.mem`)
+- Firecracker snapshot restore is currently operator-proven at ~9ms on the Colima VZ nested-virt path.
+
 ## Inngest state
 - StatefulSet PVC mounted at `/data`
 - `INNGEST_SQLITE_DIR=/data`
+
+## docs-api surface
+
+- Deployment: `docs-api` on NodePort `3838`
+- Route count: 11 endpoints including `/health`
+- Key routes:
+  - `GET /search` — hybrid chunk search with `concept`, `concepts`, `doc_id`, `expand`, and `assemble`
+  - `GET /docs/search`
+  - `GET /docs`
+  - `GET /docs/:id`
+  - `GET /docs/:id/toc`
+  - `GET /docs/:id/chunks`
+  - `GET /chunks/:id`
+  - `GET /concepts`
+  - `GET /concepts/:id`
+  - `GET /concepts/:id/docs`
+- Taxonomy surface: 21-concept SKOS graph (10 parents + 11 sub-concepts) with `broader`, `narrower`, and `related` edges.
 
 ## NAS (ADR-0088 + ADR-0187)
 
@@ -395,6 +457,8 @@ Primary command tree root: `packages/cli/src/cli.ts`.
 | `runs`, `run`, `functions`, `event`, `events` | Inngest GraphQL `POST /v0/gql` |
 | `status` | Inngest/worker health probes + k8s checks + agent-mail liveness |
 | `gateway *` | Redis keys/channels + launchd/system ops |
+| `workload *` | workload planner + Redis queue admission + Restate `dagOrchestrator` / `dagWorker` runtime |
+| `docs *` | docs-api REST API (`/search`, `/docs/*`, `/chunks/*`, `/concepts*`) |
 | `restate cron *` | Dkron REST API via direct `--base-url` or short-lived `kubectl port-forward` to `svc/dkron-svc` |
 | `otel *` | Typesense `otel_events` via capability adapter |
 | `recall *` | Typesense recall adapter |

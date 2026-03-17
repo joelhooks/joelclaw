@@ -26,7 +26,11 @@ Build: `bun build packages/cli/src/cli.ts --compile --outfile ~/.bun/bin/joelcla
 │  inngest-0             StatefulSet   ports 8288 (API), 8289 (dash) │
 │  redis-0               StatefulSet   port 6379                     │
 │  typesense-0           StatefulSet   port 8108                     │
+│  restate-0             StatefulSet   ports 8080, 9070, 9071        │
 │  system-bus-worker     Deployment    port 3111 (110+ functions)    │
+│  restate-worker        Deployment    port 9080                     │
+│  dkron-0               StatefulSet   port 8080                     │
+│  minio-0               StatefulSet   ports 9000, 9001              │
 │  docs-api              Deployment    port 3838                     │
 │  livekit-server        Deployment    ports 7880, 7881              │
 │  bluesky-pds           Deployment    port 3000                     │
@@ -147,6 +151,23 @@ joelclaw gateway test                      # Send test message through gateway
 joelclaw gateway restart                   # Restart gateway daemon
 joelclaw gateway stream                    # Live stream gateway events
 ```
+
+### Workload Rig
+
+```bash
+joelclaw workload plan "intent" --stages-from stages.json --write-plan plan.json
+joelclaw workload run plan.json --stage <stage-id> --tool pi|codex|claude
+joelclaw workload dispatch plan.json --to BlueFox --from MaroonReef --send-mail
+joelclaw workload sandboxes list
+joelclaw workload sandboxes cleanup --expired --dry-run
+joelclaw workload sandboxes janitor
+```
+
+Runtime truth:
+- `workload run` admits into Redis, then Restate executes the stage through `dagOrchestrator` → `dagWorker`
+- `dagWorker` handlers: `shell`, `infer`, `microvm`
+- `infer` now runs `pi` inside the `restate-worker` k8s pod with mounted auth, skills, and identity
+- `--stages-from` is the explicit stage-DAG front door; dependency gates and cycle detection are real
 
 ### Async runtime monitoring in pi
 

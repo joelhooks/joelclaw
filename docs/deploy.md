@@ -37,24 +37,88 @@ kubectl exec -n joelclaw clickhouse-0 -- clickhouse-client --query "CREATE DATAB
 kubectl exec -n joelclaw clickhouse-0 -- clickhouse-client --query "SHOW DATABASES"
 ```
 
-## Restate worker (k8s deployment path)
+## Restate runtime (k8s server + worker)
 
-The Restate worker now has a repo-managed k8s deployment surface alongside the existing host launchd runtime:
+Current production topology:
 
-- manifest: `k8s/restate-worker.yaml`
+- server manifest: `k8s/restate.yaml`
+- worker manifest: `k8s/restate-worker.yaml`
+- Firecracker PVC: `k8s/firecracker-pvc.yaml`
 - publish script: `k8s/publish-restate-worker.sh`
-- container image: `ghcr.io/joelhooks/restate-worker:<tag>`
-- in-cluster service URL: `http://restate-worker:9080`
+- worker image: `ghcr.io/joelhooks/restate-worker:<tag>`
+- server NodePorts: `8080` (ingress), `9070` (admin), `9071` (metrics)
+- worker service URL: `http://restate-worker:9080`
 
 Deploy + verify:
 
 ```bash
+kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/restate.yaml
+kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/firecracker-pvc.yaml
+kubectl rollout status statefulset/restate -n joelclaw
+
 ~/Code/joelhooks/joelclaw/k8s/publish-restate-worker.sh
 kubectl rollout status deployment/restate-worker -n joelclaw
-kubectl get svc restate-worker -n joelclaw
+kubectl get svc restate restate-worker -n joelclaw
+curl -fsS http://localhost:9070/deployments
 ```
 
-Important cutover note: this only publishes the worker. The Restate server still needs the deployment registered at `http://restate-worker:9080`, and the old host deployment (`http://host.lima.internal:9080`) should be deregistered after the cluster worker is healthy.
+### Re-register Restate deployments after worker deploy
+
+The Restate admin API is now reachable directly on `localhost:9070` via NodePort; no port-forward is required.
+
+```bash
+curl -fsS -X POST http://localhost:9070/deployments
+curl -fsS http://localhost:9070/deployments
+```
+
+### Refresh the pi auth secret
+
+The worker mounts `/root/.pi/agent/auth.json` from `secret/pi-auth`.
+
+```bash
+kubectl create secret generic pi-auth \
+  -n joelclaw \
+  --from-file=auth.json=$HOME/.pi/agent/auth.json \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl rollout restart deployment/restate-worker -n joelclaw
+```
+
+### Refresh the agent identity configmap
+
+The worker image symlinks these files into `/root/.joelclaw/` at container start:
+
+```bash
+kubectl create configmap agent-identity \
+  -n joelclaw \
+  --from-file=IDENTITY.md=$HOME/.joelclaw/IDENTITY.md \
+  --from-file=SOUL.md=$HOME/.joelclaw/SOUL.md \
+  --from-file=ROLE.md=$HOME/.joelclaw/ROLE.md \
+  --from-file=USER.md=$HOME/.joelclaw/USER.md \
+  --from-file=TOOLS.md=$HOME/.joelclaw/TOOLS.md \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl rollout restart deployment/restate-worker -n joelclaw
+```
+
+### Populate the Firecracker PVC
+
+`pvc/firecracker-images` is mounted at `/tmp/firecracker-test` inside `deployment/restate-worker`.
+Seed it with the kernel, rootfs, and optional snapshot artifacts:
+
+```bash
+POD=$(kubectl get pod -n joelclaw -l app=restate-worker -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n joelclaw "$POD" -- sh -lc 'mkdir -p /tmp/firecracker-test/snapshots'
+
+kubectl cp infra/firecracker/images/vmlinux-6.1.155 \
+  "joelclaw/$POD:/tmp/firecracker-test/vmlinux"
+kubectl cp infra/firecracker/images/agent-rootfs.ext4 \
+  "joelclaw/$POD:/tmp/firecracker-test/agent-rootfs.ext4"
+
+# Optional: seed snapshot restore inputs if you already created them locally
+kubectl cp infra/firecracker/snapshots/. \
+  "joelclaw/$POD:/tmp/firecracker-test/snapshots"
+```
 
 ## Canonical launchd sources
 
@@ -62,13 +126,15 @@ Host launchd assets that are part of joelclaw runtime behavior belong in `infra/
 
 Current canonical examples include:
 - `infra/launchd/com.joel.system-bus-worker.plist`
-- `infra/launchd/com.joel.restate-worker.plist`
 - `infra/launchd/com.joel.content-sync-watcher.plist`
 - `infra/launchd/com.joel.local-sandbox-janitor.plist`
 
+Historical rollback/debug asset:
+- `infra/launchd/com.joel.restate-worker.plist`
+
 When installing or repairing one of these services, prefer a symlink from `~/Library/LaunchAgents/<label>.plist` back to the repo source so launchd follows the git-tracked file.
 
-Example for the Restate worker:
+Historical fallback example for the Restate worker:
 
 ```bash
 ln -sfn ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.restate-worker.plist \
@@ -77,7 +143,7 @@ launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.restate-worker.pl
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.joel.restate-worker.plist
 ```
 
-The canonical Restate host runtime is `scripts/restate/start.sh` behind `com.joel.restate-worker`, not an ad-hoc `nohup bun run ...` shell. The wrapper loads `~/.config/system-bus.env`, forces a headless-safe channel (`console` is downgraded to `noop` under launchd), forwards SIGTERM to Bun, and opportunistically re-registers the deployment when the Restate admin API is reachable. The queue drainer now also self-heals by emitting `queue.drainer.stalled` and exiting non-zero when backlog remains but progress stops past `QUEUE_DRAIN_STALL_AFTER_MS`; launchd is the recovery path for that class of stall.
+The primary Restate runtime is now the `restate-worker` k8s deployment. Keep `scripts/restate/start.sh` behind `com.joel.restate-worker` only as a rollback/debug wrapper; do not treat it as the normal production path.
 
 Example for the content watcher:
 

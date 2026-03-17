@@ -13,7 +13,11 @@ Personal AI infrastructure monorepo. Event-driven pipelines, always-on gateway, 
 │            ├─ inngest-0          (StatefulSet, ports 8288/8289)     │
 │            ├─ redis-0            (StatefulSet, port 6379)          │
 │            ├─ typesense-0        (StatefulSet, port 8108)          │
+│            ├─ restate-0          (StatefulSet, ports 8080/9070/9071) │
 │            ├─ system-bus-worker  (Deployment, port 3111)           │
+│            ├─ restate-worker     (Deployment, port 9080)           │
+│            ├─ dkron-0            (StatefulSet, port 8080)          │
+│            ├─ minio-0            (StatefulSet, ports 9000/9001)    │
 │            ├─ docs-api           (Deployment, port 3838)           │
 │            ├─ livekit-server     (Deployment, ports 7880/7881)     │
 │            └─ bluesky-pds        (Deployment, port 3000)           │
@@ -39,6 +43,7 @@ joelclaw/
 │   ├── sdk/                    # @joelclaw/sdk — programmatic wrapper for CLI contracts
 │   ├── system-bus/             # @joelclaw/system-bus — 110+ Inngest functions
 │   ├── gateway/                # @joelclaw/gateway — multi-channel message routing
+│   ├── restate/                # @joelclaw/restate — durable DAG runtime + workers
 │   ├── inference-router/       # @joelclaw/inference-router — model selection catalog
 │   ├── model-fallback/         # @joelclaw/model-fallback — provider fallback chains
 │   ├── message-store/          # @joelclaw/message-store — Redis message queue
@@ -53,9 +58,10 @@ joelclaw/
 │   ├── things-cloud/           # @joelclaw/things-cloud — Things integration
 │   └── ui/                     # @repo/ui — shared UI components
 ├── k8s/                        # Kubernetes manifests + deploy scripts
-├── skills/                     # Agent skills (canonical, 52 skills)
+├── skills/                     # Agent skills (canonical, 76 skills)
 ├── scripts/                    # Utility scripts
 ├── infra/                      # Infrastructure config
+│   └── firecracker/            # Firecracker microVM infrastructure
 └── AGENTS.md                   # This file
 ```
 
@@ -68,10 +74,11 @@ joelclaw/
 | Language | TypeScript (strict) |
 | Web framework | Next.js 16 (App Router, RSC, PPR) |
 | Effect system | Effect, @effect/cli, @effect/schema, @effect/platform |
-| Workflows | Inngest (self-hosted, 110+ durable functions) |
+| Workflows | Inngest + Restate DAG runtime |
 | State | Redis (k8s StatefulSet) |
 | Search | Typesense (full-text + vector) |
 | Video | Mux |
+| Sandbox substrate | Firecracker microVMs in k8s pods |
 | Observability | OTEL → Typesense + Langfuse |
 | Infrastructure | Talos Linux on Colima, k8s v1.35.0 |
 | Deployment | Vercel (web), GHCR + k8s (worker) |
@@ -144,6 +151,10 @@ joelclaw subscribe list|add|remove|check|summary  # Feed subscriptions
 joelclaw gateway status|events|test    # Gateway operations
 joelclaw otel list|search|stats        # Observability
 joelclaw loop start|status|cancel      # Agent coding loops
+joelclaw workload plan "intent" [--stages-from stages.json] [--write-plan plan.json]
+joelclaw workload run <plan.json>      # Redis queue → Restate DAG runtime
+joelclaw workload dispatch <plan.json> # Stage handoff contract
+joelclaw workload sandboxes list|cleanup|janitor
 joelclaw discover <url> [-c context]   # Capture discovery
 joelclaw recall <query>                # Semantic memory search
 joelclaw inngest status|restart-worker # Inngest management
@@ -157,6 +168,23 @@ bun build packages/cli/src/cli.ts --compile --outfile ~/.bun/bin/joelclaw
 ```
 
 Test after every change: `joelclaw status`, `joelclaw send --help`, `joelclaw runs --count 1`.
+
+## Workload Rig
+
+`joelclaw workload` is the canonical front door for staged runtime work.
+
+- `joelclaw workload plan ... --stages-from stages.json` loads an explicit stage DAG, validates dependencies/cycles, and preserves per-stage acceptance truth.
+- `joelclaw workload run <plan.json>` dispatches through **Redis queue → Restate `dagOrchestrator` → `dagWorker`**.
+- `dagWorker` currently runs `shell`, `infer`, and `microvm` handlers.
+- The `restate-worker` pod is a full agent environment: Bun + Node + `pi` + `codex`, the full monorepo checkout, 76 repo skills, mounted pi auth, and the joelclaw identity chain.
+- Firecracker microVMs run inside the pod via nested virtualization on Colima VZ (`/dev/kvm`) with ~9ms snapshot restore.
+- Persistent Firecracker assets live on PVC `firecracker-images` (kernel, rootfs, snapshots).
+
+Example:
+
+```bash
+joelclaw workload plan "intent" --stages-from stages.json --write-plan plan.json
+```
 
 ## System Bus Worker
 
@@ -203,7 +231,7 @@ Storage: Typesense `otel_events` collection.
 
 ## Skills
 
-52 skills in `skills/` — **canonical source, fully tracked in git**.
+76 skills in `skills/` — **canonical source, fully tracked in git**.
 
 Canonical coordination protocol skill: `skills/clawmail/SKILL.md`.
 

@@ -123,6 +123,7 @@ Semantics:
 - `joelclaw subscribe`
 - `joelclaw webhook`
 - `joelclaw inngest`
+- `joelclaw restate`
 - `joelclaw knowledge`
 - `joelclaw capabilities`
 - `joelclaw queue`
@@ -173,14 +174,19 @@ joelclaw workload
 │   [--from <from>]
 │   [--send-mail]
 │   [--write-dispatch ~/.joelclaw/workloads/]
-└── run <plan-artifact>
-    [--stage <stage-id>]
-    [--tool pi|codex|claude]
-    [--execution-mode auto|host|sandbox]
-    [--sandbox-backend local|k8s]
-    [--skip-dep-check]
-    [--repo-url <repo-url>]
-    [--dry-run]
+├── run <plan-artifact>
+│   [--stage <stage-id>]
+│   [--tool pi|codex|claude]
+│   [--execution-mode auto|host|sandbox]
+│   [--sandbox-backend local|k8s]
+│   [--sandbox-mode minimal|full]
+│   [--skip-dep-check]
+│   [--repo-url <repo-url>]
+│   [--dry-run]
+└── sandboxes
+    ├── list [--state active|completed|failed|cancelled] [--mode minimal|full] [--expired] [--limit <n>]
+    ├── cleanup [--request-id <id> | --sandbox-id <id> | --expired | --all-terminal] [--dry-run] [--force]
+    └── janitor [--dry-run]
 ```
 
 `joelclaw workload plan` semantics:
@@ -226,6 +232,8 @@ joelclaw workload
 
 - reads a saved plan artifact and normalizes it into the canonical queue-backed runtime request
 - emits the queue family `workload/requested`, which the registry maps to `system/agent.requested`
+- current durable runtime path is `Redis queue → Restate dagOrchestrator → dagWorker`
+- `dagWorker` handlers currently cover `shell`, `infer`, and `microvm`
 - defaults to `--tool pi`, with `codex|claude` as explicit opt-ins
 - supports `--sandbox-backend local|k8s` plus `--sandbox-mode minimal|full` when sandbox execution is the point
 - explicit-stage plans now gate stage execution on dependency inbox truth; use `--skip-dep-check` only for deliberate manual recovery or replay
