@@ -233,7 +233,12 @@ async function executeShell(
   const proc = Bun.spawn(["bash", "-c", command], {
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, ...depEnv },
+    env: {
+      ...process.env,
+      ...depEnv,
+      JOELCLAW_REPO_CACHE: "/app/repo-cache",
+      JOELCLAW_WORKER_HEARTBEAT_DIR: "/tmp/joelclaw-worker-heartbeat",
+    },
   });
 
   const timer = setTimeout(() => proc.kill(), timeoutMs);

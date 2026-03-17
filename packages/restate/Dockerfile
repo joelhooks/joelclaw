@@ -83,6 +83,12 @@ RUN for s in /app/skills/*/; do \
 # Copy AGENTS.md
 COPY AGENTS.md /app/AGENTS.md
 
+# Pre-clone the monorepo for fast workspace setup
+# Runtime: git fetch && git reset --hard origin/main (~200ms vs full clone ~3s)
+RUN git clone --depth 1 https://github.com/joelhooks/joelclaw.git /app/repo-cache \
+    && git -C /app/repo-cache config user.email "panda@joelclaw.com" \
+    && git -C /app/repo-cache config user.name "joelclaw-agent"
+
 # Runtime mounts (not baked into image):
 #   /root/.pi/agent/auth.json     ← k8s secret: pi-auth
 #   /root/.joelclaw/IDENTITY.md   ← k8s configmap: agent-identity
