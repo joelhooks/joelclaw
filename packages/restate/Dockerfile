@@ -68,9 +68,6 @@ COPY --from=deps /app/package.json /app/package.json
 # Copy skills (canonical source, fully tracked in git)
 COPY skills/ /app/skills/
 
-# Copy agent identity chain
-COPY .agents/ /app/.agents/
-
 # Set up pi agent directory structure
 RUN mkdir -p /root/.pi/agent/skills \
     && mkdir -p /root/.joelclaw \
@@ -78,18 +75,21 @@ RUN mkdir -p /root/.pi/agent/skills \
     && mkdir -p /root/.joelclaw/workspace/inbox
 
 # Symlink skills into pi's skill discovery path
-RUN ln -sf /app/skills/* /root/.pi/agent/skills/ 2>/dev/null || true
-
-# Symlink identity files into ~/.joelclaw/
-RUN for f in /app/.agents/IDENTITY.md /app/.agents/SOUL.md /app/.agents/ROLE.md /app/.agents/USER.md /app/.agents/TOOLS.md; do \
-      [ -f "$f" ] && ln -sf "$f" /root/.joelclaw/$(basename "$f"); \
+RUN for s in /app/skills/*/; do \
+      name=$(basename "$s"); \
+      ln -sf "$s" "/root/.pi/agent/skills/$name"; \
     done 2>/dev/null || true
 
-# Copy AGENTS.md as system prompt basis
+# Copy AGENTS.md
 COPY AGENTS.md /app/AGENTS.md
 
-# Auth is mounted as a k8s secret volume at runtime — not baked into the image
-# Mount point: /root/.pi/agent/auth.json
+# Runtime mounts (not baked into image):
+#   /root/.pi/agent/auth.json     ← k8s secret: pi-auth
+#   /root/.joelclaw/IDENTITY.md   ← k8s configmap: agent-identity
+#   /root/.joelclaw/SOUL.md       ← k8s configmap: agent-identity
+#   /root/.joelclaw/ROLE.md       ← k8s configmap: agent-identity
+#   /root/.joelclaw/USER.md       ← k8s configmap: agent-identity
+#   /root/.joelclaw/TOOLS.md      ← k8s configmap: agent-identity
 
 WORKDIR /app/packages/restate
 
@@ -98,4 +98,9 @@ ENV PATH="/root/.bun/bin:/usr/local/bin:$PATH"
 
 EXPOSE 9080
 
-CMD ["bun", "run", "src/index.ts"]
+# Entrypoint: symlink identity files from configmap mount, then start
+CMD ["sh", "-c", "\
+  for f in /root/.joelclaw/identity/*.md; do \
+    [ -f \"$f\" ] && ln -sf \"$f\" \"/root/.joelclaw/$(basename $f)\"; \
+  done; \
+  exec bun run src/index.ts"]
