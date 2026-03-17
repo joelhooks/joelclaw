@@ -683,7 +683,7 @@ Rules:
       level: isTimeout ? "warn" : "error",
       source: "worker",
       component: "docs-ingest",
-      action: "docs.taxonomy.classify",
+      action: isTimeout ? "docs.taxonomy.classify.timeout" : "docs.taxonomy.classify",
       success: false,
       error: isTimeout
         ? `taxonomy classification timed out after ${DOCS_TAXONOMY_TIMEOUT_MS}ms`

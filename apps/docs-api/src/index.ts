@@ -67,12 +67,23 @@ type SearchConceptFacet = {
 type ConceptId =
   | "jc:docs:general"
   | "jc:docs:programming"
+  | "jc:docs:programming:systems"
+  | "jc:docs:programming:languages"
+  | "jc:docs:programming:architecture"
   | "jc:docs:business"
+  | "jc:docs:business:creator"
   | "jc:docs:education"
+  | "jc:docs:education:learning-science"
+  | "jc:docs:education:pedagogy"
   | "jc:docs:design"
+  | "jc:docs:design:game"
+  | "jc:docs:design:systems"
+  | "jc:docs:design:product"
   | "jc:docs:marketing"
   | "jc:docs:strategy"
   | "jc:docs:ai"
+  | "jc:docs:ai:agents"
+  | "jc:docs:ai:applied"
   | "jc:docs:operations"
   | "jc:docs:podcast";
 
@@ -118,36 +129,125 @@ const TAXONOMY_CONCEPTS: TaxonomyConcept[] = [
     prefLabel: "Programming",
     altLabels: ["software", "coding", "development", "computer science"],
     broader: [],
-    narrower: [],
+    narrower: [
+      "jc:docs:programming:systems",
+      "jc:docs:programming:languages",
+      "jc:docs:programming:architecture",
+    ],
     related: ["jc:docs:ai"],
     scopeNote: "Software engineering, code, architecture, and technical implementation.",
+  },
+  {
+    id: "jc:docs:programming:systems",
+    prefLabel: "Systems",
+    altLabels: ["distributed-systems", "databases", "networking"],
+    broader: ["jc:docs:programming"],
+    narrower: [],
+    related: ["jc:docs:ai:applied"],
+    scopeNote: "Distributed systems, databases, networking, infrastructure internals.",
+  },
+  {
+    id: "jc:docs:programming:languages",
+    prefLabel: "Languages",
+    altLabels: ["rust", "typescript", "language-design", "compilers"],
+    broader: ["jc:docs:programming"],
+    narrower: [],
+    related: [],
+    scopeNote: "Programming languages, type systems, compilers, language design.",
+  },
+  {
+    id: "jc:docs:programming:architecture",
+    prefLabel: "Architecture",
+    altLabels: ["patterns", "ddd", "clean-architecture", "hexagonal"],
+    broader: ["jc:docs:programming"],
+    narrower: [],
+    related: ["jc:docs:design:systems"],
+    scopeNote: "Software architecture patterns, DDD, clean arch, microservices.",
   },
   {
     id: "jc:docs:business",
     prefLabel: "Business",
     altLabels: ["company", "finance", "entrepreneurship", "sales"],
     broader: [],
-    narrower: [],
+    narrower: ["jc:docs:business:creator"],
     related: ["jc:docs:marketing", "jc:docs:strategy"],
     scopeNote: "Business operations, management, finance, and growth.",
+  },
+  {
+    id: "jc:docs:business:creator",
+    prefLabel: "Creator Economy",
+    altLabels: ["creator-economy", "indie-business", "audience-building", "bootstrapped"],
+    broader: ["jc:docs:business"],
+    narrower: [],
+    related: ["jc:docs:marketing"],
+    scopeNote: "Creator economy, indie business, audience building, solopreneurship.",
   },
   {
     id: "jc:docs:education",
     prefLabel: "Education",
     altLabels: ["learning", "teaching", "curriculum", "training"],
     broader: [],
-    narrower: [],
+    narrower: ["jc:docs:education:learning-science", "jc:docs:education:pedagogy"],
     related: [],
     scopeNote: "Learning resources, instructional material, and pedagogy.",
+  },
+  {
+    id: "jc:docs:education:learning-science",
+    prefLabel: "Learning Science",
+    altLabels: ["cognitive-science", "learning-theory", "memory", "cognitive-load"],
+    broader: ["jc:docs:education"],
+    narrower: [],
+    related: ["jc:docs:ai"],
+    scopeNote: "Cognitive science, memory, transfer, cognitive load theory.",
+  },
+  {
+    id: "jc:docs:education:pedagogy",
+    prefLabel: "Pedagogy",
+    altLabels: ["instructional-design", "ubd", "curriculum-design"],
+    broader: ["jc:docs:education"],
+    narrower: [],
+    related: [],
+    scopeNote: "Instructional design, Understanding by Design, curriculum.",
   },
   {
     id: "jc:docs:design",
     prefLabel: "Design",
     altLabels: ["ux", "ui", "product design", "visual design"],
     broader: [],
-    narrower: [],
+    narrower: [
+      "jc:docs:design:game",
+      "jc:docs:design:systems",
+      "jc:docs:design:product",
+    ],
     related: ["jc:docs:marketing"],
     scopeNote: "Interface, product, systems, and visual design practices.",
+  },
+  {
+    id: "jc:docs:design:game",
+    prefLabel: "Game Design",
+    altLabels: ["game-design", "game-feel", "play", "interactivity"],
+    broader: ["jc:docs:design"],
+    narrower: [],
+    related: ["jc:docs:education"],
+    scopeNote: "Game design, play, mechanics, interactivity, ludology.",
+  },
+  {
+    id: "jc:docs:design:systems",
+    prefLabel: "Systems Design",
+    altLabels: ["systems-thinking", "complexity", "emergence"],
+    broader: ["jc:docs:design"],
+    narrower: [],
+    related: ["jc:docs:programming:architecture"],
+    scopeNote: "Systems thinking, complexity theory, emergence, feedback loops.",
+  },
+  {
+    id: "jc:docs:design:product",
+    prefLabel: "Product Design",
+    altLabels: ["product-design", "ux", "interaction-design"],
+    broader: ["jc:docs:design"],
+    narrower: [],
+    related: ["jc:docs:marketing"],
+    scopeNote: "Product and UX design, interaction patterns, usability.",
   },
   {
     id: "jc:docs:marketing",
@@ -172,9 +272,27 @@ const TAXONOMY_CONCEPTS: TaxonomyConcept[] = [
     prefLabel: "AI",
     altLabels: ["machine learning", "llm", "agents", "artificial intelligence"],
     broader: [],
-    narrower: [],
+    narrower: ["jc:docs:ai:agents", "jc:docs:ai:applied"],
     related: ["jc:docs:programming"],
     scopeNote: "Artificial intelligence, models, tooling, and agent systems.",
+  },
+  {
+    id: "jc:docs:ai:agents",
+    prefLabel: "AI Agents",
+    altLabels: ["autonomous-agents", "tool-use", "agent-planning", "multi-agent"],
+    broader: ["jc:docs:ai"],
+    narrower: [],
+    related: ["jc:docs:programming:systems"],
+    scopeNote: "Autonomous agents, tool use, planning, multi-agent orchestration.",
+  },
+  {
+    id: "jc:docs:ai:applied",
+    prefLabel: "Applied AI",
+    altLabels: ["rag", "embeddings", "vector-search", "production-ai"],
+    broader: ["jc:docs:ai"],
+    narrower: [],
+    related: ["jc:docs:programming:systems"],
+    scopeNote: "RAG, embeddings, vector search, production AI systems.",
   },
   {
     id: "jc:docs:operations",
