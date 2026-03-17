@@ -46,5 +46,9 @@ RUN echo "=== Tool verification ===" && \
 # Create workspace and artifacts directories
 RUN mkdir -p /workspace /artifacts
 
+# Install guest-runner for microVM exec protocol
+COPY guest-runner.sh /usr/local/bin/guest-runner.sh
+RUN chmod +x /usr/local/bin/guest-runner.sh
+
 WORKDIR /workspace
 SHELL ["/bin/bash", "-c"]

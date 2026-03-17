@@ -50,7 +50,8 @@ sudo bash -c "cat > '$MOUNT_DIR/etc/inittab'" << 'INITEOF'
 ::sysinit:/bin/mount -t tmpfs tmpfs /run
 ::sysinit:/bin/hostname agent-sandbox
 ::sysinit:/sbin/ifconfig lo up
-::respawn:-/bin/bash
+::respawn:/usr/local/bin/guest-runner.sh
+ttyS0::respawn:-/bin/sh
 INITEOF
 
 # Ensure /dev/console exists
