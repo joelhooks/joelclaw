@@ -760,6 +760,19 @@ importers:
         specifier: ^4.0.0
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(yaml@2.8.2)
 
+  packages/world-restate:
+    dependencies:
+      node-fetch:
+        specifier: ^3.3.2
+        version: 3.3.2
+    devDependencies:
+      '@types/node':
+        specifier: ^20.10.0
+        version: 20.19.37
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.2
+
 packages:
 
   '@alloc/quick-lru@5.2.0':
@@ -4322,6 +4335,9 @@ packages:
 
   '@types/nlcst@2.0.3':
     resolution: {integrity: sha512-vSYNSDe6Ix3q+6Z7ri9lyWqgGhJTmzRjZRqyq15N0Z/1/UnVsno9G/N40NBijoYx2seFDIl0+B2mgAb9mezUCA==}
+
+  '@types/node@20.19.37':
+    resolution: {integrity: sha512-8kzdPJ3FsNsVIurqBs7oodNnCEVbni9yUEkaHbgptDACOPW04jimGagZ51E6+lXUwJjgnBw+hyko/lkFWCldqw==}
 
   '@types/node@22.15.3':
     resolution: {integrity: sha512-lX7HFZeHf4QG/J7tBZqrCAXwz9J5RD56Y6MpP0eJkka8p+K0RY/yBTW7CYFJ4VGCclxqOLKmiGP5juQc6MKgcw==}
@@ -12354,7 +12370,7 @@ snapshots:
 
   '@types/bunyan@1.8.11':
     dependencies:
-      '@types/node': 22.15.3
+      '@types/node': 25.3.0
 
   '@types/chai@5.2.3':
     dependencies:
@@ -12363,7 +12379,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 22.15.3
+      '@types/node': 25.3.0
 
   '@types/debug@4.1.12':
     dependencies:
@@ -12409,7 +12425,7 @@ snapshots:
 
   '@types/memcached@2.2.10':
     dependencies:
-      '@types/node': 22.15.3
+      '@types/node': 25.3.0
 
   '@types/mime-types@2.1.4': {}
 
@@ -12417,11 +12433,15 @@ snapshots:
 
   '@types/mysql@2.15.27':
     dependencies:
-      '@types/node': 22.15.3
+      '@types/node': 25.3.0
 
   '@types/nlcst@2.0.3':
     dependencies:
       '@types/unist': 3.0.3
+
+  '@types/node@20.19.37':
+    dependencies:
+      undici-types: 6.21.0
 
   '@types/node@22.15.3':
     dependencies:
@@ -12433,7 +12453,7 @@ snapshots:
 
   '@types/oracledb@6.5.2':
     dependencies:
-      '@types/node': 22.15.3
+      '@types/node': 25.3.0
 
   '@types/pg-pool@2.0.7':
     dependencies:
@@ -12441,7 +12461,7 @@ snapshots:
 
   '@types/pg@8.15.6':
     dependencies:
-      '@types/node': 22.15.3
+      '@types/node': 25.3.0
       pg-protocol: 1.11.0
       pg-types: 2.2.0
 
@@ -12472,7 +12492,7 @@ snapshots:
 
   '@types/tedious@4.0.14':
     dependencies:
-      '@types/node': 22.15.3
+      '@types/node': 25.3.0
 
   '@types/unist@2.0.11': {}
 
@@ -15278,7 +15298,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.0
-      '@types/node': 22.15.3
+      '@types/node': 25.3.0
       long: 5.3.2
 
   protobufjs@8.0.0:

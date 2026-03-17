@@ -23,7 +23,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: restate-worker
-          image: ghcr.io/joelhooks/restate-worker:20260316-161607
+          image: ghcr.io/joelhooks/restate-worker:20260316-201607
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: false
@@ -42,6 +42,10 @@ spec:
             - name: pi-auth
               mountPath: /root/.pi/agent/auth.json
               subPath: auth.json
+              readOnly: true
+            - name: github-token
+              mountPath: /root/.github-token
+              subPath: token
               readOnly: true
             - name: agent-identity
               mountPath: /root/.joelclaw/identity
@@ -112,6 +116,9 @@ spec:
         - name: pi-auth
           secret:
             secretName: pi-auth
+        - name: github-token
+          secret:
+            secretName: github-token
         - name: agent-identity
           configMap:
             name: agent-identity
