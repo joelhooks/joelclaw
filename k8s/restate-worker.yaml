@@ -114,8 +114,9 @@ spec:
           persistentVolumeClaim:
             claimName: firecracker-images
         - name: pi-auth
-          secret:
-            secretName: pi-auth
+          hostPath:
+            path: /Users/joel/.pi/agent/auth.json
+            type: File
         - name: github-token
           secret:
             secretName: github-token
