@@ -118,6 +118,7 @@ Semantics:
 - `joelclaw log`
 - `joelclaw notify`
 - `joelclaw otel`
+- `joelclaw o11y`
 - `joelclaw recall`
 - `joelclaw memory`
 - `joelclaw subscribe`
@@ -598,6 +599,8 @@ joelclaw mail {status|register|send|inbox|read|reserve|renew|release|locks|searc
 
 joelclaw otel {list|search|stats|emit}
 
+joelclaw o11y {session|system}
+
 joelclaw recall <query> [--limit N] [--min-score F] [--raw] [--include-hold] [--include-discard] [--budget auto|lean|balanced|deep] [--category <id|alias>]
 
 joelclaw subscribe {list|add|remove|check|summary}
@@ -611,6 +614,8 @@ Semantics:
 - `deploy`, `heal`, `log`, `notify`, `secrets`, `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while executing through capability registry adapters (`scripted-deploy`, `runbook-heal`, `slog-cli`, `gateway-redis`, `agent-secrets-cli`, `mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
 - `typesense-otel`, `typesense-recall`, `scripted-deploy`, `runbook-heal`, `slog-cli`, `agent-secrets-cli`, `gateway-redis`, `mcp-agent-mail`, and `redis-subscriptions` adapter logic is canonical in `@joelclaw/sdk` (`packages/sdk/src/capabilities/adapters/*`); CLI adapter files are thin re-exports.
 - `otel emit` accepts stdin JSON payloads (or convenience args/positional action), normalizes defaults (`id`, `timestamp`, `level=info`, `success=true`), and forwards to the worker ingest endpoint (`/observability/emit`).
+- `otel list` and `otel search` accept exact `--session` / `--system` filters, mapped to `sessionId` / `systemId` in Typesense.
+- `o11y session` / `o11y system` run a unified multi-search across `otel_events` and `system_log`, merge both timelines by `timestamp`, and tag each hit with its source collection.
 - Software surfaces should route OTEL through this command contract (or shared CLI ingest helper), not ad-hoc raw HTTP calls.
 - `mail search` auto-falls back to `/mail/api/unified-inbox` filtering when MCP `search_messages` returns transient DB/tool errors, so steering signals remain usable.
 - `mail reserve` now sends explicit lease TTL (`--ttl-seconds`, default `900`) and enforces a minimum of 60s.

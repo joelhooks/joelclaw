@@ -569,6 +569,8 @@ export class JoelclawClient {
         level: toCsv(options.level),
         source: toCsv(options.source),
         component: toCsv(options.component),
+        session: options.session?.trim() || undefined,
+        system: options.system?.trim() || undefined,
         success: typeof options.success === "boolean" ? (options.success ? "true" : "false") : undefined,
         hours: options.hours ?? 24,
         limit: options.limit ?? 30,
@@ -586,6 +588,8 @@ export class JoelclawClient {
     appendOption(args, "level", toCsv(options.level))
     appendOption(args, "source", toCsv(options.source))
     appendOption(args, "component", toCsv(options.component))
+    appendOption(args, "session", options.session?.trim() || undefined)
+    appendOption(args, "system", options.system?.trim() || undefined)
     if (typeof options.success === "boolean") {
       appendOption(args, "success", options.success ? "true" : "false")
     }
@@ -608,6 +612,8 @@ export class JoelclawClient {
         level: toCsv(options.level),
         source: toCsv(options.source),
         component: toCsv(options.component),
+        session: options.session?.trim() || undefined,
+        system: options.system?.trim() || undefined,
         success: typeof options.success === "boolean" ? (options.success ? "true" : "false") : undefined,
         hours: options.hours ?? 24,
         limit: options.limit ?? 30,
@@ -625,6 +631,8 @@ export class JoelclawClient {
     appendOption(args, "level", toCsv(options.level))
     appendOption(args, "source", toCsv(options.source))
     appendOption(args, "component", toCsv(options.component))
+    appendOption(args, "session", options.session?.trim() || undefined)
+    appendOption(args, "system", options.system?.trim() || undefined)
     if (typeof options.success === "boolean") {
       appendOption(args, "success", options.success ? "true" : "false")
     }

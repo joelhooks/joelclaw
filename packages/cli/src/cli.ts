@@ -29,6 +29,7 @@ import { memoryCmd } from "./commands/memory";
 import { nasCmd } from "./commands/nas";
 import { noteCmd } from "./commands/note";
 import { notifyCmd } from "./commands/notify";
+import { o11yCmd } from "./commands/o11y";
 import { otelCmd } from "./commands/otel";
 import { queueCmd } from "./commands/queue";
 import { recallCmd } from "./commands/recall";
@@ -195,7 +196,8 @@ const root = Command.make("joelclaw", {}, () =>
             jobs: "joelclaw jobs status [--hours N] [--count N]",
             nas: "joelclaw nas {status|runs|review}",
             restate: "joelclaw restate {status|deployments|smoke}",
-            otel: "joelclaw otel {list|search|stats}",
+            otel: "joelclaw otel {list|search|stats|emit}",
+            o11y: "joelclaw o11y {session|system}",
             langfuse: "joelclaw langfuse {aggregate}",
             subscribe: "joelclaw subscribe {list|add|remove|check|summary}",
             webhook: "joelclaw webhook {subscribe|unsubscribe|list|stream}",
@@ -322,6 +324,7 @@ const root = Command.make("joelclaw", {}, () =>
     nasCmd,
     restateCmd,
     otelCmd,
+    o11yCmd,
     langfuseCmd,
     inngestCmd,
     subscribeCmd,

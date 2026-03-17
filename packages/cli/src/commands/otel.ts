@@ -81,6 +81,16 @@ const componentOpt = Options.text("component").pipe(
   Options.optional,
 )
 
+const sessionOpt = Options.text("session").pipe(
+  Options.withDescription("Exact sessionId filter"),
+  Options.optional,
+)
+
+const systemOpt = Options.text("system").pipe(
+  Options.withDescription("Exact systemId filter"),
+  Options.optional,
+)
+
 const successOpt = Options.text("success").pipe(
   Options.withDescription("true | false"),
   Options.optional,
@@ -150,17 +160,21 @@ const emitErrorOpt = Options.text("error").pipe(
 
 const otelListCmd = Command.make(
   "list",
-  {
-    level: levelOpt,
-    source: sourceOpt,
-    component: componentOpt,
-    success: successOpt,
-    hours: hoursOpt,
-    limit: limitOpt,
-    page: pageOpt,
-  },
-  ({ level, source, component, success, hours, limit, page }) =>
+    {
+      level: levelOpt,
+      source: sourceOpt,
+      component: componentOpt,
+      session: sessionOpt,
+      system: systemOpt,
+      success: successOpt,
+      hours: hoursOpt,
+      limit: limitOpt,
+      page: pageOpt,
+    },
+  ({ level, source, component, session, system, success, hours, limit, page }) =>
     Effect.gen(function* () {
+      const sessionValue = parseOptionText(session)
+      const systemValue = parseOptionText(system)
       const result = yield* executeCapabilityCommand<Record<string, unknown>>({
         capability: "otel",
         subcommand: "list",
@@ -168,6 +182,8 @@ const otelListCmd = Command.make(
           level: parseOptionText(level),
           source: parseOptionText(source),
           component: parseOptionText(component),
+          session: sessionValue,
+          system: systemValue,
           success: parseOptionText(success),
           hours,
           limit,
@@ -196,6 +212,12 @@ const otelListCmd = Command.make(
           [
             { command: "joelclaw otel search \"fatal\" --hours 24", description: "Search text in recent events" },
             { command: "joelclaw otel stats --hours 24", description: "Error-rate snapshot" },
+            ...(sessionValue
+              ? [{ command: `joelclaw o11y session ${sessionValue} --hours ${hours}`, description: "Correlate this session across OTEL + slog" }]
+              : []),
+            ...(systemValue
+              ? [{ command: `joelclaw o11y system ${systemValue} --hours ${hours}`, description: "Correlate this system across OTEL + slog" }]
+              : []),
           ],
         ),
       )
@@ -206,18 +228,22 @@ const searchArg = Args.text({ name: "query" }).pipe(Args.withDescription("Full-t
 
 const otelSearchCmd = Command.make(
   "search",
-  {
-    query: searchArg,
-    level: levelOpt,
-    source: sourceOpt,
-    component: componentOpt,
-    success: successOpt,
-    hours: hoursOpt,
-    limit: limitOpt,
-    page: pageOpt,
-  },
-  ({ query, level, source, component, success, hours, limit, page }) =>
+    {
+      query: searchArg,
+      level: levelOpt,
+      source: sourceOpt,
+      component: componentOpt,
+      session: sessionOpt,
+      system: systemOpt,
+      success: successOpt,
+      hours: hoursOpt,
+      limit: limitOpt,
+      page: pageOpt,
+    },
+  ({ query, level, source, component, session, system, success, hours, limit, page }) =>
     Effect.gen(function* () {
+      const sessionValue = parseOptionText(session)
+      const systemValue = parseOptionText(system)
       const result = yield* executeCapabilityCommand<Record<string, unknown>>({
         capability: "otel",
         subcommand: "search",
@@ -226,6 +252,8 @@ const otelSearchCmd = Command.make(
           level: parseOptionText(level),
           source: parseOptionText(source),
           component: parseOptionText(component),
+          session: sessionValue,
+          system: systemValue,
           success: parseOptionText(success),
           hours,
           limit,
@@ -257,6 +285,12 @@ const otelSearchCmd = Command.make(
               description: "Narrow to high-severity",
             },
             { command: "joelclaw otel stats --hours 24", description: "Get aggregate error rate" },
+            ...(sessionValue
+              ? [{ command: `joelclaw o11y session ${sessionValue} --hours ${hours}`, description: "Correlate this session across OTEL + slog" }]
+              : []),
+            ...(systemValue
+              ? [{ command: `joelclaw o11y system ${systemValue} --hours ${hours}`, description: "Correlate this system across OTEL + slog" }]
+              : []),
           ],
         ),
       )
@@ -419,8 +453,8 @@ export const otelCmd = Command.make("otel", {}, () =>
       {
         description: "Observability event explorer (ADR-0087)",
         subcommands: {
-          list: "joelclaw otel list [--hours 24] [--level error,fatal]",
-          search: 'joelclaw otel search "query" [filters]',
+          list: "joelclaw otel list [--hours 24] [--level error,fatal] [--session <id>] [--system <id>]",
+          search: 'joelclaw otel search "query" [filters] [--session <id>] [--system <id>]',
           stats: "joelclaw otel stats [--hours 24]",
           emit: "joelclaw otel emit <action> [--source cli] [--component otel-cli] [--metadata '{\"k\":\"v\"}']",
         },
@@ -429,6 +463,7 @@ export const otelCmd = Command.make("otel", {}, () =>
         { command: "joelclaw otel list --hours 24", description: "Recent events" },
         { command: 'joelclaw otel search "gateway" --level error,fatal --hours 24', description: "Search failures by text" },
         { command: "joelclaw otel stats --hours 24", description: "Error-rate snapshot" },
+        { command: "joelclaw o11y session <sessionId> --hours 24", description: "Correlate one session across OTEL + slog" },
         { command: "joelclaw otel emit system.example.ping --source cli --component otel-cli", description: "Emit test event" },
       ],
       true,

@@ -86,6 +86,8 @@ await client.otelEmit({
 })
 ```
 
+`otelList()` and `otelSearch()` also accept exact `session` / `system` filters, which map to `sessionId` / `systemId` in the Typesense-backed OTEL capability adapter.
+
 ## Notes
 
 - Envelope schema mirrors CLI contract in `packages/cli/src/response.ts`.

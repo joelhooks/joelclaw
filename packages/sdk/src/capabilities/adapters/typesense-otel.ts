@@ -6,7 +6,9 @@ import { type CapabilityPort, capabilityError } from "../contract"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const COLLECTION = "otel_events"
+const SYSTEM_LOG_COLLECTION = "system_log"
 const QUERY_BY = "action,error,component,source,metadata_json,search_text"
+const SYSTEM_LOG_QUERY_BY = "detail,tool,action"
 const OTEL_LEVELS = new Set(["debug", "info", "warn", "error", "fatal"])
 
 type OtelQueryResult = { ok: true; data: unknown } | {
@@ -20,6 +22,8 @@ const ListArgsSchema = Schema.Struct({
   level: Schema.optional(Schema.String),
   source: Schema.optional(Schema.String),
   component: Schema.optional(Schema.String),
+  session: Schema.optional(Schema.String),
+  system: Schema.optional(Schema.String),
   success: Schema.optional(Schema.String),
   hours: Schema.Number,
   limit: Schema.Number,
@@ -31,10 +35,19 @@ const SearchArgsSchema = Schema.Struct({
   level: Schema.optional(Schema.String),
   source: Schema.optional(Schema.String),
   component: Schema.optional(Schema.String),
+  session: Schema.optional(Schema.String),
+  system: Schema.optional(Schema.String),
   success: Schema.optional(Schema.String),
   hours: Schema.Number,
   limit: Schema.Number,
   page: Schema.Number,
+})
+
+const CorrelateArgsSchema = Schema.Struct({
+  sessionId: Schema.optional(Schema.String),
+  systemId: Schema.optional(Schema.String),
+  hours: Schema.Number,
+  limit: Schema.Number,
 })
 
 const StatsArgsSchema = Schema.Struct({
@@ -67,6 +80,11 @@ const commands = {
     argsSchema: SearchArgsSchema,
     resultSchema: Schema.Unknown,
   },
+  correlate: {
+    summary: "Correlate observability records across OTEL + system log",
+    argsSchema: CorrelateArgsSchema,
+    resultSchema: Schema.Unknown,
+  },
   stats: {
     summary: "Compute OTEL aggregate stats",
     argsSchema: StatsArgsSchema,
@@ -81,6 +99,15 @@ const commands = {
 
 type OtelCommandName = keyof typeof commands
 
+function helpCommandForSubcommand(subcommand: OtelCommandName): string {
+  switch (subcommand) {
+    case "correlate":
+      return "joelclaw o11y --help"
+    default:
+      return `joelclaw otel ${String(subcommand)} --help`
+  }
+}
+
 function decodeArgs<K extends OtelCommandName>(
   subcommand: K,
   args: unknown
@@ -90,7 +117,7 @@ function decodeArgs<K extends OtelCommandName>(
       capabilityError(
         "OTEL_INVALID_ARGS",
         Schema.formatIssueSync(error),
-        `Check \`joelclaw otel ${String(subcommand)} --help\` for valid arguments.`
+        `Check \`${helpCommandForSubcommand(subcommand)}\` for valid arguments.`
       )
     )
   )
@@ -109,17 +136,24 @@ function splitCsv(value: string | undefined): string[] {
     .filter(Boolean)
 }
 
+function quoteFilterValue(value: string): string {
+  return `\`${value.replace(/[`\\]/gu, "\\$&")}\``
+}
+
 function buildFilter(input: {
   level?: string
   source?: string
   component?: string
+  session?: string
+  system?: string
   success?: string
   hours?: number
-}): string | undefined {
+}, options: { timestampUnit?: "milliseconds" | "seconds" } = {}): string | undefined {
   const filters: string[] = []
 
   if (typeof input.hours === "number" && Number.isFinite(input.hours) && input.hours > 0) {
-    const cutoff = Date.now() - input.hours * 60 * 60 * 1000
+    const cutoffMs = Date.now() - input.hours * 60 * 60 * 1000
+    const cutoff = options.timestampUnit === "seconds" ? Math.floor(cutoffMs / 1000) : Math.floor(cutoffMs)
     filters.push(`timestamp:>=${Math.floor(cutoff)}`)
   }
 
@@ -131,6 +165,12 @@ function buildFilter(input: {
 
   const components = splitCsv(input.component)
   if (components.length > 0) filters.push(`component:=[${components.join(",")}]`)
+
+  const session = input.session?.trim()
+  if (session) filters.push(`sessionId:=${quoteFilterValue(session)}`)
+
+  const system = input.system?.trim()
+  if (system) filters.push(`systemId:=${quoteFilterValue(system)}`)
 
   if (input.success === "true" || input.success === "false") {
     filters.push(`success:=${input.success}`)
@@ -170,6 +210,37 @@ async function queryOtel(options: {
     if (!resp.ok) {
       const text = await resp.text()
       return { ok: false, error: `Typesense query failed (${resp.status}): ${text}` }
+    }
+
+    return { ok: true, data: await resp.json() }
+  } catch (error) {
+    if (isTypesenseApiKeyError(error)) {
+      return {
+        ok: false,
+        error: error.message,
+        code: error.code,
+        fix: error.fix,
+      }
+    }
+    return { ok: false, error: String(error) }
+  }
+}
+
+async function queryOtelMultiSearch(searches: ReadonlyArray<Record<string, unknown>>): Promise<OtelQueryResult> {
+  try {
+    const apiKey = resolveTypesenseApiKey()
+    const resp = await fetch(`${TYPESENSE_URL}/multi_search`, {
+      method: "POST",
+      headers: {
+        "X-TYPESENSE-API-KEY": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ searches }),
+    })
+
+    if (!resp.ok) {
+      const text = await resp.text()
+      return { ok: false, error: `Typesense multi_search failed (${resp.status}): ${text}` }
     }
 
     return { ok: true, data: await resp.json() }
@@ -289,6 +360,8 @@ function simplifyHit(hit: unknown): Record<string, unknown> {
   return {
     id: doc.id,
     ts: typeof timestamp === "number" ? new Date(timestamp).toISOString() : timestamp,
+    sessionId: doc.sessionId,
+    systemId: doc.systemId,
     level: doc.level,
     source: doc.source,
     component: doc.component,
@@ -297,6 +370,51 @@ function simplifyHit(hit: unknown): Record<string, unknown> {
     duration_ms: doc.duration_ms,
     error: doc.error,
     metadata_keys: doc.metadata_keys,
+  }
+}
+
+function timestampFromDocument(document: Record<string, unknown>): number {
+  if (typeof document.timestamp === "number" && Number.isFinite(document.timestamp)) {
+    return document.timestamp < 1_000_000_000_000 ? document.timestamp * 1000 : document.timestamp
+  }
+  if (typeof document.timestamp === "string") {
+    const parsed = Number(document.timestamp)
+    if (Number.isFinite(parsed)) return parsed < 1_000_000_000_000 ? parsed * 1000 : parsed
+  }
+  return 0
+}
+
+function simplifyCorrelatedHit(collection: string, hit: unknown): Record<string, unknown> {
+  const doc = (hit as { document?: Record<string, unknown> })?.document ?? {}
+  const timestamp = timestampFromDocument(doc)
+  const common = {
+    collection,
+    timestamp,
+    ts: timestamp > 0 ? new Date(timestamp).toISOString() : doc.timestamp,
+    sessionId: doc.sessionId,
+    systemId: doc.systemId,
+    action: doc.action,
+  }
+
+  if (collection === COLLECTION) {
+    return {
+      ...common,
+      id: doc.id,
+      level: doc.level,
+      source: doc.source,
+      component: doc.component,
+      success: doc.success,
+      duration_ms: doc.duration_ms,
+      error: doc.error,
+      metadata_keys: doc.metadata_keys,
+    }
+  }
+
+  return {
+    ...common,
+    tool: doc.tool,
+    detail: doc.detail,
+    reason: doc.reason,
   }
 }
 
@@ -330,6 +448,8 @@ export const typesenseOtelAdapter: CapabilityPort<typeof commands> = {
             level: args.level,
             source: args.source,
             component: args.component,
+            session: args.session,
+            system: args.system,
             success: args.success,
             hours: args.hours,
           })
@@ -367,6 +487,8 @@ export const typesenseOtelAdapter: CapabilityPort<typeof commands> = {
             level: args.level,
             source: args.source,
             component: args.component,
+            session: args.session,
+            system: args.system,
             success: args.success,
             hours: args.hours,
           })
@@ -397,6 +519,106 @@ export const typesenseOtelAdapter: CapabilityPort<typeof commands> = {
             filterBy,
             events: hits,
             facets: payload?.facet_counts ?? [],
+          }
+        }
+        case "correlate": {
+          const args = yield* decodeArgs("correlate", rawArgs)
+          const sessionId = args.sessionId?.trim()
+          const systemId = args.systemId?.trim()
+
+          if (!sessionId && !systemId) {
+            return yield* Effect.fail(
+              capabilityError(
+                "OTEL_INVALID_ARGS",
+                "OTEL correlate requires `sessionId` or `systemId`.",
+                "Provide `sessionId` or `systemId` to correlate across otel_events and system_log."
+              )
+            )
+          }
+
+          const otelFilterBy = buildFilter({
+            session: sessionId,
+            system: systemId,
+            hours: args.hours,
+          })
+          const systemLogFilterBy = buildFilter({
+            session: sessionId,
+            system: systemId,
+            hours: args.hours,
+          }, { timestampUnit: "seconds" })
+
+          const perPage = parsePositiveInt(args.limit, 50, 200)
+          const result = yield* Effect.promise(() =>
+            queryOtelMultiSearch([
+              {
+                collection: COLLECTION,
+                q: "*",
+                query_by: QUERY_BY,
+                per_page: perPage,
+                sort_by: "timestamp:desc",
+                include_fields: "id,timestamp,level,source,component,action,success,duration_ms,error,metadata_keys,sessionId,systemId",
+                ...(otelFilterBy ? { filter_by: otelFilterBy } : {}),
+              },
+              {
+                collection: SYSTEM_LOG_COLLECTION,
+                q: "*",
+                query_by: SYSTEM_LOG_QUERY_BY,
+                per_page: perPage,
+                sort_by: "timestamp:desc",
+                include_fields: "action,tool,detail,reason,timestamp,sessionId,systemId",
+                ...(systemLogFilterBy ? { filter_by: systemLogFilterBy } : {}),
+              },
+            ])
+          )
+
+          if (!result.ok) {
+            return yield* Effect.fail(
+              failFromResult(result, "OTEL_QUERY_FAILED", "Check Typesense health and API key")
+            )
+          }
+
+          const payload = result.data as { results?: Array<Record<string, unknown>> }
+          const collectionResults = Array.isArray(payload?.results) ? payload.results : []
+          const mergedHits = collectionResults
+            .flatMap((entry, index) => {
+              const collection =
+                typeof entry?.request_params === "object" &&
+                entry?.request_params &&
+                typeof (entry.request_params as { collection_name?: unknown }).collection_name === "string"
+                  ? (entry.request_params as { collection_name: string }).collection_name
+                  : index === 0
+                    ? COLLECTION
+                    : SYSTEM_LOG_COLLECTION
+              const hits = Array.isArray(entry?.hits) ? entry.hits : []
+              return hits.map((hit) => simplifyCorrelatedHit(collection, hit))
+            })
+            .sort((a, b) => Number((b as { timestamp?: unknown }).timestamp ?? 0) - Number((a as { timestamp?: unknown }).timestamp ?? 0))
+            .slice(0, perPage)
+
+          return {
+            windowHours: args.hours,
+            limit: perPage,
+            returned: mergedHits.length,
+            found: collectionResults.reduce((total, entry) => total + Number(entry?.found ?? 0), 0),
+            filterBy: {
+              otel_events: otelFilterBy,
+              system_log: systemLogFilterBy,
+            },
+            scope: sessionId ? "session" : "system",
+            sessionId,
+            systemId,
+            collections: collectionResults.map((entry, index) => ({
+              collection:
+                typeof entry?.request_params === "object" &&
+                entry?.request_params &&
+                typeof (entry.request_params as { collection_name?: unknown }).collection_name === "string"
+                  ? (entry.request_params as { collection_name: string }).collection_name
+                  : index === 0
+                    ? COLLECTION
+                    : SYSTEM_LOG_COLLECTION,
+              found: Number(entry?.found ?? 0),
+            })),
+            hits: mergedHits,
           }
         }
         case "stats": {
@@ -527,4 +749,5 @@ export const __otelAdapterTestUtils = {
   buildFilter,
   parsePositiveInt,
   splitCsv,
+  timestampFromDocument,
 }

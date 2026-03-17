@@ -50,6 +50,8 @@ export interface OtelListOptions {
   readonly level?: string | readonly string[]
   readonly source?: string | readonly string[]
   readonly component?: string | readonly string[]
+  readonly session?: string
+  readonly system?: string
   readonly success?: boolean
   readonly hours?: number
   readonly limit?: number
