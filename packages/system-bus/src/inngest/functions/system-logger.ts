@@ -29,8 +29,13 @@ export const systemLogger = inngest.createFunction(
     const tool = (data.tool as string) ?? eventParts[0] ?? "unknown";
     const detail = (data.detail as string) ?? JSON.stringify(data);
     const reason = typeof data.reason === "string" ? data.reason : undefined;
+    // ADR-0233: provenance — default to system-bus since this runs as an Inngest function
+    const sessionId = (data.sessionId as string) ?? "system-bus";
+    const systemId = (data.systemId as string) ?? "panda";
     const entry = JSON.stringify({
       timestamp: new Date().toISOString(),
+      sessionId,
+      systemId,
       action,
       tool,
       detail,

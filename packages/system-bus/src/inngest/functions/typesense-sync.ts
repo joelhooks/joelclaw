@@ -310,6 +310,9 @@ export async function indexBlogPosts(): Promise<{ success: number; errors: numbe
 // ── Slog indexing ───────────────────────────────────────────────────
 
 export async function indexSystemLog(): Promise<{ success: number; errors: number }> {
+  // Ensure collection has provenance fields (ADR-0233)
+  await ensureSystemLogSchema();
+
   const docs: Record<string, unknown>[] = [];
   try {
     const lines = readFileSync(SLOG_PATH, "utf-8").trim().split("\n");
@@ -318,6 +321,8 @@ export async function indexSystemLog(): Promise<{ success: number; errors: numbe
         const e = JSON.parse(lines[i]!);
         const doc: Record<string, unknown> = {
           id: String(i),
+          sessionId: e.sessionId || "unknown",
+          systemId: e.systemId || "unknown",
           action: e.action || "",
           tool: e.tool || "",
           detail: e.detail || "",
@@ -354,6 +359,41 @@ export async function indexSystemLog(): Promise<{ success: number; errors: numbe
   }
 
   return result;
+}
+
+/**
+ * Ensure the system_log collection has sessionId + systemId fields (ADR-0233).
+ * Typesense supports adding new fields to existing collections via PATCH.
+ */
+async function ensureSystemLogSchema(): Promise<void> {
+  try {
+    const resp = await typesense.typesenseRequest("/collections/system_log", { method: "GET" });
+    if (!resp.ok) return; // collection doesn't exist yet, will be created on import
+
+    const schema = (await resp.json()) as { fields?: Array<{ name: string }> };
+    const existingFields = new Set((schema.fields ?? []).map((f) => f.name));
+
+    const newFields: Array<Record<string, unknown>> = [];
+    if (!existingFields.has("sessionId")) {
+      newFields.push({ name: "sessionId", type: "string", facet: true, optional: true });
+    }
+    if (!existingFields.has("systemId")) {
+      newFields.push({ name: "systemId", type: "string", facet: true, optional: true });
+    }
+
+    if (newFields.length === 0) return;
+
+    const patch = await typesense.typesenseRequest("/collections/system_log", {
+      method: "PATCH",
+      body: JSON.stringify({ fields: newFields }),
+    });
+    if (!patch.ok) {
+      const text = await patch.text();
+      console.warn(`[system_log] schema patch failed (${patch.status}): ${text}`);
+    }
+  } catch (err) {
+    console.warn(`[system_log] schema check failed: ${err}`);
+  }
 }
 
 // ── Inngest functions ───────────────────────────────────────────────
