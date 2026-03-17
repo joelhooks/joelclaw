@@ -1,7 +1,7 @@
-# restate-worker Docker image (k8s worker role)
+# restate-worker Docker image — full agent execution environment
 #
-# Full workspace install, then copy the workspace node_modules tree plus the
-# minimal package set this worker needs into the bun runtime image.
+# Contains: Restate worker services, Firecracker binary, pi agent CLI,
+# codex CLI, full monorepo checkout with skills, and agent tooling.
 
 FROM node:22-bookworm-slim AS deps
 ENV PNPM_HOME="/pnpm"
@@ -32,28 +32,69 @@ RUN apk add --no-cache curl tar \
     && chmod +x /usr/local/bin/firecracker \
     && rm -rf /tmp/fc.tgz /tmp/release-*
 
-# Runtime stage — bun
+# Runtime stage — bun + full agent environment
 FROM oven/bun:1.3.9 AS runtime
 
-# Install curl for Firecracker API socket calls
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    openssh-client \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js (pi requires node in PATH)
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pi CLI globally
+RUN npm install -g @mariozechner/pi-coding-agent && pi --version
+
+# Install codex CLI globally
+RUN npm install -g @openai/codex || echo "codex install completed"
 
 # Copy Firecracker binary
 COPY --from=firecracker /usr/local/bin/firecracker /usr/local/bin/firecracker
 
 WORKDIR /app
 
-# Copy resolved workspace deps + only the packages needed at runtime
+# Copy resolved workspace deps + ALL packages (full monorepo for agent code access)
 COPY --from=deps /app/node_modules /app/node_modules
-COPY --from=deps /app/packages/agent-execution /app/packages/agent-execution
-COPY --from=deps /app/packages/queue /app/packages/queue
-COPY --from=deps /app/packages/restate /app/packages/restate
-COPY --from=deps /app/packages/telemetry /app/packages/telemetry
+COPY --from=deps /app/packages /app/packages
+COPY --from=deps /app/apps /app/apps
 COPY --from=deps /app/package.json /app/package.json
+
+# Copy skills (canonical source, fully tracked in git)
+COPY skills/ /app/skills/
+
+# Copy agent identity chain
+COPY .agents/ /app/.agents/
+
+# Set up pi agent directory structure
+RUN mkdir -p /root/.pi/agent/skills \
+    && mkdir -p /root/.joelclaw \
+    && mkdir -p /root/.joelclaw/workspace/memory \
+    && mkdir -p /root/.joelclaw/workspace/inbox
+
+# Symlink skills into pi's skill discovery path
+RUN ln -sf /app/skills/* /root/.pi/agent/skills/ 2>/dev/null || true
+
+# Symlink identity files into ~/.joelclaw/
+RUN for f in /app/.agents/IDENTITY.md /app/.agents/SOUL.md /app/.agents/ROLE.md /app/.agents/USER.md /app/.agents/TOOLS.md; do \
+      [ -f "$f" ] && ln -sf "$f" /root/.joelclaw/$(basename "$f"); \
+    done 2>/dev/null || true
+
+# Copy AGENTS.md as system prompt basis
+COPY AGENTS.md /app/AGENTS.md
+
+# Auth is mounted as a k8s secret volume at runtime — not baked into the image
+# Mount point: /root/.pi/agent/auth.json
 
 WORKDIR /app/packages/restate
 
 ENV NODE_ENV=production
+ENV PATH="/root/.bun/bin:/usr/local/bin:$PATH"
 
 EXPOSE 9080
 

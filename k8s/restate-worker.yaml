@@ -39,6 +39,10 @@ spec:
               mountPath: /dev/kvm
             - name: firecracker-data
               mountPath: /tmp/firecracker-test
+            - name: pi-auth
+              mountPath: /root/.pi/agent/auth.json
+              subPath: auth.json
+              readOnly: true
           envFrom:
             - secretRef:
                 name: system-bus-env
@@ -102,6 +106,9 @@ spec:
         - name: firecracker-data
           persistentVolumeClaim:
             claimName: firecracker-images
+        - name: pi-auth
+          secret:
+            secretName: pi-auth
 ---
 apiVersion: v1
 kind: Service
