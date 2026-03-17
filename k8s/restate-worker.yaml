@@ -23,7 +23,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: restate-worker
-          image: ghcr.io/joelhooks/restate-worker:20260316-201607
+          image: ghcr.io/joelhooks/restate-worker:20260317-084447
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: false
@@ -114,9 +114,8 @@ spec:
           persistentVolumeClaim:
             claimName: firecracker-images
         - name: pi-auth
-          hostPath:
-            path: /Users/joel/.pi/agent/auth.json
-            type: File
+          secret:
+            secretName: pi-auth
         - name: github-token
           secret:
             secretName: github-token
