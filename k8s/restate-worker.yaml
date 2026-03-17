@@ -23,7 +23,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: restate-worker
-          image: ghcr.io/joelhooks/restate-worker:20260317-084447
+          image: ghcr.io/joelhooks/restate-worker:20260317-091052
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: false
