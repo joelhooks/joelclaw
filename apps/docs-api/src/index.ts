@@ -318,6 +318,38 @@ const CONCEPTS_BY_ID = new Map<string, TaxonomyConcept>(
   TAXONOMY_CONCEPTS.map((concept) => [concept.id, concept]),
 );
 
+// Simple TTL-based cache
+class TTLCache<T> {
+  private store = new Map<string, { value: T; expiresAt: number }>();
+
+  constructor(readonly ttlMs: number) {}
+
+  get(key: string): T | null {
+    const entry = this.store.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+
+  set(key: string, value: T): void {
+    this.store.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+  }
+
+  clear(): void {
+    this.store.clear();
+  }
+}
+
+// Cache instances (5-minute TTL)
+const docByIdCache = new TTLCache<Record<string, unknown>>(5 * 60 * 1000);
+const docTocCache = new TTLCache<Record<string, unknown>[]>(5 * 60 * 1000);
+const parentSectionsCache = new TTLCache<
+  Map<string, { id: string; headingPath: string[]; content: string }>
+>(5 * 60 * 1000);
+
 let cachedConceptCountsAt = 0;
 let cachedConceptCounts: ConceptCountsCache | null = null;
 
@@ -581,6 +613,15 @@ async function fetchParentSections(parentChunkIds: string[]): Promise<
     return new Map();
   }
 
+  // Create a cache key from sorted unique IDs
+  const cacheKey = uniqueParentIds.sort().join("|");
+
+  // Check cache first
+  const cachedParents = parentSectionsCache.get(cacheKey);
+  if (cachedParents) {
+    return cachedParents;
+  }
+
   const response = await typesenseSearch(
     "docs_chunks",
     new URLSearchParams({
@@ -606,6 +647,9 @@ async function fetchParentSections(parentChunkIds: string[]): Promise<
       content: asString(doc.content) || "",
     });
   }
+
+  // Cache the result
+  parentSectionsCache.set(cacheKey, parents);
 
   return parents;
 }
@@ -1109,6 +1153,29 @@ async function handleDocsSearch(url: URL, path: string): Promise<Response> {
 
 async function handleDocById(id: string, path: string): Promise<Response> {
   const command = `GET ${path}`;
+
+  // Check cache first
+  const cachedDoc = docByIdCache.get(id);
+  if (cachedDoc) {
+    const docId = asString(cachedDoc.id) || id;
+    return jsonResponse(
+      ok(command, cachedDoc, [
+        {
+          command: `GET /search?q=${encodeURIComponent(asString(cachedDoc.title) || docId)}`,
+          description: "Search related chunks",
+        },
+        {
+          command: `GET /docs/${docId}/toc`,
+          description: "Browse the document table of contents",
+        },
+        {
+          command: `GET /docs/${docId}/chunks`,
+          description: "List document chunks",
+        },
+      ]),
+    );
+  }
+
   const response = await typesenseGetById("docs", id);
   if (response.status === 404) {
     return jsonResponse(
@@ -1118,6 +1185,8 @@ async function handleDocById(id: string, path: string): Promise<Response> {
   }
 
   const doc = response.body || {};
+  docByIdCache.set(id, doc);
+
   const docId = asString(doc.id) || id;
   return jsonResponse(
     ok(command, doc, [
@@ -1236,7 +1305,66 @@ async function listDocSectionChunks(docId: string): Promise<Record<string, unkno
 
 async function handleDocToc(docId: string, path: string): Promise<Response> {
   const command = `GET ${path}`;
+
+  // Check cache first
+  const cachedSections = docTocCache.get(docId);
+  if (cachedSections) {
+    const toc: Array<{
+      depth: number;
+      title: string;
+      path: string[];
+      chunkId: string;
+      chunkIndex: number | null;
+    }> = [];
+    const seen = new Set<string>();
+
+    for (const doc of cachedSections) {
+      const headingPath = asStringArray(doc.heading_path);
+      const key = headingPath.length > 0 ? headingPath.join(" > ") : "__document__";
+      if (seen.has(key)) continue;
+      seen.add(key);
+      toc.push({
+        depth: headingPath.length,
+        title: headingPath[headingPath.length - 1] || "Document",
+        path: headingPath,
+        chunkId: asString(doc.id) || "",
+        chunkIndex: asNumber(doc.chunk_index),
+      });
+    }
+
+    const nextActions: NextAction[] = [
+      {
+        command: `GET /docs/${docId}`,
+        description: "Fetch document metadata",
+      },
+      {
+        command: `GET /docs/${docId}/chunks?type=section`,
+        description: "List section chunks for this document",
+      },
+    ];
+
+    if (toc[0]?.chunkId) {
+      nextActions.push({
+        command: `GET /chunks/${toc[0].chunkId}`,
+        description: "Fetch the first TOC section chunk",
+      });
+    }
+
+    return jsonResponse(
+      ok(
+        command,
+        {
+          docId,
+          entries: toc.length,
+          toc,
+        },
+        nextActions,
+      ),
+    );
+  }
+
   const sections = await listDocSectionChunks(docId);
+  docTocCache.set(docId, sections);
 
   const toc: Array<{
     depth: number;
