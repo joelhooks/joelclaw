@@ -807,6 +807,30 @@ export const dagOrchestrator = restate.workflow({
         return true;
       });
 
+      // Publish DAG completion event for pi session extensions
+      await ctx.run("publish-dag-completed", async () => {
+        try {
+          const Redis = (await import("ioredis")).default;
+          const host = (process.env.REDIS_HOST ?? "localhost") === "localhost" ? "127.0.0.1" : (process.env.REDIS_HOST ?? "redis");
+          const port = Number.parseInt(process.env.REDIS_PORT ?? "6379", 10);
+          const pub = new Redis({ host, port, lazyConnect: true, maxRetriesPerRequest: 1, retryStrategy: () => null });
+          pub.on("error", () => {});
+          await pub.connect();
+          await pub.publish("joelclaw:dag:completed", JSON.stringify({
+            workflowId: ctx.key,
+            pipeline: pipelineName,
+            success: true,
+            durationMs: totalDurationMs,
+            nodeCount: nodes.length,
+            waveCount: waves.length,
+            completionOrder,
+            summary: `${pipelineName}: ${nodes.length} nodes in ${waves.length} waves, ${Math.round(totalDurationMs / 1000)}s`,
+          }));
+          pub.disconnect();
+        } catch { /* non-fatal */ }
+        return true;
+      });
+
       return {
         workflowId: ctx.key,
         requestId: initialized.requestId,
