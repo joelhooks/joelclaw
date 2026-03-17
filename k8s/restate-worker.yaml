@@ -100,9 +100,8 @@ spec:
             path: /dev/kvm
             type: CharDevice
         - name: firecracker-data
-          hostPath:
-            path: /tmp/firecracker-test
-            type: DirectoryOrCreate
+          persistentVolumeClaim:
+            claimName: firecracker-images
 ---
 apiVersion: v1
 kind: Service
