@@ -23,7 +23,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: docs-api
-          image: ghcr.io/joelhooks/docs-api:20260316-193700
+          image: ghcr.io/joelhooks/docs-api:20260316-210000
           imagePullPolicy: Always
           env:
             - name: HOST
