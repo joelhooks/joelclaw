@@ -1,5 +1,13 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+
+/** Atomic write: write to .tmp then rename — no partial artifacts on crash */
+async function atomicWrite(path: string, content: string): Promise<void> {
+  const tmp = `${path}.${randomUUID().slice(0, 8)}.tmp`;
+  await writeFile(tmp, content, "utf8");
+  await rename(tmp, path);
+}
 import type { DocsChunkRecord } from "../inngest/functions/docs-ingest";
 
 export type DocsMetadata = {
@@ -24,7 +32,7 @@ export type DocsMetadata = {
 export const DOCS_ARTIFACTS_DIR =
   process.env.JOELCLAW_DOCS_ARTIFACTS_DIR?.trim()
   || process.env.DOCS_ARTIFACTS_DIR?.trim()
-  || "/tmp/docs-artifacts";
+  || "/Volumes/three-body/docs-artifacts";
 
 type ArtifactStage = "md" | "meta" | "chunks";
 
@@ -53,14 +61,14 @@ async function ensureDocArtifactDir(docId: string): Promise<string> {
 export async function saveMarkdownArtifact(docId: string, markdown: string): Promise<string> {
   await ensureDocArtifactDir(docId);
   const path = artifactPath(docId, "md");
-  await writeFile(path, markdown, "utf8");
+  await atomicWrite(path, markdown);
   return path;
 }
 
 export async function saveMetadataArtifact(docId: string, meta: DocsMetadata): Promise<string> {
   await ensureDocArtifactDir(docId);
   const path = artifactPath(docId, "meta");
-  await writeFile(path, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+  await atomicWrite(path, `${JSON.stringify(meta, null, 2)}\n`);
   return path;
 }
 
@@ -71,7 +79,7 @@ export async function saveChunksArtifact(
   await ensureDocArtifactDir(docId);
   const path = artifactPath(docId, "chunks");
   const body = chunks.map((chunk) => JSON.stringify(chunk)).join("\n");
-  await writeFile(path, body.length > 0 ? `${body}\n` : "", "utf8");
+  await atomicWrite(path, body.length > 0 ? `${body}\n` : "");
   return path;
 }
 
