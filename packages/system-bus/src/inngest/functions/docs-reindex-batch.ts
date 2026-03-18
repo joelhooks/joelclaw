@@ -180,69 +180,59 @@ export const docsReindexBatch = inngest.createFunction(
       );
     });
 
-    const queued = await step.run("queue-events", async () => {
-      const metadata: Record<string, unknown> = {
-        resolved: targets.length,
-        batchSize: REINDEX_BATCH_SIZE,
-      };
+    // Dispatch events in batches — step.sendEvent MUST be at top level, not nested in step.run
+    if (gateway?.progress) {
+      await gateway.progress(`📚 Batch reindex: ${targets.length} PDFs queued`);
+    }
 
-      return emitMeasuredOtelEvent(
-        {
-          level: "info",
-          source: "worker",
-          component: "docs-reindex-batch",
-          action: "docs.reindex.batch.queued",
-          metadata,
-        },
-        async () => {
-          if (gateway?.progress) {
-            await gateway.progress(`📚 Batch reindex: ${targets.length} PDFs queued`);
-          }
+    let queuedCount = 0;
+    const batchSizes: number[] = [];
 
-          let queuedCount = 0;
-          const batchSizes: number[] = [];
-
-          for (let index = 0; index < targets.length; index += REINDEX_BATCH_SIZE) {
-            const batch = targets.slice(index, index + REINDEX_BATCH_SIZE);
-            const batchNumber = Math.floor(index / REINDEX_BATCH_SIZE) + 1;
-            const sendResult = await step.sendEvent(
-              `queue-docs-reindex-v2-batch-${batchNumber}`,
-              batch.map((target) => ({
-                name: "docs/reindex-v2.requested" as const,
-                data: {
-                  nasPath: target.path,
-                  ...(target.docId ? { docId: target.docId } : {}),
-                  ...(target.title ? { title: target.title } : {}),
-                  ...(skipExistingArtifacts ? { skipExistingArtifacts: true } : {}),
-                },
-              }))
-            );
-
-            queuedCount += sendResult.ids.length;
-            batchSizes.push(sendResult.ids.length);
-
-            if (gateway?.progress && queuedCount % 50 === 0) {
-              await gateway.progress(`📚 Batch reindex: ${queuedCount}/${targets.length} PDFs dispatched`);
-            }
-          }
-
-          metadata.queued = queuedCount;
-          metadata.batches = batchSizes.length;
-          metadata.batchSizes = batchSizes;
-          return {
-            queued: queuedCount,
-            batches: batchSizes.length,
-            batchSizes,
-          };
-        }
+    for (let index = 0; index < targets.length; index += REINDEX_BATCH_SIZE) {
+      const batch = targets.slice(index, index + REINDEX_BATCH_SIZE);
+      const batchNumber = Math.floor(index / REINDEX_BATCH_SIZE) + 1;
+      const sendResult = await step.sendEvent(
+        `queue-docs-reindex-v2-batch-${batchNumber}`,
+        batch.map((target) => ({
+          name: "docs/reindex-v2.requested" as const,
+          data: {
+            nasPath: target.path,
+            ...(target.docId ? { docId: target.docId } : {}),
+            ...(target.title ? { title: target.title } : {}),
+            ...(skipExistingArtifacts ? { skipExistingArtifacts: true } : {}),
+          },
+        }))
       );
+
+      queuedCount += sendResult.ids.length;
+      batchSizes.push(sendResult.ids.length);
+
+      if (gateway?.progress && queuedCount % 50 === 0) {
+        await gateway.progress(`📚 Batch reindex: ${queuedCount}/${targets.length} PDFs dispatched`);
+      }
+    }
+
+    await step.run("emit-batch-queued", async () => {
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "docs-reindex-batch",
+        action: "docs.reindex.batch.queued",
+        success: true,
+        metadata: {
+          resolved: targets.length,
+          queued: queuedCount,
+          batches: batchSizes.length,
+          batchSizes,
+        },
+      });
     });
 
     return {
       resolved: targets.length,
-      queued: queued.queued,
-      batches: queued.batches,
-      batchSizes: queued.batchSizes,
+      queued: queuedCount,
+      batches: batchSizes.length,
+      batchSizes,
     };
   }
 );
