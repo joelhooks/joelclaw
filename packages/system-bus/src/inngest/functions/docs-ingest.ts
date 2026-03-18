@@ -698,6 +698,46 @@ Rules:
 }
 
 async function extractPdfText(path: string): Promise<{ text: string; pageCount: number | null }> {
+  // Primary: opendataloader-pdf — structured markdown with tables, headings, reading order
+  const tmpDir = `/tmp/odl-${Date.now()}`;
+  // Set JAVA_HOME for opendataloader-pdf (requires Java 11+)
+  const javaHome = process.env.JAVA_HOME || "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home";
+  const odlProc = Bun.spawn(
+    ["opendataloader-pdf", path, "-o", tmpDir, "-f", "markdown", "-q"],
+    {
+      env: { ...process.env, JAVA_HOME: javaHome, PATH: `/opt/homebrew/opt/openjdk/bin:${process.env.PATH}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    }
+  );
+  const odlResult = {
+    exitCode: await odlProc.exited,
+    stdout: await new Response(odlProc.stdout).text(),
+    stderr: await new Response(odlProc.stderr).text(),
+  };
+
+  if (odlResult.exitCode === 0) {
+    try {
+      const { readdirSync, readFileSync } = await import("node:fs");
+      const files = readdirSync(tmpDir).filter((f) => f.endsWith(".md"));
+      if (files.length > 0) {
+        const markdown = readFileSync(`${tmpDir}/${files[0]}`, "utf-8");
+        // Estimate page count from pypdf (fast, no extraction needed)
+        const pageCount = await estimatePdfPageCount(path);
+        if (normalizeWhitespace(markdown).length > 0) {
+          // Cleanup temp dir
+          await runProcess(["rm", "-rf", tmpDir]);
+          return { text: markdown, pageCount };
+        }
+      }
+    } catch {
+      // Fall through to pypdf fallback
+    }
+  }
+  // Cleanup temp dir on failure
+  await runProcess(["rm", "-rf", tmpDir]);
+
+  // Fallback: pypdf — basic text extraction
   const pythonScript = [
     "import json, sys",
     "from pypdf import PdfReader",
@@ -749,6 +789,27 @@ async function extractPdfText(path: string): Promise<{ text: string; pageCount: 
   }
 
   return { text: cleaned, pageCount: null };
+}
+
+async function estimatePdfPageCount(path: string): Promise<number | null> {
+  const script = [
+    "import json, sys",
+    "from pypdf import PdfReader",
+    "reader = PdfReader(sys.argv[1])",
+    "print(json.dumps({'page_count': len(reader.pages)}))",
+  ].join("\n");
+  const result = await runProcess(
+    ["uv", "run", "--with", "pypdf", "python3", "-c", script, path]
+  );
+  if (result.exitCode === 0) {
+    try {
+      const parsed = JSON.parse(result.stdout) as { page_count?: unknown };
+      if (typeof parsed.page_count === "number" && Number.isFinite(parsed.page_count)) {
+        return Math.max(0, Math.round(parsed.page_count));
+      }
+    } catch {}
+  }
+  return null;
 }
 
 async function validateFile(input: {
