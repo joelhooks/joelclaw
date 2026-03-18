@@ -5,7 +5,8 @@
 # ADR-0089: single-source deployment.
 # Startup is immutable: no runtime git pull / bun install mutation.
 
-export PATH="$HOME/.bun/bin:$HOME/.local/bin:$HOME/.local/share/fnm/aliases/default/bin:$PATH"
+export PATH="$HOME/.bun/bin:$HOME/.local/bin:$HOME/.local/share/fnm/aliases/default/bin:/opt/homebrew/opt/openjdk/bin:$PATH"
+export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home}"
 
 NODE_LINK="$HOME/.local/bin/node"
 FNM_DEFAULT_NODE="$HOME/.local/share/fnm/aliases/default/bin/node"
