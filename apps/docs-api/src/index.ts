@@ -1,3 +1,6 @@
+import { access, readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 class LRUCache<T> {
   private cache = new Map<string, {value: T, ts: number}>();
   constructor(private maxSize: number, private ttlMs: number) {}
@@ -89,6 +92,15 @@ type SearchConceptFacet = {
   label: string;
 };
 
+type DocSummaryResult = {
+  title: string;
+  summary: string;
+  storageCategory: string;
+  conceptIds: string[];
+};
+
+type TypesenseCollection = "docs" | "docs_chunks" | "docs_chunks_v2";
+
 type ConceptId =
   | "jc:docs:general"
   | "jc:docs:programming"
@@ -128,12 +140,17 @@ type ConceptCountsCache = {
 };
 
 const PROTOCOL_VERSION = 1 as const;
-const SERVICE_VERSION = "0.1.3";
+const SERVICE_VERSION = "0.2.0";
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number.parseInt(process.env.PORT || "3838", 10);
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://typesense:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";
 const API_TOKEN = process.env.PDF_BRAIN_API_TOKEN || process.env.pdf_brain_api_token || "";
+const DOCS_CHUNKS_COLLECTION = (process.env.DOCS_CHUNKS_COLLECTION || "docs_chunks_v2") as
+  | "docs_chunks"
+  | "docs_chunks_v2";
+const DOCS_ARTIFACTS_DIR = process.env.DOCS_ARTIFACTS_DIR || "/Volumes/three-body/docs-artifacts";
+const EMBEDDING_MODEL = "nomic-embed-text-v1.5 (768-dim)";
 const OPTIONAL_PATH_PREFIX = "/api/docs";
 const DOCS_INCLUDE_FIELDS =
   "id,title,filename,summary,tags,added_at,nas_path,nas_paths,storage_category,document_type,file_type,primary_concept_id,concept_ids,taxonomy_version";
@@ -528,6 +545,116 @@ function buildConceptResponse(concept: TaxonomyConcept, counts: ConceptCountsCac
   };
 }
 
+function dedupeNextActions(actions: NextAction[]): NextAction[] {
+  const seen = new Set<string>();
+  return actions.filter((action) => {
+    if (seen.has(action.command)) {
+      return false;
+    }
+    seen.add(action.command);
+    return true;
+  });
+}
+
+function buildSearchWithinDocCommand(docId: string, query?: string): string {
+  return query
+    ? `GET /search?q=${encodeURIComponent(query)}&doc_id=${docId}`
+    : `GET /search?q=<query>&doc_id=${docId}`;
+}
+
+function buildDocExplorationNextActions(docId: string, searchQuery?: string): NextAction[] {
+  return dedupeNextActions([
+    {
+      command: `GET /docs/${docId}/toc`,
+      description: "Browse the document TOC",
+    },
+    {
+      command: buildSearchWithinDocCommand(docId, searchQuery),
+      description: "Search within this book",
+    },
+    {
+      command: `GET /docs/${docId}/chunks?type=section&page=1&perPage=50`,
+      description: "Read surrounding section chunks",
+    },
+    {
+      command: `GET /docs/${docId}/markdown`,
+      description: "Read the full markdown artifact",
+    },
+    {
+      command: `GET /docs/${docId}/summary`,
+      description: "View the document summary and taxonomy",
+    },
+  ]);
+}
+
+function buildDocArtifactPaths(docId: string): {
+  markdown: string;
+  meta: string;
+  chunks: string;
+} | null {
+  const normalizedDocId = docId.trim();
+  if (
+    normalizedDocId.length === 0
+    || normalizedDocId.includes("/")
+    || normalizedDocId.includes("\\")
+    || normalizedDocId.includes("..")
+  ) {
+    return null;
+  }
+
+  const artifactDir = join(DOCS_ARTIFACTS_DIR, normalizedDocId);
+  return {
+    markdown: join(artifactDir, `${normalizedDocId}.md`),
+    meta: join(artifactDir, `${normalizedDocId}.meta.json`),
+    chunks: join(artifactDir, `${normalizedDocId}.chunks.jsonl`),
+  };
+}
+
+async function readArtifactText(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function readArtifactJson(path: string): Promise<Record<string, unknown> | null> {
+  const raw = await readArtifactText(path);
+  if (raw === null) {
+    return null;
+  }
+  return JSON.parse(raw) as Record<string, unknown>;
+}
+
+async function artifactsDirExists(): Promise<boolean> {
+  try {
+    await access(DOCS_ARTIFACTS_DIR);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function mapDocSummary(doc: Record<string, unknown>): DocSummaryResult | null {
+  const id = asString(doc.id);
+  if (!id) {
+    return null;
+  }
+
+  return {
+    title: asString(doc.title) || "",
+    summary: asString(doc.summary) || "",
+    storageCategory: asString(doc.storage_category) || "",
+    conceptIds: asStringArray(doc.concept_ids),
+  };
+}
+
 function buildDocsChunksSearchParams(options: {
   q: string;
   page: number;
@@ -648,7 +775,7 @@ async function fetchParentSections(parentChunkIds: string[]): Promise<
   }
 
   const response = await typesenseSearch(
-    "docs_chunks",
+    DOCS_CHUNKS_COLLECTION,
     new URLSearchParams({
       q: "*",
       query_by: "content",
@@ -685,6 +812,7 @@ function buildSearchCommand(options: {
   semantic: boolean;
   concept?: string;
   docId?: string;
+  expand: boolean;
   assemble: boolean;
 }): string {
   const params = new URLSearchParams({
@@ -699,6 +827,10 @@ function buildSearchCommand(options: {
 
   if (options.docId) {
     params.set("doc_id", options.docId);
+  }
+
+  if (options.expand) {
+    params.set("expand", "true");
   }
 
   if (options.assemble) {
@@ -723,7 +855,7 @@ async function typesenseRequest(path: string, init: RequestInit = {}): Promise<R
 }
 
 async function typesenseSearch(
-  collection: "docs" | "docs_chunks",
+  collection: TypesenseCollection,
   params: URLSearchParams,
 ): Promise<TypesenseSearchResponse> {
   const response = await typesenseRequest(`/collections/${collection}/documents/search?${params.toString()}`);
@@ -734,7 +866,7 @@ async function typesenseSearch(
   return (await response.json()) as TypesenseSearchResponse;
 }
 
-async function typesenseGetById(collection: "docs" | "docs_chunks", id: string): Promise<{
+async function typesenseGetById(collection: TypesenseCollection, id: string): Promise<{
   status: number;
   body: Record<string, unknown> | null;
 }> {
@@ -755,6 +887,69 @@ async function typesenseGetById(collection: "docs" | "docs_chunks", id: string):
   return { status: 200, body };
 }
 
+async function getCollectionDocumentCount(collection: TypesenseCollection): Promise<number> {
+  const response = await typesenseRequest(`/collections/${collection}`);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Typesense collection lookup failed (${response.status}): ${text}`);
+  }
+
+  const payload = (await response.json()) as { num_documents?: number };
+  return typeof payload.num_documents === "number" && Number.isFinite(payload.num_documents)
+    ? payload.num_documents
+    : 0;
+}
+
+async function fetchDocSummaries(docIds: string[]): Promise<Record<string, DocSummaryResult>> {
+  const summaries: Record<string, DocSummaryResult> = {};
+  const uniqueDocIds = [...new Set(docIds.filter((docId) => docId.length > 0))];
+  const missingDocIds: string[] = [];
+
+  for (const docId of uniqueDocIds) {
+    const cached = docByIdCache.get(docId);
+    if (!cached) {
+      missingDocIds.push(docId);
+      continue;
+    }
+
+    const summary = mapDocSummary(cached);
+    if (summary) {
+      summaries[docId] = summary;
+    }
+  }
+
+  if (missingDocIds.length === 0) {
+    return summaries;
+  }
+
+  const response = await typesenseSearch(
+    "docs",
+    new URLSearchParams({
+      q: "*",
+      query_by: "title,filename",
+      filter_by: `id:=[${quoteFilterValues(missingDocIds)}]`,
+      per_page: String(missingDocIds.length),
+      include_fields: "id,title,summary,storage_category,concept_ids",
+    }),
+  );
+
+  for (const hit of response.hits || []) {
+    const doc = (hit.document || {}) as Record<string, unknown>;
+    const docId = asString(doc.id);
+    if (!docId) {
+      continue;
+    }
+
+    docByIdCache.set(docId, doc);
+    const summary = mapDocSummary(doc);
+    if (summary) {
+      summaries[docId] = summary;
+    }
+  }
+
+  return summaries;
+}
+
 async function getConceptCounts(): Promise<ConceptCountsCache> {
   const now = Date.now();
   if (cachedConceptCounts && now - cachedConceptCountsAt < CONCEPT_COUNTS_TTL_MS) {
@@ -773,7 +968,7 @@ async function getConceptCounts(): Promise<ConceptCountsCache> {
       }),
     ),
     typesenseSearch(
-      "docs_chunks",
+      DOCS_CHUNKS_COLLECTION,
       new URLSearchParams({
         q: "*",
         query_by: "content",
@@ -795,7 +990,7 @@ async function getConceptCounts(): Promise<ConceptCountsCache> {
 
 async function listTopDocsForConcept(conceptId: string) {
   const response = await typesenseSearch(
-    "docs_chunks",
+    DOCS_CHUNKS_COLLECTION,
     new URLSearchParams({
       q: "*",
       query_by: "content",
@@ -868,7 +1063,145 @@ async function handleHealth(path: string): Promise<Response> {
     };
   }
 
-  return jsonResponse(ok(command, healthResult));
+  return jsonResponse(
+    ok(command, healthResult, [
+      {
+        command: "GET /status",
+        description: "Inspect docs-api version and collection status",
+      },
+      {
+        command: "GET /",
+        description: "Read the API guide and agent instructions",
+      },
+    ]),
+  );
+}
+
+async function handleStatus(path: string): Promise<Response> {
+  const command = `GET ${path}`;
+  const [artifactsAvailable, docsCount, chunksCount] = await Promise.all([
+    artifactsDirExists(),
+    getCollectionDocumentCount("docs"),
+    getCollectionDocumentCount(DOCS_CHUNKS_COLLECTION),
+  ]);
+
+  return jsonResponse(
+    ok(
+      command,
+      {
+        service: "docs-api",
+        version: SERVICE_VERSION,
+        activeCollection: DOCS_CHUNKS_COLLECTION,
+        embeddingModel: EMBEDDING_MODEL,
+        artifactsDir: DOCS_ARTIFACTS_DIR,
+        artifactsAvailable,
+        docsCount,
+        chunksCount,
+      },
+      [
+        {
+          command: "GET /",
+          description: "Read the API guide and agent instructions",
+        },
+        {
+          command: "GET /search?q=<query>",
+          description: "Search the active chunks collection",
+        },
+        {
+          command: "GET /docs",
+          description: "List indexed documents",
+        },
+      ],
+    ),
+  );
+}
+
+async function handleDocMarkdown(docId: string, path: string): Promise<Response> {
+  const command = `GET ${path}`;
+  const artifactPaths = buildDocArtifactPaths(docId);
+  if (!artifactPaths) {
+    return jsonResponse(
+      fail(command, "INVALID_DOC_ID", `Invalid document id: ${docId}`),
+      400,
+    );
+  }
+
+  const content = await readArtifactText(artifactPaths.markdown);
+  if (content === null) {
+    return jsonResponse(
+      fail(command, "NOT_FOUND", `Markdown artifact not found for ${docId}`),
+      404,
+    );
+  }
+
+  return jsonResponse(
+    ok(
+      command,
+      {
+        content,
+        bytes: Buffer.byteLength(content, "utf8"),
+      },
+      [
+        {
+          command: `GET /docs/${docId}/toc`,
+          description: "Browse the heading hierarchy before reading sections",
+        },
+        {
+          command: `GET /docs/${docId}/chunks`,
+          description: "List chunks derived from this markdown artifact",
+        },
+        {
+          command: `GET /docs/${docId}/summary`,
+          description: "View the document summary and taxonomy",
+        },
+        {
+          command: buildSearchWithinDocCommand(docId),
+          description: "Search within this book for a specific concept",
+        },
+      ],
+    ),
+  );
+}
+
+async function handleDocSummary(docId: string, path: string): Promise<Response> {
+  const command = `GET ${path}`;
+  const artifactPaths = buildDocArtifactPaths(docId);
+  if (!artifactPaths) {
+    return jsonResponse(
+      fail(command, "INVALID_DOC_ID", `Invalid document id: ${docId}`),
+      400,
+    );
+  }
+
+  const metadata = await readArtifactJson(artifactPaths.meta);
+  if (metadata === null) {
+    return jsonResponse(
+      fail(command, "NOT_FOUND", `Metadata artifact not found for ${docId}`),
+      404,
+    );
+  }
+
+  const summaryTitle = asString(metadata.title) || undefined;
+  return jsonResponse(
+    ok(
+      command,
+      metadata,
+      [
+        {
+          command: `GET /docs/${docId}/markdown`,
+          description: "Read the full markdown artifact",
+        },
+        {
+          command: `GET /docs/${docId}/toc`,
+          description: "Browse the document TOC",
+        },
+        {
+          command: buildSearchWithinDocCommand(docId, summaryTitle),
+          description: "Search within this book using the summary context",
+        },
+      ],
+    ),
+  );
 }
 
 async function handleSearch(url: URL, path: string): Promise<Response> {
@@ -900,7 +1233,7 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
   });
 
   const response = await typesenseSearch(
-    "docs_chunks",
+    DOCS_CHUNKS_COLLECTION,
     buildDocsChunksSearchParams({
       q,
       page,
@@ -934,7 +1267,7 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
         .join(" && ");
 
       const expandedResponse = await typesenseSearch(
-        "docs_chunks",
+        DOCS_CHUNKS_COLLECTION,
         buildDocsChunksSearchParams({
           q,
           page: 1,
@@ -992,22 +1325,11 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
   }
 
   const hits: SearchHitResult[] = mergedHits.map(({ parentChunkId: _parentChunkId, ...hit }) => hit);
+  const docSummaries = await fetchDocSummaries(hits.map((hit) => hit.docId));
   const conceptFacets = buildConceptFacetsFromCounts(combinedFacetCounts);
 
   const first = hits[0];
-  const nextActions: NextAction[] = [
-    {
-      command: "GET /docs",
-      description: "List indexed documents",
-    },
-  ];
-
-  if (first?.docId) {
-    nextActions.push({
-      command: `GET /docs/${first.docId}`,
-      description: "Fetch matched document metadata",
-    });
-  }
+  const nextActions: NextAction[] = [];
 
   if (first?.id) {
     nextActions.push({
@@ -1015,6 +1337,32 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
       description: "Fetch full chunk content",
     });
   }
+
+  if (first?.docId) {
+    nextActions.push(
+      {
+        command: `GET /docs/${first.docId}/chunks?type=section&page=1&perPage=50`,
+        description: "Read surrounding section chunks",
+      },
+      {
+        command: `GET /docs/${first.docId}/toc`,
+        description: "Browse the matched document TOC",
+      },
+      {
+        command: `GET /docs/${first.docId}/markdown`,
+        description: "Read the full markdown artifact",
+      },
+      {
+        command: `GET /docs/${first.docId}/summary`,
+        description: "View the document summary and taxonomy",
+      },
+    );
+  }
+
+  nextActions.push({
+    command: "GET /docs",
+    description: "List indexed documents",
+  });
 
   for (const facet of conceptFacets.slice(0, 3)) {
     nextActions.push({
@@ -1024,6 +1372,7 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
         semantic,
         concept: facet.concept,
         docId,
+        expand,
         assemble,
       }),
       description: `Drill into ${facet.label} results`,
@@ -1040,6 +1389,7 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
         found,
         page: response.page || page,
         hits,
+        docSummaries,
         conceptFacets,
         ...(expand ? { expandedConcepts } : {}),
         filters: {
@@ -1050,7 +1400,7 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
           assemble,
         },
       },
-      nextActions,
+      dedupeNextActions(nextActions),
     ),
   );
 }
@@ -1089,10 +1439,13 @@ async function handleDocsList(url: URL, path: string): Promise<Response> {
   ];
 
   if (firstId) {
-    nextActions.push({
-      command: `GET /docs/${firstId}`,
-      description: "Fetch first listed document",
-    });
+    nextActions.push(
+      {
+        command: `GET /docs/${firstId}`,
+        description: "Fetch the first listed document",
+      },
+      ...buildDocExplorationNextActions(firstId, asString(first?.title) || undefined),
+    );
   }
 
   return jsonResponse(
@@ -1104,7 +1457,7 @@ async function handleDocsList(url: URL, path: string): Promise<Response> {
         perPage,
         docs,
       },
-      nextActions,
+      dedupeNextActions(nextActions),
     ),
   );
 }
@@ -1159,10 +1512,7 @@ async function handleDocsSearch(url: URL, path: string): Promise<Response> {
         command: `GET /docs/${firstDocId}`,
         description: "Fetch the first matching document",
       },
-      {
-        command: `GET /docs/${firstDocId}/toc`,
-        description: "Browse the first document table of contents",
-      },
+      ...buildDocExplorationNextActions(firstDocId, q),
     );
   }
 
@@ -1177,7 +1527,7 @@ async function handleDocsSearch(url: URL, path: string): Promise<Response> {
         perPage,
         docs,
       },
-      nextActions,
+      dedupeNextActions(nextActions),
     ),
   );
 }
@@ -1190,20 +1540,11 @@ async function handleDocById(id: string, path: string): Promise<Response> {
   if (cachedDoc) {
     const docId = asString(cachedDoc.id) || id;
     return jsonResponse(
-      ok(command, cachedDoc, [
-        {
-          command: `GET /search?q=${encodeURIComponent(asString(cachedDoc.title) || docId)}`,
-          description: "Search related chunks",
-        },
-        {
-          command: `GET /docs/${docId}/toc`,
-          description: "Browse the document table of contents",
-        },
-        {
-          command: `GET /docs/${docId}/chunks`,
-          description: "List document chunks",
-        },
-      ]),
+      ok(
+        command,
+        cachedDoc,
+        buildDocExplorationNextActions(docId, asString(cachedDoc.title) || docId),
+      ),
     );
   }
 
@@ -1219,21 +1560,13 @@ async function handleDocById(id: string, path: string): Promise<Response> {
   docCache.set(id, doc);
 
   const docId = asString(doc.id) || id;
+  docByIdCache.set(docId, doc);
   return jsonResponse(
-    ok(command, doc, [
-      {
-        command: `GET /search?q=${encodeURIComponent(asString(doc.title) || docId)}`,
-        description: "Search related chunks",
-      },
-      {
-        command: `GET /docs/${docId}/toc`,
-        description: "Browse the document table of contents",
-      },
-      {
-        command: `GET /docs/${docId}/chunks`,
-        description: "List document chunks",
-      },
-    ]),
+    ok(
+      command,
+      doc,
+      buildDocExplorationNextActions(docId, asString(doc.title) || docId),
+    ),
   );
 }
 
@@ -1252,7 +1585,7 @@ async function handleDocChunks(docId: string, url: URL, path: string): Promise<R
   }
 
   const response = await typesenseSearch(
-    "docs_chunks",
+    DOCS_CHUNKS_COLLECTION,
     new URLSearchParams({
       q: "*",
       query_by: "content",
@@ -1277,6 +1610,14 @@ async function handleDocChunks(docId: string, url: URL, path: string): Promise<R
       command: `GET /docs/${docId}/toc`,
       description: "Browse the document table of contents",
     },
+    {
+      command: `GET /docs/${docId}/markdown`,
+      description: "Read the full markdown artifact",
+    },
+    {
+      command: `GET /docs/${docId}/summary`,
+      description: "View the document summary and taxonomy",
+    },
   ];
 
   if (firstChunkId) {
@@ -1297,7 +1638,7 @@ async function handleDocChunks(docId: string, url: URL, path: string): Promise<R
         perPage,
         chunks,
       },
-      nextActions,
+      dedupeNextActions(nextActions),
     ),
   );
 }
@@ -1309,7 +1650,7 @@ async function listDocSectionChunks(docId: string): Promise<Record<string, unkno
 
   while (true) {
     const response = await typesenseSearch(
-      "docs_chunks",
+      DOCS_CHUNKS_COLLECTION,
       new URLSearchParams({
         q: "*",
         query_by: "content",
@@ -1372,6 +1713,14 @@ async function handleDocToc(docId: string, path: string): Promise<Response> {
         command: `GET /docs/${docId}/chunks?type=section`,
         description: "List section chunks for this document",
       },
+      {
+        command: `GET /docs/${docId}/markdown`,
+        description: "Read the full markdown artifact",
+      },
+      {
+        command: `GET /docs/${docId}/summary`,
+        description: "View the document summary and taxonomy",
+      },
     ];
 
     if (toc[0]?.chunkId) {
@@ -1389,7 +1738,7 @@ async function handleDocToc(docId: string, path: string): Promise<Response> {
           entries: toc.length,
           toc,
         },
-        nextActions,
+        dedupeNextActions(nextActions),
       ),
     );
   }
@@ -1429,6 +1778,14 @@ async function handleDocToc(docId: string, path: string): Promise<Response> {
       command: `GET /docs/${docId}/chunks?type=section`,
       description: "List section chunks for this document",
     },
+    {
+      command: `GET /docs/${docId}/markdown`,
+      description: "Read the full markdown artifact",
+    },
+    {
+      command: `GET /docs/${docId}/summary`,
+      description: "View the document summary and taxonomy",
+    },
   ];
 
   if (toc[0]?.chunkId) {
@@ -1446,14 +1803,14 @@ async function handleDocToc(docId: string, path: string): Promise<Response> {
         entries: toc.length,
         toc,
       },
-      nextActions,
+      dedupeNextActions(nextActions),
     ),
   );
 }
 
 async function handleChunkById(id: string, path: string, url: URL): Promise<Response> {
   const command = `GET ${path}`;
-  const response = await typesenseGetById("docs_chunks", id);
+  const response = await typesenseGetById(DOCS_CHUNKS_COLLECTION, id);
   if (response.status === 404) {
     return jsonResponse(
       fail(command, "NOT_FOUND", `Chunk not found: ${id}`),
@@ -1469,6 +1826,9 @@ async function handleChunkById(id: string, path: string, url: URL): Promise<Resp
 
   const chunk = { ...(response.body || {}) };
   const docId = asString(chunk.doc_id);
+  const prevChunkId = asString(chunk.prev_chunk_id);
+  const nextChunkId = asString(chunk.next_chunk_id);
+  const parentChunkId = asString(chunk.parent_chunk_id);
 
   if (!includeEmbedding) {
     delete chunk.embedding;
@@ -1484,13 +1844,48 @@ async function handleChunkById(id: string, path: string, url: URL): Promise<Resp
 
   const nextActions: NextAction[] = [];
   if (docId) {
+    nextActions.push(
+      {
+        command: `GET /docs/${docId}`,
+        description: "Fetch parent document",
+      },
+      {
+        command: `GET /docs/${docId}/toc`,
+        description: "Browse the document TOC",
+      },
+      {
+        command: `GET /docs/${docId}/markdown`,
+        description: "Read the full markdown artifact",
+      },
+      {
+        command: `GET /docs/${docId}/summary`,
+        description: "View the document summary and taxonomy",
+      },
+    );
+  }
+
+  if (parentChunkId) {
     nextActions.push({
-      command: `GET /docs/${docId}`,
-      description: "Fetch parent document",
+      command: `GET /chunks/${parentChunkId}`,
+      description: "Read the parent section chunk",
     });
   }
 
-  return jsonResponse(ok(command, chunk, nextActions));
+  if (prevChunkId) {
+    nextActions.push({
+      command: `GET /chunks/${prevChunkId}`,
+      description: "Navigate to the previous sequential chunk",
+    });
+  }
+
+  if (nextChunkId) {
+    nextActions.push({
+      command: `GET /chunks/${nextChunkId}`,
+      description: "Navigate to the next sequential chunk",
+    });
+  }
+
+  return jsonResponse(ok(command, chunk, dedupeNextActions(nextActions)));
 }
 
 async function handleConceptsList(path: string): Promise<Response> {
@@ -1503,6 +1898,10 @@ async function handleConceptsList(path: string): Promise<Response> {
     {
       command: "GET /docs",
       description: "List indexed documents",
+    },
+    {
+      command: "GET /search?q=<query>",
+      description: "Search chunk content before drilling into taxonomy",
     },
   ];
 
@@ -1526,7 +1925,7 @@ async function handleConceptsList(path: string): Promise<Response> {
         found: concepts.length,
         concepts,
       },
-      nextActions,
+      dedupeNextActions(nextActions),
     ),
   );
 }
@@ -1556,10 +1955,13 @@ async function handleConceptById(conceptId: string, path: string): Promise<Respo
   ];
 
   if (firstTopDocId) {
-    nextActions.push({
-      command: `GET /docs/${firstTopDocId}`,
-      description: "Fetch the top document",
-    });
+    nextActions.push(
+      {
+        command: `GET /docs/${firstTopDocId}`,
+        description: "Fetch the top document",
+      },
+      ...buildDocExplorationNextActions(firstTopDocId),
+    );
   }
 
   return jsonResponse(
@@ -1569,7 +1971,7 @@ async function handleConceptById(conceptId: string, path: string): Promise<Respo
         ...buildConceptResponse(concept, counts),
         topDocs,
       },
-      nextActions,
+      dedupeNextActions(nextActions),
     ),
   );
 }
@@ -1616,10 +2018,13 @@ async function handleConceptDocs(url: URL, conceptId: string, path: string): Pro
   ];
 
   if (firstDocId) {
-    nextActions.push({
-      command: `GET /docs/${firstDocId}`,
-      description: "Fetch the first document in this concept",
-    });
+    nextActions.push(
+      {
+        command: `GET /docs/${firstDocId}`,
+        description: "Fetch the first document in this concept",
+      },
+      ...buildDocExplorationNextActions(firstDocId),
+    );
   }
 
   return jsonResponse(
@@ -1635,7 +2040,7 @@ async function handleConceptDocs(url: URL, conceptId: string, path: string): Pro
         perPage,
         docs,
       },
-      nextActions,
+      dedupeNextActions(nextActions),
     ),
   );
 }
@@ -1686,23 +2091,75 @@ const server = Bun.serve({
     try {
       if (path === "/") {
         return jsonResponse(
-          ok(`GET ${path}`, {
-            routes: [
-              "GET /search?q=<query>[&page=1][&perPage=10][&semantic=true|false][&concept=<id>][&concepts=<id1>,<id2>][&doc_id=<id>][&expand=true|false][&assemble=true|false]",
-              "GET /docs/search?q=<query>[&concept=<id>][&page=1][&perPage=20]",
-              "GET /docs/:id/toc",
-              "GET /docs/:id/chunks[?type=section|snippet][&page=1][&perPage=50]",
-              "GET /docs/:id",
-              "GET /docs[?page=1][&perPage=20]",
-              "GET /chunks/:id[?lite=true][&includeEmbedding=false]",
-              "GET /concepts",
-              "GET /concepts/:id",
-              "GET /concepts/:id/docs[?page=1][&perPage=20]",
-              "GET /health",
+          ok(
+            `GET ${path}`,
+            {
+              routes: [
+                "GET /status",
+                "GET /search?q=<query>[&page=1][&perPage=10][&semantic=true|false][&concept=<id>][&concepts=<id1>,<id2>][&doc_id=<id>][&expand=true|false][&assemble=true|false]",
+                "GET /docs/search?q=<query>[&concept=<id>][&page=1][&perPage=20]",
+                "GET /docs/:id/toc",
+                "GET /docs/:id/chunks[?type=section|snippet][&page=1][&perPage=50]",
+                "GET /docs/:id/markdown",
+                "GET /docs/:id/summary",
+                "GET /docs/:id/artifact/meta",
+                "GET /docs/:id",
+                "GET /docs[?page=1][&perPage=20]",
+                "GET /chunks/:id[?lite=true][&includeEmbedding=false]",
+                "GET /concepts",
+                "GET /concepts/:id",
+                "GET /concepts/:id/docs[?page=1][&perPage=20]",
+                "GET /health",
+              ],
+              agentInstructions: {
+                overview:
+                  "PDF Brain API — search and read 600+ indexed books with taxonomy-classified, semantically-chunked content. Nomic 768-dim embeddings for retrieval-tuned vector search.",
+                gettingStarted:
+                  "Start with GET /search?q=your+question to find relevant chunks. Use &semantic=true (default) for meaning-based search, &expand=true to discover related concepts, &assemble=true to attach parent section context to snippet hits.",
+                expandingContext: [
+                  "1. Search: GET /search?q=query — returns chunk-level hits with headingPath and snippet",
+                  "2. If a hit is interesting, fetch the full chunk: GET /chunks/:chunkId",
+                  "3. For broader context, fetch the parent document TOC: GET /docs/:docId/toc — shows the full heading hierarchy",
+                  "4. To read the full section around a chunk, use: GET /docs/:docId/chunks?type=section — sequential section chunks",
+                  "5. For the complete book text: GET /docs/:docId/markdown — raw structured markdown with headings and tables",
+                  "6. For document-level summary and taxonomy: GET /docs/:docId/summary",
+                  "7. To explore by domain: GET /concepts — browse the SKOS taxonomy, then GET /concepts/:id/docs to find books in that domain",
+                ],
+                searchTips: [
+                  "Use &concept=jc:docs:programming to narrow by domain",
+                  "Use &doc_id=<id> to search within a specific book",
+                  "Use &assemble=true to get parent section content alongside snippet hits (richer context for RAG)",
+                  "Use &expand=true to discover results from related domains (e.g. programming → AI)",
+                  "Combine: GET /search?q=distributed+consensus&semantic=true&expand=true&assemble=true for maximum context",
+                ],
+                collections: {
+                  active: DOCS_CHUNKS_COLLECTION,
+                  note:
+                    "v2 uses nomic-embed-text-v1.5 (768-dim, retrieval-tuned). v1 used MiniLM-L12 (384-dim).",
+                },
+              },
+              mountedPrefixes: ["/", OPTIONAL_PATH_PREFIX],
+            },
+            [
+              {
+                command: "GET /status",
+                description: "Inspect docs-api version, collections, and artifact availability",
+              },
+              {
+                command: "GET /search?q=<query>",
+                description: "Start with chunk-level semantic search",
+              },
+              {
+                command: "GET /concepts",
+                description: "Browse the taxonomy before filtering searches",
+              },
             ],
-            mountedPrefixes: ["/", OPTIONAL_PATH_PREFIX],
-          }),
+          ),
         );
+      }
+
+      if (path === "/status") {
+        return await handleStatus(path);
       }
 
       if (path === "/search") {
@@ -1730,6 +2187,21 @@ const server = Bun.serve({
       const docsTocMatch = path.match(/^\/docs\/([^/]+)\/toc$/);
       if (docsTocMatch) {
         return await handleDocToc(decodeURIComponent(docsTocMatch[1] || ""), path);
+      }
+
+      const docsMarkdownMatch = path.match(/^\/docs\/([^/]+)\/markdown$/);
+      if (docsMarkdownMatch) {
+        return await handleDocMarkdown(decodeURIComponent(docsMarkdownMatch[1] || ""), path);
+      }
+
+      const docsSummaryMatch = path.match(/^\/docs\/([^/]+)\/summary$/);
+      if (docsSummaryMatch) {
+        return await handleDocSummary(decodeURIComponent(docsSummaryMatch[1] || ""), path);
+      }
+
+      const docsArtifactMetaMatch = path.match(/^\/docs\/([^/]+)\/artifact\/meta$/);
+      if (docsArtifactMetaMatch) {
+        return await handleDocSummary(decodeURIComponent(docsArtifactMetaMatch[1] || ""), path);
       }
 
       const docsChunksMatch = path.match(/^\/docs\/([^/]+)\/chunks$/);
