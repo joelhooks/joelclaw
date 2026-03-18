@@ -21,13 +21,21 @@ export type EmbedResult = {
  * Embed a batch of texts via ollama. Returns one 768-dim vector per input text.
  * Automatically batches large inputs into groups of 100.
  */
+// nomic-embed-text has 8192 token context (~32K chars). Truncate to be safe.
+const MAX_CHARS_PER_TEXT = 28_000;
+
+function truncateForEmbedding(text: string): string {
+  if (text.length <= MAX_CHARS_PER_TEXT) return text;
+  return text.slice(0, MAX_CHARS_PER_TEXT);
+}
+
 export async function embedTexts(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
 
   const allEmbeddings: number[][] = [];
 
   for (let i = 0; i < texts.length; i += OLLAMA_EMBED_BATCH_SIZE) {
-    const batch = texts.slice(i, i + OLLAMA_EMBED_BATCH_SIZE);
+    const batch = texts.slice(i, i + OLLAMA_EMBED_BATCH_SIZE).map(truncateForEmbedding);
     const response = await fetch(`${OLLAMA_URL}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
