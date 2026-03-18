@@ -22,7 +22,7 @@ export type EmbedResult = {
  * Automatically batches large inputs into groups of 100.
  */
 // nomic-embed-text has 8192 token context (~32K chars). Truncate to be safe.
-const MAX_CHARS_PER_TEXT = 28_000;
+const MAX_CHARS_PER_TEXT = 16_000;
 
 function truncateForEmbedding(text: string): string {
   if (text.length <= MAX_CHARS_PER_TEXT) return text;
