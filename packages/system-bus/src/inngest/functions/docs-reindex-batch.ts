@@ -1,7 +1,7 @@
 import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import * as typesense from "../../lib/typesense";
-import { emitMeasuredOtelEvent } from "../../observability/emit";
+import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { DOCS_COLLECTION } from "./docs-ingest";
 
