@@ -1745,21 +1745,35 @@ export const docsIngest = inngest.createFunction(
       };
     });
 
-    await step.sendEvent("emit-completed", {
-      name: "docs/ingest.completed",
-      data: {
-        docId: validated.docId,
-        title: validated.title,
-        nasPath: validated.nasPath,
-        storageCategory: classification.storageCategory,
-        primaryConceptId: classification.primaryConceptId,
-        conceptIds: classification.conceptIds,
-        taxonomyVersion: classification.taxonomyVersion,
-        chunksIndexed: chunkSummary.indexed,
-        sectionChunks: chunkSummary.sectionCount,
-        snippetChunks: chunkSummary.snippetCount,
+    await step.sendEvent("emit-completed", [
+      {
+        name: "docs/ingest.completed",
+        data: {
+          docId: validated.docId,
+          title: validated.title,
+          nasPath: validated.nasPath,
+          storageCategory: classification.storageCategory,
+          primaryConceptId: classification.primaryConceptId,
+          conceptIds: classification.conceptIds,
+          taxonomyVersion: classification.taxonomyVersion,
+          chunksIndexed: chunkSummary.indexed,
+          sectionChunks: chunkSummary.sectionCount,
+          snippetChunks: chunkSummary.snippetCount,
+        },
       },
-    });
+      // ADR-0234: chain v1 completion to v2 artifact pipeline
+      // Every new PDF gets v2 artifacts (NAS-durable .md/.meta.json/.chunks.jsonl)
+      // + nomic 768-dim embeddings in docs_chunks_v2
+      {
+        name: "docs/reindex-v2.requested" as const,
+        data: {
+          nasPath: validated.nasPath,
+          docId: validated.docId,
+          title: validated.title,
+          skipExistingArtifacts: true,
+        },
+      },
+    ]);
 
     await step.run("cleanup-text-artifact", async () => {
       await rm(extracted.textPath, { force: true }).catch(() => {});
