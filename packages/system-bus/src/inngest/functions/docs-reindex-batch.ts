@@ -118,7 +118,7 @@ async function listCollectionPdfDocs(): Promise<CollectionPdfDoc[]> {
 export const docsReindexBatch = inngest.createFunction(
   {
     id: "docs-reindex-batch",
-    singleton: { key: '"global"', mode: "skip" },
+    singleton: { key: '"global"', mode: "cancel" },
     concurrency: { limit: 1, key: "docs-reindex-batch" },
     retries: 4,
   },
