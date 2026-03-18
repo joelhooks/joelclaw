@@ -12,6 +12,7 @@ import {
   saveMarkdownArtifact,
   saveMetadataArtifact,
 } from "../../lib/docs-artifacts";
+import { embedTexts } from "../../lib/embed-ollama";
 import { infer } from "../../lib/inference";
 import * as typesense from "../../lib/typesense";
 import { emitMeasuredOtelEvent } from "../../observability/emit";
@@ -506,16 +507,28 @@ export const docsReindexV2 = inngest.createFunction(
             }),
           }));
 
-          // Batch import in groups of 100 to avoid Typesense timeout
-          // nomic 768-dim embedding is CPU-heavy; 1000+ chunks at once kills it
+          // ADR-0234: pre-compute embeddings via ollama (GPU, ~150x faster than Typesense CPU)
+          // Then store raw float[] vectors — no auto-embed overhead
           const IMPORT_BATCH_SIZE = 100;
           let totalSuccess = 0;
           let totalErrors = 0;
+
           for (let i = 0; i < chunkRecords.length; i += IMPORT_BATCH_SIZE) {
             const batch = chunkRecords.slice(i, i + IMPORT_BATCH_SIZE);
+            const texts = batch.map((r) => (r as Record<string, unknown>).retrieval_text as string);
+
+            // Embed batch via ollama GPU
+            const embeddings = await embedTexts(texts);
+
+            // Attach embeddings to records
+            const withEmbeddings = batch.map((record, idx) => ({
+              ...(record as Record<string, unknown>),
+              embedding: embeddings[idx],
+            }));
+
             const batchResult = await typesense.bulkImport(
               DOCS_CHUNKS_V2_COLLECTION,
-              batch as unknown as Record<string, unknown>[],
+              withEmbeddings,
               "upsert"
             );
             totalSuccess += batchResult.success;
@@ -532,8 +545,8 @@ export const docsReindexV2 = inngest.createFunction(
 
           return {
             docId: convert.docId,
-            indexed: importResult.success,
-            errors: importResult.errors,
+            indexed: totalSuccess,
+            errors: totalErrors,
           };
         }
       );

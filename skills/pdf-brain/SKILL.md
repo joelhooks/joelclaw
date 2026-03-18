@@ -13,7 +13,7 @@ Use this skill when the user wants evidence-backed synthesis from the docs libra
 The docs pipeline uses a staged artifact chain:
 - **Extraction**: opendataloader-pdf → structured markdown with headings, tables, reading order
 - **Chunking**: markdown-native heading detection, no overlap, hierarchical section + snippet chunks
-- **Embeddings**: nomic-embed-text-v1.5 (768-dim, retrieval-tuned) in `docs_chunks_v2` collection
+- **Embeddings**: nomic-embed-text via ollama GPU (768-dim, retrieval-tuned, pre-computed at ingest) in `docs_chunks_v2` collection
 - **Artifacts**: durable on NAS at `/Volumes/three-body/docs-artifacts/{docId}/` — `.md`, `.meta.json`, `.chunks.jsonl`
 - **Summaries**: LLM-generated per-document summaries in `.meta.json`
 

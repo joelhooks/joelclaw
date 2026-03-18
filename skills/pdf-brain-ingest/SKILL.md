@@ -141,8 +141,9 @@ If the batch stalls or books fail:
 
 ## Embedding Model
 
-- **v2**: `ts/nomic-embed-text-v1.5` — 768-dim, retrieval-tuned, Typesense built-in
-- **v1**: `ts/all-MiniLM-L12-v2` — 384-dim, general-purpose (legacy, still in `docs_chunks`)
+- **v2**: nomic-embed-text via ollama (GPU-accelerated on M4 Pro, 768-dim, retrieval-tuned). Pre-computed at ingest time, stored as raw float[] vectors. ~150x faster than Typesense CPU auto-embed.
+- **v1**: `ts/all-MiniLM-L12-v2` — 384-dim, general-purpose, Typesense auto-embed (legacy, still in `docs_chunks`)
+- Ollama runs on panda at `localhost:11434`. System-bus-worker (host process) embeds at ingest time.
 
 ## Chunking Strategy (ADR-0234)
 

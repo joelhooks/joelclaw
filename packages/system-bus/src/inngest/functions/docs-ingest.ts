@@ -1502,6 +1502,8 @@ export async function ensureDocsCollections(): Promise<void> {
     default_sorting_field: "added_at",
   });
 
+  // ADR-0234: pre-computed embeddings via ollama (GPU-accelerated, ~150x faster than Typesense CPU)
+  // No auto-embed — raw float[] vectors stored directly
   await typesense.ensureCollection(DOCS_CHUNKS_V2_COLLECTION, {
     name: DOCS_CHUNKS_V2_COLLECTION,
     fields: [
@@ -1509,10 +1511,7 @@ export async function ensureDocsCollections(): Promise<void> {
       {
         name: "embedding",
         type: "float[]",
-        embed: {
-          from: ["retrieval_text"],
-          model_config: NOMIC_EMBED_MODEL_CONFIG,
-        },
+        num_dim: 768,
       },
       { name: "added_at", type: "int64" },
     ],
