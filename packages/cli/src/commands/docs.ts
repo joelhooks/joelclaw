@@ -1,6 +1,6 @@
 import { access, readFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { basename, extname } from "node:path"
+import { basename, extname, join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { Inngest } from "../inngest"
@@ -9,7 +9,10 @@ import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-aut
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const DOCS_COLLECTION = "docs"
-const DOCS_CHUNKS_COLLECTION = "docs_chunks"
+const DOCS_CHUNKS_V1_COLLECTION = "docs_chunks"
+const DOCS_CHUNKS_V2_COLLECTION = "docs_chunks_v2"
+const DOCS_CHUNKS_COLLECTION = process.env.DOCS_CHUNKS_COLLECTION || DOCS_CHUNKS_V2_COLLECTION
+const DOCS_ARTIFACTS_DIR = process.env.DOCS_ARTIFACTS_DIR || "/Volumes/three-body/docs-artifacts"
 const DEFAULT_LIMIT = 10
 const DEFAULT_LIST_LIMIT = 20
 const DEFAULT_RECONCILE_SAMPLE = 20
@@ -218,6 +221,48 @@ async function pathExists(path: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+function buildDocArtifactPaths(docId: string): {
+  markdown: string
+  meta: string
+  chunks: string
+} | null {
+  const normalizedDocId = docId.trim()
+  if (
+    normalizedDocId.length === 0
+    || normalizedDocId.includes("/")
+    || normalizedDocId.includes("\\")
+    || normalizedDocId.includes("..")
+  ) {
+    return null
+  }
+
+  const artifactDir = join(DOCS_ARTIFACTS_DIR, normalizedDocId)
+  return {
+    markdown: join(artifactDir, `${normalizedDocId}.md`),
+    meta: join(artifactDir, `${normalizedDocId}.meta.json`),
+    chunks: join(artifactDir, `${normalizedDocId}.chunks.jsonl`),
+  }
+}
+
+async function readArtifactText(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return null
+    }
+    throw error
+  }
+}
+
+async function readArtifactJson(path: string): Promise<unknown | null> {
+  const raw = await readArtifactText(path)
+  if (raw === null) {
+    return null
+  }
+  return JSON.parse(raw) as unknown
 }
 
 function contentEquivalentKey(path: string): string {
@@ -1071,6 +1116,193 @@ const showCmd = Command.make(
     })
 )
 
+const markdownCmd = Command.make(
+  "markdown",
+  {
+    docId: Args.text({ name: "doc-id" }),
+  },
+  ({ docId }) =>
+    Effect.gen(function* () {
+      try {
+        const artifactPaths = buildDocArtifactPaths(docId)
+        if (!artifactPaths) {
+          yield* Console.log(respondError(
+            "docs markdown",
+            `Invalid document id: ${docId}`,
+            "INVALID_DOC_ID",
+            "Use the doc id returned by `joelclaw docs list` or `joelclaw docs show`",
+            [
+              { command: "joelclaw docs list", description: "List indexed documents" },
+              {
+                command: "joelclaw docs show <doc-id>",
+                description: "Inspect a specific indexed document",
+                params: { "doc-id": { required: true, value: docId } },
+              },
+            ]
+          ))
+          return
+        }
+
+        const content = yield* Effect.promise(() => readArtifactText(artifactPaths.markdown))
+        if (content === null) {
+          yield* Console.log(respondError(
+            "docs markdown",
+            `Markdown artifact not found for ${docId}`,
+            "NOT_FOUND",
+            "Reindex the source PDF with `joelclaw docs reindex-v2 <path>` if the markdown artifact is missing",
+            [
+              {
+                command: "joelclaw docs show <doc-id>",
+                description: "Inspect the indexed document metadata",
+                params: { "doc-id": { required: true, value: docId } },
+              },
+              {
+                command: "joelclaw docs search <query> --doc <doc-id>",
+                description: "Search within this document for chunk hits",
+                params: {
+                  query: { required: true, description: "Query string" },
+                  "doc-id": { required: true, value: docId, description: "Document id" },
+                },
+              },
+            ]
+          ))
+          return
+        }
+
+        yield* Console.log(respond("docs markdown", {
+          docId,
+          bytes: Buffer.byteLength(content, "utf8"),
+          content,
+        }, [
+          {
+            command: "joelclaw docs show <doc-id>",
+            description: "Inspect the indexed document metadata",
+            params: { "doc-id": { required: true, value: docId } },
+          },
+          {
+            command: "joelclaw docs context <chunk-id> --mode parent-section",
+            description: "Expand a chunk hit into its parent section",
+            params: {
+              "chunk-id": { required: true, description: "Chunk id from `joelclaw docs search`" },
+            },
+          },
+          {
+            command: "joelclaw docs search <query> --doc <doc-id>",
+            description: "Search within this document for chunk hits",
+            params: {
+              query: { required: true, description: "Query string" },
+              "doc-id": { required: true, value: docId, description: "Document id" },
+            },
+          },
+        ]))
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error)
+        yield* Console.log(respondError(
+          "docs markdown",
+          message,
+          "DOCS_MARKDOWN_FAILED",
+          "Verify the artifacts directory and document id",
+          [
+            { command: "joelclaw docs status", description: "Check docs collection and artifact status" },
+          ]
+        ))
+      }
+    })
+)
+
+const summaryCmd = Command.make(
+  "summary",
+  {
+    docId: Args.text({ name: "doc-id" }),
+  },
+  ({ docId }) =>
+    Effect.gen(function* () {
+      try {
+        const artifactPaths = buildDocArtifactPaths(docId)
+        if (!artifactPaths) {
+          yield* Console.log(respondError(
+            "docs summary",
+            `Invalid document id: ${docId}`,
+            "INVALID_DOC_ID",
+            "Use the doc id returned by `joelclaw docs list` or `joelclaw docs show`",
+            [
+              { command: "joelclaw docs list", description: "List indexed documents" },
+              {
+                command: "joelclaw docs show <doc-id>",
+                description: "Inspect a specific indexed document",
+                params: { "doc-id": { required: true, value: docId } },
+              },
+            ]
+          ))
+          return
+        }
+
+        const metadata = yield* Effect.promise(() => readArtifactJson(artifactPaths.meta))
+        if (metadata === null) {
+          yield* Console.log(respondError(
+            "docs summary",
+            `Metadata artifact not found for ${docId}`,
+            "NOT_FOUND",
+            "Reindex the source PDF with `joelclaw docs reindex-v2 <path>` if the summary artifact is missing",
+            [
+              {
+                command: "joelclaw docs markdown <doc-id>",
+                description: "Check whether the markdown artifact exists",
+                params: { "doc-id": { required: true, value: docId } },
+              },
+              {
+                command: "joelclaw docs show <doc-id>",
+                description: "Inspect the indexed document metadata",
+                params: { "doc-id": { required: true, value: docId } },
+              },
+              {
+                command: "joelclaw docs search <query> --doc <doc-id>",
+                description: "Search within this document for chunk hits",
+                params: {
+                  query: { required: true, description: "Query string" },
+                  "doc-id": { required: true, value: docId, description: "Document id" },
+                },
+              },
+            ]
+          ))
+          return
+        }
+
+        yield* Console.log(respond("docs summary", metadata, [
+          {
+            command: "joelclaw docs markdown <doc-id>",
+            description: "Read the full markdown artifact",
+            params: { "doc-id": { required: true, value: docId } },
+          },
+          {
+            command: "joelclaw docs show <doc-id>",
+            description: "Inspect the indexed document metadata",
+            params: { "doc-id": { required: true, value: docId } },
+          },
+          {
+            command: "joelclaw docs search <query> --doc <doc-id>",
+            description: "Search within this document for chunk hits",
+            params: {
+              query: { required: true, description: "Query string" },
+              "doc-id": { required: true, value: docId, description: "Document id" },
+            },
+          },
+        ]))
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error)
+        yield* Console.log(respondError(
+          "docs summary",
+          message,
+          "DOCS_SUMMARY_FAILED",
+          "Verify the artifacts directory and summary metadata for this doc id",
+          [
+            { command: "joelclaw docs status", description: "Check docs collection and artifact status" },
+          ]
+        ))
+      }
+    })
+)
+
 const statusCmd = Command.make(
   "status",
   {},
@@ -1079,7 +1311,7 @@ const statusCmd = Command.make(
       try {
         const apiKey = resolveTypesenseApiKey()
 
-        const docsParams = new URLSearchParams({
+        const buildDocsParams = () => new URLSearchParams({
           q: "*",
           query_by: "title",
           per_page: "1",
@@ -1087,7 +1319,7 @@ const statusCmd = Command.make(
           max_facet_values: "25",
           exclude_fields: "embedding",
         })
-        const chunksParams = new URLSearchParams({
+        const buildChunksParams = () => new URLSearchParams({
           q: "*",
           query_by: "content",
           per_page: "1",
@@ -1096,14 +1328,22 @@ const statusCmd = Command.make(
           exclude_fields: "embedding,retrieval_text",
         })
 
-        const [docsResult, chunksResult] = yield* Effect.promise(() =>
+        const [docsResult, chunksV1Result, chunksV2Result, artifactsAvailable] = yield* Effect.promise(() =>
           Promise.all([
-            typesenseSearch(apiKey, DOCS_COLLECTION, docsParams),
-            typesenseSearch(apiKey, DOCS_CHUNKS_COLLECTION, chunksParams),
+            typesenseSearch(apiKey, DOCS_COLLECTION, buildDocsParams()),
+            typesenseSearch(apiKey, DOCS_CHUNKS_V1_COLLECTION, buildChunksParams()),
+            typesenseSearch(apiKey, DOCS_CHUNKS_V2_COLLECTION, buildChunksParams()),
+            pathExists(DOCS_ARTIFACTS_DIR),
           ])
         )
 
-        const ok = (docsResult.found ?? 0) > 0 && (chunksResult.found ?? 0) > 0
+        const activeChunksResult =
+          DOCS_CHUNKS_COLLECTION === DOCS_CHUNKS_V1_COLLECTION
+            ? chunksV1Result
+            : DOCS_CHUNKS_COLLECTION === DOCS_CHUNKS_V2_COLLECTION
+              ? chunksV2Result
+              : undefined
+        const ok = (docsResult.found ?? 0) > 0 && (activeChunksResult?.found ?? 0) > 0
 
         yield* Console.log(respond("docs status", {
           collections: {
@@ -1112,9 +1352,18 @@ const statusCmd = Command.make(
               facets: docsResult.facet_counts ?? [],
             },
             docs_chunks: {
-              found: chunksResult.found ?? 0,
-              facets: chunksResult.facet_counts ?? [],
+              found: chunksV1Result.found ?? 0,
+              facets: chunksV1Result.facet_counts ?? [],
             },
+            docs_chunks_v2: {
+              found: chunksV2Result.found ?? 0,
+              facets: chunksV2Result.facet_counts ?? [],
+            },
+            active: DOCS_CHUNKS_COLLECTION,
+          },
+          artifacts: {
+            dir: DOCS_ARTIFACTS_DIR,
+            available: artifactsAvailable,
           },
         }, [
           { command: "joelclaw docs list --limit 10", description: "Inspect latest indexed docs" },
@@ -1373,6 +1622,90 @@ const reindexCmd = Command.make(
     })
 )
 
+const reindexV2Cmd = Command.make(
+  "reindex-v2",
+  {
+    path: Args.text({ name: "path" }),
+    title: Options.text("title").pipe(Options.optional),
+    skipExisting: Options.boolean("skip-existing").pipe(Options.withDefault(false)),
+  },
+  ({ path, title, skipExisting }) =>
+    Effect.gen(function* () {
+      const inngestClient = yield* Inngest
+      const payload: {
+        nasPath: string
+        title?: string
+        skipExistingArtifacts?: boolean
+      } = {
+        nasPath: path,
+      }
+      if (title._tag === "Some" && title.value.trim().length > 0) {
+        payload.title = title.value.trim()
+      }
+      if (skipExisting) {
+        payload.skipExistingArtifacts = true
+      }
+
+      const response = yield* inngestClient.send("docs/reindex-v2.requested", payload)
+      const runIds = (response as { ids?: string[] })?.ids ?? []
+
+      yield* Console.log(respond("docs reindex-v2", {
+        event: "docs/reindex-v2.requested",
+        data: payload,
+        response,
+      }, [
+        {
+          command: "joelclaw run <run-id>",
+          description: "Inspect reindex-v2 run details",
+          params: { "run-id": { required: true, value: runIds[0] ?? "RUN_ID" } },
+        },
+        {
+          command: "joelclaw otel search \"docs.reindex\" --hours 1",
+          description: "Inspect docs reindex OTEL events",
+        },
+      ]))
+    })
+)
+
+const batchReindexCmd = Command.make(
+  "batch-reindex",
+  {
+    fromCollection: Options.boolean("from-collection").pipe(Options.withDefault(false)),
+    skipExisting: Options.boolean("skip-existing").pipe(Options.withDefault(true)),
+  },
+  ({ fromCollection, skipExisting }) =>
+    Effect.gen(function* () {
+      const inngestClient = yield* Inngest
+      const payload: {
+        fromCollection?: boolean
+        skipExistingArtifacts?: boolean
+      } = {}
+      if (fromCollection) {
+        payload.fromCollection = true
+      }
+      if (skipExisting) {
+        payload.skipExistingArtifacts = true
+      }
+
+      const response = yield* inngestClient.send("docs/reindex-batch.requested", payload)
+
+      yield* Console.log(respond("docs batch-reindex", {
+        event: "docs/reindex-batch.requested",
+        data: payload,
+        response,
+      }, [
+        {
+          command: "joelclaw otel search \"docs.reindex.batch\" --hours 1",
+          description: "Monitor batch reindex orchestration events",
+        },
+        {
+          command: "joelclaw otel search \"docs.reindex\" --hours 1",
+          description: "Monitor downstream per-document reindex events",
+        },
+      ]))
+    })
+)
+
 export const docsCmd = Command.make(
   "docs",
   {},
@@ -1385,12 +1718,32 @@ export const docsCmd = Command.make(
         context: "joelclaw docs context <chunk-id> [--mode snippet-window|parent-section|section-neighborhood]",
         list: "joelclaw docs list [--category <category>] [--limit N]",
         show: "joelclaw docs show <doc-id>",
+        markdown: "joelclaw docs markdown <doc-id>",
+        summary: "joelclaw docs summary <doc-id>",
         status: "joelclaw docs status",
         reconcile: "joelclaw docs reconcile [--manifest <path>] [--sample N]",
         enrich: "joelclaw docs enrich <doc-id>",
         reindex: "joelclaw docs reindex [--doc <doc-id>]",
+        "reindex-v2": "joelclaw docs reindex-v2 <path> [--title <title>] [--skip-existing]",
+        "batch-reindex": "joelclaw docs batch-reindex [--from-collection] [--skip-existing]",
       },
       modes: ["snippet-window", "parent-section", "section-neighborhood"],
+      agentInstructions: {
+        expandingContext: [
+          "1. joelclaw docs search <query> — find relevant chunks",
+          "2. joelclaw docs context <chunk-id> --mode snippet-window — expand hit into surrounding context",
+          "3. joelclaw docs context <chunk-id> --mode parent-section — get the full section",
+          "4. joelclaw docs context <chunk-id> --mode section-neighborhood — neighboring sections",
+          "5. joelclaw docs markdown <doc-id> — read the full structured markdown of the book",
+          "6. joelclaw docs summary <doc-id> — get the LLM summary + taxonomy metadata",
+        ],
+        tips: [
+          "Use --semantic (default true) for meaning-based search with nomic 768-dim embeddings",
+          "Use --doc <id> to search within a specific book",
+          "Use --concept <id> to narrow by domain taxonomy",
+          "v2 collection uses nomic-embed-text-v1.5 (retrieval-tuned, 768-dim)",
+        ],
+      },
     }, [
       { command: "joelclaw docs status", description: "Verify docs collections and facets" },
       { command: "joelclaw docs search <query>", description: "Run snippet-first retrieval", params: { query: { required: true } } },
@@ -1404,9 +1757,13 @@ export const docsCmd = Command.make(
     contextCmd,
     listCmd,
     showCmd,
+    markdownCmd,
+    summaryCmd,
     statusCmd,
     reconcileCmd,
     enrichCmd,
     reindexCmd,
+    reindexV2Cmd,
+    batchReindexCmd,
   ])
 )

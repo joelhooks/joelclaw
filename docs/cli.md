@@ -131,6 +131,32 @@ Semantics:
 - `joelclaw workload`
 - `joelclaw jobs`
 
+## Docs command tree (ADR-0234 docs pipeline v2)
+
+```bash
+joelclaw docs
+├── add <path> [--title <title>] [--tags a,b,c] [--category <storage-category>]
+├── search <query> [--limit <n>] [--category <category>] [--concept <concept-id>] [--chunk-type <section|snippet>] [--doc <doc-id>] [--semantic]
+├── context <chunk-id> [--mode snippet-window|parent-section|section-neighborhood] [--before <n>] [--after <n>] [--neighbors <n>]
+├── list [--category <category>] [--limit <n>]
+├── show <doc-id>
+├── markdown <doc-id>
+├── summary <doc-id>
+├── status
+├── reconcile [--manifest <path>] [--sample <n>]
+├── enrich <doc-id>
+├── reindex [--doc <doc-id>]
+├── reindex-v2 <path> [--title <title>] [--skip-existing]
+└── batch-reindex [--from-collection] [--skip-existing]
+```
+
+Semantics:
+
+- active chunk search collection is switchable via `DOCS_CHUNKS_COLLECTION` and now defaults to `docs_chunks_v2`
+- markdown + summary read durable artifacts from `DOCS_ARTIFACTS_DIR` (default `/Volumes/three-body/docs-artifacts`)
+- `docs status` reports both `docs_chunks` (v1) and `docs_chunks_v2` plus artifact directory availability
+- agentic expansion flow is `docs search` → `docs context` → `docs markdown` / `docs summary`
+
 ## Skills command tree
 
 ```bash
