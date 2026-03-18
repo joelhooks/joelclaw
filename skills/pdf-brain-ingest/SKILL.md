@@ -1,21 +1,36 @@
 ---
 name: pdf-brain-ingest
 displayName: PDF Brain Ingest
-description: "Ingest PDF/Markdown/TXT files into joelclaw's docs memory pipeline with Inngest durability, run monitoring, and OTEL verification. Use when adding docs, backfilling from manifest, reconciling coverage, or recovering stuck docs-ingest runs. Triggers on: 'ingest pdf', 'ingest markdown', 'docs add', 'pdf-brain ingest', 'backfill books', 'docs reconcile'."
-version: 1.0.0
+description: "Ingest PDF/Markdown/TXT files into joelclaw's docs memory pipeline with Inngest durability, durable NAS artifacts, and OTEL verification. Use when adding docs, running batch reindex, reconciling coverage, or recovering stuck runs. Triggers on: 'ingest pdf', 'ingest markdown', 'docs add', 'pdf-brain ingest', 'backfill books', 'docs reconcile', 'reindex docs', 'batch reindex'."
+version: 2.0.0
 author: Joel Hooks
-tags: [joelclaw, docs, pdf, markdown, ingest, inngest, typesense, memory]
+tags: [joelclaw, docs, pdf, markdown, ingest, inngest, typesense, memory, opendataloader]
 ---
 
-# PDF Brain Ingest (Joelclaw)
+# PDF Brain Ingest v2 (ADR-0234)
 
-This is the joelclaw-native replacement for `pdf-brain + swarm queue` operations.
+Staged artifact-chain pipeline with durable NAS storage, nomic embeddings, and workload queue orchestration.
 
-Use `joelclaw docs` and Inngest events instead of ad hoc queue workers:
-- `docs/ingest.requested` -> `docs-ingest`
-- `docs/backlog.requested` -> batch queueing from manifest
-- `docs/backlog.drive.requested` -> scheduled backlog driver with queue depth gates
-- `docs/ingest.janitor.requested` -> stuck-run detection and recovery
+## Pipeline v2 Architecture
+
+```
+PDF (source, immutable)
+  → Stage 1: CONVERT — opendataloader-pdf → {docId}.md (NAS artifact)
+  → Stage 2: CLASSIFY + SUMMARIZE — taxonomy + LLM summary → {docId}.meta.json (NAS artifact)
+  → Stage 3: CHUNK — markdown-native headings, no overlap → {docId}.chunks.jsonl (NAS artifact)
+  → Stage 4: INDEX — upsert to docs + docs_chunks_v2 (nomic-embed-text-v1.5, 768-dim)
+```
+
+**Key properties:**
+- **Durable**: artifacts on NAS RAID5, survive reboots/crashes
+- **Resumable**: each stage checks for existing artifacts, skips if present
+- **Recoverable**: re-run any stage from existing artifacts without re-extracting
+- **Observable**: OTEL event per stage per book
+
+**Artifacts dir**: `/Volumes/three-body/docs-artifacts/{docId}/`
+- `{docId}.md` — structured markdown extraction
+- `{docId}.meta.json` — taxonomy, summary, metadata
+- `{docId}.chunks.jsonl` — chunk records, one per line
 
 ## Core Workflow
 
@@ -23,130 +38,140 @@ Use `joelclaw docs` and Inngest events instead of ad hoc queue workers:
 
 ```bash
 joelclaw status
-joelclaw inngest status
 joelclaw docs status
 ```
 
-If registration is stale:
+Status now shows both v1 and v2 collection stats plus artifact availability.
 
-```bash
-joelclaw inngest sync-worker --restart
-```
-
-### 2) Single File Ingest
+### 2) Single File Ingest (v1 pipeline)
 
 ```bash
 joelclaw docs add "/absolute/path/to/file.pdf"
-joelclaw docs add "/absolute/path/to/file.md"
+joelclaw docs add "/absolute/path/to/file.pdf" --title "Title" --tags "tag1,tag2" --category programming
 ```
 
-Optional metadata:
+### 3) Single File v2 Reindex (artifact pipeline)
 
 ```bash
-joelclaw docs add "/absolute/path/to/file.pdf" \
-  --title "Readable Title" \
-  --tags "manifest,catalog-fill" \
-  --category programming
+joelclaw docs reindex-v2 "/absolute/path/to/file.pdf"
+joelclaw docs reindex-v2 "/absolute/path/to/file.pdf" --title "Title" --skip-existing
 ```
 
-Supported types: `pdf`, `md`, `txt`.
+Fires `docs/reindex-v2.requested` → 4-stage artifact pipeline → NAS artifacts + docs_chunks_v2.
 
-### 3) Bulk Backfill From Manifest
-
-Queue a controlled batch:
+### 4) Batch Reindex (full library)
 
 ```bash
-joelclaw send docs/backlog.requested -d '{
-  "maxEntries": 24,
-  "booksOnly": true,
-  "onlyMissing": true,
-  "includePodcasts": false,
-  "idempotencyPrefix": "manual"
-}'
+# Reindex all PDFs from NAS /Volumes/three-body/books/
+joelclaw docs batch-reindex --skip-existing
+
+# Reindex from existing Typesense docs collection
+joelclaw docs batch-reindex --from-collection --skip-existing
 ```
 
-Let the driver decide based on queue depth:
+Fires `docs/reindex-batch.requested` → scans NAS/collection → dispatches individual reindex-v2 events in batches of 10, concurrency 3.
+
+`--skip-existing` skips books that already have all 3 artifacts on NAS (default true).
+
+### 5) Monitor Progress
 
 ```bash
-joelclaw send docs/backlog.drive.requested -d '{
-  "reason": "manual backfill kick",
-  "maxEntries": 24,
-  "force": false
-}'
-```
+# Artifact count on NAS
+ls /Volumes/three-body/docs-artifacts/ | wc -l
 
-### 4) Monitor + Verify
+# v2 collection chunk count
+joelclaw docs status
 
-```bash
-joelclaw runs --count 20 --hours 1
+# OTEL events from pipeline
+joelclaw otel search "docs.reindex" --hours 4
+joelclaw o11y session system-bus --hours 4
+
+# Individual run trace
+joelclaw runs --count 10
 joelclaw run <run-id>
-joelclaw docs list --limit 20
-joelclaw docs show <doc-id>
-joelclaw docs search "your query"
-joelclaw docs context <chunk-id> --mode snippet-window
 ```
 
-### 5) Coverage Reconcile
+### 6) Inspect Artifacts
+
+```bash
+# Read the extracted markdown
+joelclaw docs markdown <doc-id>
+
+# Read the summary + taxonomy metadata
+joelclaw docs summary <doc-id>
+
+# Or directly on NAS
+cat /Volumes/three-body/docs-artifacts/<docId>/<docId>.md
+cat /Volumes/three-body/docs-artifacts/<docId>/<docId>.meta.json | jq
+wc -l /Volumes/three-body/docs-artifacts/<docId>/<docId>.chunks.jsonl
+```
+
+### 7) Retrieval from v2
+
+```bash
+# Search uses docs_chunks_v2 (nomic 768-dim) by default
+joelclaw docs search "distributed consensus" --limit 8
+
+# Context expansion
+joelclaw docs context <chunk-id> --mode snippet-window
+joelclaw docs context <chunk-id> --mode parent-section
+joelclaw docs context <chunk-id> --mode section-neighborhood
+```
+
+### 8) Coverage Reconcile
 
 ```bash
 joelclaw docs reconcile --sample 20
 ```
 
-Use `content_equivalent` coverage to detect false-missing churn caused by path/category aliasing.
+### 9) Recovery
 
-### 6) OTEL Verification
+If the batch stalls or books fail:
+- Inngest retries each step automatically (default retry policy)
+- `--skip-existing` means re-firing the batch only processes unfinished books
+- Check OTEL for errors: `joelclaw otel list --level error --hours 4`
+- Individual retry: `joelclaw docs reindex-v2 "/path/to/failed.pdf"`
 
-```bash
-joelclaw otel search "docs.file.validated" --hours 1
-joelclaw otel search "docs.taxonomy.classified" --hours 1
-joelclaw otel search "docs.chunks.indexed" --hours 1
-joelclaw otel search "docs.path.aliases.updated" --hours 24
-```
+## Extraction Details
 
-### 7) Recovery / Maintenance
+- **Primary**: opendataloader-pdf v2.0.0 (Java-based, #1 in benchmarks, 0.90 accuracy)
+- **Fallback**: pypdf (basic text extraction if Java unavailable)
+- **Requires**: Java 11+ (OpenJDK 25 installed on panda, PATH configured in worker start.sh)
+- **Speed**: ~2.5s per book on M4 Pro
 
-```bash
-joelclaw send docs/ingest.janitor.requested -d '{"reason":"manual janitor sweep"}'
-joelclaw docs enrich <doc-id>
-joelclaw docs reindex --doc <doc-id>
-joelclaw docs reindex
-```
+## Embedding Model
 
-## Legacy Mapping (Old -> Joelclaw)
+- **v2**: `ts/nomic-embed-text-v1.5` — 768-dim, retrieval-tuned, Typesense built-in
+- **v1**: `ts/all-MiniLM-L12-v2` — 384-dim, general-purpose (legacy, still in `docs_chunks`)
 
-- `pdf-brain add <file> --enrich` -> `joelclaw docs add <absolute-path>`
-- `pdf-brain ingest <dir> --enrich` -> `joelclaw send docs/backlog.requested -d '{...}'`
-- `swarm queue submit pdf-ingest '{"path":"..."}'` -> `joelclaw docs add <absolute-path>`
-- `pdf-brain-worker (nice -n10, concurrency 1)` -> built into `docs-ingest` + backlog driver + janitor
+## Chunking Strategy (ADR-0234)
 
-## Acquisition Handoff (aa-book -> Inngest, end to end)
+- Markdown-native heading detection (`#` markers, not heuristics)
+- Recursive splitting within sections exceeding target tokens
+- No overlap (arxiv R100-0 finding: 45% higher precision)
+- Two-level hierarchy: section chunks + snippet sub-chunks
+- heading_path derived from actual markdown heading levels
+- Context inheritance: retrieval_text includes `[DOC: title] [SUMMARY: ...] [PATH: heading > path] [CONCEPTS: ...]`
 
-Use the event workflow so acquisition, inference, download, and docs queueing stay durable:
+## Acquisition Pipeline (aa-book → ingest)
 
 ```bash
 joelclaw send pipeline/book.download -d '{
   "query": "designing data-intensive applications",
   "format": "pdf",
-  "reason": "memory backfill"
+  "reason": "library expansion"
 }'
 ```
 
-Behavior:
-- Runs `aa-book search`
-- Uses `pi` inference (Sonnet 4.6 model alias from system-bus model registry) to select MD5
-- Runs `aa-book download <md5> <outputDir> --keep-local`
-- Attempts a non-fatal NAS backup to `/volume1/home/joel/books/<year>/...` via SSH/SCP
-- Emits `docs/ingest.requested` with the local `filePath` for immediate ingest and `nasPath` when backup succeeds
-- Emits `pipeline/book.downloaded`
+Downloads via aa-book → NAS backup → fires `docs/ingest.requested` for immediate processing.
 
-Optional direct MD5 mode:
+## Inngest Events
 
-```bash
-joelclaw send pipeline/book.download -d '{
-  "md5": "0123456789abcdef0123456789abcdef",
-  "outputDir": "/Users/joel/clawd/data/pdf-brain/incoming"
-}'
-```
-
-For full operator details and troubleshooting traces, see:
-- `references/operator-guide.md`
+| Event | Function | Purpose |
+|-------|----------|---------|
+| `docs/ingest.requested` | docs-ingest | v1 pipeline (single file) |
+| `docs/reindex-v2.requested` | docs-reindex-v2 | v2 artifact pipeline (single file) |
+| `docs/reindex-batch.requested` | docs-reindex-batch | Batch orchestrator (all PDFs) |
+| `docs/backlog.requested` | docs-backlog | Legacy manifest-based backfill |
+| `docs/enrich.requested` | docs-enrich | Re-enrich metadata for existing doc |
+| `pipeline/book.download` | book-download | Acquire + ingest new book |

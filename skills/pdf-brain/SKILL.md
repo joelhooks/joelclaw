@@ -1,72 +1,103 @@
 ---
 name: pdf-brain
 description: "Research and library synthesis from the docs/PDF corpus, mapped to joelclaw system philosophy and concrete operational actions (especially k8s reliability). Trigger on: 'research this', 'from the library', 'from the books', 'pdf brain', 'correlate this', 'synthesize', or any request to derive practical architecture/ops guidance from the docs corpus. This skill is analysis-only; for ingestion/backfill workflows use pdf-brain-ingest."
+version: 2.0.0
 ---
 
 # PDF Brain — Research → Practical System Moves
 
-Use this skill when the user wants evidence-backed synthesis from the docs library (books, PDFs, long-form references), not generic web summarization.
+Use this skill when the user wants evidence-backed synthesis from the docs library (600+ books, PDFs, long-form references), not generic web summarization.
 
-This skill is for turning research into:
-1) system philosophy implications, and
-2) immediate execution plans (with bias toward k8s/infra reliability).
+## Pipeline v2 (ADR-0234)
+
+The docs pipeline uses a staged artifact chain:
+- **Extraction**: opendataloader-pdf → structured markdown with headings, tables, reading order
+- **Chunking**: markdown-native heading detection, no overlap, hierarchical section + snippet chunks
+- **Embeddings**: nomic-embed-text-v1.5 (768-dim, retrieval-tuned) in `docs_chunks_v2` collection
+- **Artifacts**: durable on NAS at `/Volumes/three-body/docs-artifacts/{docId}/` — `.md`, `.meta.json`, `.chunks.jsonl`
+- **Summaries**: LLM-generated per-document summaries in `.meta.json`
 
 ## When to Use
 
 Trigger cues (explicit or implied):
-- “research this”
-- “from the library” / “from the books”
-- “pdf brain”
-- “correlate this to our system”
-- “expand this into practical ideas”
-- “what does this mean for k8s right now?”
+- "research this" / "from the library" / "from the books"
+- "pdf brain" / "correlate this to our system"
+- "what does the research say" / "what do the books say"
+- "expand this into practical ideas"
 
-Use when the ask is synthesis across multiple references, especially for distributed systems, reliability, resilience, event-driven architecture, and operations.
+## Retrieval Workflow
 
-## Core Workflow
+### CLI path (preferred for interactive sessions)
 
-### 0) Clarify the target (brief)
-
-Extract three anchors:
-- **Decision horizon**: immediate fix / near-term hardening / long-term architecture
-- **System surface**: gateway, worker, k8s, content pipeline, memory, etc.
-- **Output form**: principles, action plan, ADR input, runbook checklist
-
-If scope is unclear, ask one tight clarifying question.
-
-### 1) Retrieve evidence from corpus
-
-Use `joelclaw docs search` first, then `joelclaw docs context` for local windows.
-
-Preferred pattern:
 ```bash
-joelclaw docs search "<topic>" --limit 8 --semantic true
-joelclaw docs search "<topic>" --doc <doc-id> --limit 8 --semantic true
-joelclaw docs context <chunk-id> --mode snippet-window --before 1 --after 1
+# Search across all books — semantic by default (nomic 768-dim)
+joelclaw docs search "distributed consensus" --limit 8
+
+# Search within a specific book
+joelclaw docs search "consensus" --doc designing-dataintensive-applications-39cc0d1842a5
+
+# Expand a chunk into surrounding context
+joelclaw docs context <chunk-id> --mode snippet-window --before 2 --after 2
+
+# Get the full parent section
+joelclaw docs context <chunk-id> --mode parent-section
+
+# Get neighboring sections for broad context
+joelclaw docs context <chunk-id> --mode section-neighborhood --neighbors 2
+
+# Read the full structured markdown of a book
+joelclaw docs markdown <doc-id>
+
+# Get document summary + taxonomy metadata
+joelclaw docs summary <doc-id>
 ```
 
-For noisy terms, pin to known doc IDs and use focused query phrases.
+### API path (for programmatic access or docs-api consumers)
 
-### 2) Build an evidence ledger
+```
+GET /search?q=distributed+consensus&semantic=true&expand=true&assemble=true
+GET /docs/:docId/toc
+GET /docs/:docId/markdown
+GET /docs/:docId/summary
+GET /chunks/:chunkId
+```
 
-Keep a compact ledger while reading:
-- `doc`
+The docs-api runs on k8s at `docs-api:3838` (Bearer auth required).
+
+### Context expansion strategy
+
+The library supports progressive context expansion:
+
+1. **Search** → chunk-level hits with heading_path and snippet
+2. **snippet-window** → 2 chunks before/after for local context
+3. **parent-section** → the full section containing the snippet
+4. **section-neighborhood** → adjacent sections for broader flow
+5. **markdown** → the complete structured book text
+
+Start narrow, expand only when needed. Don't dump full books into context.
+
+## Evidence Synthesis
+
+### Build an evidence ledger
+
+While reading, keep a compact ledger:
+- `doc` (title)
 - `chunk-id`
 - `claim` (one sentence)
 - `relevance` (why it matters to this problem)
 
 Never output synthesis without traceable evidence.
 
-### 3) Convert evidence into principles
+### Convert evidence into principles
 
 Turn each claim into an operational principle in imperative form:
-- “Treat partial failure as normal.”
-- “Fail fast at dependency boundaries.”
-- “Prefer idempotent replay-safe remediation loops.”
+- "Treat partial failure as normal."
+- "Fail fast at dependency boundaries."
+- "Prefer idempotent replay-safe remediation loops."
 
 Avoid vague advice. Each principle must imply a technical behavior.
 
-### 4) Correlate to joelclaw philosophy
+### Correlate to joelclaw philosophy
 
 Map principles to existing joelclaw operating rules:
 - single source of truth
@@ -76,9 +107,7 @@ Map principles to existing joelclaw operating rules:
 - observability required at every step
 - skill/doc updates when reality changes
 
-If a principle conflicts with current behavior, call it out directly.
-
-### 5) Translate into immediate k8s moves
+### Translate into action
 
 For each principle, produce:
 1. **Concrete change** (file/service/config path)
@@ -86,55 +115,23 @@ For each principle, produce:
 3. **Failure signal** (what proves it did not work)
 4. **Rollback or containment move**
 
-Use this structure:
+## Taxonomy
 
-```markdown
-- Principle:
-- k8s/infra move:
-- Implementation path:
-- Verify:
-- Failure signal:
-- Next escalation:
-```
+The library is classified via SKOS taxonomy:
+- `jc:docs:programming` (systems, languages, architecture)
+- `jc:docs:business` (creator economy)
+- `jc:docs:education` (learning science, pedagogy)
+- `jc:docs:design` (game, systems, product)
+- `jc:docs:marketing`, `jc:docs:strategy`, `jc:docs:ai`, `jc:docs:operations`
 
-### 6) Package output for action
-
-Default output sections:
-1. Evidence-backed principles (with chunk IDs)
-2. System philosophy implications
-3. Immediate k8s action plan (ordered by risk reduction)
-4. ADR impact (new ADR vs update existing)
-
-## K8s-Specific Correlation Heuristics
-
-When the topic involves distributed systems reliability, prioritize these mappings:
-
-- **Partial failure + nondeterminism** → avoid localhost-only liveness assumptions
-- **Bulkheads/circuit breakers** → isolate critical probe paths and fail fast on dependency meltdown
-- **Error-budget thinking** → gate risky deploy velocity on reliability state
-- **Idempotent consumers + dedupe** → make heal/repair loops replay-safe
-- **Observability for unknown-unknowns** → emit high-cardinality structured telemetry from probe + repair paths
-- **Loose coupling / stable boundaries** → keep host bootstrap logic in adapters, keep control logic platform-neutral
+Use `--concept jc:docs:programming:systems` to narrow by domain.
+Use `joelclaw docs status` to see facet counts per concept.
 
 ## Rules
 
 - Do not fabricate quotes or claims.
 - Always cite chunk IDs for non-obvious assertions.
-- Do not output “book report” fluff. Translate to operations.
+- Do not output "book report" fluff. Translate to operations.
 - If infra changes are proposed, include verification commands.
 - If work implies architectural policy change, tie it to an ADR path.
-
-## Anti-Patterns
-
-- Dumping generic best practices with no corpus evidence
-- Mixing strategic and tactical advice with no prioritization
-- Suggesting broad rewrites when a bounded hardening step reduces risk faster
-- Treating one-host reliability hacks as long-term architecture
-
-## Minimum Deliverable
-
-A good response from this skill includes:
-- 5–10 evidence-backed principles
-- explicit mapping to joelclaw rules
-- top 3 immediate k8s actions with verify commands
-- ADR recommendation (update existing or propose new)
+- Start with search, expand only as needed. Don't waste context on full book dumps.
