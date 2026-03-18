@@ -665,7 +665,10 @@ const searchCmd = Command.make(
           exclude_fields: "embedding,retrieval_text",
           highlight_full_fields: "content,retrieval_text",
         })
-        if (semantic) {
+        // ADR-0234: v2 uses pre-computed ollama embeddings (raw float[]).
+        // vector_query with empty [] only works with Typesense auto-embed (v1).
+        // TODO: embed query via ollama and pass actual vector for v2.
+        if (semantic && DOCS_CHUNKS_COLLECTION !== DOCS_CHUNKS_V2_COLLECTION) {
           params.set("vector_query", `embedding:([], k:${Math.max(limit * 3, 20)}, alpha:0.75)`)
         }
         if (filters.length > 0) {

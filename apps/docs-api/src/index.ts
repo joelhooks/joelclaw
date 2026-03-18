@@ -681,7 +681,12 @@ function buildDocsChunksSearchParams(options: {
     params.set("filter_by", options.filterBy);
   }
 
-  if (options.semantic) {
+  // ADR-0234: docs_chunks_v2 uses pre-computed ollama embeddings (raw float[]),
+  // not Typesense auto-embed. vector_query with empty [] only works with auto-embed.
+  // TODO: embed query via ollama when k8s can reach ollama endpoint, then pass actual vector.
+  // For now, text-based search via retrieval_text is still high quality.
+  if (options.semantic && DOCS_CHUNKS_COLLECTION === "docs_chunks") {
+    // Only auto-embed vector search for v1 collection
     params.set(
       "vector_query",
       `embedding:([], k:${Math.max(options.perPage * 3, 20)}, alpha:0.75)`,
