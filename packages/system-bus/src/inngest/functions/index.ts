@@ -49,6 +49,8 @@ export {
   docsIngestJanitor,
   docsReindex,
 } from "./docs-maintenance";
+export { docsReindexBatch } from "./docs-reindex-batch";
+export { docsReindexV2 } from "./docs-reindex-v2";
 export { emailNag } from "./email-nag";
 export { embedText } from "./embed";
 export { friction } from "./friction";

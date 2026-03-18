@@ -46,6 +46,8 @@ import {
   docsIngestJanitor,
   docsReindex,
 } from "./docs-maintenance";
+import { docsReindexBatch } from "./docs-reindex-batch";
+import { docsReindexV2 } from "./docs-reindex-v2";
 import { emailNag } from "./email-nag";
 import { embedText } from "./embed";
 import { friction } from "./friction";
@@ -233,6 +235,8 @@ export const hostFunctionDefinitions = [
   docsBacklog,
   docsBacklogDriver,
   docsIngest,
+  docsReindexBatch,
+  docsReindexV2,
   docsEnrich,
   channelIntelligenceGarden,
   channelIntelligenceTodoist,

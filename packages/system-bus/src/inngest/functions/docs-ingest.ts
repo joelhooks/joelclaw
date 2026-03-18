@@ -24,8 +24,9 @@ import {
 } from "../../taxonomy/resolve";
 import { inngest } from "../client";
 
-const DOCS_COLLECTION = "docs";
-const DOCS_CHUNKS_COLLECTION = "docs_chunks";
+export const DOCS_COLLECTION = "docs";
+export const DOCS_CHUNKS_COLLECTION = "docs_chunks";
+export const DOCS_CHUNKS_V2_COLLECTION = "docs_chunks_v2";
 const DOCS_TMP_DIR = "/tmp/docs-ingest";
 const THREE_BODY_ROOT = "/Volumes/three-body";
 const MANIFEST_FILE_NAME = "manifest.clean.jsonl";
@@ -71,7 +72,13 @@ const MINI_LM_MODEL_CONFIG = {
   query_prefix: "",
 };
 
-type DocsFileType = "pdf" | "md" | "txt";
+const NOMIC_EMBED_MODEL_CONFIG = {
+  model_name: "ts/nomic-embed-text-v1.5",
+  indexing_prefix: "",
+  query_prefix: "",
+};
+
+export type DocsFileType = "pdf" | "md" | "txt";
 type EvidenceTier = "section" | "snippet";
 type TaxonomyClassificationStrategy = "backfill" | "llm" | "rules";
 
@@ -85,11 +92,15 @@ type ValidatedFile = {
   title: string;
 };
 
+export type ValidatedDocsFile = ValidatedFile;
+
 type ExtractedTextArtifact = {
   textPath: string;
   characterCount: number;
   pageCount: number | null;
 };
+
+export type DocsExtractedTextArtifact = ExtractedTextArtifact;
 
 export type DocsTaxonomyClassification = {
   primaryConceptId: ConceptId;
@@ -566,6 +577,7 @@ async function inferTaxonomyWithLlm(input: {
   textSample: string;
   runId?: string;
   eventId?: string;
+  component?: string;
 }): Promise<TaxonomyLlmResult | null> {
   const taxonomySystemPrompt = `You classify documents into canonical taxonomy concepts.
 Return JSON only:
@@ -604,7 +616,7 @@ Rules:
       task: "classification",
       model: DOCS_TAXONOMY_MODEL,
       system: taxonomySystemPrompt,
-      component: "docs-ingest",
+      component: input.component ?? "docs-ingest",
       action: "docs.taxonomy.classify",
       print: true,
       noTools: true,
@@ -650,7 +662,7 @@ Rules:
       await emitOtelEvent({
         level: "warn",
         source: "worker",
-        component: "docs-ingest",
+        component: input.component ?? "docs-ingest",
         action: "docs.taxonomy.classify",
         success: false,
         error: "invalid taxonomy classifier output",
@@ -682,7 +694,7 @@ Rules:
     await emitOtelEvent({
       level: isTimeout ? "warn" : "error",
       source: "worker",
-      component: "docs-ingest",
+      component: input.component ?? "docs-ingest",
       action: isTimeout ? "docs.taxonomy.classify.timeout" : "docs.taxonomy.classify",
       success: false,
       error: isTimeout
@@ -697,7 +709,7 @@ Rules:
   }
 }
 
-async function extractPdfText(path: string): Promise<{ text: string; pageCount: number | null }> {
+export async function extractPdfText(path: string): Promise<{ text: string; pageCount: number | null }> {
   // Primary: opendataloader-pdf — structured markdown with tables, headings, reading order
   const tmpDir = `/tmp/odl-${Date.now()}`;
   // Set JAVA_HOME for opendataloader-pdf (requires Java 11+)
@@ -812,9 +824,10 @@ async function estimatePdfPageCount(path: string): Promise<number | null> {
   return null;
 }
 
-async function validateFile(input: {
+export async function validateFile(input: {
   nasPath: string;
   title?: string;
+  docId?: string;
 }): Promise<ValidatedFile> {
   const nasPath = input.nasPath.trim();
   if (!nasPath) {
@@ -838,7 +851,7 @@ async function validateFile(input: {
   const fileType = resolveFileType(nasPath);
   const sha256 = await sha256File(nasPath);
   const baseSlug = slugify(basename(fileName, extname(fileName))).slice(0, 48);
-  const docId = `${baseSlug}-${sha256.slice(0, 12)}`;
+  const docId = input.docId?.trim() || `${baseSlug}-${sha256.slice(0, 12)}`;
   const title = resolveTitle(input.title, fileName);
 
   return {
@@ -886,14 +899,14 @@ export function buildExtractedTextPath(docId: string): string {
   return `${DOCS_TMP_DIR}/${docId}-${Date.now()}-${entropy}.txt`;
 }
 
-function inferDocumentType(file: ValidatedFile, storageCategory: StorageCategory): string {
+export function inferDocumentType(file: ValidatedFile, storageCategory: StorageCategory): string {
   if (storageCategory === "podcasts") return "podcast";
   if (file.fileType === "pdf") return "book";
   if (file.fileType === "md") return "markdown";
   return "text";
 }
 
-function collectConceptLabels(input: {
+export function collectConceptLabels(input: {
   file: ValidatedFile;
   storageCategory?: string;
   tags?: string[];
@@ -939,7 +952,7 @@ function collectConceptLabels(input: {
   return [...labels];
 }
 
-function summarizeText(text: string): string {
+export function summarizeText(text: string): string {
   const sentence = text
     .replace(/\s+/g, " ")
     .trim()
@@ -1053,6 +1066,164 @@ export function buildBackfillClassification(input: {
       provider: manifestInference.enrichmentProvider,
     },
     diagnostics: input.resolved.diagnostics,
+  };
+}
+
+export async function classifyDocsTaxonomy(input: {
+  file: ValidatedFile;
+  requestedTags?: string[];
+  explicitStorageCategory?: string;
+  sourceHost?: string;
+  title?: string;
+  textSample: string;
+  runId?: string;
+  eventId?: string;
+  component?: string;
+}): Promise<{
+  classification: DocsTaxonomyClassification;
+  tags: string[];
+  manifestInference: ManifestInferenceRecord | null;
+}> {
+  const component = input.component ?? "docs-ingest";
+  const manifestInference = await resolveManifestInference(input.file.nasPath);
+  const mergedTags = [...new Set([...(input.requestedTags ?? []), ...(manifestInference?.tags ?? [])])];
+
+  const labels = collectConceptLabels({
+    file: input.file,
+    storageCategory: input.explicitStorageCategory ?? manifestInference?.enrichmentCategory,
+    tags: mergedTags,
+    title: input.title,
+    sourceHost: input.sourceHost,
+    textSample: input.textSample,
+  });
+  if (manifestInference?.enrichmentDocumentType) {
+    labels.push(manifestInference.enrichmentDocumentType);
+  }
+
+  const resolved = resolveConcepts({ labels });
+  let primaryConceptId: ConceptId = resolved.primaryConceptId;
+  let conceptIds: ConceptId[] = resolved.conceptIds;
+  let conceptSource: ConceptSource = resolved.conceptSource;
+  let strategy: TaxonomyClassificationStrategy = "rules";
+  let llmMeta: DocsTaxonomyClassification["llm"] | undefined;
+  let backfillMeta: DocsTaxonomyClassification["backfill"] | undefined;
+  let preferredStorageCategory: string | undefined =
+    input.explicitStorageCategory ?? manifestInference?.enrichmentCategory;
+  const hasBackfillInference = Boolean(
+    manifestInference
+      && (manifestInference.enrichmentCategory
+        || manifestInference.enrichmentDocumentType
+        || manifestInference.enrichmentProvider)
+  );
+  const backfillClassification = buildBackfillClassification({
+    resolved,
+    manifestInference,
+    explicitStorageCategory: input.explicitStorageCategory,
+    nasPath: input.file.nasPath,
+  });
+
+  if (backfillClassification) {
+    primaryConceptId = backfillClassification.primaryConceptId;
+    conceptIds = backfillClassification.conceptIds;
+    conceptSource = backfillClassification.conceptSource;
+    strategy = backfillClassification.strategy;
+    backfillMeta = backfillClassification.backfill;
+    preferredStorageCategory = backfillClassification.storageCategory;
+  } else {
+    const llmInference = await inferTaxonomyWithLlm({
+      file: input.file,
+      tags: mergedTags,
+      explicitStorageCategory: input.explicitStorageCategory,
+      sourceHost: input.sourceHost,
+      textSample: input.textSample,
+      runId: input.runId,
+      eventId: input.eventId,
+      component,
+    });
+
+    if (llmInference) {
+      primaryConceptId = llmInference.primaryConceptId;
+      conceptIds = llmInference.conceptIds;
+      conceptSource = "llm";
+      strategy = "llm";
+      preferredStorageCategory = input.explicitStorageCategory ?? llmInference.storageCategory;
+      llmMeta = {
+        provider: llmInference.provider,
+        model: llmInference.model,
+        usage: llmInference.usage,
+        reason: llmInference.reason,
+      };
+    } else if (!DOCS_ALLOW_RULES_FALLBACK) {
+      await emitOtelEvent({
+        level: "error",
+        source: "worker",
+        component,
+        action: "docs.taxonomy.inference_required",
+        success: false,
+        error: "taxonomy_inference_unavailable",
+        metadata: {
+          docId: input.file.docId,
+          nasPath: input.file.nasPath,
+          manifestMatched: Boolean(manifestInference),
+          hasBackfillInference,
+        },
+      });
+      throw new Error(
+        `docs-ingest requires taxonomy inference (backfill or llm) for ${input.file.nasPath}`
+      );
+    }
+  }
+
+  const storageCategory = resolveStorageCategory({
+    explicitCategory: preferredStorageCategory,
+    nasPath: input.file.nasPath,
+    primaryConceptId,
+  });
+
+  const classification: DocsTaxonomyClassification = {
+    primaryConceptId,
+    conceptIds,
+    conceptSource,
+    taxonomyVersion: resolved.taxonomyVersion,
+    storageCategory,
+    strategy,
+    ...(llmMeta ? { llm: llmMeta } : {}),
+    ...(backfillMeta ? { backfill: backfillMeta } : {}),
+    diagnostics: resolved.diagnostics,
+  };
+
+  await emitMeasuredOtelEvent(
+    {
+      level: "info",
+      source: "worker",
+      component,
+      action: "docs.taxonomy.classified",
+      metadata: {
+        docId: input.file.docId,
+        storageCategory,
+        primaryConceptId: classification.primaryConceptId,
+        conceptIds: classification.conceptIds,
+        conceptSource: classification.conceptSource,
+        taxonomyVersion: classification.taxonomyVersion,
+        strategy: classification.strategy,
+        llmModel: classification.llm?.model,
+        llmProvider: classification.llm?.provider,
+        llmReason: classification.llm?.reason,
+        backfillEntryId: classification.backfill?.entryId,
+        backfillProvider: classification.backfill?.provider,
+        mappedCount: classification.diagnostics.mappedCount,
+        unmappedCount: classification.diagnostics.unmappedCount,
+        aliasHits: classification.diagnostics.aliasHits,
+        unmappedLabels: classification.diagnostics.unmappedLabels,
+      },
+    },
+    async () => classification
+  );
+
+  return {
+    classification,
+    tags: mergedTags,
+    manifestInference,
   };
 }
 
@@ -1172,7 +1343,7 @@ async function getExistingDocumentPathAliases(docId: string): Promise<ExistingDo
   };
 }
 
-function buildDocumentRecord(input: {
+export function buildDocumentRecord(input: {
   file: ValidatedFile;
   extracted: ExtractedTextArtifact;
   storageCategory: StorageCategory;
@@ -1261,7 +1432,7 @@ async function ensureCollectionFields(
   }
 }
 
-async function ensureDocsCollections(): Promise<void> {
+export async function ensureDocsCollections(): Promise<void> {
   await typesense.ensureCollection(DOCS_COLLECTION, {
     name: DOCS_COLLECTION,
     fields: [
@@ -1292,28 +1463,32 @@ async function ensureDocsCollections(): Promise<void> {
     { name: "nas_paths", type: "string[]", optional: true },
   ]);
 
+  const chunkFields = [
+    { name: "id", type: "string" },
+    { name: "doc_id", type: "string", facet: true },
+    { name: "title", type: "string" },
+    { name: "chunk_type", type: "string", facet: true },
+    { name: "chunk_index", type: "int32" },
+    { name: "heading_path", type: "string[]", facet: true, optional: true },
+    { name: "context_prefix", type: "string", optional: true },
+    { name: "parent_chunk_id", type: "string", facet: true, optional: true },
+    { name: "prev_chunk_id", type: "string", optional: true },
+    { name: "next_chunk_id", type: "string", optional: true },
+    { name: "primary_concept_id", type: "string", facet: true, optional: true },
+    { name: "concept_ids", type: "string[]", facet: true, optional: true },
+    { name: "concept_source", type: "string", facet: true, optional: true },
+    { name: "taxonomy_version", type: "string", facet: true, optional: true },
+    { name: "source_entity_id", type: "string", facet: true },
+    { name: "evidence_tier", type: "string", facet: true },
+    { name: "parent_evidence_id", type: "string", facet: true, optional: true },
+    { name: "content", type: "string" },
+    { name: "retrieval_text", type: "string" },
+  ];
+
   await typesense.ensureCollection(DOCS_CHUNKS_COLLECTION, {
     name: DOCS_CHUNKS_COLLECTION,
     fields: [
-      { name: "id", type: "string" },
-      { name: "doc_id", type: "string", facet: true },
-      { name: "title", type: "string" },
-      { name: "chunk_type", type: "string", facet: true },
-      { name: "chunk_index", type: "int32" },
-      { name: "heading_path", type: "string[]", facet: true, optional: true },
-      { name: "context_prefix", type: "string", optional: true },
-      { name: "parent_chunk_id", type: "string", facet: true, optional: true },
-      { name: "prev_chunk_id", type: "string", optional: true },
-      { name: "next_chunk_id", type: "string", optional: true },
-      { name: "primary_concept_id", type: "string", facet: true, optional: true },
-      { name: "concept_ids", type: "string[]", facet: true, optional: true },
-      { name: "concept_source", type: "string", facet: true, optional: true },
-      { name: "taxonomy_version", type: "string", facet: true, optional: true },
-      { name: "source_entity_id", type: "string", facet: true },
-      { name: "evidence_tier", type: "string", facet: true },
-      { name: "parent_evidence_id", type: "string", facet: true, optional: true },
-      { name: "content", type: "string" },
-      { name: "retrieval_text", type: "string" },
+      ...chunkFields,
       {
         name: "embedding",
         type: "float[]",
@@ -1326,17 +1501,37 @@ async function ensureDocsCollections(): Promise<void> {
     ],
     default_sorting_field: "added_at",
   });
+
+  await typesense.ensureCollection(DOCS_CHUNKS_V2_COLLECTION, {
+    name: DOCS_CHUNKS_V2_COLLECTION,
+    fields: [
+      ...chunkFields,
+      {
+        name: "embedding",
+        type: "float[]",
+        embed: {
+          from: ["retrieval_text"],
+          model_config: NOMIC_EMBED_MODEL_CONFIG,
+        },
+      },
+      { name: "added_at", type: "int64" },
+    ],
+    default_sorting_field: "added_at",
+  });
 }
 
-async function deleteDocChunks(docId: string): Promise<void> {
+export async function deleteDocChunks(
+  docId: string,
+  collection: string = DOCS_CHUNKS_COLLECTION
+): Promise<void> {
   const filterBy = encodeURIComponent(`doc_id:=${docId}`);
   const response = await typesense.typesenseRequest(
-    `/collections/${DOCS_CHUNKS_COLLECTION}/documents?filter_by=${filterBy}`,
+    `/collections/${collection}/documents?filter_by=${filterBy}`,
     { method: "DELETE" }
   );
   if (!response.ok && response.status !== 404) {
     const errorText = await response.text();
-    throw new Error(`Failed to delete existing chunk docs for ${docId}: ${errorText}`);
+    throw new Error(`Failed to delete existing chunk docs for ${docId} in ${collection}: ${errorText}`);
   }
 }
 
@@ -1421,143 +1616,17 @@ export const docsIngest = inngest.createFunction(
 
     const classification = await step.run("classify-taxonomy", async () => {
       const textSample = (await readFile(extracted.textPath, "utf8")).slice(0, 8_000);
-      const manifestInference = await resolveManifestInference(validated.nasPath);
-      const mergedTags = [
-        ...requestedTags,
-        ...(manifestInference?.tags ?? []),
-      ];
-
-      const labels = collectConceptLabels({
+      const result = await classifyDocsTaxonomy({
         file: validated,
-        storageCategory: explicitStorageCategory ?? manifestInference?.enrichmentCategory,
-        tags: mergedTags,
-        title: event.data.title,
-        sourceHost,
-        textSample,
-      });
-      if (manifestInference?.enrichmentDocumentType) {
-        labels.push(manifestInference.enrichmentDocumentType);
-      }
-
-      const resolved = resolveConcepts({ labels });
-      let primaryConceptId: ConceptId = resolved.primaryConceptId;
-      let conceptIds: ConceptId[] = resolved.conceptIds;
-      let conceptSource: ConceptSource = resolved.conceptSource;
-      let strategy: TaxonomyClassificationStrategy = "rules";
-      let llmMeta: DocsTaxonomyClassification["llm"] | undefined;
-      let backfillMeta: DocsTaxonomyClassification["backfill"] | undefined;
-      let preferredStorageCategory: string | undefined =
-        explicitStorageCategory ?? manifestInference?.enrichmentCategory;
-      const hasBackfillInference = Boolean(
-        manifestInference &&
-          (manifestInference.enrichmentCategory ||
-            manifestInference.enrichmentDocumentType ||
-            manifestInference.enrichmentProvider)
-      );
-      const backfillClassification = buildBackfillClassification({
-        resolved,
-        manifestInference,
+        requestedTags,
         explicitStorageCategory,
-        nasPath: validated.nasPath,
+        sourceHost,
+        title: event.data.title,
+        textSample,
+        eventId: event.id,
+        component: "docs-ingest",
       });
-
-      if (backfillClassification) {
-        primaryConceptId = backfillClassification.primaryConceptId;
-        conceptIds = backfillClassification.conceptIds;
-        conceptSource = backfillClassification.conceptSource;
-        strategy = backfillClassification.strategy;
-        backfillMeta = backfillClassification.backfill;
-        preferredStorageCategory = backfillClassification.storageCategory;
-      } else {
-        const llmInference = await inferTaxonomyWithLlm({
-          file: validated,
-          tags: mergedTags,
-          explicitStorageCategory,
-          sourceHost,
-          textSample,
-          eventId: event.id,
-        });
-
-        if (llmInference) {
-          primaryConceptId = llmInference.primaryConceptId;
-          conceptIds = llmInference.conceptIds;
-          conceptSource = "llm";
-          strategy = "llm";
-          preferredStorageCategory = explicitStorageCategory ?? llmInference.storageCategory;
-          llmMeta = {
-            provider: llmInference.provider,
-            model: llmInference.model,
-            usage: llmInference.usage,
-            reason: llmInference.reason,
-          };
-        } else if (!DOCS_ALLOW_RULES_FALLBACK) {
-          await emitOtelEvent({
-            level: "error",
-            source: "worker",
-            component: "docs-ingest",
-            action: "docs.taxonomy.inference_required",
-            success: false,
-            error: "taxonomy_inference_unavailable",
-            metadata: {
-              docId: validated.docId,
-              nasPath: validated.nasPath,
-              manifestMatched: Boolean(manifestInference),
-              hasBackfillInference,
-            },
-          });
-          throw new Error(
-            `docs-ingest requires taxonomy inference (backfill or llm) for ${validated.nasPath}`
-          );
-        }
-      }
-
-      const storageCategory = resolveStorageCategory({
-        explicitCategory: preferredStorageCategory,
-        nasPath: validated.nasPath,
-        primaryConceptId,
-      });
-
-      const classificationResult: DocsTaxonomyClassification = {
-        primaryConceptId,
-        conceptIds,
-        conceptSource,
-        taxonomyVersion: resolved.taxonomyVersion,
-        storageCategory,
-        strategy,
-        ...(llmMeta ? { llm: llmMeta } : {}),
-        ...(backfillMeta ? { backfill: backfillMeta } : {}),
-        diagnostics: resolved.diagnostics,
-      };
-
-      await emitMeasuredOtelEvent(
-        {
-          level: "info",
-          source: "worker",
-          component: "docs-ingest",
-          action: "docs.taxonomy.classified",
-          metadata: {
-            docId: validated.docId,
-            storageCategory,
-            primaryConceptId: classificationResult.primaryConceptId,
-            conceptIds: classificationResult.conceptIds,
-            conceptSource: classificationResult.conceptSource,
-            taxonomyVersion: classificationResult.taxonomyVersion,
-            strategy: classificationResult.strategy,
-            llmModel: classificationResult.llm?.model,
-            llmProvider: classificationResult.llm?.provider,
-            llmReason: classificationResult.llm?.reason,
-            backfillEntryId: classificationResult.backfill?.entryId,
-            backfillProvider: classificationResult.backfill?.provider,
-            mappedCount: classificationResult.diagnostics.mappedCount,
-            unmappedCount: classificationResult.diagnostics.unmappedCount,
-            aliasHits: classificationResult.diagnostics.aliasHits,
-            unmappedLabels: classificationResult.diagnostics.unmappedLabels,
-          },
-        },
-        async () => classificationResult
-      );
-
-      return classificationResult;
+      return result.classification;
     });
 
     await step.run("ensure-docs-collections", async () => {

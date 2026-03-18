@@ -86,6 +86,61 @@ test("docs-ingest chunk records preserve parent and neighbor links", () => {
   }
 });
 
+test("book chunking keeps markdown heading hierarchy in heading_path", () => {
+  const chunking = chunkBookText(
+    "doc-markdown-headings",
+    [
+      "# Title",
+      "",
+      "Opening overview paragraph for the document.",
+      "",
+      "## Chapter 1",
+      "",
+      "Chapter body text that should inherit the chapter heading.",
+      "",
+      "### Section 1.2",
+      "",
+      "Section body text that should inherit the full heading path.",
+    ].join("\n"),
+    {
+      sectionTargetTokens: 120,
+      sectionMaxTokens: 180,
+      snippetTargetTokens: 60,
+      snippetMaxTokens: 90,
+    }
+  );
+
+  const headingPaths = chunking.section_chunks.map((chunk) => chunk.heading_path.join(" > "));
+  expect(headingPaths).toContain("Title");
+  expect(headingPaths).toContain("Title > Chapter 1");
+  expect(headingPaths).toContain("Title > Chapter 1 > Section 1.2");
+});
+
+test("book chunking does not overlap adjacent chunks", () => {
+  const tokenText = Array.from({ length: 120 }, (_, index) => `w${String(index + 1).padStart(3, "0")}`).join(" ");
+  const chunking = chunkBookText(
+    "doc-no-overlap",
+    `# Title\n\n${tokenText}`,
+    {
+      sectionTargetTokens: 12,
+      sectionMaxTokens: 12,
+      sectionOverlapTokens: 50,
+      snippetTargetTokens: 8,
+      snippetMaxTokens: 8,
+      snippetOverlapTokens: 50,
+    }
+  );
+
+  expect(chunking.section_chunks.length).toBeGreaterThan(1);
+
+  for (let index = 1; index < chunking.section_chunks.length; index += 1) {
+    const previousWords = new Set(chunking.section_chunks[index - 1]!.text.split(/\s+/));
+    const currentWords = chunking.section_chunks[index]!.text.split(/\s+/);
+    const repeatedWords = currentWords.filter((word) => previousWords.has(word));
+    expect(repeatedWords.length).toBe(0);
+  }
+});
+
 test("docs-ingest chunk records include concept and evidence metadata", () => {
   const records = buildSampleChunkRecords();
   expect(records.length).toBeGreaterThan(0);

@@ -70,10 +70,10 @@ export interface BookContextResult {
 const WORDS_TO_TOKEN_RATIO = 1.25;
 const DEFAULT_SECTION_TARGET = 1_700;
 const DEFAULT_SECTION_MAX = 2_200;
-const DEFAULT_SECTION_OVERLAP = 120;
+const DEFAULT_SECTION_OVERLAP = 0;
 const DEFAULT_SNIPPET_TARGET = 420;
 const DEFAULT_SNIPPET_MAX = 560;
-const DEFAULT_SNIPPET_OVERLAP = 80;
+const DEFAULT_SNIPPET_OVERLAP = 0;
 
 type ParsedSection = {
   section_index: number;
@@ -126,6 +126,12 @@ function cleanHeading(line: string): string {
   return normalizeWhitespace(line.replace(/^#+\s*/, "").replace(/\s+$/, ""));
 }
 
+function markdownHeadingLevel(line: string): number | null {
+  const match = line.trim().match(/^(#{1,6})\s+\S/);
+  const hashes = match?.[1];
+  return hashes ? hashes.length : null;
+}
+
 function inferHeadingDepth(heading: string): number {
   const trimmed = heading.trim();
   if (/^part\s+[A-Za-z0-9]+/i.test(trimmed)) return 1;
@@ -144,14 +150,13 @@ function inferHeadingDepth(heading: string): number {
 function isHeadingLine(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
+  if (/^#{1,6}\s+\S/.test(trimmed)) return true;
   if (trimmed.length > 120) return false;
   if (/^[\-*•]/.test(trimmed)) return false;
   if (/^https?:\/\//i.test(trimmed)) return false;
   if (/^\d+$/.test(trimmed)) return false;
   if (/^\[[0-9]+\]/.test(trimmed)) return false;
-
-  const explicitHashHeading = /^#{1,6}\s+\S/.test(trimmed);
-  if (explicitHashHeading) return true;
+  if (/[.!?]$/.test(trimmed)) return false;
 
   const chapterLike = /^(part|chapter|section)\s+[A-Za-z0-9]+/i.test(trimmed);
   if (chapterLike) return true;
@@ -161,7 +166,6 @@ function isHeadingLine(line: string): boolean {
 
   const words = trimmed.split(/\s+/);
   if (words.length < 2 || words.length > 12) return false;
-  if (/[.!?]$/.test(trimmed)) return false;
 
   const allCaps = /^[A-Z0-9 '&(),\-:]+$/.test(trimmed);
   if (allCaps) return true;
@@ -216,11 +220,12 @@ function parseSections(text: string): ParsedSection[] {
       continue;
     }
 
-    const isHeading = isHeadingLine(trimmed) && previousWasBlank;
+    const headingLevel = markdownHeadingLevel(trimmed);
+    const isHeading = headingLevel != null || (isHeadingLine(trimmed) && previousWasBlank);
     if (isHeading) {
       flushCurrent();
       const cleaned = cleanHeading(trimmed);
-      const depth = inferHeadingDepth(cleaned);
+      const depth = headingLevel ?? inferHeadingDepth(cleaned);
       const nextPath = currentPath.slice(0, Math.max(0, depth - 1));
       nextPath.push(cleaned);
       currentPath = nextPath;
@@ -330,21 +335,8 @@ function splitByTokens(
 
   flushCurrent();
   if (baseChunks.length === 0) return [];
-  if (overlapTokens <= 0 || baseChunks.length < 2) return baseChunks;
-
-  const overlapWords = wordsForTokens(overlapTokens);
-  const overlapped: string[] = [baseChunks[0]!];
-  for (let i = 1; i < baseChunks.length; i += 1) {
-    const prev = baseChunks[i - 1]!;
-    const currentChunk = baseChunks[i]!;
-    const overlapText = takeTrailingWords(prev, overlapWords);
-    if (!overlapText) {
-      overlapped.push(currentChunk);
-      continue;
-    }
-    overlapped.push(normalizeWhitespace(`${overlapText} ${currentChunk}`));
-  }
-  return overlapped;
+  void overlapTokens;
+  return baseChunks;
 }
 
 function average(values: number[]): number {

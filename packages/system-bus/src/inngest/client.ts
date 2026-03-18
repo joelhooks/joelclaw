@@ -204,6 +204,21 @@ export type Events = {
       docId?: string;
     };
   };
+  "docs/reindex-v2.requested": {
+    data: {
+      nasPath: string;
+      docId?: string;
+      title?: string;
+      skipExistingArtifacts?: boolean;
+    };
+  };
+  "docs/reindex-batch.requested": {
+    data: {
+      paths?: string[];
+      fromCollection?: boolean;
+      skipExistingArtifacts?: boolean;
+    };
+  };
   "docs/backlog.requested": {
     data: {
       manifestPath?: string;

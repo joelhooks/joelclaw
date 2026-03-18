@@ -29,6 +29,14 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 - Worker code must not import `packages/cli/src/*` via relative paths. Keep recovery-runbook helpers local to `packages/system-bus` (or move them to a leaf package) and avoid introducing `@joelclaw/system-bus` ↔ `@joelclaw/sdk` dependency cycles that break Turbo/Vercel builds.
 - Agent-loop PRDs are preflight-normalized at runtime (`normalizePrdOrThrow`): accepts `acceptance_criteria` plus aliases (`acceptance`, `acceptanceCriteria`), defaults missing `passes`/`priority`, and fails fast with explicit errors when story shape is invalid.
 
+## Docs Pipeline v2 (ADR-0234)
+
+- `docs-reindex-v2` is the staged reindex path for PDFs. It persists durable artifacts under `JOELCLAW_DOCS_ARTIFACTS_DIR` (default `/tmp/docs-artifacts`) as `{docId}.md`, `{docId}.meta.json`, and `{docId}.chunks.jsonl`.
+- Keep the four durable steps stable: `convert-pdf` → `classify-summarize` → `chunk` → `index-typesense`. Re-runs should reuse artifacts whenever `skipExistingArtifacts` is true.
+- Reuse `docs-ingest.ts` helpers for PDF extraction, taxonomy classification, chunk-record building, and Typesense schema setup instead of re-implementing classification logic in multiple places.
+- `docs_chunks_v2` is the new retrieval collection. It uses Typesense auto-embedding with `ts/nomic-embed-text-v1.5`; leave `docs_chunks` intact until cutover is complete.
+- Batch orchestration now flows through `docs-reindex-batch`, which resolves PDF targets (provided paths, collection records, or `/Volumes/three-body/books` scan) and dispatches `docs/reindex-v2.requested` in batches of 10.
+
 ## Key reliability flows
 
 ### Restate dual-run Phase-1 (ADR-0207)
