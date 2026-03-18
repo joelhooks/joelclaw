@@ -506,14 +506,24 @@ export const docsReindexV2 = inngest.createFunction(
             }),
           }));
 
-          const importResult = await typesense.bulkImport(
-            DOCS_CHUNKS_V2_COLLECTION,
-            chunkRecords as unknown as Record<string, unknown>[],
-            "upsert"
-          );
+          // Batch import in groups of 100 to avoid Typesense timeout
+          // nomic 768-dim embedding is CPU-heavy; 1000+ chunks at once kills it
+          const IMPORT_BATCH_SIZE = 100;
+          let totalSuccess = 0;
+          let totalErrors = 0;
+          for (let i = 0; i < chunkRecords.length; i += IMPORT_BATCH_SIZE) {
+            const batch = chunkRecords.slice(i, i + IMPORT_BATCH_SIZE);
+            const batchResult = await typesense.bulkImport(
+              DOCS_CHUNKS_V2_COLLECTION,
+              batch as unknown as Record<string, unknown>[],
+              "upsert"
+            );
+            totalSuccess += batchResult.success;
+            totalErrors += batchResult.errors;
+          }
 
-          metadata.indexed = importResult.success;
-          metadata.errors = importResult.errors;
+          metadata.indexed = totalSuccess;
+          metadata.errors = totalErrors;
           metadata.collection = DOCS_CHUNKS_V2_COLLECTION;
 
           if (gateway?.progress) {
