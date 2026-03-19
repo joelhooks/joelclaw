@@ -670,9 +670,8 @@ function buildDocsChunksSearchParams(options: {
   const params = new URLSearchParams({
     q: options.q,
     page: String(options.page),
-    query_by: options.semantic
-      ? "retrieval_text,content,title,embedding"
-      : "retrieval_text,content,title",
+    // v2 uses pre-computed ollama embeddings — no auto-embed field to query_by
+    query_by: "retrieval_text,content,title",
     per_page: String(options.perPage),
     include_fields:
       "id,doc_id,title,chunk_type,chunk_index,heading_path,context_prefix,parent_chunk_id,prev_chunk_id,next_chunk_id,primary_concept_id,concept_ids,taxonomy_version,evidence_tier,parent_evidence_id,source_entity_id,content",
