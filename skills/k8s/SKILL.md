@@ -333,7 +333,7 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 
 ## Danger Zones
 
-1. **Never kill Lima SSH mux** — it handles ALL tunnels. Killing anything on the SSH socket kills all port access.
+1. **Stale SSH mux socket after Colima restart** — When Colima restarts (disk resize, crash recovery, `colima stop && start`), the SSH port changes but the mux socket (`~/.colima/_lima/colima/ssh.sock`) caches the old connection. Symptoms: `kubectl port-forward` fails with "tls: internal error", `kubectl get nodes` may intermittently work then fail. **Fix**: `rm -f ~/.colima/_lima/colima/ssh.sock && pkill -f "ssh.*colima"`, then re-establish tunnels with `ssh -o ControlPath=none`. Always verify SSH port with `colima ssh-config | grep Port` after restart.
 2. **Adding Docker port mappings** — can be hot-added without cluster recreation via `hostconfig.json` edit. See [references/operations.md](references/operations.md) for the procedure.
 3. **Inngest legacy host alias in manifests** — old container-host alias may still appear in legacy configs. Worker uses connect mode, so it usually still works, but prefer explicit Talos/Colima hostnames.
 4. **Colima zombie state** — `colima status` reports "Running" but docker socket / SSH tunnels are dead. All k8s ports unresponsive. `colima start` is a no-op. Only `colima restart` recovers. Detect with: `ssh -F ~/.colima/_lima/colima/ssh.config lima-colima "docker info"` — if that fails while `colima status` passes, it's a zombie. The heal script handles this automatically.
