@@ -1,6 +1,11 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+// Prevent unhandled rejections from crashing the server
+process.on("unhandledRejection", (error) => {
+  console.error("[docs-api] unhandled rejection:", error instanceof Error ? error.message : error);
+});
+
 class LRUCache<T> {
   private cache = new Map<string, {value: T, ts: number}>();
   constructor(private maxSize: number, private ttlMs: number) {}
@@ -1084,11 +1089,18 @@ async function handleHealth(path: string): Promise<Response> {
 
 async function handleStatus(path: string): Promise<Response> {
   const command = `GET ${path}`;
-  const [artifactsAvailable, docsCount, chunksCount] = await Promise.all([
-    artifactsDirExists(),
-    getCollectionDocumentCount("docs"),
-    getCollectionDocumentCount(DOCS_CHUNKS_COLLECTION),
-  ]);
+  let artifactsAvailable = false;
+  let docsCount = 0;
+  let chunksCount = 0;
+  try {
+    [artifactsAvailable, docsCount, chunksCount] = await Promise.all([
+      artifactsDirExists(),
+      getCollectionDocumentCount("docs"),
+      getCollectionDocumentCount(DOCS_CHUNKS_COLLECTION),
+    ]);
+  } catch {
+    // Degrade gracefully if Typesense unreachable
+  }
 
   return jsonResponse(
     ok(
@@ -1330,7 +1342,13 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
   }
 
   const hits: SearchHitResult[] = mergedHits.map(({ parentChunkId: _parentChunkId, ...hit }) => hit);
-  const docSummaries = await fetchDocSummaries(hits.map((hit) => hit.docId));
+  // Gracefully degrade if docSummaries fetch fails (e.g. Typesense under load)
+  let docSummaries: Record<string, unknown> = {};
+  try {
+    docSummaries = await fetchDocSummaries(hits.map((hit) => hit.docId));
+  } catch {
+    // Non-fatal — search results are still usable without summaries
+  }
   const conceptFacets = buildConceptFacetsFromCounts(combinedFacetCounts);
 
   const first = hits[0];
