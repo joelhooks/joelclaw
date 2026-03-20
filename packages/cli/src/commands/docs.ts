@@ -1331,11 +1331,15 @@ const statusCmd = Command.make(
           exclude_fields: "embedding,retrieval_text",
         })
 
+        const safeTsSearch = async (collection: string, params: URLSearchParams): Promise<TypesenseSearchResponse> => {
+          try { return await typesenseSearch(apiKey, collection, params) }
+          catch { return { found: 0, hits: [], facet_counts: [] } }
+        }
         const [docsResult, chunksV1Result, chunksV2Result, artifactsAvailable] = yield* Effect.promise(() =>
           Promise.all([
-            typesenseSearch(apiKey, DOCS_COLLECTION, buildDocsParams()),
-            typesenseSearch(apiKey, DOCS_CHUNKS_V1_COLLECTION, buildChunksParams()),
-            typesenseSearch(apiKey, DOCS_CHUNKS_V2_COLLECTION, buildChunksParams()),
+            safeTsSearch(DOCS_COLLECTION, buildDocsParams()),
+            safeTsSearch(DOCS_CHUNKS_V1_COLLECTION, buildChunksParams()),
+            safeTsSearch(DOCS_CHUNKS_V2_COLLECTION, buildChunksParams()),
             pathExists(DOCS_ARTIFACTS_DIR),
           ])
         )
