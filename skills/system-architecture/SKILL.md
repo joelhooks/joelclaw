@@ -410,10 +410,10 @@ Tiering policy:
 
 ### Access paths
 
-| From | NVMe tier | HDD tier | Method |
+| From | NVMe tier (1.5TB) | HDD tier (56TB) | Method |
 |------|-----------|----------|--------|
 | macOS host | `/Volumes/nas-nvme` | `/Volumes/three-body` | NFS mount via LaunchDaemon |
-| k8s pods | PVC `nas-nvme` | PVC `minio-nfs-pv` | NFS PV (192.168.1.163) |
+| k8s pods | PVC `nas-nvme` | PVC `nas-hdd` | NFS PV (192.168.1.163) |
 | host-worker funcs | `/Volumes/nas-nvme` | `/Volumes/three-body` | Direct path (runs on macOS) |
 
 ### k8s ↔ NAS networking

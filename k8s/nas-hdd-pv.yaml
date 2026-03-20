@@ -1,0 +1,45 @@
+# NAS HDD tier — NFS-backed PersistentVolume (ADR-0088)
+# Provides k8s access to three-body NAS HDD RAID5 at /volume1/joelclaw
+# 57TB usable, RAID5, ~150-250 MB/s sequential
+# Requires: LAN route in Colima VM (ip route 192.168.1.0/24 via 192.168.64.1 dev col0)
+# Subdirs: backups/, books/, docs-artifacts/, s3/, sessions/, otel/, podcasts/, twitter/
+#
+# NOTE: video/media paths (/volume1/home/joel/video, /volume1/home/joel/media)
+# are under a separate NAS filesystem path not covered by this export.
+# Those currently use SSH/SCP from host-worker functions.
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nas-hdd
+  labels:
+    tier: hdd
+    location: nas
+spec:
+  capacity:
+    storage: 50Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    server: 192.168.1.163
+    path: /volume1/joelclaw
+  mountOptions:
+    - nfsvers=3
+    - tcp
+    - resvport
+    - noatime
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nas-hdd
+  namespace: joelclaw
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Ti
+  volumeName: nas-hdd
+  storageClassName: ""

@@ -272,8 +272,9 @@ Both execute: `ip route replace 192.168.1.0/24 via 192.168.64.1 dev col0`
 
 | PV | NFS Path | Capacity | Access | Use |
 |----|----------|----------|--------|-----|
-| `nas-nvme` | `192.168.1.163:/volume2/data` | 1.5TB | RWX | NVMe tier: backups, snapshots, models, sessions |
-| `minio-nfs-pv` | `192.168.1.163:/volume1/joelclaw` | 1TB | RWO | HDD tier: MinIO object storage |
+| `nas-nvme` | `192.168.1.163:/volume2/data` | 1.5TB | RWX | NVMe RAID1: backups, snapshots, models, sessions |
+| `nas-hdd` | `192.168.1.163:/volume1/joelclaw` | 50TB | RWX | HDD RAID5: books, docs-artifacts, archives, otel |
+| `minio-nfs-pv` | `192.168.1.163:/volume1/joelclaw` | 1TB | RWO | HDD tier: MinIO object storage (same export) |
 
 ### Mounting NAS in a pod
 
@@ -429,7 +430,8 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 | `~/.colima/default/colima.yaml` | Colima VM config |
 | `~/.local/bin/colima-tunnel` | Persistent SSH tunnel + NAS route (launchd: `com.joel.colima-tunnel`) |
 | `~/.local/caddy/Caddyfile` | Caddy HTTPS proxy (Tailscale) |
-| `~/Code/joelhooks/joelclaw/k8s/nas-nvme-pv.yaml` | NAS NVMe NFS PV/PVC |
+| `~/Code/joelhooks/joelclaw/k8s/nas-nvme-pv.yaml` | NAS NVMe NFS PV/PVC (1.5TB) |
+| `~/Code/joelhooks/joelclaw/k8s/nas-hdd-pv.yaml` | NAS HDD NFS PV/PVC (50TB) |
 
 ## Troubleshooting
 
