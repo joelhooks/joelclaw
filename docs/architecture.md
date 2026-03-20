@@ -488,7 +488,7 @@ vercel ls --yes 2>&1 | head -10
 
 Key ADRs:
 - **ADR-0144**: Hexagonal architecture and package boundaries
-- **ADR-0088**: NAS-backed storage tiering
+- **ADR-0088**: NAS-backed storage tiering (Phase 2.5: k8s ↔ NAS NFS access via col0 LAN route)
 - **ADR-0127**: Feed subscriptions and resource monitoring
 - **ADR-0140**: Inference router
 - **ADR-0155**: Three-stage story pipeline (PRD → stories → execution)

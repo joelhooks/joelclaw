@@ -246,6 +246,70 @@ kubectl get jobs -n joelclaw --show-all
 - ⏳ Warm-pool scheduler not yet implemented (Story 5)
 - ⏳ Restate integration not yet wired (Story 6)
 
+## NAS NFS Access from k8s (ADR-0088 Phase 2.5)
+
+k8s pods can mount NAS storage over NFS via a LAN route through the Colima bridge.
+
+### How it works
+
+```
+k8s pod → Talos container (10.5.0.x) → Docker NAT → Colima VM
+  → ip route 192.168.1.0/24 via 192.168.64.1 dev col0
+  → macOS host (IP forwarding enabled) → LAN → NAS (192.168.1.163)
+```
+
+**Root cause of prior failures:** VZ framework's shared networking on eth0 doesn't properly forward LAN-bound traffic. The fix routes LAN traffic through col0 (Colima bridge → macOS host) instead.
+
+### Route persistence
+
+The LAN route is set in **two places** for reliability:
+1. **Colima provision script** (`~/.colima/default/colima.yaml`) — runs on `colima start` (cold boot)
+2. **colima-tunnel script** (`~/.local/bin/colima-tunnel`) — runs on tunnel restart (covers warm resume)
+
+Both execute: `ip route replace 192.168.1.0/24 via 192.168.64.1 dev col0`
+
+### Available PVs
+
+| PV | NFS Path | Capacity | Access | Use |
+|----|----------|----------|--------|-----|
+| `nas-nvme` | `192.168.1.163:/volume2/data` | 1.5TB | RWX | NVMe tier: backups, snapshots, models, sessions |
+| `minio-nfs-pv` | `192.168.1.163:/volume1/joelclaw` | 1TB | RWO | HDD tier: MinIO object storage |
+
+### Mounting NAS in a pod
+
+```yaml
+volumes:
+  - name: nas
+    persistentVolumeClaim:
+      claimName: nas-nvme
+containers:
+  - volumeMounts:
+      - name: nas
+        mountPath: /nas
+        # Optional: subPath for specific dir
+        subPath: typesense
+```
+
+### Rules
+
+- **Always use IP (192.168.1.163), never hostname (three-body).** DNS doesn't resolve from inside k8s.
+- **Always use `nfsvers=3,tcp,resvport,noatime`** mount options. NFSv4 has issues with Asustor ADM.
+- **NAS unavailability degrades gracefully** with `soft` mount option — returns errors, doesn't hang pods.
+- **NFS write performance: ~660 MiB/s** over 10GbE with jumbo frames. Good for sequential I/O (backups, snapshots). Latency-sensitive workloads (Redis, active Typesense indexes) stay on local SSD.
+- **If NFS mount fails after Colima restart:** verify the route exists: `colima ssh -- ip route | grep 192.168.1.0`
+
+### Verify connectivity
+
+```bash
+# From Colima VM
+colima ssh -- timeout 2 bash -c "echo > /dev/tcp/192.168.1.163/2049" && echo "NFS OK"
+
+# From k8s pod
+kubectl run nfs-test --image=busybox --restart=Never -n joelclaw \
+  --overrides='{"spec":{"tolerations":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}],"containers":[{"name":"t","image":"busybox","command":["sh","-c","ls /nas && echo OK"],"volumeMounts":[{"name":"n","mountPath":"/nas"}]}],"volumes":[{"name":"n","persistentVolumeClaim":{"claimName":"nas-nvme"}}]}}'
+kubectl logs nfs-test -n joelclaw && kubectl delete pod nfs-test -n joelclaw --force
+```
+
 ## Deploy Commands
 
 ```bash
@@ -363,7 +427,9 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 | `~/.talos/config` | Talos client config |
 | `~/.kube/config` | Kubeconfig (context: `admin@joelclaw-1`) |
 | `~/.colima/default/colima.yaml` | Colima VM config |
+| `~/.local/bin/colima-tunnel` | Persistent SSH tunnel + NAS route (launchd: `com.joel.colima-tunnel`) |
 | `~/.local/caddy/Caddyfile` | Caddy HTTPS proxy (Tailscale) |
+| `~/Code/joelhooks/joelclaw/k8s/nas-nvme-pv.yaml` | NAS NVMe NFS PV/PVC |
 
 ## Troubleshooting
 

@@ -408,6 +408,24 @@ Tiering policy:
 - Tier 2 NAS NVMe (`/Volumes/nas-nvme` ↔ `/volume2/data`)
 - Tier 3 NAS HDD (`/Volumes/three-body`)
 
+### Access paths
+
+| From | NVMe tier | HDD tier | Method |
+|------|-----------|----------|--------|
+| macOS host | `/Volumes/nas-nvme` | `/Volumes/three-body` | NFS mount via LaunchDaemon |
+| k8s pods | PVC `nas-nvme` | PVC `minio-nfs-pv` | NFS PV (192.168.1.163) |
+| host-worker funcs | `/Volumes/nas-nvme` | `/Volumes/three-body` | Direct path (runs on macOS) |
+
+### k8s ↔ NAS networking
+
+k8s pods reach the NAS via a LAN route through the Colima col0 bridge:
+`Talos → Docker NAT → VM col0 → macOS (ip.forwarding=1) → LAN → NAS`
+
+The VZ NAT on eth0 does NOT forward LAN traffic. Route persisted in Colima provision + colima-tunnel script:
+`ip route replace 192.168.1.0/24 via 192.168.64.1 dev col0`
+
+**Always use IP 192.168.1.163, never hostname three-body** — DNS doesn't resolve from k8s.
+
 Degradation contract (ADR-0187):
 - writes must fallback `local -> remote -> queued`
 - queue spool default: `/tmp/joelclaw/nas-queue`
