@@ -1,0 +1,40 @@
+# NAS NVMe tier — NFS-backed PersistentVolume (ADR-0088 Phase 2)
+# Provides k8s access to three-body NAS NVMe RAID1 at /volume2/data
+# Requires: LAN route in Colima VM (ip route 192.168.1.0/24 via 192.168.64.1 dev col0)
+# Subdirs: backups/, typesense/, models/, redis/, otel/, sessions/, transcripts/
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nas-nvme
+  labels:
+    tier: nvme
+    location: nas
+spec:
+  capacity:
+    storage: 1500Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    server: 192.168.1.163
+    path: /volume2/data
+  mountOptions:
+    - nfsvers=3
+    - tcp
+    - resvport
+    - noatime
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nas-nvme
+  namespace: joelclaw
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1500Gi
+  volumeName: nas-nvme
+  storageClassName: ""
