@@ -33,6 +33,18 @@ echo "  joelclaw system health -- $(date '+%Y-%m-%d %H:%M')"
 echo "===================================================="
 echo ""
 
+# -- kubeconfig self-heal ----------------------------------------------
+# Colima remaps k8s API (6443) and Talos API (50000) to random host ports
+# on container restart. If kubectl can't reach the API, regenerate kubeconfig.
+if ! kubectl cluster-info >/dev/null 2>&1; then
+  if command -v talosctl >/dev/null 2>&1 && [[ -f ~/.talos/config ]]; then
+    talosctl --talosconfig ~/.talos/config --nodes 127.0.0.1 kubeconfig --force >/dev/null 2>&1 || true
+    # Find and use the new context
+    NEW_CTX=$(kubectl config get-contexts -o name 2>/dev/null | grep 'joelclaw' | head -1)
+    [[ -n "$NEW_CTX" ]] && kubectl config use-context "$NEW_CTX" >/dev/null 2>&1 || true
+  fi
+fi
+
 # -- status snapshot ---------------------------------------------------
 STATUS_JSON=$(joelclaw status --json 2>/dev/null || true)
 STATUS_OK=$(json_get "$STATUS_JSON" '.ok // false')
@@ -265,13 +277,16 @@ else
 fi
 
 # -- stale tests -------------------------------------------------------
-STALE_TESTS=$(find "$SBUS_DIR" -name "__tests__" -type d 2>/dev/null | head -1)
+# Only flag __tests__/ at the package root (loop artifact). Subdirs like
+# src/inngest/functions/__tests__/ are legitimate test locations.
+STALE_ROOT_TESTS=""
+[[ -d "$SBUS_DIR/__tests__" ]] && STALE_ROOT_TESTS="__tests__/ exists at package root"
 STALE_ACC=$(find "$SBUS_DIR/src" -name "*.acceptance.test.ts" 2>/dev/null | wc -l | tr -d ' ')
-if [[ -z "$STALE_TESTS" && "$STALE_ACC" == "0" ]]; then
+if [[ -z "$STALE_ROOT_TESTS" && "$STALE_ACC" == "0" ]]; then
   check "stale tests" 10 "clean"
 else
   DETAIL=""
-  [[ -n "$STALE_TESTS" ]] && DETAIL="__tests__/ exists"
+  [[ -n "$STALE_ROOT_TESTS" ]] && DETAIL="$STALE_ROOT_TESTS"
   [[ "$STALE_ACC" -gt 0 ]] && DETAIL="${DETAIL:+${DETAIL}, }${STALE_ACC} acceptance tests"
   check "stale tests" 4 "${DETAIL}"
 fi
