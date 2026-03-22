@@ -11,6 +11,7 @@ import { DEDUP_THRESHOLD } from "../../memory/retrieval";
 import { type CategorySource, classifyObservationCategory, type MemoryCategoryId, normalizeCategoryId, TAXONOMY_VERSION } from "../../memory/taxonomy-v1";
 import { allowsReflect, resolveWriteGate, type WriteVerdict } from "../../memory/write-gate";
 import { emitOtelEvent } from "../../observability/emit";
+import { pdsWriteObservation } from "../../lib/pds";
 // ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
 // ADR-0082: Typesense is the canonical memory store.
 import { inngest } from "../client.ts";
@@ -875,6 +876,26 @@ Session context:
         },
       });
     });
+
+    // Dual-write to PDS (best-effort, non-blocking)
+    // ADR-0004: AT Protocol as bedrock — observations → dev.joelclaw.memory.observation
+    if (typesenseStoreResult.stored && "count" in typesenseStoreResult && typesenseStoreResult.count > 0) {
+      await step.run("pds-dual-write", async () => {
+        const items = createObservationItems(parsedObservations);
+        const allowed = items.filter((item) => allowsReflect(item.writeVerdict));
+        let written = 0;
+        for (const item of allowed.slice(0, 25)) {
+          const result = await pdsWriteObservation({
+            observation: item.observation,
+            source: validatedInput.sessionId,
+            category: item.categoryId ?? undefined,
+            timestamp: new Date().toISOString(),
+          });
+          if (result) written++;
+        }
+        return { written, total: allowed.length };
+      });
+    }
 
     const observationItems = createObservationItems(parsedObservations);
     const observationCount = observationItems.length;

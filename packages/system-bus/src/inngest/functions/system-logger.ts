@@ -1,4 +1,5 @@
 import { inngest } from "../client";
+import { pdsWriteSystemLog } from "../../lib/pds";
 
 const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
 
@@ -61,6 +62,21 @@ export const systemLogger = inngest.createFunction(
       });
     }
 
-    return { logged: event.name };
+    // Dual-write to PDS (best-effort, non-blocking)
+    // ADR-0004: AT Protocol as bedrock — slog entries → dev.joelclaw.system.log
+    const pdsResult = await step.run("pds-dual-write", async () => {
+      const result = await pdsWriteSystemLog({
+        timestamp: new Date().toISOString(),
+        action,
+        tool,
+        detail,
+        ...(reason ? { reason } : {}),
+        sessionId,
+        systemId,
+      });
+      return result ? { uri: result.uri } : { skipped: true };
+    });
+
+    return { logged: event.name, pds: pdsResult };
   }
 );
