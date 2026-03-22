@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Priority, type QueueEventRegistryEntry, type QueueTriageDecision } from "@joelclaw/queue";
 import { __queueTestUtils, enqueueRegisteredQueueEvent } from "./queue";
 
-const persisted: Array<Record<string, unknown>> = [];
-const triageCalls: Array<Record<string, unknown>> = [];
-let triageDecision: Record<string, unknown> | undefined;
+type PersistInput = Parameters<typeof __queueTestUtils.deps.persist>[0];
+type TriageInput = Parameters<typeof __queueTestUtils.deps.triageQueueEvent>[0];
+
+const persisted: PersistInput[] = [];
+const triageCalls: TriageInput[] = [];
+let triageDecision: QueueTriageDecision | undefined;
 
 const originalDeps = {
   ...__queueTestUtils.deps,
@@ -21,33 +25,33 @@ describe("queue admission helper", () => {
 
     __queueTestUtils.deps.getRedisClient = (() => ({}) as never) as typeof __queueTestUtils.deps.getRedisClient;
     __queueTestUtils.deps.init = (async () => {}) as typeof __queueTestUtils.deps.init;
-    __queueTestUtils.deps.lookupQueueEvent = ((name: string) => {
+    __queueTestUtils.deps.lookupQueueEvent = ((name: string): QueueEventRegistryEntry | undefined => {
       if (name === "discovery/noted") {
         return {
           name,
-          priority: 2,
-          handler: { type: "inngest-event", target: name },
+          priority: Priority.P2,
+          handler: { type: "inngest", target: name },
         };
       }
 
       if (name === "github/workflow_run.completed") {
         return {
           name,
-          priority: 1,
-          handler: { type: "inngest-event", target: name },
+          priority: Priority.P1,
+          handler: { type: "inngest", target: name },
         };
       }
 
-      return null;
+      return undefined;
     }) as typeof __queueTestUtils.deps.lookupQueueEvent;
-    __queueTestUtils.deps.persist = (async (input: Record<string, unknown>) => {
+    __queueTestUtils.deps.persist = (async (input: PersistInput) => {
       persisted.push(input);
       return {
         streamId: "1740000000000-0",
         priority: input.priority,
       };
     }) as typeof __queueTestUtils.deps.persist;
-    __queueTestUtils.deps.triageQueueEvent = (async (input: Record<string, unknown>) => {
+    __queueTestUtils.deps.triageQueueEvent = (async (input: TriageInput) => {
       triageCalls.push(input);
       return triageDecision ?? {
         mode: "shadow",

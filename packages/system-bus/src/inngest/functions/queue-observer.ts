@@ -168,7 +168,7 @@ function parsePositiveInt(raw: unknown, fallback: number): number {
   return fallback;
 }
 
-function parseStringArrayJson(raw: string | null): string[] {
+function parseStringArrayJson(raw: string | null | undefined): string[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -736,7 +736,7 @@ async function applyQueueObserverActions(input: {
 }
 
 type QueueObserverStep = {
-  run<T>(id: string, fn: () => Promise<T> | T): Promise<T>;
+  run(id: string, fn: () => unknown): Promise<any>;
   sendEvent(
     id: string,
     payload: { name: string; data: Record<string, unknown> },

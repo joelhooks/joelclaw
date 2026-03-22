@@ -98,7 +98,7 @@ const JOEL_EMAILS = new Set([
   "joel@joelhooks.com",
 ]);
 // WARNING: Think twice before adding real collaborators here. This auto-archives without review.
-const AUTO_ARCHIVE_NEWSLETTER_SENDERS = new Set([]);
+const AUTO_ARCHIVE_NEWSLETTER_SENDERS = new Set<string>();
 
 const VIP_ANALYSIS_SYSTEM_PROMPT = `You are a relationship intelligence analyst for Joel Hooks.
 
@@ -1663,28 +1663,31 @@ export const vipEmailReceived = inngest.createFunction(
 
     const analysis = finalAnalysis.analysis;
 
-    const cacheResult = await step.run("cache-email-thread", async () => {
-      const t0 = Date.now();
-      try {
-        await typesense.ensureEmailThreadsCollection();
-        const document = buildEmailThreadCacheDocument({
-          conversationId,
-          subject,
-          vipSender: senderEmail || from,
-          frontContext,
-          followedLinks,
-          summary: analysis.executive_summary,
-        });
-        await typesense.upsert(typesense.EMAIL_THREADS_COLLECTION, document);
-        return { cached: true, durationMs: Date.now() - t0 };
-      } catch (error) {
-        return {
-          cached: false,
-          durationMs: Date.now() - t0,
-          error: error instanceof Error ? error.message.slice(0, 220) : String(error).slice(0, 220),
-        };
-      }
-    });
+    const cacheResult = await step.run(
+      "cache-email-thread",
+      async (): Promise<{ durationMs: number; cached: boolean; error?: string }> => {
+        const t0 = Date.now();
+        try {
+          await typesense.ensureEmailThreadsCollection();
+          const document = buildEmailThreadCacheDocument({
+            conversationId,
+            subject,
+            vipSender: senderEmail || from,
+            frontContext,
+            followedLinks,
+            summary: analysis.executive_summary,
+          });
+          await typesense.upsert(typesense.EMAIL_THREADS_COLLECTION, document);
+          return { cached: true, durationMs: Date.now() - t0 };
+        } catch (error) {
+          return {
+            cached: false,
+            durationMs: Date.now() - t0,
+            error: error instanceof Error ? error.message.slice(0, 220) : String(error).slice(0, 220),
+          };
+        }
+      },
+    );
 
     timings["cache-email-thread"] = cacheResult.durationMs;
     if (cacheResult.error) {

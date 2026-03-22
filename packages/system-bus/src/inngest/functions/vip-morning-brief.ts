@@ -426,44 +426,47 @@ export const vipEmailBrief = inngest.createFunction(
       };
     }
 
-    const generated = await step.run("generate-brief", async () => {
-      const fallback = buildFallbackBrief(classified);
+    const generated = await step.run(
+      "generate-brief",
+      async (): Promise<{ mode: string; briefText: string; error?: string }> => {
+        const fallback = buildFallbackBrief(classified);
 
-      try {
-        const result = await infer(buildBriefUserPrompt(classified), {
-          task: "summary",
-          system: VIP_EMAIL_BRIEF_SYSTEM_PROMPT,
-          component: COMPONENT,
-          action: "vip.email-brief.generate",
-          requireTextOutput: true,
-          noTools: true,
-          timeout: 120_000,
-          env: {
-            ...process.env,
-            TERM: "dumb",
-          },
-          metadata: {
-            threadCount: queried.threads.length,
-            danglingCount: classified.dangling.length,
-            newActivityCount: classified.newActivity.length,
-            staleCount: classified.stale.length,
-          },
-        });
+        try {
+          const result = await infer(buildBriefUserPrompt(classified), {
+            task: "summary",
+            system: VIP_EMAIL_BRIEF_SYSTEM_PROMPT,
+            component: COMPONENT,
+            action: "vip.email-brief.generate",
+            requireTextOutput: true,
+            noTools: true,
+            timeout: 120_000,
+            env: {
+              ...process.env,
+              TERM: "dumb",
+            },
+            metadata: {
+              threadCount: queried.threads.length,
+              danglingCount: classified.dangling.length,
+              newActivityCount: classified.newActivity.length,
+              staleCount: classified.stale.length,
+            },
+          });
 
-        const briefText = stripMarkdownFences(result.text).trim();
+          const briefText = stripMarkdownFences(result.text).trim();
 
-        return {
-          briefText: briefText || fallback,
-          mode: briefText ? "infer" : "fallback",
-        };
-      } catch (error) {
-        return {
-          briefText: fallback,
-          mode: "fallback",
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-    });
+          return {
+            briefText: briefText || fallback,
+            mode: briefText ? "infer" : "fallback",
+          };
+        } catch (error) {
+          return {
+            briefText: fallback,
+            mode: "fallback",
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    );
 
     const gatewayPrompt = buildGatewayPrompt(generated.briefText);
     const telegramBriefHtml = toTelegramHtml(

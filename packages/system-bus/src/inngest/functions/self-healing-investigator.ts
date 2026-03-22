@@ -360,6 +360,8 @@ export const selfHealingInvestigator = inngest.createFunction(
         remediation = await restartWorker({
           id: "self-healing-sdk-reachability",
           timestamp: Date.now(),
+          sessionId: "system/self-healing.investigator",
+          systemId: "panda",
           level: "error",
           source: "worker",
           component: "self-healing",

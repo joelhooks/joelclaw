@@ -75,6 +75,10 @@ function scoreFromCount(count: number, base = 0.55): number {
   return Math.min(0.95, Number((base + Math.min(count, 6) * 0.06).toFixed(2)))
 }
 
+function addDays(days: number, now = Date.now()): number {
+  return now + days * 24 * 60 * 60 * 1000
+}
+
 function parseMessageText(content: unknown): string {
   if (typeof content === "string") return content.trim()
   if (!Array.isArray(content)) return ""

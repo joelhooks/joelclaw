@@ -267,7 +267,7 @@ export async function enqueueRegisteredQueueEvent(input: QueueAdmissionInput): P
 
   const admission = await buildQueueAdmissionEnvelope(input);
   const result = await queueDeps.persist({
-    payload: admission.envelope as Record<string, unknown>,
+    payload: admission.envelope as unknown as Record<string, unknown>,
     priority: admission.priority,
     metadata: {
       envelope_version: "1",

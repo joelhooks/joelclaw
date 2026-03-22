@@ -360,6 +360,9 @@ export const agentChainRun = inngest.createFunction(
 
         for (let stepIndex = 0; stepIndex < steps.length; stepIndex += 1) {
           const stepDef = steps[stepIndex];
+          if (!stepDef) {
+            throw new NonRetriableError(`agent/chain.run step ${stepIndex + 1} is missing`);
+          }
 
           if (isParallelStep(stepDef)) {
             if (!Array.isArray(stepDef.parallel) || stepDef.parallel.length === 0) {
@@ -379,6 +382,9 @@ export const agentChainRun = inngest.createFunction(
 
       for (let stepIndex = 0; stepIndex < steps.length; stepIndex += 1) {
         const stepDef = steps[stepIndex];
+        if (!stepDef) {
+          throw new NonRetriableError(`agent/chain.run step ${stepIndex + 1} is missing`);
+        }
 
         if (isParallelStep(stepDef)) {
           const settled = await Promise.allSettled(

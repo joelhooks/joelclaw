@@ -922,7 +922,7 @@ export const o11yTriage = inngest.createFunction(
           runbookCode: runbookPlan?.code ?? null,
           runbookPhase: runbookPlan?.phase ?? null,
           recoverCommand: runbookRecoverCommand(runbookPlan),
-          runbookCommands: runbookPlan?.commands ?? [],
+          runbookCommands: runbookPlan?.commands.map((command) => command.command) ?? [],
           candidateFiles,
           gitLogSample: gitLog.trim().length > 0
             ? gitLog.split("\n").slice(0, 3)

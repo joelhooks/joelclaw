@@ -8,6 +8,8 @@ const gatewayEvents: Array<Record<string, any>> = [];
 const tier1Event: OtelEvent = {
   id: "evt-o11y-tier1",
   timestamp: Date.now(),
+  sessionId: "test-session",
+  systemId: "panda",
   level: "error",
   source: "worker",
   component: "triage-test",
@@ -20,6 +22,8 @@ const tier1Event: OtelEvent = {
 const tier3Event: OtelEvent = {
   id: "evt-o11y-tier3",
   timestamp: Date.now(),
+  sessionId: "test-session",
+  systemId: "panda",
   level: "fatal",
   source: "worker",
   component: "tier3-test",

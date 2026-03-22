@@ -48,8 +48,10 @@ function parseAdrFrontmatter(content: string): Record<string, string> {
     const match = line.match(
       /^(Status|Date|Updated|Supersedes|Superseded by|Related|Tags):\s*(.+)/i,
     );
-    if (match) {
-      result[match[1].toLowerCase().replace(/ /g, "_")] = match[2].trim();
+    const key = match?.[1]?.toLowerCase().replace(/ /g, "_");
+    const value = match?.[2]?.trim();
+    if (key && value) {
+      result[key] = value;
     }
     if (line.startsWith("## ")) break;
   }

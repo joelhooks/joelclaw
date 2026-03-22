@@ -771,7 +771,7 @@ export const bookDownload = inngest.createFunction(
         });
       });
 
-      const nasBackup: NasBackupResult = await step.run("backup-to-nas", async () => {
+      const nasBackup: NasBackupResult = await step.run("backup-to-nas", async (): Promise<NasBackupResult> => {
         try {
           const year = new Date().getFullYear().toString();
           const filename = basename(downloadResult.filePath);
@@ -783,7 +783,7 @@ export const bookDownload = inngest.createFunction(
             NAS_BACKUP_TIMEOUT_MS
           );
           if (mkdirResult.exitCode !== 0) {
-            return { backedUp: false, reason: `mkdir failed: ${mkdirResult.stderr.trim()}` };
+            return { backedUp: false as const, reason: `mkdir failed: ${mkdirResult.stderr.trim()}` };
           }
 
           const scpResult = await runProcess(
@@ -791,13 +791,13 @@ export const bookDownload = inngest.createFunction(
             NAS_BACKUP_TIMEOUT_MS
           );
           if (scpResult.exitCode !== 0) {
-            return { backedUp: false, reason: `scp failed: ${scpResult.stderr.trim()}` };
+            return { backedUp: false as const, reason: `scp failed: ${scpResult.stderr.trim()}` };
           }
 
-          return { backedUp: true, nasPath: `${nasDir}/${filename}` };
+          return { backedUp: true as const, nasPath: `${nasDir}/${filename}` };
         } catch (error) {
           return {
-            backedUp: false,
+            backedUp: false as const,
             reason: error instanceof Error ? error.message : String(error),
           };
         }

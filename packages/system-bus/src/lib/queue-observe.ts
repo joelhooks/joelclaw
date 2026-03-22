@@ -247,9 +247,9 @@ function percentile(values: readonly number[], target: number): number | null {
   return ordered[index] ?? null;
 }
 
-type QueueObservationPauseInput = NonNullable<BuildQueueObservationSnapshotInput["control"]>["activePauses"] extends ReadonlyArray<infer T>
-  ? T
-  : never;
+type QueueObservationPauseInput = NonNullable<
+  NonNullable<BuildQueueObservationSnapshotInput["control"]>["activePauses"]
+>[number];
 
 type QueueObservationPauseSummary = QueueObservationSnapshot["control"]["activePauses"][number];
 

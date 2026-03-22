@@ -601,10 +601,17 @@ export const checkGatewayHealth = inngest.createFunction(
           60_000,
         );
 
-        if (!postDiagnose.ok || !postDiagnose.result) {
+        if (!postDiagnose.ok) {
           return {
             attempted: true,
             restartError: `post-check failed: ${postDiagnose.error}`,
+          } satisfies RestartAttemptSummary;
+        }
+
+        if (!postDiagnose.result) {
+          return {
+            attempted: true,
+            restartError: "post-check returned no result",
           } satisfies RestartAttemptSummary;
         }
 

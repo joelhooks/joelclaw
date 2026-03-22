@@ -736,6 +736,17 @@ export type Events = {
       source?: string;
     };
   };
+  "system/inngest.runtime.health.requested": {
+    data: {
+      domain?: string;
+      dryRun?: boolean;
+      attempt?: number;
+      sourceFunction?: string;
+      targetComponent?: string;
+      targetEventName?: string;
+      problemSummary?: string;
+    };
+  };
   "system/network.update": {
     data: {
       source?: string;
@@ -1623,6 +1634,9 @@ export type Events = {
       source?: string;
       agentDispatchCanary?: boolean;
     };
+  };
+  "gateway/health.check.requested": {
+    data: Record<string, never>;
   };
   "memory/friction.requested": {
     data: Record<string, never>;

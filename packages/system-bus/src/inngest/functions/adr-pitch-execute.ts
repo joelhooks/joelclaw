@@ -181,7 +181,8 @@ function extractMarkdownSection(content: string, headings: string[]): string | n
     for (let index = startIndex + 1; index < lines.length; index += 1) {
       const line = lines[index] ?? "";
       const nextHeading = line.trim().match(/^(#{1,6})\s+/);
-      if (nextHeading && nextHeading[1].length <= startLevel) break;
+      const nextHeadingLevel = nextHeading?.[1]?.length;
+      if (typeof nextHeadingLevel === "number" && nextHeadingLevel <= startLevel) break;
       sectionLines.push(line);
     }
 

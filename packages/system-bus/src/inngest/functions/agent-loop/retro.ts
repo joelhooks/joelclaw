@@ -433,12 +433,12 @@ export const agentLoopRetro = inngest.createFunction(
           .map((l) => l.replace(/^[\s\-•]+/, "").trim())
           .filter((l) => l.length > 20);
 
-        for (let i = 0; i < bullets.length; i++) {
+        for (const [i, bullet] of bullets.entries()) {
           docs.push({
             id: `lesson:${loopId}:${i}`,
             type: "lesson",
-            title: bullets[i].slice(0, 120),
-            content: bullets[i],
+            title: bullet.slice(0, 120),
+            content: bullet,
             project,
             loop_id: loopId,
             tags: ["lesson", "loop"],

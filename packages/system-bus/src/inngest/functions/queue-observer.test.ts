@@ -1,17 +1,59 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import type { QueueObservationDecision, QueueObservationSnapshot } from "@joelclaw/queue";
+
+type ObserveQueueSnapshotDetailedResult = {
+  autoApplyFamilies: Set<string>;
+  decision: QueueObservationDecision;
+  failedError?: string;
+};
 
 const controlAppliedEvents: Array<Record<string, unknown>> = [];
 const controlRejectedEvents: Array<Record<string, unknown>> = [];
 
-function buildObservedDecisionMock() {
+const mockSnapshot: QueueObservationSnapshot = {
+  snapshotId: "snap-test",
+  capturedAt: "2026-03-08T00:00:00.000Z",
+  totals: {
+    depth: 0,
+    byPriority: { P0: 0, P1: 0, P2: 0, P3: 0 },
+    oldestAgeMs: null,
+    newestAgeMs: null,
+  },
+  families: [],
+  triage: {
+    attempts: 0,
+    completed: 0,
+    failed: 0,
+    fallbacks: 0,
+    fallbackByReason: {},
+    routeMismatches: 0,
+    latencyMs: { p50: null, p95: null },
+  },
+  drainer: {
+    state: "healthy",
+    recentDispatches: 0,
+    recentFailures: 0,
+    throughputPerMinute: null,
+  },
+  gateway: {
+    sleepMode: false,
+    quietHours: false,
+    mutedChannels: [],
+  },
+  control: {
+    activePauses: [],
+  },
+};
+
+function buildObservedDecisionMock(): ObserveQueueSnapshotDetailedResult {
   return {
     autoApplyFamilies: new Set<string>(),
     decision: {
-      mode: "dry-run" as const,
+      mode: "dry-run",
       snapshotId: "snap-test",
       findings: {
-        queuePressure: "healthy" as const,
-        downstreamState: "healthy" as const,
+        queuePressure: "healthy",
+        downstreamState: "healthy",
         summary: "stubbed",
       },
       suggestedActions: [],
@@ -23,44 +65,11 @@ function buildObservedDecisionMock() {
   };
 }
 
-let mockObservedDecision = buildObservedDecisionMock();
+let mockObservedDecision: ObserveQueueSnapshotDetailedResult = buildObservedDecisionMock();
 
 mock.module(new URL("../../lib/queue-observe.ts", import.meta.url).pathname, () => ({
   QUEUE_OBSERVE_MODEL: "anthropic/claude-sonnet-4-6",
-  buildQueueObservationSnapshot: () => ({
-    snapshotId: "snap-test",
-    capturedAt: "2026-03-08T00:00:00.000Z",
-    totals: {
-      depth: 0,
-      byPriority: { P0: 0, P1: 0, P2: 0, P3: 0 },
-      oldestAgeMs: null,
-      newestAgeMs: null,
-    },
-    families: [],
-    triage: {
-      attempts: 0,
-      completed: 0,
-      failed: 0,
-      fallbacks: 0,
-      fallbackByReason: {},
-      routeMismatches: 0,
-      latencyMs: { p50: null, p95: null },
-    },
-    drainer: {
-      state: "healthy",
-      recentDispatches: 0,
-      recentFailures: 0,
-      throughputPerMinute: null,
-    },
-    gateway: {
-      sleepMode: false,
-      quietHours: false,
-      mutedChannels: [],
-    },
-    control: {
-      activePauses: [],
-    },
-  }),
+  buildQueueObservationSnapshot: () => mockSnapshot,
   emitQueueControlApplied: async (event: Record<string, unknown>) => {
     controlAppliedEvents.push(event);
   },
@@ -75,7 +84,7 @@ mock.module(new URL("../../lib/queue-observe.ts", import.meta.url).pathname, () 
 }));
 
 describe("queue observer config and control adapter", () => {
-  let testUtils: Awaited<ReturnType<typeof import("./queue-observer")>>["__queueObserverTestUtils"];
+  let testUtils: (typeof import("./queue-observer"))["__queueObserverTestUtils"];
   let originalDeps: typeof testUtils.deps;
 
   beforeEach(async () => {
@@ -161,7 +170,7 @@ describe("queue observer config and control adapter", () => {
       get: async () => null,
       set: async () => "OK",
       mget: async () => [null, null],
-    })) as typeof testUtils.deps.getRedisClient;
+    })) as unknown as typeof testUtils.deps.getRedisClient;
     testUtils.deps.ensureQueueInitialized = (async () => {}) as typeof testUtils.deps.ensureQueueInitialized;
     testUtils.deps.getQueueStats = (async () => ({
       total: 0,
@@ -212,8 +221,8 @@ describe("queue observer config and control adapter", () => {
     const sendEvents: Array<Record<string, unknown>> = [];
     const result = await testUtils.runQueueObserverPass({
       step: {
-        run: async (_id, fn) => await fn(),
-        sendEvent: async (_id, payload) => {
+        run: async (_id: string, fn: () => unknown | Promise<unknown>) => await fn(),
+        sendEvent: async (_id: string, payload: { name: string; data: Record<string, unknown> }) => {
           sendEvents.push(payload);
           return { ids: ["mock-event-id"] };
         },
