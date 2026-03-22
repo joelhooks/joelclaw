@@ -93,6 +93,30 @@ kubectl -n joelclaw delete pod redis-0
 
 For port mappings, recovery procedures, and cluster recreation steps, read [references/operations.md](references/operations.md).
 
+### Kubeconfig Port Drift (2026-03-21 incident)
+
+Docker port mappings for k8s API (6443) and Talos API (50000) are **not pinned** — they use random host ports assigned at container creation. All service ports (3111, 8288, 6379, etc.) ARE pinned 1:1.
+
+When the Colima VM or Talos container restarts, Docker may reassign different random ports for 6443/50000. Kubeconfig goes stale, kubectl fails, and everything that depends on it (joelclaw CLI, health checks, pod inspection) breaks silently.
+
+**Symptoms**: `kubectl` returns `tls: internal error` or `connection refused`. All pods are actually running — only the kubeconfig routing is wrong.
+
+**Fix**:
+```bash
+# 1. Regenerate kubeconfig from talosctl (which has the correct port)
+talosctl --talosconfig ~/.talos/config --nodes 127.0.0.1 kubeconfig --force
+
+# 2. Switch to the new context
+kubectl config use-context "$(kubectl config get-contexts -o name | grep joelclaw | head -1)"
+
+# 3. Clean stale contexts (optional)
+kubectl config delete-context admin@joelclaw  # if stale entry exists
+```
+
+**Self-heal**: `health.sh` now auto-detects and fixes this before running checks.
+
+**Root cause**: Container was created without pinning these ports. To permanently fix, recreate the container with explicit port bindings for 6443:6443 and 50000:50000. This requires cluster recreation — a bigger operation.
+
 ## Quick Health Check
 
 ```bash
