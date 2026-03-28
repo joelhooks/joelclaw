@@ -653,12 +653,13 @@ async function gatherSystemContext(): Promise<string> {
   const startTs = Date.now();
   const sections: string[] = [];
 
-  // Run all queries in parallel — each has its own timeout
-  const [slogResult, otelResult, runsResult, failedResult] = await Promise.all([
+  // Run all queries in parallel — each has its own timeout.
+  // slog + otel are fast (<300ms). `joelclaw runs` takes 10-15s so we use
+  // `joelclaw status` (570ms) for system health instead.
+  const [slogResult, otelResult, statusResult] = await Promise.all([
     runCli(["slog", "tail", "--count", "15"]),
     runCliJson(["otel", "stats", "--hours", "24"]),
-    runCliJson(["runs", "--count", "5"]),
-    runCliJson(["runs", "--count", "10", "--status", "FAILED"]),
+    runCliJson(["status"]),
   ]);
 
   // Recent slog entries
@@ -687,35 +688,27 @@ async function gatherSystemContext(): Promise<string> {
     }
   }
 
-  // Recent runs
-  if (runsResult) {
-    const result = runsResult.result as Record<string, unknown> | undefined;
-    const runs = Array.isArray(result?.runs) ? result.runs : [];
-    if (runs.length > 0) {
-      const lines = (runs as Array<Record<string, unknown>>).map((r) => {
-        const status = r.status === "COMPLETED" ? "✅" : r.status === "FAILED" ? "❌" : "⏳";
-        const name = typeof r.functionName === "string" ? r.functionName : "unknown";
-        return `- ${status} ${name}`;
-      });
-      sections.push(`### Recent Runs\n${lines.join("\n")}`);
-    }
-  }
+  // System status (fast — ~570ms vs 15s for `runs`)
+  if (statusResult) {
+    const result = statusResult.result as Record<string, unknown> | undefined;
+    if (result) {
+      const lines: string[] = [];
+      const worker = result.worker as Record<string, unknown> | undefined;
+      const inngest = result.inngest as Record<string, unknown> | undefined;
+      const redis = result.redis as Record<string, unknown> | undefined;
+      const k8s = result.k8s as Record<string, unknown> | undefined;
 
-  // Failed runs
-  if (failedResult) {
-    const result = failedResult.result as Record<string, unknown> | undefined;
-    const runs = Array.isArray(result?.runs) ? result.runs : [];
-    if (runs.length > 0) {
-      // Group by function name
-      const counts = new Map<string, number>();
-      for (const r of runs as Array<Record<string, unknown>>) {
-        const name = typeof r.functionName === "string" ? r.functionName : "unknown";
-        counts.set(name, (counts.get(name) || 0) + 1);
+      if (worker) lines.push(`- Worker: ${worker.status ?? "unknown"} (functions: ${worker.functionCount ?? "?"})`);
+      if (inngest) lines.push(`- Inngest: ${inngest.status ?? "unknown"}`);
+      if (redis) lines.push(`- Redis: ${redis.status ?? "unknown"}`);
+      if (k8s) {
+        const pods = Array.isArray(k8s.pods) ? k8s.pods : [];
+        const notRunning = (pods as Array<Record<string, unknown>>).filter((p) => p.status !== "Running");
+        lines.push(`- K8s: ${pods.length} pods${notRunning.length > 0 ? ` (${notRunning.length} not running)` : " (all running)"}`);
       }
-      const lines = Array.from(counts.entries())
-        .sort((a, b) => b[1] - a[1])
-        .map(([name, count]) => `- ${count}× ${name}`);
-      sections.push(`### Failed Runs (24h)\n${lines.join("\n")}`);
+      if (lines.length > 0) {
+        sections.push(`### System Status\n${lines.join("\n")}`);
+      }
     }
   }
 
