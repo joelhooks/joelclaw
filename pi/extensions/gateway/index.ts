@@ -609,6 +609,123 @@ async function readAndFlushContextBuffer(): Promise<string | null> {
   }
 }
 
+// ── ADR-0235: On-demand system context for operator questions ────────
+// When operator asks something, gather live system state so the gateway
+// can answer "what's important" / "summarize this week" etc.
+
+function runCliJson(args: string[], timeoutMs = 8000): Promise<Record<string, unknown> | null> {
+  return new Promise((resolve) => {
+    const child = spawn("joelclaw", [...args, "--json"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, TERM: "dumb" },
+    });
+    let stdout = "";
+    child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    const timer = setTimeout(() => { child.kill(); resolve(null); }, timeoutMs);
+    child.on("close", () => {
+      clearTimeout(timer);
+      try {
+        resolve(JSON.parse(stdout) as Record<string, unknown>);
+      } catch { resolve(null); }
+    });
+    child.on("error", () => { clearTimeout(timer); resolve(null); });
+  });
+}
+
+function runCli(args: string[], timeoutMs = 8000): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = spawn(args[0], args.slice(1), {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, TERM: "dumb" },
+    });
+    let stdout = "";
+    child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    const timer = setTimeout(() => { child.kill(); resolve(null); }, timeoutMs);
+    child.on("close", () => {
+      clearTimeout(timer);
+      resolve(stdout.trim() || null);
+    });
+    child.on("error", () => { clearTimeout(timer); resolve(null); });
+  });
+}
+
+async function gatherSystemContext(): Promise<string> {
+  const startTs = Date.now();
+  const sections: string[] = [];
+
+  // Run all queries in parallel — each has its own timeout
+  const [slogResult, otelResult, runsResult, failedResult] = await Promise.all([
+    runCli(["slog", "tail", "--count", "15"]),
+    runCliJson(["otel", "stats", "--hours", "24"]),
+    runCliJson(["runs", "--count", "5"]),
+    runCliJson(["runs", "--count", "10", "--status", "FAILED"]),
+  ]);
+
+  // Recent slog entries
+  if (slogResult) {
+    try {
+      const parsed = JSON.parse(slogResult);
+      const entries = (parsed?.result?.entries ?? []) as Array<Record<string, unknown>>;
+      if (entries.length > 0) {
+        const lines = entries.map((e) => {
+          const ts = typeof e.timestamp === "string" ? e.timestamp.slice(5, 16).replace("T", " ") : "";
+          return `- ${ts} [${e.action}] ${e.tool}: ${typeof e.detail === "string" ? (e.detail as string).slice(0, 100) : ""}`;
+        });
+        sections.push(`### Recent System Log\n${lines.join("\n")}`);
+      }
+    } catch { /* slog output not JSON-parseable, skip */ }
+  }
+
+  // OTEL error rate
+  if (otelResult) {
+    const result = otelResult.result as Record<string, unknown> | undefined;
+    if (result) {
+      const total = typeof result.total === "number" ? result.total : 0;
+      const errors = typeof result.errors === "number" ? result.errors : 0;
+      const rate = typeof result.errorRate === "number" ? (result.errorRate * 100).toFixed(1) : "?";
+      sections.push(`### Observability (24h)\n- Events: ${total}, Errors: ${errors} (${rate}%)`);
+    }
+  }
+
+  // Recent runs
+  if (runsResult) {
+    const result = runsResult.result as Record<string, unknown> | undefined;
+    const runs = Array.isArray(result?.runs) ? result.runs : [];
+    if (runs.length > 0) {
+      const lines = (runs as Array<Record<string, unknown>>).map((r) => {
+        const status = r.status === "COMPLETED" ? "✅" : r.status === "FAILED" ? "❌" : "⏳";
+        const name = typeof r.functionName === "string" ? r.functionName : "unknown";
+        return `- ${status} ${name}`;
+      });
+      sections.push(`### Recent Runs\n${lines.join("\n")}`);
+    }
+  }
+
+  // Failed runs
+  if (failedResult) {
+    const result = failedResult.result as Record<string, unknown> | undefined;
+    const runs = Array.isArray(result?.runs) ? result.runs : [];
+    if (runs.length > 0) {
+      // Group by function name
+      const counts = new Map<string, number>();
+      for (const r of runs as Array<Record<string, unknown>>) {
+        const name = typeof r.functionName === "string" ? r.functionName : "unknown";
+        counts.set(name, (counts.get(name) || 0) + 1);
+      }
+      const lines = Array.from(counts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, count]) => `- ${count}× ${name}`);
+      sections.push(`### Failed Runs (24h)\n${lines.join("\n")}`);
+    }
+  }
+
+  const elapsed = Date.now() - startTs;
+  console.log(`[gateway:context] gathered system context in ${elapsed}ms (${sections.length} sections)`);
+
+  if (sections.length === 0) return "";
+  return sections.join("\n\n");
+}
+
 function pickId(sources: Record<string, unknown>[], keys: string[]): string | null {
   for (const source of sources) {
     for (const key of keys) {
@@ -1059,16 +1176,24 @@ export default function (pi: ExtensionAPI) {
 
     let systemPrompt = injected.systemPrompt;
     if (isOperatorMessage) {
-      const contextBlock = await readAndFlushContextBuffer();
-      if (contextBlock) {
-        // Prepend context buffer to system prompt so the LLM has awareness
-        // but doesn't need to comment on it unless relevant to the question.
+      // ADR-0235: Gather context on demand — event buffer + live system state
+      const [contextBlock, systemContext] = await Promise.all([
+        readAndFlushContextBuffer(),
+        gatherSystemContext(),
+      ]);
+
+      const contextParts: string[] = [];
+      if (contextBlock) contextParts.push(contextBlock);
+      if (systemContext) contextParts.push(systemContext);
+
+      if (contextParts.length > 0) {
         systemPrompt = [
           systemPrompt,
           "",
-          "<!-- Recent system activity (demand-driven context, ADR-0235) -->",
-          "<!-- Only mention these if directly relevant to the operator's question. -->",
-          contextBlock,
+          "<!-- Demand-driven system context (ADR-0235) -->",
+          "<!-- This is live system state. Use it to answer questions about what's happening, -->",
+          "<!-- what's important, what failed, what changed. Only mention if relevant. -->",
+          ...contextParts,
         ].join("\n");
       }
     }
