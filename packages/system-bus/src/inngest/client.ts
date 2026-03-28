@@ -1117,7 +1117,7 @@ export type Events = {
   };
   "channel/message.received": {
     data: {
-      channelType: "slack" | "discord" | "telegram";
+      channelType: "slack" | "discord" | "telegram" | "email";
       channelId: string;
       channelName: string;
       threadId?: string;
@@ -1137,7 +1137,7 @@ export type Events = {
   "channel/message.signal": {
     data: {
       messageId: string;
-      channelType: "slack" | "discord" | "telegram";
+      channelType: "slack" | "discord" | "telegram" | "email";
       channelId: string;
       channelName: string;
       threadId?: string;

@@ -3,6 +3,39 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { type EnqueueFn, pushGatewayEvent } from "./redis";
+
+// ADR-0236: Emit channel/message.received to Inngest for realtime Typesense indexing.
+const INNGEST_URL = process.env.INNGEST_URL ?? "http://127.0.0.1:8288";
+const INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15";
+
+function emitChannelMessageEvent(msg: {
+  channelId: string;
+  channelName: string;
+  userId: string;
+  userName: string;
+  text: string;
+  timestamp: number;
+  threadId?: string;
+}): void {
+  // Fire and forget — don't block the message handling path
+  fetch(`${INNGEST_URL}/e/${INNGEST_EVENT_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "channel/message.received",
+      data: {
+        channelType: "slack",
+        channelId: msg.channelId,
+        channelName: msg.channelName,
+        userId: msg.userId,
+        userName: msg.userName,
+        text: msg.text,
+        timestamp: msg.timestamp,
+        ...(msg.threadId ? { threadId: msg.threadId } : {}),
+      },
+    }),
+  }).catch(() => {}); // silent — indexing failure must not break message flow
+}
 import type {
   Channel,
   ChannelPlatform,
@@ -519,6 +552,18 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
         length: text.length,
       },
     });
+
+    // ADR-0236: Index to Typesense for gateway context gathering
+    emitChannelMessageEvent({
+      channelId: message.channel,
+      channelName: context.source.replace("slack:", ""),
+      userId: message.user,
+      userName: userLabel,
+      text,
+      timestamp: Math.floor(Date.now() / 1000),
+      threadId: threadTs,
+    });
+
     return;
   } else if (isAllowedUser) {
     const intelPrompt = `${context.prefix} ${userLabel}: ${text}`;
@@ -555,6 +600,18 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
         routedVia: queuedEvent ? "redis-event" : "direct-enqueue-fallback",
       },
     });
+
+    // ADR-0236: Index to Typesense for gateway context gathering
+    emitChannelMessageEvent({
+      channelId: message.channel,
+      channelName: context.source.replace("slack-intel:", "").replace("slack:", ""),
+      userId: message.user,
+      userName: userLabel,
+      text,
+      timestamp: Math.floor(Date.now() / 1000),
+      threadId: threadTs,
+    });
+
     return;
   }
 }

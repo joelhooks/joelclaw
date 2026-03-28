@@ -107,6 +107,22 @@ export const frontMessageReceived = inngest.createFunction(
       ].join("\n");
     });
 
+    // ADR-0236: Index to Typesense for gateway context gathering
+    await step.run("index-channel-message", async () => {
+      await inngest.send({
+        name: "channel/message.received",
+        data: {
+          channelType: "email",
+          channelId: conversationId || "front-unknown",
+          channelName: context.subject || "email",
+          userId: from || "unknown",
+          userName: context.sender || from || "unknown",
+          text: (bodyPlain || preview || "").slice(0, 2000),
+          timestamp: Date.now(),
+        },
+      });
+    });
+
     const result = await step.run("notify-gateway", async () => {
       // VIP senders get a dedicated intelligence pipeline (vip-email-received.ts)
       // that delivers a richer brief — skip the generic notification to avoid stutter.

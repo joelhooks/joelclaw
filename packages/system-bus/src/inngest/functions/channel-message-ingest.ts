@@ -4,7 +4,7 @@ import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
-const CHANNEL_TYPES = ["slack", "discord", "telegram"] as const;
+const CHANNEL_TYPES = ["slack", "discord", "telegram", "email"] as const;
 type ChannelType = (typeof CHANNEL_TYPES)[number];
 
 type IncomingMessage = {
