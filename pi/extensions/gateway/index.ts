@@ -79,8 +79,7 @@ const TODOIST_DEBOUNCE_SECONDS = 5;
 const DEDUP_KEY_PREFIX = "joelclaw:gateway:seen";
 const DEBOUNCE_KEY_PREFIX = "joelclaw:gateway:debounce";
 const DRAIN_DEBOUNCE_MS = 5_000;
-const HEARTBEAT_FULL_CHECK_MS = 60 * 60 * 1000;
-const AUTO_MESSAGE_DIGEST_ONLY_THRESHOLD = 20;
+
 const CONTEXT_BUFFER_KEY = "joelclaw:gateway:context-buffer";
 const CONTEXT_BUFFER_MAX_EVENTS = 50;
 const CONTEXT_BUFFER_TTL_SECONDS = 24 * 60 * 60; // 24h
@@ -103,8 +102,7 @@ let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 let watchdogAlarmFired = false; // only fire once per missed window
 let ctx: ExtensionContext | null = null;
 let piRef: ExtensionAPI | null = null;
-let lastFullHeartbeatCheckTs = 0;
-let automatedInjectedCount = 0;
+
 let drainDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -114,10 +112,6 @@ interface SystemEvent {
   source: string;
   payload: Record<string, unknown>;
   ts: number;
-}
-
-interface DrainOptions {
-  forceFull?: boolean;
 }
 
 // ADR-0235: Demand-driven context buffer — events accumulate silently,
@@ -451,18 +445,6 @@ function eventLooksCritical(event: SystemEvent): boolean {
   return /(error|failed|degraded|warning|⚠️|watchdog|alarm)/i.test(text);
 }
 
-function isHeartbeatDegraded(event: SystemEvent): boolean {
-  if (event.type !== "cron.heartbeat") return false;
-  return eventLooksCritical(event);
-}
-
-function shouldInjectHeartbeat(event: SystemEvent, options: DrainOptions): boolean {
-  if (options.forceFull) return true;
-  if (isHeartbeatDegraded(event)) return true;
-  if (lastFullHeartbeatCheckTs === 0) return true;
-  return Date.now() - lastFullHeartbeatCheckTs > HEARTBEAT_FULL_CHECK_MS;
-}
-
 function maybeCountFromObject(value: unknown): number {
   const rec = asRecord(value);
   let total = 0;
@@ -496,99 +478,16 @@ function parseDigestStats(event: SystemEvent): { total: number; hasErrors: boole
   return { total, hasErrors: errorCount > 0 || hasKeyedError || hasErrorText };
 }
 
-function buildQuietDigestSummary(events: SystemEvent[]): string {
-  const typeCounts = new Map<string, number>();
-  let total = 0;
-  let hasErrors = false;
-
-  for (const event of events) {
-    const stats = parseDigestStats(event);
-    total += stats.total;
-    if (stats.hasErrors) hasErrors = true;
-
-    const payload = asRecord(event.payload);
-    const counts = asRecord(payload.typeCounts);
-    for (const [type, value] of Object.entries(counts)) {
-      const count = asNumber(value);
-      if (count === null || count <= 0) continue;
-      typeCounts.set(type, (typeCounts.get(type) || 0) + count);
-    }
-  }
-
-  const top = Array.from(typeCounts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([type, count]) => `- ${type}: ${count}`)
-    .join("\n");
-
-  const volume = total > 0 ? total : events.length;
-  return [
-    "> ⚡ **Automated gateway digest summary**",
-    "",
-    `Batch digests received: ${events.length}`,
-    `Estimated volume: ${volume}`,
-    `Anomalies: ${hasErrors ? "yes" : "no"}`,
-    top ? `\nTop event types:\n${top}` : "",
-  ].join("\n");
-}
-
-function buildSubscriptionMessage(events: SystemEvent[]): string {
-  return events
-    .map((event) => {
-      const payload = asRecord(event.payload);
-      const name = asString(payload.name) || "Unnamed feed";
-      const source = asString(payload.source);
-      const newEntries = asNumber(payload.newEntries);
-      const summary = asString(payload.summary)
-        || `${newEntries ?? 0} new entr${newEntries === 1 ? "y" : "ies"}${source ? ` from ${source}` : ""}.`;
-      const links = Array.isArray(payload.links)
-        ? payload.links
-            .map((value) => {
-              const link = asRecord(value);
-              const title = asString(link.title) || asString(link.url) || "Open";
-              const url = asString(link.url);
-              return url ? { title, url } : null;
-            })
-            .filter((value): value is { title: string; url: string } => Boolean(value))
-        : [];
-
-      const lines = [
-        `## 📡 Feed Update — ${name}`,
-        "",
-        summary,
-      ];
-
-      if (links.length > 0) {
-        lines.push("", ...links.map((link) => `- [${link.title}](${link.url})`));
-      } else if (source) {
-        lines.push("", `- [Source](${source})`);
-      }
-
-      return lines.join("\n");
-    })
-    .join("\n\n");
-}
-
-function isDigestOnlyMode(): boolean {
-  return automatedInjectedCount > AUTO_MESSAGE_DIGEST_ONLY_THRESHOLD;
-}
-
-function logAutomationCounter(reason: string): void {
-  const mode = isDigestOnlyMode() ? "digest-only" : "active";
-  console.log(`[gateway] automated messages injected=${automatedInjectedCount} mode=${mode} reason=${reason}`);
-}
-
+// ADR-0235: Only used for critical event injection and manual /heartbeat command.
 function sendAutomatedMessage(prompt: string, reason: string): void {
   if (!piRef || !ctx) return;
 
+  console.log(`[gateway] sending automated message reason=${reason}`);
   if (ctx.isIdle()) {
     piRef.sendUserMessage(prompt);
   } else {
     piRef.sendUserMessage(prompt, { deliverAs: "followUp" });
   }
-
-  automatedInjectedCount++;
-  logAutomationCounter(reason);
 }
 
 // ── ADR-0235: Demand-driven context buffer ──────────────────────────
@@ -804,7 +703,7 @@ async function markProcessed(events: SystemEvent[]): Promise<void> {
   await pipeline.exec();
 }
 
-async function drain(options: DrainOptions = {}): Promise<void> {
+async function drain(): Promise<void> {
   if (draining || !cmd || !piRef) return;
   draining = true;
 
@@ -922,12 +821,6 @@ async function drain(options: DrainOptions = {}): Promise<void> {
     const criticalEvents = filtered.filter((e) => eventLooksCritical(e));
     const nonCriticalEvents = filtered.filter((e) => !eventLooksCritical(e));
 
-    // Track heartbeat timing for quiet-heartbeat suppression
-    const heartbeatEvents = filtered.filter((e) => e.type === "cron.heartbeat");
-    if (heartbeatEvents.length > 0) {
-      lastFullHeartbeatCheckTs = Date.now();
-    }
-
     // Buffer all non-critical events silently (ADR-0235)
     if (nonCriticalEvents.length > 0) {
       await appendToContextBuffer(nonCriticalEvents, false);
@@ -1003,7 +896,7 @@ function startWatchdog(): void {
 
       console.error(`[gateway] WATCHDOG: no heartbeat for ${mins}min, injecting alarm`);
 
-      // Always deliver watchdog alarms, regardless of quiet/digest-only modes.
+      // Watchdog alarms always break through immediately.
       if (ctx.isIdle()) {
         piRef.sendUserMessage(alarm);
       } else {
@@ -1557,7 +1450,7 @@ export default function (pi: ExtensionAPI) {
         _ctx.ui.notify("Gateway not connected", "error");
         return;
       }
-      await drain({ forceFull: true });
+      await drain();
       if (lastDrainTs === 0) {
         _ctx.ui.notify("No events — sending heartbeat prompt", "info");
         sendAutomatedMessage(buildPrompt([]), "manual-heartbeat");
