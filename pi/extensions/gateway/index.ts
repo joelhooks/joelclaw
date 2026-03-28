@@ -739,55 +739,124 @@ async function gatherSystemContext(): Promise<string> {
     }
   }
 
-  // ── Business intelligence: Slack + Email + Vault (Typesense) ──
-  // This is what Joel actually wants — project-relevant conversations, not infra metrics.
+  // ── Business intelligence: thread-oriented momentum + relationships (ADR-0237) ──
   const tsKey = typesenseApiKey || process.env.TYPESENSE_API_KEY || "";
   const tsHost = process.env.TYPESENSE_HOST ?? "http://127.0.0.1:8108";
 
   if (tsKey) {
-    const [slackResult, emailResult] = await Promise.all([
-      searchTypesense(tsHost, tsKey, "slack_messages", "*", {
-        sort_by: "timestamp:desc",
-        per_page: "15",
-        filter_by: `timestamp:>=${Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000)}`,
-      }),
-      searchTypesense(tsHost, tsKey, "email_threads", "*", {
-        per_page: "10",
-      }),
-    ]);
-
-    if (slackResult && slackResult.length > 0) {
-      // Group by channel for readability
-      const byChannel = new Map<string, Array<{ user: string; text: string }>>();
-      for (const msg of slackResult) {
-        const ch = msg.channel_name ?? msg.channel_id ?? "unknown";
-        if (!byChannel.has(ch)) byChannel.set(ch, []);
-        byChannel.get(ch)!.push({
-          user: msg.user_name ?? "?",
-          text: (msg.text ?? "").slice(0, 150),
-        });
+    const urgencyEmoji = (urgency: unknown): string => {
+      switch (urgency) {
+        case "critical": return "🔴";
+        case "high": return "🟠";
+        case "low": return "🟢";
+        default: return "🟡";
       }
-      const lines: string[] = [];
-      for (const [channel, msgs] of byChannel) {
-        lines.push(`**#${channel}** (${msgs.length} recent)`);
-        for (const m of msgs.slice(0, 3)) {
-          lines.push(`  - ${m.user}: ${m.text}`);
+    };
+    const asStrings = (value: unknown): string[] => Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+
+    const conversationThreads = await searchTypesense(tsHost, tsKey, "conversation_threads", "*", {
+      sort_by: "last_message_at:desc",
+      per_page: "20",
+      filter_by: "status:=[active,stale]",
+      include_fields: "source,channel_name,message_count,summary,related_projects,related_contacts,vault_gap,vault_gap_signal,urgency,needs_joel,last_message_at,status",
+    });
+
+    if (conversationThreads && conversationThreads.length > 0) {
+      const projectMomentum = conversationThreads
+        .filter((thread) => asStrings(thread.related_projects).length > 0)
+        .slice(0, 8)
+        .map((thread) => {
+          const projects = asStrings(thread.related_projects).slice(0, 2).join(", ");
+          const contacts = asStrings(thread.related_contacts).slice(0, 2).join(", ");
+          const summary = typeof thread.summary === "string" ? thread.summary.slice(0, 140) : "Untitled thread";
+          const tail = [projects ? `→ ${projects}` : "", contacts ? `(${contacts})` : ""]
+            .filter(Boolean)
+            .join(" ");
+          return `- ${urgencyEmoji(thread.urgency)} ${summary}${tail ? ` ${tail}` : ""}`;
+        });
+
+      if (projectMomentum.length > 0) {
+        sections.push(`### Project Momentum\n${projectMomentum.join("\n")}`);
+      }
+
+      const relationshipThreads = conversationThreads
+        .filter((thread) => {
+          const contacts = asStrings(thread.related_contacts);
+          return contacts.length > 0 || thread.source === "email" || thread.needs_joel === true;
+        })
+        .slice(0, 8)
+        .map((thread) => {
+          const contacts = asStrings(thread.related_contacts).slice(0, 3).join(", ");
+          const summary = typeof thread.summary === "string" ? thread.summary.slice(0, 140) : "Untitled thread";
+          const source = thread.source === "email" ? "email" : `#${thread.channel_name ?? "unknown"}`;
+          const flags = [contacts, thread.needs_joel === true ? "needs Joel" : ""].filter(Boolean).join(" · ");
+          return `- ${urgencyEmoji(thread.urgency)} [${source}] ${summary}${flags ? ` (${flags})` : ""}`;
+        });
+
+      if (relationshipThreads.length > 0) {
+        sections.push(`### Relationship Threads\n${relationshipThreads.join("\n")}`);
+      }
+
+      const momentumRisks = conversationThreads
+        .filter((thread) => thread.needs_joel === true || thread.vault_gap === true)
+        .slice(0, 8)
+        .map((thread) => {
+          const summary = typeof thread.summary === "string" ? thread.summary.slice(0, 140) : "Untitled thread";
+          const gap = typeof thread.vault_gap_signal === "string" ? thread.vault_gap_signal.slice(0, 120) : "";
+          const riskLabel = thread.vault_gap === true ? "vault gap" : "needs Joel";
+          return `- ${urgencyEmoji(thread.urgency)} ${summary} — ${riskLabel}${gap ? `: ${gap}` : ""}`;
+        });
+
+      if (momentumRisks.length > 0) {
+        sections.push(`### Momentum Risks\n${momentumRisks.join("\n")}`);
+      }
+    } else {
+      // Fallback while thread collection is still warming up.
+      const [slackResult, emailResult] = await Promise.all([
+        searchTypesense(tsHost, tsKey, "slack_messages", "*", {
+          sort_by: "timestamp:desc",
+          per_page: "15",
+          filter_by: `timestamp:>=${Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000)}`,
+        }),
+        searchTypesense(tsHost, tsKey, "email_threads", "*", {
+          per_page: "10",
+        }),
+      ]);
+
+      if (slackResult && slackResult.length > 0) {
+        const byChannel = new Map<string, Array<{ user: string; text: string }>>();
+        for (const msg of slackResult) {
+          const ch = msg.channel_name ?? msg.channel_id ?? "unknown";
+          if (!byChannel.has(ch)) byChannel.set(ch, []);
+          byChannel.get(ch)!.push({
+            user: msg.user_name ?? "?",
+            text: (msg.text ?? "").slice(0, 150),
+          });
         }
+        const lines: string[] = [];
+        for (const [channel, msgs] of byChannel) {
+          lines.push(`**#${channel}** (${msgs.length} recent)`);
+          for (const m of msgs.slice(0, 3)) {
+            lines.push(`  - ${m.user}: ${m.text}`);
+          }
+        }
+        sections.push(`### Recent Slack Activity (7d)\n${lines.join("\n")}`);
       }
-      sections.push(`### Recent Slack Activity (7d)\n${lines.join("\n")}`);
-    }
 
-    if (emailResult && emailResult.length > 0) {
-      const lines = emailResult
-        .filter((t: Record<string, unknown>) => t.subject)
-        .map((t: Record<string, unknown>) => {
-          const subject = (t.subject as string).slice(0, 80);
-          const participants = Array.isArray(t.participants) ? (t.participants as string[]).slice(0, 3).join(", ") : "";
-          const summary = typeof t.summary === "string" ? (t.summary as string).slice(0, 120) : "";
-          return `- **${subject}**${participants ? ` (${participants})` : ""}${summary && summary !== "No actionable follow-up required." ? `\n  ${summary}` : ""}`;
-        });
-      if (lines.length > 0) {
-        sections.push(`### Email Threads\n${lines.join("\n")}`);
+      if (emailResult && emailResult.length > 0) {
+        const lines = emailResult
+          .filter((t: Record<string, unknown>) => t.subject)
+          .map((t: Record<string, unknown>) => {
+            const subject = (t.subject as string).slice(0, 80);
+            const participants = Array.isArray(t.participants) ? (t.participants as string[]).slice(0, 3).join(", ") : "";
+            const summary = typeof t.summary === "string" ? (t.summary as string).slice(0, 120) : "";
+            return `- **${subject}**${participants ? ` (${participants})` : ""}${summary && summary !== "No actionable follow-up required." ? `\n  ${summary}` : ""}`;
+          });
+        if (lines.length > 0) {
+          sections.push(`### Email Threads\n${lines.join("\n")}`);
+        }
       }
     }
   }

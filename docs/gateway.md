@@ -33,6 +33,23 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+## Thread-oriented demand context (ADR-0237)
+
+Demand-driven context gathering in `pi/extensions/gateway/index.ts` now prefers `conversation_threads` over flat `slack_messages` / `email_threads` snippets.
+
+Current operator-facing priorities are:
+
+- **project momentum** — recent threads already linked to active projects
+- **relationship threads** — important people, email threads, and anything explicitly waiting on Joel
+- **momentum risks** — vault gaps or `needs_joel` threads that imply dropped balls, missing capture, or stalled progress
+
+Contract:
+
+- query `conversation_threads` first
+- keep `slack_messages` + `email_threads` only as warm-up fallback while the new collection backfills
+- format summaries for actionability, not transcript archaeology
+- only inject these sections for real operator turns, preserving ADR-0235's silent accumulation model
+
 ## Gateway context refresh scoping (2026-03-09)
 
 ADR-0204 rolling context refresh in `pi/extensions/gateway/index.ts` must stay scoped to **real conversational topics**, not automated gateway envelopes.
