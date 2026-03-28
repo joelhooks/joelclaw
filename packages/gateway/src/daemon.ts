@@ -1218,7 +1218,6 @@ setSession({
 function buildCompressionSummary(): string {
   const entries = sessionManager.getEntries();
   const recentUserMessages: string[] = [];
-  const recentAssistantSnippets: string[] = [];
   let lastSource = "";
 
   // Walk backwards through entries to grab recent context
@@ -1240,14 +1239,7 @@ function buildCompressionSummary(): string {
       if (sourceMatch && !lastSource) lastSource = sourceMatch[1];
     }
 
-    if (msg.role === "assistant" && recentAssistantSnippets.length < 3) {
-      const text = Array.isArray(msg.content)
-        ? msg.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n")
-        : String(msg.content);
-      if (text.length > 0) {
-        recentAssistantSnippets.unshift(text.slice(0, 800));
-      }
-    }
+    // ADR-0235: skip assistant responses — stale triage contaminates fresh sessions
   }
 
   const parts = [
@@ -1269,16 +1261,14 @@ function buildCompressionSummary(): string {
     }
   }
 
-  if (recentAssistantSnippets.length > 0) {
-    parts.push("## Last assistant responses (summaries)", "");
-    for (const snippet of recentAssistantSnippets) {
-      parts.push(`> ${snippet.replace(/\n/g, "\n> ").slice(0, 500)}`, "");
-    }
-  }
+  // ADR-0235: Do NOT carry forward old assistant responses into new sessions.
+  // They inject stale strategic triage that dominates fresh context.
+  // The gateway gets live system state via on-demand context gathering instead.
 
   parts.push(
     "",
-    "Resume normal operation. You are the joelclaw gateway agent. Respond to new inbound messages as they arrive.",
+    "Resume normal operation. You are the joelclaw gateway agent.",
+    "Answer questions from live system data (slog, OTEL, runs), not from old conversation history.",
     "If the user's last message was unanswered due to the overflow, it will be replayed next.",
   );
 
