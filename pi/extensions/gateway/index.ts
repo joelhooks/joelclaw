@@ -81,6 +81,9 @@ const DEBOUNCE_KEY_PREFIX = "joelclaw:gateway:debounce";
 const DRAIN_DEBOUNCE_MS = 5_000;
 const HEARTBEAT_FULL_CHECK_MS = 60 * 60 * 1000;
 const AUTO_MESSAGE_DIGEST_ONLY_THRESHOLD = 20;
+const CONTEXT_BUFFER_KEY = "joelclaw:gateway:context-buffer";
+const CONTEXT_BUFFER_MAX_EVENTS = 50;
+const CONTEXT_BUFFER_TTL_SECONDS = 24 * 60 * 60; // 24h
 
 const redisOpts = {
   host: process.env.REDIS_HOST ?? "localhost",
@@ -115,6 +118,21 @@ interface SystemEvent {
 
 interface DrainOptions {
   forceFull?: boolean;
+}
+
+// ADR-0235: Demand-driven context buffer — events accumulate silently,
+// surface only when operator sends a message or something is critical.
+interface ContextBufferEntry {
+  type: string;
+  summary: string;
+  ts: number;
+  critical: boolean;
+}
+
+interface GatewayContextBuffer {
+  events: ContextBufferEntry[];
+  lastFlushedAt: number;
+  eventCount: number;
 }
 
 interface ActiveBehaviorContract {
@@ -573,6 +591,125 @@ function sendAutomatedMessage(prompt: string, reason: string): void {
   logAutomationCounter(reason);
 }
 
+// ── ADR-0235: Demand-driven context buffer ──────────────────────────
+// Events accumulate silently. Only critical events break through.
+// Buffer is prepended as context when operator sends a message.
+
+function summarizeEvent(event: SystemEvent): string {
+  const payload = event.payload ?? {};
+  const type = event.type;
+
+  // Extract useful summary from common event types
+  if (type === "cron.heartbeat") {
+    const status = typeof payload.status === "string" ? payload.status : "ok";
+    return `heartbeat: ${status}`;
+  }
+  if (type === "gateway.batch.digest") {
+    const stats = parseDigestStats(event);
+    return `batch digest: ${stats.total} events${stats.hasErrors ? " (has errors)" : ""}`;
+  }
+  if (type === "subscription.updated") {
+    const name = typeof payload.name === "string" ? payload.name : "feed";
+    const entries = typeof payload.newEntries === "number" ? payload.newEntries : 0;
+    return `feed update: ${name} (${entries} new)`;
+  }
+  if (typeof payload.prompt === "string") {
+    return (payload.prompt as string).slice(0, 120);
+  }
+  if (typeof payload.summary === "string") {
+    return (payload.summary as string).slice(0, 120);
+  }
+  if (typeof payload.detail === "string") {
+    return `${type}: ${(payload.detail as string).slice(0, 100)}`;
+  }
+  return type;
+}
+
+async function appendToContextBuffer(events: SystemEvent[], critical: boolean): Promise<void> {
+  if (!cmd) return;
+
+  try {
+    const raw = await cmd.get(CONTEXT_BUFFER_KEY);
+    const buffer: GatewayContextBuffer = raw
+      ? JSON.parse(raw)
+      : { events: [], lastFlushedAt: Date.now(), eventCount: 0 };
+
+    for (const event of events) {
+      buffer.events.push({
+        type: event.type,
+        summary: summarizeEvent(event),
+        ts: event.ts,
+        critical,
+      });
+      buffer.eventCount++;
+    }
+
+    // Evict oldest non-critical events if over max
+    while (buffer.events.length > CONTEXT_BUFFER_MAX_EVENTS) {
+      const oldestNonCriticalIdx = buffer.events.findIndex((e) => !e.critical);
+      if (oldestNonCriticalIdx >= 0) {
+        buffer.events.splice(oldestNonCriticalIdx, 1);
+      } else {
+        buffer.events.shift(); // all critical, drop oldest
+      }
+    }
+
+    await cmd.set(CONTEXT_BUFFER_KEY, JSON.stringify(buffer), "EX", CONTEXT_BUFFER_TTL_SECONDS);
+    console.log(`[gateway:buffer] appended ${events.length} event(s), buffer size=${buffer.events.length}, total=${buffer.eventCount}`);
+  } catch (err) {
+    console.error("[gateway:buffer] append failed:", err);
+  }
+}
+
+async function readAndFlushContextBuffer(): Promise<string | null> {
+  if (!cmd) return null;
+
+  try {
+    const raw = await cmd.get(CONTEXT_BUFFER_KEY);
+    if (!raw) return null;
+
+    const buffer: GatewayContextBuffer = JSON.parse(raw);
+    if (buffer.events.length === 0) return null;
+
+    // Build a concise context block
+    const lines: string[] = [
+      `## System Activity (${buffer.eventCount} events since last interaction)`,
+      "",
+    ];
+
+    // Group by type for compact display
+    const byType = new Map<string, { count: number; latest: string; hasCritical: boolean }>();
+    for (const entry of buffer.events) {
+      const existing = byType.get(entry.type);
+      if (existing) {
+        existing.count++;
+        existing.latest = entry.summary;
+        if (entry.critical) existing.hasCritical = true;
+      } else {
+        byType.set(entry.type, { count: 1, latest: entry.summary, hasCritical: entry.critical });
+      }
+    }
+
+    for (const [type, info] of byType) {
+      const marker = info.hasCritical ? "🔴 " : "";
+      if (info.count === 1) {
+        lines.push(`- ${marker}${info.latest}`);
+      } else {
+        lines.push(`- ${marker}${type} ×${info.count} (latest: ${info.latest})`);
+      }
+    }
+
+    // Flush the buffer
+    await cmd.del(CONTEXT_BUFFER_KEY);
+    console.log(`[gateway:buffer] flushed ${buffer.events.length} events for context injection`);
+
+    return lines.join("\n");
+  } catch (err) {
+    console.error("[gateway:buffer] flush failed:", err);
+    return null;
+  }
+}
+
 function pickId(sources: Record<string, unknown>[], keys: string[]): string | null {
   for (const source of sources) {
     for (const key of keys) {
@@ -778,66 +915,29 @@ async function drain(options: DrainOptions = {}): Promise<void> {
       }
     }
 
-    // Quiet heartbeat mode: only emit healthy heartbeats once per hour unless forced.
+    // ── ADR-0235: Demand-driven event routing ────────────────────
+    // Events go to context buffer (silent) unless critical.
+    // Only critical events break through as proactive LLM messages.
+
+    const criticalEvents = filtered.filter((e) => eventLooksCritical(e));
+    const nonCriticalEvents = filtered.filter((e) => !eventLooksCritical(e));
+
+    // Track heartbeat timing for quiet-heartbeat suppression
     const heartbeatEvents = filtered.filter((e) => e.type === "cron.heartbeat");
-    const nonHeartbeatEvents = filtered.filter((e) => e.type !== "cron.heartbeat");
-    const injectableHeartbeats = heartbeatEvents.filter((e) => shouldInjectHeartbeat(e, options));
-    const suppressedHeartbeats = heartbeatEvents.length - injectableHeartbeats.length;
-    if (suppressedHeartbeats > 0) {
-      console.log(`[gateway] quiet-heartbeat suppressed ${suppressedHeartbeats} healthy heartbeat event(s)`);
-    }
-    if (injectableHeartbeats.length > 0) {
+    if (heartbeatEvents.length > 0) {
       lastFullHeartbeatCheckTs = Date.now();
     }
 
-    // Quiet digest mode: only pass digest anomalies (errors or unusual volume).
-    const digestEvents = nonHeartbeatEvents.filter((e) => e.type === "gateway.batch.digest");
-    const regularEvents = nonHeartbeatEvents.filter((e) => e.type !== "gateway.batch.digest");
-    let injectDigestSummary = false;
-    if (digestEvents.length > 0) {
-      let digestTotal = 0;
-      let digestHasErrors = false;
-      for (const event of digestEvents) {
-        const stats = parseDigestStats(event);
-        digestTotal += stats.total;
-        if (stats.hasErrors) digestHasErrors = true;
-      }
-      const unusualVolume = digestTotal > 50;
-      injectDigestSummary = digestHasErrors || unusualVolume;
-      if (!injectDigestSummary) {
-        console.log(`[gateway] suppressed ${digestEvents.length} quiet digest event(s) total=${digestTotal}`);
-      }
+    // Buffer all non-critical events silently (ADR-0235)
+    if (nonCriticalEvents.length > 0) {
+      await appendToContextBuffer(nonCriticalEvents, false);
+      console.log(`[gateway] buffered ${nonCriticalEvents.length} non-critical event(s)`);
     }
 
-    // Session pressure control: after N automated injections, only pass critical events.
-    const digestOnlyMode = isDigestOnlyMode();
-    const subscriptionEvents = regularEvents.filter((e) => e.type === "subscription.updated");
-    const nonSubscriptionEvents = regularEvents.filter((e) => e.type !== "subscription.updated");
-    const criticalEvents = nonSubscriptionEvents.filter((e) => eventLooksCritical(e));
-    const nonCriticalEvents = nonSubscriptionEvents.filter((e) => !eventLooksCritical(e));
-    if (digestOnlyMode && nonCriticalEvents.length > 0) {
-      console.log(`[gateway] digest-only mode suppressed ${nonCriticalEvents.length} non-critical event(s)`);
-    }
-
-    const finalRegularEvents = digestOnlyMode ? criticalEvents : nonSubscriptionEvents;
-    const finalEvents = [...finalRegularEvents, ...injectableHeartbeats];
-    const shouldInjectDigestSummary = injectDigestSummary && (!digestOnlyMode || digestEvents.some(eventLooksCritical));
-
-    if (finalEvents.length === 0 && !shouldInjectDigestSummary && subscriptionEvents.length === 0) {
-      await markProcessed(events);
-      await cmd.del(EVENT_LIST);
-      lastDrainTs = Date.now();
-      return;
-    }
-
-    if (finalEvents.length > 0) {
-      sendAutomatedMessage(buildPrompt(finalEvents), "event-drain");
-    }
-    if (shouldInjectDigestSummary) {
-      sendAutomatedMessage(buildQuietDigestSummary(digestEvents), "anomalous-digest");
-    }
-    if (subscriptionEvents.length > 0) {
-      sendAutomatedMessage(buildSubscriptionMessage(subscriptionEvents), "subscription-update");
+    // Only critical events get injected as LLM messages
+    if (criticalEvents.length > 0) {
+      await appendToContextBuffer(criticalEvents, true);
+      sendAutomatedMessage(buildPrompt(criticalEvents), "critical-event");
     }
 
     await markProcessed(events);
@@ -1052,8 +1152,36 @@ export default function (pi: ExtensionAPI) {
       });
     }
 
+    // ADR-0235: Inject accumulated context buffer when operator sends a message.
+    // The prompt is the operator's message — if it looks like an automated injection
+    // (starts with known automated prefixes), skip context flush.
+    const isOperatorMessage = prompt.length > 0
+      && !prompt.startsWith("> ⚡ **Automated gateway")
+      && !prompt.startsWith("## 📋 Batch Digest")
+      && !prompt.startsWith("HEARTBEAT")
+      && !prompt.startsWith("## ⚠️ MISSED HEARTBEAT")
+      && !prompt.startsWith("## Gateway Boot")
+      && !prompt.startsWith("# Context Recovery")
+      && !prompt.startsWith("## Context Refresh");
+
+    let systemPrompt = injected.systemPrompt;
+    if (isOperatorMessage) {
+      const contextBlock = await readAndFlushContextBuffer();
+      if (contextBlock) {
+        // Prepend context buffer to system prompt so the LLM has awareness
+        // but doesn't need to comment on it unless relevant to the question.
+        systemPrompt = [
+          systemPrompt,
+          "",
+          "<!-- Recent system activity (demand-driven context, ADR-0235) -->",
+          "<!-- Only mention these if directly relevant to the operator's question. -->",
+          contextBlock,
+        ].join("\n");
+      }
+    }
+
     return {
-      systemPrompt: injected.systemPrompt,
+      systemPrompt,
     };
   });
 
