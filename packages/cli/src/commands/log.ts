@@ -42,6 +42,16 @@ const adapterOption = Options.text("adapter").pipe(
   Options.optional,
 )
 
+const sessionOption = Options.text("session").pipe(
+  Options.withDescription("Session provenance for slog (falls back to SLOG_SESSION_ID env)"),
+  Options.optional,
+)
+
+const systemOption = Options.text("system").pipe(
+  Options.withDescription("System provenance for slog (falls back to SLOG_SYSTEM_ID env)"),
+  Options.optional,
+)
+
 const logWrite = Command.make(
   "write",
   {
@@ -49,15 +59,21 @@ const logWrite = Command.make(
     tool: toolOption,
     detail: detailOption,
     reason: reasonOption,
+    session: sessionOption,
+    system: systemOption,
     adapter: adapterOption,
   },
-  ({ action, tool, detail, reason, adapter }) =>
+  ({ action, tool, detail, reason, session, system, adapter }) =>
     Effect.gen(function* () {
       const adapterOverride = parseOptionalText(adapter)
+      const sessionId = parseOptionalText(session) ?? process.env.SLOG_SESSION_ID?.trim()
+      const systemId = parseOptionalText(system) ?? process.env.SLOG_SYSTEM_ID?.trim()
       const result = yield* executeCapabilityCommand({
         capability: "log",
         subcommand: "write",
         args: {
+          sessionId,
+          systemId,
           action,
           tool,
           detail,
@@ -75,7 +91,7 @@ const logWrite = Command.make(
             codeOrFallback(error),
             fixOrFallback(error, "Ensure slog CLI is available and arguments are valid."),
             [
-              { command: "joelclaw log write --action <action> --tool <tool> --detail <detail>", description: "Retry log write with required fields" },
+              { command: "joelclaw log write --session <session>|env:SLOG_SESSION_ID --system <system>|env:SLOG_SYSTEM_ID --action <action> --tool <tool> --detail <detail>", description: "Retry log write with required provenance" },
               { command: "joelclaw logs worker --lines 50", description: "Inspect recent worker logs after logging changes" },
             ]
           )

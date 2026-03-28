@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, ParseResult, Schema } from "effect"
 import type Redis from "ioredis"
 import { loadInngestEventConfig, sendInngestEvent } from "../../lib/inngest"
 import { type CapabilityPort, capabilityError } from "../contract"
@@ -89,7 +89,7 @@ function decodeArgs<K extends SubscribeCommandName>(
     Effect.mapError((error) =>
       capabilityError(
         "SUBSCRIBE_INVALID_ARGS",
-        Schema.formatIssueSync(error),
+        ParseResult.TreeFormatter.formatErrorSync(error),
         `Check \`joelclaw subscribe ${String(subcommand)} --help\` for valid arguments.`
       )
     )

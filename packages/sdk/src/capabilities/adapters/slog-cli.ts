@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, ParseResult, Schema } from "effect"
 import { parseJsonFromMixedOutput, runCommandSync } from "../../lib/shell"
 import { type CapabilityPort, capabilityError } from "../contract"
 
@@ -40,7 +40,7 @@ function decodeArgs<K extends keyof typeof commands>(
     Effect.mapError((error) =>
       capabilityError(
         "LOG_INVALID_ARGS",
-        Schema.formatIssueSync(error),
+        ParseResult.TreeFormatter.formatErrorSync(error),
         `Check \`joelclaw log ${String(subcommand)} --help\` for valid arguments.`
       )
     )

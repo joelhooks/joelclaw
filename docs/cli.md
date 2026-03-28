@@ -615,7 +615,7 @@ joelclaw secrets revoke --all
 joelclaw secrets audit --tail 50
 joelclaw secrets env --dry-run [--ttl 1h] [--force]
 
-joelclaw log write --action <action> --tool <tool> --detail <detail> [--reason <reason>]
+joelclaw log write --action <action> --tool <tool> --detail <detail> [--reason <reason>] [--session <session>] [--system <system>]
 
 joelclaw notify send "<message>" [--priority low|normal|high|urgent] [--channel gateway|main|all] [--context '{"k":"v"}']
 
@@ -635,6 +635,7 @@ joelclaw subscribe {list|add|remove|check|summary}
 Semantics:
 
 - `log` writes structured system entries (slog backend).
+- `log write` now accepts explicit `--session` / `--system` provenance flags and also falls back to `SLOG_SESSION_ID` / `SLOG_SYSTEM_ID` env vars before handing off to the slog backend.
 - `logs` reads/analyzes runtime logs.
 - `notify` is the canonical operator alert command; `gateway push` remains transport/debug.
 - `deploy`, `heal`, `log`, `notify`, `secrets`, `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while executing through capability registry adapters (`scripted-deploy`, `runbook-heal`, `slog-cli`, `gateway-redis`, `agent-secrets-cli`, `mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).

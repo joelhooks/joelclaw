@@ -69,13 +69,15 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
         },
       },
       {
-        command: "log write --action <action> --tool <tool> --detail <detail> [--reason <reason>]",
-        description: "Record the operational mutation in canonical slog",
+        command: "log write --action <action> --tool <tool> --detail <detail> [--reason <reason>] [--session <session>] [--system <system>]",
+        description: "Record the operational mutation in canonical slog (flags or SLOG_* env required)",
         params: {
           action: { description: "Mutation verb", required: true, value: "configure" },
           tool: { description: "Component name", required: true, value: "cli" },
           detail: { description: "What changed", required: true, value: "updated capability adapter config" },
           reason: { description: "Why the change was made", value: "phase-1 capability rollout" },
+          session: { description: "slog provenance sessionId (or set SLOG_SESSION_ID)", value: "gateway" },
+          system: { description: "slog provenance systemId (or set SLOG_SYSTEM_ID)", value: "panda" },
         },
       },
       {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { Effect, Schema } from "effect"
+import { Effect, ParseResult, Schema } from "effect"
 import { ingestOtelPayload, OTEL_INGEST_URL } from "../../lib/otel-ingest"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../lib/typesense-auth"
 import { type CapabilityPort, capabilityError } from "../contract"
@@ -116,7 +116,7 @@ function decodeArgs<K extends OtelCommandName>(
     Effect.mapError((error) =>
       capabilityError(
         "OTEL_INVALID_ARGS",
-        Schema.formatIssueSync(error),
+        ParseResult.TreeFormatter.formatErrorSync(error),
         `Check \`${helpCommandForSubcommand(subcommand)}\` for valid arguments.`
       )
     )

@@ -2,7 +2,7 @@
 // ADR-0082: Migrated from Qdrant+embed.py (Qdrant fully retired 2026-02-22) to Typesense with built-in auto-embedding.
 // ADR-0077 Workstream 1/2: query rewrite + trust pass + usage-signal-aware ranking.
 
-import { Effect, Schema } from "effect"
+import { Effect, ParseResult, Schema } from "effect"
 import { traceRecallRewrite } from "../../lib/langfuse"
 import { createOtelEventPayload, ingestOtelPayload } from "../../lib/otel-ingest"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../lib/typesense-auth"
@@ -1043,7 +1043,7 @@ function decodeArgs<K extends RecallCommandName>(
     Effect.mapError((error) =>
       capabilityError(
         "RECALL_INVALID_ARGS",
-        Schema.formatIssueSync(error),
+        ParseResult.TreeFormatter.formatErrorSync(error),
         "Check `joelclaw recall --help` for valid options."
       )
     )

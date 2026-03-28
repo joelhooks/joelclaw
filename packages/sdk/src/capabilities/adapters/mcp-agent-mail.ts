@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { Effect, Schema } from "effect"
+import { Effect, ParseResult, Schema } from "effect"
 import { callMcpTool, fetchMailApi, getAgentMailUrl } from "../../lib/agent-mail"
 import { type CapabilityPort, capabilityError } from "../contract"
 
@@ -143,7 +143,7 @@ function decodeArgs<K extends MailCommandName>(
     Effect.mapError((error) =>
       capabilityError(
         "MAIL_INVALID_ARGS",
-        Schema.formatIssueSync(error),
+        ParseResult.TreeFormatter.formatErrorSync(error),
         `Check \`joelclaw mail ${String(subcommand)} --help\` for valid arguments.`
       )
     )

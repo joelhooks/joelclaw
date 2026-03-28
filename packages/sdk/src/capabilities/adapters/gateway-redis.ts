@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, ParseResult, Schema } from "effect"
 import { type CapabilityPort, capabilityError } from "../contract"
 
 const PRIORITIES = ["low", "normal", "high", "urgent"] as const
@@ -51,7 +51,7 @@ function decodeArgs<K extends keyof typeof commands>(
     Effect.mapError((error) =>
       capabilityError(
         "NOTIFY_INVALID_ARGS",
-        Schema.formatIssueSync(error),
+        ParseResult.TreeFormatter.formatErrorSync(error),
         `Check \`joelclaw notify ${String(subcommand)} --help\` for valid arguments.`
       )
     )

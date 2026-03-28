@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
-import { Effect, Schema } from "effect"
+import { Effect, ParseResult, Schema } from "effect"
 import { parseJsonFromMixedOutput, runCommandSync } from "../../lib/shell"
 import { type CapabilityContext, type CapabilityPort, capabilityError } from "../contract"
 
@@ -50,7 +50,7 @@ function decodeArgs<K extends DeployCommandName>(
     Effect.mapError((error) =>
       capabilityError(
         "DEPLOY_INVALID_ARGS",
-        Schema.formatIssueSync(error),
+        ParseResult.TreeFormatter.formatErrorSync(error),
         `Check \`joelclaw deploy ${String(subcommand)} --help\` for valid arguments.`
       )
     )

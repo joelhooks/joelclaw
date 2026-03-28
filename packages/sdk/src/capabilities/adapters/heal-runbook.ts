@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, ParseResult, Schema } from "effect"
 import { runCommandSync } from "../../lib/shell"
 import { getRunbook, listRunbookCodes, type RunbookPhase, resolveRunbookPhase } from "../../runbooks"
 import { type CapabilityPort, capabilityError } from "../contract"
@@ -81,7 +81,7 @@ function decodeArgs<K extends HealCommandName>(
     Effect.mapError((error) =>
       capabilityError(
         "HEAL_INVALID_ARGS",
-        Schema.formatIssueSync(error),
+        ParseResult.TreeFormatter.formatErrorSync(error),
         `Check \`joelclaw heal ${String(subcommand)} --help\` for valid arguments.`
       )
     )
