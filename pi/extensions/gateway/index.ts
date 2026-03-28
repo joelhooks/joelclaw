@@ -102,6 +102,7 @@ let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 let watchdogAlarmFired = false; // only fire once per missed window
 let ctx: ExtensionContext | null = null;
 let piRef: ExtensionAPI | null = null;
+let typesenseApiKey = ""; // leased at startup for context gathering
 
 let drainDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -649,6 +650,32 @@ function runCli(args: string[], timeoutMs = 8000): Promise<string | null> {
   });
 }
 
+async function searchTypesense(
+  host: string,
+  apiKey: string,
+  collection: string,
+  query: string,
+  params: Record<string, string> = {},
+): Promise<Array<Record<string, unknown>> | null> {
+  try {
+    const searchParams = new URLSearchParams({ q: query, ...params });
+    const url = `${host}/collections/${collection}/documents/search?${searchParams}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(url, {
+      headers: { "X-TYPESENSE-API-KEY": apiKey },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const data = await res.json() as Record<string, unknown>;
+    const hits = Array.isArray(data.hits) ? data.hits : [];
+    return hits.map((h: any) => h.document as Record<string, unknown>);
+  } catch {
+    return null;
+  }
+}
+
 async function gatherSystemContext(): Promise<string> {
   const startTs = Date.now();
   const sections: string[] = [];
@@ -708,6 +735,59 @@ async function gatherSystemContext(): Promise<string> {
       }
       if (lines.length > 0) {
         sections.push(`### System Status\n${lines.join("\n")}`);
+      }
+    }
+  }
+
+  // ── Business intelligence: Slack + Email + Vault (Typesense) ──
+  // This is what Joel actually wants — project-relevant conversations, not infra metrics.
+  const tsKey = typesenseApiKey || process.env.TYPESENSE_API_KEY || "";
+  const tsHost = process.env.TYPESENSE_HOST ?? "http://127.0.0.1:8108";
+
+  if (tsKey) {
+    const [slackResult, emailResult] = await Promise.all([
+      searchTypesense(tsHost, tsKey, "slack_messages", "*", {
+        sort_by: "timestamp:desc",
+        per_page: "15",
+        filter_by: `timestamp:>=${Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000)}`,
+      }),
+      searchTypesense(tsHost, tsKey, "email_threads", "*", {
+        per_page: "10",
+      }),
+    ]);
+
+    if (slackResult && slackResult.length > 0) {
+      // Group by channel for readability
+      const byChannel = new Map<string, Array<{ user: string; text: string }>>();
+      for (const msg of slackResult) {
+        const ch = msg.channel_name ?? msg.channel_id ?? "unknown";
+        if (!byChannel.has(ch)) byChannel.set(ch, []);
+        byChannel.get(ch)!.push({
+          user: msg.user_name ?? "?",
+          text: (msg.text ?? "").slice(0, 150),
+        });
+      }
+      const lines: string[] = [];
+      for (const [channel, msgs] of byChannel) {
+        lines.push(`**#${channel}** (${msgs.length} recent)`);
+        for (const m of msgs.slice(0, 3)) {
+          lines.push(`  - ${m.user}: ${m.text}`);
+        }
+      }
+      sections.push(`### Recent Slack Activity (7d)\n${lines.join("\n")}`);
+    }
+
+    if (emailResult && emailResult.length > 0) {
+      const lines = emailResult
+        .filter((t: Record<string, unknown>) => t.subject)
+        .map((t: Record<string, unknown>) => {
+          const subject = (t.subject as string).slice(0, 80);
+          const participants = Array.isArray(t.participants) ? (t.participants as string[]).slice(0, 3).join(", ") : "";
+          const summary = typeof t.summary === "string" ? (t.summary as string).slice(0, 120) : "";
+          return `- **${subject}**${participants ? ` (${participants})` : ""}${summary && summary !== "No actionable follow-up required." ? `\n  ${summary}` : ""}`;
+        });
+      if (lines.length > 0) {
+        sections.push(`### Email Threads\n${lines.join("\n")}`);
       }
     }
   }
@@ -1048,6 +1128,25 @@ export default function (pi: ExtensionAPI) {
     // Prune dead pid-* sessions on every startup (ADR-0050)
     await pruneDeadSessions(cmd);
     console.log(`[gateway] registered ${SESSION_ID} (role=${ROLE})`);
+
+    // Lease Typesense API key for context gathering (ADR-0235)
+    try {
+      const secretResult = spawnSync("secrets", ["lease", "typesense_api_key", "--ttl", "24h"], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      if (secretResult.status === 0 && secretResult.stdout?.trim()) {
+        try {
+          const parsed = JSON.parse(secretResult.stdout.trim());
+          typesenseApiKey = parsed?.secret ?? parsed?.value ?? secretResult.stdout.trim();
+        } catch {
+          typesenseApiKey = secretResult.stdout.trim();
+        }
+        console.log(`[gateway] leased typesense_api_key for context gathering`);
+      }
+    } catch {
+      console.warn("[gateway] failed to lease typesense_api_key — slack/email context unavailable");
+    }
 
     // Subscribe to our channel
     await sub.subscribe(NOTIFY_CHANNEL);
