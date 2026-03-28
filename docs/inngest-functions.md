@@ -231,6 +231,32 @@ Preferred operator path: `joelclaw inngest sweep-stale-runs` (preview by default
 
 Do **not** mutate `main.db` without a point-in-time backup.
 
+### Conversation thread intelligence (ADR-0237)
+
+- files:
+  - `packages/system-bus/src/inngest/functions/channel-message-classify.ts`
+  - `packages/system-bus/src/inngest/functions/conversation-thread-aggregate.ts`
+  - `packages/system-bus/src/inngest/functions/conversation-thread-enrich.ts`
+  - `packages/system-bus/src/inngest/functions/conversation-thread-stale-sweep.ts`
+- collections:
+  - `channel_messages` now stores MiniLM embeddings plus workload taxonomy fields (`primary_concept_id`, `concept_ids`, `taxonomy_version`, `concept_source`)
+  - `conversation_threads` stores lightweight thread aggregates and enrichment output (`summary`, `related_projects`, `related_contacts`, `vault_gap`, `needs_joel`)
+- event flow:
+  1. `channel/message.received` → `channel-message-ingest`
+  2. `channel/message.classify.requested` → `channel-message-classify`
+  3. `conversation/thread.updated` → `conversation-thread-aggregate`
+  4. `conversation/thread.enrichment.requested` → `conversation-thread-enrich`
+  5. hourly cron → `conversation-thread-stale-sweep`
+- current scope:
+  - thread aggregation/enrichment is enabled for `slack` and `email`
+  - email uses the Front conversation id as both `channelId` and `threadId`
+  - `channel-message-classify` now accepts `email` messages and emits workload concept metadata
+- debounce contract:
+  - enrich immediately for new threads
+  - re-enrich after `5` new messages
+  - re-enrich after a `30m` gap when new messages arrive
+  - mark threads `stale` after `48h` idle without re-running enrichment
+
 ### Conversation annotation pipeline (ADR-0225)
 
 - function: `conversation/annotate`

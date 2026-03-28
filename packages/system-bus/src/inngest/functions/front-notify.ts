@@ -115,6 +115,7 @@ export const frontMessageReceived = inngest.createFunction(
           channelType: "email",
           channelId: conversationId || "front-unknown",
           channelName: context.subject || "email",
+          threadId: conversationId || "front-unknown",
           userId: from || "unknown",
           userName: context.sender || from || "unknown",
           text: (bodyPlain || preview || "").slice(0, 2000),

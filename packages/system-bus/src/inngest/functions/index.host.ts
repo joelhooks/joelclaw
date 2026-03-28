@@ -36,6 +36,9 @@ import { contactEnrich } from "./contact-enrich";
 import { contentReviewApply } from "./content-review";
 import { contentPrune, contentSync, contentVerify } from "./content-sync";
 import { conversationAnnotate } from "./conversation-annotate";
+import { conversationThreadAggregate } from "./conversation-thread-aggregate";
+import { conversationThreadEnrich } from "./conversation-thread-enrich";
+import { conversationThreadStaleSweep } from "./conversation-thread-stale-sweep";
 import { dailyDigest } from "./daily-digest";
 import { discoveryCapture } from "./discovery-capture";
 import { docsIngest } from "./docs-ingest";
@@ -146,6 +149,9 @@ export const hostFunctionDefinitions = [
   contentPrune,
   contentReviewApply,
   conversationAnnotate,
+  conversationThreadAggregate,
+  conversationThreadEnrich,
+  conversationThreadStaleSweep,
   discoveryCapture,
   xPost,
   xContentHook,

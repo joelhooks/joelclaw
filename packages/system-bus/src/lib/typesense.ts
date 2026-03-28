@@ -123,6 +123,7 @@ export interface TypesenseSearchResult {
 export const TRANSCRIPTS_COLLECTION = "transcripts";
 export const VOICE_TRANSCRIPTS_COLLECTION = "voice_transcripts";
 export const CHANNEL_MESSAGES_COLLECTION = "channel_messages";
+export const CONVERSATION_THREADS_COLLECTION = "conversation_threads";
 export const EMAIL_THREADS_COLLECTION = "email_threads";
 export const DEFAULT_VECTOR_FIELD = "embedding";
 
@@ -133,6 +134,10 @@ type TypesenseCollectionField = {
 
 type TypesenseCollectionSchema = {
   fields?: unknown;
+};
+
+type TypesenseSchemaFieldSpec = Record<string, unknown> & {
+  name?: string;
 };
 
 const vectorFieldCache = new Map<string, string>();
@@ -199,7 +204,7 @@ export const CHANNEL_MESSAGES_COLLECTION_SCHEMA = {
     { name: "channel_type", type: "string", facet: true },
     { name: "channel_id", type: "string", facet: true },
     { name: "channel_name", type: "string" },
-    { name: "thread_id", type: "string", optional: true },
+    { name: "thread_id", type: "string", facet: true, optional: true },
     { name: "user_id", type: "string" },
     { name: "user_name", type: "string" },
     { name: "text", type: "string" },
@@ -210,8 +215,56 @@ export const CHANNEL_MESSAGES_COLLECTION_SCHEMA = {
     { name: "actionable", type: "bool" },
     { name: "summary", type: "string", optional: true },
     { name: "source_url", type: "string", optional: true },
+    { name: "primary_concept_id", type: "string", facet: true, optional: true },
+    { name: "concept_ids", type: "string[]", facet: true, optional: true },
+    { name: "taxonomy_version", type: "string", facet: true, optional: true },
+    { name: "concept_source", type: "string", facet: true, optional: true },
+    {
+      name: "embedding",
+      type: "float[]",
+      embed: {
+        from: ["text"],
+        model_config: MINI_LM_MODEL_CONFIG,
+      },
+    },
   ],
   default_sorting_field: "timestamp",
+} satisfies Record<string, unknown>;
+
+export const CONVERSATION_THREADS_COLLECTION_SCHEMA = {
+  name: CONVERSATION_THREADS_COLLECTION,
+  fields: [
+    { name: "id", type: "string" },
+    { name: "source", type: "string", facet: true },
+    { name: "channel_id", type: "string", facet: true },
+    { name: "channel_name", type: "string" },
+    { name: "thread_id", type: "string", facet: true },
+    { name: "participants", type: "string[]", facet: true },
+    { name: "message_count", type: "int32" },
+    { name: "first_message_at", type: "int64" },
+    { name: "last_message_at", type: "int64" },
+    { name: "status", type: "string", facet: true },
+    { name: "primary_concept_id", type: "string", facet: true, optional: true },
+    { name: "concept_ids", type: "string[]", facet: true, optional: true },
+    { name: "taxonomy_version", type: "string", facet: true, optional: true },
+    { name: "summary", type: "string" },
+    { name: "related_projects", type: "string[]", facet: true, optional: true },
+    { name: "related_contacts", type: "string[]", facet: true, optional: true },
+    { name: "vault_gap", type: "bool" },
+    { name: "vault_gap_signal", type: "string", optional: true },
+    { name: "urgency", type: "string", facet: true },
+    { name: "needs_joel", type: "bool" },
+    { name: "enriched_at", type: "int64", optional: true },
+    {
+      name: "embedding",
+      type: "float[]",
+      embed: {
+        from: ["summary"],
+        model_config: MINI_LM_MODEL_CONFIG,
+      },
+    },
+  ],
+  default_sorting_field: "last_message_at",
 } satisfies Record<string, unknown>;
 
 export const EMAIL_THREADS_COLLECTION_SCHEMA = {
@@ -662,6 +715,50 @@ export async function ensureKnowledgeBatch(
   return counts;
 }
 
+async function ensureCollectionFields(
+  collection: string,
+  fields: TypesenseSchemaFieldSpec[]
+): Promise<void> {
+  if (fields.length === 0) return;
+
+  const schemaResponse = await typesenseRequest(`/collections/${collection}`, { method: "GET" });
+  if (!schemaResponse.ok) {
+    const errorText = await schemaResponse.text();
+    throw new Error(
+      `Failed to inspect Typesense schema for ${collection}: ${schemaResponse.status} ${errorText}`
+    );
+  }
+
+  const schema = (await schemaResponse.json()) as TypesenseCollectionSchema;
+  const existing = new Set(
+    (Array.isArray(schema.fields) ? schema.fields : [])
+      .map((field) => {
+        if (!field || typeof field !== "object") return null;
+        const name = (field as TypesenseCollectionField).name;
+        return typeof name === "string" ? name : null;
+      })
+      .filter((field): field is string => field != null)
+  );
+
+  const missing = fields.filter((field) => {
+    const name = typeof field.name === "string" ? field.name : null;
+    return Boolean(name && !existing.has(name));
+  });
+
+  if (missing.length === 0) return;
+
+  const patchResponse = await typesenseRequest(`/collections/${collection}`, {
+    method: "PATCH",
+    body: JSON.stringify({ fields: missing }),
+  });
+  if (!patchResponse.ok) {
+    const errorText = await patchResponse.text();
+    throw new Error(
+      `Failed to patch Typesense schema for ${collection}: ${patchResponse.status} ${errorText}`
+    );
+  }
+}
+
 export async function ensureTranscriptsCollection(): Promise<void> {
   await ensureCollection(TRANSCRIPTS_COLLECTION, TRANSCRIPTS_COLLECTION_SCHEMA);
 }
@@ -672,6 +769,14 @@ export async function ensureVoiceTranscriptsCollection(): Promise<void> {
 
 export async function ensureChannelMessagesCollection(): Promise<void> {
   await ensureCollection(CHANNEL_MESSAGES_COLLECTION, CHANNEL_MESSAGES_COLLECTION_SCHEMA);
+  const fields = Array.isArray(CHANNEL_MESSAGES_COLLECTION_SCHEMA.fields)
+    ? (CHANNEL_MESSAGES_COLLECTION_SCHEMA.fields as TypesenseSchemaFieldSpec[])
+    : [];
+  await ensureCollectionFields(CHANNEL_MESSAGES_COLLECTION, fields);
+}
+
+export async function ensureConversationThreadsCollection(): Promise<void> {
+  await ensureCollection(CONVERSATION_THREADS_COLLECTION, CONVERSATION_THREADS_COLLECTION_SCHEMA);
 }
 
 export async function ensureEmailThreadsCollection(): Promise<void> {

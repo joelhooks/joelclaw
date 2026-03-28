@@ -1151,6 +1151,35 @@ export type Events = {
       urgency: "high" | "normal" | "low";
       actionable: boolean;
       summary?: string;
+      primaryConceptId?: string;
+      conceptIds?: string[];
+      taxonomyVersion?: string;
+      conceptSource?: string;
+    };
+  };
+  "conversation/thread.updated": {
+    data: {
+      messageId: string;
+      channelType: "slack" | "discord" | "telegram" | "email";
+      channelId: string;
+      channelName: string;
+      threadId: string;
+      timestamp: number;
+      primaryConceptId?: string;
+      conceptIds?: string[];
+      taxonomyVersion?: string;
+    };
+  };
+  "conversation/thread.enrichment.requested": {
+    data: {
+      source: "slack" | "email";
+      channelId: string;
+      channelName: string;
+      threadId: string;
+      threadKey: string;
+      reason: "new-thread" | "message-threshold" | "time-gap" | "manual";
+      newMessageCount: number;
+      lastMessageAt: number;
     };
   };
   "contact/enrich.requested": {

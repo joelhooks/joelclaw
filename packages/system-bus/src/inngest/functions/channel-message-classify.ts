@@ -6,8 +6,10 @@ import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
 const CHANNEL_CLASSIFIER_MODEL = "anthropic/claude-haiku-4-5";
+const TAXONOMY_VERSION = "workload-v1";
+const DEFAULT_PRIMARY_CONCEPT_ID = "joelclaw:concept:comms";
 
-const CHANNEL_TYPES = ["slack", "discord", "telegram"] as const;
+const CHANNEL_TYPES = ["slack", "discord", "telegram", "email"] as const;
 type ChannelType = (typeof CHANNEL_TYPES)[number];
 
 const CLASSIFICATION_VALUES = ["signal", "context", "noise"] as const;
@@ -15,6 +17,41 @@ type MessageClassificationLevel = (typeof CLASSIFICATION_VALUES)[number];
 
 const URGENCY_VALUES = ["high", "normal", "low"] as const;
 type MessageUrgency = (typeof URGENCY_VALUES)[number];
+
+type WorkloadConceptId =
+  | "joelclaw:concept:platform"
+  | "joelclaw:concept:integration"
+  | "joelclaw:concept:tooling"
+  | "joelclaw:concept:pipeline"
+  | "joelclaw:concept:build"
+  | "joelclaw:concept:knowledge"
+  | "joelclaw:concept:comms"
+  | "joelclaw:concept:observe"
+  | "joelclaw:concept:meta";
+
+const WORKLOAD_CONCEPT_IDS: readonly WorkloadConceptId[] = [
+  "joelclaw:concept:platform",
+  "joelclaw:concept:integration",
+  "joelclaw:concept:tooling",
+  "joelclaw:concept:pipeline",
+  "joelclaw:concept:build",
+  "joelclaw:concept:knowledge",
+  "joelclaw:concept:comms",
+  "joelclaw:concept:observe",
+  "joelclaw:concept:meta",
+] as const;
+
+const WORKLOAD_CONCEPT_CHEATSHEET = [
+  "- joelclaw:concept:platform — infrastructure, runtime, hosting, cluster, pods, deployment substrate",
+  "- joelclaw:concept:integration — external APIs, vendors, webhooks, Slack, Front, GitHub, service connections",
+  "- joelclaw:concept:tooling — CLI, scripts, local automation, developer tooling",
+  "- joelclaw:concept:pipeline — workflows, ingestion, durable jobs, event flow, queues",
+  "- joelclaw:concept:build — implementation, bugs, features, tests, code changes",
+  "- joelclaw:concept:knowledge — docs, notes, ADRs, memory, vault context",
+  "- joelclaw:concept:comms — conversations, coordination, replies, messaging",
+  "- joelclaw:concept:observe — monitoring, telemetry, logs, incidents, health",
+  "- joelclaw:concept:meta — governance, process, prioritization, planning",
+].join("\n");
 
 type ChannelMessage = {
   id: string;
@@ -35,6 +72,10 @@ type MessageClassification = {
   urgency: MessageUrgency;
   actionable: boolean;
   summary?: string;
+  primaryConceptId: WorkloadConceptId;
+  conceptIds: WorkloadConceptId[];
+  taxonomyVersion: string;
+  conceptSource: "llm" | "fallback";
 };
 
 type RouteDestination = "session" | "digest" | "dropped";
@@ -58,20 +99,28 @@ Classify each message into one of:
 - context: relevant ongoing discussion, technical decisions, and product updates that matter for summaries but do not need immediate interruption.
 - noise: bot chatter, emoji-only reactions, routine CI notifications, low-value social chatter, and content that should not surface.
 
+Use these canonical workload concept IDs only:
+${WORKLOAD_CONCEPT_CHEATSHEET}
+
 Return ONLY valid JSON with this shape:
 {
   "classification": "signal | context | noise",
   "topics": ["topic-one", "topic-two"],
   "urgency": "high | normal | low",
   "actionable": true,
-  "summary": "optional one-sentence summary"
+  "summary": "optional one-sentence summary",
+  "primaryConceptId": "joelclaw:concept:comms",
+  "conceptIds": ["joelclaw:concept:comms", "joelclaw:concept:build"]
 }
 
 Rules:
 - Keep topics concise (max 6) and lowercase kebab-case.
 - urgency should be high only for time-sensitive content.
 - actionable should be true only when Joel should likely take action soon.
-- summary may be omitted for obvious noise.`;
+- summary may be omitted for obvious noise.
+- conceptIds must contain 1-3 canonical concept IDs from the allowed list.
+- primaryConceptId must be the first and most important concept in conceptIds.
+- If unsure, default to joelclaw:concept:comms.`;
 
 function isChannelType(value: string): value is ChannelType {
   return (CHANNEL_TYPES as readonly string[]).includes(value);
@@ -83,6 +132,10 @@ function isClassification(value: string): value is MessageClassificationLevel {
 
 function isUrgency(value: string): value is MessageUrgency {
   return (URGENCY_VALUES as readonly string[]).includes(value);
+}
+
+function isWorkloadConceptId(value: string): value is WorkloadConceptId {
+  return (WORKLOAD_CONCEPT_IDS as readonly string[]).includes(value);
 }
 
 function requireString(value: unknown, fieldName: string): string {
@@ -137,6 +190,21 @@ function normalizeTopics(value: unknown): string[] {
   return [...unique];
 }
 
+function normalizeConceptIds(value: unknown): WorkloadConceptId[] {
+  if (!Array.isArray(value)) return [DEFAULT_PRIMARY_CONCEPT_ID];
+
+  const unique = new Set<WorkloadConceptId>();
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const normalized = item.trim().toLowerCase();
+    if (!isWorkloadConceptId(normalized)) continue;
+    unique.add(normalized);
+    if (unique.size >= 3) break;
+  }
+
+  return unique.size > 0 ? [...unique] : [DEFAULT_PRIMARY_CONCEPT_ID];
+}
+
 function parseJsonObject(value: string): Record<string, unknown> | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -173,6 +241,15 @@ function parseClassification(data: unknown, rawText: string): MessageClassificat
   const urgency = isUrgency(urgencyRaw) ? urgencyRaw : "normal";
   const actionable = candidate.actionable === true || String(candidate.actionable).toLowerCase() === "true";
   const summary = optionalString(candidate.summary);
+  const conceptIds = normalizeConceptIds(candidate.conceptIds);
+  const requestedPrimary = optionalString(candidate.primaryConceptId)?.toLowerCase();
+  const primaryConceptId = requestedPrimary && isWorkloadConceptId(requestedPrimary)
+    ? requestedPrimary
+    : conceptIds[0] ?? DEFAULT_PRIMARY_CONCEPT_ID;
+  const orderedConceptIds = [
+    primaryConceptId,
+    ...conceptIds.filter((conceptId) => conceptId !== primaryConceptId),
+  ] as WorkloadConceptId[];
 
   return {
     classification: classificationValue,
@@ -180,6 +257,10 @@ function parseClassification(data: unknown, rawText: string): MessageClassificat
     urgency,
     actionable,
     ...(summary ? { summary } : {}),
+    primaryConceptId,
+    conceptIds: orderedConceptIds,
+    taxonomyVersion: TAXONOMY_VERSION,
+    conceptSource: orderedConceptIds.length > 0 ? "llm" : "fallback",
   };
 }
 
@@ -230,6 +311,12 @@ function resolveDestination(classification: MessageClassification): RouteDestina
   return "dropped";
 }
 
+function resolveThreadId(message: ChannelMessage): string | undefined {
+  if (message.threadId) return message.threadId;
+  if (message.channelType === "email") return message.channelId;
+  return undefined;
+}
+
 export const channelMessageClassify = inngest.createFunction(
   {
     id: "channel-message-classify",
@@ -264,6 +351,7 @@ export const channelMessageClassify = inngest.createFunction(
           message,
           classification,
           durationMs: Date.now() - startedAt,
+          threadId: resolveThreadId(message),
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -289,10 +377,15 @@ export const channelMessageClassify = inngest.createFunction(
       try {
         await typesense.upsert(typesense.CHANNEL_MESSAGES_COLLECTION, {
           id: classified.message.id,
+          ...(classified.threadId ? { thread_id: classified.threadId } : {}),
           classification: classified.classification.classification,
           topics: classified.classification.topics,
           urgency: classified.classification.urgency,
           actionable: classified.classification.actionable,
+          primary_concept_id: classified.classification.primaryConceptId,
+          concept_ids: classified.classification.conceptIds,
+          taxonomy_version: classified.classification.taxonomyVersion,
+          concept_source: classified.classification.conceptSource,
           ...(classified.classification.summary
             ? { summary: classified.classification.summary }
             : {}),
@@ -314,6 +407,9 @@ export const channelMessageClassify = inngest.createFunction(
             topics: classified.classification.topics,
             urgency: classified.classification.urgency,
             actionable: classified.classification.actionable,
+            primaryConceptId: classified.classification.primaryConceptId,
+            conceptIds: classified.classification.conceptIds,
+            taxonomyVersion: classified.classification.taxonomyVersion,
             model: CHANNEL_CLASSIFIER_MODEL,
             latency: classified.durationMs,
           },
@@ -357,6 +453,7 @@ export const channelMessageClassify = inngest.createFunction(
             destination,
             classification: classified.classification.classification,
             actionable: classified.classification.actionable,
+            primaryConceptId: classified.classification.primaryConceptId,
           },
         });
       } catch (error) {
@@ -390,7 +487,7 @@ export const channelMessageClassify = inngest.createFunction(
           channelType: classified.message.channelType,
           channelId: classified.message.channelId,
           channelName: classified.message.channelName,
-          ...(classified.message.threadId ? { threadId: classified.message.threadId } : {}),
+          ...(classified.threadId ? { threadId: classified.threadId } : {}),
           userId: classified.message.userId,
           userName: classified.message.userName,
           text: classified.message.text,
@@ -400,12 +497,35 @@ export const channelMessageClassify = inngest.createFunction(
           topics: classified.classification.topics,
           urgency: classified.classification.urgency,
           actionable: classified.classification.actionable,
+          primaryConceptId: classified.classification.primaryConceptId,
+          conceptIds: classified.classification.conceptIds,
+          taxonomyVersion: classified.classification.taxonomyVersion,
+          conceptSource: classified.classification.conceptSource,
           ...(classified.classification.summary
             ? { summary: classified.classification.summary }
             : {}),
         },
       });
       signalEventId = dispatched.ids[0] ?? null;
+    }
+
+    let threadEventId: string | null = null;
+    if (classified.threadId) {
+      const dispatched = await step.sendEvent("emit-thread-updated", {
+        name: "conversation/thread.updated",
+        data: {
+          messageId: classified.message.id,
+          channelType: classified.message.channelType,
+          channelId: classified.message.channelId,
+          channelName: classified.message.channelName,
+          threadId: classified.threadId,
+          timestamp: classified.message.timestamp,
+          primaryConceptId: classified.classification.primaryConceptId,
+          conceptIds: classified.classification.conceptIds,
+          taxonomyVersion: classified.classification.taxonomyVersion,
+        },
+      });
+      threadEventId = dispatched.ids[0] ?? null;
     }
 
     await step.run("trace-langfuse", async () => {
@@ -437,6 +557,7 @@ export const channelMessageClassify = inngest.createFunction(
       classification: classified.classification.classification,
       destination: routing.destination,
       signalEventId,
+      threadEventId,
     };
   }
 );
