@@ -29,9 +29,9 @@ sos_telegram_secret_name = "telegram_bot_token"
 critical_threshold_secs = 900
 
 [agent]
-cloud_command = "pi -p --no-session --no-extensions --model anthropic/claude-sonnet-4"
-local_command = "pi -p --no-session --no-extensions --model ollama/qwen3:8b"
-timeout_secs = 120
+cloud_command = "pi -p --model openai-codex/gpt-5.4"
+local_command = "pi -p --model ollama/qwen3:8b"
+timeout_secs = 300
 
 [probes]
 colima_timeout_secs = 5
