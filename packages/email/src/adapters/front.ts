@@ -129,12 +129,26 @@ function toDraft(d: Draft): EmailDraft {
   };
 }
 
+type FrontInboxListResponse = {
+  _results?: Inbox[];
+  _pagination?: {
+    next?: string | null;
+  } | null;
+};
+
 type FrontConversationListResponse = {
   _results?: Conversation[];
   _pagination?: {
     next?: string | null;
   } | null;
 };
+
+async function listFrontInboxes(
+  front: ReturnType<typeof createFrontClient>
+): Promise<Inbox[]> {
+  const result = await front.raw.get<FrontInboxListResponse>("/inboxes");
+  return Array.isArray(result?._results) ? result._results : [];
+}
 
 async function listFrontConversations(
   front: ReturnType<typeof createFrontClient>,
@@ -157,8 +171,8 @@ export function createFrontAdapter(config: {
     provider: "front",
 
     async listInboxes(): Promise<EmailInbox[]> {
-      const result = await front.inboxes.list();
-      return result._results.map((inbox: Inbox) => ({
+      const inboxes = await listFrontInboxes(front);
+      return inboxes.map((inbox: Inbox) => ({
         id: inbox.id,
         name: inbox.name,
         address: inbox.address ?? undefined,

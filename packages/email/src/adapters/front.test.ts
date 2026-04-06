@@ -25,6 +25,14 @@ function buildConversation() {
   };
 }
 
+function buildInbox() {
+  return {
+    id: "inb_123",
+    name: "Primary",
+    address: "joel@example.com",
+  };
+}
+
 describe("createFrontAdapter.listConversations", () => {
   test("treats unread filters as unreplied and tolerates null pagination.next", async () => {
     const requests: string[] = [];
@@ -103,5 +111,44 @@ describe("createFrontAdapter.listConversations", () => {
     ]);
     expect(conversations).toHaveLength(1);
     expect(conversations[0]?.id).toBe("cnv_123");
+  });
+});
+
+describe("createFrontAdapter.listInboxes", () => {
+  test("tolerates null pagination.next on inbox listing", async () => {
+    const requests: string[] = [];
+
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      requests.push(url);
+
+      if (url === "https://api2.frontapp.com/inboxes") {
+        return new Response(
+          JSON.stringify({
+            _links: { self: url },
+            _pagination: { next: null },
+            _results: [buildInbox()],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        );
+      }
+
+      throw new Error(`Unexpected request: ${url}`);
+    }) as typeof fetch;
+
+    const adapter = createFrontAdapter({ apiToken: "front-test-token" });
+    const inboxes = await adapter.listInboxes();
+
+    expect(requests).toEqual(["https://api2.frontapp.com/inboxes"]);
+    expect(inboxes).toEqual([
+      {
+        id: "inb_123",
+        name: "Primary",
+        address: "joel@example.com",
+      },
+    ]);
   });
 });
