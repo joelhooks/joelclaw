@@ -35,15 +35,15 @@ const RUNS_GQL_MAX_TIMEOUT_MS = Math.max(
 )
 const DETAIL_GQL_TIMEOUT_MS = Math.max(
   GQL_TIMEOUT_MS,
-  Number.parseInt(process.env.JOELCLAW_INNGEST_DETAIL_GQL_TIMEOUT_MS ?? "35000", 10),
+  Number.parseInt(process.env.JOELCLAW_INNGEST_DETAIL_GQL_TIMEOUT_MS ?? "75000", 10),
 )
 const DETAIL_GQL_TIMEOUT_STEP_MS = Math.max(
   5000,
-  Number.parseInt(process.env.JOELCLAW_INNGEST_DETAIL_GQL_TIMEOUT_STEP_MS ?? "15000", 10),
+  Number.parseInt(process.env.JOELCLAW_INNGEST_DETAIL_GQL_TIMEOUT_STEP_MS ?? "30000", 10),
 )
 const DETAIL_GQL_MAX_TIMEOUT_MS = Math.max(
   DETAIL_GQL_TIMEOUT_MS,
-  Number.parseInt(process.env.JOELCLAW_INNGEST_DETAIL_GQL_MAX_TIMEOUT_MS ?? "90000", 10),
+  Number.parseInt(process.env.JOELCLAW_INNGEST_DETAIL_GQL_MAX_TIMEOUT_MS ?? "150000", 10),
 )
 const HEALTH_PROBE_TIMEOUT_MS = Math.max(
   600,

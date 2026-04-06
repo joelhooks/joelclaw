@@ -97,7 +97,7 @@ describe("CLI runs timeout budgeting", () => {
 
 describe("CLI run detail timeout budgeting", () => {
   test("uses an elevated timeout for run and event detail queries", () => {
-    expect(resolveDetailGqlTimeoutMs()).toBeGreaterThanOrEqual(35000);
+    expect(resolveDetailGqlTimeoutMs()).toBeGreaterThanOrEqual(75000);
   });
 
   test("retries detail queries with a larger second budget", () => {
