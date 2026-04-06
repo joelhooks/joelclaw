@@ -392,6 +392,34 @@ function resolveThreadId(message: ChannelMessage): string | undefined {
   return undefined;
 }
 
+function buildClassifiedChannelMessageDocument(
+  message: ChannelMessage,
+  classification: MessageClassification,
+  threadId?: string
+): Record<string, unknown> {
+  return {
+    id: message.id,
+    channel_type: message.channelType,
+    channel_id: message.channelId,
+    channel_name: message.channelName,
+    ...(threadId ? { thread_id: threadId } : {}),
+    user_id: message.userId,
+    user_name: message.userName,
+    text: message.text,
+    timestamp: message.timestamp,
+    classification: classification.classification,
+    topics: classification.topics,
+    urgency: classification.urgency,
+    actionable: classification.actionable,
+    primary_concept_id: classification.primaryConceptId,
+    concept_ids: classification.conceptIds,
+    taxonomy_version: classification.taxonomyVersion,
+    concept_source: classification.conceptSource,
+    ...(classification.summary ? { summary: classification.summary } : {}),
+    ...(message.sourceUrl ? { source_url: message.sourceUrl } : {}),
+  };
+}
+
 export const channelMessageClassify = inngest.createFunction(
   {
     id: "channel-message-classify",
@@ -472,21 +500,14 @@ export const channelMessageClassify = inngest.createFunction(
 
     await step.run("update-typesense", async () => {
       try {
-        await typesense.upsert(typesense.CHANNEL_MESSAGES_COLLECTION, {
-          id: classified.message.id,
-          ...(classified.threadId ? { thread_id: classified.threadId } : {}),
-          classification: classified.classification.classification,
-          topics: classified.classification.topics,
-          urgency: classified.classification.urgency,
-          actionable: classified.classification.actionable,
-          primary_concept_id: classified.classification.primaryConceptId,
-          concept_ids: classified.classification.conceptIds,
-          taxonomy_version: classified.classification.taxonomyVersion,
-          concept_source: classified.classification.conceptSource,
-          ...(classified.classification.summary
-            ? { summary: classified.classification.summary }
-            : {}),
-        });
+        await typesense.upsert(
+          typesense.CHANNEL_MESSAGES_COLLECTION,
+          buildClassifiedChannelMessageDocument(
+            classified.message,
+            classified.classification,
+            classified.threadId
+          )
+        );
 
         await emitOtelEvent({
           level: "info",
@@ -663,4 +684,5 @@ export const __channelMessageClassifyTestUtils = {
   parseJsonObject,
   parseClassification,
   fallbackClassificationFromMessage,
+  buildClassifiedChannelMessageDocument,
 };
