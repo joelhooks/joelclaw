@@ -715,11 +715,22 @@ export async function ensureKnowledgeBatch(
   return counts;
 }
 
+function isImmutableTypesenseFieldName(name: string): boolean {
+  return name === "id";
+}
+
 async function ensureCollectionFields(
   collection: string,
   fields: TypesenseSchemaFieldSpec[]
 ): Promise<void> {
   if (fields.length === 0) return;
+
+  const desiredFields = fields.filter((field) => {
+    const name = typeof field.name === "string" ? field.name : null;
+    return Boolean(name && !isImmutableTypesenseFieldName(name));
+  });
+
+  if (desiredFields.length === 0) return;
 
   const schemaResponse = await typesenseRequest(`/collections/${collection}`, { method: "GET" });
   if (!schemaResponse.ok) {
@@ -740,7 +751,7 @@ async function ensureCollectionFields(
       .filter((field): field is string => field != null)
   );
 
-  const missing = fields.filter((field) => {
+  const missing = desiredFields.filter((field) => {
     const name = typeof field.name === "string" ? field.name : null;
     return Boolean(name && !existing.has(name));
   });

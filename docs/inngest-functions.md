@@ -244,6 +244,8 @@ Do **not** mutate `main.db` without a point-in-time backup.
 - collections:
   - `channel_messages` now stores MiniLM embeddings plus workload taxonomy fields (`primary_concept_id`, `concept_ids`, `taxonomy_version`, `concept_source`)
   - `conversation_threads` stores lightweight thread aggregates and enrichment output (`summary`, `related_projects`, `related_contacts`, `vault_gap`, `needs_joel`)
+- schema maintenance guard:
+  - `ensureChannelMessagesCollection()` must never include Typesense field `id` in PATCH payloads. `id` is implicit/immutable there, and trying to re-patch it floods `channel-message-ingest` with `Field \`id\` cannot be altered.` failures plus pointless o11y escalations.
 - event flow:
   1. `channel/message.received` → `channel-message-ingest`
   2. `channel/message.classify.requested` → `channel-message-classify`
