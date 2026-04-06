@@ -256,6 +256,8 @@ Do **not** mutate `main.db` without a point-in-time backup.
   - thread aggregation/enrichment is enabled for `slack` and `email`
   - email uses the Front conversation id as both `channelId` and `threadId`
   - `channel-message-classify` now accepts `email` messages and emits workload concept metadata
+  - classifier JSON parsing must tolerate markdown-fenced or prose-wrapped model output before failing; strict raw-JSON-only parsing was too brittle and produced false `classification response was not valid JSON` failures even when the model returned usable structured content
+  - if classifier output is still malformed after parsing attempts, the function must degrade to heuristic fallback classification (`conceptSource: "fallback"`) and emit `channel.message.classify_fallback` instead of failing the workflow
 - debounce contract:
   - enrich immediately for new threads
   - re-enrich after `5` new messages

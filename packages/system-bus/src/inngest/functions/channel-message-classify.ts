@@ -215,7 +215,32 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
       return parsed as Record<string, unknown>;
     }
   } catch {
-    // ignore parse errors; caller handles null
+    // continue
+  }
+
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/iu);
+  if (fenceMatch?.[1]) {
+    try {
+      const parsed = JSON.parse(fenceMatch[1]) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  const objectStart = trimmed.indexOf("{");
+  const objectEnd = trimmed.lastIndexOf("}");
+  if (objectStart !== -1 && objectEnd > objectStart) {
+    try {
+      const parsed = JSON.parse(trimmed.slice(objectStart, objectEnd + 1)) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // continue
+    }
   }
 
   return null;
@@ -261,6 +286,56 @@ function parseClassification(data: unknown, rawText: string): MessageClassificat
     conceptIds: orderedConceptIds,
     taxonomyVersion: TAXONOMY_VERSION,
     conceptSource: orderedConceptIds.length > 0 ? "llm" : "fallback",
+  };
+}
+
+function inferConceptIdsFromText(text: string): WorkloadConceptId[] {
+  const normalized = text.toLowerCase();
+  const concepts: WorkloadConceptId[] = [];
+
+  const maybeAdd = (conceptId: WorkloadConceptId, patterns: RegExp[]) => {
+    if (concepts.includes(conceptId)) return;
+    if (patterns.some((pattern) => pattern.test(normalized))) {
+      concepts.push(conceptId);
+    }
+  };
+
+  maybeAdd("joelclaw:concept:observe", [/error/u, /failed/u, /timeout/u, /health/u, /incident/u, /otel/u, /observ/u, /log/u]);
+  maybeAdd("joelclaw:concept:platform", [/k8s/u, /cluster/u, /deploy/u, /worker/u, /gateway/u, /runtime/u, /pod/u]);
+  maybeAdd("joelclaw:concept:integration", [/webhook/u, /github/u, /front/u, /slack/u, /telegram/u, /discord/u, /vendor/u, /api/u]);
+  maybeAdd("joelclaw:concept:tooling", [/cli/u, /script/u, /tool/u, /automation/u, /codex/u, /pi /u]);
+  maybeAdd("joelclaw:concept:pipeline", [/queue/u, /workflow/u, /inngest/u, /restate/u, /pipeline/u, /event/u]);
+  maybeAdd("joelclaw:concept:build", [/bug/u, /fix/u, /code/u, /test/u, /build/u, /compile/u, /patch/u]);
+  maybeAdd("joelclaw:concept:knowledge", [/adr/u, /docs/u, /memory/u, /vault/u, /note/u]);
+  maybeAdd("joelclaw:concept:meta", [/priority/u, /plan/u, /triage/u, /process/u, /govern/u]);
+  maybeAdd("joelclaw:concept:comms", [/message/u, /reply/u, /thread/u, /conversation/u, /mail/u, /contact/u]);
+
+  if (concepts.length === 0) concepts.push(DEFAULT_PRIMARY_CONCEPT_ID);
+  return concepts.slice(0, 3);
+}
+
+function fallbackClassificationFromMessage(message: ChannelMessage): MessageClassification {
+  const normalized = message.text.toLowerCase();
+  const urgent = /urgent|asap|immediately|outage|down|broken|failing|failure|error|incident|blocked/u.test(normalized);
+  const noisy = /^(thanks|thx|ok|okay|lol|👍|✅|done)$/u.test(message.text.trim()) || message.text.trim().length < 8;
+  const classification: MessageClassificationLevel = noisy ? "noise" : urgent ? "signal" : "context";
+  const urgency: MessageUrgency = urgent ? "high" : "normal";
+  const actionable = urgent;
+  const conceptIds = inferConceptIdsFromText(message.text);
+  const primaryConceptId = conceptIds[0] ?? DEFAULT_PRIMARY_CONCEPT_ID;
+  const summary = noisy ? undefined : optionalString(message.text, 140);
+  const topics = normalizeTopics(message.text.split(/[^a-zA-Z0-9-_]+/u).filter(Boolean).slice(0, 6));
+
+  return {
+    classification,
+    topics,
+    urgency,
+    actionable,
+    ...(summary ? { summary } : {}),
+    primaryConceptId,
+    conceptIds,
+    taxonomyVersion: TAXONOMY_VERSION,
+    conceptSource: "fallback",
   };
 }
 
@@ -346,7 +421,29 @@ export const channelMessageClassify = inngest.createFunction(
           action: "channel.message.classified",
           timeout: 45_000,
         });
-        const classification = parseClassification(result.data, result.text);
+
+        let classification: MessageClassification;
+        try {
+          classification = parseClassification(result.data, result.text);
+        } catch (error) {
+          classification = fallbackClassificationFromMessage(message);
+          await emitOtelEvent({
+            level: "warn",
+            source: "worker",
+            component: "channel-classify",
+            action: "channel.message.classify_fallback",
+            success: true,
+            error: error instanceof Error ? error.message : String(error),
+            metadata: {
+              eventId: event.id,
+              messageId,
+              channelId: message.channelId,
+              model: CHANNEL_CLASSIFIER_MODEL,
+              conceptSource: classification.conceptSource,
+            },
+          });
+        }
+
         return {
           message,
           classification,
@@ -561,3 +658,9 @@ export const channelMessageClassify = inngest.createFunction(
     };
   }
 );
+
+export const __channelMessageClassifyTestUtils = {
+  parseJsonObject,
+  parseClassification,
+  fallbackClassificationFromMessage,
+};
