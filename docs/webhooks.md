@@ -21,6 +21,11 @@ Contract:
 3. By default, emit to Inngest as `<provider>/<event>`.
 4. Queue pilots may intercept specific normalized events first, persist them into the shared Redis queue, and let the Restate drainer forward the concrete Inngest event name.
 
+Health-check contract:
+
+- system health probes should hit `GET /webhooks` through the shared endpoint resolver (`localhost -> Colima VM IP -> service DNS`) rather than assuming the host-worker localhost path is the only valid surface.
+- a fast `401 Invalid signature` on `POST /webhooks/:provider` is healthy behavior for unauthenticated probes; it proves the route is alive and signature enforcement is working.
+
 ## GitHub workflow path
 
 - provider adapter: `packages/system-bus/src/webhooks/providers/github.ts`

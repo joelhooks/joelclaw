@@ -717,27 +717,67 @@ async function checkTypesense(): Promise<ServiceStatus> {
   }
 }
 
+type SecretsStatusResult = {
+  status: number | null;
+  stdout?: string | null;
+  stderr?: string | null;
+};
+
+function interpretAgentSecretsStatus(result: SecretsStatusResult): ServiceStatus {
+  const stdout = (result.stdout ?? "").trim();
+  const stderr = (result.stderr ?? "").trim();
+
+  if (result.status === 0 && stdout.length > 0) {
+    try {
+      const parsed = JSON.parse(stdout) as {
+        result?: { running?: boolean; active_leases?: number };
+        error?: { message?: string };
+      };
+      if (parsed.result?.running === true) {
+        const leaseCount = parsed.result.active_leases;
+        return {
+          name: "Agent Secrets",
+          ok: true,
+          detail: typeof leaseCount === "number" ? `running (${leaseCount} active leases)` : "running",
+        };
+      }
+
+      const message = parsed.error?.message;
+      return {
+        name: "Agent Secrets",
+        ok: false,
+        detail: (message ?? "secrets daemon unreachable").slice(0, 140),
+      };
+    } catch {
+      return {
+        name: "Agent Secrets",
+        ok: true,
+        detail: "running",
+      };
+    }
+  }
+
+  const text = `${stderr}\n${stdout}`
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !line.startsWith("{"));
+
+  return {
+    name: "Agent Secrets",
+    ok: false,
+    detail: (text ?? "secrets daemon unreachable").slice(0, 140),
+  };
+}
+
 async function checkAgentSecrets(): Promise<ServiceStatus> {
   try {
-    const result = spawnSync("secrets", ["health"], {
+    const result = spawnSync("secrets", ["status"], {
       encoding: "utf8",
-      timeout: 4000,
+      timeout: 5000,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    if (result.status === 0) {
-      return { name: "Agent Secrets", ok: true };
-    }
-
-    const text = `${result.stderr ?? ""}\n${result.stdout ?? ""}`
-      .split("\n")
-      .map((line) => line.trim())
-      .find((line) => line.length > 0 && !line.startsWith("{"));
-    return {
-      name: "Agent Secrets",
-      ok: false,
-      detail: (text ?? "secrets daemon unreachable").slice(0, 140),
-    };
+    return interpretAgentSecretsStatus(result);
   } catch (err) {
     return { name: "Agent Secrets", ok: false, detail: String(err).slice(0, 140) };
   }
@@ -774,18 +814,44 @@ async function checkNfsMounts(): Promise<ServiceStatus> {
 }
 
 async function checkWebhooks(): Promise<ServiceStatus> {
+  const resolution = await resolveEndpoint(
+    buildServiceHealthCandidates("worker", { probePaths: ["/webhooks"] }),
+    { timeoutMs: ENDPOINT_RESOLVE_TIMEOUT_MS },
+  );
+
+  if (!resolution.ok) {
+    return {
+      name: "Webhooks",
+      ok: false,
+      detail: `unreachable (${resolution.reason})`,
+      skippedCandidates: resolution.skippedCandidates,
+    };
+  }
+
   try {
-    // Probe webhook server locally (avoids TLS cert issues with Tailscale funnel)
-    const res = await fetch("http://localhost:3111/webhooks", {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (res.ok) {
-      const data = await res.json() as { status?: string; providers?: string[] };
-      return { name: "Webhooks", ok: true, detail: `providers: ${data.providers?.join(", ") ?? "none"}` };
-    }
-    return { name: "Webhooks", ok: false, detail: `HTTP ${res.status}` };
+    const data = resolution.body.length > 0
+      ? JSON.parse(resolution.body) as { status?: string; providers?: string[] }
+      : {};
+    const providers = Array.isArray(data.providers) ? data.providers : [];
+    const detail = `${formatHealthEndpointLabel(resolution.endpointClass, resolution.probeUrl)}; providers: ${providers.join(", ") || "none"}`;
+
+    return {
+      name: "Webhooks",
+      ok: data.status === "running",
+      detail,
+      endpoint: resolution.probeUrl,
+      endpointClass: resolution.endpointClass,
+      skippedCandidates: resolution.skippedCandidates,
+    };
   } catch (err) {
-    return { name: "Webhooks", ok: false, detail: String(err) };
+    return {
+      name: "Webhooks",
+      ok: false,
+      detail: `invalid webhook payload [${resolution.endpointClass}] (${resolution.probeUrl}): ${String(err)}`,
+      endpoint: resolution.probeUrl,
+      endpointClass: resolution.endpointClass,
+      skippedCandidates: resolution.skippedCandidates,
+    };
   }
 }
 
@@ -1741,6 +1807,8 @@ export const __checkSystemHealthTestUtils = {
   checkInngest,
   checkWorker,
   checkTypesense,
+  checkWebhooks,
+  interpretAgentSecretsStatus,
   resolveHealthCanaryScheduleMode,
 };
 

@@ -569,6 +569,7 @@ joelclaw runs [--status RUNNING|FAILED|COMPLETED|QUEUED|CANCELLED]
 Semantics:
 
 - applies backend status filtering and a local status guard so mixed-status payloads cannot leak through.
+- the runs list query uses a longer timeout budget than generic Inngest GraphQL calls because self-hosted `runs(...)` can take ~30s even for small windows; timeout scales upward with requested `count`, and timeout aborts get one bounded retry with a larger budget before the CLI gives up.
 - for suspicious `RUNNING` rows (endedAt present while running, or long-running health checks), runs performs bounded detail reconciliation (max 5 lookups) to detect stale SDK-unreachable ghosts.
 - runs with stale indicators include `staleSignal` with `likely`, `confidence`, and machine-readable `reasons`.
 - response includes `staleSignals` summary (`detected`, `likely`, `detailChecked`) and suggests `joelclaw inngest sweep-stale-runs` when likely ghosts are present.

@@ -5,9 +5,13 @@ import {
 } from "@joelclaw/endpoint-resolver"
 import { Effect, Schema } from "effect"
 import { loadConfig } from "./config"
-import {EventsV2Response, 
-  InngestFunction, LoopEventData,RunsResponse, RunTrigger,
-  SpanOutput, 
+import {
+  EventsV2Response,
+  InngestFunction,
+  LoopEventData,
+  RunsResponse,
+  RunTrigger,
+  SpanOutput,
 } from "./schema"
 
 const cfg = loadConfig()
@@ -15,12 +19,29 @@ const GQL = `${cfg.inngestUrl}/v0/gql`
 const EVENT_API = `${cfg.inngestUrl}/e/${cfg.eventKey}`
 const GQL_TIMEOUT_MS = Math.max(
   5000,
-  Number.parseInt(process.env.JOELCLAW_INNGEST_GQL_TIMEOUT_MS ?? "20000", 10)
+  Number.parseInt(process.env.JOELCLAW_INNGEST_GQL_TIMEOUT_MS ?? "20000", 10),
+)
+const RUNS_GQL_TIMEOUT_MS = Math.max(
+  GQL_TIMEOUT_MS,
+  Number.parseInt(process.env.JOELCLAW_INNGEST_RUNS_GQL_TIMEOUT_MS ?? "45000", 10),
+)
+const RUNS_GQL_TIMEOUT_STEP_MS = Math.max(
+  5000,
+  Number.parseInt(process.env.JOELCLAW_INNGEST_RUNS_GQL_TIMEOUT_STEP_MS ?? "15000", 10),
+)
+const RUNS_GQL_MAX_TIMEOUT_MS = Math.max(
+  RUNS_GQL_TIMEOUT_MS,
+  Number.parseInt(process.env.JOELCLAW_INNGEST_RUNS_GQL_MAX_TIMEOUT_MS ?? "120000", 10),
 )
 const HEALTH_PROBE_TIMEOUT_MS = Math.max(
   600,
   Number.parseInt(process.env.JOELCLAW_HEALTH_PROBE_TIMEOUT_MS ?? "1500", 10),
 )
+
+type GqlOptions = {
+  timeoutMs?: number
+  retryTimeoutMs?: number
+}
 
 // ── Errors ───────────────────────────────────────────────────────────
 
@@ -31,26 +52,65 @@ class InngestError {
 
 // ── GQL helper ───────────────────────────────────────────────────────
 
-const gql = (query: string, variables?: Record<string, unknown>) =>
+function isAbortLikeError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false
+  const name = "name" in error ? String((error as { name?: unknown }).name ?? "") : ""
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : ""
+  return name === "AbortError" || /aborted|timed out/i.test(message)
+}
+
+function resolveRunsGqlTimeoutMs(count: number): number {
+  const safeCount = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 10
+
+  if (safeCount <= 10) return RUNS_GQL_TIMEOUT_MS
+  if (safeCount <= 50) return Math.min(RUNS_GQL_MAX_TIMEOUT_MS, RUNS_GQL_TIMEOUT_MS + RUNS_GQL_TIMEOUT_STEP_MS)
+  if (safeCount <= 150) return Math.min(RUNS_GQL_MAX_TIMEOUT_MS, RUNS_GQL_TIMEOUT_MS + RUNS_GQL_TIMEOUT_STEP_MS * 2)
+
+  return RUNS_GQL_MAX_TIMEOUT_MS
+}
+
+const gql = (
+  query: string,
+  variables?: Record<string, unknown>,
+  options?: GqlOptions,
+) =>
   Effect.tryPromise({
     try: async () => {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), GQL_TIMEOUT_MS)
+      const execute = async (timeoutMs: number) => {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        try {
+          const res = await fetch(GQL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query,
+              ...(variables ? { variables } : {}),
+            }),
+            signal: controller.signal,
+          })
+          const json = await res.json() as { errors?: Array<{ message: string }>; data: any }
+          if (json.errors?.length) throw new Error(json.errors[0].message)
+          return json.data
+        } finally {
+          clearTimeout(timer)
+        }
+      }
+
+      const timeoutMs = options?.timeoutMs ?? GQL_TIMEOUT_MS
+
       try {
-        const res = await fetch(GQL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query,
-            ...(variables ? { variables } : {}),
-          }),
-          signal: controller.signal,
-        })
-        const json = await res.json() as { errors?: Array<{ message: string }>; data: any }
-        if (json.errors?.length) throw new Error(json.errors[0].message)
-        return json.data
-      } finally {
-        clearTimeout(timer)
+        return await execute(timeoutMs)
+      } catch (error) {
+        const retryTimeoutMs = options?.retryTimeoutMs
+        if (
+          retryTimeoutMs != null
+          && retryTimeoutMs > timeoutMs
+          && isAbortLikeError(error)
+        ) {
+          return await execute(retryTimeoutMs)
+        }
+        throw error
       }
     },
     catch: (e) => new InngestError("GQL request failed", e),
@@ -105,6 +165,8 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
       const hours = opts.hours ?? 24
       const from = new Date(Date.now() - hours * 3600_000).toISOString()
       const statusFilter = opts.status ? `, status: [${opts.status}]` : ""
+      const timeoutMs = resolveRunsGqlTimeoutMs(count)
+      const retryTimeoutMs = Math.min(RUNS_GQL_MAX_TIMEOUT_MS, timeoutMs + RUNS_GQL_TIMEOUT_STEP_MS)
 
       const data = yield* gql(`{
         runs(
@@ -114,7 +176,7 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
         ) {
           edges { node { id status functionID startedAt endedAt output } }
         }
-      }`)
+      }`, undefined, { timeoutMs, retryTimeoutMs })
 
       // resolve function names
       const fns = yield* functions()
@@ -403,6 +465,7 @@ async function probeWorkerHealth(): Promise<HealthCheck> {
 export const __inngestHealthTestUtils = {
   probeServerHealth,
   probeWorkerHealth,
+  resolveRunsGqlTimeoutMs,
 }
 
 function flattenSpans(span: any): Array<{ name: string; status: string; outputID?: string }> {

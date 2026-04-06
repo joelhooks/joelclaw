@@ -7,7 +7,7 @@ process.env.INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "test-event-key
 process.env.JOELCLAW_COLIMA_VM_IP = "10.10.10.10";
 
 const { __inngestHealthTestUtils } = await import("./inngest");
-const { probeServerHealth, probeWorkerHealth } = __inngestHealthTestUtils;
+const { probeServerHealth, probeWorkerHealth, resolveRunsGqlTimeoutMs } = __inngestHealthTestUtils;
 
 beforeEach(() => {
   __endpointResolverTestUtils.resetColimaVmIpCache();
@@ -75,5 +75,16 @@ describe("CLI health probes endpoint fallback", () => {
       "http://localhost:3111/api/inngest",
       "http://10.10.10.10:3111",
     ]);
+  });
+});
+
+describe("CLI runs timeout budgeting", () => {
+  test("uses elevated timeout even for small run windows", () => {
+    expect(resolveRunsGqlTimeoutMs(5)).toBeGreaterThanOrEqual(45000);
+  });
+
+  test("scales timeout upward for larger run queries", () => {
+    expect(resolveRunsGqlTimeoutMs(50)).toBeGreaterThan(resolveRunsGqlTimeoutMs(10));
+    expect(resolveRunsGqlTimeoutMs(300)).toBeGreaterThanOrEqual(resolveRunsGqlTimeoutMs(50));
   });
 });

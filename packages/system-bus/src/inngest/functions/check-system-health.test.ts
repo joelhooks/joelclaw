@@ -7,6 +7,7 @@ import {
 } from "./check-system-health";
 
 const originalFetch = globalThis.fetch;
+const { checkWebhooks, interpretAgentSecretsStatus } = __checkSystemHealthTestUtils;
 
 process.env.JOELCLAW_COLIMA_VM_IP = "10.10.10.10";
 
@@ -127,5 +128,62 @@ describe("check/system-health endpoint fallback", () => {
     expect(result.ok).toBe(true);
     expect(result.endpointClass).toBe("vm");
     expect(result.detail).toContain("[vm]");
+  });
+
+  test("webhook check falls back to vm worker webhook endpoint", async () => {
+    const calls: string[] = [];
+
+    globalThis.fetch = (async (url: string | URL) => {
+      const target = String(url);
+      calls.push(target);
+
+      if (target.startsWith("http://localhost:3111/webhooks")) {
+        throw new Error("connect ECONNREFUSED");
+      }
+
+      if (target === "http://10.10.10.10:3111/webhooks") {
+        return new Response(
+          '{"service":"webhook-gateway","status":"running","providers":["github","vercel"]}',
+          { status: 200 },
+        );
+      }
+
+      return new Response("down", { status: 503 });
+    }) as typeof fetch;
+
+    const result = await checkWebhooks();
+
+    expect(result.ok).toBe(true);
+    expect(result.endpointClass).toBe("vm");
+    expect(result.detail).toContain("[vm]");
+    expect(result.detail).toContain("providers: github, vercel");
+    expect(calls).toEqual([
+      "http://localhost:3111/webhooks",
+      "http://10.10.10.10:3111/webhooks",
+    ]);
+  });
+});
+
+describe("check/system-health agent secrets parsing", () => {
+  test("treats secrets status running payload as healthy", () => {
+    const result = interpretAgentSecretsStatus({
+      status: 0,
+      stdout: JSON.stringify({ result: { running: true, active_leases: 27 } }),
+      stderr: "",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain("27 active leases");
+  });
+
+  test("surfaces status error payload as degraded", () => {
+    const result = interpretAgentSecretsStatus({
+      status: 1,
+      stdout: JSON.stringify({ error: { message: "daemon unresponsive (timeout after 5s)" } }),
+      stderr: "Error: failed to get health report",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("failed to get health report");
   });
 });

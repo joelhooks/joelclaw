@@ -154,6 +154,9 @@ Operational boundary for Phase 1:
   - cron heartbeat checks
   - `system/health.check.requested`
 - checks include core services (`Inngest`, `Worker`, `Redis`, etc.) and mount probes.
+- current truth guards:
+  - **Agent Secrets** health is based on `secrets status`, not `secrets health`; the latter can time out under load and falsely report the daemon as down even while leases and audit traffic still work.
+  - **Webhooks** health probes the actual `/webhooks` route through the shared endpoint resolver (`localhost -> Colima VM IP -> service DNS`) instead of assuming the host worker localhost path is the only truthful surface.
 
 ### Self-healing router
 
