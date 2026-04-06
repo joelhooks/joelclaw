@@ -22,6 +22,14 @@ const SELF_HEALING_MAX_DETAILS_PER_TICK = Number.parseInt(
   process.env.SELF_HEALING_MAX_DETAILS_PER_TICK ?? "12",
   10
 );
+const SELF_HEALING_FAILED_RUNS_TIMEOUT_MS = Math.max(
+  10_000,
+  Number.parseInt(process.env.SELF_HEALING_FAILED_RUNS_TIMEOUT_MS ?? "30000", 10)
+);
+const SELF_HEALING_FAILED_RUNS_RETRY_TIMEOUT_MS = Math.max(
+  SELF_HEALING_FAILED_RUNS_TIMEOUT_MS,
+  Number.parseInt(process.env.SELF_HEALING_FAILED_RUNS_RETRY_TIMEOUT_MS ?? "45000", 10)
+);
 const SDK_REACHABILITY_ERROR_REGEX = /Unable to reach SDK URL/iu;
 
 type FailedRunNode = {
@@ -111,6 +119,38 @@ function toSafeText(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
+function isAbortLikeError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const name = "name" in error ? String((error as { name?: unknown }).name ?? "") : "";
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+  return name === "AbortError" || /aborted|timed out/i.test(message);
+}
+
+function resolveFailedRunsQueryTimeoutMs(maxRuns: number): number {
+  const safeRuns = Number.isFinite(maxRuns) ? Math.max(1, Math.floor(maxRuns)) : SELF_HEALING_DEFAULT_MAX_RUNS;
+  if (safeRuns <= 20) return SELF_HEALING_FAILED_RUNS_TIMEOUT_MS;
+  if (safeRuns <= 60) return Math.min(SELF_HEALING_FAILED_RUNS_RETRY_TIMEOUT_MS, SELF_HEALING_FAILED_RUNS_TIMEOUT_MS + 10_000);
+  return SELF_HEALING_FAILED_RUNS_RETRY_TIMEOUT_MS;
+}
+
+async function fetchInngestGraphql(query: string, timeoutMs: number, retryTimeoutMs: number): Promise<Response> {
+  const execute = (requestTimeoutMs: number) => fetch(`${INNGEST_BASE_URL}/v0/gql`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(requestTimeoutMs),
+  });
+
+  try {
+    return await execute(timeoutMs);
+  } catch (error) {
+    if (retryTimeoutMs > timeoutMs && isAbortLikeError(error)) {
+      return await execute(retryTimeoutMs);
+    }
+    throw error;
+  }
+}
+
 async function listRecentFailedRuns(fromIso: string, maxRuns: number): Promise<RunSummary[]> {
   const query = `
     query {
@@ -134,12 +174,12 @@ async function listRecentFailedRuns(fromIso: string, maxRuns: number): Promise<R
     }
   `;
 
-  const response = await fetch(`${INNGEST_BASE_URL}/v0/gql`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ query }),
-    signal: AbortSignal.timeout(10_000),
-  });
+  const timeoutMs = resolveFailedRunsQueryTimeoutMs(maxRuns);
+  const response = await fetchInngestGraphql(
+    query,
+    timeoutMs,
+    Math.max(timeoutMs, SELF_HEALING_FAILED_RUNS_RETRY_TIMEOUT_MS),
+  );
 
   if (!response.ok) {
     throw new Error(`failed-run query failed: HTTP ${response.status}`);
@@ -214,6 +254,11 @@ async function loadRunOutputViaCli(runId: string): Promise<{ ok: boolean; output
     return { ok: true, output: stdout };
   }
 }
+
+export const __selfHealingInvestigatorTestUtils = {
+  isAbortLikeError,
+  resolveFailedRunsQueryTimeoutMs,
+};
 
 export const selfHealingInvestigator = inngest.createFunction(
   {

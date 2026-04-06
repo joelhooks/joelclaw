@@ -33,6 +33,18 @@ const RUNS_GQL_MAX_TIMEOUT_MS = Math.max(
   RUNS_GQL_TIMEOUT_MS,
   Number.parseInt(process.env.JOELCLAW_INNGEST_RUNS_GQL_MAX_TIMEOUT_MS ?? "120000", 10),
 )
+const DETAIL_GQL_TIMEOUT_MS = Math.max(
+  GQL_TIMEOUT_MS,
+  Number.parseInt(process.env.JOELCLAW_INNGEST_DETAIL_GQL_TIMEOUT_MS ?? "35000", 10),
+)
+const DETAIL_GQL_TIMEOUT_STEP_MS = Math.max(
+  5000,
+  Number.parseInt(process.env.JOELCLAW_INNGEST_DETAIL_GQL_TIMEOUT_STEP_MS ?? "15000", 10),
+)
+const DETAIL_GQL_MAX_TIMEOUT_MS = Math.max(
+  DETAIL_GQL_TIMEOUT_MS,
+  Number.parseInt(process.env.JOELCLAW_INNGEST_DETAIL_GQL_MAX_TIMEOUT_MS ?? "90000", 10),
+)
 const HEALTH_PROBE_TIMEOUT_MS = Math.max(
   600,
   Number.parseInt(process.env.JOELCLAW_HEALTH_PROBE_TIMEOUT_MS ?? "1500", 10),
@@ -67,6 +79,18 @@ function resolveRunsGqlTimeoutMs(count: number): number {
   if (safeCount <= 150) return Math.min(RUNS_GQL_MAX_TIMEOUT_MS, RUNS_GQL_TIMEOUT_MS + RUNS_GQL_TIMEOUT_STEP_MS * 2)
 
   return RUNS_GQL_MAX_TIMEOUT_MS
+}
+
+function resolveDetailGqlTimeoutMs(): number {
+  return DETAIL_GQL_TIMEOUT_MS
+}
+
+function resolveDetailGqlOptions(): GqlOptions {
+  const timeoutMs = resolveDetailGqlTimeoutMs()
+  return {
+    timeoutMs,
+    retryTimeoutMs: Math.min(DETAIL_GQL_MAX_TIMEOUT_MS, timeoutMs + DETAIL_GQL_TIMEOUT_STEP_MS),
+  }
 }
 
 const gql = (
@@ -141,17 +165,21 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
 
     // ── list functions ─────────────────────────────────────────────
 
-    const functions = Effect.fn("Inngest.functions")(function* () {
+    const loadFunctions = (options?: GqlOptions) => Effect.gen(function* () {
       const data = yield* gql(`{
         functions {
           id slug name
           triggers { type value }
         }
-      }`)
+      }`, undefined, options)
       return data.functions as Array<{
         id: string; slug: string; name: string
         triggers: Array<{ type: string; value: string }>
       }>
+    })
+
+    const functions = Effect.fn("Inngest.functions")(function* () {
+      return yield* loadFunctions()
     })
 
     // ── list runs ──────────────────────────────────────────────────
@@ -191,9 +219,10 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
     // ── single run detail ──────────────────────────────────────────
 
     const run = Effect.fn("Inngest.run")(function* (runID: string) {
+      const detailGqlOptions = resolveDetailGqlOptions()
       const [runData, triggerData, traceData] = yield* Effect.all([
-        gql(`{ run(runID: "${runID}") { id status functionID startedAt endedAt output traceID } }`),
-        gql(`{ runTrigger(runID: "${runID}") { eventName IDs timestamp } }`),
+        gql(`{ run(runID: "${runID}") { id status functionID startedAt endedAt output traceID } }`, undefined, detailGqlOptions),
+        gql(`{ runTrigger(runID: "${runID}") { eventName IDs timestamp } }`, undefined, detailGqlOptions),
         gql(`{
           runTrace(runID: "${runID}") {
             name status attempts duration isRoot startedAt endedAt
@@ -207,11 +236,11 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
               }
             }
           }
-        }`),
+        }`, undefined, detailGqlOptions),
       ])
 
       // resolve function name
-      const fns = yield* functions()
+      const fns = yield* loadFunctions(detailGqlOptions)
       const fnMap = new Map(fns.map((f) => [f.id, f.name]))
 
       // fetch errors for failed steps
@@ -224,7 +253,7 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
               runTraceSpanOutputByID(outputID: "${step.outputID}") {
                 data error { message name stack }
               }
-            }`)
+            }`, undefined, detailGqlOptions)
             errors[step.name] = output.runTraceSpanOutputByID
           } catch { /* ignore */ }
         }
@@ -301,18 +330,19 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
     // ── single event + its runs ──────────────────────────────────
 
     const event = Effect.fn("Inngest.event")(function* (eventID: string) {
+      const detailGqlOptions = resolveDetailGqlOptions()
       const data = yield* gql(`{
         event(query: { eventId: "${eventID}" }) {
           id name createdAt raw pendingRuns totalRuns
           functionRuns { id status functionID startedAt finishedAt output }
         }
-      }`)
+      }`, undefined, detailGqlOptions)
 
       const ev = data.event
       if (!ev) return { event: null, runs: [] }
 
       // resolve function names
-      const fns = yield* functions()
+      const fns = yield* loadFunctions(detailGqlOptions)
       const fnMap = new Map(fns.map((f) => [f.id, f.name]))
 
       let payload: Record<string, unknown> = {}
@@ -466,6 +496,8 @@ export const __inngestHealthTestUtils = {
   probeServerHealth,
   probeWorkerHealth,
   resolveRunsGqlTimeoutMs,
+  resolveDetailGqlTimeoutMs,
+  resolveDetailGqlOptions,
 }
 
 function flattenSpans(span: any): Array<{ name: string; status: string; outputID?: string }> {

@@ -165,6 +165,14 @@ Operational boundary for Phase 1:
 - input event: `system/self.healing.requested`
 - responsibility: apply retry/defer/escalate policy and emit target remediation events.
 
+### Self-healing investigator
+
+- function: `system/self-healing.investigator`
+- file: `packages/system-bus/src/inngest/functions/self-healing-investigator.ts`
+- current guardrails:
+  - the initial `list-failed-runs` GraphQL scan now uses a longer timeout budget plus one bounded retry on abort-like failures; the investigator was tripping on the same slow-detail surface as `joelclaw run` and falsely timing out before it could inspect evidence.
+  - downstream per-run inspection still shells through `joelclaw run`, so CLI detail timeout fixes directly improve investigator stability too.
+
 ### Inngest runtime remediation (new)
 
 - function: `system/self-healing.inngest-runtime`
@@ -180,16 +188,19 @@ Operational boundary for Phase 1:
 
 ### Host worker rollout reality
 
-The running host worker is sourced from the separate checkout at `~/Code/system-bus-worker/`, launched by `com.joel.system-bus-worker` via `~/Code/system-bus-worker/packages/system-bus/start.sh`.
+The running host worker is launched by `com.joel.system-bus-worker` through `worker-supervisor`, and the current launchd/plist + supervisor config points at the main monorepo checkout:
+
+- supervisor working dir: `~/Code/joelhooks/joelclaw/infra/worker-supervisor`
+- worker dir: `~/Code/joelhooks/joelclaw/packages/system-bus`
+- worker entry: `bun run src/serve.ts`
 
 After changing host-role functions in the monorepo:
 
-1. push to `origin`
-2. `cd ~/Code/system-bus-worker && git pull --ff-only`
-3. `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`
-4. `curl -X PUT http://127.0.0.1:3111/api/inngest`
+1. restart launchd: `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`
+2. re-register functions: `curl -X PUT http://127.0.0.1:3111/api/inngest`
+3. verify with `joelclaw inngest status` or a targeted synthetic event
 
-Do not assume the live host worker reloads directly from `~/Code/joelhooks/joelclaw/`.
+Do not rely on stale instructions about a separate `~/Code/system-bus-worker/` checkout unless the launchd plist/supervisor config has been deliberately changed back to that topology.
 
 ### Host worker startup preflight + supervisor OTEL
 

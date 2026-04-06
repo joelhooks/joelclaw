@@ -7,7 +7,13 @@ process.env.INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "test-event-key
 process.env.JOELCLAW_COLIMA_VM_IP = "10.10.10.10";
 
 const { __inngestHealthTestUtils } = await import("./inngest");
-const { probeServerHealth, probeWorkerHealth, resolveRunsGqlTimeoutMs } = __inngestHealthTestUtils;
+const {
+  probeServerHealth,
+  probeWorkerHealth,
+  resolveRunsGqlTimeoutMs,
+  resolveDetailGqlTimeoutMs,
+  resolveDetailGqlOptions,
+} = __inngestHealthTestUtils;
 
 beforeEach(() => {
   __endpointResolverTestUtils.resetColimaVmIpCache();
@@ -86,5 +92,16 @@ describe("CLI runs timeout budgeting", () => {
   test("scales timeout upward for larger run queries", () => {
     expect(resolveRunsGqlTimeoutMs(50)).toBeGreaterThan(resolveRunsGqlTimeoutMs(10));
     expect(resolveRunsGqlTimeoutMs(300)).toBeGreaterThanOrEqual(resolveRunsGqlTimeoutMs(50));
+  });
+});
+
+describe("CLI run detail timeout budgeting", () => {
+  test("uses an elevated timeout for run and event detail queries", () => {
+    expect(resolveDetailGqlTimeoutMs()).toBeGreaterThanOrEqual(35000);
+  });
+
+  test("retries detail queries with a larger second budget", () => {
+    const options = resolveDetailGqlOptions();
+    expect(options.retryTimeoutMs).toBeGreaterThan(options.timeoutMs);
   });
 });

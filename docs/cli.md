@@ -584,6 +584,7 @@ joelclaw run <run-id> [--cancel] [--wait-ms 3000]
 Semantics:
 
 - default mode returns run detail, trigger event, trace, and step errors.
+- run detail and `joelclaw event <event-id>` now use a larger timeout/retry budget than generic GraphQL calls because self-hosted detail lookups can abort under load even while the runtime itself is healthy.
 - `--cancel` issues Inngest GraphQL `cancelRun` for active runs, then polls status up to `--wait-ms`.
 - deterministic error envelopes:
   - `RUN_CANCEL_FAILED` when `cancelRun` mutation fails.

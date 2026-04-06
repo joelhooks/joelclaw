@@ -81,6 +81,10 @@ import {
   getInitialSessionPressureAlertState,
 } from "./session-pressure";
 import * as telegramStream from "./telegram-stream";
+import {
+  getFallbackWatchdogGraceRemainingMs,
+  shouldTreatSessionAsDead,
+} from "./watchdog";
 
 // Initialize Langfuse tracing for inference routing (reads from env vars):
 // LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_HOST or LANGFUSE_BASE_URL.
@@ -326,6 +330,10 @@ function shouldForwardToTelegram(text: string): boolean {
 }
 
 const HUMAN_TURN_BATCH_WINDOW_MS = 1_500;
+const WATCHDOG_FALLBACK_ACTIVATION_GRACE_MS = Math.max(
+  30_000,
+  Number.parseInt(process.env.JOELCLAW_GATEWAY_FALLBACK_WATCHDOG_GRACE_MS ?? "120000", 10),
+);
 
 function getSourceKind(source: string | undefined): "channel" | "internal" | "unknown" {
   if (!source) return "unknown";
@@ -4950,7 +4958,19 @@ const watchdogTimer = setInterval(() => {
   const stuckMs = waitingForTurnEnd && !maintenanceActive && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
   const isStuck = stuckMs > STUCK_THRESHOLD_MS;
   const failures = getConsecutiveFailures();
-  const isDead = failures >= 3;
+  const fallbackGraceRemainingMs = getFallbackWatchdogGraceRemainingMs({
+    fallbackActive: fallbackController.state.active,
+    fallbackActiveSince: fallbackController.state.activeSince,
+    now,
+    fallbackGraceMs: WATCHDOG_FALLBACK_ACTIVATION_GRACE_MS,
+  });
+  const isDead = shouldTreatSessionAsDead({
+    consecutiveFailures: failures,
+    fallbackActive: fallbackController.state.active,
+    fallbackActiveSince: fallbackController.state.activeSince,
+    now,
+    fallbackGraceMs: WATCHDOG_FALLBACK_ACTIVATION_GRACE_MS,
+  });
   const recoveryPending = Boolean(stuckRecovery);
 
   if (stuckRecovery && now >= stuckRecovery.deadlineAt) {
@@ -4999,6 +5019,12 @@ const watchdogTimer = setInterval(() => {
         ? {
             recoveryPending: true,
             recoveryDeadlineInMs: Math.max(0, stuckRecovery.deadlineAt - now),
+          }
+        : {}),
+      ...(fallbackController.state.active && fallbackGraceRemainingMs > 0
+        ? {
+            fallbackActive: true,
+            fallbackGraceRemainingMs,
           }
         : {}),
     });
@@ -5087,7 +5113,19 @@ function getHealthStatus(): {
   const maintenanceActive = isGatewayMaintenanceActive();
   const stuckMs = waitingForTurnEnd && !maintenanceActive && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
   const failures = getConsecutiveFailures();
-  const isDead = failures >= 3;
+  const fallbackGraceRemainingMs = getFallbackWatchdogGraceRemainingMs({
+    fallbackActive: fallbackController.state.active,
+    fallbackActiveSince: fallbackController.state.activeSince,
+    now,
+    fallbackGraceMs: WATCHDOG_FALLBACK_ACTIVATION_GRACE_MS,
+  });
+  const isDead = shouldTreatSessionAsDead({
+    consecutiveFailures: failures,
+    fallbackActive: fallbackController.state.active,
+    fallbackActiveSince: fallbackController.state.activeSince,
+    now,
+    fallbackGraceMs: WATCHDOG_FALLBACK_ACTIVATION_GRACE_MS,
+  });
   const recoveryPending = Boolean(stuckRecovery);
   const recoveryDeadlineInMs = stuckRecovery
     ? Math.max(0, stuckRecovery.deadlineAt - now)
@@ -5144,6 +5182,7 @@ function getHealthStatus(): {
       maintenanceElapsedMs: activeGatewayMaintenance ? now - activeGatewayMaintenance.startedAt : undefined,
       stuckRecoveryPending: recoveryPending,
       stuckRecoveryDeadlineMs: recoveryDeadlineInMs,
+      fallbackGraceRemainingMs,
     },
     status,
   };

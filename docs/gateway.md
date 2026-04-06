@@ -401,6 +401,8 @@ Aborted-turn monitor guard: `message_end` with no text (especially `stopReason: 
 
 Fallback decision telemetry guard: fallback control now emits structured `model_fallback.decision` events alongside the coarse swap/probe actions. Activation reasons are bucketed (`timeout`, `consecutive_failures`, `rate_limit`, `provider_overloaded`, etc.), recovery probes record `probeCount`, and probe failures include `error_kind` plus `backoff_ms` so OTEL can tell the difference between a legitimately sick provider and a noisy control loop.
 
+Fallback watchdog grace guard: when ADR-0091 fallback has just activated, the watchdog now gives the swapped model a short grace window before declaring the session dead on the same consecutive-failure counter. This stops auth/provider failures from triggering `fallback activated` and `watchdog.session_dead` in the same breath, which previously restarted the daemon before fallback could earn a successful turn.
+
 Recovery probe backoff guard: when the primary model recovery probe fails for transient/persistent reasons, the gateway now backs off future probes instead of mindlessly retrying every interval. This borrows the OpenClaw pattern of “don’t keep probing the same sick provider in the same failure window” and cuts swap↔probe churn without disabling recovery entirely.
 
 No-op fallback guard: if primary and fallback resolve to the same model ID/provider, fallback swapping is disabled for that session (no `swapped`/`primary_restored` churn). The daemon emits `daemon.fallback:fallback.disabled.same_model` once at startup so operators can spot misconfiguration without alert spam.
