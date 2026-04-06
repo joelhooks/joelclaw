@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, extname } from "node:path";
+import { basename, extname, join } from "node:path";
 import { NonRetriableError } from "inngest";
 import { type BookChunkingResult, chunkBookText, renderChunkForEmbedding } from "../../lib/book-chunk";
 import { infer } from "../../lib/inference";
@@ -824,17 +824,51 @@ async function estimatePdfPageCount(path: string): Promise<number | null> {
   return null;
 }
 
+/**
+ * Resolve the accessible path for a file, trying NAS fallback if the original
+ * path is missing (e.g. aa-book already moved it from incoming/ to NAS).
+ */
+async function resolveAccessiblePath(requestedPath: string): Promise<string> {
+  try {
+    await access(requestedPath);
+    return requestedPath;
+  } catch {
+    // If the file isn't at the requested path, try common NAS locations.
+    // aa-book copies to /Volumes/three-body/books/YYYY/ then removes local.
+    const fileName = basename(requestedPath);
+    const year = new Date().getFullYear().toString();
+    const candidates = [
+      join(THREE_BODY_ROOT, "books", year, fileName),
+      join(THREE_BODY_ROOT, "books", fileName),
+      // Try previous year in case of Jan ingest of Dec download
+      join(THREE_BODY_ROOT, "books", (Number(year) - 1).toString(), fileName),
+    ];
+    for (const candidate of candidates) {
+      try {
+        await access(candidate);
+        return candidate;
+      } catch {
+        continue;
+      }
+    }
+    // Nothing found — throw with the original path for a clear error
+    throw new NonRetriableError(
+      `docs-ingest file not found at requested path or NAS fallbacks: ${requestedPath}`
+    );
+  }
+}
+
 export async function validateFile(input: {
   nasPath: string;
   title?: string;
   docId?: string;
 }): Promise<ValidatedFile> {
-  const nasPath = input.nasPath.trim();
-  if (!nasPath) {
+  const rawPath = input.nasPath.trim();
+  if (!rawPath) {
     throw new NonRetriableError("docs-ingest requires a non-empty nasPath or filePath");
   }
 
-  await access(nasPath);
+  const nasPath = await resolveAccessiblePath(rawPath);
   const fileStat = await stat(nasPath);
   if (!fileStat.isFile()) {
     throw new NonRetriableError(`docs-ingest path is not a file: ${nasPath}`);
@@ -1774,9 +1808,25 @@ export const docsIngest = inngest.createFunction(
       },
     ]);
 
-    await step.run("cleanup-text-artifact", async () => {
+    await step.run("cleanup-artifacts", async () => {
+      // Remove temp text extraction artifact
       await rm(extracted.textPath, { force: true }).catch(() => {});
-      return { removed: true };
+
+      // If the original event path was a local incoming/ file and the validated
+      // nasPath resolved to NAS, clean up the incoming copy — ingest owns the
+      // file lifecycle, not the acquisition tool (aa-book).
+      const originalPath = requestedNasPath;
+      let incomingCleaned = false;
+      if (
+        originalPath &&
+        originalPath !== validated.nasPath &&
+        !originalPath.startsWith(THREE_BODY_ROOT)
+      ) {
+        await rm(originalPath, { force: true }).catch(() => {});
+        incomingCleaned = true;
+      }
+
+      return { textRemoved: true, incomingCleaned, originalPath };
     });
 
     return {
