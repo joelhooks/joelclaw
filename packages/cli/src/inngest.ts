@@ -245,18 +245,27 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
 
       // fetch errors for failed steps
       const steps = flattenSpans(traceData.runTrace)
-      const errors: Record<string, any> = {}
-      for (const step of steps) {
-        if (step.status === "FAILED" && step.outputID) {
+      const failedSteps = steps.filter((step) => step.status === "FAILED" && step.outputID)
+      const errorEntries = yield* Effect.forEach(
+        failedSteps,
+        (step) => Effect.gen(function* () {
           try {
             const output = yield* gql(`{
               runTraceSpanOutputByID(outputID: "${step.outputID}") {
                 data error { message name stack }
               }
             }`, undefined, detailGqlOptions)
-            errors[step.name] = output.runTraceSpanOutputByID
-          } catch { /* ignore */ }
-        }
+            return [step.name, output.runTraceSpanOutputByID] as const
+          } catch {
+            return undefined
+          }
+        }),
+        { concurrency: 4 },
+      )
+      const errors: Record<string, any> = {}
+      for (const entry of errorEntries) {
+        if (!entry) continue
+        errors[entry[0]] = entry[1]
       }
 
       return {
