@@ -318,7 +318,8 @@ Do **not** mutate `main.db` without a point-in-time backup.
   2. `interesting` is a first-class escalation action (never silently archived)
   3. escalation notifications include direct Front deep links (`https://app.frontapp.com/open/<conversationId>`)
   4. `email-nag` runs on cron `0 17,22 * * *` (9am/2pm PST), leases `front_api_token`, and only nags for inbound-last conversations waiting `>4h`
-  5. nag digests are sorted oldest-first and delivered through `pushGatewayEvent`
+  5. Front list/search responses may return `_pagination.next: null`; the Front adapter must tolerate that shape and treat `unread: true` as Front's supported `is:unreplied` query instead of the invalid `is:unread` filter
+  6. nag digests are sorted oldest-first and delivered through `pushGatewayEvent`
 
 ### VIP email brief contract
 

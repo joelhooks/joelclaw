@@ -9,10 +9,8 @@ import {
   type Conversation,
   createFrontClient,
   type Draft,
-  type FrontClient,
   type Inbox,
   type Message,
-  paginate,
   type Recipient,
 } from "@skillrecordings/front-sdk";
 
@@ -131,6 +129,21 @@ function toDraft(d: Draft): EmailDraft {
   };
 }
 
+type FrontConversationListResponse = {
+  _results?: Conversation[];
+  _pagination?: {
+    next?: string | null;
+  } | null;
+};
+
+async function listFrontConversations(
+  front: ReturnType<typeof createFrontClient>,
+  path: string
+): Promise<Conversation[]> {
+  const result = await front.raw.get<FrontConversationListResponse>(path);
+  return Array.isArray(result?._results) ? result._results : [];
+}
+
 // ── Adapter ─────────────────────────────────────────────────────────
 
 export function createFrontAdapter(config: {
@@ -158,32 +171,23 @@ export function createFrontAdapter(config: {
     ): Promise<EmailConversation[]> {
       // Build Front search query
       const parts: string[] = [];
-      if (filter?.unread) parts.push("is:unread");
+      if (filter?.unread) parts.push("is:unreplied");
       if (filter?.status === "archived") parts.push("is:archived");
       if (filter?.status === "snoozed") parts.push("is:snoozed");
       if (filter?.tag) parts.push(`tag:"${filter.tag}"`);
       if (filter?.query) parts.push(filter.query);
 
       const query = parts.length > 0 ? parts.join(" ") : undefined;
-      const limit = filter?.limit ?? 25;
+      const limit = Math.min(filter?.limit ?? 25, 100);
 
-      let conversations: Conversation[];
+      const conversations = query
+        ? await listFrontConversations(
+            front,
+            `/conversations/search/${encodeURIComponent(query)}?limit=${limit}`
+          )
+        : await listFrontConversations(front, `/inboxes/${inboxId}/conversations?limit=${limit}`);
 
-      if (query) {
-        // Use conversations.search for filtered queries
-        const result = await front.conversations.search(query);
-        conversations = result._results;
-      } else {
-        // Unfiltered — list inbox conversations
-        const result = await front.inboxes.listConversations(inboxId);
-        conversations = ((result as any)?._results ?? []) as Conversation[];
-      }
-
-      if (limit && conversations.length > limit) {
-        conversations = conversations.slice(0, limit);
-      }
-
-      return conversations.map(toConversation);
+      return conversations.slice(0, limit).map(toConversation);
     },
 
     async getConversation(conversationId: string) {
