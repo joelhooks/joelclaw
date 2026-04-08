@@ -89,6 +89,23 @@ describe("classifyOperatorSignal", () => {
 
     expect(decision.bucket).toBe("batched");
   });
+
+  test("suppresses low-signal recovered automation chatter", () => {
+    const decision = classifyOperatorSignal(
+      makeEvent({
+        type: "recovered",
+        source: "system-health",
+        payload: {
+          status: "recovered",
+          preview: "Agent Secrets daemon healthy",
+          prompt: "Agent Secrets daemon healthy",
+        },
+      }),
+    );
+
+    expect(decision.bucket).toBe("suppressed");
+    expect(decision.reason).toBe("suppressed.recovered-low-signal");
+  });
 });
 
 describe("isImmediateOperatorPriorityEvent", () => {

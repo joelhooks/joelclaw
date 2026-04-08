@@ -233,6 +233,18 @@ function isDegradationOrErrorEvent(event: OperatorRelayEvent): boolean {
     || type === "alert";
 }
 
+function isRecoveryEvent(event: OperatorRelayEvent): boolean {
+  const payload = event.payload ?? {};
+  if (payload.immediateTelegram === true) return false;
+
+  const type = event.type.trim().toLowerCase();
+  const status = normalizeText(payload.status).toLowerCase();
+  return type === "recovered"
+    || type.endsWith(".recovered")
+    || type.includes("recovered")
+    || status === "recovered";
+}
+
 function isAutomationSource(source: string): boolean {
   const normalized = source.trim().toLowerCase();
   return normalized.startsWith("inngest/") || normalized === "restate" || normalized.startsWith("restate/");
@@ -271,6 +283,10 @@ export function classifyOperatorSignal(
 
   if (event.type === "vip.email.received") {
     return { bucket: "ingested", reason: "ingested.vip-delivered-direct", score, summary, projectKeys, contactKeys, correlationKeys };
+  }
+
+  if (isRecoveryEvent(event) && score < 5) {
+    return { bucket: "suppressed", reason: "suppressed.recovered-low-signal", score, summary, projectKeys, contactKeys, correlationKeys };
   }
 
   if (score <= -2) {
