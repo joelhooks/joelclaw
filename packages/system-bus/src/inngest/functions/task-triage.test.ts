@@ -1,7 +1,26 @@
 import { describe, expect, test } from "bun:test";
+import type { Project, Task } from "../../tasks/port";
 import { __taskTriageTestUtils } from "./task-triage";
 
-const { parseTriageResult } = __taskTriageTestUtils;
+const { parseTriageResult, selectHumanFacingTasks } = __taskTriageTestUtils;
+
+const makeTask = (overrides: Partial<Task>): Task => ({
+  id: "task-1",
+  content: "Task",
+  priority: 1,
+  isRecurring: false,
+  completed: false,
+  labels: [],
+  url: "",
+  createdAt: new Date("2026-04-08T00:00:00.000Z"),
+  ...overrides,
+});
+
+const projects: Project[] = [
+  { id: "proj-human", name: "Joel's Tasks" },
+  { id: "proj-decision", name: "Questions for Joel" },
+  { id: "proj-machine", name: "Agent Work" },
+];
 
 describe("task triage output contract", () => {
   test("rejects non-json output", () => {
@@ -54,5 +73,34 @@ describe("task triage output contract", () => {
       expect(parsed.triage).toHaveLength(2);
       expect(parsed.insights).toEqual(["Task 1 should happen before task 2"]);
     }
+  });
+});
+
+describe("human-facing task selection", () => {
+  test("keeps Joel-facing and decision projects, excludes machine backlog", () => {
+    const selection = selectHumanFacingTasks(
+      [
+        makeTask({ id: "task-human", projectId: "proj-human", content: "Call the doctor" }),
+        makeTask({ id: "task-decision", projectId: "proj-decision", content: "Pick launch pricing" }),
+        makeTask({ id: "task-machine", projectId: "proj-machine", content: "Review memory proposal" }),
+      ],
+      projects,
+    );
+
+    expect(selection.visibleTasks.map((task) => task.id)).toEqual(["task-human", "task-decision"]);
+    expect(selection.excludedTasks.map((task) => task.id)).toEqual(["task-machine"]);
+  });
+
+  test("accepts direct project names when ids are unavailable", () => {
+    const selection = selectHumanFacingTasks(
+      [
+        makeTask({ id: "task-human", projectId: "Joel's Tasks", content: "Mail the form" }),
+        makeTask({ id: "task-machine", projectId: "Agent Work", content: "Investigate queue noise" }),
+      ],
+      [],
+    );
+
+    expect(selection.visibleTasks.map((task) => task.id)).toEqual(["task-human"]);
+    expect(selection.excludedTasks.map((task) => task.id)).toEqual(["task-machine"]);
   });
 });

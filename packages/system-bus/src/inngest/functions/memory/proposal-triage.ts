@@ -63,10 +63,37 @@ function isTodoistAuthFailure(message: string): boolean {
   );
 }
 
-function getReviewTaskProjects(): string[] {
+const HUMAN_FACING_PROJECTS = new Set(["joel's tasks", "questions for joel"]);
+
+type ReviewTaskProjectPlan = {
+  targets: string[];
+  blockedHumanFacingProjects: string[];
+};
+
+function normalizeProjectName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isHumanFacingProject(value: string): boolean {
+  return HUMAN_FACING_PROJECTS.has(normalizeProjectName(value));
+}
+
+function getReviewTaskProjectPlan(): ReviewTaskProjectPlan {
   const preferred = (process.env.MEMORY_REVIEW_TODOIST_PROJECT ?? "Agent Work").trim();
-  const fallback = (process.env.MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT ?? "Joel's Tasks").trim();
-  return Array.from(new Set([preferred, fallback].filter((value) => value.length > 0)));
+  const fallback = (process.env.MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT ?? "").trim();
+  const targets: string[] = [];
+  const blockedHumanFacingProjects: string[] = [];
+
+  for (const value of [preferred, fallback]) {
+    if (!value) continue;
+    if (isHumanFacingProject(value)) {
+      if (!blockedHumanFacingProjects.includes(value)) blockedHumanFacingProjects.push(value);
+      continue;
+    }
+    if (!targets.includes(value)) targets.push(value);
+  }
+
+  return { targets, blockedHumanFacingProjects };
 }
 
 type ReviewTaskOutcome = {
@@ -281,7 +308,7 @@ export const proposalTriage = inngest.createFunction(
           }
 
           const taskAdapter = new TodoistTaskAdapter();
-          const projectTargets = getReviewTaskProjects();
+          const { targets: projectTargets, blockedHumanFacingProjects } = getReviewTaskProjectPlan();
           const summary = proposal.change.replace(/\s+/gu, " ").trim().slice(0, 90);
           const source = proposal.source?.trim() || "unknown";
           const capturedAt = proposal.timestamp?.trim() || "unknown";
@@ -303,6 +330,54 @@ export const proposalTriage = inngest.createFunction(
             dueString: "today",
           };
           const failures: Array<{ projectId: string; message: string; authFailure: boolean }> = [];
+
+          if (projectTargets.length === 0) {
+            const message = blockedHumanFacingProjects.length > 0
+              ? `machine review task routing rejected human-facing projects: ${blockedHumanFacingProjects.join(", ")}`
+              : "no machine review task project configured";
+
+            await redis.hset(
+              hashKey(proposal.id),
+              "reviewTaskStatus",
+              "failed",
+              "reviewTaskId",
+              "",
+              "reviewTaskProjectId",
+              "",
+              "reviewTaskError",
+              message,
+              "reviewTaskLastAttemptAt",
+              new Date().toISOString(),
+            );
+
+            await emitOtelEvent({
+              level: "warn",
+              source: "worker",
+              component: "proposal-triage",
+              action: "proposal-triage.review-task.failed",
+              success: false,
+              error: message,
+              metadata: {
+                eventId,
+                proposalId: proposal.id,
+                authFailure: false,
+                attempts: 0,
+                attemptedProjects: [],
+                blockedHumanFacingProjects,
+              },
+            });
+
+            return {
+              attempted: false,
+              created: false,
+              taskId: null,
+              projectId: null,
+              projectFallbackUsed: false,
+              error: message,
+              authFailure: false,
+              attempts: 0,
+            } satisfies ReviewTaskOutcome;
+          }
 
           for (const [index, projectId] of projectTargets.entries()) {
             try {
@@ -397,6 +472,7 @@ export const proposalTriage = inngest.createFunction(
               authFailure,
               attempts: failures.length,
               attemptedProjects: projectTargets,
+              blockedHumanFacingProjects,
             },
           });
 

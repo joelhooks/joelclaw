@@ -267,7 +267,7 @@ describe("memory/proposal-triage review task reliability", () => {
         attempted: true,
         created: false,
         authFailure: true,
-        attempts: 2,
+        attempts: 1,
       },
     });
 
@@ -276,9 +276,8 @@ describe("memory/proposal-triage review task reliability", () => {
     });
     expect(reviewHash.reviewTaskError).toContain("HTTP 403");
 
-    expect(createTaskCalls).toHaveLength(2);
+    expect(createTaskCalls).toHaveLength(1);
     expect(createTaskCalls[0]?.projectId).toBe("Agent Work");
-    expect(createTaskCalls[1]?.projectId).toBe("Joel's Tasks");
 
     expect(sendEventCalls[0]).toMatchObject({
       name: "memory/proposal.triaged",
@@ -289,15 +288,17 @@ describe("memory/proposal-triage review task reliability", () => {
     });
   });
 
-  test("falls back to secondary project when primary project is forbidden", async () => {
+  test("falls back to secondary machine project when primary project is forbidden", async () => {
     const proposalId = "p-20260302-fallback";
     stageProposal({
       id: proposalId,
       section: "Patterns",
-      change: "Needs human review and should fall back to writable Todoist project.",
+      change: "Needs human review and should fall back to a writable machine project.",
       source: "reflect",
       timestamp: "2026-03-02T18:30:00.000Z",
     });
+
+    process.env.MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT = "Machine Queue";
 
     createTaskHandler = async (task) => {
       if (task.projectId === "Agent Work") {
@@ -333,7 +334,7 @@ describe("memory/proposal-triage review task reliability", () => {
         attempted: true,
         created: true,
         taskId: "mock-task-fallback",
-        projectId: "Joel's Tasks",
+        projectId: "Machine Queue",
         projectFallbackUsed: true,
         attempts: 2,
       },
@@ -341,13 +342,52 @@ describe("memory/proposal-triage review task reliability", () => {
 
     expect(createTaskCalls).toHaveLength(2);
     expect(createTaskCalls[0]?.projectId).toBe("Agent Work");
-    expect(createTaskCalls[1]?.projectId).toBe("Joel's Tasks");
+    expect(createTaskCalls[1]?.projectId).toBe("Machine Queue");
 
     expect(reviewHash).toMatchObject({
       reviewTaskStatus: "created",
       reviewTaskId: "mock-task-fallback",
-      reviewTaskProjectId: "Joel's Tasks",
+      reviewTaskProjectId: "Machine Queue",
     });
+  });
+
+  test("rejects human-facing fallback projects instead of spilling into Joel's Tasks", async () => {
+    const proposalId = "p-20260302-human-fallback-rejected";
+    stageProposal({
+      id: proposalId,
+      section: "Patterns",
+      change: "Needs human review but should not contaminate Joel-facing task views.",
+      source: "reflect",
+      timestamp: "2026-03-02T18:45:00.000Z",
+    });
+
+    createTaskHandler = async (task) => {
+      if (task.projectId === "Agent Work") {
+        throw new Error("todoist-cli add failed (1): {\"ok\":false,\"error\":\"add failed: HTTP 403: Forbidden\"}");
+      }
+
+      throw new Error(`unexpected fallback project ${task.projectId}`);
+    };
+
+    const { result } = await executeProposalTriage(proposalId);
+    const reviewHash = redisHashes.get(`memory:review:proposal:${proposalId}`) ?? {};
+
+    expect(result).toMatchObject({
+      proposalId,
+      action: "needs-review",
+      reviewTask: {
+        attempted: true,
+        created: false,
+        projectId: null,
+        projectFallbackUsed: false,
+        attempts: 1,
+      },
+    });
+
+    expect(createTaskCalls).toHaveLength(1);
+    expect(createTaskCalls[0]?.projectId).toBe("Agent Work");
+    expect(reviewHash.reviewTaskError).toContain("Agent Work");
+    expect(reviewHash.reviewTaskError).not.toContain("Joel's Tasks");
   });
 
   test("records created review task metadata when Todoist task succeeds", async () => {

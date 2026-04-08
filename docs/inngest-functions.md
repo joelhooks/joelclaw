@@ -293,11 +293,13 @@ Do **not** mutate `main.db` without a point-in-time backup.
 - function: `tasks/triage`
 - file: `packages/system-bus/src/inngest/functions/task-triage.ts`
 - behavior:
-  1. enforces strict JSON classification schema (`id`, `category`, `reason`) for every task ID
-  2. retries once with a repair prompt when output is invalid
-  3. returns `status: degraded` (not success) when classification remains invalid/null
-  4. sets cooldown only when a gateway notification is actually pushed
-  5. emits telemetry with `classificationValid`, `triageItemsCount`, `actionableCount`, and `outputFailureReason`
+  1. scopes review to the human-facing task surface only (`Joel's Tasks` + `Questions for Joel`) and excludes machine backlog by default
+  2. resolves Todoist project IDs to names before filtering so triage can work against real API payloads
+  3. enforces strict JSON classification schema (`id`, `category`, `reason`) for every visible task ID
+  4. retries once with a repair prompt when output is invalid
+  5. returns `status: degraded` (not success) when classification remains invalid/null
+  6. sets cooldown only when a gateway notification is actually pushed
+  7. emits telemetry with `classificationValid`, `triageItemsCount`, `actionableCount`, `outputFailureReason`, and excluded-task counts
 
 ### O11y triage singleton contract
 
@@ -398,11 +400,12 @@ Do **not** mutate `main.db` without a point-in-time backup.
   2. Todoist create failures (including `HTTP 403 Forbidden` auth issues) **must not fail the function run**
   3. for `needs-review`, the worker attempts project targets in order:
      - `MEMORY_REVIEW_TODOIST_PROJECT` (default `Agent Work`)
-     - `MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT` (default `Joel's Tasks`)
-  4. task-create outcomes are persisted on the proposal hash (`reviewTaskStatus`, `reviewTaskId`, `reviewTaskProjectId`, `reviewTaskError`, `reviewTaskLastAttemptAt`)
-  5. emits explicit task-create telemetry:
+     - `MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT` only if it resolves to another machine-facing project; human-facing projects are rejected
+  4. `Joel's Tasks` and `Questions for Joel` are blocked as machine-review fallback targets under ADR-0238
+  5. task-create outcomes are persisted on the proposal hash (`reviewTaskStatus`, `reviewTaskId`, `reviewTaskProjectId`, `reviewTaskError`, `reviewTaskLastAttemptAt`)
+  6. emits explicit task-create telemetry:
      - `proposal-triage.review-task.created` (includes `projectId`, `projectFallbackUsed`, `attempts`)
-     - `proposal-triage.review-task.failed` (includes attempted project list + attempts)
+     - `proposal-triage.review-task.failed` (includes attempted project list + any blocked human-facing projects)
 
 ### Content sync ADR frontmatter resilience
 

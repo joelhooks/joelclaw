@@ -1,7 +1,7 @@
 import { getRedisPort } from "../../lib/redis";
 
 /**
- * Task triage — Sonnet reviews ALL open tasks via TaskPort.
+ * Task triage — Sonnet reviews the human-facing Todoist surface via TaskPort.
  * ADR-0045: TaskPort hexagonal interface.
  * ADR-0062: Heartbeat-Driven Task Triage.
  *
@@ -15,7 +15,7 @@ import { infer } from "../../lib/inference";
 import { checkCircuit, recordFailure, recordSuccess } from "../../lib/inference-circuit";
 import { emitOtelEvent } from "../../observability/emit";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
-import type { Task } from "../../tasks/port";
+import type { Project, Task } from "../../tasks/port";
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
 
@@ -28,7 +28,7 @@ const TRIAGE_SYSTEM_PROMPT = `You review Todoist tasks for Joel Hooks' personal 
 
 The agent runs on a Mac Mini with access to: file system, git, CLI tools (todoist-cli, granola, slog, gog, etc), Inngest event bus, Redis, Typesense, Vault (Obsidian notes), web search, code execution (TypeScript/Python/Bash), GitHub API, email (Front + Gmail via EmailPort), SSH to NAS, Kubernetes cluster.
 
-Review ALL tasks — not just @agent labeled ones. Joel's entire task list is context for what matters.
+Review only the human-facing task surface provided to you. Machine backlog and system bookkeeping have already been filtered out upstream.
 
 For each task, classify into exactly one category:
 - agent-can-do-now: the agent can execute this immediately with available tools. Low risk, reversible, or clearly scoped. State what the agent would do.
@@ -151,7 +151,51 @@ function hashTasks(tasks: Task[]): string {
   return createHash("sha256").update(canonical).digest("hex");
 }
 
-function formatTaskForLLM(task: Task): string {
+const HUMAN_FACING_TASK_PROJECTS = new Set(["joel's tasks", "questions for joel"]);
+
+type HumanFacingTaskSelection = {
+  visibleTasks: Task[];
+  excludedTasks: Task[];
+  projectNames: Map<string, string>;
+};
+
+function normalizeProjectName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function buildProjectNameMap(projects: Project[]): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const project of projects) {
+    names.set(project.id, project.name);
+    names.set(project.name, project.name);
+  }
+  return names;
+}
+
+function resolveTaskProjectName(task: Task, projectNames: Map<string, string>): string | null {
+  const raw = task.projectId?.trim();
+  if (!raw) return null;
+  return projectNames.get(raw) ?? raw;
+}
+
+function selectHumanFacingTasks(tasks: Task[], projects: Project[]): HumanFacingTaskSelection {
+  const projectNames = buildProjectNameMap(projects);
+  const visibleTasks: Task[] = [];
+  const excludedTasks: Task[] = [];
+
+  for (const task of tasks) {
+    const projectName = resolveTaskProjectName(task, projectNames);
+    if (projectName && HUMAN_FACING_TASK_PROJECTS.has(normalizeProjectName(projectName))) {
+      visibleTasks.push(task);
+      continue;
+    }
+    excludedTasks.push(task);
+  }
+
+  return { visibleTasks, excludedTasks, projectNames };
+}
+
+function formatTaskForLLM(task: Task, projectNames: Map<string, string>): string {
   const parts = [
     `ID: ${task.id}`,
     `Content: ${task.content}`,
@@ -160,27 +204,38 @@ function formatTaskForLLM(task: Task): string {
   parts.push(`Priority: P${task.priority}`);
   if (task.labels.length) parts.push(`Labels: ${task.labels.join(", ")}`);
   if (task.dueString) parts.push(`Due: ${task.dueString}`);
-  if (task.projectId) parts.push(`Project: ${task.projectId}`);
+  const projectName = resolveTaskProjectName(task, projectNames);
+  if (projectName) parts.push(`Project: ${projectName}`);
   return parts.join("\n");
 }
 
 export const taskTriage = inngest.createFunction(
   {
     id: "tasks/triage",
-    name: "Task Triage — Sonnet reviews all open tasks via TaskPort",
+    name: "Task Triage — Sonnet reviews human-facing tasks via TaskPort",
     concurrency: { limit: 1 },
     retries: 1,
   },
   { event: "tasks/triage.requested" },
   async ({ step }) => {
-    // Step 1: Fetch ALL open tasks via TaskPort
-    const tasks = await (async (): Promise<Task[]> => {
+    // Step 1: Fetch open tasks, then scope to the human-facing task surface.
+    const selection = await (async (): Promise<HumanFacingTaskSelection> => {
       const adapter = new TodoistTaskAdapter();
-      return adapter.listTasks();
+      const [tasks, projects] = await Promise.all([adapter.listTasks(), adapter.listProjects()]);
+      return selectHumanFacingTasks(tasks, projects);
     })();
 
+    const tasks = selection.visibleTasks;
+    const totalTaskCount = selection.visibleTasks.length + selection.excludedTasks.length;
+    const excludedTaskCount = selection.excludedTasks.length;
+
     if (tasks.length === 0) {
-      return { status: "noop", reason: "no tasks" };
+      return {
+        status: "noop",
+        reason: totalTaskCount === 0 ? "no tasks" : "no human-facing tasks",
+        totalTaskCount,
+        excludedTaskCount,
+      };
     }
 
     // Step 2: Check if task list changed (content + labels, not just IDs)
@@ -192,7 +247,7 @@ export const taskTriage = inngest.createFunction(
     });
 
     if (!shouldTriage.changed) {
-      return { status: "noop", reason: "task list unchanged", taskCount: tasks.length };
+      return { status: "noop", reason: "task list unchanged", taskCount: tasks.length, totalTaskCount, excludedTaskCount };
     }
 
     // Step 3: Check cooldown
@@ -202,7 +257,7 @@ export const taskTriage = inngest.createFunction(
     });
 
     if (onCooldown) {
-      return { status: "noop", reason: "cooldown active (2h)", taskCount: tasks.length };
+      return { status: "noop", reason: "cooldown active (2h)", taskCount: tasks.length, totalTaskCount, excludedTaskCount };
     }
 
     // Step 4: Check inference circuit before Sonnet classification
@@ -219,17 +274,19 @@ export const taskTriage = inngest.createFunction(
         success: false,
         metadata: {
           taskCount: tasks.length,
+          totalTaskCount,
+          excludedTaskCount,
           circuitState: circuitState.state,
           circuitReason: circuitState.reason,
         },
       });
 
-      return { status: "degraded", reason: "circuit_open", circuitState };
+      return { status: "degraded", reason: "circuit_open", circuitState, taskCount: tasks.length, totalTaskCount, excludedTaskCount };
     }
 
-    // Step 5: Sonnet reviews ALL tasks with strict output contract
+    // Step 5: Sonnet reviews the human-facing task surface with strict output contract
     const triageResult = await step.run("sonnet-triage", async () => {
-      const taskBlocks = tasks.map(formatTaskForLLM);
+      const taskBlocks = tasks.map((task) => formatTaskForLLM(task, selection.projectNames));
       const expectedTaskIds = new Set(tasks.map((task) => task.id));
       const basePrompt = [
         `Review these ${tasks.length} tasks. Return one triage entry per task ID.`,
@@ -250,6 +307,8 @@ export const taskTriage = inngest.createFunction(
             requireTextOutput: true,
             metadata: {
               taskCount: tasks.length,
+              totalTaskCount,
+              excludedTaskCount,
               classificationStage: stage,
             },
           });
@@ -318,6 +377,8 @@ export const taskTriage = inngest.createFunction(
         success: false,
         metadata: {
           taskCount: tasks.length,
+          totalTaskCount,
+          excludedTaskCount,
           classificationValid: false,
           outputFailureReason: triageResult.failureReason,
           fallbackUsed: triageResult.fallbackUsed,
@@ -328,6 +389,8 @@ export const taskTriage = inngest.createFunction(
       return {
         status: "degraded",
         taskCount: tasks.length,
+        totalTaskCount,
+        excludedTaskCount,
         classificationValid: false,
         triageItemsCount: 0,
         actionableCount: 0,
@@ -367,12 +430,14 @@ export const taskTriage = inngest.createFunction(
           pushed: false,
           actionableCount: 0,
           totalTasks: rows.length,
+          totalOpenTasks: totalTaskCount,
+          excludedTaskCount,
           staleCount: 0,
           triageItemsCount: triageResult.triage.length,
         };
       }
 
-      const sections: string[] = [`## 📋 Task Review (${tasks.length} total)`, ""];
+      const sections: string[] = [`## 📋 Task Review (${tasks.length} human-facing, ${totalTaskCount} total open)`, ""];
 
       if (canDo.length > 0) {
         sections.push("**Ready to execute (say go):**");
@@ -421,6 +486,8 @@ export const taskTriage = inngest.createFunction(
         pushed: true,
         actionableCount: canDo.length + needsDecision.length,
         totalTasks: rows.length,
+        totalOpenTasks: totalTaskCount,
+        excludedTaskCount,
         staleCount: stale.length,
         triageItemsCount: triageResult.triage.length,
       };
@@ -434,6 +501,8 @@ export const taskTriage = inngest.createFunction(
       success: true,
       metadata: {
         taskCount: tasks.length,
+        totalTaskCount,
+        excludedTaskCount,
         classificationValid: true,
         triageItemsCount: result.triageItemsCount,
         actionableCount: result.actionableCount,
@@ -455,4 +524,5 @@ export const taskTriage = inngest.createFunction(
 
 export const __taskTriageTestUtils = {
   parseTriageResult,
+  selectHumanFacingTasks,
 };
