@@ -29,6 +29,33 @@ Three systems, one practice:
 - **Habits are anchored, not scheduled.** "After morning coffee → shoulder warm-up" not "Do exercises at 7am." The anchor is the trigger.
 - **Less is more.** A clean list with 5 clear next actions beats 50 vague intentions. Ruthlessly prune. If you haven't touched it in 2 weeks and it's not scheduled, it doesn't matter.
 
+## Task Surfaces (ADR-0238)
+
+Todoist is not one undifferentiated bucket.
+
+- **Human surface**: tasks Joel must personally do, review, or decide
+- **Decision surface**: explicit questions for Joel, not generic backlog
+- **Machine surface**: agent bookkeeping, infra follow-ups, memory review, and system chores
+
+Rules:
+
+- Default human home is **`Joel's Tasks`**
+- `Questions for Joel` is for actual decisions only, not a dumping ground
+- `Agent Work` is for machine-visible backlog when a task is still useful at all
+- **Do not create machine tasks in Joel-facing projects**
+- **Do not let machine-task creation fall back into Joel-facing projects just because another surface failed**
+- If the agent can do the work now, **do it instead of tasking it**
+
+Good human-facing tasks:
+- "Ask Kristina for post-op follow-up appointment date"
+- "Update Grzegorz on instructor chat progress"
+- "Choose between A and B for launch pricing"
+
+Bad human-facing tasks:
+- "Investigate gateway retry chatter"
+- "Review memory proposal p-20260306-030"
+- "Build log query tool for LiveKit integration" when the agent can already do the work
+
 ## Todoist Adapter
 
 ### Credentials
@@ -165,9 +192,11 @@ Present as a batch decision: "Inbox has 4 items. Here's my triage..."
 When actionable items emerge from other activities (transcribed photos, calendar events, project planning):
 
 1. Extract concrete next actions (verb-first, specific)
-2. Assign to the right project
-3. Add descriptions with context (ADR refs, links, acceptance criteria)
-4. Report what was created
+2. Decide the audience first: **human, decision, or machine**
+3. Only human/decision work goes into Joel-facing Todoist views
+4. Assign to the right project
+5. Add descriptions with context (ADR refs, links, acceptance criteria)
+6. Report what was created
 
 ### Weekly Review
 
@@ -194,11 +223,12 @@ Then:
 
 ### "Could the agent just do this?"
 
-Before creating a task, ask: **could joelclaw do this right now?** If yes, do it and create a completed task as a record. Tasks are for humans; agents execute.
+Before creating a task, ask: **could joelclaw do this right now?** If yes, do it. Do not create a machine chore in Joel's task list just to feel organized. Tasks are for humans; agents execute.
 
 - **Agent does it**: code changes, research, file operations, API calls, calendar updates
 - **Agent drafts, Joel reviews**: writing in Joel's voice, design decisions
 - **Joel only**: physical actions (shopping, exercise), phone calls, editorial taste
+- **Machine bookkeeping stays off Joel-facing surfaces**: memory review, infra babysitting, retry cleanup, agent backlog
 
 ## Fallback: Vault Checklists
 
@@ -230,6 +260,7 @@ When an ADR is `accepted` or `proposed`, its remaining work should exist as Todo
 - Things the agent can do right now (< 5 min) — just do them
 - Deferred ADRs — they'll get tasked when un-deferred
 - Vague research — time-box it first ("Spend 30 min on X" not "Research X")
+- Machine-only bookkeeping in Joel-facing projects — route it to `Agent Work` or keep it out of Todoist entirely
 
 ## Anti-Patterns
 
@@ -238,6 +269,7 @@ When an ADR is `accepted` or `proposed`, its remaining work should exist as Todo
 - **Don't over-organize** — labels and sections add friction. Keep it flat until complexity demands structure.
 - **Don't duplicate** — check existing tasks before creating. Use `todoist-cli list --filter` to search.
 - **Don't put agent context in task titles** — keep titles human-readable. Put ADR refs and technical details in the description.
+- **Don't contaminate Joel-facing views with machine sludge** — if Joel does not need to see it, it does not belong there.
 
 ## Credits
 
