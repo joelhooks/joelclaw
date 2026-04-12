@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.joelclaw.agent-mail</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/joel/.local/bin/uv</string>
+        <string>run</string>
+        <string>python</string>
+        <string>-c</string>
+        <string>from mcp_agent_mail.cli import app; app()</string>
+        <string>--</string>
+        <string>serve-http</string>
+        <string>--port</string>
+        <string>8765</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/joel/Code/Dicklesworthstone/mcp_agent_mail</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/joel</string>
+        <key>PATH</key>
+        <string>/Users/joel/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/joel/.joelclaw/logs/agent-mail.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/joel/.joelclaw/logs/agent-mail.stderr.log</string>
+</dict>
+</plist>

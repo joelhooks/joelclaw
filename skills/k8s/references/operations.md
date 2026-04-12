@@ -140,7 +140,25 @@ kubectl taint nodes joelclaw-controlplane-1 node-role.kubernetes.io/control-plan
 
 Colima starts via launchd (`com.joel.colima`). Wait ~60s for full stack: VM → Docker → Talos → k8s → pods. Worker auto-starts via `com.joel.system-bus-worker`.
 
-**Resource invariant first:** the stable Colima profile is `cpu: 8`, `memory: 16` (see `~/.colima/default/colima.yaml`). If the profile drifts down to `4/8`, Docker can refuse to restart `joelclaw-controlplane-1` with `range of CPUs is from 0.01 to 4.00`, leaving the whole cluster down after reboot.
+**Resource invariant first:** the stable Colima profile is `cpu: 8`, `memory: 16` (see `~/.colima/default/colima.yaml`). If the profile drifts down to `4/8`, Docker can refuse to restart `joelclaw-controlplane-1` with `range of CPUs is from 0.01 to 4.00`, leaving the whole cluster down after reboot. The repo-managed `infra/launchd/com.joel.colima.plist` must stay aligned at `8 / 16 / 100` so boot automation does not reintroduce the drift.
+
+**Headless bridge (ADR-0239):** if Panda reboots without an Aqua login, install the system bridge once:
+
+```bash
+sudo ~/Code/joelhooks/joelclaw/infra/install-headless-bootstrap.sh
+```
+
+That installs `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist`, which temporarily bootstraps these critical repo-managed launch agents into `user/$UID` while `gui/$UID` is absent:
+
+- `com.joel.colima`
+- `com.joel.k8s-reboot-heal`
+- `com.joel.agent-secrets`
+- `com.joel.system-bus-worker`
+- `com.joel.gateway`
+- `com.joel.typesense-portforward`
+- `com.joelclaw.agent-mail`
+
+When the GUI domain returns, the bridge boots those temporary `user/$UID` jobs back out so normal GUI ownership can resume without duplicate processes.
 
 **⚠️ launchd PATH requirement**: The Colima plist MUST include `EnvironmentVariables` with `PATH` containing `/opt/homebrew/bin`. Colima internally shells to `limactl` which is a Homebrew formula. Without this, launchd recovery silently fails (Feb 2026 incident: 6 days of silent failures). Same applies to `k8s-reboot-heal.sh` — it exports PATH at the top as belt-and-suspenders.
 
@@ -209,8 +227,9 @@ Expected inspect output: `unless-stopped`.
 Add a periodic local healer to recover common reboot races (Colima stopped, Talos stopped, taint restored, flannel unhealthy):
 
 ```bash
-cp ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.k8s-reboot-heal.plist \
-  ~/Library/LaunchAgents/
+ln -sfn ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.k8s-reboot-heal.plist \
+  ~/Library/LaunchAgents/com.joel.k8s-reboot-heal.plist
+launchctl unload -w ~/Library/LaunchAgents/com.joel.k8s-reboot-heal.plist 2>/dev/null || true
 launchctl load -w ~/Library/LaunchAgents/com.joel.k8s-reboot-heal.plist
 ```
 
@@ -220,8 +239,8 @@ Logs: `~/.local/log/k8s-reboot-heal.log`
 Also set Colima launch agent to retry every 5 minutes after login:
 
 ```bash
-cp ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.colima.plist \
-  ~/Library/LaunchAgents/
+ln -sfn ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.colima.plist \
+  ~/Library/LaunchAgents/com.joel.colima.plist
 launchctl unload -w ~/Library/LaunchAgents/com.joel.colima.plist 2>/dev/null || true
 launchctl load -w ~/Library/LaunchAgents/com.joel.colima.plist
 ```

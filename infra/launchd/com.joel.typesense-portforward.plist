@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.joel.typesense-portforward</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/kubectl</string>
+        <string>port-forward</string>
+        <string>-n</string>
+        <string>joelclaw</string>
+        <string>svc/typesense</string>
+        <string>8108:8108</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/joel</string>
+        <key>KUBECONFIG</key>
+        <string>/Users/joel/.kube/config</string>
+        <key>PATH</key>
+        <string>/Users/joel/.local/bin:/Users/joel/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/joelclaw/typesense-portforward.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/joelclaw/typesense-portforward.log</string>
+</dict>
+</plist>

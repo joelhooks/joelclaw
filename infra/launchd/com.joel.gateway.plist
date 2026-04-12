@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Comment</key>
+    <string>joelclaw gateway daemon — embedded pi session with Redis + channel routing (ADR-0038)</string>
+
+    <key>Label</key>
+    <string>com.joel.gateway</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/joel/.joelclaw/scripts/gateway-start.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/joel/Code/joelhooks/joelclaw</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/joel</string>
+        <key>PATH</key>
+        <string>/Users/joel/.local/bin:/Users/joel/.bun/bin:/Users/joel/.local/share/fnm/aliases/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>TELEGRAM_POLL_LEASE_ENABLED</key>
+        <string>0</string>
+        <key>SLOG_SESSION_ID</key>
+        <string>gateway</string>
+        <key>SLOG_SYSTEM_ID</key>
+        <string>panda</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/joelclaw/gateway.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/joelclaw/gateway.err</string>
+</dict>
+</plist>

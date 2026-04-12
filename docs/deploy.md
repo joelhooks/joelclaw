@@ -125,9 +125,18 @@ kubectl cp infra/firecracker/snapshots/. \
 Host launchd assets that are part of joelclaw runtime behavior belong in `infra/launchd/`, not as hand-edited one-offs under `~/Library/LaunchAgents`.
 
 Current canonical examples include:
+- `infra/launchd/com.joel.colima.plist`
+- `infra/launchd/com.joel.k8s-reboot-heal.plist`
+- `infra/launchd/com.joel.agent-secrets.plist`
 - `infra/launchd/com.joel.system-bus-worker.plist`
+- `infra/launchd/com.joel.gateway.plist`
+- `infra/launchd/com.joel.typesense-portforward.plist`
+- `infra/launchd/com.joelclaw.agent-mail.plist`
 - `infra/launchd/com.joel.content-sync-watcher.plist`
 - `infra/launchd/com.joel.local-sandbox-janitor.plist`
+
+System-only headless bridge asset:
+- `infra/launchd/com.joel.headless-bootstrap.plist`
 
 Historical rollback/debug asset:
 - `infra/launchd/com.joel.restate-worker.plist`
@@ -165,6 +174,22 @@ launchctl print gui/$(id -u)/com.joel.local-sandbox-janitor
 ```
 
 This service runs `scripts/local-sandbox-janitor.sh`, which calls `joelclaw workload sandboxes janitor` at load and every 30 minutes. It is the scheduled cleanup layer for ADR-0221 retained local sandboxes; bounded manual cleanup still goes through `joelclaw workload sandboxes cleanup ...`.
+
+### Headless reboot bridge (ADR-0239)
+
+Critical services that must survive a reboot without an Aqua login now have a repo-tracked bridge install:
+
+```bash
+sudo ~/Code/joelhooks/joelclaw/infra/install-headless-bootstrap.sh
+```
+
+What it does:
+- symlinks critical user launch agents in `~/Library/LaunchAgents/` back to repo-managed sources in `infra/launchd/`
+- installs `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist`
+- bootstraps the system bridge, which temporarily loads critical services into `user/$UID` whenever `gui/$UID` is absent
+- boots those temporary `user/$UID` services back out once a normal GUI session exists again
+
+This closes the reboot gap that previously forced manual `nohup` recovery for `colima`, `k8s-reboot-heal`, `agent-secrets`, `system-bus-worker`, `gateway`, `typesense-portforward`, and `agent-mail`.
 
 ## Dkron phase-1 scheduler (ADR-0216)
 
