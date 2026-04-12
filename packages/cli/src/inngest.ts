@@ -398,7 +398,11 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
         const proc = Bun.spawnSync(["kubectl", "get", "pods", "-n", "joelclaw", "--no-headers", "-o", "custom-columns=NAME:.metadata.name,STATUS:.status.phase,READY:.status.containerStatuses[0].ready"])
         const output = proc.stdout.toString().trim()
         const pods = output.split("\n").filter(Boolean)
-        const allRunning = pods.every(p => p.includes("Running") && p.includes("true"))
+        const activePods = pods.filter((line) => {
+          const [, status] = line.trim().split(/\s+/, 3)
+          return status !== "Succeeded" && status !== "Completed"
+        })
+        const allRunning = activePods.length > 0 && activePods.every(p => p.includes("Running") && p.includes("true"))
         checks.k8s = { ok: allRunning, detail: pods.join(" | ") }
       } catch {
         checks.k8s = { ok: false, detail: "kubectl not available or k3d cluster not running" }

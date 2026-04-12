@@ -11,8 +11,8 @@ Traffic path: `Mac:port → Lima SSH tunnel → Docker port map → Talos NodePo
 | 7881 | 7881 | 7881 | LiveKit WebRTC TCP | |
 | 8288 | 8288 | 8288 | Inngest HTTP | Dashboard + Event API |
 | 8289 | 8289 | 8289 | Inngest WS | Connect gateway (gRPC) |
-| 3111 | 3111 | 3111 | system-bus-worker | Inngest SDK serve endpoint |
 | 8108 | 8108 | 8108 | Typesense | Search + OTEL event storage |
+| 3111 | — | — | host system-bus worker | **Do not map through Talos.** `localhost:3111` is reserved for the host worker / worker-supervisor path. |
 | 9627 | **3000** | **3000** | Bluesky PDS | ⚠️ Asymmetric mapping |
 | 64784* | 6443 | — | k8s API | Auto-assigned by talosctl |
 | 64785* | 50000 | — | talosctl API | Auto-assigned by talosctl |
@@ -22,6 +22,8 @@ Traffic path: `Mac:port → Lima SSH tunnel → Docker port map → Talos NodePo
 NodePort must equal the Docker **container-side** port. Docker maps `hostPort:containerPort`. The Talos node receives traffic on `containerPort`, and NodePort listens on the node at that same value.
 
 For symmetric mappings (6379:6379), NodePort=6379 works. For PDS (9627:3000), NodePort must be 3000.
+
+**Important exception:** `3111` is no longer a Talos/Docker port mapping. The host worker is canonical on `localhost:3111`; leaving a stale `3111/tcp` Docker binding on `joelclaw-controlplane-1` will block the host worker and produce `Unable to reach SDK URL` failures in Inngest.
 
 ### Inspecting Docker Port Mappings
 
@@ -138,6 +140,8 @@ kubectl taint nodes joelclaw-controlplane-1 node-role.kubernetes.io/control-plan
 
 Colima starts via launchd (`com.joel.colima`). Wait ~60s for full stack: VM → Docker → Talos → k8s → pods. Worker auto-starts via `com.joel.system-bus-worker`.
 
+**Resource invariant first:** the stable Colima profile is `cpu: 8`, `memory: 16` (see `~/.colima/default/colima.yaml`). If the profile drifts down to `4/8`, Docker can refuse to restart `joelclaw-controlplane-1` with `range of CPUs is from 0.01 to 4.00`, leaving the whole cluster down after reboot.
+
 **⚠️ launchd PATH requirement**: The Colima plist MUST include `EnvironmentVariables` with `PATH` containing `/opt/homebrew/bin`. Colima internally shells to `limactl` which is a Homebrew formula. Without this, launchd recovery silently fails (Feb 2026 incident: 6 days of silent failures). Same applies to `k8s-reboot-heal.sh` — it exports PATH at the top as belt-and-suspenders.
 
 ```bash
@@ -179,6 +183,15 @@ For stale `Unknown` workloads in `joelclaw`, delete the pod and let the controll
 ```bash
 kubectl delete pod -n joelclaw <pod-name> --force --grace-period=0
 ```
+
+If the host worker still won't come back after k8s is healthy, inspect the Talos container port map and remove any stale `3111/tcp` binding:
+
+```bash
+DOCKER_HOST=unix:///Users/joel/.colima/default/docker.sock \
+  docker inspect joelclaw-controlplane-1 --format '{{json .HostConfig.PortBindings}}' | python3 -m json.tool
+```
+
+If `3111/tcp` is present, remove it with the same hostconfig/config.v2 edit flow used for hot port changes, then restart Docker + the Talos container. `localhost:3111` must be free before `worker-supervisor` can bind.
 
 ### Reboot Hardening
 

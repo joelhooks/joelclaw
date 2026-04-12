@@ -72,6 +72,7 @@ Semantics:
   - if direct worker endpoint probe fails but `deployment/system-bus-worker` is ready, worker is reported as healthy with `summary.route = "k8s-only"`
 - k8s truth uses core workload readiness (not every pod phase):
   - `statefulset/inngest`, `statefulset/redis`, `statefulset/typesense`, `deployment/system-bus-worker`
+- the lightweight `joelclaw status` pod summary now ignores terminal `Succeeded` / `Completed` pods from old ReplicaSets so reboot rollouts don't stay falsely red after replacement pods are healthy.
 - includes Talon watchdog health (`http://127.0.0.1:9999/health`) plus launchd state to guide escalation.
 
 `--heal` performs targeted remediation before re-check:

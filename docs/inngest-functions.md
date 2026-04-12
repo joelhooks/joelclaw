@@ -200,6 +200,11 @@ After changing host-role functions in the monorepo:
 2. re-register functions: `curl -X PUT http://127.0.0.1:3111/api/inngest`
 3. verify with `joelclaw inngest status` or a targeted synthetic event
 
+Reboot recovery gotchas that bit for real:
+
+- `localhost:3111` belongs to the **host worker**, not the Talos container. If `docker inspect joelclaw-controlplane-1` still shows a stale `3111/tcp` port binding while `k8s/system-bus-worker.yaml` is `ClusterIP`, remove that Docker binding or the host worker cannot bind and Inngest runs fail with `Unable to reach SDK URL`.
+- If the reboot lands in a headless/non-Aqua session and the `com.joel.system-bus-worker` LaunchAgent is unavailable, start `worker-supervisor` manually with the launchd env (`HOME`, `PATH`, `VAULT_PATH`, `WORKER_ROLE=host`, `INNGEST_DEV=0`) until the normal GUI launchd domain is back.
+
 Do not rely on stale instructions about a separate `~/Code/system-bus-worker/` checkout unless the launchd plist/supervisor config has been deliberately changed back to that topology.
 
 ### Host worker startup preflight + supervisor OTEL
