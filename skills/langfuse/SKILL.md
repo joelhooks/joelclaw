@@ -77,6 +77,8 @@ Langfuse creds in `agent-secrets`:
 
 Gateway gets them via `gateway-start.sh` env exports. System-bus resolves via env → `secrets lease` fallback.
 
+**Gotcha:** `secrets lease` prints a JSON error envelope to stdout and still exits `0` when the daemon is unavailable. Any Langfuse loader that shells to `secrets` must either use `--json` and read `result.value`, or explicitly reject `ok:false` JSON payloads. Never trust raw stdout as a base URL or credential.
+
 ## Trace Conventions
 
 ### Naming

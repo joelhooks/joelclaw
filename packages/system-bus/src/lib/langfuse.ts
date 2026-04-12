@@ -69,9 +69,42 @@ function readShellText(value: unknown): string {
   return String(value);
 }
 
+function parseSecretLeaseOutput(output: string): string | undefined {
+  const trimmed = output.trim();
+  if (!trimmed) return undefined;
+
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        ok?: boolean;
+        result?: { value?: unknown };
+      };
+      if (parsed.ok !== true || typeof parsed.result?.value !== "string") return undefined;
+      const value = parsed.result.value.trim();
+      return value.length > 0 ? value : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  return trimmed;
+}
+
+function sanitizeBaseUrl(value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return "https://cloud.langfuse.com";
+
+  try {
+    const url = new URL(trimmed);
+    return url.toString().replace(/\/$/u, "");
+  } catch {
+    return "https://cloud.langfuse.com";
+  }
+}
+
 function loadSecret(name: string): string | undefined {
   try {
-    const proc = Bun.spawnSync(["secrets", "lease", name, "--ttl", SECRET_TTL], {
+    const proc = Bun.spawnSync(["secrets", "lease", name, "--ttl", SECRET_TTL, "--json"], {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -79,9 +112,8 @@ function loadSecret(name: string): string | undefined {
       env: { ...process.env, TERM: "dumb" },
     });
 
-    if (proc.exitCode !== 0) return undefined;
-    const value = readShellText(proc.stdout).trim();
-    return value.length > 0 ? value : undefined;
+    const value = parseSecretLeaseOutput(readShellText(proc.stdout));
+    return value && value.length > 0 ? value : undefined;
   } catch {
     return undefined;
   }
@@ -90,9 +122,10 @@ function loadSecret(name: string): string | undefined {
 function resolveLangfuseConfig(): { publicKey: string; secretKey: string; baseUrl: string } | null {
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY?.trim() || loadSecret("langfuse_public_key");
   const secretKey = process.env.LANGFUSE_SECRET_KEY?.trim() || loadSecret("langfuse_secret_key");
-  const baseUrl = process.env.LANGFUSE_BASE_URL?.trim()
-    || loadSecret("langfuse_base_url")
-    || "https://cloud.langfuse.com";
+  const baseUrl = sanitizeBaseUrl(
+    process.env.LANGFUSE_BASE_URL?.trim()
+      || loadSecret("langfuse_base_url"),
+  );
 
   if (!publicKey || !secretKey) return null;
 

@@ -78,13 +78,41 @@ function compact(value: string, max = 180): string {
 }
 
 function sanitizeBaseUrl(value: string | undefined): string {
-  if (!value) return DEFAULT_BASE_URL
-  return value.trim().replace(/\/$/u, "")
+  const trimmed = value?.trim()
+  if (!trimmed) return DEFAULT_BASE_URL
+
+  try {
+    const url = new URL(trimmed)
+    return url.toString().replace(/\/$/u, "")
+  } catch {
+    return DEFAULT_BASE_URL
+  }
+}
+
+function parseSecretLeaseOutput(output: string): string | undefined {
+  const trimmed = output.trim()
+  if (!trimmed) return undefined
+
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        ok?: boolean
+        result?: { value?: unknown }
+      }
+      if (parsed.ok !== true || typeof parsed.result?.value !== "string") return undefined
+      const value = parsed.result.value.trim()
+      return value.length > 0 ? value : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  return trimmed
 }
 
 function leaseSecret(name: string): string | undefined {
   try {
-    const proc = Bun.spawnSync(["secrets", "lease", name, "--ttl", SECRET_TTL], {
+    const proc = Bun.spawnSync(["secrets", "lease", name, "--ttl", SECRET_TTL, "--json"], {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -92,9 +120,8 @@ function leaseSecret(name: string): string | undefined {
       env: { ...process.env, TERM: "dumb" },
     })
 
-    if (proc.exitCode !== 0) return undefined
-    const value = readShellText(proc.stdout).trim()
-    return value.length > 0 ? value : undefined
+    const value = parseSecretLeaseOutput(readShellText(proc.stdout))
+    return value && value.length > 0 ? value : undefined
   } catch {
     return undefined
   }
