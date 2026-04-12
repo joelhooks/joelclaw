@@ -5,15 +5,26 @@
     <key>Label</key>
     <string>com.joel.typesense-portforward</string>
 
+    <key>UserName</key>
+    <string>joel</string>
+
+    <key>GroupName</key>
+    <string>staff</string>
+
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/kubectl</string>
         <string>port-forward</string>
+        <string>--context</string>
+        <string>admin@joelclaw-1</string>
         <string>-n</string>
         <string>joelclaw</string>
         <string>svc/typesense</string>
         <string>8108:8108</string>
     </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/joel/Code/joelhooks/joelclaw</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -30,6 +41,9 @@
 
     <key>KeepAlive</key>
     <true/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
 
     <key>ThrottleInterval</key>
     <integer>10</integer>

@@ -122,9 +122,12 @@ kubectl cp infra/firecracker/snapshots/. \
 
 ## Canonical launchd sources
 
-Host launchd assets that are part of joelclaw runtime behavior belong in `infra/launchd/`, not as hand-edited one-offs under `~/Library/LaunchAgents`.
+Host launchd assets that are part of joelclaw runtime behavior belong in `infra/launchd/`, not as hand-edited one-offs.
 
-Current canonical examples include:
+### Critical boot-safe system daemons (ADR-0240)
+
+These repo-managed plists are the canonical source for the host control plane and are installed into `/Library/LaunchDaemons/` by the root installer:
+
 - `infra/launchd/com.joel.colima.plist`
 - `infra/launchd/com.joel.k8s-reboot-heal.plist`
 - `infra/launchd/com.joel.agent-secrets.plist`
@@ -132,16 +135,46 @@ Current canonical examples include:
 - `infra/launchd/com.joel.gateway.plist`
 - `infra/launchd/com.joel.typesense-portforward.plist`
 - `infra/launchd/com.joelclaw.agent-mail.plist`
+
+Canonical installer:
+
+```bash
+sudo ~/Code/joelhooks/joelclaw/infra/install-critical-launchdaemons.sh
+```
+
+Compatibility alias (same behavior, kept so old recovery notes do not brick):
+
+```bash
+sudo ~/Code/joelhooks/joelclaw/infra/install-headless-bootstrap.sh
+```
+
+What the installer does:
+- copies the repo-managed plists into `/Library/LaunchDaemons/`
+- removes the old `~/Library/LaunchAgents/<label>.plist` copies for the critical labels
+- removes the superseded `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist` bridge
+- kills known manual `nohup` fallbacks from reboot recovery
+- bootstraps the critical services directly into the `system` launchd domain, using `UserName=joel` where the process should run as Joel
+
+This replaces the failed ADR-0239 bridge design. We no longer try to bounce LaunchAgents into `user/$UID` from a system daemon.
+
+Quick checks:
+
+```bash
+launchctl print system/com.joel.gateway | rg 'state =|pid =|last exit code'
+launchctl print system/com.joel.system-bus-worker | rg 'state =|pid =|last exit code'
+launchctl print system/com.joel.agent-secrets | rg 'state =|pid =|last exit code'
+launchctl print system/com.joel.typesense-portforward | rg 'state =|pid =|last exit code'
+launchctl print system/com.joelclaw.agent-mail | rg 'state =|pid =|last exit code'
+joelclaw status
+joelclaw gateway status
+```
+
+### User LaunchAgents still used for non-critical local surfaces
+
+Examples that still belong under `~/Library/LaunchAgents/` via repo symlink:
 - `infra/launchd/com.joel.content-sync-watcher.plist`
 - `infra/launchd/com.joel.local-sandbox-janitor.plist`
-
-System-only headless bridge asset:
-- `infra/launchd/com.joel.headless-bootstrap.plist`
-
-Historical rollback/debug asset:
-- `infra/launchd/com.joel.restate-worker.plist`
-
-When installing or repairing one of these services, prefer a symlink from `~/Library/LaunchAgents/<label>.plist` back to the repo source so launchd follows the git-tracked file.
+- historical rollback/debug asset: `infra/launchd/com.joel.restate-worker.plist`
 
 Historical fallback example for the Restate worker:
 
@@ -174,22 +207,6 @@ launchctl print gui/$(id -u)/com.joel.local-sandbox-janitor
 ```
 
 This service runs `scripts/local-sandbox-janitor.sh`, which calls `joelclaw workload sandboxes janitor` at load and every 30 minutes. It is the scheduled cleanup layer for ADR-0221 retained local sandboxes; bounded manual cleanup still goes through `joelclaw workload sandboxes cleanup ...`.
-
-### Headless reboot bridge (ADR-0239)
-
-Critical services that must survive a reboot without an Aqua login now have a repo-tracked bridge install:
-
-```bash
-sudo ~/Code/joelhooks/joelclaw/infra/install-headless-bootstrap.sh
-```
-
-What it does:
-- symlinks critical user launch agents in `~/Library/LaunchAgents/` back to repo-managed sources in `infra/launchd/`
-- installs `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist`
-- bootstraps the system bridge, which temporarily loads critical services into `user/$UID` whenever `gui/$UID` is absent
-- boots those temporary `user/$UID` services back out once a normal GUI session exists again
-
-This closes the reboot gap that previously forced manual `nohup` recovery for `colima`, `k8s-reboot-heal`, `agent-secrets`, `system-bus-worker`, `gateway`, `typesense-portforward`, and `agent-mail`.
 
 ## Dkron phase-1 scheduler (ADR-0216)
 

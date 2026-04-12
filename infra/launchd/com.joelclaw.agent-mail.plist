@@ -5,6 +5,12 @@
     <key>Label</key>
     <string>com.joelclaw.agent-mail</string>
 
+    <key>UserName</key>
+    <string>joel</string>
+
+    <key>GroupName</key>
+    <string>staff</string>
+
     <key>ProgramArguments</key>
     <array>
         <string>/Users/joel/.local/bin/uv</string>

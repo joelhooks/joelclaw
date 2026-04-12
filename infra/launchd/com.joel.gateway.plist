@@ -8,6 +8,12 @@
     <key>Label</key>
     <string>com.joel.gateway</string>
 
+    <key>UserName</key>
+    <string>joel</string>
+
+    <key>GroupName</key>
+    <string>staff</string>
+
     <key>ProgramArguments</key>
     <array>
         <string>/Users/joel/.joelclaw/scripts/gateway-start.sh</string>
@@ -35,6 +41,9 @@
 
     <key>KeepAlive</key>
     <true/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
 
     <key>ThrottleInterval</key>
     <integer>10</integer>

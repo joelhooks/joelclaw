@@ -142,13 +142,19 @@ Colima starts via launchd (`com.joel.colima`). Wait ~60s for full stack: VM → 
 
 **Resource invariant first:** the stable Colima profile is `cpu: 8`, `memory: 16` (see `~/.colima/default/colima.yaml`). If the profile drifts down to `4/8`, Docker can refuse to restart `joelclaw-controlplane-1` with `range of CPUs is from 0.01 to 4.00`, leaving the whole cluster down after reboot. The repo-managed `infra/launchd/com.joel.colima.plist` must stay aligned at `8 / 16 / 100` so boot automation does not reintroduce the drift.
 
-**Headless bridge (ADR-0239):** if Panda reboots without an Aqua login, install the system bridge once:
+**Boot-safe critical daemons (ADR-0240):** if Panda needs the host control plane to survive headless reboots, install the critical system daemons once:
+
+```bash
+sudo ~/Code/joelhooks/joelclaw/infra/install-critical-launchdaemons.sh
+```
+
+Compatibility alias if old notes still point at it:
 
 ```bash
 sudo ~/Code/joelhooks/joelclaw/infra/install-headless-bootstrap.sh
 ```
 
-That installs `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist`, which temporarily bootstraps these critical repo-managed launch agents into `user/$UID` while `gui/$UID` is absent:
+This installs the repo-managed plists directly into `/Library/LaunchDaemons/`, removes stale `~/Library/LaunchAgents` copies for the critical labels, deletes the superseded `com.joel.headless-bootstrap` bridge, kills known manual `nohup` fallbacks, and bootstraps these services in the `system` domain using `UserName=joel` where needed:
 
 - `com.joel.colima`
 - `com.joel.k8s-reboot-heal`
@@ -158,7 +164,7 @@ That installs `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist`, which 
 - `com.joel.typesense-portforward`
 - `com.joelclaw.agent-mail`
 
-When the GUI domain returns, the bridge boots those temporary `user/$UID` jobs back out so normal GUI ownership can resume without duplicate processes.
+Do **not** try to bootstrap user LaunchAgents into `user/$UID` from a system daemon anymore. That ADR-0239 bridge was not earned on Panda; `launchctl bootstrap user/501 ...` kept failing with `Input/output error`.
 
 **⚠️ launchd PATH requirement**: The Colima plist MUST include `EnvironmentVariables` with `PATH` containing `/opt/homebrew/bin`. Colima internally shells to `limactl` which is a Homebrew formula. Without this, launchd recovery silently fails (Feb 2026 incident: 6 days of silent failures). Same applies to `k8s-reboot-heal.sh` — it exports PATH at the top as belt-and-suspenders.
 

@@ -4,17 +4,42 @@
 <dict>
     <key>Label</key>
     <string>com.joel.k8s-reboot-heal</string>
+
+    <key>UserName</key>
+    <string>joel</string>
+
+    <key>GroupName</key>
+    <string>staff</string>
+
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
         <string>/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh</string>
     </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/joel/Code/joelhooks/joelclaw</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/joel</string>
+        <key>PATH</key>
+        <string>/Users/joel/.local/bin:/Users/joel/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
     <key>RunAtLoad</key>
     <true/>
+
     <key>StartInterval</key>
     <integer>180</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
     <key>StandardOutPath</key>
     <string>/Users/joel/.local/log/k8s-reboot-heal.log</string>
+
     <key>StandardErrorPath</key>
     <string>/Users/joel/.local/log/k8s-reboot-heal.err</string>
 </dict>
