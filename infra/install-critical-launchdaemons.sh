@@ -90,6 +90,7 @@ stop_manual_fallbacks() {
   pkill -f "${TARGET_HOME}/.joelclaw/scripts/gateway-start.sh" >/dev/null 2>&1 || true
   pkill -f 'svc/typesense 8108:8108' >/dev/null 2>&1 || true
   pkill -f "${TARGET_HOME}/.local/bin/secrets serve --socket ${TARGET_HOME}/.agent-secrets/agent-secrets.sock" >/dev/null 2>&1 || true
+  pkill -f "${REPO_ROOT}/infra/agent-mail-daemon.sh" >/dev/null 2>&1 || true
   pkill -f 'serve-http --port 8765' >/dev/null 2>&1 || true
 }
 

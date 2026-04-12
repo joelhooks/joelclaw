@@ -135,6 +135,7 @@ These repo-managed plists are the canonical source for the host control plane an
 - `infra/launchd/com.joel.gateway.plist`
 - `infra/launchd/com.joel.typesense-portforward.plist`
 - `infra/launchd/com.joelclaw.agent-mail.plist`
+- `infra/agent-mail-daemon.sh`
 
 Canonical installer:
 
@@ -154,6 +155,8 @@ What the installer does:
 - removes the superseded `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist` bridge
 - kills known manual `nohup` fallbacks from reboot recovery
 - bootstraps the critical services directly into the `system` launchd domain, using `UserName=joel` where the process should run as Joel
+
+Agent-mail note: `com.joelclaw.agent-mail` now goes through `infra/agent-mail-daemon.sh`, which resolves the joelclaw-managed `joelhooks/mcp_agent_mail` checkout instead of baking a third-party path into the plist. If the local checkout still lives under a legacy directory name, that is fine as long as the git `origin` remote is `joelhooks/mcp_agent_mail`.
 
 This replaces the failed ADR-0239 bridge design. We no longer try to bounce LaunchAgents into `user/$UID` from a system daemon.
 

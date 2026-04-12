@@ -13,24 +13,18 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/joel/.local/bin/uv</string>
-        <string>run</string>
-        <string>python</string>
-        <string>-c</string>
-        <string>from mcp_agent_mail.cli import app; app()</string>
-        <string>--</string>
-        <string>serve-http</string>
-        <string>--port</string>
-        <string>8765</string>
+        <string>/Users/joel/Code/joelhooks/joelclaw/infra/agent-mail-daemon.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/joel/Code/Dicklesworthstone/mcp_agent_mail</string>
+    <string>/Users/joel/Code/joelhooks/joelclaw</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
         <string>/Users/joel</string>
+        <key>AGENT_MAIL_PORT</key>
+        <string>8765</string>
         <key>PATH</key>
         <string>/Users/joel/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>

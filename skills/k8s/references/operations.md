@@ -164,6 +164,8 @@ This installs the repo-managed plists directly into `/Library/LaunchDaemons/`, r
 - `com.joel.typesense-portforward`
 - `com.joelclaw.agent-mail`
 
+`com.joelclaw.agent-mail` is launched via `infra/agent-mail-daemon.sh`, not by hardcoding the third-party checkout path into the plist. The daemon script expects the joelclaw-managed `joelhooks/mcp_agent_mail` fork; a legacy on-disk directory name is acceptable only if that checkout's `origin` remote points at `joelhooks/mcp_agent_mail`.
+
 Do **not** try to bootstrap user LaunchAgents into `user/$UID` from a system daemon anymore. That ADR-0239 bridge was not earned on Panda; `launchctl bootstrap user/501 ...` kept failing with `Input/output error`.
 
 **⚠️ launchd PATH requirement**: The Colima plist MUST include `EnvironmentVariables` with `PATH` containing `/opt/homebrew/bin`. Colima internally shells to `limactl` which is a Homebrew formula. Without this, launchd recovery silently fails (Feb 2026 incident: 6 days of silent failures). Same applies to `k8s-reboot-heal.sh` — it exports PATH at the top as belt-and-suspenders.
