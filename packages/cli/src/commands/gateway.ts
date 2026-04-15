@@ -832,150 +832,11 @@ const gatewayUnmute = Command.make(
 // ── gateway restart ─────────────────────────────────────────────────
 
 import { execSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
 
 const gatewayRestart = Command.make("restart", {}, () =>
   Effect.gen(function* () {
-    const LAUNCHD_LABEL = "com.joel.gateway"
-    const DAEMON_MATCH = "/Users/joel/Code/joelhooks/joelclaw/packages/gateway/src/daemon.ts"
-    const LAUNCHD_UID = process.getuid?.() ?? 0
-    const LAUNCHD_DOMAIN = `gui/${LAUNCHD_UID}`
-    const LAUNCHD_SERVICE = `${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}`
-    const PID_FILE = "/tmp/joelclaw/gateway.pid"
-    const LOG_FILE = "/tmp/joelclaw/gateway.log"
+    const launchd = inspectGatewayLaunchd()
     const MAX_RESTART_WAIT_SECONDS = 30
-
-    const readGatewayPidFile = (): string | null => {
-      try {
-        if (!existsSync(PID_FILE)) return null
-        const pid = readFileSync(PID_FILE, "utf-8").trim()
-        return /^\d+$/.test(pid) ? pid : null
-      } catch {
-        return null
-      }
-    }
-
-    const isPidAlive = (pid: string): boolean => {
-      try {
-        execSync(`kill -0 ${pid} 2>/dev/null`, { stdio: "pipe" })
-        return true
-      } catch {
-        return false
-      }
-    }
-
-    const findDaemonPid = (): string | null => {
-      try {
-        const pid = execSync(`pgrep -f '${DAEMON_MATCH}' | head -n 1`, {
-          encoding: "utf-8",
-          timeout: 2_000,
-          stdio: "pipe",
-        }).trim()
-        return /^\d+$/.test(pid) ? pid : null
-      } catch {
-        return null
-      }
-    }
-
-    const oldPid = readGatewayPidFile() ?? findDaemonPid()
-
-    // Clean stale Redis state (in case shutdown doesn't complete cleanly)
-    const redis = yield* makeRedis()
-    yield* Effect.tryPromise({
-      try: async () => {
-        await redis.srem("joelclaw:gateway:sessions", "gateway")
-        await redis.del("joelclaw:events:gateway")
-      },
-      catch: () => {},
-    })
-    yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
-
-    // Stop via launchctl (SIGTERM → graceful shutdown)
-    try {
-      execSync(`launchctl bootout ${LAUNCHD_DOMAIN} system/${LAUNCHD_LABEL} 2>/dev/null || launchctl stop ${LAUNCHD_LABEL}`, {
-        timeout: 10_000,
-        stdio: "pipe",
-      })
-    } catch {}
-
-    // Wait for old process to exit
-    let waited = 0
-    while (waited < 5000 && oldPid) {
-      if (!isPidAlive(oldPid)) {
-        break
-      }
-      yield* Effect.promise(() => new Promise(r => setTimeout(r, 500)))
-      waited += 500
-    }
-
-    // Re-enable + bootstrap + kickstart (KeepAlive ensures it comes back)
-    try {
-      execSync(`launchctl enable ${LAUNCHD_SERVICE}`, {
-        timeout: 5_000,
-        stdio: "pipe",
-      })
-    } catch {}
-
-    try {
-      execSync(`launchctl bootstrap ${LAUNCHD_DOMAIN} ~/Library/LaunchAgents/com.joel.gateway.plist 2>/dev/null || true`, {
-        timeout: 5_000,
-        stdio: "pipe",
-      })
-    } catch {}
-
-    try {
-      execSync(`launchctl kickstart -k ${LAUNCHD_SERVICE}`, {
-        timeout: 5_000,
-        stdio: "pipe",
-      })
-    } catch {}
-
-    // Wait for new PID (PID file can lag startup; fall back to pgrep)
-    let newPid: string | null = null
-    let attempts = 0
-    while (attempts < MAX_RESTART_WAIT_SECONDS) {
-      yield* Effect.promise(() => new Promise(r => setTimeout(r, 1000)))
-      attempts++
-      const pidCandidate = readGatewayPidFile() ?? findDaemonPid()
-      if (!pidCandidate) continue
-      if (oldPid && pidCandidate === oldPid && isPidAlive(pidCandidate)) continue
-      if (!isPidAlive(pidCandidate)) continue
-      newPid = pidCandidate
-      break
-    }
-
-    let logTail = ""
-    try {
-      logTail = execSync(`tail -5 ${LOG_FILE}`, { encoding: "utf-8", timeout: 3000 }).trim()
-    } catch {}
-
-    const ok = !!newPid && newPid !== oldPid
-
-    yield* Console.log(respond(
-      "gateway restart",
-      {
-        previousPid: oldPid,
-        newPid: newPid ?? "unknown",
-        restarted: ok,
-        waitedMs: attempts * 1000,
-        log: logTail.split("\n").slice(-3),
-      },
-      [
-        { command: "joelclaw gateway status", description: "Verify sessions registered" },
-        { command: "joelclaw gateway test", description: "Push test event to verify" },
-      ],
-      ok
-    ))
-  })
-).pipe(Command.withDescription("Restart daemon (kill, clean Redis, respawn)"))
-
-const gatewayEnable = Command.make("enable", {}, () =>
-  Effect.gen(function* () {
-    const LAUNCHD_LABEL = "com.joel.gateway"
-    const LAUNCHD_UID = process.getuid?.() ?? 0
-    const LAUNCHD_DOMAIN = `gui/${LAUNCHD_UID}`
-    const LAUNCHD_SERVICE = `${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}`
-    const PLIST_PATH = `${process.env.HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist`
 
     const runLaunchctl = (command: string, timeout = 5000): { ok: boolean; error?: string } => {
       try {
@@ -986,22 +847,173 @@ const gatewayEnable = Command.make("enable", {}, () =>
       }
     }
 
-    const enableResult = runLaunchctl(`launchctl enable ${LAUNCHD_SERVICE}`)
+    const oldPid = readGatewayPidFile() ?? launchd.pid ?? findGatewayDaemonPid()
 
-    const bootstrapResult = runLaunchctl(`launchctl bootstrap ${LAUNCHD_DOMAIN} ${PLIST_PATH}`)
-    const bootstrapAlreadyLoaded =
-      !bootstrapResult.ok
-      && /already loaded|in progress|service is disabled/iu.test(bootstrapResult.error ?? "")
+    const redis = yield* makeRedis()
+    yield* Effect.tryPromise({
+      try: async () => {
+        await redis.srem("joelclaw:gateway:sessions", "gateway")
+        await redis.del("joelclaw:events:gateway")
+      },
+      catch: () => {},
+    })
+    yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
 
-    const kickstartResult = runLaunchctl(`launchctl kickstart -k ${LAUNCHD_SERVICE}`)
+    if (oldPid) {
+      try {
+        execSync(`kill -TERM ${oldPid}`, {
+          timeout: 5_000,
+          stdio: "pipe",
+        })
+      } catch {
+        // best effort — launchctl kickstart below is the authoritative restart path
+      }
+    }
+
+    let waited = 0
+    while (waited < 5000 && oldPid) {
+      if (!isPidAlive(parseInt(oldPid, 10))) break
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 500)))
+      waited += 500
+    }
+
+    const warnings: string[] = []
+    const installerRequired =
+      launchd.domain === "system"
+      && !existsSync(launchd.plistPath)
+      && existsSync(GATEWAY_INSTALLER_PATH)
+
+    let enableResult = { ok: false as boolean, error: undefined as string | undefined }
+    let bootstrapResult = { ok: false as boolean, error: undefined as string | undefined }
+    let kickstartResult = { ok: false as boolean, error: undefined as string | undefined }
+    let bootstrapAlreadyLoaded = false
+
+    if (!installerRequired && !(launchd.domain === "system" && launchd.registered)) {
+      enableResult = runLaunchctl(`launchctl enable ${launchd.service}`)
+
+      if (existsSync(launchd.plistPath) && !launchd.registered) {
+        bootstrapResult = runLaunchctl(`launchctl bootstrap ${launchd.bootstrapTarget} ${launchd.plistPath}`)
+        bootstrapAlreadyLoaded =
+          !bootstrapResult.ok
+          && /already loaded|in progress|service is disabled/iu.test(bootstrapResult.error ?? "")
+      }
+
+      kickstartResult = runLaunchctl(`launchctl kickstart -k ${launchd.service}`)
+    } else if (installerRequired) {
+      warnings.push(
+        `gateway system daemon is not installed; run sudo ${GATEWAY_INSTALLER_PATH} to install ${GATEWAY_LAUNCHD_LABEL}`,
+      )
+    }
+
+    let newPid: string | null = null
+    let attempts = 0
+    while (attempts < MAX_RESTART_WAIT_SECONDS) {
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 1000)))
+      attempts++
+      const pidCandidate = readGatewayPidFile() ?? inspectGatewayLaunchd().pid ?? findGatewayDaemonPid()
+      if (!pidCandidate) continue
+      if (oldPid && pidCandidate === oldPid && isPidAlive(parseInt(pidCandidate, 10))) continue
+      if (!isPidAlive(parseInt(pidCandidate, 10))) continue
+      newPid = pidCandidate
+      break
+    }
+
+    const launchdAfter = inspectGatewayLaunchd()
+    let logTail = ""
+    try {
+      logTail = execSync(`tail -5 ${LOG_FILE}`, { encoding: "utf-8", timeout: 3000 }).trim()
+    } catch {}
+
+    if (!installerRequired && !(launchd.domain === "system" && launchd.registered) && !enableResult.ok) {
+      warnings.push(`launchctl enable failed: ${enableResult.error}`)
+    }
+    if (!installerRequired && !(launchd.domain === "system" && launchd.registered) && !bootstrapResult.ok && !bootstrapAlreadyLoaded && existsSync(launchd.plistPath) && !launchd.registered) {
+      warnings.push(`launchctl bootstrap failed: ${bootstrapResult.error}`)
+    }
+    if (!installerRequired && !(launchd.domain === "system" && launchd.registered) && !kickstartResult.ok) {
+      warnings.push(`launchctl kickstart failed: ${kickstartResult.error}`)
+    }
+    if (launchdAfter.disabled === true) warnings.push(`launchd service ${launchdAfter.service} still disabled after restart`)
+
+    const ok = !!newPid && launchdAfter.disabled !== true
+    const nextActions: NextAction[] = [
+      { command: "joelclaw gateway status", description: "Verify sessions registered" },
+      { command: "joelclaw gateway test", description: "Push test event to verify" },
+    ]
+    if (installerRequired) {
+      nextActions.push({
+        command: `sudo ${GATEWAY_INSTALLER_PATH}`,
+        description: "Install the boot-safe system daemon set (required for headless gateway startup)",
+      })
+    }
+
+    yield* Console.log(respond(
+      "gateway restart",
+      {
+        domain: launchd.domain,
+        service: launchd.service,
+        plistPath: launchd.plistPath,
+        previousPid: oldPid,
+        newPid: newPid ?? "unknown",
+        restarted: ok,
+        waitedMs: attempts * 1000,
+        actions: {
+          enable: enableResult.ok,
+          bootstrap: bootstrapResult.ok || bootstrapAlreadyLoaded,
+          kickstart: kickstartResult.ok,
+        },
+        log: logTail.split("\n").slice(-3),
+        ...(warnings.length > 0 ? { warnings } : {}),
+      },
+      nextActions,
+      ok,
+    ))
+  }),
+).pipe(Command.withDescription("Restart daemon (kill, clean Redis, respawn)"))
+
+const gatewayEnable = Command.make("enable", {}, () =>
+  Effect.gen(function* () {
+    const launchd = inspectGatewayLaunchd()
+
+    const runLaunchctl = (command: string, timeout = 5000): { ok: boolean; error?: string } => {
+      try {
+        execSync(command, { timeout, stdio: "pipe" })
+        return { ok: true }
+      } catch (error) {
+        return { ok: false, error: `${error}` }
+      }
+    }
+
+    const installerRequired =
+      launchd.domain === "system"
+      && !existsSync(launchd.plistPath)
+      && existsSync(GATEWAY_INSTALLER_PATH)
+
+    let enableResult = { ok: false as boolean, error: undefined as string | undefined }
+    let bootstrapResult = { ok: false as boolean, error: undefined as string | undefined }
+    let kickstartResult = { ok: false as boolean, error: undefined as string | undefined }
+    let bootstrapAlreadyLoaded = false
+
+    if (!installerRequired && !(launchd.domain === "system" && launchd.registered)) {
+      enableResult = runLaunchctl(`launchctl enable ${launchd.service}`)
+
+      if (existsSync(launchd.plistPath) && !launchd.registered) {
+        bootstrapResult = runLaunchctl(`launchctl bootstrap ${launchd.bootstrapTarget} ${launchd.plistPath}`)
+        bootstrapAlreadyLoaded =
+          !bootstrapResult.ok
+          && /already loaded|in progress|service is disabled/iu.test(bootstrapResult.error ?? "")
+      }
+
+      kickstartResult = runLaunchctl(`launchctl kickstart -k ${launchd.service}`)
+    }
 
     let pid: string | null = null
     let attempts = 0
     while (attempts < 20) {
       yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 500)))
       attempts++
-      const launchd = inspectGatewayLaunchd()
-      const pidCandidate = launchd.pid ?? findGatewayDaemonPid()
+      const launchdNow = inspectGatewayLaunchd()
+      const pidCandidate = launchdNow.pid ?? findGatewayDaemonPid()
       if (!pidCandidate) continue
       const parsedPid = Number.parseInt(pidCandidate, 10)
       if (!Number.isInteger(parsedPid) || !isPidAlive(parsedPid)) continue
@@ -1010,22 +1022,40 @@ const gatewayEnable = Command.make("enable", {}, () =>
     }
 
     const launchdAfter = inspectGatewayLaunchd()
-
     const warnings: string[] = []
-    if (!enableResult.ok) warnings.push(`launchctl enable failed: ${enableResult.error}`)
-    if (!bootstrapResult.ok && !bootstrapAlreadyLoaded) {
-      warnings.push(`launchctl bootstrap failed: ${bootstrapResult.error}`)
+    if (installerRequired) {
+      warnings.push(
+        `gateway system daemon is not installed; run sudo ${GATEWAY_INSTALLER_PATH} to install ${GATEWAY_LAUNCHD_LABEL}`,
+      )
+    } else if (!(launchd.domain === "system" && launchd.registered)) {
+      if (!enableResult.ok) warnings.push(`launchctl enable failed: ${enableResult.error}`)
+      if (!bootstrapResult.ok && !bootstrapAlreadyLoaded && existsSync(launchd.plistPath) && !launchd.registered) {
+        warnings.push(`launchctl bootstrap failed: ${bootstrapResult.error}`)
+      }
+      if (!kickstartResult.ok) warnings.push(`launchctl kickstart failed: ${kickstartResult.error}`)
     }
-    if (!kickstartResult.ok) warnings.push(`launchctl kickstart failed: ${kickstartResult.error}`)
-    if (launchdAfter.disabled === true) warnings.push("launchd service still disabled after enable")
+    if (launchdAfter.disabled === true) warnings.push(`launchd service ${launchdAfter.service} still disabled after enable`)
 
     const ok = launchdAfter.disabled !== true && !!pid
+    const nextActions: NextAction[] = [
+      { command: "joelclaw gateway status", description: "Verify gateway session registration" },
+      { command: "joelclaw gateway test", description: "Verify e2e event delivery" },
+      { command: "joelclaw gateway diagnose", description: "Run full diagnostic if still unhealthy" },
+    ]
+    if (installerRequired) {
+      nextActions.push({
+        command: `sudo ${GATEWAY_INSTALLER_PATH}`,
+        description: "Install the boot-safe system daemon set (required for headless gateway startup)",
+      })
+    }
 
     yield* Console.log(respond(
       "gateway enable",
       {
-        service: LAUNCHD_SERVICE,
-        enabled: launchdAfter.disabled === false,
+        domain: launchdAfter.domain,
+        service: launchdAfter.service,
+        plistPath: launchdAfter.plistPath,
+        enabled: launchdAfter.disabled !== true,
         registered: launchdAfter.registered,
         state: launchdAfter.state,
         pid,
@@ -1036,11 +1066,7 @@ const gatewayEnable = Command.make("enable", {}, () =>
         },
         ...(warnings.length > 0 ? { warnings } : {}),
       },
-      [
-        { command: "joelclaw gateway status", description: "Verify gateway session registration" },
-        { command: "joelclaw gateway test", description: "Verify e2e event delivery" },
-        { command: "joelclaw gateway diagnose", description: "Run full diagnostic if still unhealthy" },
-      ],
+      nextActions,
       ok,
     ))
   }),
@@ -1200,8 +1226,17 @@ const PID_FILE = "/tmp/joelclaw/gateway.pid"
 const SESSION_DIR = `${process.env.HOME}/.joelclaw/sessions/gateway`
 const GATEWAY_LAUNCHD_LABEL = "com.joel.gateway"
 const GATEWAY_DAEMON_MATCH = "/Users/joel/Code/joelhooks/joelclaw/packages/gateway/src/daemon.ts"
+const GATEWAY_SYSTEM_PLIST_PATH = `/Library/LaunchDaemons/${GATEWAY_LAUNCHD_LABEL}.plist`
+const GATEWAY_GUI_PLIST_PATH = `${process.env.HOME}/Library/LaunchAgents/${GATEWAY_LAUNCHD_LABEL}.plist`
+const GATEWAY_INSTALLER_PATH = `${process.env.HOME}/Code/joelhooks/joelclaw/infra/install-critical-launchdaemons.sh`
+
+type GatewayLaunchdDomain = "system" | "gui"
 
 type GatewayLaunchdSnapshot = {
+  domain: GatewayLaunchdDomain
+  bootstrapTarget: string
+  service: string
+  plistPath: string
   disabled: boolean | null
   registered: boolean
   pid: string | null
@@ -1214,6 +1249,16 @@ type DiagLayer = {
   status: "ok" | "degraded" | "failed" | "skipped"
   detail: string
   findings?: string[]
+}
+
+function readGatewayPidFile(): string | null {
+  try {
+    if (!existsSync(PID_FILE)) return null
+    const pid = readFileSync(PID_FILE, "utf-8").trim()
+    return /^\d+$/.test(pid) ? pid : null
+  } catch {
+    return null
+  }
 }
 
 const KNOWN_ERR_PATTERNS: Array<{ pattern: RegExp; label: string; severity: "error" | "warn" }> = [
@@ -1278,14 +1323,15 @@ function parseLaunchctlDisabled(raw: string, label: string): boolean | null {
   return match[1]?.toLowerCase() === "disabled"
 }
 
-function inspectGatewayLaunchd(): GatewayLaunchdSnapshot {
+function inspectGatewayLaunchdDomain(domain: GatewayLaunchdDomain): GatewayLaunchdSnapshot {
   const uid = process.getuid?.() ?? 0
-  const domain = `gui/${uid}`
-  const service = `${domain}/${GATEWAY_LAUNCHD_LABEL}`
+  const bootstrapTarget = domain === "system" ? "system" : `gui/${uid}`
+  const service = `${bootstrapTarget}/${GATEWAY_LAUNCHD_LABEL}`
+  const plistPath = domain === "system" ? GATEWAY_SYSTEM_PLIST_PATH : GATEWAY_GUI_PLIST_PATH
 
   let disabled: boolean | null = null
   try {
-    const output = execSync(`launchctl print-disabled ${domain} 2>/dev/null`, {
+    const output = execSync(`launchctl print-disabled ${bootstrapTarget} 2>/dev/null`, {
       encoding: "utf-8",
       timeout: 3000,
     })
@@ -1302,6 +1348,10 @@ function inspectGatewayLaunchd(): GatewayLaunchdSnapshot {
     const pidRaw = parseLaunchctlField(output, "pid")
 
     return {
+      domain,
+      bootstrapTarget,
+      service,
+      plistPath,
       disabled,
       registered: true,
       pid: pidRaw && /^\d+$/.test(pidRaw) ? pidRaw : null,
@@ -1310,6 +1360,10 @@ function inspectGatewayLaunchd(): GatewayLaunchdSnapshot {
     }
   } catch {
     return {
+      domain,
+      bootstrapTarget,
+      service,
+      plistPath,
       disabled,
       registered: false,
       pid: null,
@@ -1317,6 +1371,20 @@ function inspectGatewayLaunchd(): GatewayLaunchdSnapshot {
       lastExitCode: null,
     }
   }
+}
+
+function inspectGatewayLaunchd(): GatewayLaunchdSnapshot {
+  const systemSnapshot = inspectGatewayLaunchdDomain("system")
+  if (systemSnapshot.registered || existsSync(systemSnapshot.plistPath)) {
+    return systemSnapshot
+  }
+
+  const guiSnapshot = inspectGatewayLaunchdDomain("gui")
+  if (guiSnapshot.registered || guiSnapshot.disabled !== null || existsSync(guiSnapshot.plistPath)) {
+    return guiSnapshot
+  }
+
+  return systemSnapshot
 }
 
 function findGatewayDaemonPid(): string | null {

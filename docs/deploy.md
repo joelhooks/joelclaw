@@ -129,6 +129,7 @@ Host launchd assets that are part of joelclaw runtime behavior belong in `infra/
 These repo-managed plists are the canonical source for the host control plane and are installed into `/Library/LaunchDaemons/` by the root installer:
 
 - `infra/launchd/com.joel.colima.plist`
+- `infra/launchd/com.joel.colima-tunnel.plist`
 - `infra/launchd/com.joel.k8s-reboot-heal.plist`
 - `infra/launchd/com.joel.agent-secrets.plist`
 - `infra/launchd/com.joel.system-bus-worker.plist`
@@ -153,17 +154,20 @@ What the installer does:
 - copies the repo-managed plists into `/Library/LaunchDaemons/`
 - removes the old `~/Library/LaunchAgents/<label>.plist` copies for the critical labels
 - removes the superseded `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist` bridge
-- kills known manual `nohup` fallbacks from reboot recovery
+- kills known manual `nohup` and stale `autossh` colima-tunnel fallbacks from reboot recovery
 - bootstraps the critical services directly into the `system` launchd domain, using `UserName=joel` where the process should run as Joel
 
 Agent-mail note: `com.joelclaw.agent-mail` now goes through `infra/agent-mail-daemon.sh`, which resolves the joelclaw-managed `joelhooks/mcp_agent_mail` checkout instead of baking a third-party path into the plist. If the local checkout still lives under a legacy directory name, that is fine as long as the git `origin` remote is `joelhooks/mcp_agent_mail`.
 
 This replaces the failed ADR-0239 bridge design. We no longer try to bounce LaunchAgents into `user/$UID` from a system daemon.
 
+`com.joel.colima-tunnel` is now part of the boot-safe set because gateway, worker, and host diagnostics all depend on localhost Redis/Inngest forwards surviving a headless reboot. The canonical tunnel script lives at `infra/colima-tunnel.sh`; the legacy `~/.local/bin/colima-tunnel` path should be treated as a compatibility wrapper only. The script now waits on `colima status --json`, re-resolves the current SSH port on every start, kills stale ssh/autossh listeners on the ports it owns, and leaves `8108` and `6443` to their dedicated owners (`com.joel.typesense-portforward` and Caddy).
+
 Quick checks:
 
 ```bash
 launchctl print system/com.joel.gateway | rg 'state =|pid =|last exit code'
+launchctl print system/com.joel.colima-tunnel | rg 'state =|pid =|last exit code'
 launchctl print system/com.joel.system-bus-worker | rg 'state =|pid =|last exit code'
 launchctl print system/com.joel.agent-secrets | rg 'state =|pid =|last exit code'
 launchctl print system/com.joel.typesense-portforward | rg 'state =|pid =|last exit code'

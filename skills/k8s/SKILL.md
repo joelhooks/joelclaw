@@ -288,9 +288,20 @@ k8s pod → Talos container (10.5.0.x) → Docker NAT → Colima VM
 
 The LAN route is set in **two places** for reliability:
 1. **Colima provision script** (`~/.colima/default/colima.yaml`) — runs on `colima start` (cold boot)
-2. **colima-tunnel script** (`~/.local/bin/colima-tunnel`) — runs on tunnel restart (covers warm resume)
+2. **colima-tunnel script** (`~/Code/joelhooks/joelclaw/infra/colima-tunnel.sh`) — canonical tunnel script for warm resume; `~/.local/bin/colima-tunnel` is compatibility glue only
 
 Both execute: `ip route replace 192.168.1.0/24 via 192.168.64.1 dev col0`
+
+### Tunnel false-fail after reboot (2026-04-14)
+
+`com.joel.colima-tunnel` can look alive while being useless: if Colima reassigns its SSH port on reboot, a stale autossh process can keep localhost listeners on `6379` / `8288` and still forward to nowhere.
+
+Rules:
+- wait for Colima with `colima status --json`, not plain `colima status`
+- derive the SSH port from `colima ssh-config` every start
+- kill stale `ssh` / `autossh` listeners on the tunnel-owned ports before starting a fresh tunnel
+- leave `8108` to `com.joel.typesense-portforward`; the tunnel should not own Typesense anymore
+- leave `6443` to Caddy; the tunnel should not compete with the HTTPS proxy for that port
 
 ### Available PVs
 
@@ -447,12 +458,14 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 | `~/Code/joelhooks/joelclaw/k8s/dkron.yaml` | Dkron scheduler StatefulSet + services |
 | `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh` | Build/push/deploy system-bus worker to k8s |
 | `~/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh` | Reboot auto-heal script for Colima/Talos/taint/flannel |
+| `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.colima-tunnel.plist` | Boot-safe launchd wrapper for the Colima tunnel |
 | `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.k8s-reboot-heal.plist` | launchd timer for reboot auto-heal |
 | `~/Code/joelhooks/joelclaw/skills/k8s/references/operations.md` | Cluster operations + recovery notes |
 | `~/.talos/config` | Talos client config |
 | `~/.kube/config` | Kubeconfig (context: `admin@joelclaw-1`) |
 | `~/.colima/default/colima.yaml` | Colima VM config |
-| `~/.local/bin/colima-tunnel` | Persistent SSH tunnel + NAS route (launchd: `com.joel.colima-tunnel`) |
+| `~/Code/joelhooks/joelclaw/infra/colima-tunnel.sh` | Canonical persistent SSH tunnel + NAS route script |
+| `~/.local/bin/colima-tunnel` | Compatibility wrapper for the canonical tunnel script |
 | `~/.local/caddy/Caddyfile` | Caddy HTTPS proxy (Tailscale) |
 | `~/Code/joelhooks/joelclaw/k8s/nas-nvme-pv.yaml` | NAS NVMe NFS PV/PVC (1.5TB) |
 | `~/Code/joelhooks/joelclaw/k8s/nas-hdd-pv.yaml` | NAS HDD NFS PV/PVC (50TB) |
