@@ -161,7 +161,7 @@ Agent-mail note: `com.joelclaw.agent-mail` now goes through `infra/agent-mail-da
 
 This replaces the failed ADR-0239 bridge design. We no longer try to bounce LaunchAgents into `user/$UID` from a system daemon.
 
-`com.joel.colima-tunnel` is now part of the boot-safe set because gateway, worker, and host diagnostics all depend on localhost Redis/Inngest forwards surviving a headless reboot. The canonical tunnel script lives at `infra/colima-tunnel.sh`; the legacy `~/.local/bin/colima-tunnel` path should be treated as a compatibility wrapper only. The script now waits on `colima status --json`, re-resolves the current SSH port on every start, kills stale ssh/autossh listeners on the ports it owns, and leaves `8108` and `6443` to their dedicated owners (`com.joel.typesense-portforward` and Caddy).
+`com.joel.colima-tunnel` is now part of the boot-safe set because gateway, worker, and host diagnostics all depend on localhost Redis/Inngest forwards surviving a headless reboot. The canonical tunnel script lives at `infra/colima-tunnel.sh`; the legacy `~/.local/bin/colima-tunnel` path should be treated as a compatibility wrapper only. The script now waits on `colima status --json`, re-resolves the current SSH port on every start, kills stale ssh/autossh listeners on the ports it owns, and leaves `8108` and `6443` to their dedicated owners (`com.joel.typesense-portforward` and Caddy) instead of fighting them.
 
 Quick checks:
 

@@ -90,7 +90,6 @@ FORWARDS=(
   # NOTE: port 8108 is owned by the dedicated typesense port-forward daemon.
   "-L 3838:127.0.0.1:3838"   # docs-api
   "-L 6379:127.0.0.1:6379"   # Redis
-  "-L 6443:127.0.0.1:64784"  # k8s API
   "-L 7880:127.0.0.1:7880"   # LiveKit HTTP
   "-L 7881:127.0.0.1:7881"   # LiveKit TCP
   "-L 8288:127.0.0.1:8288"   # Inngest server

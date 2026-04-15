@@ -301,7 +301,7 @@ Rules:
 - derive the SSH port from `colima ssh-config` every start
 - kill stale `ssh` / `autossh` listeners on the tunnel-owned ports before starting a fresh tunnel
 - leave `8108` to `com.joel.typesense-portforward`; the tunnel should not own Typesense anymore
-- leave `6443` to Caddy; the tunnel should not compete with the HTTPS proxy for that port
+- leave `6443` to Caddy; the tunnel should not forward or compete for that port at all
 
 ### Available PVs
 
