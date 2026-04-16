@@ -32,6 +32,7 @@ recover-usernet options:
   --incident-id <id>
   --hypothesis-id <id>
   --restart-mode <none|start|force-cycle>
+  --verify-wait-secs <seconds>
   --reason <text>
 EOF
 }
@@ -413,11 +414,152 @@ PY
   emit_otel_payload "$otel_payload_file"
 }
 
-recover_usernet() {
+evaluate_usernet_recovery() {
   local incident_id="$1"
   local hypothesis_id="$2"
   local restart_mode="$3"
   local reason="$4"
+
+  local incident_dir="$ARTIFACT_ROOT/$incident_id"
+  local verdict_file="$incident_dir/recover-usernet-verdict.json"
+  local otel_payload_file="$incident_dir/recover-usernet-verdict.otel.json"
+
+  INCIDENT_ID="$incident_id" \
+  HYPOTHESIS_ID="$hypothesis_id" \
+  RESTART_MODE="$restart_mode" \
+  REASON="$reason" \
+  SESSION_ID="$SESSION_ID" \
+  SYSTEM_ID="$SYSTEM_ID" \
+  INCIDENT_DIR="$incident_dir" \
+  VERDICT_FILE="$verdict_file" \
+  OTEL_PAYLOAD_FILE="$otel_payload_file" \
+  python3 - <<'PY'
+import json
+import os
+import pathlib
+from datetime import datetime, timezone
+
+incident_dir = pathlib.Path(os.environ["INCIDENT_DIR"])
+incident_id = os.environ["INCIDENT_ID"]
+hypothesis_id = os.environ["HYPOTHESIS_ID"]
+restart_mode = os.environ["RESTART_MODE"]
+reason = os.environ.get("REASON", "")
+session_id = os.environ.get("SESSION_ID", "unknown")
+system_id = os.environ.get("SYSTEM_ID", "unknown")
+verdict_file = pathlib.Path(os.environ["VERDICT_FILE"])
+otel_payload_file = pathlib.Path(os.environ["OTEL_PAYLOAD_FILE"])
+pre = json.loads((incident_dir / "recover-usernet-pre.json").read_text())
+post = json.loads((incident_dir / "recover-usernet-post.json").read_text())
+
+pre_summary = pre.get("summary", {})
+post_summary = post.get("summary", {})
+pre_sockets = pre.get("sockets", {})
+post_sockets = post.get("sockets", {})
+
+critical_ports = ["6379", "8108", "8288", "64784"]
+pre_ports = pre_summary.get("ports_open", {})
+post_ports = post_summary.get("ports_open", {})
+pre_core_ports_open = all(bool(pre_ports.get(port)) for port in critical_ports)
+post_core_ports_open = all(bool(post_ports.get(port)) for port in critical_ports)
+
+pre_signal = bool(pre_summary.get("suspected_usernet_leak")) or int(pre_summary.get("usernet_pid_count", 0) or 0) > 1
+post_signal = bool(post_summary.get("suspected_usernet_leak")) or int(post_summary.get("usernet_pid_count", 0) or 0) > 1
+post_usernet_sockets_ok = all(bool(post_sockets.get(name, {}).get("connect_ok")) for name in ["usernet_ep_sock", "usernet_fd_sock", "usernet_qemu_sock"])
+post_host_control_ok = bool(post_summary.get("docker_socket_connect_ok")) and post_core_ports_open
+
+if restart_mode == "force-cycle":
+    verdict = "inconclusive_broader_recovery"
+    success = False
+    error = "force_cycle_was_required"
+elif not pre_signal:
+    verdict = "missing_usernet_precondition"
+    success = False
+    error = "precondition_not_met"
+elif pre_signal and (not post_signal) and post_usernet_sockets_ok and post_host_control_ok:
+    verdict = "supports_h1_usernet"
+    success = True
+    error = None
+elif pre_signal and post_signal:
+    verdict = "does_not_support_h1_usernet"
+    success = False
+    error = "usernet_signal_persisted"
+else:
+    verdict = "inconclusive_partial_improvement"
+    success = False
+    error = "usernet_signal_improved_without_full_recovery"
+
+payload = {
+    "incident_id": incident_id,
+    "hypothesis_id": hypothesis_id,
+    "recovery_mode": "usernet-only",
+    "restart_mode": restart_mode,
+    "reason": reason,
+    "captured_at": datetime.now(timezone.utc).isoformat(),
+    "session_id": session_id,
+    "system_id": system_id,
+    "verdict": verdict,
+    "success": success,
+    "error": error,
+    "comparison": {
+        "pre_usernet_pid_count": pre_summary.get("usernet_pid_count"),
+        "post_usernet_pid_count": post_summary.get("usernet_pid_count"),
+        "pre_suspected_usernet_leak": pre_summary.get("suspected_usernet_leak"),
+        "post_suspected_usernet_leak": post_summary.get("suspected_usernet_leak"),
+        "pre_docker_socket_connect_ok": pre_summary.get("docker_socket_connect_ok"),
+        "post_docker_socket_connect_ok": post_summary.get("docker_socket_connect_ok"),
+        "pre_core_ports_open": pre_core_ports_open,
+        "post_core_ports_open": post_core_ports_open,
+        "post_usernet_sockets_ok": post_usernet_sockets_ok,
+    },
+    "artifacts": {
+        "pre": str(incident_dir / "recover-usernet-pre.json"),
+        "post": str(incident_dir / "recover-usernet-post.json"),
+        "verdict": str(verdict_file),
+    },
+}
+verdict_file.write_text(json.dumps(payload, indent=2, sort_keys=True))
+
+otel_event = {
+    "action": "infra.colima.recovery.usernet_only.verdict",
+    "source": "infra",
+    "component": "colima-proof",
+    "level": "info" if success else "warn",
+    "success": success,
+    "sessionId": session_id,
+    "systemId": system_id,
+    "error": error,
+    "metadata": {
+        "incident_id": incident_id,
+        "hypothesis_id": hypothesis_id,
+        "recovery_mode": "usernet-only",
+        "restart_mode": restart_mode,
+        "reason": reason,
+        "verdict": verdict,
+        "pre_usernet_pid_count": pre_summary.get("usernet_pid_count"),
+        "post_usernet_pid_count": post_summary.get("usernet_pid_count"),
+        "pre_suspected_usernet_leak": pre_summary.get("suspected_usernet_leak"),
+        "post_suspected_usernet_leak": post_summary.get("suspected_usernet_leak"),
+        "pre_docker_socket_connect_ok": pre_summary.get("docker_socket_connect_ok"),
+        "post_docker_socket_connect_ok": post_summary.get("docker_socket_connect_ok"),
+        "pre_core_ports_open": pre_core_ports_open,
+        "post_core_ports_open": post_core_ports_open,
+        "post_usernet_sockets_ok": post_usernet_sockets_ok,
+        "artifact_path": str(verdict_file),
+    },
+}
+otel_payload_file.write_text(json.dumps(otel_event, sort_keys=True))
+print(json.dumps(payload, sort_keys=True))
+PY
+
+  emit_otel_payload "$otel_payload_file"
+}
+
+recover_usernet() {
+  local incident_id="$1"
+  local hypothesis_id="$2"
+  local restart_mode="$3"
+  local verify_wait_secs="$4"
+  local reason="$5"
 
   snapshot "$incident_id" "recover-usernet-pre" "infra.colima.recovery.usernet_only.started" "warn" "false" "$hypothesis_id" "usernet-only" "$reason"
 
@@ -441,7 +583,12 @@ recover_usernet() {
       ;;
   esac
 
+  if [[ "$verify_wait_secs" =~ ^[0-9]+$ ]] && [ "$verify_wait_secs" -gt 0 ]; then
+    sleep "$verify_wait_secs"
+  fi
+
   snapshot "$incident_id" "recover-usernet-post" "infra.colima.recovery.usernet_only.completed" "info" "true" "$hypothesis_id" "usernet-only" "$reason"
+  evaluate_usernet_recovery "$incident_id" "$hypothesis_id" "$restart_mode" "$reason"
 }
 
 command_name="${1:-}"
@@ -460,6 +607,7 @@ hypothesis_id="H1-usernet"
 recovery_mode=""
 reason=""
 restart_mode="none"
+verify_wait_secs="15"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -499,6 +647,10 @@ while [ "$#" -gt 0 ]; do
       restart_mode="$2"
       shift 2
       ;;
+    --verify-wait-secs)
+      verify_wait_secs="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -518,7 +670,7 @@ case "$command_name" in
     snapshot "$incident_id" "$phase" "$action" "$level" "$success" "$hypothesis_id" "$recovery_mode" "$reason"
     ;;
   recover-usernet)
-    recover_usernet "$incident_id" "$hypothesis_id" "$restart_mode" "$reason"
+    recover_usernet "$incident_id" "$hypothesis_id" "$restart_mode" "$verify_wait_secs" "$reason"
     ;;
   *)
     echo "unknown command: $command_name" >&2
