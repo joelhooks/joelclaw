@@ -20,9 +20,15 @@ COLIMA_SSH_HOST="lima-colima"
 KUBELET_PROXY_RBAC_MANIFEST="$HOME/Code/joelhooks/joelclaw/k8s/apiserver-kubelet-client-rbac.yaml"
 CORE_WARMUP_TIMEOUT_SECS=300
 WARMUP_GRACE_SECS="${WARMUP_GRACE_SECS:-120}"
+COLIMA_FORCE_CONFIRM_TICKS="${COLIMA_FORCE_CONFIRM_TICKS:-2}"
+COLIMA_FORCE_COOLDOWN_SECS="${COLIMA_FORCE_COOLDOWN_SECS:-900}"
+COLIMA_UNHEALTHY_STREAK_WINDOW_SECS="${COLIMA_UNHEALTHY_STREAK_WINDOW_SECS:-420}"
 COLIMA_START_EPOCH=""
 RECOVERY_START_EPOCH=""
 LAST_FLANNEL_RESTART_EPOCH=""
+COLIMA_UNHEALTHY_STREAK="0"
+LAST_COLIMA_UNHEALTHY_EPOCH=""
+LAST_COLIMA_FORCE_CYCLE_EPOCH=""
 NAS_CIDR="192.168.1.0/24"
 NAS_GATEWAY="192.168.64.1"
 NAS_INTERFACE="col0"
@@ -38,12 +44,16 @@ load_state() {
   # shellcheck disable=SC1090
   source "$STATE_FILE"
 
-  for key in COLIMA_START_EPOCH RECOVERY_START_EPOCH LAST_FLANNEL_RESTART_EPOCH; do
+  for key in COLIMA_START_EPOCH RECOVERY_START_EPOCH LAST_FLANNEL_RESTART_EPOCH LAST_COLIMA_UNHEALTHY_EPOCH LAST_COLIMA_FORCE_CYCLE_EPOCH; do
     local value="${!key:-}"
     if [[ -n "$value" && ! "$value" =~ ^[0-9]+$ ]]; then
       printf -v "$key" '%s' ""
     fi
   done
+
+  if [[ ! "${COLIMA_UNHEALTHY_STREAK:-0}" =~ ^[0-9]+$ ]]; then
+    COLIMA_UNHEALTHY_STREAK="0"
+  fi
 }
 
 persist_state() {
@@ -53,6 +63,9 @@ persist_state() {
 COLIMA_START_EPOCH=${COLIMA_START_EPOCH:-}
 RECOVERY_START_EPOCH=${RECOVERY_START_EPOCH:-}
 LAST_FLANNEL_RESTART_EPOCH=${LAST_FLANNEL_RESTART_EPOCH:-}
+COLIMA_UNHEALTHY_STREAK=${COLIMA_UNHEALTHY_STREAK:-0}
+LAST_COLIMA_UNHEALTHY_EPOCH=${LAST_COLIMA_UNHEALTHY_EPOCH:-}
+LAST_COLIMA_FORCE_CYCLE_EPOCH=${LAST_COLIMA_FORCE_CYCLE_EPOCH:-}
 EOF
   mv "$tmp_file" "$STATE_FILE"
 }
@@ -65,6 +78,9 @@ mark_recovery_started() {
 mark_colima_started() {
   COLIMA_START_EPOCH="$(date +%s)"
   RECOVERY_START_EPOCH="$COLIMA_START_EPOCH"
+  LAST_COLIMA_FORCE_CYCLE_EPOCH="$COLIMA_START_EPOCH"
+  COLIMA_UNHEALTHY_STREAK="0"
+  LAST_COLIMA_UNHEALTHY_EPOCH=""
   persist_state
 }
 
@@ -72,6 +88,91 @@ mark_flannel_restarted() {
   LAST_FLANNEL_RESTART_EPOCH="$(date +%s)"
   RECOVERY_START_EPOCH="$LAST_FLANNEL_RESTART_EPOCH"
   persist_state
+}
+
+reset_colima_unhealthy_state() {
+  local changed=0
+
+  if [ "${COLIMA_UNHEALTHY_STREAK:-0}" != "0" ]; then
+    COLIMA_UNHEALTHY_STREAK="0"
+    changed=1
+  fi
+
+  if [ -n "${LAST_COLIMA_UNHEALTHY_EPOCH:-}" ]; then
+    LAST_COLIMA_UNHEALTHY_EPOCH=""
+    changed=1
+  fi
+
+  if [ "$changed" -eq 1 ]; then
+    persist_state
+  fi
+}
+
+note_colima_unhealthy() {
+  local now
+  local last_seen
+
+  now="$(date +%s)"
+  last_seen="${LAST_COLIMA_UNHEALTHY_EPOCH:-}"
+
+  if [[ "$last_seen" =~ ^[0-9]+$ ]] && [ $((now - last_seen)) -le "$COLIMA_UNHEALTHY_STREAK_WINDOW_SECS" ]; then
+    COLIMA_UNHEALTHY_STREAK=$(( ${COLIMA_UNHEALTHY_STREAK:-0} + 1 ))
+  else
+    COLIMA_UNHEALTHY_STREAK="1"
+  fi
+
+  LAST_COLIMA_UNHEALTHY_EPOCH="$now"
+  persist_state
+  echo "$COLIMA_UNHEALTHY_STREAK"
+}
+
+colima_force_cycle_cooldown_remaining_secs() {
+  local now
+  local elapsed
+
+  now="$(date +%s)"
+
+  if [[ ! "${LAST_COLIMA_FORCE_CYCLE_EPOCH:-}" =~ ^[0-9]+$ ]]; then
+    echo 0
+    return 0
+  fi
+
+  elapsed=$((now - LAST_COLIMA_FORCE_CYCLE_EPOCH))
+  if [ "$elapsed" -lt "$COLIMA_FORCE_COOLDOWN_SECS" ]; then
+    echo $((COLIMA_FORCE_COOLDOWN_SECS - elapsed))
+    return 0
+  fi
+
+  echo 0
+}
+
+colima_force_cycle_ready() {
+  local reason="$1"
+  local streak
+  local warmup_remaining
+  local cooldown_remaining
+
+  streak="$(note_colima_unhealthy)"
+  warmup_remaining="$(warmup_grace_remaining_secs)"
+  cooldown_remaining="$(colima_force_cycle_cooldown_remaining_secs)"
+
+  if [ "$cooldown_remaining" -gt 0 ]; then
+    log "hold: Colima unhealthy (${reason}) but recent force-cycle cooldown has ${cooldown_remaining}s remaining"
+    return 1
+  fi
+
+  if [ "$warmup_remaining" -gt 0 ]; then
+    log "hold: Colima unhealthy (${reason}) but recovery warmup still has ${warmup_remaining}s remaining"
+    return 1
+  fi
+
+  if [ "$streak" -lt "$COLIMA_FORCE_CONFIRM_TICKS" ]; then
+    log "hold: Colima unhealthy (${reason}) on tick ${streak}/${COLIMA_FORCE_CONFIRM_TICKS}; waiting for confirmation before force-cycle"
+    return 1
+  fi
+
+  log "escalation: Colima unhealthy (${reason}) confirmed for ${streak} consecutive ticks; force-cycle allowed"
+  return 0
 }
 
 load_state
@@ -615,14 +716,18 @@ log "k8s reboot heal tick"
 
 COLIMA_STATUS_OUTPUT="$(colima_status_json || true)"
 if docker_socket_healthy || colima_ssh_healthy; then
-  :
+  reset_colima_unhealthy_state
 elif ! colima_healthy; then
   STATUS_ONE_LINE="$(echo "$COLIMA_STATUS_OUTPUT" | tr '\n' ' ' | tr -s ' ')"
   log "colima control plane unreachable; status snapshot: ${STATUS_ONE_LINE:-status json unavailable}"
-  force_cycle_colima
+  if colima_force_cycle_ready "status json unhealthy and both docker socket + ssh are down"; then
+    force_cycle_colima
+  fi
 else
   log "docker socket unreachable at $COLIMA_DOCKER_HOST"
-  force_cycle_colima
+  if colima_force_cycle_ready "docker socket + ssh are down while status json still reports runtime"; then
+    force_cycle_colima
+  fi
 fi
 
 if ! docker_socket_healthy && ! colima_ssh_healthy; then
