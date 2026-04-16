@@ -16,7 +16,6 @@ LAUNCH_AGENTS_DIR="${TARGET_HOME}/Library/LaunchAgents"
 
 CRITICAL_LABELS=(
   com.joel.colima
-  com.joel.colima-tunnel
   com.joel.k8s-reboot-heal
   com.joel.agent-secrets
   com.joel.system-bus-worker
@@ -109,6 +108,8 @@ bootstrap_system_daemon() {
 ensure_runtime_dirs
 remove_headless_bridge
 stop_manual_fallbacks
+remove_user_agent "com.joel.colima-tunnel"
+remove_system_service "com.joel.colima-tunnel"
 sleep 2
 
 for label in "${CRITICAL_LABELS[@]}"; do
@@ -131,6 +132,8 @@ Installed system daemons:
 $(printf '  - %s\n' "${CRITICAL_LABELS[@]}")
 Old bridge removed:
   /Library/LaunchDaemons/com.joel.headless-bootstrap.plist
+Deprecated daemon removed:
+  /Library/LaunchDaemons/com.joel.colima-tunnel.plist
 
 Quick checks:
 $(printf '  launchctl print system/%s | rg '\''state =|pid =|last exit code'\''\n' "${CRITICAL_LABELS[@]}")

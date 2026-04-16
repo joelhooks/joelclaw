@@ -308,21 +308,20 @@ k8s pod → Talos container (10.5.0.x) → Docker NAT → Colima VM
 
 The LAN route is set in **two places** for reliability:
 1. **Colima provision script** (`~/.colima/default/colima.yaml`) — runs on `colima start` (cold boot)
-2. **colima-tunnel script** (`~/Code/joelhooks/joelclaw/infra/colima-tunnel.sh`) — canonical tunnel script for warm resume; `~/.local/bin/colima-tunnel` is compatibility glue only
+2. **k8s-reboot-heal** (`~/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh`) — reasserts the route during reboot recovery ticks
 
 Both execute: `ip route replace 192.168.1.0/24 via 192.168.64.1 dev col0`
 
-### Tunnel false-fail after reboot (2026-04-14)
+### Duplicate tunnel ownership is a bug (2026-04-16)
 
-`com.joel.colima-tunnel` can look alive while being useless: if Colima reassigns its SSH port on reboot, a stale autossh process can keep localhost listeners on `6379` / `8288` and still forward to nowhere.
+`com.joel.colima-tunnel` is deprecated. Colima/Lima already forwards the docker-published host ports for `joelclaw-controlplane-1`, so a second autossh daemon on those same ports is not redundancy — it's interference.
 
 Rules:
-- wait for Colima with `colima status --json`, not plain `colima status`
-- derive the SSH port from `colima ssh-config` every start
-- self-monitor for SSH port drift after start; if Colima reassigns the port, the tunnel must kill its child `autossh` and restart with the new port instead of sitting there forwarding to nowhere
-- kill stale `ssh` / `autossh` listeners on the tunnel-owned ports before starting a fresh tunnel
-- leave `8108` to `com.joel.typesense-portforward`; the tunnel should not own Typesense anymore
-- leave `6443` to Caddy; the tunnel should not forward or compete for that port at all
+- `com.joel.colima` is the only boot/start helper for the VM; it must not keep a periodic `StartInterval`
+- `com.joel.colima-tunnel` should be absent from `/Library/LaunchDaemons/`; `install-critical-launchdaemons.sh` removes it instead of reinstalling it
+- do not run a second autossh daemon on ports Colima/Lima already publishes for `joelclaw-controlplane-1` (`3838`, `6379`, `7880`, `7881`, `8108`, `8288`, `8289`, `9627`, `64784`)
+- do not kill generic `ssh` listeners on those host ports; that can kill Lima's own forwarders
+- `infra/colima-tunnel.sh` is now only a deprecated compatibility stub so stale launchd installs exit cleanly instead of fighting Lima
 - `com.joel.k8s-reboot-heal` must use the same JSON status check; a plain `colima status` false-negative can force-cycle the VM and retrigger the flannel/NAS failure cascade during reboot recovery
 - do not trust status output alone when deciding to cycle Colima; if the Docker socket or Colima SSH path is still healthy, treat the VM as alive and keep your hands off it
 - a Colima force-cycle now requires confirmed evidence; one ugly observation is not enough to panic-cycle the VM
@@ -487,14 +486,13 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 | `~/Code/joelhooks/joelclaw/k8s/dkron.yaml` | Dkron scheduler StatefulSet + services |
 | `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh` | Build/push/deploy system-bus worker to k8s |
 | `~/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh` | Reboot auto-heal script for Colima/Talos/taint/flannel |
-| `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.colima-tunnel.plist` | Boot-safe launchd wrapper for the Colima tunnel |
 | `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.k8s-reboot-heal.plist` | launchd timer for reboot auto-heal |
 | `~/Code/joelhooks/joelclaw/skills/k8s/references/operations.md` | Cluster operations + recovery notes |
 | `~/.talos/config` | Talos client config |
 | `~/.kube/config` | Kubeconfig (context: `admin@joelclaw-1`) |
 | `~/.colima/default/colima.yaml` | Colima VM config |
-| `~/Code/joelhooks/joelclaw/infra/colima-tunnel.sh` | Canonical persistent SSH tunnel + NAS route script |
-| `~/.local/bin/colima-tunnel` | Compatibility wrapper for the canonical tunnel script |
+| `~/Code/joelhooks/joelclaw/infra/colima-tunnel.sh` | Deprecated compatibility stub; exits cleanly so stale launchd installs stop fighting Lima |
+| `~/.local/bin/colima-tunnel` | Compatibility wrapper for the deprecated tunnel stub |
 | `~/.local/caddy/Caddyfile` | Caddy HTTPS proxy (Tailscale) |
 | `~/Code/joelhooks/joelclaw/k8s/nas-nvme-pv.yaml` | NAS NVMe NFS PV/PVC (1.5TB) |
 | `~/Code/joelhooks/joelclaw/k8s/nas-hdd-pv.yaml` | NAS HDD NFS PV/PVC (50TB) |

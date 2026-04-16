@@ -129,7 +129,6 @@ Host launchd assets that are part of joelclaw runtime behavior belong in `infra/
 These repo-managed plists are the canonical source for the host control plane and are installed into `/Library/LaunchDaemons/` by the root installer:
 
 - `infra/launchd/com.joel.colima.plist`
-- `infra/launchd/com.joel.colima-tunnel.plist`
 - `infra/launchd/com.joel.k8s-reboot-heal.plist`
 - `infra/launchd/com.joel.agent-secrets.plist`
 - `infra/launchd/com.joel.system-bus-worker.plist`
@@ -155,6 +154,7 @@ What the installer does:
 - removes the old `~/Library/LaunchAgents/<label>.plist` copies for the critical labels
 - removes the superseded `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist` bridge
 - kills known manual `nohup` and stale `autossh` colima-tunnel fallbacks from reboot recovery
+- removes the deprecated `com.joel.colima-tunnel` daemon instead of reinstalling it, because Colima/Lima already owns docker-published host ports for `joelclaw-controlplane-1`
 - bootstraps the critical services directly into the `system` launchd domain, using `UserName=joel` where the process should run as Joel
 
 Agent-mail note: `com.joelclaw.agent-mail` now goes through `infra/agent-mail-daemon.sh`, which resolves the joelclaw-managed `joelhooks/mcp_agent_mail` checkout instead of baking a third-party path into the plist. If the local checkout still lives under a legacy directory name, that is fine as long as the git `origin` remote is `joelhooks/mcp_agent_mail`.
@@ -163,7 +163,7 @@ This replaces the failed ADR-0239 bridge design. We no longer try to bounce Laun
 
 `com.joel.colima` is a boot/startup helper only. It should run `colima start ...` at load, then exit. It must **not** keep a `StartInterval` that re-runs `colima start` every few minutes against an already-running VM — that adds useless churn to an already fragile host path and obscures whether later Colima instability is real collapse or self-inflicted launchd hammering.
 
-`com.joel.colima-tunnel` is now part of the boot-safe set because gateway, worker, and host diagnostics all depend on localhost Redis/Inngest forwards surviving a headless reboot. The canonical tunnel script lives at `infra/colima-tunnel.sh`; the legacy `~/.local/bin/colima-tunnel` path should be treated as a compatibility wrapper only. The script now waits on `colima status --json`, re-resolves the current SSH port on every start, kills stale ssh/autossh listeners on the ports it owns, and leaves `8108` and `6443` to their dedicated owners (`com.joel.typesense-portforward` and Caddy) instead of fighting them. It also supervises `autossh` in-process and restarts itself when Colima reassigns the SSH port, which closes the old failure mode where launchd reported the tunnel as running while localhost Redis/Inngest were actually dead.
+`com.joel.colima-tunnel` is no longer part of the critical boot path. The old autossh daemon was forwarding the same host ports that Colima/Lima already publishes for `joelclaw-controlplane-1` (`3838`, `6379`, `7880`, `7881`, `8288`, `8289`, `9627`) and it killed `ssh` listeners on those ports before binding them itself. That means it could kill Lima's own forwarders and create the exact kind of host-path churn we were trying to avoid. The canonical `infra/colima-tunnel.sh` file now exists only as a deprecated compatibility stub that exits cleanly; `install-critical-launchdaemons.sh` removes any installed `com.joel.colima-tunnel` daemon instead of reinstalling it.
 
 `com.joel.k8s-reboot-heal` must follow the same rule: use `colima status --json`, not plain `colima status`, because the plain command has false-failed during warm recovery and force-cycled a healthy-enough VM. Even JSON is only advisory here — the healer should trust the Docker socket / Colima SSH path before deciding to cycle the VM. The healer also needs to restore the `192.168.1.0/24 via 192.168.64.1 dev col0` NAS route before calling reboot recovery healthy; otherwise gateway can come back while NFS-backed workloads are still cooked. Its recovery markers now persist in `~/.local/state/k8s-reboot-heal.env`, because launchd runs the script as a fresh process every interval and in-memory timestamps were not enough to suppress repeat flannel restarts from already-seen `subnet.env` events. That state file now also carries Colima escalation markers (`COLIMA_UNHEALTHY_STREAK`, `LAST_COLIMA_UNHEALTHY_EPOCH`, `LAST_COLIMA_FORCE_CYCLE_EPOCH`) so a single ugly tick cannot immediately panic-cycle the whole VM again. The second-stage escalation is faster now, but still earned: after the first unhealthy tick, the healer runs a short rapid-confirmation window before authorizing a force-cycle, and if host access is still down but no escalation is yet allowed it exits early instead of pretending downstream kube/NAS repairs are actionable. The recovery contract is: trust Docker/SSH first, require either consecutive unhealthy ticks or a short severe-collapse confirmation window before a Colima cycle, and honor a post-cycle cooldown so Talos + workload warmup can finish without the healer re-breaking the machine. See ADR-0241 for the escalation policy.
 
@@ -171,7 +171,6 @@ Quick checks:
 
 ```bash
 launchctl print system/com.joel.gateway | rg 'state =|pid =|last exit code'
-launchctl print system/com.joel.colima-tunnel | rg 'state =|pid =|last exit code'
 launchctl print system/com.joel.system-bus-worker | rg 'state =|pid =|last exit code'
 launchctl print system/com.joel.agent-secrets | rg 'state =|pid =|last exit code'
 launchctl print system/com.joel.typesense-portforward | rg 'state =|pid =|last exit code'
