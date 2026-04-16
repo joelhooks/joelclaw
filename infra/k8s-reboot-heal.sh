@@ -23,6 +23,8 @@ WARMUP_GRACE_SECS="${WARMUP_GRACE_SECS:-120}"
 COLIMA_FORCE_CONFIRM_TICKS="${COLIMA_FORCE_CONFIRM_TICKS:-2}"
 COLIMA_FORCE_COOLDOWN_SECS="${COLIMA_FORCE_COOLDOWN_SECS:-900}"
 COLIMA_UNHEALTHY_STREAK_WINDOW_SECS="${COLIMA_UNHEALTHY_STREAK_WINDOW_SECS:-420}"
+COLIMA_RAPID_CONFIRM_RETRIES="${COLIMA_RAPID_CONFIRM_RETRIES:-6}"
+COLIMA_RAPID_CONFIRM_SLEEP_SECS="${COLIMA_RAPID_CONFIRM_SLEEP_SECS:-5}"
 COLIMA_START_EPOCH=""
 RECOVERY_START_EPOCH=""
 LAST_FLANNEL_RESTART_EPOCH=""
@@ -146,6 +148,29 @@ colima_force_cycle_cooldown_remaining_secs() {
   echo 0
 }
 
+rapid_confirm_colima_host_collapse() {
+  local reason="$1"
+  local attempt
+
+  for attempt in $(seq 1 "$COLIMA_RAPID_CONFIRM_RETRIES"); do
+    sleep "$COLIMA_RAPID_CONFIRM_SLEEP_SECS"
+
+    if docker_socket_healthy || colima_ssh_healthy; then
+      log "hold: Colima unhealthy (${reason}) recovered during rapid confirmation probe ${attempt}/${COLIMA_RAPID_CONFIRM_RETRIES}"
+      reset_colima_unhealthy_state
+      return 1
+    fi
+
+    if colima_healthy; then
+      log "hold: Colima unhealthy (${reason}) no longer meets severe-collapse criteria during rapid confirmation probe ${attempt}/${COLIMA_RAPID_CONFIRM_RETRIES}"
+      return 1
+    fi
+  done
+
+  log "escalation: Colima unhealthy (${reason}) survived rapid confirmation window (${COLIMA_RAPID_CONFIRM_RETRIES}x${COLIMA_RAPID_CONFIRM_SLEEP_SECS}s); force-cycle allowed"
+  return 0
+}
+
 colima_force_cycle_ready() {
   local reason="$1"
   local streak
@@ -166,13 +191,13 @@ colima_force_cycle_ready() {
     return 1
   fi
 
-  if [ "$streak" -lt "$COLIMA_FORCE_CONFIRM_TICKS" ]; then
-    log "hold: Colima unhealthy (${reason}) on tick ${streak}/${COLIMA_FORCE_CONFIRM_TICKS}; waiting for confirmation before force-cycle"
-    return 1
+  if [ "$streak" -ge "$COLIMA_FORCE_CONFIRM_TICKS" ]; then
+    log "escalation: Colima unhealthy (${reason}) confirmed for ${streak} consecutive ticks; force-cycle allowed"
+    return 0
   fi
 
-  log "escalation: Colima unhealthy (${reason}) confirmed for ${streak} consecutive ticks; force-cycle allowed"
-  return 0
+  log "hold: Colima unhealthy (${reason}) on tick ${streak}/${COLIMA_FORCE_CONFIRM_TICKS}; entering rapid confirmation window before force-cycle"
+  rapid_confirm_colima_host_collapse "$reason"
 }
 
 load_state
@@ -715,23 +740,30 @@ post_colima_invariant_gate() {
 log "k8s reboot heal tick"
 
 COLIMA_STATUS_OUTPUT="$(colima_status_json || true)"
+COLIMA_CYCLE_ATTEMPTED=0
 if docker_socket_healthy || colima_ssh_healthy; then
   reset_colima_unhealthy_state
 elif ! colima_healthy; then
   STATUS_ONE_LINE="$(echo "$COLIMA_STATUS_OUTPUT" | tr '\n' ' ' | tr -s ' ')"
   log "colima control plane unreachable; status snapshot: ${STATUS_ONE_LINE:-status json unavailable}"
   if colima_force_cycle_ready "status json unhealthy and both docker socket + ssh are down"; then
+    COLIMA_CYCLE_ATTEMPTED=1
     force_cycle_colima
   fi
 else
   log "docker socket unreachable at $COLIMA_DOCKER_HOST"
   if colima_force_cycle_ready "docker socket + ssh are down while status json still reports runtime"; then
+    COLIMA_CYCLE_ATTEMPTED=1
     force_cycle_colima
   fi
 fi
 
 if ! docker_socket_healthy && ! colima_ssh_healthy; then
   log "WARNING: colima still unhealthy after recovery attempt"
+  if [ "$COLIMA_CYCLE_ATTEMPTED" -eq 0 ]; then
+    log "ERROR: host recovery hold active; skipping downstream repair until Colima host access returns or rapid confirmation authorizes a force-cycle"
+    exit 1
+  fi
 fi
 
 # Ensure Talos control-plane container is up and persistent.

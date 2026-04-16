@@ -325,8 +325,10 @@ Rules:
 - leave `6443` to Caddy; the tunnel should not forward or compete for that port at all
 - `com.joel.k8s-reboot-heal` must use the same JSON status check; a plain `colima status` false-negative can force-cycle the VM and retrigger the flannel/NAS failure cascade during reboot recovery
 - do not trust status output alone when deciding to cycle Colima; if the Docker socket or Colima SSH path is still healthy, treat the VM as alive and keep your hands off it
-- a Colima force-cycle now requires confirmed evidence across consecutive launchd ticks; one ugly observation is not enough to panic-cycle the VM
+- a Colima force-cycle now requires confirmed evidence; one ugly observation is not enough to panic-cycle the VM
+- confirmation can come from consecutive launchd ticks or from a short rapid-confirmation window when both the Docker socket and Colima SSH path stay down long enough to prove a severe collapse
 - after any Colima force-cycle, honor the persisted cooldown in `~/.local/state/k8s-reboot-heal.env` so Talos and workload warmup can finish before another escalation is even considered
+- if the host path is still down but escalation is not yet earned, bail out early and mark the tick failed; do not pretend downstream kube/NAS repair steps are actionable without Colima host access
 - reboot recovery is not healthy until the NAS route `192.168.1.0/24 via 192.168.64.1 dev col0` exists again and NFS is reachable from the Colima VM
 - flannel can be "Running" while kubelet still reports `failed to load flannel 'subnet.env' file`; treat recent `FailedCreatePodSandBox` events with that message as a restart signal for the flannel pod
 
