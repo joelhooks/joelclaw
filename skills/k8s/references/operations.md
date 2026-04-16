@@ -138,7 +138,7 @@ kubectl taint nodes joelclaw-controlplane-1 node-role.kubernetes.io/control-plan
 
 ### After Mac Reboot
 
-Colima starts via launchd (`com.joel.colima`). Wait ~60s for full stack: VM → Docker → Talos → k8s → pods. Worker auto-starts via `com.joel.system-bus-worker`.
+Colima starts via launchd (`com.joel.colima`). Treat it as a **boot/startup helper**, not a periodic babysitter: it should run `colima start ...` at load, then exit. If the installed plist still has `StartInterval 300`, that is stale and should be reinstalled from the repo-managed plist because re-running `colima start` every five minutes against an already-running VM adds churn and muddies collapse diagnosis. Wait ~60s for full stack: VM → Docker → Talos → k8s → pods. Worker auto-starts via `com.joel.system-bus-worker`.
 
 **Resource invariant first:** the stable Colima profile is `cpu: 8`, `memory: 16` (see `~/.colima/default/colima.yaml`). If the profile drifts down to `4/8`, Docker can refuse to restart `joelclaw-controlplane-1` with `range of CPUs is from 0.01 to 4.00`, leaving the whole cluster down after reboot. The repo-managed `infra/launchd/com.joel.colima.plist` must stay aligned at `8 / 16 / 100` so boot automation does not reintroduce the drift.
 
