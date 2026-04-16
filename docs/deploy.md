@@ -169,6 +169,8 @@ This replaces the failed ADR-0239 bridge design. We no longer try to bounce Laun
 
 `com.joel.k8s-reboot-heal` must follow the same rule: use `colima status --json`, not plain `colima status`, because the plain command has false-failed during warm recovery and force-cycled a healthy-enough VM. Even JSON is only advisory here — the healer should trust the Docker socket / Colima SSH path before deciding to cycle the VM. The healer also needs to restore the `192.168.1.0/24 via 192.168.64.1 dev col0` NAS route before calling reboot recovery healthy; otherwise gateway can come back while NFS-backed workloads are still cooked. Its recovery markers now persist in `~/.local/state/k8s-reboot-heal.env`, because launchd runs the script as a fresh process every interval and in-memory timestamps were not enough to suppress repeat flannel restarts from already-seen `subnet.env` events. That state file now also carries Colima escalation markers (`COLIMA_UNHEALTHY_STREAK`, `LAST_COLIMA_UNHEALTHY_EPOCH`, `LAST_COLIMA_FORCE_CYCLE_EPOCH`) so a single ugly tick cannot immediately panic-cycle the whole VM again. The second-stage escalation is faster now, but still earned: after the first unhealthy tick, the healer runs a short rapid-confirmation window before authorizing a force-cycle, and if host access is still down but no escalation is yet allowed it exits early instead of pretending downstream kube/NAS repairs are actionable. The recovery contract is: trust Docker/SSH first, require either consecutive unhealthy ticks or a short severe-collapse confirmation window before a Colima cycle, and honor a post-cycle cooldown so Talos + workload warmup can finish without the healer re-breaking the machine. See ADR-0241 for the escalation policy.
 
+`infra/colima-proof.sh` is the evidence-first companion to the healer. It captures incident-scoped Colima/Lima substrate artifacts under `~/.local/share/colima-proof/incidents/<incident_id>/` and emits structured OTEL under `source=infra`, `component=colima-proof`. The healer now calls it at the failure edge, on hold states, before/after force-cycles, and after post-Colima invariant outcomes so recovery no longer destroys the evidence needed to prove root cause. See ADR-0242 for the proof contract.
+
 Quick checks:
 
 ```bash
@@ -178,6 +180,7 @@ launchctl print system/com.joel.agent-secrets | rg 'state =|pid =|last exit code
 launchctl print system/com.joelclaw.agent-mail | rg 'state =|pid =|last exit code'
 joelclaw status
 joelclaw gateway status
+~/Code/joelhooks/joelclaw/infra/colima-proof.sh snapshot --phase manual-check --action infra.colima.snapshot --level info --success true --reason 'manual substrate probe'
 ```
 
 ### User LaunchAgents still used for non-critical local surfaces

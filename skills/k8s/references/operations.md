@@ -165,6 +165,8 @@ This installs the repo-managed plists directly into `/Library/LaunchDaemons/`, r
 
 `com.joel.typesense-portforward` is deprecated and should be absent from `/Library/LaunchDaemons/`; Typesense is already published through `joelclaw-controlplane-1`, so a separate `kubectl port-forward svc/typesense 8108:8108` daemon only adds churn.
 
+`infra/colima-proof.sh` is the evidence-first substrate harness. Use it to capture incident-scoped artifacts under `~/.local/share/colima-proof/incidents/<incident_id>/` and emit OTEL under `source=infra`, `component=colima-proof` before destructive recovery erases the failure state. The reboot healer now uses it on failure edges, hold states, force-cycle boundaries, and post-invariant outcomes.
+
 `com.joelclaw.agent-mail` is launched via `infra/agent-mail-daemon.sh`, not by hardcoding the third-party checkout path into the plist. The daemon script expects the joelclaw-managed `joelhooks/mcp_agent_mail` fork; a legacy on-disk directory name is acceptable only if that checkout's `origin` remote points at `joelhooks/mcp_agent_mail`.
 
 Do **not** try to bootstrap user LaunchAgents into `user/$UID` from a system daemon anymore. That ADR-0239 bridge was not earned on Panda; `launchctl bootstrap user/501 ...` kept failing with `Input/output error`.

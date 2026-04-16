@@ -14,6 +14,43 @@ log() {
   echo "[$(date -Iseconds)] $*" | tee -a "$LOG_FILE"
 }
 
+ensure_colima_proof_incident_id() {
+  if [ -n "$COLIMA_PROOF_INCIDENT_ID" ]; then
+    return 0
+  fi
+
+  COLIMA_PROOF_INCIDENT_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+}
+
+run_colima_proof_snapshot() {
+  local phase="$1"
+  local action="$2"
+  local level="$3"
+  local success="$4"
+  local reason="$5"
+  local recovery_mode="${6:-}"
+
+  if [ ! -x "$COLIMA_PROOF_SCRIPT" ]; then
+    return 0
+  fi
+
+  ensure_colima_proof_incident_id
+
+  if ! SLOG_SESSION_ID="${SLOG_SESSION_ID:-FeralPigeon}" \
+    SLOG_SYSTEM_ID="${SLOG_SYSTEM_ID:-panda}" \
+    "$COLIMA_PROOF_SCRIPT" snapshot \
+      --incident-id "$COLIMA_PROOF_INCIDENT_ID" \
+      --phase "$phase" \
+      --action "$action" \
+      --level "$level" \
+      --success "$success" \
+      --hypothesis-id "$COLIMA_PROOF_HYPOTHESIS_ID" \
+      --recovery-mode "$recovery_mode" \
+      --reason "$reason" >>"$LOG_FILE" 2>&1; then
+    log "WARNING: colima proof snapshot failed (${phase})"
+  fi
+}
+
 COLIMA_DOCKER_HOST="unix:///Users/joel/.colima/default/docker.sock"
 COLIMA_SSH_CONFIG="$HOME/.colima/_lima/colima/ssh.config"
 COLIMA_SSH_HOST="lima-colima"
@@ -37,6 +74,9 @@ NAS_INTERFACE="col0"
 NAS_HOST="192.168.1.163"
 NAS_NFS_PORT="2049"
 FLANNEL_SUBNET_EVENT_WINDOW_SECS="${FLANNEL_SUBNET_EVENT_WINDOW_SECS:-300}"
+COLIMA_PROOF_SCRIPT="$HOME/Code/joelhooks/joelclaw/infra/colima-proof.sh"
+COLIMA_PROOF_HYPOTHESIS_ID="${COLIMA_PROOF_HYPOTHESIS_ID:-H1-usernet}"
+COLIMA_PROOF_INCIDENT_ID=""
 
 load_state() {
   if [ ! -f "$STATE_FILE" ]; then
@@ -245,13 +285,16 @@ colima_ssh_healthy() {
 }
 
 force_cycle_colima() {
+  run_colima_proof_snapshot "pre-force-cycle" "infra.colima.recovery.force_cycle.started" "warn" "false" "force-cycle requested by k8s-reboot-heal" "force-cycle"
   log "force-cycling colima runtime"
   colima stop --force >>"$LOG_FILE" 2>&1 || log "WARNING: colima stop --force failed"
   sleep 1
   if colima start >>"$LOG_FILE" 2>&1; then
     mark_colima_started
+    run_colima_proof_snapshot "post-force-cycle" "infra.colima.recovery.force_cycle.completed" "info" "true" "force-cycle completed" "force-cycle"
   else
     log "WARNING: colima start failed"
+    run_colima_proof_snapshot "force-cycle-start-failed" "infra.colima.recovery.force_cycle.failed" "error" "false" "colima start failed after force-cycle" "force-cycle"
   fi
 }
 
@@ -746,12 +789,14 @@ if docker_socket_healthy || colima_ssh_healthy; then
 elif ! colima_healthy; then
   STATUS_ONE_LINE="$(echo "$COLIMA_STATUS_OUTPUT" | tr '\n' ' ' | tr -s ' ')"
   log "colima control plane unreachable; status snapshot: ${STATUS_ONE_LINE:-status json unavailable}"
+  run_colima_proof_snapshot "failure-detected" "infra.colima.failure.detected" "error" "false" "status json unhealthy and both docker socket + ssh are down" "observe"
   if colima_force_cycle_ready "status json unhealthy and both docker socket + ssh are down"; then
     COLIMA_CYCLE_ATTEMPTED=1
     force_cycle_colima
   fi
 else
   log "docker socket unreachable at $COLIMA_DOCKER_HOST"
+  run_colima_proof_snapshot "failure-detected" "infra.colima.failure.detected" "error" "false" "docker socket + ssh are down while status json still reports runtime" "observe"
   if colima_force_cycle_ready "docker socket + ssh are down while status json still reports runtime"; then
     COLIMA_CYCLE_ATTEMPTED=1
     force_cycle_colima
@@ -760,6 +805,7 @@ fi
 
 if ! docker_socket_healthy && ! colima_ssh_healthy; then
   log "WARNING: colima still unhealthy after recovery attempt"
+  run_colima_proof_snapshot "host-unhealthy-hold" "infra.colima.failure.hold" "error" "false" "host recovery hold active after unhealthy detection" "hold"
   if [ "$COLIMA_CYCLE_ATTEMPTED" -eq 0 ]; then
     log "ERROR: host recovery hold active; skipping downstream repair until Colima host access returns or rapid confirmation authorizes a force-cycle"
     exit 1
@@ -798,7 +844,14 @@ else
   log "WARNING: kubernetes api still unavailable after wait"
 fi
 
-post_colima_invariant_gate
+if post_colima_invariant_gate; then
+  if [ -n "$COLIMA_PROOF_INCIDENT_ID" ]; then
+    run_colima_proof_snapshot "post-invariant-passed" "infra.colima.invariant.passed" "info" "true" "post-Colima invariant gate passed after recovery" "observe"
+  fi
+else
+  run_colima_proof_snapshot "post-invariant-failed" "infra.colima.invariant.failed" "error" "false" "post-Colima invariant gate failed" "observe"
+  exit 1
+fi
 
 # Clean up stale voice-agent processes that may hold port 8081 after Colima cycles.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
