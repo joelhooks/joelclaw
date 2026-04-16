@@ -93,6 +93,23 @@ kubectl -n joelclaw delete pod redis-0
 
 For port mappings, recovery procedures, and cluster recreation steps, read [references/operations.md](references/operations.md).
 
+### Reboot-heal persistence rule (2026-04-15 incident)
+
+`infra/k8s-reboot-heal.sh` runs under launchd as a fresh process every interval. Any recovery marker that only lives in shell memory dies at the end of that tick.
+
+That means flannel/event-healing state must be persisted on disk. Canonical path:
+
+```bash
+~/.local/state/k8s-reboot-heal.env
+```
+
+Persist at least:
+- `COLIMA_START_EPOCH`
+- `RECOVERY_START_EPOCH`
+- `LAST_FLANNEL_RESTART_EPOCH`
+
+Why this matters: kubelet `FailedCreatePodSandBox` events mentioning missing `subnet.env` can stay recent for minutes after the first repair. If the healer forgets that it already restarted flannel, the next launchd tick can bounce flannel again and knock healthy services like Typesense back into 503 warmup for no good reason.
+
 ### Kubeconfig Port Drift (2026-03-21 incident)
 
 Docker port mappings for k8s API (6443) and Talos API (50000) are **not pinned** — they use random host ports assigned at container creation. All service ports (3111, 8288, 6379, etc.) ARE pinned 1:1.

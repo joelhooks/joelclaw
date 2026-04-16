@@ -6,7 +6,9 @@ export PATH="/opt/homebrew/bin:/Users/joel/.local/bin:/usr/local/bin:/usr/bin:/b
 
 LOG_DIR="$HOME/.local/log"
 LOG_FILE="$LOG_DIR/k8s-reboot-heal.log"
-mkdir -p "$LOG_DIR"
+STATE_DIR="$HOME/.local/state"
+STATE_FILE="$STATE_DIR/k8s-reboot-heal.env"
+mkdir -p "$LOG_DIR" "$STATE_DIR"
 
 log() {
   echo "[$(date -Iseconds)] $*" | tee -a "$LOG_FILE"
@@ -27,6 +29,53 @@ NAS_INTERFACE="col0"
 NAS_HOST="192.168.1.163"
 NAS_NFS_PORT="2049"
 FLANNEL_SUBNET_EVENT_WINDOW_SECS="${FLANNEL_SUBNET_EVENT_WINDOW_SECS:-300}"
+
+load_state() {
+  if [ ! -f "$STATE_FILE" ]; then
+    return 0
+  fi
+
+  # shellcheck disable=SC1090
+  source "$STATE_FILE"
+
+  for key in COLIMA_START_EPOCH RECOVERY_START_EPOCH LAST_FLANNEL_RESTART_EPOCH; do
+    local value="${!key:-}"
+    if [[ -n "$value" && ! "$value" =~ ^[0-9]+$ ]]; then
+      printf -v "$key" '%s' ""
+    fi
+  done
+}
+
+persist_state() {
+  local tmp_file
+  tmp_file="$STATE_FILE.tmp"
+  cat >"$tmp_file" <<EOF
+COLIMA_START_EPOCH=${COLIMA_START_EPOCH:-}
+RECOVERY_START_EPOCH=${RECOVERY_START_EPOCH:-}
+LAST_FLANNEL_RESTART_EPOCH=${LAST_FLANNEL_RESTART_EPOCH:-}
+EOF
+  mv "$tmp_file" "$STATE_FILE"
+}
+
+mark_recovery_started() {
+  RECOVERY_START_EPOCH="$(date +%s)"
+  persist_state
+}
+
+mark_colima_started() {
+  COLIMA_START_EPOCH="$(date +%s)"
+  RECOVERY_START_EPOCH="$COLIMA_START_EPOCH"
+  persist_state
+}
+
+mark_flannel_restarted() {
+  LAST_FLANNEL_RESTART_EPOCH="$(date +%s)"
+  RECOVERY_START_EPOCH="$LAST_FLANNEL_RESTART_EPOCH"
+  persist_state
+}
+
+load_state
+export LAST_FLANNEL_RESTART_EPOCH
 
 # ADR-0182 invariant target users for kubelet proxy authz.
 KUBELET_PROXY_USERS=(
@@ -74,8 +123,7 @@ force_cycle_colima() {
   colima stop --force >>"$LOG_FILE" 2>&1 || log "WARNING: colima stop --force failed"
   sleep 1
   if colima start >>"$LOG_FILE" 2>&1; then
-    COLIMA_START_EPOCH="$(date +%s)"
-    RECOVERY_START_EPOCH="$COLIMA_START_EPOCH"
+    mark_colima_started
   else
     log "WARNING: colima start failed"
   fi
@@ -166,8 +214,7 @@ restart_flannel_if_unhealthy() {
 
   if [ "$should_restart" -eq 0 ]; then
     log "flannel unhealthy; restarting kube-flannel pods"
-    LAST_FLANNEL_RESTART_EPOCH="$(date +%s)"
-    RECOVERY_START_EPOCH="$LAST_FLANNEL_RESTART_EPOCH"
+    mark_flannel_restarted
     export LAST_FLANNEL_RESTART_EPOCH RECOVERY_START_EPOCH
     kubectl get pods -n kube-system --no-headers | awk '/kube-flannel/ {print $1}' | \
       xargs -r kubectl delete pod -n kube-system >>"$LOG_FILE" 2>&1 || true
