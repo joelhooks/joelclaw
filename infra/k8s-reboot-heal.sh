@@ -19,6 +19,14 @@ KUBELET_PROXY_RBAC_MANIFEST="$HOME/Code/joelhooks/joelclaw/k8s/apiserver-kubelet
 CORE_WARMUP_TIMEOUT_SECS=300
 WARMUP_GRACE_SECS="${WARMUP_GRACE_SECS:-120}"
 COLIMA_START_EPOCH=""
+RECOVERY_START_EPOCH=""
+LAST_FLANNEL_RESTART_EPOCH=""
+NAS_CIDR="192.168.1.0/24"
+NAS_GATEWAY="192.168.64.1"
+NAS_INTERFACE="col0"
+NAS_HOST="192.168.1.163"
+NAS_NFS_PORT="2049"
+FLANNEL_SUBNET_EVENT_WINDOW_SECS="${FLANNEL_SUBNET_EVENT_WINDOW_SECS:-300}"
 
 # ADR-0182 invariant target users for kubelet proxy authz.
 KUBELET_PROXY_USERS=(
@@ -37,12 +45,37 @@ docker_socket_healthy() {
   DOCKER_HOST="$COLIMA_DOCKER_HOST" docker ps --format '{{.Names}}' >/dev/null 2>&1
 }
 
+colima_status_json() {
+  colima status --json 2>/dev/null
+}
+
+colima_healthy() {
+  python3 - <<'PY'
+import json, subprocess, sys
+try:
+    raw = subprocess.check_output(["colima", "status", "--json"], stderr=subprocess.DEVNULL, text=True)
+    data = json.loads(raw)
+except Exception:
+    sys.exit(1)
+runtime = str(data.get("runtime", "")).strip()
+ip_address = str(data.get("ip_address", "")).strip()
+if runtime and ip_address:
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
+colima_ssh_healthy() {
+  ssh -F "$COLIMA_SSH_CONFIG" -o ConnectTimeout=3 "$COLIMA_SSH_HOST" "true" >/dev/null 2>&1
+}
+
 force_cycle_colima() {
   log "force-cycling colima runtime"
   colima stop --force >>"$LOG_FILE" 2>&1 || log "WARNING: colima stop --force failed"
   sleep 1
   if colima start >>"$LOG_FILE" 2>&1; then
     COLIMA_START_EPOCH="$(date +%s)"
+    RECOVERY_START_EPOCH="$COLIMA_START_EPOCH"
   else
     log "WARNING: colima start failed"
   fi
@@ -74,15 +107,95 @@ ensure_vm_br_netfilter() {
   return 1
 }
 
+recent_flannel_subnet_failure() {
+  python3 - <<'PY'
+import json, os, subprocess, sys
+from datetime import datetime, timedelta, timezone
+window = int(os.environ.get('FLANNEL_SUBNET_EVENT_WINDOW_SECS', '300'))
+cutoff = datetime.now(timezone.utc) - timedelta(seconds=window)
+last_restart = os.environ.get('LAST_FLANNEL_RESTART_EPOCH', '').strip()
+last_restart_dt = None
+if last_restart:
+    try:
+        last_restart_dt = datetime.fromtimestamp(int(last_restart), tz=timezone.utc)
+    except Exception:
+        last_restart_dt = None
+try:
+    raw = subprocess.check_output([
+        'kubectl', 'get', 'events', '-A', '-o', 'json'
+    ], stderr=subprocess.DEVNULL, text=True)
+    items = json.loads(raw).get('items', [])
+except Exception:
+    sys.exit(1)
+for item in items:
+    message = item.get('message') or ''
+    reason = item.get('reason') or ''
+    if 'failed to load flannel' not in message or 'subnet.env' not in message:
+        continue
+    if reason != 'FailedCreatePodSandBox':
+        continue
+    when = (
+        item.get('eventTime')
+        or item.get('series', {}).get('lastObservedTime')
+        or item.get('lastTimestamp')
+        or item.get('metadata', {}).get('creationTimestamp')
+    )
+    if not when:
+        continue
+    when = datetime.fromisoformat(when.replace('Z', '+00:00'))
+    if when < cutoff:
+        continue
+    if last_restart_dt and when <= last_restart_dt:
+        continue
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
 restart_flannel_if_unhealthy() {
   local flannel_pods
+  local should_restart=1
 
   flannel_pods="$(kubectl get pods -n kube-system --no-headers 2>/dev/null | awk '/kube-flannel/ {print $1":"$3}')"
   if echo "$flannel_pods" | grep -Eq 'Error|CrashLoopBackOff|Unknown'; then
+    should_restart=0
+  elif recent_flannel_subnet_failure; then
+    log "recent flannel subnet.env sandbox failure detected"
+    should_restart=0
+  fi
+
+  if [ "$should_restart" -eq 0 ]; then
     log "flannel unhealthy; restarting kube-flannel pods"
+    LAST_FLANNEL_RESTART_EPOCH="$(date +%s)"
+    RECOVERY_START_EPOCH="$LAST_FLANNEL_RESTART_EPOCH"
+    export LAST_FLANNEL_RESTART_EPOCH RECOVERY_START_EPOCH
     kubectl get pods -n kube-system --no-headers | awk '/kube-flannel/ {print $1}' | \
       xargs -r kubectl delete pod -n kube-system >>"$LOG_FILE" 2>&1 || true
+    return 0
   fi
+
+  return 1
+}
+
+ensure_nas_route() {
+  local route_state
+
+  route_state="$(ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "sudo ip route replace $NAS_CIDR via $NAS_GATEWAY dev $NAS_INTERFACE && ip route show $NAS_CIDR" 2>>"$LOG_FILE" || true)"
+  if echo "$route_state" | grep -q "$NAS_CIDR"; then
+    log "invariant: NAS route present via $NAS_GATEWAY dev $NAS_INTERFACE"
+    return 0
+  fi
+
+  log "WARNING: NAS route missing after repair attempt"
+  return 1
+}
+
+nas_route_healthy() {
+  ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "ip route show $NAS_CIDR | grep -q '$NAS_GATEWAY dev $NAS_INTERFACE'" >/dev/null 2>&1
+}
+
+nas_nfs_healthy() {
+  ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "timeout 3 bash -lc 'echo >/dev/tcp/$NAS_HOST/$NAS_NFS_PORT'" >/dev/null 2>&1
 }
 
 kubelet_proxy_rbac_check_user() {
@@ -184,18 +297,25 @@ warmup_grace_remaining_secs() {
   local now
   local elapsed
 
+  now="$(date +%s)"
+
+  if [ -n "${RECOVERY_START_EPOCH:-}" ]; then
+    elapsed=$((now - RECOVERY_START_EPOCH))
+    if [ "$elapsed" -lt "$WARMUP_GRACE_SECS" ]; then
+      echo $((WARMUP_GRACE_SECS - elapsed))
+      return 0
+    fi
+  fi
+
   uptime_secs="$(colima_uptime_secs || true)"
   if [[ "$uptime_secs" =~ ^[0-9]+$ ]]; then
     if [ "$uptime_secs" -lt "$WARMUP_GRACE_SECS" ]; then
       echo $((WARMUP_GRACE_SECS - uptime_secs))
-    else
-      echo 0
+      return 0
     fi
-    return 0
   fi
 
   if [ -n "${COLIMA_START_EPOCH:-}" ]; then
-    now="$(date +%s)"
     elapsed=$((now - COLIMA_START_EPOCH))
     if [ "$elapsed" -lt "$WARMUP_GRACE_SECS" ]; then
       echo $((WARMUP_GRACE_SECS - elapsed))
@@ -299,12 +419,12 @@ wait_for_service_convergence() {
 
     crashed_workload_pods="$(list_non_image_pull_crash_pods)"
     if [ -n "$crashed_workload_pods" ]; then
-      hard_failures+=("deployment crash (non-image-pull): ${crashed_workload_pods//$'\n'/, }")
+      transient_failures+=("deployment crash (non-image-pull): ${crashed_workload_pods//$'\n'/, }")
     fi
 
     if [[ " ${pending[*]-} " == *" kube-flannel "* ]] && [ "$SECONDS" -ge "$next_flannel_repair_at" ]; then
       ensure_vm_br_netfilter || true
-      restart_flannel_if_unhealthy
+      restart_flannel_if_unhealthy || true
       next_flannel_repair_at=$((SECONDS + 20))
     fi
 
@@ -323,8 +443,8 @@ wait_for_service_convergence() {
       else
         curl_rc=$?
         pending+=("inngest")
-        if [ "$curl_rc" -eq 7 ] || [ "$curl_rc" -eq 28 ]; then
-          transient_failures+=("inngest health timeout/refused")
+        if [ "$curl_rc" -eq 7 ] || [ "$curl_rc" -eq 28 ] || [ "$curl_rc" -eq 52 ]; then
+          transient_failures+=("inngest health timeout/refused/empty reply")
         else
           hard_failures+=("inngest health check failed (curl exit $curl_rc)")
         fi
@@ -335,8 +455,8 @@ wait_for_service_convergence() {
       else
         curl_rc=$?
         pending+=("typesense")
-        if [ "$curl_rc" -eq 7 ] || [ "$curl_rc" -eq 28 ]; then
-          transient_failures+=("typesense health timeout/refused")
+        if [ "$curl_rc" -eq 7 ] || [ "$curl_rc" -eq 28 ] || [ "$curl_rc" -eq 52 ]; then
+          transient_failures+=("typesense health timeout/refused/empty reply")
         else
           hard_failures+=("typesense health check failed (curl exit $curl_rc)")
         fi
@@ -416,6 +536,20 @@ post_colima_invariant_gate() {
     failures=$((failures + 1))
   fi
 
+  if nas_route_healthy; then
+    log "invariant: NAS route healthy"
+  else
+    log "ERROR: invariant failed: NAS route missing"
+    failures=$((failures + 1))
+  fi
+
+  if nas_nfs_healthy; then
+    log "invariant: NAS NFS reachable"
+  else
+    log "ERROR: invariant failed: NAS NFS unreachable"
+    failures=$((failures + 1))
+  fi
+
   # Post-cycle startup can flap while flannel/core services/workloads settle.
   # Require two consecutive clean passes before declaring convergence.
   if ! wait_for_service_convergence "$CORE_WARMUP_TIMEOUT_SECS"; then
@@ -432,17 +566,19 @@ post_colima_invariant_gate() {
 
 log "k8s reboot heal tick"
 
-COLIMA_STATUS_OUTPUT="$(colima status 2>&1 || true)"
-if [[ "$COLIMA_STATUS_OUTPUT" != *"colima is running"* ]]; then
+COLIMA_STATUS_OUTPUT="$(colima_status_json || true)"
+if docker_socket_healthy || colima_ssh_healthy; then
+  :
+elif ! colima_healthy; then
   STATUS_ONE_LINE="$(echo "$COLIMA_STATUS_OUTPUT" | tr '\n' ' ' | tr -s ' ')"
-  log "colima status unhealthy: $STATUS_ONE_LINE"
+  log "colima control plane unreachable; status snapshot: ${STATUS_ONE_LINE:-status json unavailable}"
   force_cycle_colima
-elif ! docker_socket_healthy; then
+else
   log "docker socket unreachable at $COLIMA_DOCKER_HOST"
   force_cycle_colima
 fi
 
-if ! colima status >/dev/null 2>&1; then
+if ! docker_socket_healthy && ! colima_ssh_healthy; then
   log "WARNING: colima still unhealthy after recovery attempt"
 fi
 
@@ -457,6 +593,7 @@ if ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker inspect joelclaw-contr
 fi
 
 ensure_vm_br_netfilter || true
+ensure_nas_route || true
 
 # Wait briefly for kube api.
 for _ in {1..12}; do
@@ -470,7 +607,7 @@ if kubectl get nodes >/dev/null 2>&1; then
   kubectl taint nodes joelclaw-controlplane-1 node-role.kubernetes.io/control-plane:NoSchedule- >>"$LOG_FILE" 2>&1 || true
   kubectl uncordon joelclaw-controlplane-1 >>"$LOG_FILE" 2>&1 || true
 
-  restart_flannel_if_unhealthy
+  restart_flannel_if_unhealthy || true
 
   ensure_kubelet_proxy_rbac
 else

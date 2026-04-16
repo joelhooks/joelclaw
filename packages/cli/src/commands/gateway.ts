@@ -332,8 +332,9 @@ const gatewayStatus = Command.make("status", {}, () =>
         : []
 
     const totalPending = activeSessions.reduce((sum, session) => sum + (session.pending ?? 0), 0)
-    const available = daemonHealth?.available ?? (redisStatus.connected || activeSessions.length > 0)
-    const healthy = daemonHealth?.healthy ?? redisStatus.connected
+    const daemonReachable = Boolean(daemonHealth)
+    const available = daemonHealth?.available ?? (daemonReachable || redisStatus.connected || activeSessions.length > 0)
+    const healthy = daemonHealth?.healthy ?? (redisStatus.connected && daemonReachable)
 
     const nextActions: NextAction[] = [
       { command: "joelclaw gateway events", description: "Peek at pending events" },
