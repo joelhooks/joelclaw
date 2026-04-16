@@ -20,7 +20,6 @@ CRITICAL_LABELS=(
   com.joel.agent-secrets
   com.joel.system-bus-worker
   com.joel.gateway
-  com.joel.typesense-portforward
   com.joelclaw.agent-mail
 )
 
@@ -110,6 +109,8 @@ remove_headless_bridge
 stop_manual_fallbacks
 remove_user_agent "com.joel.colima-tunnel"
 remove_system_service "com.joel.colima-tunnel"
+remove_user_agent "com.joel.typesense-portforward"
+remove_system_service "com.joel.typesense-portforward"
 sleep 2
 
 for label in "${CRITICAL_LABELS[@]}"; do
@@ -132,8 +133,9 @@ Installed system daemons:
 $(printf '  - %s\n' "${CRITICAL_LABELS[@]}")
 Old bridge removed:
   /Library/LaunchDaemons/com.joel.headless-bootstrap.plist
-Deprecated daemon removed:
+Deprecated daemons removed:
   /Library/LaunchDaemons/com.joel.colima-tunnel.plist
+  /Library/LaunchDaemons/com.joel.typesense-portforward.plist
 
 Quick checks:
 $(printf '  launchctl print system/%s | rg '\''state =|pid =|last exit code'\''\n' "${CRITICAL_LABELS[@]}")

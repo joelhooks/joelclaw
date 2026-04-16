@@ -138,7 +138,7 @@ kubectl taint nodes joelclaw-controlplane-1 node-role.kubernetes.io/control-plan
 
 ### After Mac Reboot
 
-Colima starts via launchd (`com.joel.colima`). Treat it as a **boot/startup helper**, not a periodic babysitter: it should run `colima start ...` at load, then exit. If the installed plist still has `StartInterval 300`, that is stale and should be reinstalled from the repo-managed plist because re-running `colima start` every five minutes against an already-running VM adds churn and muddies collapse diagnosis. `com.joel.colima-tunnel` is deprecated and should be absent from `/Library/LaunchDaemons/`; Colima/Lima already owns the docker-published host ports for `joelclaw-controlplane-1`, so a second autossh daemon on the same ports just creates duplicate ownership and host-path fights. Wait ~60s for full stack: VM → Docker → Talos → k8s → pods. Worker auto-starts via `com.joel.system-bus-worker`.
+Colima starts via launchd (`com.joel.colima`). Treat it as a **boot/startup helper**, not a periodic babysitter: it should run `colima start ...` at load, then exit. If the installed plist still has `StartInterval 300`, that is stale and should be reinstalled from the repo-managed plist because re-running `colima start` every five minutes against an already-running VM adds churn and muddies collapse diagnosis. `com.joel.colima-tunnel` is deprecated and should be absent from `/Library/LaunchDaemons/`; Colima/Lima already owns the docker-published host ports for `joelclaw-controlplane-1`, so a second autossh daemon on the same ports just creates duplicate ownership and host-path fights. `com.joel.typesense-portforward` is also deprecated; Typesense is already exposed through the controlplane container, so a separate `kubectl port-forward` daemon on `8108` only adds churn. Wait ~60s for full stack: VM → Docker → Talos → k8s → pods. Worker auto-starts via `com.joel.system-bus-worker`.
 
 **Resource invariant first:** the stable Colima profile is `cpu: 8`, `memory: 16` (see `~/.colima/default/colima.yaml`). If the profile drifts down to `4/8`, Docker can refuse to restart `joelclaw-controlplane-1` with `range of CPUs is from 0.01 to 4.00`, leaving the whole cluster down after reboot. The repo-managed `infra/launchd/com.joel.colima.plist` must stay aligned at `8 / 16 / 100` so boot automation does not reintroduce the drift.
 
@@ -161,8 +161,9 @@ This installs the repo-managed plists directly into `/Library/LaunchDaemons/`, r
 - `com.joel.agent-secrets`
 - `com.joel.system-bus-worker`
 - `com.joel.gateway`
-- `com.joel.typesense-portforward`
 - `com.joelclaw.agent-mail`
+
+`com.joel.typesense-portforward` is deprecated and should be absent from `/Library/LaunchDaemons/`; Typesense is already published through `joelclaw-controlplane-1`, so a separate `kubectl port-forward svc/typesense 8108:8108` daemon only adds churn.
 
 `com.joelclaw.agent-mail` is launched via `infra/agent-mail-daemon.sh`, not by hardcoding the third-party checkout path into the plist. The daemon script expects the joelclaw-managed `joelhooks/mcp_agent_mail` fork; a legacy on-disk directory name is acceptable only if that checkout's `origin` remote points at `joelhooks/mcp_agent_mail`.
 
