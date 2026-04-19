@@ -84,6 +84,15 @@ remove_headless_bridge() {
   rm -f "$plist_path"
 }
 
+cancel_mux_forward() {
+  local spec="$1"
+  sudo -u "$TARGET_USER" HOME="$TARGET_HOME" \
+    ssh -F "${TARGET_HOME}/.colima/_lima/colima/ssh.config" \
+      -O cancel \
+      -L "$spec" \
+      lima-colima >/dev/null 2>&1 || true
+}
+
 stop_manual_fallbacks() {
   pkill -f "${TARGET_HOME}/.local/bin/worker-supervisor" >/dev/null 2>&1 || true
   pkill -f "${REPO_ROOT}/packages/gateway/src/daemon.ts" >/dev/null 2>&1 || true
@@ -93,6 +102,8 @@ stop_manual_fallbacks() {
   pkill -f 'autossh .*127\.0\.0\.1:6379' >/dev/null 2>&1 || true
   pkill -f '127\.0\.0\.1:16443:10\.5\.0\.2:6443' >/dev/null 2>&1 || true
   pkill -f '127\.0\.0\.1:15000:10\.5\.0\.2:50000' >/dev/null 2>&1 || true
+  cancel_mux_forward '16443:10.5.0.2:6443'
+  cancel_mux_forward '127.0.0.1:15000:10.5.0.2:50000'
   pkill -f 'svc/typesense 8108:8108' >/dev/null 2>&1 || true
   pkill -f "${TARGET_HOME}/.local/bin/secrets serve --socket ${TARGET_HOME}/.agent-secrets/agent-secrets.sock" >/dev/null 2>&1 || true
   pkill -f "${REPO_ROOT}/infra/agent-mail-daemon.sh" >/dev/null 2>&1 || true

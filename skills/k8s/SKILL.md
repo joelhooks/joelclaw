@@ -337,7 +337,7 @@ Rules:
 - do not kill generic `ssh` listeners on those host ports; that can kill Lima's own forwarders
 - `infra/colima-tunnel.sh` is now only a deprecated compatibility stub so stale launchd installs exit cleanly instead of fighting Lima
 - `com.joel.kube-operator-access` is the allowed exception because it owns dedicated operator-only loopback ports that Colima/Lima do not publish themselves: `16443 -> 10.5.0.2:6443` for kube-apiserver and `15000 -> 10.5.0.2:50000` for Talos
-- the operator daemon must use `ssh -F ~/.colima/_lima/colima/ssh.config -o ControlMaster=no`; do not trust the generic Lima mux path for long-lived kubectl/talos access after a rebuild
+- the operator daemon must use `ssh -F ~/.colima/_lima/colima/ssh.config -S none -o ControlPath=none -o ControlMaster=no -o ControlPersist=no`; do not trust the generic Lima mux path for long-lived kubectl/talos access after a rebuild
 - once the daemon is installed, kubectl should use `https://127.0.0.1:16443` and talosctl should use `127.0.0.1:15000`
 - `com.joel.k8s-reboot-heal` must use the same JSON status check; a plain `colima status` false-negative can force-cycle the VM and retrigger the flannel/NAS failure cascade during reboot recovery
 - do not trust status output alone when deciding to cycle Colima; if the Docker socket or Colima SSH path is still healthy, treat the VM as alive and keep your hands off it

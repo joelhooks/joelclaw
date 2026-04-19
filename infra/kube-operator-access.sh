@@ -94,7 +94,10 @@ mkdir -p "${TARGET_HOME}/.kube"
 
 log "starting dedicated operator tunnel on 127.0.0.1:${LOCAL_KUBE_PORT} and 127.0.0.1:${LOCAL_TALOS_PORT}"
 ssh -F "$SSH_CONFIG" \
+  -S none \
+  -o ControlPath=none \
   -o ControlMaster=no \
+  -o ControlPersist=no \
   -o BatchMode=yes \
   -o ExitOnForwardFailure=yes \
   -o ServerAliveInterval=15 \

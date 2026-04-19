@@ -191,8 +191,8 @@ Source: `infra/worker-supervisor/src/main.rs`
 - **Colima stability**: nestedVirtualization is OFF by default (crashes VM under Docker build load). Toggle ON only for Firecracker testing sessions, then toggle OFF. See k8s skill for recovery procedures.
 
 ### Control-plane access
-- kube API exposed locally at `127.0.0.1:16443` via `com.joel.kube-operator-access` (`ssh -L 16443:10.5.0.2:6443`)
-- Talos API exposed locally at `127.0.0.1:15000` via the same daemon (`ssh -L 15000:10.5.0.2:50000`)
+- kube API exposed locally at `127.0.0.1:16443` via `com.joel.kube-operator-access` (`ssh -S none -o ControlPath=none -L 16443:10.5.0.2:6443`)
+- Talos API exposed locally at `127.0.0.1:15000` via the same daemon (`ssh -S none -o ControlPath=none -L 15000:10.5.0.2:50000`)
 - NodePort/runtime app ports still come from Colima/Lima forwarding; the operator daemon exists specifically because the direct host-published 6443 path was not boring after the rebuild
 
 ---
