@@ -2,8 +2,8 @@
 # Typesense v30.1 — Unified search for JoelClaw network (ADR-0082)
 # Single-node deployment with local-path PVC.
 # Primary data stays local; no NAS mount at runtime (ADR-0187).
-# Access via: kubectl port-forward svc/typesense -n joelclaw 8108:8108
-# Later: Tailscale operator will expose as typesense.ts.net (ADR-0083)
+# Access via stable host NodePort 8108 so host worker/CLI observability writes do not depend on ad hoc port-forwards.
+# Later: Tailscale operator can still expose a cleaner remote surface (ADR-0083).
 apiVersion: v1
 kind: Secret
 metadata:
@@ -92,10 +92,11 @@ metadata:
   labels:
     app: typesense
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app: typesense
   ports:
     - port: 8108
       targetPort: 8108
+      nodePort: 8108
       name: http

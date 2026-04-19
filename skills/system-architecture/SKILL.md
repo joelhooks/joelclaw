@@ -169,7 +169,7 @@ Source: `infra/worker-supervisor/src/main.rs`
 |---|---|---|---|---|---|
 | Inngest | StatefulSet `inngest` | NodePort (`inngest-svc`) | 8288, 8289 | 8288, 8289 | Event API + connect ws |
 | Redis | StatefulSet `redis` | NodePort | 6379 | 6379 | Queue/state/pubsub |
-| Typesense | StatefulSet `typesense` | ClusterIP | 8108 | in-cluster only; operator access via short-lived port-forward when needed | Search + telemetry store |
+| Typesense | StatefulSet `typesense` | NodePort | 8108 | 8108 via Colima/Lima host publish | Search + telemetry store |
 | Restate | StatefulSet `restate` | NodePort | 8080, 9070, 9071 | 8080, 9070, 9071 | Durable workflow ingress + admin + metrics |
 | system-bus-worker | Deployment | ClusterIP | 3111 | in-cluster only | Cluster-role worker (12 functions) |
 | restate-worker | Deployment | ClusterIP | 9080 | in-cluster only | `dagOrchestrator` + `dagWorker` + queue drainer in full agent image |
@@ -324,7 +324,7 @@ From index comments + function lists:
 | 8288 | ssh forward (Colima) -> Inngest svc | Inngest API + dashboard backend | NodePort + host forward; proxied via Caddy 9443 |
 | 8289 | ssh forward (Colima) -> Inngest ws | Inngest connect websocket | NodePort + host forward; proxied via Caddy 8290 |
 | 6379 | ssh forward (Colima) -> Redis | Redis | NodePort + host forward |
-| 8108 | transient `kubectl port-forward` | Typesense API | ClusterIP only; short-lived operator tunnel |
+| 8108 | Typesense NodePort via Colima/Lima host publish | Typesense API | stable host access for worker + CLI observability/search |
 | 9070 | ssh forward (Colima) -> restate | Restate admin API | NodePort + host forward |
 | 9071 | ssh forward (Colima) -> restate | Restate metrics | NodePort + host forward |
 | 9080 | k8s `restate-worker` service | Restate worker HTTP (`dagOrchestrator`, `dagWorker`, queue drainer) | ClusterIP only |

@@ -489,6 +489,7 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 9. **`restate-worker` privilege is intentional.** Do not “harden” away `/dev/kvm`, `privileged: true`, or the unconfined seccomp profile unless you are simultaneously changing the Firecracker runtime contract.
 10. **Dkron service-name collision** — never create a bare `svc/dkron`. Kubernetes injects `DKRON_*` env vars into pods, which collides with Dkron's own config parsing. Use `dkron-peer` and `dkron-svc`.
 11. **Dkron PVC permissions** — upstream `dkron/dkron:latest` currently needs root on the local-path PVC. Non-root hardening caused `permission denied` under `/data/raft/snapshots/permTest` and CrashLoopBackOff.
+12. **Typesense host access must be a real service contract** — after the 2026-04-19 rebuild, OTEL emit hung because host code still targeted `localhost:8108` while `typesense` had been restored as `ClusterIP` only. The fix was to make `k8s/typesense.yaml` a NodePort service on `8108` again so host worker + CLI writes have a stable path without reviving a launchd port-forward sidecar.
 
 ## Key Files
 

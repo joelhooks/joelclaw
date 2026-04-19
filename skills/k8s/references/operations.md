@@ -164,7 +164,7 @@ This installs the repo-managed plists directly into `/Library/LaunchDaemons/`, r
 - `com.joel.gateway`
 - `com.joelclaw.agent-mail`
 
-`com.joel.typesense-portforward` is deprecated and should be absent from `/Library/LaunchDaemons/`; Typesense is already published through `joelclaw-controlplane-1`, so a separate `kubectl port-forward svc/typesense 8108:8108` daemon only adds churn.
+`com.joel.typesense-portforward` is deprecated and should be absent from `/Library/LaunchDaemons/`; `k8s/typesense.yaml` now exposes Typesense as NodePort `8108`, and Colima/Lima publishes that host port through the controlplane container. A separate `kubectl port-forward svc/typesense 8108:8108` daemon only adds churn.
 
 `com.joel.kube-operator-access` is the canonical kubectl/talos operator plane. It runs `ssh -F ~/.colima/_lima/colima/ssh.config -S none -o ControlPath=none -o ControlMaster=no -o ControlPersist=no` under launchd and keeps two boring local ports alive: `127.0.0.1:16443` for Kubernetes and `127.0.0.1:15000` for Talos. The installer cancels any stale operator forwards that were accidentally added to Lima's mux master before it bootstraps the daemon, otherwise launchd will sit there failing on `Address already in use`. The daemon rewrites `~/.kube/config` and `~/.talos/config` toward those stable loopback endpoints so operator access stops depending on an ad hoc manual tunnel.
 
