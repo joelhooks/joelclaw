@@ -110,8 +110,9 @@ Persist at least:
 - `COLIMA_UNHEALTHY_STREAK`
 - `LAST_COLIMA_UNHEALTHY_EPOCH`
 - `LAST_COLIMA_FORCE_CYCLE_EPOCH`
+- `LAST_COLIMA_FAILED_RECOVERY_EPOCH`
 
-Why this matters: kubelet `FailedCreatePodSandBox` events mentioning missing `subnet.env` can stay recent for minutes after the first repair. If the healer forgets that it already restarted flannel, the next launchd tick can bounce flannel again and knock healthy services like Typesense back into 503 warmup for no good reason.
+Why this matters: kubelet `FailedCreatePodSandBox` events mentioning missing `subnet.env` can stay recent for minutes after the first repair. If the healer forgets that it already restarted flannel, the next launchd tick can bounce flannel again and knock healthy services like Typesense back into 503 warmup for no good reason. The extra failed-recovery marker also stops the system from counting a one-minute green flash as success and then force-cycling Colima again when the control path collapses.
 
 ### Kubeconfig Port Drift (2026-03-21 incident)
 
@@ -136,6 +137,19 @@ kubectl config delete-context admin@joelclaw  # if stale entry exists
 **Self-heal**: `health.sh` now auto-detects and fixes this before running checks.
 
 **Root cause**: Container was created without pinning these ports. To permanently fix, recreate the container with explicit port bindings for 6443:6443 and 50000:50000. This requires cluster recreation — a bigger operation.
+
+### Durable recovery rule (ADR-0244)
+
+A Colima restart is **not** recovery.
+
+After any `colima start` / force-cycle, the system only counts recovery as real if a post-restart stability window stays healthy across repeated passes for:
+- Colima SSH
+- Docker socket
+- Kubernetes API
+- Typesense localhost health
+- Inngest localhost health
+
+If those regress during the verification window, classify the event as a **failed recovery**, capture proof artifacts, and stop repeated force-cycles for the configured hold period. The point is durability, not healer theatre.
 
 ## Quick Health Check
 

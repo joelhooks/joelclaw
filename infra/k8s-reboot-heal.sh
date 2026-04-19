@@ -62,12 +62,17 @@ COLIMA_FORCE_COOLDOWN_SECS="${COLIMA_FORCE_COOLDOWN_SECS:-900}"
 COLIMA_UNHEALTHY_STREAK_WINDOW_SECS="${COLIMA_UNHEALTHY_STREAK_WINDOW_SECS:-420}"
 COLIMA_RAPID_CONFIRM_RETRIES="${COLIMA_RAPID_CONFIRM_RETRIES:-6}"
 COLIMA_RAPID_CONFIRM_SLEEP_SECS="${COLIMA_RAPID_CONFIRM_SLEEP_SECS:-5}"
+COLIMA_RECOVERY_STABILITY_WINDOW_SECS="${COLIMA_RECOVERY_STABILITY_WINDOW_SECS:-90}"
+COLIMA_RECOVERY_STABILITY_POLL_SECS="${COLIMA_RECOVERY_STABILITY_POLL_SECS:-10}"
+COLIMA_RECOVERY_STABILITY_REQUIRED_PASSES="${COLIMA_RECOVERY_STABILITY_REQUIRED_PASSES:-6}"
+COLIMA_FAILED_RECOVERY_HOLD_SECS="${COLIMA_FAILED_RECOVERY_HOLD_SECS:-1800}"
 COLIMA_START_EPOCH=""
 RECOVERY_START_EPOCH=""
 LAST_FLANNEL_RESTART_EPOCH=""
 COLIMA_UNHEALTHY_STREAK="0"
 LAST_COLIMA_UNHEALTHY_EPOCH=""
 LAST_COLIMA_FORCE_CYCLE_EPOCH=""
+LAST_COLIMA_FAILED_RECOVERY_EPOCH=""
 NAS_CIDR="192.168.1.0/24"
 NAS_GATEWAY="192.168.64.1"
 NAS_INTERFACE="col0"
@@ -86,7 +91,7 @@ load_state() {
   # shellcheck disable=SC1090
   source "$STATE_FILE"
 
-  for key in COLIMA_START_EPOCH RECOVERY_START_EPOCH LAST_FLANNEL_RESTART_EPOCH LAST_COLIMA_UNHEALTHY_EPOCH LAST_COLIMA_FORCE_CYCLE_EPOCH; do
+  for key in COLIMA_START_EPOCH RECOVERY_START_EPOCH LAST_FLANNEL_RESTART_EPOCH LAST_COLIMA_UNHEALTHY_EPOCH LAST_COLIMA_FORCE_CYCLE_EPOCH LAST_COLIMA_FAILED_RECOVERY_EPOCH; do
     local value="${!key:-}"
     if [[ -n "$value" && ! "$value" =~ ^[0-9]+$ ]]; then
       printf -v "$key" '%s' ""
@@ -108,6 +113,7 @@ LAST_FLANNEL_RESTART_EPOCH=${LAST_FLANNEL_RESTART_EPOCH:-}
 COLIMA_UNHEALTHY_STREAK=${COLIMA_UNHEALTHY_STREAK:-0}
 LAST_COLIMA_UNHEALTHY_EPOCH=${LAST_COLIMA_UNHEALTHY_EPOCH:-}
 LAST_COLIMA_FORCE_CYCLE_EPOCH=${LAST_COLIMA_FORCE_CYCLE_EPOCH:-}
+LAST_COLIMA_FAILED_RECOVERY_EPOCH=${LAST_COLIMA_FAILED_RECOVERY_EPOCH:-}
 EOF
   mv "$tmp_file" "$STATE_FILE"
 }
@@ -130,6 +136,18 @@ mark_flannel_restarted() {
   LAST_FLANNEL_RESTART_EPOCH="$(date +%s)"
   RECOVERY_START_EPOCH="$LAST_FLANNEL_RESTART_EPOCH"
   persist_state
+}
+
+mark_colima_failed_recovery() {
+  LAST_COLIMA_FAILED_RECOVERY_EPOCH="$(date +%s)"
+  persist_state
+}
+
+clear_colima_failed_recovery_state() {
+  if [ -n "${LAST_COLIMA_FAILED_RECOVERY_EPOCH:-}" ]; then
+    LAST_COLIMA_FAILED_RECOVERY_EPOCH=""
+    persist_state
+  fi
 }
 
 reset_colima_unhealthy_state() {
@@ -188,6 +206,26 @@ colima_force_cycle_cooldown_remaining_secs() {
   echo 0
 }
 
+colima_failed_recovery_hold_remaining_secs() {
+  local now
+  local elapsed
+
+  now="$(date +%s)"
+
+  if [[ ! "${LAST_COLIMA_FAILED_RECOVERY_EPOCH:-}" =~ ^[0-9]+$ ]]; then
+    echo 0
+    return 0
+  fi
+
+  elapsed=$((now - LAST_COLIMA_FAILED_RECOVERY_EPOCH))
+  if [ "$elapsed" -lt "$COLIMA_FAILED_RECOVERY_HOLD_SECS" ]; then
+    echo $((COLIMA_FAILED_RECOVERY_HOLD_SECS - elapsed))
+    return 0
+  fi
+
+  echo 0
+}
+
 rapid_confirm_colima_host_collapse() {
   local reason="$1"
   local attempt
@@ -216,10 +254,17 @@ colima_force_cycle_ready() {
   local streak
   local warmup_remaining
   local cooldown_remaining
+  local failed_recovery_hold_remaining
 
   streak="$(note_colima_unhealthy)"
   warmup_remaining="$(warmup_grace_remaining_secs)"
   cooldown_remaining="$(colima_force_cycle_cooldown_remaining_secs)"
+  failed_recovery_hold_remaining="$(colima_failed_recovery_hold_remaining_secs)"
+
+  if [ "$failed_recovery_hold_remaining" -gt 0 ]; then
+    log "hold: Colima unhealthy (${reason}) but a failed recovery is still in hold for ${failed_recovery_hold_remaining}s; stop cycling and preserve evidence"
+    return 1
+  fi
 
   if [ "$cooldown_remaining" -gt 0 ]; then
     log "hold: Colima unhealthy (${reason}) but recent force-cycle cooldown has ${cooldown_remaining}s remaining"
@@ -608,6 +653,20 @@ wait_for_service_convergence() {
     transient_failures=()
     hard_failures=()
 
+    if docker_socket_healthy; then
+      :
+    else
+      pending+=("docker-socket")
+      transient_failures+=("docker socket unhealthy")
+    fi
+
+    if colima_ssh_healthy; then
+      :
+    else
+      pending+=("colima-ssh")
+      transient_failures+=("colima ssh unhealthy")
+    fi
+
     if kubectl get nodes >/dev/null 2>&1; then
       kubelet_proxy_rbac_healthy || hard_failures+=("kubelet proxy RBAC unhealthy")
     else
@@ -728,6 +787,52 @@ wait_for_service_convergence() {
   return 1
 }
 
+verify_post_recovery_stability_window() {
+  local deadline=$((SECONDS + COLIMA_RECOVERY_STABILITY_WINDOW_SECS))
+  local stable_passes=0
+  local failures=()
+  local curl_rc=0
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    failures=()
+
+    docker_socket_healthy || failures+=("docker socket unhealthy")
+    colima_ssh_healthy || failures+=("colima ssh unhealthy")
+    kubectl get nodes >/dev/null 2>&1 || failures+=("kubernetes api unreachable")
+
+    if curl -fsS --max-time 5 http://localhost:8288/health >/dev/null 2>&1; then
+      :
+    else
+      curl_rc=$?
+      failures+=("inngest health failed (curl exit $curl_rc)")
+    fi
+
+    if curl -fsS --max-time 5 http://localhost:8108/health >/dev/null 2>&1; then
+      :
+    else
+      curl_rc=$?
+      failures+=("typesense health failed (curl exit $curl_rc)")
+    fi
+
+    if [ "${#failures[@]}" -gt 0 ]; then
+      log "ERROR: post-recovery stability regression (${failures[*]})"
+      return 1
+    fi
+
+    stable_passes=$((stable_passes + 1))
+    log "invariant: post-recovery stability pass ${stable_passes}/${COLIMA_RECOVERY_STABILITY_REQUIRED_PASSES}"
+    if [ "$stable_passes" -ge "$COLIMA_RECOVERY_STABILITY_REQUIRED_PASSES" ]; then
+      log "invariant: post-recovery stability window passed"
+      return 0
+    fi
+
+    sleep "$COLIMA_RECOVERY_STABILITY_POLL_SECS"
+  done
+
+  log "ERROR: post-recovery stability window timed out after ${COLIMA_RECOVERY_STABILITY_WINDOW_SECS}s"
+  return 1
+}
+
 post_colima_invariant_gate() {
   local failures=0
 
@@ -735,6 +840,13 @@ post_colima_invariant_gate() {
     log "invariant: docker socket healthy"
   else
     log "ERROR: invariant failed: docker socket unhealthy at $COLIMA_DOCKER_HOST"
+    failures=$((failures + 1))
+  fi
+
+  if colima_ssh_healthy; then
+    log "invariant: Colima SSH healthy"
+  else
+    log "ERROR: invariant failed: Colima SSH unhealthy"
     failures=$((failures + 1))
   fi
 
@@ -769,6 +881,12 @@ post_colima_invariant_gate() {
   # Post-cycle startup can flap while flannel/core services/workloads settle.
   # Require two consecutive clean passes before declaring convergence.
   if ! wait_for_service_convergence "$CORE_WARMUP_TIMEOUT_SECS"; then
+    failures=$((failures + 1))
+  fi
+
+  # A restart is not recovery. Recovery only counts if the control path stays up
+  # through a boring verification window after convergence looks green.
+  if ! verify_post_recovery_stability_window; then
     failures=$((failures + 1))
   fi
 
@@ -845,10 +963,15 @@ else
 fi
 
 if post_colima_invariant_gate; then
+  clear_colima_failed_recovery_state
   if [ -n "$COLIMA_PROOF_INCIDENT_ID" ]; then
     run_colima_proof_snapshot "post-invariant-passed" "infra.colima.invariant.passed" "info" "true" "post-Colima invariant gate passed after recovery" "observe"
   fi
 else
+  if [ "$COLIMA_CYCLE_ATTEMPTED" -eq 1 ]; then
+    mark_colima_failed_recovery
+    run_colima_proof_snapshot "post-recovery-regressed" "infra.colima.recovery.verification.failed" "error" "false" "post-restart verification window regressed; recovery did not hold" "observe"
+  fi
   run_colima_proof_snapshot "post-invariant-failed" "infra.colima.invariant.failed" "error" "false" "post-Colima invariant gate failed" "observe"
   exit 1
 fi
