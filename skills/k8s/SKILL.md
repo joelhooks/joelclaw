@@ -336,6 +336,9 @@ Rules:
 - do not run a second autossh daemon on ports Colima/Lima already publishes for `joelclaw-controlplane-1` (`3838`, `6379`, `7880`, `7881`, `8108`, `8288`, `8289`, `9627`, `64784`)
 - do not kill generic `ssh` listeners on those host ports; that can kill Lima's own forwarders
 - `infra/colima-tunnel.sh` is now only a deprecated compatibility stub so stale launchd installs exit cleanly instead of fighting Lima
+- `com.joel.kube-operator-access` is the allowed exception because it owns dedicated operator-only loopback ports that Colima/Lima do not publish themselves: `16443 -> 10.5.0.2:6443` for kube-apiserver and `15000 -> 10.5.0.2:50000` for Talos
+- the operator daemon must use `ssh -F ~/.colima/_lima/colima/ssh.config -o ControlMaster=no`; do not trust the generic Lima mux path for long-lived kubectl/talos access after a rebuild
+- once the daemon is installed, kubectl should use `https://127.0.0.1:16443` and talosctl should use `127.0.0.1:15000`
 - `com.joel.k8s-reboot-heal` must use the same JSON status check; a plain `colima status` false-negative can force-cycle the VM and retrigger the flannel/NAS failure cascade during reboot recovery
 - do not trust status output alone when deciding to cycle Colima; if the Docker socket or Colima SSH path is still healthy, treat the VM as alive and keep your hands off it
 - a Colima force-cycle now requires confirmed evidence; one ugly observation is not enough to panic-cycle the VM
@@ -500,10 +503,12 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 | `~/Code/joelhooks/joelclaw/k8s/dkron.yaml` | Dkron scheduler StatefulSet + services |
 | `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh` | Build/push/deploy system-bus worker to k8s |
 | `~/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh` | Reboot auto-heal script for Colima/Talos/taint/flannel |
+| `~/Code/joelhooks/joelclaw/infra/kube-operator-access.sh` | launchd-managed kubectl/talos operator tunnel on 16443/15000 |
 | `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.k8s-reboot-heal.plist` | launchd timer for reboot auto-heal |
+| `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.kube-operator-access.plist` | launchd service for stable operator access |
 | `~/Code/joelhooks/joelclaw/skills/k8s/references/operations.md` | Cluster operations + recovery notes |
-| `~/.talos/config` | Talos client config |
-| `~/.kube/config` | Kubeconfig (context: `admin@joelclaw-1`) |
+| `~/.talos/config` | Talos client config (stable endpoint: `127.0.0.1:15000`) |
+| `~/.kube/config` | Kubeconfig (stable server: `https://127.0.0.1:16443`) |
 | `~/.colima/default/colima.yaml` | Colima VM config |
 | `~/Code/joelhooks/joelclaw/infra/colima-tunnel.sh` | Deprecated compatibility stub; exits cleanly so stale launchd installs stop fighting Lima |
 | `~/.local/bin/colima-tunnel` | Compatibility wrapper for the deprecated tunnel stub |

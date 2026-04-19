@@ -138,7 +138,7 @@ kubectl taint nodes joelclaw-controlplane-1 node-role.kubernetes.io/control-plan
 
 ### After Mac Reboot
 
-Colima starts via launchd (`com.joel.colima`). Treat it as a **boot/startup helper**, not a periodic babysitter: it should run `colima start ...` at load, then exit. If the installed plist still has `StartInterval 300`, that is stale and should be reinstalled from the repo-managed plist because re-running `colima start` every five minutes against an already-running VM adds churn and muddies collapse diagnosis. `com.joel.colima-tunnel` is deprecated and should be absent from `/Library/LaunchDaemons/`; Colima/Lima already owns the docker-published host ports for `joelclaw-controlplane-1`, so a second autossh daemon on the same ports just creates duplicate ownership and host-path fights. `com.joel.typesense-portforward` is also deprecated; Typesense is already exposed through the controlplane container, so a separate `kubectl port-forward` daemon on `8108` only adds churn. Wait ~60s for full stack: VM → Docker → Talos → k8s → pods. Worker auto-starts via `com.joel.system-bus-worker`.
+Colima starts via launchd (`com.joel.colima`). Treat it as a **boot/startup helper**, not a periodic babysitter: it should run `colima start ...` at load, then exit. If the installed plist still has `StartInterval 300`, that is stale and should be reinstalled from the repo-managed plist because re-running `colima start` every five minutes against an already-running VM adds churn and muddies collapse diagnosis. `com.joel.colima-tunnel` is deprecated and should be absent from `/Library/LaunchDaemons/`; Colima/Lima already owns the docker-published host ports for `joelclaw-controlplane-1`, so a second autossh daemon on the same ports just creates duplicate ownership and host-path fights. `com.joel.typesense-portforward` is also deprecated; Typesense is already exposed through the controlplane container, so a separate `kubectl port-forward` daemon on `8108` only adds churn. `com.joel.kube-operator-access` is the one allowed operator-plane tunnel because it owns dedicated local ports Lima does **not** publish itself: `16443 -> 10.5.0.2:6443` for kube-apiserver and `15000 -> 10.5.0.2:50000` for the Talos API. Wait ~60s for full stack: VM → Docker → Talos → k8s → pods. Worker auto-starts via `com.joel.system-bus-worker`.
 
 **Resource invariant first:** the stable Colima profile is `cpu: 8`, `memory: 16` (see `~/.colima/default/colima.yaml`). If the profile drifts down to `4/8`, Docker can refuse to restart `joelclaw-controlplane-1` with `range of CPUs is from 0.01 to 4.00`, leaving the whole cluster down after reboot. The repo-managed `infra/launchd/com.joel.colima.plist` must stay aligned at `8 / 16 / 100` so boot automation does not reintroduce the drift.
 
@@ -154,16 +154,19 @@ Compatibility alias if old notes still point at it:
 sudo ~/Code/joelhooks/joelclaw/infra/install-headless-bootstrap.sh
 ```
 
-This installs the repo-managed plists directly into `/Library/LaunchDaemons/`, removes stale `~/Library/LaunchAgents` copies for the critical labels, deletes the superseded `com.joel.headless-bootstrap` bridge, kills known manual `nohup` fallbacks, and bootstraps these services in the `system` domain using `UserName=joel` where needed:
+This installs the repo-managed plists directly into `/Library/LaunchDaemons/`, removes stale `~/Library/LaunchAgents` copies for the critical labels, deletes the superseded `com.joel.headless-bootstrap` bridge, kills known manual `nohup` fallbacks, kills stale manual operator tunnels on `16443` and `15000`, and bootstraps these services in the `system` domain using `UserName=joel` where needed:
 
 - `com.joel.colima`
 - `com.joel.k8s-reboot-heal`
+- `com.joel.kube-operator-access`
 - `com.joel.agent-secrets`
 - `com.joel.system-bus-worker`
 - `com.joel.gateway`
 - `com.joelclaw.agent-mail`
 
 `com.joel.typesense-portforward` is deprecated and should be absent from `/Library/LaunchDaemons/`; Typesense is already published through `joelclaw-controlplane-1`, so a separate `kubectl port-forward svc/typesense 8108:8108` daemon only adds churn.
+
+`com.joel.kube-operator-access` is the canonical kubectl/talos operator plane. It runs `ssh -F ~/.colima/_lima/colima/ssh.config -o ControlMaster=no` under launchd and keeps two boring local ports alive: `127.0.0.1:16443` for Kubernetes and `127.0.0.1:15000` for Talos. It also rewrites `~/.kube/config` and `~/.talos/config` toward those stable loopback endpoints so operator access stops depending on an ad hoc manual tunnel.
 
 `infra/colima-proof.sh` is the evidence-first substrate harness. Use it to capture incident-scoped artifacts under `~/.local/share/colima-proof/incidents/<incident_id>/` and emit OTEL under `source=infra`, `component=colima-proof` before destructive recovery erases the failure state. The reboot healer now uses it on failure edges, hold states, force-cycle boundaries, and post-invariant outcomes. For the first non-destructive discriminator, run `recover-usernet --restart-mode none --verify-wait-secs 15`: it resets Lima `user-v2` control state, writes pre/post snapshots, and records a verdict artifact that says whether the intervention actually supported `H1-usernet` or not.
 
@@ -174,6 +177,9 @@ Do **not** try to bootstrap user LaunchAgents into `user/$UID` from a system dae
 **⚠️ launchd PATH requirement**: The Colima plist MUST include `EnvironmentVariables` with `PATH` containing `/opt/homebrew/bin`. Colima internally shells to `limactl` which is a Homebrew formula. Without this, launchd recovery silently fails (Feb 2026 incident: 6 days of silent failures). Same applies to `k8s-reboot-heal.sh` — it exports PATH at the top as belt-and-suspenders.
 
 ```bash
+launchctl print system/com.joel.kube-operator-access | rg 'state =|pid =|last exit code'
+kubectl get nodes
+curl -k https://127.0.0.1:16443/readyz?verbose
 kubectl get pods -n joelclaw
 curl localhost:8288/health
 ```

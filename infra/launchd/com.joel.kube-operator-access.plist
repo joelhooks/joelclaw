@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.joel.kube-operator-access</string>
+
+    <key>UserName</key>
+    <string>joel</string>
+
+    <key>GroupName</key>
+    <string>staff</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/joel/Code/joelhooks/joelclaw/infra/kube-operator-access.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/joel/Code/joelhooks/joelclaw</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/joel</string>
+        <key>PATH</key>
+        <string>/Users/joel/.local/bin:/Users/joel/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>KUBE_OPERATOR_LOCAL_KUBE_PORT</key>
+        <string>16443</string>
+        <key>KUBE_OPERATOR_LOCAL_TALOS_PORT</key>
+        <string>15000</string>
+        <key>KUBE_OPERATOR_TARGET_NODE</key>
+        <string>10.5.0.2</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/joel/.joelclaw/logs/kube-operator-access.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/joel/.joelclaw/logs/kube-operator-access.stderr.log</string>
+</dict>
+</plist>

@@ -91,7 +91,8 @@ Mac Mini "Panda" (host macOS)
 
 ### Known runtime endpoints
 - Colima VM IP: `192.168.64.2` (`colima status --json`)
-- Kubernetes API (local forward): `https://127.0.0.1:64784` (`kubectl cluster-info`)
+- Kubernetes API (stable operator tunnel): `https://127.0.0.1:16443`
+- Talos API (stable operator tunnel): `127.0.0.1:15000`
 - Tailnet hostnames seen in config:
   - `panda.tail7af24.ts.net` (Caddy routes)
   - `pds.panda.tail7af24.ts.net` (PDS values)
@@ -116,7 +117,7 @@ Mac Mini "Panda" (host macOS)
 | `com.joel.talon` | running | 96359 | Infra watchdog | health `127.0.0.1:9999` |
 | `com.joel.agent-secrets` | running | 98048 | Secret lease daemon | no public port |
 | `com.joel.imsg-rpc` | running | 61110 | iMessage JSON-RPC socket daemon | Unix socket `/tmp/imsg.sock` |
-| `com.joel.typesense-portforward` | running | 32095 | `kubectl port-forward svc/typesense 8108:8108` | local 8108 |
+| `com.joel.kube-operator-access` | running | varies | stable kubectl/talos operator tunnel | local 16443 (kube), 15000 (talos) |
 | `com.joel.voice-agent` | running | 71887 | voice agent runtime | local 8081 |
 | `com.joel.local-sandbox-janitor` | scheduled | (launchd timer) | ADR-0221 local sandbox janitor (`scripts/local-sandbox-janitor.sh` → `joelclaw workload sandboxes janitor`) | logs in `/tmp/joelclaw/local-sandbox-janitor.{log,err}` |
 | `com.joelclaw.agent-mail` | spawn scheduled | (none in launchctl snapshot) | agent-mail MCP HTTP service | observed listener `127.0.0.1:8765` (python process) |
@@ -168,7 +169,7 @@ Source: `infra/worker-supervisor/src/main.rs`
 |---|---|---|---|---|---|
 | Inngest | StatefulSet `inngest` | NodePort (`inngest-svc`) | 8288, 8289 | 8288, 8289 | Event API + connect ws |
 | Redis | StatefulSet `redis` | NodePort | 6379 | 6379 | Queue/state/pubsub |
-| Typesense | StatefulSet `typesense` | ClusterIP | 8108 | host via launchd port-forward 8108 | Search + telemetry store |
+| Typesense | StatefulSet `typesense` | ClusterIP | 8108 | in-cluster only; operator access via short-lived port-forward when needed | Search + telemetry store |
 | Restate | StatefulSet `restate` | NodePort | 8080, 9070, 9071 | 8080, 9070, 9071 | Durable workflow ingress + admin + metrics |
 | system-bus-worker | Deployment | ClusterIP | 3111 | in-cluster only | Cluster-role worker (12 functions) |
 | restate-worker | Deployment | ClusterIP | 9080 | in-cluster only | `dagOrchestrator` + `dagWorker` + queue drainer in full agent image |
@@ -190,8 +191,9 @@ Source: `infra/worker-supervisor/src/main.rs`
 - **Colima stability**: nestedVirtualization is OFF by default (crashes VM under Docker build load). Toggle ON only for Firecracker testing sessions, then toggle OFF. See k8s skill for recovery procedures.
 
 ### Control-plane access
-- kube API exposed locally at `127.0.0.1:64784` (forwarded)
-- additional forwarded control ports observed: `64785`, `9627` (**exact ownership mapping UNKNOWN — needs manual verification**)
+- kube API exposed locally at `127.0.0.1:16443` via `com.joel.kube-operator-access` (`ssh -L 16443:10.5.0.2:6443`)
+- Talos API exposed locally at `127.0.0.1:15000` via the same daemon (`ssh -L 15000:10.5.0.2:50000`)
+- NodePort/runtime app ports still come from Colima/Lima forwarding; the operator daemon exists specifically because the direct host-published 6443 path was not boring after the rebuild
 
 ---
 
@@ -322,7 +324,7 @@ From index comments + function lists:
 | 8288 | ssh forward (Colima) -> Inngest svc | Inngest API + dashboard backend | NodePort + host forward; proxied via Caddy 9443 |
 | 8289 | ssh forward (Colima) -> Inngest ws | Inngest connect websocket | NodePort + host forward; proxied via Caddy 8290 |
 | 6379 | ssh forward (Colima) -> Redis | Redis | NodePort + host forward |
-| 8108 | ssh forward / kubectl port-forward | Typesense API | ClusterIP; exposed locally by port-forward |
+| 8108 | transient `kubectl port-forward` | Typesense API | ClusterIP only; short-lived operator tunnel |
 | 9070 | ssh forward (Colima) -> restate | Restate admin API | NodePort + host forward |
 | 9071 | ssh forward (Colima) -> restate | Restate metrics | NodePort + host forward |
 | 9080 | k8s `restate-worker` service | Restate worker HTTP (`dagOrchestrator`, `dagWorker`, queue drainer) | ClusterIP only |
@@ -345,7 +347,8 @@ From index comments + function lists:
 | 3018 | gateway daemon | gateway websocket stream port | local |
 | 9999 | talon | Talon health endpoint | local `127.0.0.1` |
 | 8765 | agent-mail HTTP service | MCP agent-mail API | local `127.0.0.1` |
-| 64784 | ssh forward | Kubernetes API | local kubectl endpoint |
+| 15000 | `com.joel.kube-operator-access` | Talos API | stable local talosctl endpoint |
+| 16443 | `com.joel.kube-operator-access` | Kubernetes API | stable local kubectl endpoint |
 
 ### Notes
 - Host NodePort exposure appears through an `ssh` listener process (Colima portForwarder=ssh).

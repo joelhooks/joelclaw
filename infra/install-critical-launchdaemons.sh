@@ -17,6 +17,7 @@ LAUNCH_AGENTS_DIR="${TARGET_HOME}/Library/LaunchAgents"
 CRITICAL_LABELS=(
   com.joel.colima
   com.joel.k8s-reboot-heal
+  com.joel.kube-operator-access
   com.joel.agent-secrets
   com.joel.system-bus-worker
   com.joel.gateway
@@ -90,6 +91,8 @@ stop_manual_fallbacks() {
   pkill -f "${TARGET_HOME}/.local/bin/colima-tunnel" >/dev/null 2>&1 || true
   pkill -f "${REPO_ROOT}/infra/colima-tunnel.sh" >/dev/null 2>&1 || true
   pkill -f 'autossh .*127\.0\.0\.1:6379' >/dev/null 2>&1 || true
+  pkill -f '127\.0\.0\.1:16443:10\.5\.0\.2:6443' >/dev/null 2>&1 || true
+  pkill -f '127\.0\.0\.1:15000:10\.5\.0\.2:50000' >/dev/null 2>&1 || true
   pkill -f 'svc/typesense 8108:8108' >/dev/null 2>&1 || true
   pkill -f "${TARGET_HOME}/.local/bin/secrets serve --socket ${TARGET_HOME}/.agent-secrets/agent-secrets.sock" >/dev/null 2>&1 || true
   pkill -f "${REPO_ROOT}/infra/agent-mail-daemon.sh" >/dev/null 2>&1 || true
