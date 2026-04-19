@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { hostname } from "node:os"
 
 export const OTEL_INGEST_URL =
   process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"
@@ -54,12 +55,43 @@ function tryParseJson(raw: string): unknown {
   }
 }
 
+function readNonEmptyEnv(...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = process.env[key]?.trim()
+    if (value) return value
+  }
+  return undefined
+}
+
+function normalizeHostnameSystemId(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const normalized = value.trim().toLowerCase().replace(/\.localdomain$|\.local$/u, "")
+  return normalized || undefined
+}
+
+export function resolveDefaultOtelSessionId(): string {
+  return readNonEmptyEnv(
+    "SLOG_SESSION_ID",
+    "JOELCLAW_SESSION_ID",
+    "JOELCLAW_SESSION_HANDLE",
+    "PI_SESSION_HANDLE",
+  ) ?? (process.env.GATEWAY_ROLE?.trim() === "central"
+    ? "gateway"
+    : readNonEmptyEnv("JOELCLAW_ROLE") ?? "interactive")
+}
+
+export function resolveDefaultOtelSystemId(): string {
+  return readNonEmptyEnv("SLOG_SYSTEM_ID", "JOELCLAW_SYSTEM_ID")
+    ?? normalizeHostnameSystemId(hostname())
+    ?? "unknown"
+}
+
 export function createOtelEventPayload(input: OtelEventPayloadInput): Record<string, unknown> {
   return {
     id: input.id ?? randomUUID(),
     timestamp: input.timestamp ?? Date.now(),
-    sessionId: input.sessionId || process.env.SLOG_SESSION_ID || "unknown",
-    systemId: input.systemId || process.env.SLOG_SYSTEM_ID || "unknown",
+    sessionId: input.sessionId || resolveDefaultOtelSessionId(),
+    systemId: input.systemId || resolveDefaultOtelSystemId(),
     level: input.level,
     source: input.source,
     component: input.component,

@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto"
 import { Effect, ParseResult, Schema } from "effect"
-import { ingestOtelPayload, OTEL_INGEST_URL } from "../../lib/otel-ingest"
+import {
+  createOtelEventPayload,
+  ingestOtelPayload,
+  OTEL_INGEST_URL,
+  resolveDefaultOtelSessionId,
+  resolveDefaultOtelSystemId,
+} from "../../lib/otel-ingest"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../lib/typesense-auth"
 import { type CapabilityPort, capabilityError } from "../contract"
 
@@ -311,22 +317,19 @@ function buildEmitPayload(args: Schema.Schema.Type<typeof EmitArgsSchema>): Emit
   }
 
   const level = normalizeLevel(args.level) ?? normalizeLevel(baseEvent.level) ?? "info"
-  const payload: Record<string, unknown> = {
-    ...baseEvent,
+  const payload = createOtelEventPayload({
     id: asNonEmptyString(args.id) ?? asNonEmptyString(baseEvent.id) ?? randomUUID(),
     timestamp: asFiniteNumber(args.timestamp) ?? asFiniteNumber(baseEvent.timestamp) ?? Date.now(),
-    sessionId: asNonEmptyString(baseEvent.sessionId) ?? process.env.SLOG_SESSION_ID ?? "unknown",
-    systemId: asNonEmptyString(baseEvent.systemId) ?? process.env.SLOG_SYSTEM_ID ?? "unknown",
-    level,
+    sessionId: asNonEmptyString(baseEvent.sessionId) ?? resolveDefaultOtelSessionId(),
+    systemId: asNonEmptyString(baseEvent.systemId) ?? resolveDefaultOtelSystemId(),
+    level: level as "debug" | "info" | "warn" | "error" | "fatal",
     source: asNonEmptyString(args.source) ?? asNonEmptyString(baseEvent.source) ?? "cli",
     component: asNonEmptyString(args.component) ?? asNonEmptyString(baseEvent.component) ?? "otel-cli",
     action,
     success: args.success ?? asBoolean(baseEvent.success) ?? true,
     metadata,
-  }
-
-  const error = asNonEmptyString(args.error) ?? asNonEmptyString(baseEvent.error)
-  if (error) payload.error = error
+    error: asNonEmptyString(args.error) ?? asNonEmptyString(baseEvent.error),
+  })
 
   return { ok: true, payload }
 }
@@ -746,6 +749,7 @@ export const typesenseOtelAdapter: CapabilityPort<typeof commands> = {
 }
 
 export const __otelAdapterTestUtils = {
+  buildEmitPayload,
   buildFilter,
   parsePositiveInt,
   splitCsv,
