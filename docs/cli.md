@@ -126,11 +126,33 @@ Semantics:
 - `joelclaw webhook`
 - `joelclaw inngest`
 - `joelclaw restate`
+- `joelclaw pds`
 - `joelclaw knowledge`
 - `joelclaw capabilities`
 - `joelclaw queue`
 - `joelclaw workload`
 - `joelclaw jobs`
+
+## PDS command tree
+
+```bash
+joelclaw pds
+├── health
+├── describe
+├── collections
+├── records <collection> [--limit <n>]
+├── write <collection> --data <json>
+├── delete <collection> <rkey>
+└── session [--refresh]
+```
+
+Semantics:
+
+- targets the rebuilt host-published PDS at `http://localhost:9627`
+- caches sessions at `~/.joelclaw/pds-session.json`
+- resolves the login identifier from `pds_joel_did` by calling `describeRepo` and using the repo handle before `createSession`, because the rebuilt PDS accepted the handle while rejecting raw DID login
+- returns token metadata in `session` output without dumping raw JWTs
+- `write` auto-adds `$type` and `createdAt`
 
 ## Docs command tree (ADR-0234 docs pipeline v2)
 

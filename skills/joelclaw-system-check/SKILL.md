@@ -20,7 +20,7 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 | Check | What | Green (10) | Yellow (5-7) | Red (1-3) |
 |-------|------|-----------|-------------|----------|
 | k8s cluster | pods in `joelclaw` namespace | 4/4 Running, 0 restarts | partial pods | no pods |
-| pds | AT Proto PDS on :2583 | version + collections | pod running, port-forward down | pod not running |
+| pds | AT Proto PDS on :9627 | version + collections | pod running, host publish degraded | pod not running |
 | worker | system-bus on :3111 | 16+ functions | responding, low count | down |
 | inngest server | :8288 reachable | responding | — | down |
 | redis/gateway | Redis + gateway session queues | connected, low pending queue | connected, backlog rising | unavailable |
@@ -49,7 +49,7 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 
 **pi-tools broken**: `cd ~/.pi/agent/git/github.com/joelhooks/pi-tools && bun add @sinclair/typebox @mariozechner/pi-coding-agent @mariozechner/pi-tui @mariozechner/pi-ai`
 
-**PDS unreachable**: `kubectl port-forward -n joelclaw svc/bluesky-pds 2583:3000 &` (or if pod down: `kubectl rollout restart deployment/bluesky-pds -n joelclaw`)
+**PDS unreachable**: `curl -fsS http://localhost:9627/xrpc/_health` then `kubectl get deploy,svc,pods,pvc -n joelclaw | rg 'bluesky-pds|NAME'` (or if pod down: `kubectl rollout restart deployment/bluesky-pds -n joelclaw`)
 
 **Worker down**: `joelclaw inngest restart-worker --register`
 

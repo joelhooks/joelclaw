@@ -130,6 +130,7 @@ Current production topology:
 - in-cluster service port / nodePort: `3000`
 - host-published port: `9627`
 - health endpoint: `http://localhost:9627/xrpc/_health`
+- operator CLI surface: `joelclaw pds {health|describe|collections|records|write|delete|session}`
 
 Deploy + verify:
 

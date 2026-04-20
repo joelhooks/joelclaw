@@ -65,9 +65,10 @@ fi
 # -- pds health --------------------------------------------------------
 # PDS Docker mapping: container:3000 → host:9627 (NodePort per ADR-0148)
 PDS_PORT=9627
+PDS_REPO="joel.pds.panda.tail7af24.ts.net"
 PDS_VER=$(curl -sf "http://localhost:${PDS_PORT}/xrpc/_health" 2>/dev/null | jq -r '.version // empty' 2>/dev/null)
 if [[ -n "$PDS_VER" ]]; then
-  PDS_COLLS=$(curl -sf "http://localhost:${PDS_PORT}/xrpc/com.atproto.repo.describeRepo?repo=did:plc:7vyfh3gnwfjniddpp5sws4mq" 2>/dev/null | jq -r '.collections | length // 0' 2>/dev/null)
+  PDS_COLLS=$(curl -sf "http://localhost:${PDS_PORT}/xrpc/com.atproto.repo.describeRepo?repo=${PDS_REPO}" 2>/dev/null | jq -r '.collections | length // 0' 2>/dev/null)
   check "pds" 10 "v${PDS_VER}, ${PDS_COLLS} collections"
 else
   PDS_POD=$(kubectl get pods -n joelclaw --no-headers 2>/dev/null | awk '/bluesky-pds/ && /Running/ {c++} END {print c+0}')
