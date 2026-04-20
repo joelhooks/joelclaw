@@ -120,6 +120,71 @@ kubectl cp infra/firecracker/snapshots/. \
   "joelclaw/$POD:/tmp/firecracker-test/snapshots"
 ```
 
+## PDS runtime (Helm)
+
+Current production topology:
+
+- values file: `infra/pds/values.yaml`
+- Helm release: `bluesky-pds`
+- service type: `NodePort`
+- in-cluster service port / nodePort: `3000`
+- host-published port: `9627`
+- health endpoint: `http://localhost:9627/xrpc/_health`
+
+Deploy + verify:
+
+```bash
+JWT_SECRET=$(secrets lease pds_jwt_secret --ttl 10m)
+ADMIN_PASSWORD=$(secrets lease pds_admin_password --ttl 10m)
+PLC_ROTATION_KEY=$(secrets lease pds_plc_rotation_key --ttl 10m)
+
+kubectl create secret generic bluesky-pds-secrets \
+  -n joelclaw \
+  --from-literal=jwtSecret="$JWT_SECRET" \
+  --from-literal=adminPassword="$ADMIN_PASSWORD" \
+  --from-literal=plcRotationKey="$PLC_ROTATION_KEY" \
+  --from-literal=emailSmtpUrl='' \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+helm upgrade --install bluesky-pds nerkho/bluesky-pds \
+  -n joelclaw \
+  -f ~/Code/joelhooks/joelclaw/infra/pds/values.yaml
+
+kubectl patch svc bluesky-pds -n joelclaw --type='json' \
+  -p='[{"op":"replace","path":"/spec/ports/0/nodePort","value":3000}]'
+
+kubectl rollout status deployment/bluesky-pds -n joelclaw
+curl -fsS http://localhost:9627/xrpc/_health
+```
+
+Post-rebuild account recreation:
+
+```bash
+ADMIN_PASSWORD=$(secrets lease pds_admin_password --ttl 10m)
+JOEL_PASSWORD=$(secrets lease pds_joel_password --ttl 10m)
+
+INVITE_CODE=$(curl -fsS -u "admin:${ADMIN_PASSWORD}" \
+  -H 'content-type: application/json' \
+  -d '{"useCount":1}' \
+  http://localhost:9627/xrpc/com.atproto.server.createInviteCode | jq -r '.code')
+
+curl -fsS -X POST http://localhost:9627/xrpc/com.atproto.server.createAccount \
+  -H 'content-type: application/json' \
+  -d "$(jq -nc \
+    --arg email 'joelhooks@gmail.com' \
+    --arg handle 'joel.pds.panda.tail7af24.ts.net' \
+    --arg password "$JOEL_PASSWORD" \
+    --arg inviteCode "$INVITE_CODE" \
+    '{email:$email,handle:$handle,password:$password,inviteCode:$inviteCode}')"
+```
+
+Gotchas:
+
+- `bluesky-pds-secrets` must exist before the Helm release will come up.
+- keep the service `nodePort` at `3000`; the host exposure is `9627`, but the in-cluster NodePort still has to match the container-side port.
+- after a rebuild that wipes the PDS PVC, the repo is empty again; recreate Joel's account and update the stored `pds_joel_did` secret to the new DID returned by `createAccount`.
+- PDS session creation is more reliable against the handle than the raw DID. `packages/system-bus/src/lib/pds.ts` now resolves the handle from `pds_joel_did` before calling `createSession`, so dual-write survives account recreation as long as the DID secret is current.
+
 ## Canonical launchd sources
 
 Host launchd assets that are part of joelclaw runtime behavior belong in `infra/launchd/`, not as hand-edited one-offs.

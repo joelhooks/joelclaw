@@ -20,11 +20,39 @@ interface PdsSession {
 
 let cachedSession: PdsSession | null = null;
 
+async function resolveSessionIdentifier(did: string): Promise<string> {
+  const explicitIdentifier =
+    process.env.PDS_JOEL_IDENTIFIER ??
+    process.env.PDS_JOEL_HANDLE ??
+    (await shellLease("pds_joel_handle"));
+
+  if (explicitIdentifier) {
+    return explicitIdentifier;
+  }
+
+  try {
+    const res = await fetch(
+      `${PDS_URL}/xrpc/com.atproto.repo.describeRepo?repo=${encodeURIComponent(did)}`,
+      { signal: AbortSignal.timeout(3000) },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { handle?: string };
+      if (data.handle) {
+        return data.handle;
+      }
+    }
+  } catch {
+    // fall back to DID below
+  }
+
+  return did;
+}
+
 /**
  * Resolve PDS credentials from agent-secrets via secrets CLI.
  * Falls back to env vars for k8s worker pods.
  */
-async function getCredentials(): Promise<{ did: string; password: string }> {
+async function getCredentials(): Promise<{ did: string; password: string; identifier: string }> {
   const did =
     process.env.PDS_JOEL_DID ??
     (await shellLease("pds_joel_did"));
@@ -36,7 +64,8 @@ async function getCredentials(): Promise<{ did: string; password: string }> {
     throw new Error("PDS credentials unavailable (pds_joel_did / pds_joel_password)");
   }
 
-  return { did, password };
+  const identifier = await resolveSessionIdentifier(did);
+  return { did, password, identifier };
 }
 
 async function shellLease(name: string): Promise<string> {
@@ -47,7 +76,30 @@ async function shellLease(name: string): Promise<string> {
     });
     const text = await new Response(proc.stdout).text();
     await proc.exited;
-    return text.trim();
+
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return "";
+    }
+
+    if (trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed) as {
+          ok?: boolean;
+          success?: boolean;
+          value?: string;
+          result?: { value?: string };
+        };
+        if (parsed.ok === false || parsed.success === false) {
+          return "";
+        }
+        return parsed.value ?? parsed.result?.value ?? "";
+      } catch {
+        // raw secret values are not expected to be JSON; fall through
+      }
+    }
+
+    return trimmed;
   } catch {
     return "";
   }
@@ -65,12 +117,12 @@ async function getSession(): Promise<PdsSession> {
     return cachedSession;
   }
 
-  const { did, password } = await getCredentials();
+  const { password, identifier } = await getCredentials();
 
   const res = await fetch(`${PDS_URL}/xrpc/com.atproto.server.createSession`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ identifier: did, password }),
+    body: JSON.stringify({ identifier, password }),
   });
 
   if (!res.ok) {
