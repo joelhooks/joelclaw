@@ -39,13 +39,23 @@ spec:
       containers:
         - name: typesense
           image: typesense/typesense:30.1
+          # Raise file-descriptor ulimit before starting Typesense. The default
+          # 1024 soft limit is exhausted by HNSW segment files during large
+          # vector collection reindexes (e.g. docs_chunks_v2 ~223k docs), which
+          # leaves the pod in a permanent "Too many open files" state that
+          # looks identical to raft ERROR from the outside. 2026-04-19 incident.
           command:
-            - /opt/typesense-server
-            - --data-dir=/data
-            - --api-address=0.0.0.0
-            - --api-port=8108
-            - --enable-search-analytics=true
-            - --analytics-dir=/data/analytics
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              ulimit -n 1048576 2>/dev/null || ulimit -n 65535 || true
+              exec /opt/typesense-server \
+                --data-dir=/data \
+                --api-address=0.0.0.0 \
+                --api-port=8108 \
+                --enable-search-analytics=true \
+                --analytics-dir=/data/analytics
           env:
             - name: TYPESENSE_API_KEY
               valueFrom:
@@ -58,10 +68,10 @@ spec:
           resources:
             requests:
               cpu: 200m
-              memory: 1Gi
+              memory: 2Gi
             limits:
               cpu: "2"
-              memory: 4Gi
+              memory: 8Gi
           readinessProbe:
             httpGet:
               path: /health
@@ -82,7 +92,7 @@ spec:
         storageClassName: local-path
         resources:
           requests:
-            storage: 5Gi
+            storage: 20Gi
 ---
 apiVersion: v1
 kind: Service
