@@ -20,25 +20,11 @@
 import { type EmbeddingPriority, embed } from "@joelclaw/inference-router";
 import { RUN_CHUNKS_COLLECTION } from "@joelclaw/memory";
 import { type NextRequest, NextResponse } from "next/server";
+import { authenticateMemoryRequest } from "@/lib/memory-auth";
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY ?? "";
 const EMBED_DIMS = 768;
-
-const DEV_BEARER_TOKENS: Record<string, { user_id: string; machine_id: string }> =
-  (() => {
-    const raw = process.env.MEMORY_DEV_BEARER_TOKENS;
-    if (!raw) {
-      return {
-        "dev-joel-panda": { user_id: "joel", machine_id: "panda" },
-      };
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return {};
-    }
-  })();
 
 type Mode = "hybrid" | "semantic" | "keyword";
 
@@ -55,15 +41,6 @@ interface SearchRequest {
   };
   facets?: string[];
   limit?: number;
-}
-
-function authenticate(
-  request: NextRequest
-): { user_id: string; machine_id: string } | null {
-  const header = request.headers.get("authorization");
-  if (!header?.startsWith("Bearer ")) return null;
-  const token = header.slice("Bearer ".length).trim();
-  return DEV_BEARER_TOKENS[token] ?? null;
 }
 
 function buildFilterBy(
@@ -101,7 +78,7 @@ function buildFilterBy(
 }
 
 export async function POST(request: NextRequest) {
-  const auth = authenticate(request);
+  const auth = await authenticateMemoryRequest(request);
   if (!auth) {
     return NextResponse.json(
       {

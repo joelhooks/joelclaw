@@ -13,25 +13,11 @@
  */
 import { type AgentRuntime, writeRunBlob } from "@joelclaw/memory";
 import { type NextRequest, NextResponse } from "next/server";
+import { authenticateMemoryRequest } from "@/lib/memory-auth";
 
 const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
 const INNGEST_EVENT_KEY =
   process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15";
-
-const DEV_BEARER_TOKENS: Record<string, { user_id: string; machine_id: string }> =
-  (() => {
-    const raw = process.env.MEMORY_DEV_BEARER_TOKENS;
-    if (!raw) {
-      return {
-        "dev-joel-panda": { user_id: "joel", machine_id: "panda" },
-      };
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return {};
-    }
-  })();
 
 const VALID_RUNTIMES: AgentRuntime[] = [
   "pi",
@@ -58,17 +44,8 @@ function newRunId(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 26);
 }
 
-function authenticate(
-  request: NextRequest
-): { user_id: string; machine_id: string } | null {
-  const header = request.headers.get("authorization");
-  if (!header?.startsWith("Bearer ")) return null;
-  const token = header.slice("Bearer ".length).trim();
-  return DEV_BEARER_TOKENS[token] ?? null;
-}
-
 export async function POST(request: NextRequest) {
-  const auth = authenticate(request);
+  const auth = await authenticateMemoryRequest(request);
   if (!auth) {
     return NextResponse.json(
       {

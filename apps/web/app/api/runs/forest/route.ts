@@ -17,36 +17,15 @@
  */
 import { RUNS_COLLECTION } from "@joelclaw/memory";
 import { type NextRequest, NextResponse } from "next/server";
+import { authenticateMemoryRequest } from "@/lib/memory-auth";
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY ?? "";
 
-const DEV_BEARER_TOKENS: Record<string, { user_id: string; machine_id: string }> =
-  (() => {
-    const raw = process.env.MEMORY_DEV_BEARER_TOKENS;
-    if (!raw) {
-      return { "dev-joel-panda": { user_id: "joel", machine_id: "panda" } };
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return {};
-    }
-  })();
-
-function authenticate(
-  request: NextRequest
-): { user_id: string; machine_id: string } | null {
-  const header = request.headers.get("authorization");
-  if (!header?.startsWith("Bearer ")) return null;
-  const token = header.slice("Bearer ".length).trim();
-  return DEV_BEARER_TOKENS[token] ?? null;
-}
-
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function GET(request: NextRequest) {
-  const auth = authenticate(request);
+  const auth = await authenticateMemoryRequest(request);
   if (!auth) {
     return NextResponse.json(
       { ok: false, error: { code: "unauthorized" } },

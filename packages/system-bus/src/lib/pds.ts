@@ -235,3 +235,78 @@ export async function pdsHealth(): Promise<string | null> {
     return null;
   }
 }
+
+/**
+ * ADR-0243 Rule 20: create an AT Protocol App Password for the caller's
+ * DID. Used during joelclaw-machine-register to mint per-Machine
+ * credentials.
+ *
+ * App Passwords are revocable individually and can have "privileged" scope
+ * (default: false — app password has restricted perms vs full credentials).
+ */
+export async function pdsCreateAppPassword(params: {
+  name: string;
+  privileged?: boolean;
+}): Promise<{ name: string; password: string; createdAt: string; did: string; handle: string }> {
+  const session = await getSession();
+  const res = await fetch(`${PDS_URL}/xrpc/com.atproto.server.createAppPassword`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.accessJwt}`,
+    },
+    body: JSON.stringify({ name: params.name, privileged: params.privileged ?? false }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`PDS createAppPassword failed (${res.status}): ${body}`);
+  }
+  const data = (await res.json()) as {
+    name: string;
+    password: string;
+    createdAt: string;
+    privileged?: boolean;
+  };
+  return { ...data, did: session.did, handle: session.handle };
+}
+
+/**
+ * ADR-0243 Rule 20: revoke a previously-issued App Password by name.
+ */
+export async function pdsRevokeAppPassword(name: string): Promise<boolean> {
+  const session = await getSession();
+  const res = await fetch(`${PDS_URL}/xrpc/com.atproto.server.revokeAppPassword`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.accessJwt}`,
+    },
+    body: JSON.stringify({ name }),
+  });
+  return res.ok;
+}
+
+/**
+ * ADR-0243 Rule 20: validate an App Password by creating a session with it.
+ * Returns the caller's DID + handle on success. Used at register time to
+ * prove the password is real before we store its hash; NOT called per-request
+ * (that's what the Machine-row lookup is for — hash-based auth is cheaper
+ * and doesn't create server-side session state at the PDS).
+ */
+export async function pdsValidateAppPassword(
+  identifier: string,
+  appPassword: string
+): Promise<{ did: string; handle: string } | null> {
+  try {
+    const res = await fetch(`${PDS_URL}/xrpc/com.atproto.server.createSession`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, password: appPassword }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { did: string; handle: string };
+    return { did: data.did, handle: data.handle };
+  } catch {
+    return null;
+  }
+}
