@@ -32,6 +32,7 @@ COPY --from=deps /app/packages/email /app/packages/email
 COPY --from=deps /app/packages/endpoint-resolver /app/packages/endpoint-resolver
 COPY --from=deps /app/packages/inference-router /app/packages/inference-router
 COPY --from=deps /app/packages/mdx-pipeline /app/packages/mdx-pipeline
+COPY --from=deps /app/packages/memory /app/packages/memory
 COPY --from=deps /app/packages/queue /app/packages/queue
 COPY --from=deps /app/packages/system-bus /app/packages/system-bus
 COPY --from=deps /app/package.json /app/package.json
