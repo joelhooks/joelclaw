@@ -690,6 +690,32 @@ export type Events = {
     };
   };
 
+  // ADR-0243 Rule 9a: embed priority lanes.
+  "memory/embed.requested": {
+    data: {
+      input: string;
+      priority: "query" | "ingest-realtime" | "ingest-bulk";
+      dimensions?: number;
+      model?: string;
+      /**
+       * Optional correlation id from the upstream ingest/search flow.
+       * Used only for tracing — no Inngest behavior depends on it.
+       */
+      correlation_id?: string;
+    };
+  };
+  "memory/embed.completed": {
+    data: {
+      priority: "query" | "ingest-realtime" | "ingest-bulk";
+      dimensions: number;
+      model: string;
+      queued_ms: number;
+      compute_ms: number;
+      total_ms: number;
+      correlation_id?: string;
+    };
+  };
+
   // --- Discovery ---
   "discovery/noted": {
     data: {
