@@ -124,6 +124,15 @@ function relTime(ts: number): string {
   return `${d}d ago`;
 }
 
+function machineBadge(machine: string): string {
+  // Stable color per machine via a tiny hash so each Machine gets its own
+  // hue without a lookup table. Bright colors range 91-97 (magenta..white).
+  let h = 0;
+  for (let i = 0; i < machine.length; i++) h = (h * 31 + machine.charCodeAt(i)) | 0;
+  const code = 91 + (Math.abs(h) % 6);
+  return `\x1b[${code}m@${machine}${RESET}`;
+}
+
 function summarize(run: Run): string {
   const intent = (run.intent ?? "").replace(/\s+/g, " ").slice(0, 80);
   const duration =
@@ -141,7 +150,7 @@ function summarize(run: Run): string {
         .join(" ")}${RESET}`
     : "";
   return (
-    `${runtimeBadge(run.agent_runtime)} ${DIM}${relTime(run.started_at)}${RESET} ${turns}${duration ? " " + duration : ""}${status}${tags}\n` +
+    `${runtimeBadge(run.agent_runtime)} ${machineBadge(run.machine_id)} ${DIM}${relTime(run.started_at)}${RESET} ${turns}${duration ? " " + duration : ""}${status}${tags}\n` +
     `   ${BOLD}${intent || "<no intent>"}${RESET}${intent.length === 80 ? "…" : ""}\n` +
     `   ${DIM}${run.id}${RESET}`
   );
