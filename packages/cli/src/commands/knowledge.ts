@@ -297,6 +297,36 @@ async function indexSkills(): Promise<{ count: number }> {
   return { count: result.success }
 }
 
+type KnowledgeSyncResult = {
+  created: boolean
+  indexed: Record<string, number>
+}
+
+async function syncKnowledgeIndex(options: {
+  adrsOnly?: boolean
+  skillsOnly?: boolean
+} = {}): Promise<KnowledgeSyncResult> {
+  const { created } = await ensureCollection()
+  const syncAll = !options.adrsOnly && !options.skillsOnly
+  const indexed: Record<string, number> = {}
+
+  if (syncAll || options.adrsOnly) {
+    const adrs = await indexAdrs()
+    indexed.adrs = adrs.count
+  }
+
+  if (syncAll || options.skillsOnly) {
+    const skills = await indexSkills()
+    indexed.skills = skills.count
+  }
+
+  return { created, indexed }
+}
+
+function isMissingKnowledgeCollection(status: number, body: string): boolean {
+  return status === 404 && /collection not found/i.test(body)
+}
+
 // --- Commands ---
 
 const syncCmd = Command.make(
@@ -307,29 +337,16 @@ const syncCmd = Command.make(
   },
   ({ adrsOnly, skillsOnly }) =>
     Effect.gen(function* () {
-      const { created } = yield* Effect.promise(() => ensureCollection())
-      if (created) {
+      const result = yield* Effect.promise(() => syncKnowledgeIndex({ adrsOnly, skillsOnly }))
+      if (result.created) {
         yield* Console.log(`Created collection: ${COLLECTION}`)
-      }
-
-      const syncAll = !adrsOnly && !skillsOnly
-      const results: Record<string, number> = {}
-
-      if (syncAll || adrsOnly) {
-        const adrs = yield* Effect.promise(() => indexAdrs())
-        results.adrs = adrs.count
-      }
-
-      if (syncAll || skillsOnly) {
-        const skills = yield* Effect.promise(() => indexSkills())
-        results.skills = skills.count
       }
 
       yield* Console.log(
         respond("knowledge sync", {
           collection: COLLECTION,
-          created,
-          indexed: results,
+          created: result.created,
+          indexed: result.indexed,
         }, [
           {
             command: "joelclaw knowledge search <query>",
@@ -374,13 +391,50 @@ const searchCmd = Command.make(
         params.set("filter_by", `type:=${type.value}`)
       }
 
-      const resp = yield* Effect.promise(() =>
+      let resp = yield* Effect.promise(() =>
         fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents/search?${params}`, { headers: h }),
       )
 
+      let repair: KnowledgeSyncResult | undefined
       if (!resp.ok) {
         const text = yield* Effect.promise(() => resp.text())
-        yield* Console.error(`Search failed: ${resp.status} ${text}`)
+
+        if (isMissingKnowledgeCollection(resp.status, text)) {
+          repair = yield* Effect.promise(() => syncKnowledgeIndex())
+          resp = yield* Effect.promise(() =>
+            fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents/search?${params}`, { headers: h }),
+          )
+        } else {
+          yield* Console.log(
+            respondError(
+              "knowledge search",
+              `Search failed: ${resp.status} ${text}`,
+              "KNOWLEDGE_SEARCH_FAILED",
+              "Check Typesense health on localhost:8108 and run `joelclaw knowledge sync` if the system_knowledge index drifted.",
+              [
+                { command: "joelclaw knowledge sync", description: "Rebuild the system_knowledge collection" },
+                { command: "joelclaw status", description: "Check core runtime health" },
+              ],
+            ),
+          )
+          return
+        }
+      }
+
+      if (!resp.ok) {
+        const text = yield* Effect.promise(() => resp.text())
+        yield* Console.log(
+          respondError(
+            "knowledge search",
+            `Search failed after auto-repair: ${resp.status} ${text}`,
+            "KNOWLEDGE_SEARCH_FAILED",
+            "Run `joelclaw knowledge sync` explicitly and inspect Typesense health if the collection is still missing or unreadable.",
+            [
+              { command: "joelclaw knowledge sync", description: "Rebuild the system_knowledge collection" },
+              { command: "joelclaw status", description: "Check core runtime health" },
+            ],
+          ),
+        )
         return
       }
 
@@ -391,6 +445,7 @@ const searchCmd = Command.make(
         respond("knowledge search", {
           query,
           found: data.found ?? 0,
+          ...(repair ? { autoRepair: repair } : {}),
           hits: hits.map((h: any) => ({
             id: h.document?.id,
             type: h.document?.type,
