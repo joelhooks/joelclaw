@@ -68,8 +68,10 @@ import { meetingAnalyze } from "./meeting-analyze";
 import { meetingTranscriptIndex } from "./meeting-transcript-index";
 import { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 import { batchReview } from "./memory/batch-review";
+import { memoryEmbed } from "./memory/embed";
 import { nightlyMaintenance } from "./memory/nightly-maintenance";
 import { proposalTriage } from "./memory/proposal-triage";
+import { memoryRunCaptured } from "./memory/run-captured";
 import { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 import {
   backupFailureRouter,
@@ -191,6 +193,8 @@ export const hostFunctionDefinitions = [
   nightlyMaintenance,
   weeklyMaintenanceSummary,
   adrEvidenceCapture,
+  memoryEmbed,
+  memoryRunCaptured,
   echoFizzle,
   taskTriage,
   checkSessions,
