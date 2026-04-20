@@ -13,7 +13,7 @@ export interface TypesenseCollectionSchema {
   default_sorting_field?: string;
 }
 
-export const RUN_CHUNKS_COLLECTION = "run_chunks_spike";
+export const RUN_CHUNKS_COLLECTION = "run_chunks_dev";
 
 export function runChunksSchema(
   name: string = RUN_CHUNKS_COLLECTION,
