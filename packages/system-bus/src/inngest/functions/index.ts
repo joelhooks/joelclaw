@@ -80,6 +80,7 @@ export { meetingTranscriptIndex } from "./meeting-transcript-index";
 export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 export { batchReview } from "./memory/batch-review";
 export { memoryEmbed } from "./memory/embed";
+export { memoryRunCaptured } from "./memory/run-captured";
 export { nightlyMaintenance } from "./memory/nightly-maintenance";
 export { proposalTriage } from "./memory/proposal-triage";
 export { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";

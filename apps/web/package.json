@@ -13,7 +13,9 @@
   "dependencies": {
     "@better-auth/cli": "^1.4.18",
     "@convex-dev/better-auth": "^0.10.10",
+    "@joelclaw/inference-router": "workspace:*",
     "@joelclaw/mdx-pipeline": "workspace:^",
+    "@joelclaw/memory": "workspace:*",
     "@repo/ui": "workspace:*",
     "@types/mdast": "^4.0.4",
     "@upstash/ratelimit": "^2.0.8",

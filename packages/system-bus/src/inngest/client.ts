@@ -716,6 +716,41 @@ export type Events = {
     };
   };
 
+  // ADR-0243: Run capture lifecycle.
+  "memory/run.captured": {
+    data: {
+      run_id: string;
+      user_id: string;
+      machine_id: string;
+      agent_runtime:
+        | "pi"
+        | "claude-code"
+        | "codex"
+        | "loop"
+        | "workload-stage"
+        | "gateway"
+        | "other";
+      jsonl_path: string;
+      jsonl_bytes: number;
+      jsonl_sha256: string;
+      /** ISO8601 for UI; epoch ms primary downstream. */
+      started_at: number;
+      parent_run_id?: string;
+      conversation_id?: string;
+      tags?: string[];
+      /** Raw jsonl content, inline for small Runs. Omit if jsonl_path on NAS. */
+      jsonl_inline?: string;
+    };
+  };
+  "memory/run.indexed": {
+    data: {
+      run_id: string;
+      user_id: string;
+      chunk_count: number;
+      index_duration_ms: number;
+    };
+  };
+
   // --- Discovery ---
   "discovery/noted": {
     data: {
