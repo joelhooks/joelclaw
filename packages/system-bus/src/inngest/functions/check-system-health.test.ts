@@ -7,7 +7,8 @@ import {
 } from "./check-system-health";
 
 const originalFetch = globalThis.fetch;
-const { checkWebhooks, interpretAgentSecretsStatus } = __checkSystemHealthTestUtils;
+const { checkWebhooks, classifyHealthSummary, interpretAgentSecretsStatus } =
+  __checkSystemHealthTestUtils;
 
 process.env.JOELCLAW_COLIMA_VM_IP = "10.10.10.10";
 
@@ -161,6 +162,45 @@ describe("check/system-health endpoint fallback", () => {
       "http://localhost:3111/webhooks",
       "http://10.10.10.10:3111/webhooks",
     ]);
+  });
+});
+
+describe("check/system-health summary classification", () => {
+  test("treats non-critical degradation as warn-but-successful", () => {
+    const result = classifyHealthSummary({
+      services: [
+        { name: "NFS Mounts", ok: false, detail: "nas-nvme: missing, three-body: ok" },
+        { name: "Redis", ok: true },
+      ],
+      agentDispatchCanary: null,
+    });
+
+    expect(result.degradedCount).toBe(1);
+    expect(result.criticalDegradedCount).toBe(0);
+    expect(result.nonCriticalDegradedCount).toBe(1);
+    expect(result.nonCriticalDegradedServices).toEqual(["NFS Mounts"]);
+    expect(result.hasCriticalDegradation).toBe(false);
+  });
+
+  test("treats critical services and canary failures as failed health summaries", () => {
+    const result = classifyHealthSummary({
+      services: [
+        { name: "Worker", ok: false, detail: "unreachable" },
+        { name: "NFS Mounts", ok: false, detail: "nas-nvme: missing" },
+      ],
+      agentDispatchCanary: {
+        enabled: true,
+        ok: false,
+        summary: "agent-dispatch timeout canary returned unexpected truth",
+        error: "terminal=completed registry=running",
+      },
+    });
+
+    expect(result.degradedCount).toBe(3);
+    expect(result.criticalDegradedCount).toBe(2);
+    expect(result.nonCriticalDegradedCount).toBe(1);
+    expect(result.criticalDegradedServices).toEqual(["Worker", "Agent Dispatch Canary"]);
+    expect(result.hasCriticalDegradation).toBe(true);
   });
 });
 

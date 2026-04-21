@@ -85,6 +85,7 @@ const CRITICAL_COMPONENTS = new Set([
   "typesense",
   "agent secrets",
 ]);
+const AGENT_DISPATCH_CANARY_COMPONENT = "Agent Dispatch Canary";
 const HEALTH_LAST_CHECK_KEY = "health:last_check";
 const HEALTH_LAST_RESULT_KEY = "health:last_result";
 const HEALTH_CHECK_GATE_INTERVAL_MS = 45 * 60 * 1000;
@@ -126,6 +127,15 @@ const ENDPOINT_RESOLVE_TIMEOUT_MS = Math.max(
 
 type RecordedHealthResult = "healthy" | "degraded";
 
+type HealthSummaryClassification = {
+  degradedCount: number;
+  criticalDegradedCount: number;
+  nonCriticalDegradedCount: number;
+  criticalDegradedServices: string[];
+  nonCriticalDegradedServices: string[];
+  hasCriticalDegradation: boolean;
+};
+
 export function shouldSkipHealthCheckSchedule(params: {
   now: number;
   lastCheckTimestamp: number;
@@ -166,6 +176,35 @@ async function recordHealthCheckResult(
 function normalizeTimestampToMs(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.round(value));
+}
+
+function isCriticalHealthComponent(name: string): boolean {
+  return CRITICAL_COMPONENTS.has(name.trim().toLowerCase());
+}
+
+function classifyHealthSummary(params: {
+  services: ServiceStatus[];
+  agentDispatchCanary: AgentDispatchCanaryHealthResult | null;
+}): HealthSummaryClassification {
+  const criticalDegradedServices = params.services
+    .filter((service) => !service.ok && isCriticalHealthComponent(service.name))
+    .map((service) => service.name);
+  const nonCriticalDegradedServices = params.services
+    .filter((service) => !service.ok && !isCriticalHealthComponent(service.name))
+    .map((service) => service.name);
+
+  if (params.agentDispatchCanary?.ok === false) {
+    criticalDegradedServices.push(AGENT_DISPATCH_CANARY_COMPONENT);
+  }
+
+  return {
+    degradedCount: criticalDegradedServices.length + nonCriticalDegradedServices.length,
+    criticalDegradedCount: criticalDegradedServices.length,
+    nonCriticalDegradedCount: nonCriticalDegradedServices.length,
+    criticalDegradedServices,
+    nonCriticalDegradedServices,
+    hasCriticalDegradation: criticalDegradedServices.length > 0,
+  };
 }
 
 async function withTiming<T>(
@@ -1179,14 +1218,13 @@ export const checkSystemHealth = inngest.createFunction(
 
     const otelHealthResult = await withTiming(stepDurationsMs, "summary.emit-otel-health", async () =>
       step.run("emit-otel-health-summary", async () => {
-        const degradedCount = services.filter((service) => !service.ok).length;
-        const canaryOk = agentDispatchCanary?.ok ?? true;
+        const summary = classifyHealthSummary({ services, agentDispatchCanary });
         return emitOtelEvent({
-          level: degradedCount === 0 && canaryOk ? "info" : "warn",
+          level: summary.degradedCount === 0 ? "info" : "warn",
           source: "worker",
           component: "check-system-health",
           action: "system.health.checked",
-          success: degradedCount === 0 && canaryOk,
+          success: !summary.hasCriticalDegradation,
           metadata: {
             runContext: flowContext,
             mode,
@@ -1195,7 +1233,11 @@ export const checkSystemHealth = inngest.createFunction(
             runSignalChecks,
             runtimeMs: normalizeTimestampToMs(Date.now() - runStartedAt),
             stepDurationsMs,
-            degradedCount,
+            degradedCount: summary.degradedCount,
+            criticalDegradedCount: summary.criticalDegradedCount,
+            nonCriticalDegradedCount: summary.nonCriticalDegradedCount,
+            criticalDegradedServices: summary.criticalDegradedServices,
+            nonCriticalDegradedServices: summary.nonCriticalDegradedServices,
             services: services.map((service) => ({
               name: service.name,
               ok: service.ok,
@@ -1204,6 +1246,7 @@ export const checkSystemHealth = inngest.createFunction(
               endpointClass: service.endpointClass ?? "n/a",
               skippedCandidates: service.skippedCandidates ?? [],
               detail: service.detail ?? "",
+              critical: isCriticalHealthComponent(service.name),
             })),
             otelErrorRate,
             writeGateDrift,
@@ -1810,6 +1853,8 @@ export const __checkSystemHealthTestUtils = {
   checkWebhooks,
   interpretAgentSecretsStatus,
   resolveHealthCanaryScheduleMode,
+  classifyHealthSummary,
+  isCriticalHealthComponent,
 };
 
 export const checkSystemHealthSignalsSchedule = inngest.createFunction(
