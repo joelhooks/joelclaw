@@ -2,8 +2,8 @@ import type { InferenceCatalogEntry, InferenceModelId, InferenceProvider, Infere
 
 export const INFERENCE_POLICY_VERSION = "2026-03-06-router-v3";
 
-export const MODEL_OPENAI_CODEX_CODEx = "openai-codex/gpt-5.4";
-export const MODEL_OPENAI_CODEX_SPARK = "openai-codex/gpt-5.4";
+export const MODEL_OPENAI_CODEX_CODEx = "openai-codex/gpt-5.5";
+export const MODEL_OPENAI_CODEX_SPARK = "openai-codex/gpt-5.5";
 export const MODEL_OPENAI_CODEX_SPARK_LEGACY = "openai-codex/gpt-5.4";
 
 export const MODEL_CATALOG: Record<string, InferenceCatalogEntry> = {
@@ -34,6 +34,30 @@ export const MODEL_CATALOG: Record<string, InferenceCatalogEntry> = {
     aliases: ["claude-haiku-4-5", "claude-haiku", "haiku", "claude-3-5-haiku-latest", "haiku-latest"],
     description: "Anthropic Claude Haiku 4.5",
     supportedTasks: ["simple", "classification", "json", "default", "rewrite", "summary", "vision"],
+  },
+  "openai-codex/gpt-5.5": {
+    id: "openai-codex/gpt-5.5",
+    provider: "openai-codex",
+    aliases: [
+      "gpt-5.5",
+      "gpt-55",
+      "gpt-5.5-codex",
+      "gpt-5.5-codex-spark",
+      "gpt-5-5-codex",
+    ],
+    description: "OpenAI GPT-5.5 via Codex provider",
+    supportedTasks: [
+      "summary",
+      "digest",
+      "default",
+      "reasoning",
+      "complex",
+      "simple",
+      "json",
+      "classification",
+      "vision",
+      "rewrite",
+    ],
   },
   "openai-codex/gpt-5.4": {
     id: "openai-codex/gpt-5.4",
@@ -152,6 +176,9 @@ export const GATEWAY_ALLOWED_MODELS = [
   "claude-sonnet-4-6",
   "claude-sonnet-4-5",
   "claude-haiku-4-5",
+  "gpt-5.5",
+  "gpt-5.5-codex",
+  "gpt-5.5-codex-spark",
   "gpt-5.4",
   "gpt-5.4-codex",
   "gpt-5.4-codex-spark",
@@ -167,6 +194,9 @@ export const GATEWAY_MODEL_TO_PROVIDER: Record<(typeof GATEWAY_ALLOWED_MODELS)[n
   "claude-sonnet-4-6": "anthropic",
   "claude-sonnet-4-5": "anthropic",
   "claude-haiku-4-5": "anthropic",
+  "gpt-5.5": "openai-codex",
+  "gpt-5.5-codex": "openai-codex",
+  "gpt-5.5-codex-spark": "openai-codex",
   "gpt-5.4": "openai-codex",
   "gpt-5.4-codex": "openai-codex",
   "gpt-5.4-codex-spark": "openai-codex",
