@@ -68,9 +68,9 @@ Functions are split between `index.host.ts` and `index.cluster.ts`. The combined
 ## Deployment Model
 
 - **Source of truth**: `~/Code/joelhooks/joelclaw/packages/system-bus/`
-- **Running host worker**: launchd service `com.joel.system-bus-worker`
-  - launch script: `~/Code/system-bus-worker/packages/system-bus/start.sh`
-  - checkout used by the running host worker: `~/Code/system-bus-worker/`
+- **Running host worker**: `worker-supervisor` process running `bun run src/serve.ts` from `~/Code/joelhooks/joelclaw/packages/system-bus/`
+  - verify with `lsof -iTCP:3111 -sTCP:LISTEN -n -P` and `lsof -p <pid> | awk '$4=="cwd"{print}'`
+  - legacy clone `~/Code/system-bus-worker/` may still exist, but it is not the active host worker when port 3111's cwd points at the monorepo
 - **Cluster runtime**: `system-bus-worker` Deployment in the Talos/Colima k8s cluster for cluster-role workloads
 - **Cluster deploy path**: `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh`
 
@@ -79,11 +79,12 @@ Functions are split between `index.host.ts` and `index.cluster.ts`. The combined
 After changing `packages/system-bus/src/inngest/functions/*` that run on the host worker:
 
 1. commit + push the monorepo change to `origin`
-2. `cd ~/Code/system-bus-worker && git pull --ff-only`
-3. `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`
-4. `curl -X PUT http://127.0.0.1:3111/api/inngest`
+2. confirm the live worker cwd: `pid=$(lsof -tiTCP:3111 -sTCP:LISTEN); lsof -p "$pid" | awk '$4=="cwd"{print}'`
+3. if cwd is `~/Code/joelhooks/joelclaw/packages/system-bus`, kill the Bun worker PID and let `worker-supervisor` respawn it
+4. if cwd is the legacy `~/Code/system-bus-worker`, sync that clone first (`git fetch origin && git reset --hard origin/main`) and then restart the process
+5. verify `curl http://127.0.0.1:3111/` shows functions and `joelclaw functions` returns >0
 
-Do not trust stale monorepo docs that imply the host worker runs directly from `~/Code/joelhooks/joelclaw`.
+The stale failure mode: a host worker can keep running old source for days. In that state, OTEL may show behavior that current monorepo code has already fixed. Always verify the live port-3111 process cwd and start time before debugging source that "should" already be deployed.
 
 Queue pilot flags are evaluated inside the live worker process, not your shell. If a host-worker emitter like `discovery-capture` or `/webhooks/github` should switch to queue mode, put the flag in `~/.config/system-bus.env`, then kickstart the worker and PUT-sync `/api/inngest`. Ad-hoc shell env only affects CLI-local emitters.
 
