@@ -83,6 +83,15 @@ export const TRIAGE_PATTERNS: TriagePattern[] = [
   },
   {
     match: {
+      component: "check-system-health",
+      action: "system.health.checked",
+      error: /operation_failed/iu,
+    },
+    tier: 2,
+    dedup_hours: 24,
+  },
+  {
+    match: {
       component: "task-triage",
       action: "model_router.fallback",
       error: /pi timed out/i,

@@ -108,52 +108,76 @@ function buildListFilter(filter?: TaskFilter): string | undefined {
   return parts.length > 0 ? parts.join(" & ") : undefined;
 }
 
+function isRetryableTodoistError(message: string): boolean {
+  return /HTTP\s+(429|500|502|503|504)\b/iu.test(message) || /Service Unavailable/iu.test(message);
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class TodoistTaskAdapter implements TaskPort {
   constructor(private readonly cliBin = "todoist-cli") {}
 
   private async runCli(args: string[]): Promise<unknown> {
     const token = requireTodoistToken();
-    const proc = Bun.spawn([this.cliBin, ...args], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...process.env,
-        TODOIST_API_TOKEN: token,
-      },
-    });
+    const maxAttempts = 3;
+    let lastError: Error | null = null;
 
-    const [stdoutText, stderrText] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const exitCode = await proc.exited;
-    const raw = stdoutText.trim();
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const proc = Bun.spawn([this.cliBin, ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          TODOIST_API_TOKEN: token,
+        },
+      });
 
-    if (exitCode !== 0) {
-      throw new Error(
-        `todoist-cli ${args.join(" ")} failed (${exitCode}): ${stderrText.trim() || raw || "unknown error"}`
-      );
+      const [stdoutText, stderrText] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      const exitCode = await proc.exited;
+      const raw = stdoutText.trim();
+
+      try {
+        if (exitCode !== 0) {
+          throw new Error(
+            `todoist-cli ${args.join(" ")} failed (${exitCode}): ${stderrText.trim() || raw || "unknown error"}`
+          );
+        }
+
+        if (!raw) {
+          return null;
+        }
+
+        let envelope: TodoistEnvelope;
+        try {
+          envelope = JSON.parse(raw) as TodoistEnvelope;
+        } catch {
+          throw new Error(`todoist-cli returned invalid JSON: ${raw.slice(0, 400)}`);
+        }
+
+        if (envelope.ok !== true) {
+          const errorText = typeof envelope.error === "string"
+            ? envelope.error
+            : JSON.stringify(envelope.error ?? "unknown error");
+          throw new Error(`todoist-cli command failed: ${errorText}`);
+        }
+
+        return envelope.result;
+      } catch (error) {
+        const currentError = error instanceof Error ? error : new Error(String(error));
+        lastError = currentError;
+        if (attempt >= maxAttempts || !isRetryableTodoistError(currentError.message)) {
+          throw currentError;
+        }
+        await sleep(250 * attempt);
+      }
     }
 
-    if (!raw) {
-      return null;
-    }
-
-    let envelope: TodoistEnvelope;
-    try {
-      envelope = JSON.parse(raw) as TodoistEnvelope;
-    } catch {
-      throw new Error(`todoist-cli returned invalid JSON: ${raw.slice(0, 400)}`);
-    }
-
-    if (envelope.ok !== true) {
-      const errorText = typeof envelope.error === "string"
-        ? envelope.error
-        : JSON.stringify(envelope.error ?? "unknown error");
-      throw new Error(`todoist-cli command failed: ${errorText}`);
-    }
-
-    return envelope.result;
+    throw lastError ?? new Error(`todoist-cli ${args.join(" ")} failed`);
   }
 
   async listTasks(filter?: TaskFilter): Promise<Task[]> {

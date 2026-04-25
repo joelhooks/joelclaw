@@ -392,7 +392,7 @@ export const channelIntelligenceGarden = inngest.createFunction(
         inboxTasks = parseTodoistTasks(inboxPayload);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!/No inbox project found/iu.test(message)) {
+        if (!/No inbox project found/iu.test(message) && !/HTTP\s+503\b|Service Unavailable/iu.test(message)) {
           throw error;
         }
       }
