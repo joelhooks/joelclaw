@@ -149,13 +149,14 @@ async function tickHeartbeat(): Promise<void> {
   const local = getLocalHealth();
   const talon = await getTalonHealth();
 
-  const healthy = local.redis
+  const localHealthy = local.redis
     && local.session
-    && local.queueDepth <= 2
-    && talon.ok;
+    && local.queueDepth <= 2;
+  const talonHealthy = talon.ok;
+  const healthy = localHealthy;
 
   void emitGatewayOtel({
-    level: healthy ? "debug" : "warn",
+    level: localHealthy ? (talonHealthy ? "debug" : "info") : "warn",
     component: "heartbeat",
     action: "heartbeat.tick",
     success: healthy,
@@ -163,7 +164,9 @@ async function tickHeartbeat(): Promise<void> {
       redis: local.redis ? "ok" : "degraded",
       session: local.session ? "ok" : "degraded",
       queueDepth: local.queueDepth,
+      localHealth: localHealthy ? "ok" : "degraded",
       talon: talon.ok ? "ok" : talon.reachable ? "degraded" : "failed",
+      talonAffectsOperatorEscalation: false,
       talonState: talon.state ?? "unknown",
       talonFailedProbeCount: talon.failedProbeCount ?? -1,
       talonHealthUrl: talon.endpoint ?? TALON_HEALTH_URL,
@@ -173,8 +176,13 @@ async function tickHeartbeat(): Promise<void> {
     },
   });
 
-  if (!healthy) {
-    console.warn("[heartbeat] health degraded", { local, talon });
+  if (!localHealthy) {
+    console.warn("[heartbeat] local health degraded", { local, talon });
+    return;
+  }
+
+  if (!talonHealthy) {
+    console.log("[heartbeat] talon advisory degraded", { talon });
   }
 }
 

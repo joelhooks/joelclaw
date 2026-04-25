@@ -137,6 +137,14 @@ describe("signal digest and guidance", () => {
         },
       }),
       makeEvent({
+        type: "cron.heartbeat",
+        source: "inngest/heartbeat.cron",
+        payload: {
+          status: "HEARTBEAT_OK",
+          prompt: "HEARTBEAT_OK",
+        },
+      }),
+      makeEvent({
         type: "slack.signal.received",
         source: "slack-intel:C07CURG8YB1",
         payload: {
@@ -149,6 +157,8 @@ describe("signal digest and guidance", () => {
 
     expect(prompt).toContain("## 🔔 Signal Digest");
     expect(prompt).not.toContain("VIP email from Alex Hillman — AI Hero membership");
+    expect(prompt).not.toContain("misc:cron.heartbeat");
+    expect(prompt).not.toContain("inngest/heartbeat.cron");
     expect(prompt).toContain("Slack C07CURG8YB1");
   });
 

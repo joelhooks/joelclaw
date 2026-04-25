@@ -326,6 +326,7 @@ function formatCorrelationGroupLabel(key: string): string {
 
 export function buildSignalDigestPrompt(events: OperatorRelayEvent[]): string {
   const decisions = events
+    .filter((event) => event.type !== "cron.heartbeat")
     .map((event) => ({ event, decision: classifyOperatorSignal(event) }))
     .filter(({ decision }) => decision.bucket !== "suppressed" && decision.bucket !== "ingested");
 

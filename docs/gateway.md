@@ -474,7 +474,9 @@ During quiet hours, all non-interactive events are batched (not immediate). Batc
 Additional low-signal guards now apply:
 - `restate` / `restate/*` sources count as automation for batching, so successful queue-dispatch DAG completions do not hit the live gateway session immediately
 - `test.gateway-e2e` is suppressed from operator delivery by default (internal probe, not a human-facing notification)
+- `cron.heartbeat` events are excluded from operator signal digests entirely, even when mixed with real project signals, so digests stop growing junk `misc:cron.heartbeat` sections
 - low-signal-only digests (for example heartbeat-only or queue-dispatch-complete-only batches) are dropped instead of prompting the model just to say `HEARTBEAT_OK`
+- gateway heartbeat treats Talon reachability as advisory telemetry, not operator-facing degradation by itself; local gateway health still escalates, Talon-only misses stay in logs/OTEL
 - fallback swap/recovery notices no longer page Telegram during quiet hours, and routine recovery notices are log/OTEL-only instead of operator spam
 - direct operator-only `Knowledge Watchdog Alert` messages are suppressed during quiet hours so degraded turn-write accounting doesn’t page overnight unless some higher-signal path escalates it
 - proactive compaction now has hysteresis: after a successful proactive compact, the gateway waits for either a 30m cooldown or a meaningful usage jump before compacting again
