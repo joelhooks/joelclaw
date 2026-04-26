@@ -15,7 +15,7 @@ import {
 import { embedTexts } from "../../lib/embed-ollama";
 import { infer } from "../../lib/inference";
 import * as typesense from "../../lib/typesense";
-import { emitMeasuredOtelEvent } from "../../observability/emit";
+import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import {
   type ConceptId,
   getConceptById,
@@ -512,13 +512,32 @@ export const docsReindexV2 = inngest.createFunction(
           const IMPORT_BATCH_SIZE = 100;
           let totalSuccess = 0;
           let totalErrors = 0;
+          const totalBatches = Math.ceil(chunkRecords.length / IMPORT_BATCH_SIZE);
+
+          await emitOtelEvent({
+            level: "info",
+            source: "worker",
+            component: "docs-reindex-v2",
+            action: "docs.reindex.embed.batches.started",
+            success: true,
+            metadata: {
+              docId: convert.docId,
+              totalChunks: chunkRecords.length,
+              totalBatches,
+              batchSize: IMPORT_BATCH_SIZE,
+              collection: DOCS_CHUNKS_V2_COLLECTION,
+            },
+          });
 
           for (let i = 0; i < chunkRecords.length; i += IMPORT_BATCH_SIZE) {
+            const batchIndex = Math.floor(i / IMPORT_BATCH_SIZE);
             const batch = chunkRecords.slice(i, i + IMPORT_BATCH_SIZE);
             const texts = batch.map((r) => (r as Record<string, unknown>).retrieval_text as string);
 
             // Embed batch via ollama GPU
+            const embedStart = Date.now();
             const embeddings = await embedTexts(texts);
+            const embedElapsedMs = Date.now() - embedStart;
 
             // Attach embeddings to records
             const withEmbeddings = batch.map((record, idx) => ({
@@ -526,6 +545,7 @@ export const docsReindexV2 = inngest.createFunction(
               embedding: embeddings[idx],
             }));
 
+            const upsertStart = Date.now();
             const batchResult = await typesense.bulkImport(
               DOCS_CHUNKS_V2_COLLECTION,
               withEmbeddings,
@@ -533,6 +553,25 @@ export const docsReindexV2 = inngest.createFunction(
             );
             totalSuccess += batchResult.success;
             totalErrors += batchResult.errors;
+
+            await emitOtelEvent({
+              level: batchResult.errors > 0 ? "warn" : "info",
+              source: "worker",
+              component: "docs-reindex-v2",
+              action: "docs.reindex.embed.batch.completed",
+              success: batchResult.errors === 0,
+              metadata: {
+                docId: convert.docId,
+                batchIndex,
+                totalBatches,
+                batchChunkCount: batch.length,
+                embedElapsedMs,
+                upsertElapsedMs: Date.now() - upsertStart,
+                batchSuccess: batchResult.success,
+                batchErrors: batchResult.errors,
+                cumulativeSuccess: totalSuccess,
+              },
+            });
           }
 
           metadata.indexed = totalSuccess;

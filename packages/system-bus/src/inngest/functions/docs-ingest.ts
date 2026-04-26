@@ -1714,6 +1714,22 @@ export const docsIngest = inngest.createFunction(
     });
 
     const chunkSummary = await step.run("chunk-and-index", async () => {
+      // ADR-0245 visibility: emit per-phase OTEL inside chunk-and-index so
+      // operators can tell which phase is slow instead of watching a silent
+      // 15–30 minute black hole. Phases: text-read, chunk, delete, upsert.
+      const chunkStart = Date.now();
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "docs-ingest",
+        action: "docs.chunk_and_index.started",
+        success: true,
+        metadata: {
+          docId: validated.docId,
+          textPath: extracted.textPath,
+        },
+      });
+
       const text = await readFile(extracted.textPath, "utf8");
       const chunking = chunkBookText(validated.docId, text);
 
@@ -1746,12 +1762,61 @@ export const docsIngest = inngest.createFunction(
         async () => chunking.stats
       );
 
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "docs-ingest",
+        action: "docs.chunks.delete.started",
+        success: true,
+        metadata: { docId: validated.docId },
+      });
+      const deleteStart = Date.now();
       await deleteDocChunks(validated.docId);
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "docs-ingest",
+        action: "docs.chunks.delete.completed",
+        success: true,
+        metadata: {
+          docId: validated.docId,
+          elapsedMs: Date.now() - deleteStart,
+        },
+      });
+
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "docs-ingest",
+        action: "docs.chunks.upsert.started",
+        success: true,
+        metadata: {
+          docId: validated.docId,
+          chunkRecordCount: chunkRecords.length,
+          collection: DOCS_CHUNKS_COLLECTION,
+          elapsedSinceStepStartMs: Date.now() - chunkStart,
+        },
+      });
+      const upsertStart = Date.now();
       const importResult = await typesense.bulkImport(
         DOCS_CHUNKS_COLLECTION,
         chunkRecords as unknown as Record<string, unknown>[],
         "upsert"
       );
+      await emitOtelEvent({
+        level: importResult.errors > 0 ? "warn" : "info",
+        source: "worker",
+        component: "docs-ingest",
+        action: "docs.chunks.upsert.completed",
+        success: importResult.errors === 0,
+        metadata: {
+          docId: validated.docId,
+          chunkRecordCount: chunkRecords.length,
+          indexed: importResult.success,
+          errors: importResult.errors,
+          elapsedMs: Date.now() - upsertStart,
+        },
+      });
 
       await emitMeasuredOtelEvent(
         {
