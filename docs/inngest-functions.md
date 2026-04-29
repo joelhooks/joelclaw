@@ -274,7 +274,7 @@ Do **not** mutate `main.db` without a point-in-time backup.
   - triggers: `channel/slack.backfill.batch.requested` and `channel/slack.backfill.requested`
   - runtime: host worker, because it leases `slack_user_token` through the local `secrets` CLI; do not move this to the cluster worker unless token leasing is replaced with an explicit cluster-safe adapter
   - target collection: legacy flat `slack_messages`; current realtime channel intelligence still writes `channel_messages` / `conversation_threads`
-  - fetches top-level channel history and expands `reply_count > 0` parents through `conversations.replies`, because Slack search results include thread replies but `conversations.history` alone does not
+  - fetches top-level channel history, expands `reply_count > 0` parents through `conversations.replies`, and also indexes bounded `search.messages` matches for the requested channel/date window because Slack search returns active replies even when the thread parent is older than the backfill window
   - use for catch-up windows when realtime Slack events miss ambient channel traffic or when a daily summary needs channel-wide context
 - current scope:
   - thread aggregation/enrichment is enabled for `slack` and `email`

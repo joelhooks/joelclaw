@@ -54,6 +54,32 @@ type SlackRepliesResponse = {
   };
 };
 
+type SlackSearchMatch = {
+  ts?: string;
+  user?: string;
+  username?: string;
+  text?: string;
+  permalink?: string;
+  channel?: {
+    id?: string;
+    name?: string;
+  };
+};
+
+type SlackSearchResponse = {
+  ok: boolean;
+  error?: string;
+  messages?: {
+    matches?: SlackSearchMatch[];
+    pagination?: {
+      page?: number;
+      page_count?: number;
+      per_page?: number;
+      total_count?: number;
+    };
+  };
+};
+
 type SlackMessageDocument = {
   id: string;
   channel_type: "slack";
@@ -116,6 +142,25 @@ function defaultOldestTs(): string {
 
 function defaultLatestTs(): string {
   return String(Math.floor(Date.now() / 1000));
+}
+
+function slackDateFromUnixSeconds(value: string): string {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return new Date().toISOString().slice(0, 10);
+  }
+  return new Date(parsed * 1000).toISOString().slice(0, 10);
+}
+
+function threadTsFromPermalink(permalink: string | undefined): string | undefined {
+  if (!permalink) return undefined;
+  try {
+    const url = new URL(permalink);
+    const threadTs = url.searchParams.get("thread_ts")?.trim();
+    return threadTs || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseSlackTimestamp(value: string | undefined): number | null {
@@ -294,6 +339,17 @@ export const slackChannelBackfill = inngest.createFunction(
         : userId;
       userCache.set(userId, name);
       return name;
+    }
+
+    async function fetchSlackSearchPage(page: number): Promise<SlackSearchResponse> {
+      const afterDate = slackDateFromUnixSeconds(range.oldestTs);
+      return fetchSlackApi<SlackSearchResponse>("search.messages", token, {
+        query: `in:${channelName} after:${afterDate}`,
+        count: "100",
+        page: String(page),
+        sort: "timestamp",
+        sort_dir: "desc",
+      });
     }
 
     await step.run("emit-slack-backfill-started", async () => {
@@ -482,6 +538,108 @@ export const slackChannelBackfill = inngest.createFunction(
       cursor = nextCursor;
       await step.sleep(`rate-limit-${pageNumber}`, "1.5s");
     }
+
+    const searchStats = await step.run("index-search-matches", async () => {
+      const oldest = Number.parseFloat(range.oldestTs);
+      const latest = Number.parseFloat(range.latestTs);
+      const docsById = new Map<string, SlackMessageDocument>();
+      let fetchedMatches = 0;
+      let skippedMatches = 0;
+
+      for (let searchPage = 1; searchPage <= 5; searchPage += 1) {
+        const response = await fetchSlackSearchPage(searchPage);
+        const matches = Array.isArray(response.messages?.matches)
+          ? response.messages.matches
+          : [];
+        fetchedMatches += matches.length;
+
+        for (const match of matches) {
+          if (match.channel?.id && match.channel.id !== channelId) {
+            skippedMatches += 1;
+            continue;
+          }
+
+          const messageTs = match.ts?.trim();
+          const timestamp = parseSlackTimestamp(messageTs);
+          if (!messageTs || timestamp == null || timestamp < oldest || timestamp > latest) {
+            skippedMatches += 1;
+            continue;
+          }
+
+          const text = (match.text ?? "").trim();
+          if (!text) {
+            skippedMatches += 1;
+            continue;
+          }
+
+          const userId = match.user?.trim() || match.username?.trim() || "unknown";
+          const userName = userId === "unknown" ? "unknown" : await resolveUserName(userId, token);
+          const threadTs = threadTsFromPermalink(match.permalink);
+          const document: SlackMessageDocument = {
+            id: `${channelId}:${messageTs}`,
+            channel_type: "slack",
+            channel_id: channelId,
+            channel_name: channelName,
+            channel_category: channelCategory,
+            ...(threadTs ? { thread_ts: threadTs } : {}),
+            user_id: userId,
+            user_name: userName,
+            text,
+            timestamp,
+            message_ts: messageTs,
+            is_thread_reply: Boolean(threadTs && threadTs !== messageTs),
+            has_attachments: false,
+            ingested_at: Math.floor(Date.now() / 1000),
+          };
+          docsById.set(document.id, document);
+        }
+
+        const pageCount = response.messages?.pagination?.page_count ?? searchPage;
+        if (matches.length < 100 || searchPage >= pageCount) break;
+      }
+
+      let importResult = { success: 0, errors: 0 };
+      if (docsById.size > 0) {
+        importResult = await typesense.bulkImport(
+          SLACK_MESSAGES_COLLECTION,
+          [...docsById.values()] as unknown as Record<string, unknown>[],
+          "upsert"
+        );
+      }
+
+      await emitOtelEvent({
+        level: importResult.errors > 0 ? "warn" : "info",
+        source: "worker",
+        component: "slack-backfill",
+        action: "channel.slack.backfill.search_indexed",
+        success: importResult.errors === 0,
+        ...(importResult.errors > 0 ? { error: "typesense_bulk_import_errors" } : {}),
+        metadata: {
+          eventId: event.id,
+          channelId,
+          channelName,
+          fetchedMatches,
+          indexedMessages: docsById.size,
+          skippedMatches,
+          typesenseSuccess: importResult.success,
+          typesenseErrors: importResult.errors,
+        },
+      });
+
+      return {
+        fetchedMessages: fetchedMatches,
+        indexedMessages: docsById.size,
+        skippedMessages: skippedMatches,
+        typesenseSuccess: importResult.success,
+        typesenseErrors: importResult.errors,
+      };
+    });
+
+    totalFetched += searchStats.fetchedMessages;
+    totalIndexed += searchStats.indexedMessages;
+    totalSkipped += searchStats.skippedMessages;
+    totalTypesenseSuccess += searchStats.typesenseSuccess;
+    totalTypesenseErrors += searchStats.typesenseErrors;
 
     await step.run("emit-slack-backfill-completed", async () => {
       await emitOtelEvent({
