@@ -146,12 +146,14 @@ curl -s "https://slack.com/api/users.info?user=EXTERNAL_USER_ID" \
 
 ## Backfill Pipeline
 
-Inngest functions (deployed, registered):
+Inngest functions (deployed, registered on the **host worker**):
 - `slack-channel-backfill` — per-channel paginated history → Typesense `slack_messages`
 - `slack-backfill-batch` — fan-out orchestrator for multiple channels
 - Events: `channel/slack.backfill.requested`, `channel/slack.backfill.batch.requested`
 - Flow control: concurrency 2, throttle 10/60s, 1.5s sleep between pages
-- First backfill: 15 channels, 60-day window, 245+ messages indexed
+- Runtime reason: host worker is required because the function leases `slack_user_token` through local `secrets`; do not move to k8s cluster worker unless token leasing is replaced with a cluster-safe adapter.
+- Freshness gotcha: `conversations.history` only discovers thread parents inside the requested window. The function also expands `reply_count > 0` parents with `conversations.replies` and runs a bounded `search.messages in:<channel> after:<date>` pass so active replies on old threads are indexed too.
+- Repair canary (2026-04-29): 9-channel 24h backfill indexed 43 current Slack messages into `slack_messages` after the search fallback landed.
 
 ## Privacy Boundary
 
