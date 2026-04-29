@@ -19,6 +19,7 @@ type SlackHistoryMessage = {
   reactions?: Array<{ name?: string; count?: number }>;
   attachments?: unknown[];
   files?: unknown[];
+  reply_count?: number;
 };
 
 type SlackHistoryResponse = {
@@ -40,6 +41,16 @@ type SlackUserInfoResponse = {
     profile?: {
       display_name?: string;
     };
+  };
+};
+
+type SlackRepliesResponse = {
+  ok: boolean;
+  error?: string;
+  messages?: SlackHistoryMessage[];
+  has_more?: boolean;
+  response_metadata?: {
+    next_cursor?: string;
   };
 };
 
@@ -329,7 +340,43 @@ export const slackChannelBackfill = inngest.createFunction(
       });
 
       const pageStats = await step.run(`process-history-page-${pageNumber}`, async () => {
-        const messages = Array.isArray(history.messages) ? history.messages : [];
+        const topLevelMessages = Array.isArray(history.messages) ? history.messages : [];
+        const messagesByTs = new Map<string, SlackHistoryMessage>();
+
+        for (const message of topLevelMessages) {
+          const messageTs = message.ts?.trim();
+          if (messageTs) messagesByTs.set(messageTs, message);
+        }
+
+        let fetchedThreadReplies = 0;
+        for (const message of topLevelMessages) {
+          const messageTs = message.ts?.trim();
+          if (!messageTs || !message.reply_count || message.reply_count <= 0) continue;
+
+          let repliesCursor: string | undefined;
+          do {
+            const replies = await fetchSlackApi<SlackRepliesResponse>("conversations.replies", token, {
+              channel: channelId,
+              ts: messageTs,
+              limit: String(SLACK_PAGE_LIMIT),
+              oldest: range.oldestTs,
+              latest: range.latestTs,
+              inclusive: "true",
+              ...(repliesCursor ? { cursor: repliesCursor } : {}),
+            });
+
+            const replyMessages = Array.isArray(replies.messages) ? replies.messages : [];
+            for (const reply of replyMessages) {
+              const replyTs = reply.ts?.trim();
+              if (!replyTs) continue;
+              messagesByTs.set(replyTs, reply);
+            }
+            fetchedThreadReplies += Math.max(0, replyMessages.length - 1);
+            repliesCursor = replies.has_more ? replies.response_metadata?.next_cursor?.trim() : undefined;
+          } while (repliesCursor);
+        }
+
+        const messages = [...messagesByTs.values()];
         const normalizedDocs: SlackMessageDocument[] = [];
         const ingestedAt = Math.floor(Date.now() / 1000);
 
@@ -397,6 +444,8 @@ export const slackChannelBackfill = inngest.createFunction(
             channelName,
             pageNumber,
             fetchedMessages: messages.length,
+            topLevelMessages: topLevelMessages.length,
+            fetchedThreadReplies,
             indexedMessages: normalizedDocs.length,
             skippedMessages: skipped,
             typesenseSuccess: importResult.success,
@@ -407,6 +456,8 @@ export const slackChannelBackfill = inngest.createFunction(
 
         return {
           fetchedMessages: messages.length,
+          topLevelMessages: topLevelMessages.length,
+          fetchedThreadReplies,
           indexedMessages: normalizedDocs.length,
           skippedMessages: skipped,
           typesenseSuccess: importResult.success,
