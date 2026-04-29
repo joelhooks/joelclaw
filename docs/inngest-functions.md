@@ -268,6 +268,13 @@ Do **not** mutate `main.db` without a point-in-time backup.
   3. `conversation/thread.updated` → `conversation-thread-aggregate`
   4. `conversation/thread.enrichment.requested` → `conversation-thread-enrich`
   5. hourly cron → `conversation-thread-stale-sweep`
+- Slack historical backfill:
+  - functions: `slack-backfill-batch` and `slack-channel-backfill`
+  - file: `packages/system-bus/src/inngest/functions/slack-backfill.ts`
+  - triggers: `channel/slack.backfill.batch.requested` and `channel/slack.backfill.requested`
+  - runtime: host worker, because it leases `slack_user_token` through the local `secrets` CLI; do not move this to the cluster worker unless token leasing is replaced with an explicit cluster-safe adapter
+  - target collection: legacy flat `slack_messages`; current realtime channel intelligence still writes `channel_messages` / `conversation_threads`
+  - use for catch-up windows when realtime Slack events miss ambient channel traffic or when a daily summary needs channel-wide context
 - current scope:
   - thread aggregation/enrichment is enabled for `slack` and `email`
   - email uses the Front conversation id as both `channelId` and `threadId`

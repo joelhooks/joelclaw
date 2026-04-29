@@ -94,6 +94,7 @@ import { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
 import { selfHealingInvestigator } from "./self-healing-investigator";
 import { selfHealingRouter } from "./self-healing-router";
 import { skillGarden } from "./skill-garden";
+import { slackBackfillBatch, slackChannelBackfill } from "./slack-backfill";
 import { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 import { storyPipeline } from "./story-pipeline";
 import { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions";
@@ -252,6 +253,8 @@ export const hostFunctionDefinitions = [
   channelIntelligenceTodoist,
   channelMessageIngest,
   channelMessageClassify,
+  slackBackfillBatch,
+  slackChannelBackfill,
   docsIngestJanitor,
   docsReindex,
   contactEnrich,
