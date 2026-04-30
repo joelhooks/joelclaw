@@ -155,6 +155,26 @@ Inngest functions (deployed, registered on the **host worker**):
 - Freshness gotcha: `conversations.history` only discovers thread parents inside the requested window. The function also expands `reply_count > 0` parents with `conversations.replies` and runs a bounded `search.messages in:<channel> after:<date>` pass so active replies on old threads are indexed too.
 - Repair canary (2026-04-29): 9-channel 24h backfill indexed 43 current Slack messages into `slack_messages` after the search fallback landed.
 
+## Realtime Important-Channel Intelligence
+
+The live gateway no longer treats Slack as Joel-only for selected important channels. It still invokes only on Joel DMs, bot mentions, and tracked mention threads, but configured important channels now collect every non-bot message as passive intelligence.
+
+Runtime config lives in private startup state:
+
+- `~/.joelclaw/scripts/gateway-start.sh`
+- `SLACK_IMPORTANT_CHANNEL_IDS` — comma-separated list of high/medium channel IDs from this skill
+- optional `SLACK_IMPORTANT_CHANNEL_NAMES` fallback for local/dev use
+
+Behavior:
+
+- important-channel messages from anyone are indexed through `channel/message.received`
+- important-channel messages are queued as `slack.signal.received` with `passiveIntel: true` and `importantChannel: true`
+- Joel-authored messages also carry `joelSignal: true`
+- relay policy batches ordinary channel chatter and escalates only on stronger multi-signal score
+- if Redis is down, non-Joel important-channel messages remain index-only instead of direct-enqueuing the gateway session
+
+This is awareness, not participation. JoelClaw still never posts in channels unless explicitly sent there by Joel.
+
 ## Privacy Boundary
 
 **Absolute rules:**

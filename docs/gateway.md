@@ -359,7 +359,26 @@ Current contract:
 - low-signal `recovered` automation events are suppressed instead of paging Telegram just because a daemon became healthy again
 - digest prompts must ask for an operator brief, not `HEARTBEAT_OK` sludge
 - outbound operator relay strips leaked `HEARTBEAT_OK` prefixes from non-heartbeat content before Telegram delivery
-- if Redis is unavailable, Slack passive intel falls back to direct enqueue rather than disappearing
+- if Redis is unavailable, Joel-authored Slack passive intel falls back to direct enqueue rather than disappearing
+
+### Slack important-channel intelligence
+
+The Slack live listener still only invokes the gateway for Joel DMs, explicit bot mentions, and tracked mention threads. Important channels are different: they are **collected**, not auto-answered.
+
+Configure selected channels with private runtime env vars:
+
+- `SLACK_IMPORTANT_CHANNEL_IDS` — comma-separated Slack channel IDs; preferred because IDs survive renames
+- `SLACK_IMPORTANT_CHANNEL_NAMES` — comma-separated names or `#names`; fallback for local/dev use
+
+For messages in important channels:
+
+1. every non-bot message is indexed through `channel/message.received` for `channel_messages` / `conversation_threads` context
+2. every non-bot message is queued as `slack.signal.received` with `passiveIntel: true` and `importantChannel: true`
+3. Joel-authored messages also carry `joelSignal: true`
+4. relay policy batches normal important-channel chatter, escalates only when score crosses the immediate threshold, and suppresses low-signal noise
+5. if Redis is unavailable, non-Joel important-channel messages stay index-only rather than directly invoking the gateway session
+
+This gives the gateway working memory of important channels without turning Slack into an operator notification sewer pipe.
 
 If either derivation fails, startup logs explicit warnings in `/tmp/joelclaw/gateway.log` so degraded Slack behavior is visible immediately.
 

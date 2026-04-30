@@ -3,6 +3,13 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { type EnqueueFn, pushGatewayEvent } from "./redis";
+import type {
+  Channel,
+  ChannelPlatform,
+  MessageHandler,
+  SendMediaPayload,
+  SendOptions,
+} from "./types";
 
 // ADR-0236: Emit channel/message.received to Inngest for realtime Typesense indexing.
 const INNGEST_URL = process.env.INNGEST_URL ?? "http://127.0.0.1:8288";
@@ -36,13 +43,6 @@ function emitChannelMessageEvent(msg: {
     }),
   }).catch(() => {}); // silent — indexing failure must not break message flow
 }
-import type {
-  Channel,
-  ChannelPlatform,
-  MessageHandler,
-  SendMediaPayload,
-  SendOptions,
-} from "./types";
 
 const CHUNK_MAX = 4000;
 const DEDUPE_MAX = 500;
@@ -62,6 +62,8 @@ type SlackStartOptions = {
   appToken?: string;
   allowedUserId?: string;
   reactionAckEmoji?: string;
+  importantChannelIds?: string[];
+  importantChannelNames?: string[];
 };
 
 type SlackSendOptions = {
@@ -177,6 +179,8 @@ let started = false;
 let botUserId: string | undefined;
 let allowedUserId: string | undefined;
 let reactionAckEmoji = "eyes";
+let importantChannelIds = new Set<string>();
+let importantChannelNames = new Set<string>();
 let defaultInstance: SlackChannel | undefined;
 
 const channelNameCache = new Map<string, string>();
@@ -193,6 +197,28 @@ function mapSendOptionsFromChannelSendOptions(options?: SendOptions): SlackSendO
     ...slackOptions,
     threadTs: slackOptions.threadTs ?? options.threadId,
   };
+}
+
+function parseCsvSet(value: string | undefined): Set<string> {
+  return new Set(
+    (value ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0),
+  );
+}
+
+function optionListToSet(values: string[] | undefined, fallback: string | undefined): Set<string> {
+  if (values && values.length > 0) {
+    return new Set(values.map((item) => item.trim()).filter((item) => item.length > 0));
+  }
+  return parseCsvSet(fallback);
+}
+
+function isImportantSlackChannel(channelId: string, channelName: string | undefined): boolean {
+  if (importantChannelIds.has(channelId)) return true;
+  if (!channelName) return false;
+  return importantChannelNames.has(channelName) || importantChannelNames.has(`#${channelName}`);
 }
 
 function leaseSecret(name: string): string {
@@ -507,7 +533,9 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
   const threadTs = extractThreadTs(message);
   const context = await resolveSlackContext(message.channel, message.channel_type, threadTs);
   const isDm = message.channel_type === "im" || message.channel.startsWith("D");
+  const channelName = isDm ? undefined : await resolveChannelName(message.channel);
   const isAllowedUser = allowedUserId ? message.user === allowedUserId : false;
+  const isImportantChannel = !isDm && isImportantSlackChannel(message.channel, channelName);
   const isInvoke = (isDm && isAllowedUser)
     || kind === "mention"
     || (threadTs && mentionThreads.has(threadTs));
@@ -523,10 +551,10 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
 
   const userLabel = await resolveUserLabel(message.user);
 
-  // ADR-0131: Slack routing.
+  // ADR-0131/0210: Slack routing.
   // Invoke: Joel DM, @mentions, and tracked mention threads.
-  // Joel non-mention channel messages: passive intel marked as signal.
-  // Everyone else: passive intel.
+  // Passive intel: Joel-authored channel messages and messages from selected important channels.
+  // Everything else stays quiet to avoid turning Slack into a firehose.
   if (isInvoke) {
     const prompt = `${context.prefix} ${userLabel}: ${text}`;
 
@@ -565,17 +593,20 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
     });
 
     return;
-  } else if (isAllowedUser) {
+  } else if (isAllowedUser || isImportantChannel) {
     const intelPrompt = `${context.prefix} ${userLabel}: ${text}`;
     const payload = {
       prompt: intelPrompt,
       slackChannelId: message.channel,
+      slackChannelName: channelName,
       slackThreadTs: threadTs,
       slackUserId: message.user,
+      slackUserName: userLabel,
       slackTs: message.ts,
       slackEventKind: kind,
       passiveIntel: true,
-      joelSignal: true,
+      joelSignal: isAllowedUser,
+      importantChannel: isImportantChannel,
     };
 
     const queuedEvent = await pushGatewayEvent({
@@ -584,7 +615,7 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       payload,
     });
 
-    if (!queuedEvent) {
+    if (!queuedEvent && isAllowedUser) {
       await enqueuePrompt(`slack-intel:${message.channel}`, intelPrompt, payload);
     }
 
@@ -595,16 +626,23 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       success: true,
       metadata: {
         channelId: message.channel,
+        channelName,
         threadTs,
         userId: message.user,
-        routedVia: queuedEvent ? "redis-event" : "direct-enqueue-fallback",
+        joelSignal: isAllowedUser,
+        importantChannel: isImportantChannel,
+        routedVia: queuedEvent
+          ? "redis-event"
+          : isAllowedUser
+            ? "direct-enqueue-fallback"
+            : "index-only-redis-unavailable",
       },
     });
 
     // ADR-0236: Index to Typesense for gateway context gathering
     emitChannelMessageEvent({
       channelId: message.channel,
-      channelName: context.source.replace("slack-intel:", "").replace("slack:", ""),
+      channelName: channelName ?? context.source.replace("slack-intel:", "").replace("slack:", ""),
       userId: message.user,
       userName: userLabel,
       text,
@@ -755,6 +793,14 @@ function startSlackChannel(
     enqueuePrompt = enqueue;
     allowedUserId = options?.allowedUserId ?? process.env.SLACK_ALLOWED_USER_ID;
     reactionAckEmoji = options?.reactionAckEmoji ?? process.env.SLACK_REACTION_ACK_EMOJI ?? "eyes";
+    importantChannelIds = optionListToSet(
+      options?.importantChannelIds,
+      process.env.SLACK_IMPORTANT_CHANNEL_IDS,
+    );
+    importantChannelNames = optionListToSet(
+      options?.importantChannelNames,
+      process.env.SLACK_IMPORTANT_CHANNEL_NAMES,
+    );
 
     const botToken = options?.botToken ?? leaseSecretSafe("slack_bot_token");
     const appToken = options?.appToken ?? leaseSecretSafe("slack_app_token");
@@ -850,6 +896,8 @@ function startSlackChannel(
       console.log("[gateway:slack] started", {
         botUserId,
         allowedUserId,
+        importantChannelIds: importantChannelIds.size,
+        importantChannelNames: importantChannelNames.size,
       });
       void emitGatewayOtel({
         level: "info",
@@ -859,6 +907,8 @@ function startSlackChannel(
         metadata: {
           botUserId,
           allowedUserId,
+          importantChannelIds: importantChannelIds.size,
+          importantChannelNames: importantChannelNames.size,
         },
       });
     } catch (error) {

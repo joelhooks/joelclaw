@@ -189,6 +189,7 @@ function computeSignalScore(event: OperatorRelayEvent, text: string, projectKeys
   if (event.type === "front.message.received") score += 2;
   if (event.source.startsWith("slack-intel:")) score += 2;
   if (payload.joelSignal === true) score += 1;
+  if (payload.importantChannel === true) score += 1;
   if (payload.immediateTelegram === true) score += 10;
   if (payload.newsletter === true) score -= 4;
   if (payload.archived === true) score -= 2;
