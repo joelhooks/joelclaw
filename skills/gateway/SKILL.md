@@ -258,6 +258,7 @@ await pushGatewayEvent({
 | Pending events growing on a session | Agent processing or blocked | Wait 1min, then `joelclaw gateway restart` |
 | Telegram messages not delivered | HTML parsing error in response | Check `joelclaw gateway status`, restart |
 | Slack passive firehose looks dead (mentions still work) | `SLACK_ALLOWED_USER_ID` not derived at startup | Ensure `slack_user_token` lease works; `gateway-start.sh` derives user id via `auth.test`, then `joelclaw gateway restart` |
+| Important Slack channels are not being collected | `SLACK_IMPORTANT_CHANNEL_IDS`/`SLACK_IMPORTANT_CHANNEL_NAMES` missing or channel IDs drifted | Check private `~/.joelclaw/scripts/gateway-start.sh`, restart gateway, and verify startup log shows `importantChannelIds > 0` |
 | Slack replies have no default target | `SLACK_DEFAULT_CHANNEL_ID` not derived at startup | Ensure `slack_bot_token` lease works; `gateway-start.sh` derives DM channel via `conversations.open`, then restart |
 | Gateway restarts every few seconds | Crash loop — bad secret lease or code error | Check `/tmp/joelclaw/gateway.err`, fix cause |
 | Redis connection failed | Redis pod down or Colima/k8s substrate down | Check `colima status --json`, then `joelclaw status`/`kubectl` for cluster health |
@@ -272,6 +273,7 @@ launchd (com.joel.gateway)
             ├─ createAgentSession() → headless pi session (reads SOUL.md)
             ├─ Redis channel (joelclaw:notify:gateway)
             ├─ Telegram channel (@JoelClawPandaBot)
+            ├─ Slack channel (invoke on Joel/mentions; collect configured important channels)
             ├─ WebSocket (port 3018, for TUI attach)
             ├─ Command queue (serial — one prompt at a time)
             └─ Heartbeat runner (periodic autonomous checks)
