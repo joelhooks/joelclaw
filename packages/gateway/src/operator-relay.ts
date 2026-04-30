@@ -311,6 +311,16 @@ function isFrontMessageEvent(event: OperatorRelayEvent): boolean {
   return event.type === "front.message.received";
 }
 
+function isMetaSystemChatter(event: OperatorRelayEvent): boolean {
+  const type = event.type.toLowerCase();
+  const source = event.source.toLowerCase();
+  return type.startsWith("gateway.")
+    || type.includes("session_pressure")
+    || type.includes("friction-analysis")
+    || source.includes("check-gateway-health")
+    || source.includes("friction-analysis");
+}
+
 function classifyFrontMessage(
   event: OperatorRelayEvent,
   text: string,
@@ -375,8 +385,8 @@ export function classifyOperatorSignal(
     return { bucket: "suppressed", reason: "suppressed.type-listed", score, summary, projectKeys, contactKeys, correlationKeys };
   }
 
-  if (event.type === "gateway.channels.degraded") {
-    return { bucket: "suppressed", reason: "suppressed.channel-degradation-noise", score, summary, projectKeys, contactKeys, correlationKeys };
+  if (isMetaSystemChatter(event)) {
+    return { bucket: "suppressed", reason: "suppressed.meta-system-chatter", score, summary, projectKeys, contactKeys, correlationKeys };
   }
 
   const frontDecision = classifyFrontMessage(event, text, score, summary, projectKeys, contactKeys, correlationKeys);

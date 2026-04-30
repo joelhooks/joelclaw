@@ -142,7 +142,7 @@ describe("classifyOperatorSignal", () => {
     expect(decision.reason).toBe("batched.email-project-or-human");
   });
 
-  test("suppresses gateway channel degradation chatter", () => {
+  test("suppresses meta system chatter", () => {
     const decision = classifyOperatorSignal(
       makeEvent({
         type: "gateway.channels.degraded",
@@ -155,7 +155,7 @@ describe("classifyOperatorSignal", () => {
     );
 
     expect(decision.bucket).toBe("suppressed");
-    expect(decision.reason).toBe("suppressed.channel-degradation-noise");
+    expect(decision.reason).toBe("suppressed.meta-system-chatter");
   });
 
   test("suppresses low-signal recovered automation chatter", () => {
