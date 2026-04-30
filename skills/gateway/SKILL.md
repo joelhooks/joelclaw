@@ -94,7 +94,7 @@ If Joel says the gateway session feels "fucked" while health checks look green, 
 - pressure reasons (`context_usage`, `context_ceiling`, `compaction_gap`, `session_age`)
 - last alert health/time + cooldown state
 
-The daemon emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|suppressed|failed`). Operator paging is stricter now: only `critical` pressure states page Telegram, while `elevated` / `recovered` transitions stay in status/diagnose/OTEL.
+The daemon emits OTEL under `daemon.session-pressure` (`session_pressure.alert.suppressed|failed`). Session-pressure states do **not** page Telegram; rotation/compaction pressure stays in status/diagnose/OTEL because it is gateway maintenance, not Joel action.
 
 Idle maintenance is autonomous for time-based pressure:
 - watchdog evaluates idle session pressure even when no turn is active

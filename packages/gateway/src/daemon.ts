@@ -1435,8 +1435,8 @@ function shouldSendFallbackTelegramNotice(text: string): boolean {
   return true;
 }
 
-function shouldSendSessionPressureTelegramNotice(kind: "elevated" | "critical" | "recovered"): boolean {
-  return kind === "critical";
+function shouldSendSessionPressureTelegramNotice(_kind: "elevated" | "critical" | "recovered"): boolean {
+  return false;
 }
 
 function shouldSendSessionLifecycleTelegramNotice(kind: "recycled" | "rotated"): boolean {

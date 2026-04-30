@@ -124,7 +124,7 @@ Session pressure is now surfaced in status payloads as first-class data:
 
 `joelclaw gateway diagnose` now includes a dedicated `session-pressure` layer instead of burying pressure state inside generic status findings.
 
-The daemon emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|suppressed|failed`). Operator paging is now stricter: only `critical` pressure states page Telegram, while `elevated` / `recovered` transitions stay in status/diagnose/OTEL so the control loop can be noisy without becoming human spam.
+The daemon emits OTEL under `daemon.session-pressure` (`session_pressure.alert.suppressed|failed`). Session-pressure states do **not** page Telegram; rotation/compaction pressure stays in status/diagnose/OTEL because it is gateway maintenance, not Joel action.
 
 Idle maintenance is now autonomous for time-based pressure too:
 
