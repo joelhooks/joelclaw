@@ -54,6 +54,51 @@ const LOW_SIGNAL_PATTERNS = [
   /\balready have it\b/iu,
 ];
 
+const EMAIL_PAGE_NOW_PATTERNS = [
+  /customers? (can'?t|cannot|unable to) check out/iu,
+  /failed production deployment/iu,
+  /security vulnerability detected/iu,
+  /new incident started/iu,
+  /missed heartbeat/iu,
+  /payment(s)? (blocked|failed|disabled|suspended)/iu,
+  /checkout (blocked|down|failed|disabled)/iu,
+  /what do you need from me/iu,
+  /adding joel for visibility and any feedback/iu,
+];
+
+const EMAIL_DIRECT_ASK_PATTERNS = [
+  /\bcan you\b/iu,
+  /\bcould you\b/iu,
+  /\bwhat do you (need|think|want)\b/iu,
+  /\bany feedback\b/iu,
+  /\bplease (review|reply|approve|confirm)\b/iu,
+  /\bneeds? your (reply|response|approval|review)\b/iu,
+];
+
+const EMAIL_NOISE_PATTERNS = [
+  /\bnewsletter\b/iu,
+  /\bunsubscribe\b/iu,
+  /\brestocked?\b/iu,
+  /\border .*confirmed\b/iu,
+  /\bwelcome to .*rewards\b/iu,
+  /\byou'?ve left something behind\b/iu,
+  /\bprice drop\b/iu,
+  /\btrending posts\b/iu,
+  /\bscheduled maintenance\b/iu,
+  /\bweekly usage summary\b/iu,
+  /\breview in progress\b/iu,
+  /auto-generated comment/iu,
+];
+
+const EMAIL_HUMAN_RELATION_PATTERNS = [
+  /alex hillman/iu,
+  /matt pocock/iu,
+  /amy hoy/iu,
+  /jason lengstorf/iu,
+  /mike ryan/iu,
+  /kent c\.? dodds/iu,
+];
+
 const PROJECT_RULES = [
   { key: "ai-hero", patterns: [/\bai hero\b/iu, /\bcohort\b/iu, /\bmembership\b/iu] },
   { key: "gremlin", patterns: [/\bgremlin\b/iu, /#project-gremlin\b/iu] },
@@ -101,9 +146,16 @@ function collectTags(payload: Record<string, unknown>): string[] {
   return raw.map((tag) => normalizeText(tag)).filter(Boolean);
 }
 
+function stripRelayBoilerplate(text: string): string {
+  return text
+    .replace(/Triage:\s*needs reply\? Needs scheduling\? Forward to someone\? Tag for follow-up\? If it's noise \(newsletter, notification\), acknowledge briefly\./giu, "")
+    .replace(/Operator relay rules:[\s\S]*$/u, "")
+    .trim();
+}
+
 function buildEventText(event: OperatorRelayEvent): string {
   const payload = event.payload ?? {};
-  return [
+  return stripRelayBoilerplate([
     normalizeText(payload.prompt),
     normalizeText(payload.subject),
     normalizeText(payload.preview),
@@ -111,7 +163,7 @@ function buildEventText(event: OperatorRelayEvent): string {
     normalizeText(payload.from),
     normalizeText(payload.status),
     ...collectTags(payload),
-  ].filter(Boolean).join("\n");
+  ].filter(Boolean).join("\n"));
 }
 
 function extractProjectKeys(text: string): string[] {
@@ -251,6 +303,51 @@ function isAutomationSource(source: string): boolean {
   return normalized.startsWith("inngest/") || normalized === "restate" || normalized.startsWith("restate/");
 }
 
+function matchesAny(patterns: RegExp[], text: string): boolean {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function isFrontMessageEvent(event: OperatorRelayEvent): boolean {
+  return event.type === "front.message.received";
+}
+
+function classifyFrontMessage(
+  event: OperatorRelayEvent,
+  text: string,
+  score: number,
+  summary: string,
+  projectKeys: string[],
+  contactKeys: string[],
+  correlationKeys: string[],
+): OperatorSignalDecision | undefined {
+  if (!isFrontMessageEvent(event)) return undefined;
+
+  const hasPageNowSignal = matchesAny(EMAIL_PAGE_NOW_PATTERNS, text);
+  const hasDirectAsk = matchesAny(EMAIL_DIRECT_ASK_PATTERNS, text);
+  const hasHumanRelation = matchesAny(EMAIL_HUMAN_RELATION_PATTERNS, text);
+  const hasProjectSignal = projectKeys.length > 0;
+  const hasNoiseSignal = matchesAny(EMAIL_NOISE_PATTERNS, text);
+  const isNewsletter = event.payload?.newsletter === true;
+
+  if (hasPageNowSignal) {
+    return { bucket: "immediate", reason: "immediate.email-page-now", score: Math.max(score, 10), summary, projectKeys, contactKeys, correlationKeys };
+  }
+
+  if (hasDirectAsk && (hasHumanRelation || hasProjectSignal)) {
+    return { bucket: "immediate", reason: "immediate.email-human-ask", score: Math.max(score, 8), summary, projectKeys, contactKeys, correlationKeys };
+  }
+
+  if (isNewsletter || hasNoiseSignal) {
+    return { bucket: "suppressed", reason: "suppressed.email-noise", score, summary, projectKeys, contactKeys, correlationKeys };
+  }
+
+  if (hasHumanRelation || hasProjectSignal || score >= 5) {
+    return { bucket: "batched", reason: "batched.email-project-or-human", score, summary, projectKeys, contactKeys, correlationKeys };
+  }
+
+  return { bucket: "suppressed", reason: "suppressed.email-default", score, summary, projectKeys, contactKeys, correlationKeys };
+}
+
 export function normalizeOperatorRelayText(source: string | undefined, text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
@@ -277,6 +374,9 @@ export function classifyOperatorSignal(
   if (SUPPRESSED_TYPES.has(event.type)) {
     return { bucket: "suppressed", reason: "suppressed.type-listed", score, summary, projectKeys, contactKeys, correlationKeys };
   }
+
+  const frontDecision = classifyFrontMessage(event, text, score, summary, projectKeys, contactKeys, correlationKeys);
+  if (frontDecision) return frontDecision;
 
   if (isInteractiveEvent(event) || isDegradationOrErrorEvent(event)) {
     return { bucket: "immediate", reason: "immediate.interactive-or-error", score: Math.max(score, 10), summary, projectKeys, contactKeys, correlationKeys };

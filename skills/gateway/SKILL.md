@@ -257,6 +257,7 @@ await pushGatewayEvent({
 | Status shows healthy but messages don't arrive | Session stuck mid-stream on hung tool call | `joelclaw gateway restart` |
 | Pending events growing on a session | Agent processing or blocked | Wait 1min, then `joelclaw gateway restart` |
 | Telegram messages not delivered | HTML parsing error in response | Check `joelclaw gateway status`, restart |
+| Telegram is spammed with raw inbound email | `front.message.received` relay gate too permissive or classifier drift | Check `packages/gateway/src/operator-relay.ts`; raw Front email should page only for production/security/money failures or human/project direct asks |
 | Slack passive firehose looks dead (mentions still work) | `SLACK_ALLOWED_USER_ID` not derived at startup | Ensure `slack_user_token` lease works; `gateway-start.sh` derives user id via `auth.test`, then `joelclaw gateway restart` |
 | Important Slack channels are not being collected | `SLACK_IMPORTANT_CHANNEL_IDS`/`SLACK_IMPORTANT_CHANNEL_NAMES` missing or channel IDs drifted | Check private `~/.joelclaw/scripts/gateway-start.sh`, restart gateway, and verify startup log shows `importantChannelIds > 0` |
 | Slack replies have no default target | `SLACK_DEFAULT_CHANNEL_ID` not derived at startup | Ensure `slack_bot_token` lease works; `gateway-start.sh` derives DM channel via `conversations.open`, then restart |

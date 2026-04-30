@@ -355,7 +355,9 @@ Canonical implementation lives in `packages/gateway/src/operator-relay.ts`.
 
 Current contract:
 - `vip.email.received` is ingested by relay policy so the gateway keeps correlation context without announcing a duplicate operator alert after the VIP pipeline delivers the richer brief directly to Telegram
-- lower-signal `front.message.received` / passive Slack intel can batch into a correlated signal digest instead of paging immediately
+- raw `front.message.received` no longer pages by default; it pages only for production/security/money failures or a human/project direct ask
+- lower-signal project/person email and passive Slack intel batch into correlated signal digests instead of paging immediately
+- obvious email noise (`newsletter`, `unsubscribe`, shopping/restock/cart, bot review-in-progress, weekly summaries) is suppressed before it reaches the gateway session
 - low-signal `recovered` automation events are suppressed instead of paging Telegram just because a daemon became healthy again
 - digest prompts must ask for an operator brief, not `HEARTBEAT_OK` sludge
 - outbound operator relay strips leaked `HEARTBEAT_OK` prefixes from non-heartbeat content before Telegram delivery

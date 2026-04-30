@@ -90,6 +90,58 @@ describe("classifyOperatorSignal", () => {
     expect(decision.bucket).toBe("batched");
   });
 
+  test("suppresses raw inbound email newsletters instead of paging Telegram", () => {
+    const decision = classifyOperatorSignal(
+      makeEvent({
+        type: "front.message.received",
+        source: "inngest/front-notify",
+        payload: {
+          from: "news@example.com",
+          subject: "Restocked: summer drop",
+          prompt: "## 📧 Inbound Email\n\nSubject: Restocked: summer drop\n\nTriage: needs reply? Needs scheduling? Forward to someone? Tag for follow-up? If it's noise (newsletter, notification), acknowledge briefly.",
+        },
+      }),
+    );
+
+    expect(decision.bucket).toBe("suppressed");
+    expect(decision.reason).toBe("suppressed.email-noise");
+  });
+
+  test("pages production and money email failures", () => {
+    const decision = classifyOperatorSignal(
+      makeEvent({
+        type: "front.message.received",
+        source: "inngest/front-notify",
+        payload: {
+          from: "mailer@shopify.com",
+          subject: "Customers can't check out — Update business details",
+          prompt: "Shopify says customers can't check out until business details are updated.",
+        },
+      }),
+    );
+
+    expect(decision.bucket).toBe("immediate");
+    expect(decision.reason).toBe("immediate.email-page-now");
+  });
+
+  test("batches project emails without a direct ask", () => {
+    const decision = classifyOperatorSignal(
+      makeEvent({
+        type: "front.message.received",
+        source: "inngest/front-notify",
+        payload: {
+          fromName: "Matt Pocock",
+          from: "matt@example.com",
+          subject: "AI Hero curriculum shape",
+          prompt: "Matt is thinking through the AI Hero cohort and crash course structure.",
+        },
+      }),
+    );
+
+    expect(decision.bucket).toBe("batched");
+    expect(decision.reason).toBe("batched.email-project-or-human");
+  });
+
   test("suppresses low-signal recovered automation chatter", () => {
     const decision = classifyOperatorSignal(
       makeEvent({
