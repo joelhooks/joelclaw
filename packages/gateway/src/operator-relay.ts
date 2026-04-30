@@ -375,6 +375,10 @@ export function classifyOperatorSignal(
     return { bucket: "suppressed", reason: "suppressed.type-listed", score, summary, projectKeys, contactKeys, correlationKeys };
   }
 
+  if (event.type === "gateway.channels.degraded") {
+    return { bucket: "suppressed", reason: "suppressed.channel-degradation-noise", score, summary, projectKeys, contactKeys, correlationKeys };
+  }
+
   const frontDecision = classifyFrontMessage(event, text, score, summary, projectKeys, contactKeys, correlationKeys);
   if (frontDecision) return frontDecision;
 

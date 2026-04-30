@@ -679,7 +679,7 @@ export const checkGatewayHealth = inngest.createFunction(
         payload: {
           prompt: buildChannelAlertPrompt(alertableChannels),
           level: "warn",
-          immediateTelegram: true,
+          immediateTelegram: false,
           channels: alertableChannels,
           mutedChannels,
           mutedActionableChannels,

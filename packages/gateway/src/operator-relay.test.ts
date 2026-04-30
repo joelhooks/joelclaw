@@ -142,6 +142,22 @@ describe("classifyOperatorSignal", () => {
     expect(decision.reason).toBe("batched.email-project-or-human");
   });
 
+  test("suppresses gateway channel degradation chatter", () => {
+    const decision = classifyOperatorSignal(
+      makeEvent({
+        type: "gateway.channels.degraded",
+        source: "inngest/check-gateway-health",
+        payload: {
+          level: "warn",
+          prompt: "## ⚠️ Gateway Channel Degradation\n\n- slack: degraded — channel_not_found",
+        },
+      }),
+    );
+
+    expect(decision.bucket).toBe("suppressed");
+    expect(decision.reason).toBe("suppressed.channel-degradation-noise");
+  });
+
   test("suppresses low-signal recovered automation chatter", () => {
     const decision = classifyOperatorSignal(
       makeEvent({
