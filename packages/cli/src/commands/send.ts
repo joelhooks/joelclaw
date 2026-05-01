@@ -240,14 +240,15 @@ export const sendCmd = Command.make(
             if (initialRunPollPending) {
               let pollFailed = true
               for (let attempt = 1; attempt <= runPollAttempts; attempt += 1) {
-                try {
-                  runResult = yield* inngestClient.run(runIds[0])
+                const detail = yield* inngestClient.run(runIds[0]).pipe(Effect.either)
+                if (detail._tag === "Right") {
+                  runResult = detail.right
                   pollFailed = false
                   break
-                } catch {
-                  if (attempt < runPollAttempts) {
-                    yield* sleepMs(runPollDelayMs)
-                  }
+                }
+
+                if (attempt < runPollAttempts) {
+                  yield* sleepMs(runPollDelayMs)
                 }
               }
 
@@ -257,7 +258,12 @@ export const sendCmd = Command.make(
                 continue
               }
             } else {
-              runResult = yield* inngestClient.run(runIds[0])
+              const detail = yield* inngestClient.run(runIds[0]).pipe(Effect.either)
+              if (detail._tag === "Left") {
+                emitLog("warn", "Run poll unavailable; will retry")
+                continue
+              }
+              runResult = detail.right
             }
 
             const status = runResult?.run?.status
@@ -286,9 +292,12 @@ export const sendCmd = Command.make(
       // Fetch final run state
       let finalState: any = null
       if (runIds[0]) {
-        try {
-          finalState = yield* inngestClient.run(runIds[0])
-        } catch {}
+        const detail = yield* inngestClient.run(runIds[0]).pipe(Effect.either)
+        if (detail._tag === "Right") {
+          finalState = detail.right
+        } else {
+          emitLog("warn", "Final run state unavailable; event was sent but follow could not confirm completion")
+        }
       }
 
       const ok = finalState?.run?.status !== "FAILED"

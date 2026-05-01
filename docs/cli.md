@@ -376,7 +376,7 @@ Semantics:
 joelclaw send discovery/noted --data '{"url":"<url>","context":"<optional>","site":"joelclaw","visibility":"public"}' --follow
 ```
 
-The terminal result from `discovery-capture` now includes `finalLink`.
+The terminal result from `discovery-capture` now includes `finalLink`. `send --follow` treats transient Inngest run lookup misses (for example immediate `sql: no rows in result set` after event send) as polling gaps, not fatal send failures: it keeps the event-sent result, emits a warning if final state cannot be confirmed, and points operators to `joelclaw run` / `joelclaw runs` for inspection.
 
 ## Subscribe check queue pilot
 
