@@ -358,7 +358,7 @@ Current contract:
 - raw `front.message.received` no longer pages by default; it pages only for production/security/money failures or a human/project direct ask
 - lower-signal project/person email and passive Slack intel batch into correlated signal digests instead of paging immediately
 - obvious email noise (`newsletter`, `unsubscribe`, shopping/restock/cart, bot review-in-progress, weekly summaries) is suppressed before it reaches the gateway session
-- meta-system chatter (`gateway.*`, session pressure, channel degradation, friction/check-gateway-health noise) is suppressed from Telegram; it remains available through status/diagnose/OTEL/logs
+- meta-system chatter (`gateway.*`, session pressure, channel degradation, knowledge watchdog drift, friction/check-gateway-health noise) is suppressed from Telegram; it remains available through status/diagnose/OTEL/logs
 - low-signal `recovered` automation events are suppressed instead of paging Telegram just because a daemon became healthy again
 - digest prompts must ask for an operator brief, not `HEARTBEAT_OK` sludge
 - outbound operator relay strips leaked `HEARTBEAT_OK` prefixes from non-heartbeat content before Telegram delivery
@@ -502,7 +502,7 @@ Additional low-signal guards now apply:
 - low-signal-only digests (for example heartbeat-only or queue-dispatch-complete-only batches) are dropped instead of prompting the model just to say `HEARTBEAT_OK`
 - gateway heartbeat treats Talon reachability as advisory telemetry, not operator-facing degradation by itself; local gateway health still escalates, Talon-only misses stay in logs/OTEL
 - fallback swap/recovery notices no longer page Telegram during quiet hours, and routine recovery notices are log/OTEL-only instead of operator spam
-- direct operator-only `Knowledge Watchdog Alert` messages are suppressed during quiet hours so degraded turn-write accounting doesn’t page overnight unless some higher-signal path escalates it
+- direct operator-only `Knowledge Watchdog Alert` messages are always suppressed; degraded turn-write accounting is system maintenance and stays in OTEL/logs unless a higher-signal user-work path escalates it
 - proactive compaction now has hysteresis: after a successful proactive compact, the gateway waits for either a 30m cooldown or a meaningful usage jump before compacting again
 - fallback recovery now requires a minimum dwell on the fallback model before probing primary again, which prevents immediate swap→restore chatter when a recovery probe tick lands right on top of a fresh fallback activation
 - maintenance windows (compact/rotate) are now first-class runtime state: the daemon emits `daemon.maintenance.started|completed|failed`, surfaces maintenance activity in gateway status, and watchdog/idle-wait logic treats active compaction/rotation as busy work instead of a dead turn

@@ -1446,10 +1446,11 @@ function shouldSendSessionLifecycleTelegramNotice(kind: "recycled" | "rotated"):
 
 function shouldSuppressDirectOperatorTelegramMessage(text: string, source: string | undefined): boolean {
   if (source) return false;
-  if (!isGatewayQuietHours()) return false;
 
   const trimmed = text.trim();
-  return trimmed.includes("Knowledge Watchdog Alert");
+  if (trimmed.includes("Knowledge Watchdog Alert")) return true;
+
+  return false;
 }
 
 // Track prompt dispatch timing for stuck-session detection.

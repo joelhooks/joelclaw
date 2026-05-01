@@ -13,7 +13,7 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { getRedisClient, isAlertSuppressed } from "../../lib/redis";
+import { getRedisClient } from "../../lib/redis";
 import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
@@ -389,29 +389,23 @@ export const knowledgeWatchdog = inngest.createFunction(
       }),
     );
 
-    // Alert if issues found
+    // Knowledge watchdog drift is meta-system maintenance, not operator work.
+    // Keep it queryable in OTEL/status surfaces; do not page Joel in Telegram.
     if (checks.issues.length > 0) {
-      const alertSuppressed = await step.run("check-alert-suppression", () =>
-        isAlertSuppressed("knowledge-watchdog")
-      );
-
-      if (!alertSuppressed) {
-        await step.sendEvent("alert-knowledge-degraded", {
-          name: "gateway/send.message" as any,
-          data: {
-            channel: "telegram",
-            text: [
-              "⚠️ <b>Knowledge Watchdog Alert</b>",
-              "",
-              ...checks.issues.map((i) => `• ${i}`),
-              "",
-              `<code>docs: ${checks.stats.num_documents ?? "?"} | retrievals: ${checks.stats.retrievals_in_window ?? "?"} | last sync: ${checks.stats.last_sync_age_hours ?? "?"}h ago</code>`,
-              `<code>turn writes: eligible=${checks.stats.turn_writes_eligible ?? "?"} accounted=${checks.stats.turn_writes_accounted ?? "?"} failed=${checks.stats.turn_writes_failed ?? "?"}</code>`,
-            ].join("\n"),
-            parse_mode: "HTML",
+      await step.run("record-watchdog-telegram-suppressed", () =>
+        emitOtelEvent({
+          action: "knowledge.watchdog.telegram_suppressed",
+          component: "knowledge-watchdog",
+          source: "cron",
+          level: "warn",
+          success: true,
+          metadata: {
+            reason: "meta_system_chatter",
+            issues: checks.issues,
+            ...checks.stats,
           },
-        });
-      }
+        })
+      );
     }
 
     await step.run("record-last-run", async () => {

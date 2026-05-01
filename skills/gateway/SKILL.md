@@ -158,7 +158,7 @@ Low-signal operator-spam guardrails now also apply:
 - ingest `vip.email.received` after the VIP pipeline delivers its direct Telegram brief so the gateway keeps correlation context without sending a duplicate alert, while allowing lower-signal email/Slack items to batch into a correlated digest by project/contact/conversation keys
 - drop low-signal-only digests (heartbeat-only / queue-dispatch-complete-only) instead of prompting the model for a pointless `HEARTBEAT_OK`
 - routine fallback swap/recovery notices are not operator-facing during quiet hours, and recovery notices are log/OTEL-only unless some higher-signal path escalates them
-- suppress direct operator-only `Knowledge Watchdog Alert` messages during quiet hours
+- suppress direct operator-only `Knowledge Watchdog Alert` messages always; degraded turn-write accounting is system maintenance, not operator work
 - add proactive-compaction hysteresis (30m cooldown unless context meaningfully worsens)
 - require a minimum dwell on fallback before probing primary again, so fallback swap→restore chatter doesn’t flap immediately
 - when the primary model is `claude-opus-4-6`, floor `fallbackTimeoutMs` to `240000`; `120000` is now treated as stale and too aggressive for real Opus TTFT
@@ -258,7 +258,7 @@ await pushGatewayEvent({
 | Pending events growing on a session | Agent processing or blocked | Wait 1min, then `joelclaw gateway restart` |
 | Telegram messages not delivered | HTML parsing error in response | Check `joelclaw gateway status`, restart |
 | Telegram is spammed with raw inbound email | `front.message.received` relay gate too permissive or classifier drift | Check `packages/gateway/src/operator-relay.ts`; raw Front email should page only for production/security/money failures or human/project direct asks |
-| Telegram is spammed with meta system alerts (`gateway.*`, session pressure, Slack `channel_not_found`) | Maintenance/check events escaped suppression | Keep `immediateTelegram: false` in health checks; operator relay should classify meta system chatter as `suppressed.meta-system-chatter` |
+| Telegram is spammed with meta system alerts (`gateway.*`, session pressure, Knowledge Watchdog, Slack `channel_not_found`) | Maintenance/check events escaped suppression | Keep direct watchdog/channel/system alerts out of Telegram; operator relay should classify meta system chatter as `suppressed.meta-system-chatter` |
 | Slack passive firehose looks dead (mentions still work) | `SLACK_ALLOWED_USER_ID` not derived at startup | Ensure `slack_user_token` lease works; `gateway-start.sh` derives user id via `auth.test`, then `joelclaw gateway restart` |
 | Important Slack channels are not being collected | `SLACK_IMPORTANT_CHANNEL_IDS`/`SLACK_IMPORTANT_CHANNEL_NAMES` missing or channel IDs drifted | Check private `~/.joelclaw/scripts/gateway-start.sh`, restart gateway, and verify startup log shows `importantChannelIds > 0` |
 | Slack replies have no default target | `SLACK_DEFAULT_CHANNEL_ID` not derived at startup | Ensure `slack_bot_token` lease works; `gateway-start.sh` derives DM channel via `conversations.open`, then restart |
