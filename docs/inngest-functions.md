@@ -323,7 +323,9 @@ Do **not** mutate `main.db` without a point-in-time backup.
 - behavior:
   1. uses `singleton: { key: '"global"', mode: "skip" }` in addition to concurrency so duplicate cron/manual scans do not pile up stale queued runs behind one long active triage pass
   2. manual triggers may therefore be skipped while another triage run is already active; that is intentional because this function scans current state rather than processing an irreplaceable payload
-  3. if operators see queued build-up again, treat it as a regression in singleton or runtime truth rather than expected behavior
+  3. tier-3 o11y classifications are **log-only by default** (`O11Y_TIER3_OPERATOR_ACTIONS=log`): emit `triage.operator_action_suppressed` and `triage.escalated` OTEL with runbook metadata, but do not create Todoist tasks, dispatch codex, or send Telegram alerts
+  4. temporary supervised operator paging can be re-enabled with `O11Y_TIER3_OPERATOR_ACTIONS=notify`, but this is opt-in because ADR-0189 treats meta-system chatter as non-operator-facing unless explicitly requested
+  5. if operators see queued build-up again, treat it as a regression in singleton or runtime truth rather than expected behavior
 
 ### Email triage + nag contract
 

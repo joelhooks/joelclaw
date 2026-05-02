@@ -120,7 +120,7 @@ describe("o11y triage runbook metadata", () => {
     expect(autoFixApplied?.metadata?.runbookCommands?.length).toBeGreaterThan(0);
   });
 
-  test("threads runbook metadata into tier3 escalated OTEL and telegram payload", async () => {
+  test("logs tier3 escalations without Telegram, Todoist, or codex by default", async () => {
     mockScannedEvents = [tier3Event];
     mockTier1 = [];
     mockTier2 = [];
@@ -150,19 +150,19 @@ describe("o11y triage runbook metadata", () => {
     expect(Array.isArray(escalated?.metadata?.runbookCommands)).toBe(true);
     expect(escalated?.metadata?.runbookCommands?.length).toBeGreaterThan(0);
 
-    const telegramSent = emittedEvents.find((event) => event.action === "triage.telegram_sent");
-    expect(telegramSent).toBeTruthy();
-    expect(telegramSent?.metadata?.runbookCode).toBe("RUN_FAILED");
-    expect(telegramSent?.metadata?.recoverCommand).toBe(
+    const suppressed = emittedEvents.find((event) => event.action === "triage.operator_action_suppressed");
+    expect(suppressed).toBeTruthy();
+    expect(suppressed?.metadata?.runbookCode).toBe("RUN_FAILED");
+    expect(suppressed?.metadata?.recoverCommand).toBe(
       "joelclaw recover RUN_FAILED --phase diagnose"
     );
 
+    const telegramSent = emittedEvents.find((event) => event.action === "triage.telegram_sent");
+    expect(telegramSent).toBeFalsy();
+
     const alertEvent = gatewayEvents.find((event) => event.type === "alert");
-    expect(alertEvent).toBeTruthy();
-    expect(alertEvent?.payload?.runbookCode).toBe("RUN_FAILED");
-    expect(alertEvent?.payload?.runbookPhase).toBe("diagnose");
-    expect(alertEvent?.payload?.recoverCommand).toBe(
-      "joelclaw recover RUN_FAILED --phase diagnose"
-    );
+    expect(alertEvent).toBeFalsy();
+    expect(escalated?.metadata?.taskId).toBeNull();
+    expect(escalated?.metadata?.codexDispatched).toBe(false);
   });
 });

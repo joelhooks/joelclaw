@@ -33,6 +33,7 @@ const OTEL_QUERY_BY = "action,error,component,source,metadata_json,search_text";
 const TELEGRAM_ESCALATION_MAX_PER_HOUR = 3;
 const TELEGRAM_ESCALATION_WINDOW_MS = 60 * 60 * 1000;
 const TELEGRAM_SNOOZE_HOURS = 4;
+const O11Y_TIER3_OPERATOR_ACTIONS = process.env.O11Y_TIER3_OPERATOR_ACTIONS ?? "log";
 const localTelegramEscalationSentAt: number[] = [];
 
 type TodoistTaskResult = {
@@ -781,23 +782,28 @@ export const o11yTriage = inngest.createFunction(
           continue;
         }
 
-        const candidateFiles = collectCandidateFiles(event);
-        const gitLog = collectGitLog(candidateFiles);
-        const preliminaryDescription = buildPreliminaryTaskDescription(
-          event,
-          llmReasoning,
-          candidateFiles,
-          gitLog,
-          runbookPlan
-        );
-        const task = createTodoistEscalationTask(event, preliminaryDescription);
+        const operatorActionsEnabled = O11Y_TIER3_OPERATOR_ACTIONS === "notify";
+        const candidateFiles = operatorActionsEnabled ? collectCandidateFiles(event) : [];
+        const gitLog = operatorActionsEnabled ? collectGitLog(candidateFiles) : "";
+        const preliminaryDescription = operatorActionsEnabled
+          ? buildPreliminaryTaskDescription(
+            event,
+            llmReasoning,
+            candidateFiles,
+            gitLog,
+            runbookPlan
+          )
+          : "";
+        const task = operatorActionsEnabled
+          ? createTodoistEscalationTask(event, preliminaryDescription)
+          : {};
         const taskId = task.id;
         const taskUrl = task.url;
 
         let codexDispatchPlan: CodexDispatchPlan | null = null;
         let codexDispatchError: string | null = null;
 
-        if (taskId) {
+        if (operatorActionsEnabled && taskId) {
           const codexRequestId = buildCodexRequestId(event, taskId);
           const codexTask = buildCodexInvestigationTask(
             event,
@@ -823,18 +829,41 @@ export const o11yTriage = inngest.createFunction(
             },
           };
           codexDispatchPlans.push(codexDispatchPlan);
-        } else {
+        } else if (operatorActionsEnabled) {
           codexDispatchError = "Todoist task creation failed to return a task ID; codex dispatch skipped.";
         }
 
-        const text = buildTelegramText(event, llmReasoning, runbookPlan);
-        const buttons = buildTelegramButtons(taskUrl, eventDedupKey);
-        const canSendTelegram = sentTelegramInWindow < TELEGRAM_ESCALATION_MAX_PER_HOUR;
-        const telegramSuppressed = await isAlertSuppressed("o11y-triage");
+        const text = operatorActionsEnabled ? buildTelegramText(event, llmReasoning, runbookPlan) : "";
+        const buttons = operatorActionsEnabled ? buildTelegramButtons(taskUrl, eventDedupKey) : [];
+        const canSendTelegram = operatorActionsEnabled && sentTelegramInWindow < TELEGRAM_ESCALATION_MAX_PER_HOUR;
+        const telegramSuppressed = operatorActionsEnabled ? await isAlertSuppressed("o11y-triage") : true;
         let telegramSent = false;
         let telegramRateLimited = false;
 
-        if (canSendTelegram && !telegramSuppressed) {
+        if (!operatorActionsEnabled) {
+          await emitOtelEvent({
+            level: "info",
+            source: "worker",
+            component: "o11y-triage",
+            action: "triage.operator_action_suppressed",
+            success: true,
+            metadata: {
+              dedupKey: eventDedupKey,
+              mode: O11Y_TIER3_OPERATOR_ACTIONS,
+              reason: "tier3_escalations_log_only",
+              runbookCode: runbookPlan?.code ?? null,
+              runbookPhase: runbookPlan?.phase ?? null,
+              recoverCommand: runbookRecoverCommand(runbookPlan),
+              event: {
+                id: event.id,
+                component: event.component,
+                action: event.action,
+                error: event.error ?? null,
+                level: event.level,
+              },
+            },
+          });
+        } else if (canSendTelegram && !telegramSuppressed) {
           const telegramPayload = {
             immediateTelegram: true,
             telegramOnly: true,
