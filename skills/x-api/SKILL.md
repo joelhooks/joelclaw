@@ -62,7 +62,26 @@ secrets revoke --all
 Use this for:
 - reading a specific tweet/post
 - fetching public user metadata
+- recent search
+- full-archive search when the app has access
 - other public read-only X v2 endpoints
+
+### Full-Archive Search
+
+The bot app can call Full-Archive Search if the access tier permits it. Do not use Recent Search for YTD/backfill research; it rejects older `start_time` values.
+
+```bash
+# After deriving bearer as above:
+curl "https://api.x.com/2/tweets/search/all?query=from%3Athreepointone%20-is%3Areply&start_time=2026-01-01T00%3A00%3A00Z&end_time=2026-05-02T00%3A00%3A00Z&max_results=100&tweet.fields=created_at,public_metrics" \
+  -H "Authorization: Bearer $bearer"
+```
+
+Notes:
+- Full archive endpoint: `/2/tweets/search/all`.
+- Recent endpoint: `/2/tweets/search/recent`; last-7-days style window only.
+- `tweet.fields=context_annotations` forces `max_results <= 100`; X returns 400 if paired with `max_results=500`.
+- Full-archive docs: https://docs.x.com/x-api/posts/search/quickstart/full-archive-search
+
 
 **Alternative: OAuth 1.0a User Context** (for posting and account actions)
 
