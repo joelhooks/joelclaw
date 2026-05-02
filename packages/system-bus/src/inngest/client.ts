@@ -13,10 +13,42 @@ import { gatewayMiddleware } from "./middleware/gateway";
  *     → transcript.processed → summarize.requested → summarized
  */
 
+type TranscriptRequestedData = {
+  /** "youtube" | "granola" | "fathom" | "podcast" | "manual" */
+  source: string;
+  /** Path to audio/video file — runs mlx-whisper */
+  audioPath?: string;
+  /** Raw transcript text — used directly, no whisper */
+  text?: string;
+  title: string;
+  slug: string;
+  channel?: string;
+  publishedDate?: string;
+  duration?: string;
+  sourceUrl?: string;
+  nasPath?: string;
+  /** Tmp dir to clean up after processing */
+  tmpDir?: string;
+  /** Key moment screenshots extracted during download */
+  screenshots?: { vaultDir: string; files: string[] };
+};
+
+type ContentSummarizeRequestedData = {
+  vaultPath: string;
+  prompt?: string;
+};
+
 // System event types
 export type Events = {
   // --- Video pipeline ---
   "pipeline/video.requested": {
+    data: {
+      url: string;
+      maxQuality?: string;
+    };
+  };
+  /** Legacy public CLI/docs event. Prefer pipeline/video.requested. */
+  "pipeline/video.download": {
     data: {
       url: string;
       maxQuality?: string;
@@ -37,25 +69,11 @@ export type Events = {
 
   // --- Transcript pipeline (multi-source) ---
   "pipeline/transcript.requested": {
-    data: {
-      /** "youtube" | "granola" | "fathom" | "podcast" | "manual" */
-      source: string;
-      /** Path to audio/video file — runs mlx-whisper */
-      audioPath?: string;
-      /** Raw transcript text — used directly, no whisper */
-      text?: string;
-      title: string;
-      slug: string;
-      channel?: string;
-      publishedDate?: string;
-      duration?: string;
-      sourceUrl?: string;
-      nasPath?: string;
-      /** Tmp dir to clean up after processing */
-      tmpDir?: string;
-      /** Key moment screenshots extracted during download */
-      screenshots?: { vaultDir: string; files: string[] };
-    };
+    data: TranscriptRequestedData;
+  };
+  /** Legacy public CLI/docs event. Prefer pipeline/transcript.requested. */
+  "pipeline/transcript.process": {
+    data: TranscriptRequestedData;
   };
   "pipeline/transcript.processed": {
     data: {
@@ -77,10 +95,11 @@ export type Events = {
 
   // --- Content enrichment ---
   "content/summarize.requested": {
-    data: {
-      vaultPath: string;
-      prompt?: string;
-    };
+    data: ContentSummarizeRequestedData;
+  };
+  /** Legacy public CLI/docs event. Prefer content/summarize.requested. */
+  "content/summarize": {
+    data: ContentSummarizeRequestedData;
   };
   "content/summarized": {
     data: {

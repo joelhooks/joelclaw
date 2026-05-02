@@ -668,8 +668,8 @@ importers:
         specifier: ^4.11.9
         version: 4.11.9
       inngest:
-        specifier: ^3.52.0
-        version: 3.52.0(@opentelemetry/core@2.5.1(@opentelemetry/api@1.9.0))(express@5.2.1)(hono@4.11.9)(next@16.1.6(@opentelemetry/api@1.9.0)(react-dom@19.2.0(react@19.2.4))(react@19.2.4))(typescript@5.9.2)(zod@4.3.6)
+        specifier: ^3.54.2
+        version: 3.54.2(@opentelemetry/core@2.5.1(@opentelemetry/api@1.9.0))(express@5.2.1)(hono@4.11.9)(next@16.1.6(@opentelemetry/api@1.9.0)(react-dom@19.2.0(react@19.2.4))(react@19.2.4))(typescript@5.9.2)(zod@4.3.6)
       ioredis:
         specifier: ^5.9.3
         version: 5.9.3
@@ -6173,8 +6173,8 @@ packages:
   inline-style-parser@0.2.7:
     resolution: {integrity: sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==}
 
-  inngest@3.52.0:
-    resolution: {integrity: sha512-itQFS75x5/1D5w0fWRBZNOEOVhlol23QUfufpymKmKHAbaxW4UGqlipDgk07pQVfRRTwyD2GXlXK8+VzOLtT+w==}
+  inngest@3.54.2:
+    resolution: {integrity: sha512-SAAc52c7n34E9dBEapy99g0vO5MPJP2yttoZpCu3LcYy1d8tz6CrkdoEQ4FBBgzMNnQxNpeAH5lvNeFCGNXbtA==}
     engines: {node: '>=20'}
     peerDependencies:
       '@sveltejs/kit': '>=1.27.3'
@@ -8159,6 +8159,7 @@ packages:
 
   uuid@9.0.1:
     resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   validate-npm-package-name@7.0.2:
@@ -10162,7 +10163,7 @@ snapshots:
 
   '@inngest/test@0.1.9(@opentelemetry/core@2.5.1(@opentelemetry/api@1.9.0))(express@5.2.1)(hono@4.11.9)(next@16.1.6(@opentelemetry/api@1.9.0)(react-dom@19.2.0(react@19.2.4))(react@19.2.4))(typescript@5.9.2)(zod@4.3.6)':
     dependencies:
-      inngest: 3.52.0(@opentelemetry/core@2.5.1(@opentelemetry/api@1.9.0))(express@5.2.1)(hono@4.11.9)(next@16.1.6(@opentelemetry/api@1.9.0)(react-dom@19.2.0(react@19.2.4))(react@19.2.4))(typescript@5.9.2)(zod@4.3.6)
+      inngest: 3.54.2(@opentelemetry/core@2.5.1(@opentelemetry/api@1.9.0))(express@5.2.1)(hono@4.11.9)(next@16.1.6(@opentelemetry/api@1.9.0)(react-dom@19.2.0(react@19.2.4))(react@19.2.4))(typescript@5.9.2)(zod@4.3.6)
       tinyspy: 3.0.2
       ulid: 2.4.0
     transitivePeerDependencies:
@@ -15018,7 +15019,7 @@ snapshots:
 
   inline-style-parser@0.2.7: {}
 
-  inngest@3.52.0(@opentelemetry/core@2.5.1(@opentelemetry/api@1.9.0))(express@5.2.1)(hono@4.11.9)(next@16.1.6(@opentelemetry/api@1.9.0)(react-dom@19.2.0(react@19.2.4))(react@19.2.4))(typescript@5.9.2)(zod@4.3.6):
+  inngest@3.54.2(@opentelemetry/core@2.5.1(@opentelemetry/api@1.9.0))(express@5.2.1)(hono@4.11.9)(next@16.1.6(@opentelemetry/api@1.9.0)(react-dom@19.2.0(react@19.2.4))(react@19.2.4))(typescript@5.9.2)(zod@4.3.6):
     dependencies:
       '@bufbuild/protobuf': 2.11.0
       '@inngest/ai': 0.1.7

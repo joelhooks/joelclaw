@@ -119,3 +119,22 @@ Return ONLY the full updated markdown and do not include extra explanations.`;
     return { vaultPath, title, status: "summarized" };
   }
 );
+
+/** Compatibility shim for the legacy public event documented before the pipeline moved to *.requested names. */
+export const summarizeLegacyAlias = inngest.createFunction(
+  {
+    id: "content-summarize-legacy-alias",
+  },
+  { event: "content/summarize" },
+  async ({ event, step }) => {
+    await step.sendEvent("forward-to-summarize-requested", {
+      name: "content/summarize.requested",
+      data: event.data,
+    });
+
+    return {
+      status: "forwarded",
+      forwardedTo: "content/summarize.requested",
+    };
+  }
+);

@@ -10,6 +10,9 @@ Videos are ingested through the Inngest event bus. **Do not run yt-dlp, mlx-whis
 ## Quick Start
 
 ```bash
+joelclaw send pipeline/video.requested -d '{"url":"URL_HERE"}'
+
+# legacy alias still accepted
 joelclaw send pipeline/video.download -d '{"url":"URL_HERE"}'
 ```
 
@@ -20,23 +23,23 @@ Alternative (raw curl):
 ```bash
 curl -s -X POST "http://localhost:8288/e/37aa349b89692d657d276a40e0e47a15" \
   -H "Content-Type: application/json" \
-  -d '{"name":"pipeline/video.download","data":{"url":"URL_HERE"}}'
+  -d '{"name":"pipeline/video.requested","data":{"url":"URL_HERE"}}'
 ```
 
 ## Pipeline Flow
 
 ```
-pipeline/video.download        — you send this
+pipeline/video.requested       — you send this (legacy alias: pipeline/video.download)
     ↓
 video-download function        — yt-dlp → /tmp → NAS transfer
     ↓ emits
 pipeline/video.downloaded      — logged by system-logger
-pipeline/transcript.process    — auto-triggered
+pipeline/transcript.requested  — auto-triggered (legacy alias: pipeline/transcript.process)
     ↓
 transcript-process function    — mlx-whisper (M4 Pro, ~5min/hr of video)
     ↓ emits
 pipeline/transcript.processed  — logged
-content/summarize              — auto-triggered
+content/summarize.requested    — auto-triggered (legacy alias: content/summarize)
     ↓
 content-summarize function     — pi enrichment → vault note with summary
     ↓ emits
@@ -108,9 +111,9 @@ tail -10 ~/Vault/system/system-log.jsonl | grep -i video
 Send multiple events. Inngest queues and processes them with concurrency control:
 
 ```bash
-joelclaw send pipeline/video.download -d '{"url":"https://youtube.com/watch?v=XXXX"}'
-joelclaw send pipeline/video.download -d '{"url":"https://youtube.com/watch?v=YYYY"}'
-joelclaw send pipeline/video.download -d '{"url":"https://youtube.com/watch?v=ZZZZ"}'
+joelclaw send pipeline/video.requested -d '{"url":"https://youtube.com/watch?v=XXXX"}'
+joelclaw send pipeline/video.requested -d '{"url":"https://youtube.com/watch?v=YYYY"}'
+joelclaw send pipeline/video.requested -d '{"url":"https://youtube.com/watch?v=ZZZZ"}'
 ```
 
 ## Manual Transcript (Non-YouTube)
@@ -119,10 +122,10 @@ For audio files already on disk, or raw text from Granola/Fathom:
 
 ```bash
 # From audio file
-joelclaw send pipeline/transcript.process -d '{"source":"manual","audioPath":"/path/to/audio.mp4","title":"Recording Title","slug":"recording-title"}'
+joelclaw send pipeline/transcript.requested -d '{"source":"manual","audioPath":"/path/to/audio.mp4","title":"Recording Title","slug":"recording-title"}'
 
 # From raw text (Granola, Fathom, etc.)
-joelclaw send pipeline/transcript.process -d '{"source":"granola","text":"transcript text...","title":"Meeting Title","slug":"meeting-title"}'
+joelclaw send pipeline/transcript.requested -d '{"source":"granola","text":"transcript text...","title":"Meeting Title","slug":"meeting-title"}'
 ```
 
 ## Re-run Summary Only
@@ -130,7 +133,7 @@ joelclaw send pipeline/transcript.process -d '{"source":"granola","text":"transc
 If the vault note exists but needs a better summary:
 
 ```bash
-joelclaw send content/summarize -d '{"vaultPath":"/Users/joel/Vault/Resources/videos/SLUG.md"}'
+joelclaw send content/summarize.requested -d '{"vaultPath":"/Users/joel/Vault/Resources/videos/SLUG.md"}'
 ```
 
 ## Options

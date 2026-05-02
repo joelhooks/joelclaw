@@ -33,7 +33,7 @@ export const sendCmd = Command.make(
   "send",
   {
     event: Args.text({ name: "event" }).pipe(
-      Args.withDescription("Event name (e.g. pipeline/video.download, system/log)")
+      Args.withDescription("Event name (e.g. pipeline/video.requested, pipeline/video.download, system/log)")
     ),
     data: Options.text("data").pipe(
       Options.withAlias("d"),
@@ -41,7 +41,7 @@ export const sendCmd = Command.make(
       Options.withDefault("{}")
     ),
     url: Options.text("url").pipe(
-      Options.withDescription("Shorthand: sets data.url for video.download events"),
+      Options.withDescription("Shorthand: sets data.url for video requested/download events"),
       Options.optional
     ),
     follow: Options.boolean("follow").pipe(
@@ -82,7 +82,8 @@ export const sendCmd = Command.make(
       }
 
       const result = yield* inngestClient.send(event, payload)
-      const runIds = (result as any)?.ids ?? []
+      const eventIds = (result as any)?.ids ?? []
+      let runIds: string[] = []
 
       // ── Standard mode: fire and forget ─────────────────────────
       if (!follow) {
@@ -95,10 +96,10 @@ export const sendCmd = Command.make(
             },
           },
           {
-            command: "joelclaw run <run-id>",
-            description: "Inspect the run once it starts",
+            command: "joelclaw event <event-id>",
+            description: "Inspect the accepted event and mapped function runs",
             params: {
-              "run-id": { description: "Run ID", value: runIds[0] ?? "RUN_ID", required: true },
+              "event-id": { description: "Event ID", value: eventIds[0] ?? "EVENT_ID", required: true },
             },
           },
           {
@@ -117,7 +118,7 @@ export const sendCmd = Command.make(
       // ── Follow mode: stream via Redis pub/sub ──────────────────
       const cmd = `joelclaw send ${event} --follow`
       emitStart(cmd)
-      emitLog("info", `Event sent: ${event} → ${runIds.length} run(s)`)
+      emitLog("info", `Event sent: ${event} → ${eventIds.length} event id(s)`)
       const runPollDelayMs = 1500
       const runPollAttempts = 3
       const runPollIntervalMs = 5000
@@ -127,6 +128,28 @@ export const sendCmd = Command.make(
           catch: () => new Error("sleep"),
         })
       let initialRunPollPending = true
+
+      if (eventIds.length > 0) {
+        for (let attempt = 1; attempt <= runPollAttempts; attempt += 1) {
+          const mappedRuns = yield* Effect.forEach(
+            eventIds,
+            (eventId: string) => inngestClient.event(eventId).pipe(Effect.either),
+            { concurrency: 4 },
+          )
+          runIds = mappedRuns
+            .filter((result): result is { _tag: "Right"; right: { runs: Array<{ id: string }> } } => result._tag === "Right")
+            .flatMap((result) => result.right.runs.map((run) => run.id))
+
+          if (runIds.length > 0) break
+          if (attempt < runPollAttempts) yield* sleepMs(runPollDelayMs)
+        }
+
+        if (runIds.length > 0) {
+          emitLog("info", `Mapped ${eventIds.length} event id(s) to ${runIds.length} run id(s)`)
+        } else {
+          emitLog("warn", `No function runs mapped for event id(s): ${eventIds.join(", ")}`)
+        }
+      }
 
       const Redis = (yield* Effect.tryPromise({
         try: () => import("ioredis"),
@@ -154,13 +177,21 @@ export const sendCmd = Command.make(
           response: result,
           follow_failed: "Redis connection failed — event sent but cannot stream progress",
         }, [
-          {
-            command: "joelclaw run <run-id>",
-            description: "Poll run status instead",
-            params: {
-              "run-id": { description: "Run ID", value: runIds[0] ?? "RUN_ID", required: true },
-            },
-          },
+          runIds[0]
+            ? {
+                command: "joelclaw run <run-id>",
+                description: "Poll run status instead",
+                params: {
+                  "run-id": { description: "Run ID", value: runIds[0], required: true },
+                },
+              }
+            : {
+                command: "joelclaw event <event-id>",
+                description: "Inspect event-to-run mapping instead",
+                params: {
+                  "event-id": { description: "Event ID", value: eventIds[0] ?? "EVENT_ID", required: true },
+                },
+              },
         ])
         return
       }

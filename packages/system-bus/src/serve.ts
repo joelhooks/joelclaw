@@ -655,6 +655,10 @@ app.on(
 
 export default {
   port: 3111,
+  // Inngest registration PUTs can take longer than Bun's 10s default when the
+  // self-hosted runtime is under cron/backlog pressure. A 10s idle timeout
+  // causes an empty reply, leaving the server with stale function triggers.
+  idleTimeout: 255,
   fetch: app.fetch,
 };
 

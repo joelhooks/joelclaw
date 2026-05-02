@@ -194,7 +194,7 @@ await gateway?.progress("Step 3/5 complete");
 - `vip/email-received` operator output is narrative-first now: expect 3-5 sentence prose plus one calibrated urgency line (`🔴🟠🟡🟢✅`), not the old `Thread / Your last reply / Needs your attention` block format.
 - **NEVER set `retries: 0`** — Inngest defaults handle retries. This has caused multiple production failures.
 - **Events silently dropped if functions not registered.** Verify `joelclaw functions` returns >0 before sending events. `joelclaw refresh` forces re-registration.
-- **Inngest server function registry goes stale** on worker restart. Always `curl -X PUT http://127.0.0.1:3111/api/inngest` after restart.
+- **Inngest server function registry goes stale** on worker restart. Always `curl -X PUT http://127.0.0.1:3111/api/inngest` after restart. If PUT returns `Empty reply from server`, check `~/.local/log/system-bus-worker.err` for Bun request timeouts — the host worker must keep `idleTimeout` high enough for slow self-hosted Inngest registration under backlog pressure.
 - **Don't edit monorepo while a loop is running.** `git add -A` scoops up unrelated changes.
 - **Step names must be unique within a function** — Inngest uses them for memoization.
 - **`step.invoke` over fan-out events for rate-limited APIs** — fan-out starts all near-simultaneously even with throttle.

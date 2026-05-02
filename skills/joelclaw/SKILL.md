@@ -64,7 +64,7 @@ joelclaw refresh                           # Force re-register with Inngest serv
 
 ```bash
 joelclaw send "event/name" --data '{"key":"value"}'
-joelclaw send "pipeline/video.download" --data '{"url":"https://youtube.com/watch?v=XXX"}'
+joelclaw send "pipeline/video.requested" --data '{"url":"https://youtube.com/watch?v=XXX"}'
 joelclaw send "agent/story.start" --data '{"prdPath":"/abs/path/prd.json","storyId":"S-1"}'
 ```
 
@@ -345,9 +345,12 @@ joelclaw send agent/story.start -d '{
 ### Pipelines
 | Event | Chain |
 |-------|-------|
-| `pipeline/video.download` | → video-download → transcript-process → content-summarize |
-| `pipeline/transcript.process` | → transcript-process → content-summarize |
-| `content/summarize` | → content-summarize |
+| `pipeline/video.requested` | → video-download → transcript-process → content-summarize |
+| `pipeline/video.download` | legacy alias for `pipeline/video.requested` |
+| `pipeline/transcript.requested` | → transcript-process → content-summarize |
+| `pipeline/transcript.process` | legacy alias for `pipeline/transcript.requested` |
+| `content/summarize.requested` | → content-summarize |
+| `content/summarize` | legacy alias for `content/summarize.requested` |
 | `content/updated` | → content-sync (git commit vault changes) |
 | `docs/ingest` | → docs-ingest (PDF/markdown → vector store) |
 

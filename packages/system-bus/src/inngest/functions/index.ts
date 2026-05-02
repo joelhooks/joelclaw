@@ -80,9 +80,9 @@ export { meetingTranscriptIndex } from "./meeting-transcript-index";
 export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 export { batchReview } from "./memory/batch-review";
 export { memoryEmbed } from "./memory/embed";
-export { memoryRunCaptured } from "./memory/run-captured";
 export { nightlyMaintenance } from "./memory/nightly-maintenance";
 export { proposalTriage } from "./memory/proposal-triage";
+export { memoryRunCaptured } from "./memory/run-captured";
 export { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 export { nasSoakReview, nasSoakSample } from "./nas-soak";
 export { networkStatusUpdate } from "./network-status-update";
@@ -97,7 +97,7 @@ export { slackBackfillBatch, slackChannelBackfill } from "./slack-backfill";
 export { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 export { storyPipeline } from "./story-pipeline";
 export { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions";
-export { summarize } from "./summarize";
+export { summarize, summarizeLegacyAlias } from "./summarize";
 export { swarmAgentExec } from "./swarm-agent-exec";
 export { swarmOrchestrator } from "./swarm-orchestrator";
 export { systemLogger } from "./system-logger";
@@ -111,7 +111,7 @@ export {
   todoistTaskCreated,
 } from "./todoist-notify";
 export { transcriptIndexWeb } from "./transcript-index-web";
-export { transcriptProcess } from "./transcript-process";
+export { transcriptProcess, transcriptProcessLegacyAlias } from "./transcript-process";
 export {
   typesenseBlogSync,
   typesenseFullSync,
@@ -123,7 +123,7 @@ export {
   vercelDeployError,
   vercelDeploySucceeded,
 } from "./vercel-notify";
-export { videoDownload } from "./video-download";
+export { videoDownload, videoDownloadLegacyAlias } from "./video-download";
 export { vipEmailThreadsBackfill } from "./vip-email-backfill";
 export { vipEmailReceived } from "./vip-email-received";
 export { vipEmailBrief } from "./vip-morning-brief";

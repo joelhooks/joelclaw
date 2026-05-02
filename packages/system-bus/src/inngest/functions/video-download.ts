@@ -28,7 +28,7 @@ function formatDuration(seconds: number): string {
 
 /**
  * Video Download — downloads video with yt-dlp and transfers to NAS.
- * Emits pipeline/video.downloaded + pipeline/transcript.process
+ * Emits pipeline/video.downloaded + pipeline/transcript.requested
  * Does NOT transcribe — that's a separate composable step.
  */
 export const videoDownload = inngest.createFunction(
@@ -37,7 +37,7 @@ export const videoDownload = inngest.createFunction(
     concurrency: { limit: 1 },
     retries: 2,
   },
-  [{ event: "pipeline/video.requested" }],
+  { event: "pipeline/video.requested" },
   async ({ event, step }) => {
     // Step 1: Download with yt-dlp
     const download = await step.run("download", async () => {
@@ -166,6 +166,25 @@ export const videoDownload = inngest.createFunction(
       channel: download.channel,
       nasPath,
       status: "downloaded",
+    };
+  }
+);
+
+/** Compatibility shim for the legacy public event documented before the pipeline moved to *.requested names. */
+export const videoDownloadLegacyAlias = inngest.createFunction(
+  {
+    id: "video-download-legacy-alias",
+  },
+  { event: "pipeline/video.download" },
+  async ({ event, step }) => {
+    await step.sendEvent("forward-to-video-requested", {
+      name: "pipeline/video.requested",
+      data: event.data,
+    });
+
+    return {
+      status: "forwarded",
+      forwardedTo: "pipeline/video.requested",
     };
   }
 );

@@ -106,7 +106,7 @@ function leaseAnthropicApiKey(): string {
  * If audioPath is provided → runs mlx-whisper
  * If text is provided → uses directly (no whisper needed)
  *
- * Creates vault note, updates daily note, emits transcript.processed + content/summarize
+ * Creates vault note, updates daily note, emits transcript.processed + content/summarize.requested
  */
 export const transcriptProcess = inngest.createFunction(
   {
@@ -719,6 +719,25 @@ date: ${today}
       slug,
       source,
       status: "processed",
+    };
+  }
+);
+
+/** Compatibility shim for the legacy public event documented before the pipeline moved to *.requested names. */
+export const transcriptProcessLegacyAlias = inngest.createFunction(
+  {
+    id: "transcript-process-legacy-alias",
+  },
+  { event: "pipeline/transcript.process" },
+  async ({ event, step }) => {
+    await step.sendEvent("forward-to-transcript-requested", {
+      name: "pipeline/transcript.requested",
+      data: event.data,
+    });
+
+    return {
+      status: "forwarded",
+      forwardedTo: "pipeline/transcript.requested",
     };
   }
 );

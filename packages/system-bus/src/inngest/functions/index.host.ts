@@ -98,13 +98,13 @@ import { slackBackfillBatch, slackChannelBackfill } from "./slack-backfill";
 import { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 import { storyPipeline } from "./story-pipeline";
 import { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions";
-import { summarize } from "./summarize";
+import { summarize, summarizeLegacyAlias } from "./summarize";
 import { systemLogger } from "./system-logger";
 import { taskTriage } from "./task-triage";
 import { telegramCallbackReceived } from "./telegram-callback";
 import { telnyxNotify } from "./telnyx-notify";
 import { transcriptIndexWeb } from "./transcript-index-web";
-import { transcriptProcess } from "./transcript-process";
+import { transcriptProcess, transcriptProcessLegacyAlias } from "./transcript-process";
 import {
   typesenseBlogSync,
   typesenseFullSync,
@@ -117,7 +117,7 @@ import {
   vercelDeployError,
   vercelDeploySucceeded,
 } from "./vercel-notify";
-import { videoDownload } from "./video-download";
+import { videoDownload, videoDownloadLegacyAlias } from "./video-download";
 import { vipEmailThreadsBackfill } from "./vip-email-backfill";
 import { vipEmailReceived } from "./vip-email-received";
 import { vipEmailBrief } from "./vip-morning-brief";
@@ -141,9 +141,12 @@ export const hostFunctionDefinitions = [
   gatewayHandleMessage,
   gatewayBehaviorDailyReview,
   videoDownload,
+  videoDownloadLegacyAlias,
   transcriptProcess,
+  transcriptProcessLegacyAlias,
   transcriptIndexWeb,
   summarize,
+  summarizeLegacyAlias,
   systemLogger,
   observeSessionFunction,
   reflect,
