@@ -35,6 +35,8 @@ const OUTBOX_DIR = join(homedir(), ".joelclaw", "outbox");
 const LOG_PATH = join(homedir(), ".joelclaw", "capture.log");
 const RUNTIME = "pi";
 
+const captureQueue = new Map<string, Promise<void>>();
+
 interface AuthFile {
   user_id: string;
   machine_id: string;
@@ -121,6 +123,24 @@ function countAssistantTurns(jsonlDelta: string): number {
 }
 
 async function captureDelta(params: {
+  sessionId: string;
+  sessionFile: string;
+  trigger: "turn_end" | "session_shutdown";
+}): Promise<void> {
+  const priorCapture = captureQueue.get(params.sessionId) ?? Promise.resolve();
+  const nextCapture = priorCapture
+    .catch(() => undefined)
+    .then(() => captureDeltaUnsafe(params))
+    .finally(() => {
+      if (captureQueue.get(params.sessionId) === nextCapture) {
+        captureQueue.delete(params.sessionId);
+      }
+    });
+  captureQueue.set(params.sessionId, nextCapture);
+  return nextCapture;
+}
+
+async function captureDeltaUnsafe(params: {
   sessionId: string;
   sessionFile: string;
   trigger: "turn_end" | "session_shutdown";
