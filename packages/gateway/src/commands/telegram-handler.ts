@@ -60,9 +60,10 @@ const CALLBACK_PREFIX = "cmd:";
 const MAX_LIGHT_RESPONSE_CHARS = 3900;
 const DOWNSTREAM_AGENT_TRACE_TIMEOUT_MS = 120_000;
 
+// Keep historical slash-command aliases stable while routing them to Codex models.
 const LIGHT_MODEL_MAP: Record<string, { provider: string; id: string }> = {
-  haiku: { provider: "anthropic", id: "claude-haiku-4-5" },
-  sonnet: { provider: "anthropic", id: "claude-sonnet-4-5" },
+  haiku: { provider: "openai-codex", id: "gpt-5.4-mini" },
+  sonnet: { provider: "openai-codex", id: "gpt-5.5" },
 };
 
 const TELEGRAM_NATIVE_COMMANDS = [
@@ -477,8 +478,8 @@ async function executeCommand(
 
     try {
       const model = getModel(
-        modelSpec.provider as "anthropic",
-        modelSpec.id as "claude-haiku-4-5" | "claude-sonnet-4-5",
+        modelSpec.provider as any,
+        modelSpec.id as any,
       );
       const response = await completeSimple(model, {
         messages: [{ role: "user", content: commandText, timestamp: Date.now() }],

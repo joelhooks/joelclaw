@@ -10,7 +10,7 @@
  * processes the response, so the next call is also instant.
  *
  * Usage:
- *   const pool = createPiProcessPool({ model: "anthropic/claude-haiku-4-5" });
+ *   const pool = createPiProcessPool({ model: "openai-codex/gpt-5.4-mini" });
  *   const result = await pool.infer("classify this message");
  *   pool.shutdown();
  */
@@ -18,7 +18,7 @@
 import { spawn } from "node:child_process";
 
 export interface PiProcessPoolOptions {
-  /** Model to use (default: anthropic/claude-haiku-4-5) */
+  /** Model to use (default: openai-codex/gpt-5.4-mini) */
   model?: string;
   /** Response timeout in ms (default: 6000) */
   timeoutMs?: number;
@@ -44,7 +44,7 @@ export interface PiProcessPool {
 }
 
 export function createPiProcessPool(options: PiProcessPoolOptions = {}): PiProcessPool {
-  const model = options.model ?? "anthropic/claude-haiku-4-5";
+  const model = options.model ?? "openai-codex/gpt-5.4-mini";
   const timeoutMs = options.timeoutMs ?? 6000;
   const maxIdleMs = options.maxIdleMs ?? 5 * 60 * 1000;
   const onEvent = options.onEvent ?? (() => {});

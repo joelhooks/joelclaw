@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { GATEWAY_MODEL_TO_PROVIDER, inferProviderFromModel, isKnownModel, MODEL_CATALOG, normalizeModel } from "../catalog";
+import {
+  GATEWAY_ALLOWED_MODELS,
+  GATEWAY_MODEL_TO_PROVIDER,
+  inferProviderFromModel,
+  isKnownModel,
+  MODEL_CATALOG,
+  normalizeModel,
+} from "../catalog";
 
 describe("catalog helpers", () => {
   test("normalizeModel resolves known models and aliases", () => {
@@ -8,6 +15,7 @@ describe("catalog helpers", () => {
     expect(normalizeModel("  CLAUDE-HAIKU-4-5 ")).toBe("anthropic/claude-haiku-4-5");
     expect(normalizeModel("OPENAI-CODEX/GPT-5.5-CODEX")).toBe("openai-codex/gpt-5.5");
     expect(normalizeModel("OPENAI-CODEX/GPT-5.3-CODEX")).toBe("openai-codex/gpt-5.4");
+    expect(normalizeModel("OPENAI-CODEX/GPT-5.4-MINI")).toBe("openai-codex/gpt-5.4-mini");
   });
 
   test("normalizeModel resolves legacy gateway names", () => {
@@ -27,10 +35,25 @@ describe("catalog helpers", () => {
     expect(inferProviderFromModel("openai/gpt-5.2")).toBe("openai");
     expect(inferProviderFromModel("openai-codex/gpt-5.5")).toBe("openai-codex");
     expect(inferProviderFromModel("openai-codex/gpt-5.4")).toBe("openai-codex");
+    expect(inferProviderFromModel("gpt-5.4-mini")).toBe("openai-codex");
     expect(inferProviderFromModel("claude-opus-4-6")).toBe("anthropic");
     expect(inferProviderFromModel("codex-spark")).toBe("openai-codex");
     expect(inferProviderFromModel("openai-ish")).toBe("openai");
     expect(inferProviderFromModel("random-model-name")).toBe("anthropic");
+  });
+
+  test("gateway model config allows Codex mini and keeps Anthropic compatibility", () => {
+    expect(GATEWAY_ALLOWED_MODELS.slice(0, 7)).toEqual([
+      "gpt-5.5",
+      "gpt-5.5-codex",
+      "gpt-5.5-codex-spark",
+      "gpt-5.4",
+      "gpt-5.4-codex",
+      "gpt-5.4-codex-spark",
+      "gpt-5.4-mini",
+    ]);
+    expect(GATEWAY_MODEL_TO_PROVIDER["gpt-5.4-mini"]).toBe("openai-codex");
+    expect(GATEWAY_MODEL_TO_PROVIDER["claude-haiku-4-5"]).toBe("anthropic");
   });
 
   test("isKnownModel handles positive and negative inputs", () => {

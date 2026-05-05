@@ -25,7 +25,7 @@ export const AGENT_PROFILES: Record<string, AgentProfile> = {
     tags: ["classification"],
     defaults: {
       task: "classification",
-      model: "anthropic/claude-haiku-4-5",
+      model: "openai-codex/gpt-5.4-mini",
       json: true,
       noTools: true,
       timeout: 45_000,
@@ -37,7 +37,7 @@ export const AGENT_PROFILES: Record<string, AgentProfile> = {
     tags: ["reflection"],
     defaults: {
       task: "summary",
-      model: "anthropic/claude-haiku-4-5",
+      model: "openai-codex/gpt-5.5",
       noTools: true,
     },
   },
@@ -47,7 +47,7 @@ export const AGENT_PROFILES: Record<string, AgentProfile> = {
     tags: ["triage", "classification"],
     defaults: {
       task: "classification",
-      model: "anthropic/claude-sonnet-4-6",
+      model: "openai-codex/gpt-5.4-mini",
       json: true,
       noTools: true,
       timeout: 120_000,

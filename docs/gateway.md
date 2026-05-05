@@ -416,9 +416,9 @@ Stuck detection now only runs while the queue is actively waiting for `turn_end`
 
 Prompt dispatch tracking now starts **after** `session.prompt()` successfully accepts the prompt (instead of before the call). This prevents immediate auth/model rejection failures from being misclassified as "stuck turn" incidents.
 
-Gateway primary standard: the gateway agent primary model is `openai-codex/gpt-5.5`. Startup env (`~/.joelclaw/scripts/gateway-start.sh`) sets `PI_MODEL_PROVIDER=openai-codex` and `PI_MODEL=gpt-5.5`; Redis config key `joelclaw:gateway:config` should store `model: "gpt-5.5"`. The inference-router catalog allows explicit GPT-5.5 gateway config while keeping older codex aliases on GPT-5.4 for non-gateway compatibility.
+Gateway primary standard: the gateway agent primary model is `openai-codex/gpt-5.5`. Startup env (`~/.joelclaw/scripts/gateway-start.sh`) sets `PI_MODEL_PROVIDER=openai-codex` and `PI_MODEL=gpt-5.5`; Redis config key `joelclaw:gateway:config` should store `model: "gpt-5.5"`. Cheap gateway helpers use `openai-codex/gpt-5.4-mini`; the historical `haiku` slash-command alias is kept for compatibility but maps to Codex mini. There is no Codex nano model exposed by pi 0.73.0.
 
-Fallback standardization guard: gateway fallback remains `openai-codex/gpt-5.4` so fallback is not identical to the GPT-5.5 primary. If Redis still has legacy Anthropic fallbacks (`claude-sonnet-4-6` or `claude-sonnet-4-5`), daemon startup remaps to codex and emits `daemon.fallback:fallback.model.remapped`.
+Fallback standardization guard: gateway fallback remains `openai-codex/gpt-5.4` so fallback is not identical to the GPT-5.5 primary. If Redis still has legacy Anthropic fallbacks (`claude-sonnet-4-6` or `claude-sonnet-4-5`), daemon startup remaps to codex and emits `daemon.fallback:fallback.model.remapped`. If the configured primary is already GPT-5.4, identical fallback is remapped to `openai-codex/gpt-5.4-mini` rather than Anthropic.
 
 Opus timeout floor guard: when the primary model is `claude-opus-4-6`, gateway config now floors `fallbackTimeoutMs` to `240000` even if Redis still says `120000`. ADR-0091 already recorded real Opus first-token latency beyond 120s, so 120s had become a stale SLA that caused avoidable fallback churn.
 

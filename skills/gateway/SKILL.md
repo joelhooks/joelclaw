@@ -281,7 +281,7 @@ launchd (com.joel.gateway)
             └─ Heartbeat runner (periodic autonomous checks)
 ```
 
-Gateway model standard: startup env sets `PI_MODEL_PROVIDER=openai-codex` and `PI_MODEL=gpt-5.5`; Redis config key `joelclaw:gateway:config` should store `model: "gpt-5.5"`. Fallback remains `openai-codex/gpt-5.4` so the fallback controller has a distinct lower-cost/known-good target.
+Gateway model standard: startup env sets `PI_MODEL_PROVIDER=openai-codex` and `PI_MODEL=gpt-5.5`; Redis config key `joelclaw:gateway:config` should store `model: "gpt-5.5"`. Fallback remains `openai-codex/gpt-5.4` so the fallback controller has a distinct lower-cost/known-good target. Cheap helper paths use `openai-codex/gpt-5.4-mini`; historical `haiku` command aliases remain but map to Codex mini. pi 0.73.0 exposes no Codex nano model.
 
 The gateway reads `~/.pi/agent/` at boot for identity/prompt context (SOUL.md, AGENTS.md, MEMORY.md, daily log), but the **gateway extension itself is context-local**:
 

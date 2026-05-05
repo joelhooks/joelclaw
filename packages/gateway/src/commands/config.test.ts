@@ -1,12 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ALLOWED_MODELS,
   defaultGatewayConfig,
   GATEWAY_CONFIG_KEY,
   loadGatewayConfig,
+  providerForModel,
   saveGatewayConfig,
 } from "./config";
 
-describe("gateway config fallback timeout normalization", () => {
+describe("gateway config model policy", () => {
+  test("allows Codex mini and resolves unknown defaults to OpenAI Codex", () => {
+    expect(ALLOWED_MODELS).toContain("gpt-5.4-mini");
+    expect(providerForModel("gpt-5.4-mini")).toBe("openai-codex");
+    expect(providerForModel("totally-unknown-model")).toBe("openai-codex");
+  });
+
   test("floors claude-opus-4-6 fallback timeout to 240s when loading config", async () => {
     const redis = {
       get: async () => JSON.stringify({

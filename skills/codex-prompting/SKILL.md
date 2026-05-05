@@ -28,8 +28,9 @@ The job is to produce a high-signal Codex request that gets directly executed wi
 
 ## Required model default
 
-- Codex tasks must set model to `gpt-5.4` when unspecified.
+- Codex tasks must set model to `gpt-5.4` when unspecified. This remains the stable Codex worker default even though pipeline inference now routes heavy/default work to `openai-codex/gpt-5.5` and cheap classification/json/rewrite work to `openai-codex/gpt-5.4-mini`.
 - Use an explicit model override only when user explicitly requests another.
+- Do not invent a nano tier: pi 0.73.0 exposes no Codex nano model.
 
 ## Local runtime defaults (Panda)
 

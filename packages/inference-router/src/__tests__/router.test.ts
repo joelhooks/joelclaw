@@ -30,35 +30,30 @@ describe("buildInferenceRoute", () => {
     expect(plan.requestedModel).toBeUndefined();
     expect(plan.attempts[0]!.reason).toBe("policy");
     expect(plan.attempts).toEqual([
-      { model: "anthropic/claude-sonnet-4-6", provider: "anthropic", reason: "policy", attempt: 0 },
-      { model: "anthropic/claude-opus-4-6", provider: "anthropic", reason: "policy", attempt: 1 },
-      { model: "anthropic/claude-haiku-4-5", provider: "anthropic", reason: "policy", attempt: 2 },
+      { model: "openai-codex/gpt-5.5", provider: "openai-codex", reason: "policy", attempt: 0 },
+      { model: "anthropic/claude-sonnet-4-6", provider: "anthropic", reason: "policy", attempt: 1 },
+      { model: "anthropic/claude-opus-4-6", provider: "anthropic", reason: "policy", attempt: 2 },
       { model: "openai-codex/gpt-5.4", provider: "openai-codex", reason: "fallback", attempt: 3 },
+      { model: "openai-codex/gpt-5.4-mini", provider: "openai-codex", reason: "fallback", attempt: 4 },
+      { model: "anthropic/claude-haiku-4-5", provider: "anthropic", reason: "fallback", attempt: 5 },
     ]);
   });
 
   test("builds route with provider filter", () => {
     const plan = buildInferenceRoute({ task: "classification", provider: "openai-codex" }, buildPolicy({ maxFallbackAttempts: 10 }));
 
-    expect(plan.attempts[0]!).toMatchObject({
-      model: "openai-codex/gpt-5.4",
-      provider: "openai-codex",
-      reason: "policy",
-      attempt: 0,
-    });
+    expect(plan.attempts.slice(0, 3)).toEqual([
+      { model: "openai-codex/gpt-5.4-mini", provider: "openai-codex", reason: "policy", attempt: 0 },
+      { model: "openai-codex/gpt-5.4", provider: "openai-codex", reason: "policy", attempt: 1 },
+      { model: "openai-codex/gpt-5.5", provider: "openai-codex", reason: "policy", attempt: 2 },
+    ]);
     expect(plan.attempts).toContainEqual({
       model: "anthropic/claude-haiku-4-5",
       provider: "anthropic",
       reason: "fallback",
-      attempt: 1,
+      attempt: 3,
     });
-    expect(plan.attempts).toContainEqual({
-      model: "anthropic/claude-sonnet-4-6",
-      provider: "anthropic",
-      reason: "fallback",
-      attempt: 2,
-    });
-    expect(plan.attempts).toHaveLength(3);
+    expect(plan.attempts).toHaveLength(5);
   });
 
   test("deduplicates fallback attempts and respects max attempts", () => {
@@ -70,7 +65,7 @@ describe("buildInferenceRoute", () => {
     expect(plan.attempts).toHaveLength(2);
     expect(new Set(plan.attempts.map((entry) => entry.model)).size).toBe(plan.attempts.length);
     expect(plan.attempts[0]!).toMatchObject({ model: "openai-codex/gpt-5.4", reason: "requested" });
-    expect(plan.attempts[1]!).toMatchObject({ model: "anthropic/claude-haiku-4-5", reason: "fallback" });
+    expect(plan.attempts[1]!).toMatchObject({ model: "openai-codex/gpt-5.4-mini", reason: "fallback" });
   });
 
   test("throws in strict mode for unknown model", () => {
@@ -117,10 +112,10 @@ describe("buildInferenceRoute", () => {
     expect(plan.normalizedTask).toBe("default");
     expect(plan.attempts.length).toBeGreaterThan(0);
     expect(plan.attempts[0]!.reason).toBe("policy");
-    expect(plan.policyVersion).toBe("2026-03-06-router-v3");
+    expect(plan.policyVersion).toBe("2026-05-05-codex-policy-v4");
   });
 
-  test("handles no candidates available by throwing", () => {
+  test("uses Codex fallback when policy defaults are empty", () => {
     const policy = buildPolicy({
       defaults: {
         simple: [],
@@ -138,7 +133,25 @@ describe("buildInferenceRoute", () => {
 
     const plan = buildInferenceRoute({ task: "simple", provider: "openai-codex" }, policy);
     expect(plan.attempts).toEqual([
-      { model: "anthropic/claude-haiku-4-5", provider: "anthropic", reason: "fallback", attempt: 0 },
+      { model: "openai-codex/gpt-5.4", provider: "openai-codex", reason: "fallback", attempt: 0 },
     ]);
+  });
+
+  test("pipeline task defaults are Codex-first", () => {
+    const cheapTasks = ["simple", "classification", "json", "rewrite"] as const;
+    for (const task of cheapTasks) {
+      expect(DEFAULT_TASK_TO_MODELS[task].slice(0, 2)).toEqual([
+        "openai-codex/gpt-5.4-mini",
+        "openai-codex/gpt-5.4",
+      ]);
+    }
+
+    const heavyTasks = ["summary", "digest", "default", "reasoning", "complex"] as const;
+    for (const task of heavyTasks) {
+      expect(DEFAULT_TASK_TO_MODELS[task].slice(0, 2)).toEqual([
+        "openai-codex/gpt-5.5",
+        "openai-codex/gpt-5.4",
+      ]);
+    }
   });
 });

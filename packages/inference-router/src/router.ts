@@ -145,9 +145,11 @@ export function routeInference(input: InferencePlanInput, policy = DEFAULT_POLIC
   }
 
   const fallbackCandidate: InferenceModelId[] = [
+    "openai-codex/gpt-5.4",
+    "openai-codex/gpt-5.4-mini",
+    "openai-codex/gpt-5.5",
     "anthropic/claude-haiku-4-5",
     "anthropic/claude-sonnet-4-6",
-    "openai-codex/gpt-5.4",
   ];
 
   for (const model of fallbackCandidate) {

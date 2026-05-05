@@ -1,6 +1,6 @@
 import type { InferenceCatalogEntry, InferenceModelId, InferenceProvider, InferenceTask } from "./schema";
 
-export const INFERENCE_POLICY_VERSION = "2026-03-06-router-v3";
+export const INFERENCE_POLICY_VERSION = "2026-05-05-codex-policy-v4";
 
 export const MODEL_OPENAI_CODEX_CODEx = "openai-codex/gpt-5.5";
 export const MODEL_OPENAI_CODEX_SPARK = "openai-codex/gpt-5.5";
@@ -94,6 +94,32 @@ export const MODEL_CATALOG: Record<string, InferenceCatalogEntry> = {
       "rewrite",
     ],
   },
+  "openai-codex/gpt-5.4-mini": {
+    id: "openai-codex/gpt-5.4-mini",
+    provider: "openai-codex",
+    aliases: [
+      "gpt-5.4-mini",
+      "gpt-54-mini",
+      "gpt-5.4-codex-mini",
+      "gpt-5-4-mini",
+      "gpt-5-4-codex-mini",
+      "codex-mini",
+      "openai-codex-mini",
+      "mini",
+    ],
+    description: "OpenAI GPT-5.4 Mini via Codex provider",
+    supportedTasks: [
+      "simple",
+      "classification",
+      "json",
+      "rewrite",
+      "default",
+      "summary",
+      "digest",
+      "reasoning",
+      "complex",
+    ],
+  },
   "openai/gpt-5.2": {
     id: "openai/gpt-5.2",
     provider: "openai",
@@ -119,92 +145,95 @@ export const MODEL_CATALOG: Record<string, InferenceCatalogEntry> = {
 
 export const DEFAULT_TASK_TO_MODELS: Record<InferenceTask, InferenceModelId[]> = {
   simple: [
-    "anthropic/claude-haiku-4-5",
-    "anthropic/claude-sonnet-4-5",
+    "openai-codex/gpt-5.4-mini",
     "openai-codex/gpt-5.4",
+    "openai-codex/gpt-5.5",
   ],
   classification: [
-    "anthropic/claude-haiku-4-5",
-    "anthropic/claude-sonnet-4-6",
+    "openai-codex/gpt-5.4-mini",
     "openai-codex/gpt-5.4",
+    "openai-codex/gpt-5.5",
   ],
   summary: [
-    "anthropic/claude-sonnet-4-6",
-    "anthropic/claude-opus-4-6",
-    "openai/o4-mini",
+    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.4",
+    "openai-codex/gpt-5.4-mini",
   ],
   digest: [
-    "anthropic/claude-sonnet-4-6",
-    "anthropic/claude-opus-4-6",
+    "openai-codex/gpt-5.5",
     "openai-codex/gpt-5.4",
+    "openai-codex/gpt-5.4-mini",
   ],
   vision: [
+    "openai-codex/gpt-5.5",
     "anthropic/claude-sonnet-4-6",
     "anthropic/claude-opus-4-6",
-    "anthropic/claude-haiku-4-5",
   ],
   reasoning: [
-    "openai/o4-mini",
-    "openai/o3",
+    "openai-codex/gpt-5.5",
     "openai-codex/gpt-5.4",
-    "anthropic/claude-opus-4-6",
+    "openai-codex/gpt-5.4-mini",
   ],
   json: [
-    "anthropic/claude-haiku-4-5",
-    "anthropic/claude-sonnet-4-6",
+    "openai-codex/gpt-5.4-mini",
     "openai-codex/gpt-5.4",
+    "openai-codex/gpt-5.5",
   ],
   default: [
-    "anthropic/claude-sonnet-4-6",
-    "anthropic/claude-haiku-4-5",
+    "openai-codex/gpt-5.5",
     "openai-codex/gpt-5.4",
+    "openai-codex/gpt-5.4-mini",
   ],
   complex: [
-    "openai/o3",
-    "openai/o4-mini",
-    "anthropic/claude-opus-4-6",
+    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.4",
+    "openai-codex/gpt-5.4-mini",
   ],
   rewrite: [
-    "anthropic/claude-haiku-4-5",
-    "anthropic/claude-sonnet-4-6",
-    "anthropic/claude-opus-4-6",
+    "openai-codex/gpt-5.4-mini",
+    "openai-codex/gpt-5.4",
+    "openai-codex/gpt-5.5",
   ],
 };
 
 export const GATEWAY_ALLOWED_MODELS = [
-  "claude-opus-4-6",
-  "claude-sonnet-4-6",
-  "claude-sonnet-4-5",
-  "claude-haiku-4-5",
   "gpt-5.5",
   "gpt-5.5-codex",
   "gpt-5.5-codex-spark",
   "gpt-5.4",
   "gpt-5.4-codex",
   "gpt-5.4-codex-spark",
+  "gpt-5.4-mini",
+  "gpt-5.4-codex-mini",
   "gpt-5.3-codex",
   "gpt-5.3-codex-spark",
   "gpt-5.2-codex",
   "gpt-5.2-codex-spark",
   "gpt-5.2",
+  "claude-opus-4-6",
+  "claude-sonnet-4-6",
+  "claude-sonnet-4-5",
+  "claude-haiku-4-5",
 ] as const;
 
 export const GATEWAY_MODEL_TO_PROVIDER: Record<(typeof GATEWAY_ALLOWED_MODELS)[number], InferenceProvider> = {
-  "claude-opus-4-6": "anthropic",
-  "claude-sonnet-4-6": "anthropic",
-  "claude-sonnet-4-5": "anthropic",
-  "claude-haiku-4-5": "anthropic",
   "gpt-5.5": "openai-codex",
   "gpt-5.5-codex": "openai-codex",
   "gpt-5.5-codex-spark": "openai-codex",
   "gpt-5.4": "openai-codex",
   "gpt-5.4-codex": "openai-codex",
   "gpt-5.4-codex-spark": "openai-codex",
+  "gpt-5.4-mini": "openai-codex",
+  "gpt-5.4-codex-mini": "openai-codex",
   "gpt-5.3-codex": "openai-codex",
   "gpt-5.3-codex-spark": "openai-codex",
   "gpt-5.2-codex": "openai-codex",
   "gpt-5.2-codex-spark": "openai-codex",
   "gpt-5.2": "openai",
+  "claude-opus-4-6": "anthropic",
+  "claude-sonnet-4-6": "anthropic",
+  "claude-sonnet-4-5": "anthropic",
+  "claude-haiku-4-5": "anthropic",
 };
 
 export const CANONICAL_MODELS = Object.keys(MODEL_CATALOG) as InferenceModelId[];
@@ -259,6 +288,9 @@ export function inferProviderFromModel(model: string): InferenceProvider {
   }
   const normalized = normalizeModel(model);
   if (normalized) return MODEL_CATALOG[normalized]!.provider;
+  if (model.startsWith("openai-codex") || model.startsWith("gpt-") || model.includes("codex")) {
+    return "openai-codex";
+  }
   return model.startsWith("openai") ? "openai" : "anthropic";
 }
 

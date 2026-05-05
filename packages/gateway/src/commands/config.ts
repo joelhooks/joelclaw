@@ -61,10 +61,10 @@ export function providerForModel(modelId: string): string {
     success: true,
     metadata: {
       modelId,
-      provider: "anthropic",
+      provider: "openai-codex",
     },
   });
-  return "anthropic";
+  return "openai-codex";
 }
 
 function normalizeModel(raw: unknown): GatewayModel {

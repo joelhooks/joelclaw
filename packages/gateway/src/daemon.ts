@@ -1354,8 +1354,8 @@ if (!modelRefsEqual(resolvedPrimaryModel, requestedPrimaryModelRef)) {
 
 const configuredFallbackModel = `${startupGatewayConfig.fallbackProvider}/${startupGatewayConfig.fallbackModel}`;
 const secondaryFallback = {
-  provider: "anthropic",
-  model: "claude-sonnet-4-5",
+  provider: "openai-codex",
+  model: "gpt-5.4-mini",
 } as const;
 const secondaryFallbackModel = `${secondaryFallback.provider}/${secondaryFallback.model}`;
 if (configuredFallbackModel === actualPrimaryModel && actualPrimaryModel !== secondaryFallbackModel) {
@@ -4297,7 +4297,7 @@ const THREAD_SNAPSHOT_PATH = join(homedir(), ".joelclaw", "state", "thread-snaps
 
 /** ADR-0209: Warm pi process pool for sub-second thread classification */
 const classifierPool: PiProcessPool = createPiProcessPool({
-  model: "anthropic/claude-haiku-4-5",
+  model: "openai-codex/gpt-5.4-mini",
   timeoutMs: 6000,
   maxIdleMs: 5 * 60 * 1000, // recycle every 5min
   onEvent: (event, detail) => {
@@ -4323,7 +4323,7 @@ function persistThreadSnapshot(): void {
     writeFile(THREAD_SNAPSHOT_PATH, JSON.stringify({ threads: snapshot, ts: Date.now() }, null, 2)).catch(() => {});
   } catch {}
 }
-/** Cheap haiku call for thread classification (~200ms) */
+/** Cheap Codex-mini call for thread classification. */
 async function classifyThread(
   userMessage: string,
   channel: string,
@@ -4339,7 +4339,7 @@ async function classifyThread(
     }
   }
 
-  // 2. Haiku classifier
+  // 2. Cheap model classifier
   const active = getActiveThreads();
   const classifierPrompt = buildClassifierPrompt(userMessage, active);
 
@@ -4397,7 +4397,7 @@ async function classifyThread(
     return { threadId: resolved.thread.id, replyToAnchor: resolved.replyToAnchor };
   }
 
-  // 4. No threads at all → create first thread (only path that creates without haiku)
+  // 4. No threads at all → create first thread (only path that creates without classifier)
   const resolved = resolveClassification(
     { threadId: "new", threadLabel: "general", isNew: true, confidence: 0.3, source: "continuation" },
     channel,
@@ -4416,7 +4416,7 @@ const enqueueToGateway = async (source: string, prompt: string, metadata?: Recor
     : typeof metadata?.discordMessageId === "string"
       ? metadata.discordMessageId
       : undefined;
-  // ADR-0209: Classify thread (haiku ~200ms, reply-to ~0ms)
+  // ADR-0209: Classify thread (cheap model, reply-to ~0ms)
   const threadCtx = await classifyThread(prompt, channel, replyToAnchor, inboundAnchor);
 
   const queueMetadata = buildHumanTurnQueueMetadata(source, metadata);
