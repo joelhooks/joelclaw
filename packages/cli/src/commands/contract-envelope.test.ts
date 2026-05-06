@@ -69,6 +69,36 @@ describe("CLI contract envelope", () => {
     expect(validation.errors).toHaveLength(0)
   })
 
+  test("next action normalization preserves agent-fillable params", () => {
+    const envelope = buildSuccessEnvelope("workload plan", { id: "plan-123" }, [
+      {
+        command: "workload run <plan-file> [--dry-run]",
+        description: "Run the generated workload plan",
+        params: {
+          "plan-file": {
+            description: "Path to the generated workload plan",
+            value: ".pi-autoresearch/plan.json",
+            required: true,
+          },
+          "dry-run": {
+            description: "Validate without dispatching work",
+            default: "false",
+          },
+        },
+      },
+    ])
+
+    const action = envelope.next_actions[0]
+    expect(action?.command).toBe("joelclaw workload run <plan-file> [--dry-run]")
+    expect(action?.params?.["plan-file"]?.value).toBe(".pi-autoresearch/plan.json")
+    expect(action?.params?.["plan-file"]?.required).toBe(true)
+    expect(action?.params?.["dry-run"]?.default).toBe("false")
+
+    const validation = validateJoelclawEnvelope(envelope)
+    expect(validation.valid).toBe(true)
+    expect(validation.errors).toHaveLength(0)
+  })
+
   test("validator reports missing required fields", () => {
     const invalid = {
       ok: true,
