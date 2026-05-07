@@ -396,7 +396,7 @@ export function classifyOperatorSignal(
     return { bucket: "immediate", reason: "immediate.interactive-or-error", score: Math.max(score, 10), summary, projectKeys, contactKeys, correlationKeys };
   }
 
-  if (event.type === "vip.email.received") {
+  if (event.type === "vip.email.received" || event.type === "vip.email.brief") {
     return { bucket: "ingested", reason: "ingested.vip-delivered-direct", score, summary, projectKeys, contactKeys, correlationKeys };
   }
 

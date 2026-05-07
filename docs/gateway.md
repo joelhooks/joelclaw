@@ -354,7 +354,7 @@ Joel-authored non-mention Slack channel messages now enter the canonical gateway
 Canonical implementation lives in `packages/gateway/src/operator-relay.ts`.
 
 Current contract:
-- `vip.email.received` is ingested by relay policy so the gateway keeps correlation context without announcing a duplicate operator alert after the VIP pipeline delivers the richer brief directly to Telegram
+- `vip.email.received` and `vip.email.brief` are ingested by relay policy so direct VIP Telegram delivery cannot also become a duplicate Signal Digest item
 - raw `front.message.received` no longer pages by default; it pages only for production/security/money failures or a human/project direct ask
 - lower-signal project/person email and passive Slack intel batch into correlated signal digests instead of paging immediately
 - obvious email noise (`newsletter`, `unsubscribe`, shopping/restock/cart, bot review-in-progress, weekly summaries) is suppressed before it reaches the gateway session
