@@ -10,13 +10,13 @@ import {
   search,
 } from "../../lib/typesense";
 import { inngest } from "../client";
-import { pushGatewayEvent } from "./agent-loop/utils";
 
 const COMPONENT = "vip-email-brief";
 const FRONT_CONVERSATION_URL = "https://app.frontapp.com/open";
 const LOS_ANGELES_TIME_ZONE = "America/Los_Angeles";
 const DAY_MS = 24 * 60 * 60_000;
 const WEEK_MS = 7 * DAY_MS;
+const VIP_ATTENTION_WINDOW_MS = 30 * DAY_MS;
 const QUERY_LIMIT = 20;
 const QUERY_SCAN_LIMIT = 50;
 const EMPTY_BRIEF = "☀️ VIP inbox clear — nothing needs your attention.";
@@ -213,6 +213,8 @@ function normalizeThreadDocument(doc: VipThreadDocument, now: number): Normalize
 }
 
 function classifyThread(thread: NormalizedVipThread, now: number): "dangling" | "new-activity" | "stale" | null {
+  if (thread.lastMessageAt < now - VIP_ATTENTION_WINDOW_MS) return null;
+
   const lastJoelReplyAt = thread.lastJoelReplyAt ?? 0;
   const isDangling = lastJoelReplyAt <= 0 || lastJoelReplyAt < thread.lastMessageAt;
 
@@ -473,27 +475,10 @@ export const vipEmailBrief = inngest.createFunction(
       stripOperatorRelayRules(gatewayPrompt) || generated.briefText || EMPTY_BRIEF,
     );
 
-    const notifyResult = await step.run("notify-gateway", async () => {
-      const gatewayResultPromise = pushGatewayEvent({
-        type: "vip.email.brief",
-        source: "inngest/vip-email-brief",
-        payload: {
-          prompt: gatewayPrompt,
-          threadCount: queried.threads.length,
-          danglingCount: classified.dangling.length,
-          newActivityCount: classified.newActivity.length,
-          staleCount: classified.stale.length,
-        },
-      })
-        .then(() => ({ ok: true as const }))
-        .catch((error) => ({
-          ok: false as const,
-          error: error instanceof Error ? error.message : String(error),
-        }));
+    const notifyResult = await step.run("notify-telegram", async () => {
       const telegramResult = await sendTelegramDirect(telegramBriefHtml, {
         disablePreview: false,
       });
-      const gatewayResult = await gatewayResultPromise;
 
       if (!telegramResult.ok) {
         console.error("[vip-email-brief] failed to send direct telegram brief", {
@@ -501,15 +486,9 @@ export const vipEmailBrief = inngest.createFunction(
         });
       }
 
-      if (!gatewayResult.ok) {
-        console.error("[vip-email-brief] failed to enqueue gateway brief", {
-          error: gatewayResult.error,
-        });
-      }
-
-      if (!telegramResult.ok && !gatewayResult.ok) {
+      if (!telegramResult.ok) {
         throw new Error(
-          `VIP email brief delivery failed: telegram=${telegramResult.error ?? "unknown"} gateway=${gatewayResult.error ?? "unknown"}`,
+          `VIP email brief delivery failed: telegram=${telegramResult.error ?? "unknown"}`,
         );
       }
 

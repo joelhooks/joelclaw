@@ -351,10 +351,10 @@ Do **not** mutate `main.db` without a point-in-time backup.
   - cron: `0 2 * * 2-6` (02:00 UTC Tue-Sat; ~7:00pm PT on the prior weekday during DST)
 - behavior:
   1. ensures the `email_threads` Typesense collection exists, queries non-archived VIP thread cache entries sorted by `last_message_at:desc`, and degrades to `noop` if Typesense is unavailable or the cache is empty
-  2. classifies up to 20 cached VIP threads into priority buckets: `dangling` (Joel owes a reply), `new activity` (recently active but not dangling), and `stale` (open with 7+ days of inactivity)
-  3. returns `{ status: "noop", reason: "no-signal" }` without notifying the gateway when all three buckets are empty
+  2. classifies up to 20 cached VIP threads into priority buckets within a 30-day attention window: `dangling` (Joel owes a reply), `new activity` (recently active but not dangling), and `stale` (open with 7+ days of inactivity). Older threads are ignored until fresh inbound activity updates `last_message_at`.
+  3. returns `{ status: "noop", reason: "no-signal" }` without notifying Telegram when all three buckets are empty
   4. generates a Telegram-ready VIP email brief through `infer()` with a deterministic fallback formatter if model generation fails
-  5. relays the final brief to the gateway as `vip.email.brief` with operator instructions to deliver it to Joel unchanged
+  5. sends the final brief directly to Telegram only; it does not enqueue a `vip.email.brief` gateway event, because that creates duplicate Signal Digest spam for a brief already formatted for Joel
 
 ### VIP email contextual analysis contract
 
