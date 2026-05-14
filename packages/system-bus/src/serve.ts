@@ -534,13 +534,26 @@ app.route("/webhooks", webhookApp);
 // Inngest serve endpoint — registers functions and handles execution.
 // ADR-0089: host workers keep explicit serveHost for Docker callback compatibility.
 // Cluster workers rely on connect mode and should not advertise host.docker.internal.
+function shouldSkipInngestSignatureValidation(): boolean {
+  const explicit = process.env.INNGEST_DEV?.trim().toLowerCase();
+  if (explicit === "1" || explicit === "true") return true;
+
+  const endpoint = process.env.INNGEST_URL ?? process.env.INNGEST_BASE_URL ?? "http://localhost:8288";
+  const isLocalEndpoint = /(^|\/\/)(localhost|127\.0\.0\.1|host\.docker\.internal)(:|\/|$)/.test(endpoint);
+  if (isLocalEndpoint) return true;
+  if (explicit === "0" || explicit === "false") return false;
+  return false;
+}
+
 const inngestApiOptions: {
   client: typeof inngest;
   functions: any[];
   serveHost?: string;
+  skipSignatureValidation?: boolean;
 } = {
   client: inngest,
   functions: registeredFunctions,
+  skipSignatureValidation: shouldSkipInngestSignatureValidation(),
 };
 if (serveHost) {
   inngestApiOptions.serveHost = serveHost;

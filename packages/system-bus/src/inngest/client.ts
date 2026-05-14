@@ -1948,15 +1948,27 @@ export type Events = {
   // --- Legacy ---
 };
 
+function shouldUseInngestDevMode(): boolean {
+  const explicit = process.env.INNGEST_DEV?.trim().toLowerCase();
+  if (explicit === "1" || explicit === "true") return true;
+
+  const endpoint = process.env.INNGEST_URL ?? process.env.INNGEST_BASE_URL ?? "http://localhost:8288";
+  const isLocalEndpoint = /(^|\/\/)(localhost|127\.0\.0\.1|host\.docker\.internal)(:|\/|$)/.test(endpoint);
+  if (isLocalEndpoint) return true;
+  if (explicit === "0" || explicit === "false") return false;
+  return false;
+}
+
 export const inngest = new Inngest({
   // Ensure host and cluster workers register independently and cannot
   // overwrite each other's function graph in Inngest.
   id: (() => {
-    const explicit = process.env.INNGEST_APP_ID?.trim()
-    if (explicit) return explicit
-    const role = process.env.WORKER_ROLE === "cluster" ? "cluster" : "host"
-    return `system-bus-${role}`
+    const explicit = process.env.INNGEST_APP_ID?.trim();
+    if (explicit) return explicit;
+    const role = process.env.WORKER_ROLE === "cluster" ? "cluster" : "host";
+    return `system-bus-${role}`;
   })(),
+  isDev: shouldUseInngestDevMode(),
   schemas: new EventSchemas().fromRecord<Events>(),
   middleware: [gatewayMiddleware],
 });
