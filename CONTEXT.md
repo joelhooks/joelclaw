@@ -21,7 +21,7 @@ The single authoritative joelclaw service for a Network, hosted on one primary M
 _Avoid_: server, backend, hub, Panda
 
 **Relay Machine**:
-A Machine that runs account-bound or local-hardware-bound joelclaw services while delegating authoritative state and indexing to Central.
+A Machine dedicated to account-bound or local-hardware-bound joelclaw services for one or more Users while delegating authoritative state and indexing to Central.
 _Avoid_: secondary Central, worker node, edge server
 
 **Run**:
@@ -69,6 +69,8 @@ One of `active` (default, searchable) or `deleted` (hard-removed from NAS + Type
 - **Central** is hosted on one primary **Machine** at a time
 - A **User** owns many **Machines**
 - A **Machine** may act as a **Relay Machine**
+- A **Relay Machine** may serve many **Users** without becoming their **Machine**
+- A **Relay Machine** hosts no **Central** state
 - A **Machine** produces many **Runs**
 - A **Run** is owned by exactly one **User** (via the Machine that produced it)
 - A **Run** may have a parent **Run** (nested agent calls, workload-rig sub-runs); Runs form trees
@@ -82,7 +84,7 @@ One of `active` (default, searchable) or `deleted` (hard-removed from NAS + Type
 2. **Embedding is an interface, not an implementation.** The Central worker calls embeddings through `@joelclaw/inference-router`. Local Ollama today, Mac Studio Ollama tomorrow — caller code unchanged.
 3. **Every Run carries User + Machine identity at capture time.** Ownership is not inferred downstream.
 4. **Runs are private by default; sharing is explicit.** Queries filter to `owner_user_id` or a `readable_by` grant. No Network-wide pool. (Per-Run vs per-tag sharing granularity still open.)
-5. **Design for Central host migration, not RAM optimization.** Central may move from Panda to Mac Studio, but there is still exactly one Central per Network. Relay Machines can keep local-hardware-bound services, but authoritative state, indexing, and ingestion ownership stay with Central. Central host migration is a planned whole-Central cutover: state and runtime move together, and the old host is frozen only as rollback. In practice: stable typed HTTP interfaces between services, persistent state on NAS or explicit service volumes, no service assumes colocation with another.
+5. **Design for Central host migration, not RAM optimization.** Central may move from Panda to Mac Studio, but there is still exactly one Central per Network. Relay Machines can keep local-hardware-bound services, but authoritative state, indexing, and ingestion ownership stay with Central. Central host migration is a planned whole-Central cutover: state and runtime move together, and the old host is frozen only as rollback. After cutover, Panda is a Relay Machine only, not a family-use Machine and not a Central fallback. In practice: stable typed HTTP interfaces between services, persistent state on NAS or explicit service volumes, no service assumes colocation with another.
 6. **Identity is PDS; the wire is a bearer token.** Every User has a DID in the joelclaw PDS. Every Machine has an AT Protocol App Password scoped to its User's DID. Machines present the App Password (as a bearer token in v1) to authenticate Run POSTs. Central verifies against PDS, extracts `(user_id, machine_id)`, never trusts identity from the request body. Users are provisioned manually via `joelclaw user create <name>`; self-serve invite flow is a later upgrade. Upgrade path to full AT Proto signed requests is reserved for federation scenarios (e.g. external DIDs participating in the Network).
 7. **Ingress is Tailnet-only.** `/api/runs/*` and `/api/memory/*` are not reachable from the public internet. Defense in depth beneath the bearer-token layer.
 8. **Capture uses native runtime hooks; wrappers are the fallback.** Pi extension, claude-code `Stop` hook, codex hook — each invokes `joelclaw capture-stdin` which enriches and POSTs. Explicit `joelclaw capture -- <cmd>` only for tools with no hook surface. Machines get one CLI installed, nothing else. Parent linkage propagates via `JOELCLAW_PARENT_RUN_ID` + `JOELCLAW_CONVERSATION_ID` env vars — best-effort; orphan Runs are acceptable. Failed POSTs go to the Outbox.
@@ -120,4 +122,5 @@ Runs = raw. Memory = derived from Runs. Keep them namespaced apart.
 
 - **"Session"** is overloaded — pi, claude-code, and the gateway each use it differently. Resolved: use **Run** for captured agent traces. "Session" reserved for its existing meanings.
 - **"Operator"** — resolved: drop "operator", use **User** (the owning person) + `agent_runtime` field (pi, claude-code, codex, etc.).
-- **"Panda as Central"** — resolved: **Central** is logical and can move hosts; Panda is a **Machine** and may become a **Relay Machine** after Mac Studio becomes Central.
+- **"Panda as Central"** — resolved: **Central** is logical and can move hosts; Panda is a **Machine** and becomes a relay-only **Relay Machine** after Mac Studio becomes Central.
+- **"Panda as family Machine"** — resolved: Panda is not a normal family-use **Machine** after cutover; it exists to relay account-bound services for multiple **Users**.
