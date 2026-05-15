@@ -13,7 +13,7 @@ A person in the joelclaw Network (Joel, his wife, his kids). Each User has one i
 _Avoid_: account, operator, member, principal
 
 **Machine**:
-An endpoint device belonging to exactly one User (laptop, phone, Pi, microVM, sandbox). Identified by a stable `machine_id`.
+An endpoint device belonging to exactly one User (laptop, phone, Pi, microVM, sandbox). Identified by a stable, boring `machine_id`; display names may carry personality.
 _Avoid_: node, client, device (in API/DB contexts — "Machine" is canonical)
 
 **Central**:
@@ -101,7 +101,7 @@ One of `active` (default, searchable) or `deleted` (hard-removed from NAS + Type
 2. **Embedding is an interface, not an implementation.** The Central worker calls embeddings through `@joelclaw/inference-router`. Local Ollama today, Mac Studio Ollama tomorrow — caller code unchanged.
 3. **Every Run carries User + Machine identity at capture time.** Ownership is not inferred downstream.
 4. **Runs are private by default; sharing is explicit.** Queries filter to `owner_user_id` or a `readable_by` grant. No Network-wide pool. (Per-Run vs per-tag sharing granularity still open.)
-5. **Design for Central host migration, not RAM optimization.** Central may move from Panda to Mac Studio, but there is still exactly one Central per Network. Relay Machines can keep local-hardware-bound services, but authoritative state, indexing, and ingestion ownership stay with Central. Central host migration is a planned whole-Central cutover: state and runtime move together, and the old host is frozen only as rollback. After cutover, Panda is a Relay Machine only, not a family-use Machine and not a Central fallback. In practice: stable typed HTTP interfaces between services, persistent state on NAS or explicit service volumes, no service assumes colocation with another.
+5. **Design for Central host migration, not RAM optimization.** Central may move from Panda to Mac Studio, but there is still exactly one Central per Network. Relay Machines can keep local-hardware-bound services, but authoritative state, indexing, and ingestion ownership stay with Central. Central host migration is a planned whole-Central cutover: state and runtime move together, and the old host is frozen only as rollback. After cutover, Panda is a Relay Machine only, not a family-use Machine and not a Central fallback. The Mac Studio Central host uses `machine_id=mac-studio-central`; any themed name is display-only. In practice: stable typed HTTP interfaces between services, persistent state on NAS or explicit service volumes, no service assumes colocation with another.
 6. **Identity is PDS; the wire is a bearer token.** Every User has a DID in the joelclaw PDS. Every Machine has an AT Protocol App Password scoped to its User's DID. Machines present the App Password (as a bearer token in v1) to authenticate Run POSTs. Central verifies against PDS, extracts `(user_id, machine_id)`, never trusts identity from the request body. Users are provisioned manually via `joelclaw user create <name>`; self-serve invite flow is a later upgrade. Upgrade path to full AT Proto signed requests is reserved for federation scenarios (e.g. external DIDs participating in the Network).
 7. **Ingress is Tailnet-only.** `/api/runs/*` and `/api/memory/*` are not reachable from the public internet. Defense in depth beneath the bearer-token layer.
 8. **Capture uses native runtime hooks; wrappers are the fallback.** Pi extension, claude-code `Stop` hook, codex hook — each invokes `joelclaw capture-stdin` which enriches and POSTs. Explicit `joelclaw capture -- <cmd>` only for tools with no hook surface. Machines get one CLI installed, nothing else. Parent linkage propagates via `JOELCLAW_PARENT_RUN_ID` + `JOELCLAW_CONVERSATION_ID` env vars — best-effort; orphan Runs are acceptable. Failed POSTs go to the Outbox.
@@ -153,4 +153,5 @@ Runs = raw. Memory = derived from Runs. Keep them namespaced apart.
 - **"Agent Vault"** — resolved: use **Credential Proxy** for the domain concept; Infisical Agent Vault is the current roadmap implementation candidate.
 - **"Credential Proxy placement"** — resolved: the Credential Proxy runs on the Mac Studio Central host as Central infrastructure, not on Panda Relay Machines and not inside agent sandboxes.
 - **"Credential Proxy as cutover dependency"** — resolved: Credential Proxy is Phase 2 hardening after the Mac Studio Central host is stable, not required for the first cutover.
-- **"BossHogg"** — resolved: not a canonical Machine name; use "Mac Studio" as the hardware placeholder until the Machine receives a real `machine_id`.
+- **"BossHogg"** — resolved: not a canonical Machine name; use "Mac Studio" as the hardware placeholder during discussion.
+- **"Mac Studio Machine ID"** — resolved: use `mac-studio-central` as the stable `machine_id`; themed names are display names only.
