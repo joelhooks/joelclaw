@@ -17,8 +17,12 @@ An endpoint device belonging to exactly one User (laptop, phone, Pi, microVM, sa
 _Avoid_: node, client, device (in API/DB contexts — "Machine" is canonical)
 
 **Central**:
-The Panda-hosted joelclaw service: joelclaw.com (Next.js on Vercel) + the k8s cluster on Colima (system-bus worker, Inngest, Typesense, Redis, Restate, NAS-backed storage). One Central per Network.
-_Avoid_: server, backend, hub
+The single authoritative joelclaw service for a Network, hosted on one primary Machine at a time. One Central per Network.
+_Avoid_: server, backend, hub, Panda
+
+**Relay Machine**:
+A Machine that runs account-bound or local-hardware-bound joelclaw services while delegating authoritative state and indexing to Central.
+_Avoid_: secondary Central, worker node, edge server
 
 **Run**:
 One agent invocation — the atomic unit of capture. A single `pi -p` call, one claude-code turn, one codex call, one loop iteration, one gateway reply generation. Has a jsonl transcript and structured metadata. May have a `parent_run_id` pointing to a larger Run (workload stage, nested agent call). Runs form trees.
@@ -62,7 +66,9 @@ One of `active` (default, searchable) or `deleted` (hard-removed from NAS + Type
 ## Relationships
 
 - A **Network** has one **Central** and many **Users**
+- **Central** is hosted on one primary **Machine** at a time
 - A **User** owns many **Machines**
+- A **Machine** may act as a **Relay Machine**
 - A **Machine** produces many **Runs**
 - A **Run** is owned by exactly one **User** (via the Machine that produced it)
 - A **Run** may have a parent **Run** (nested agent calls, workload-rig sub-runs); Runs form trees
@@ -76,7 +82,7 @@ One of `active` (default, searchable) or `deleted` (hard-removed from NAS + Type
 2. **Embedding is an interface, not an implementation.** The Central worker calls embeddings through `@joelclaw/inference-router`. Local Ollama today, Mac Studio Ollama tomorrow — caller code unchanged.
 3. **Every Run carries User + Machine identity at capture time.** Ownership is not inferred downstream.
 4. **Runs are private by default; sharing is explicit.** Queries filter to `owner_user_id` or a `readable_by` grant. No Network-wide pool. (Per-Run vs per-tag sharing granularity still open.)
-5. **Design for horizontal migration, not RAM optimization.** Panda (64GB) runs everything today. Mac Studio (128GB) is the upgrade target for RAM-bound services like Typesense. Current capacity ceiling is ~270K Runs in RAM — several years of headroom at realistic family rates — but services must be designed so Typesense (or any other service) can move to a different Mac-class node over Tailscale without a refactor. In practice: stable typed HTTP interfaces between services, persistent state on NAS or PVC (never host disk), no service assumes colocation with another.
+5. **Design for Central host migration, not RAM optimization.** Central may move from Panda to Mac Studio, but there is still exactly one Central per Network. Relay Machines can keep local-hardware-bound services, but authoritative state, indexing, and ingestion ownership stay with Central. In practice: stable typed HTTP interfaces between services, persistent state on NAS or explicit service volumes, no service assumes colocation with another.
 6. **Identity is PDS; the wire is a bearer token.** Every User has a DID in the joelclaw PDS. Every Machine has an AT Protocol App Password scoped to its User's DID. Machines present the App Password (as a bearer token in v1) to authenticate Run POSTs. Central verifies against PDS, extracts `(user_id, machine_id)`, never trusts identity from the request body. Users are provisioned manually via `joelclaw user create <name>`; self-serve invite flow is a later upgrade. Upgrade path to full AT Proto signed requests is reserved for federation scenarios (e.g. external DIDs participating in the Network).
 7. **Ingress is Tailnet-only.** `/api/runs/*` and `/api/memory/*` are not reachable from the public internet. Defense in depth beneath the bearer-token layer.
 8. **Capture uses native runtime hooks; wrappers are the fallback.** Pi extension, claude-code `Stop` hook, codex hook — each invokes `joelclaw capture-stdin` which enriches and POSTs. Explicit `joelclaw capture -- <cmd>` only for tools with no hook surface. Machines get one CLI installed, nothing else. Parent linkage propagates via `JOELCLAW_PARENT_RUN_ID` + `JOELCLAW_CONVERSATION_ID` env vars — best-effort; orphan Runs are acceptable. Failed POSTs go to the Outbox.
@@ -114,3 +120,4 @@ Runs = raw. Memory = derived from Runs. Keep them namespaced apart.
 
 - **"Session"** is overloaded — pi, claude-code, and the gateway each use it differently. Resolved: use **Run** for captured agent traces. "Session" reserved for its existing meanings.
 - **"Operator"** — resolved: drop "operator", use **User** (the owning person) + `agent_runtime` field (pi, claude-code, codex, etc.).
+- **"Panda as Central"** — resolved: **Central** is logical and can move hosts; Panda is a **Machine** and may become a **Relay Machine** after Mac Studio becomes Central.
