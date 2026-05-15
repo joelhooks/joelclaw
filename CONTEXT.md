@@ -46,6 +46,10 @@ The AT Protocol identifier for a **User** in the joelclaw PDS (`did:plc:...`). S
 An AT Protocol credential bound to a (DID, Machine) pair, issued by Central and stored in `~/.joelclaw/auth.json` on the Machine. Revocable individually. Machines present it (as a bearer token in v1) to authenticate Run POSTs.
 _Avoid_: API key, token, auth secret
 
+**Channel Account**:
+An external communication account bound to exactly one joelclaw User for one channel.
+_Avoid_: macOS account, Messages database, inbox, account
+
 **Capture Hook**:
 The runtime-native mechanism that emits a Run. pi extension for pi, `Stop` hook in `~/.claude/settings.json` for claude-code, equivalent for codex. Every hook invokes `joelclaw capture-stdin` which enriches the jsonl with identity + lineage and POSTs to `/api/runs`. Server-side runtimes (loops, workload-rig, gateway) skip the hook and call `captureRun()` inline.
 _Avoid_: capture agent, capture daemon (we have neither)
@@ -71,6 +75,8 @@ One of `active` (default, searchable) or `deleted` (hard-removed from NAS + Type
 - A **Machine** may act as a **Relay Machine**
 - A **Relay Machine** may serve many **Users** without becoming their **Machine**
 - A **Relay Machine** hosts no **Central** state
+- A **User** owns zero or more **Channel Accounts**
+- A **Channel Account** belongs to exactly one **User**
 - A **Machine** produces many **Runs**
 - A **Run** is owned by exactly one **User** (via the Machine that produced it)
 - A **Run** may have a parent **Run** (nested agent calls, workload-rig sub-runs); Runs form trees
@@ -88,6 +94,7 @@ One of `active` (default, searchable) or `deleted` (hard-removed from NAS + Type
 6. **Identity is PDS; the wire is a bearer token.** Every User has a DID in the joelclaw PDS. Every Machine has an AT Protocol App Password scoped to its User's DID. Machines present the App Password (as a bearer token in v1) to authenticate Run POSTs. Central verifies against PDS, extracts `(user_id, machine_id)`, never trusts identity from the request body. Users are provisioned manually via `joelclaw user create <name>`; self-serve invite flow is a later upgrade. Upgrade path to full AT Proto signed requests is reserved for federation scenarios (e.g. external DIDs participating in the Network).
 7. **Ingress is Tailnet-only.** `/api/runs/*` and `/api/memory/*` are not reachable from the public internet. Defense in depth beneath the bearer-token layer.
 8. **Capture uses native runtime hooks; wrappers are the fallback.** Pi extension, claude-code `Stop` hook, codex hook — each invokes `joelclaw capture-stdin` which enriches and POSTs. Explicit `joelclaw capture -- <cmd>` only for tools with no hook surface. Machines get one CLI installed, nothing else. Parent linkage propagates via `JOELCLAW_PARENT_RUN_ID` + `JOELCLAW_CONVERSATION_ID` env vars — best-effort; orphan Runs are acceptable. Failed POSTs go to the Outbox.
+8a. **Channel ownership is by Channel Account.** Relay Machines normalize external channel events to Central with a resolved joelclaw User from the Channel Account binding. For iMessage, the iCloud account is the Channel Account identity; macOS login sessions and `~/Library/Messages/chat.db` are relay implementation details.
 9. **Embeddings: qwen3-embedding:8b via Ollama, Matryoshka-truncated to 768-dim.** Chunking is per-turn (40K context window makes sub-turn splits rare). Every Chunk carries its Embedding Model Tag (`qwen3-embedding-8b@768`). Dimension is a query-time/deployment knob, not a data commitment — full 4096-dim can be re-computed at zero cost since the same model produces it. Ingest path calls the model through `@joelclaw/inference-router`; swap via config.
 
 9a. **Embed concurrency is an Inngest-managed knob with priority lanes.** Ollama serializes embed calls internally, so raw concurrency at the HTTP layer is a fake optimization — what matters is *who waits*. Every embed call routes through Inngest with one of three priorities: `query` (agent/CLI search, interactive, never starved), `ingest-realtime` (live Run captures, normal priority), `ingest-bulk` (reindex, backfill, spike ingest — lowest priority, drops out when anything else arrives). Concrete contention observed during the spike: a query embed queued behind bulk work went from ~220ms idle to 8-10 s under load. Priority lanes are the fix. Implementation: `memory/embed.requested` event carries a `priority` field; `@joelclaw/inference-router` embeddings lane sets it based on caller; Inngest `priority.run` expression gates scheduling. Background ingest must never steal query latency.
@@ -110,6 +117,9 @@ One of `active` (default, searchable) or `deleted` (hard-removed from NAS + Type
 > **Agent:** "The laptop ships jsonl to **Central** as a **Run** tagged with kiddo's **User** ID and the laptop's `machine_id`. **Central** chunks, embeds, indexes. Kiddo's **Runs** are isolated from Joel's by default."
 > **Joel:** "Can my agents search kiddo's **Runs**?"
 > **Agent:** "Only if kiddo's **User** record grants access — isolation by default, explicit sharing contract required." _(pending Q2)_
+>
+> **Joel:** "Panda is logged into my kid's iCloud for iMessage relay — whose messages are those?"
+> **Agent:** "They belong to the kid's **User** because that iCloud identity is their **Channel Account**. Panda only relays it."
 
 ## API surfaces
 
@@ -124,3 +134,4 @@ Runs = raw. Memory = derived from Runs. Keep them namespaced apart.
 - **"Operator"** — resolved: drop "operator", use **User** (the owning person) + `agent_runtime` field (pi, claude-code, codex, etc.).
 - **"Panda as Central"** — resolved: **Central** is logical and can move hosts; Panda is a **Machine** and becomes a relay-only **Relay Machine** after Mac Studio becomes Central.
 - **"Panda as family Machine"** — resolved: Panda is not a normal family-use **Machine** after cutover; it exists to relay account-bound services for multiple **Users**.
+- **"iMessage account"** — resolved: use **Channel Account** for the external account bound to a joelclaw **User**; iCloud account, macOS login, and Messages database are implementation details unless specifically discussing relay mechanics.
