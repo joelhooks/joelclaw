@@ -90,6 +90,8 @@ These are joelclaw's foundational rules. They govern every decision.
 
 6. **Memory captures patterns, not noise.** Every session should leave the system smarter. Durable patterns go in skills. Semantic search via `joelclaw recall`. Transient context stays ephemeral.
 
+6a. **pi-rag is system-prior session memory.** When an answer depends on prior session/conversation context — "above", "earlier", "that thread", "last time", gateway recovery, failed loops, stale-vs-active signals, handoffs — use `pi-rag` before relying on compacted context or vague recollection. Canonical sequence: `rag_search_sessions` (with project/thread/person hints; rerank on) → `rag_get_session` → `rag_get_structure` → `rag_tree_search` → bounded `rag_get_content` → `rag_summarize_node` only when useful. Typesense is the default joelclaw provider; libSQL/pdf-brain/local providers may participate on satellite machines. Never dump full sessions unless explicitly required.
+
 7. **Agent communication is mandatory.** Use `joelclaw mail` for agent-to-agent coordination: file usage, current task, handoffs, and friction. Use `joelclaw notify` for operator-facing relay through the gateway. Read mail frequently for system activity. Always include file paths and task context. **Load the `clawmail` skill for the canonical protocol** (subject taxonomy, reserve/release workflow, and prompt contract checklist). Designed to evolve toward AT Protocol and PDS-backed agent communication.
 
 8. **Never expose secrets.** No secrets in vault, repos, or version-controlled files. Use `joelclaw secrets` for all credential access. Leases with TTL, audit trail.

@@ -1,0 +1,37 @@
+{
+  "sessionId": "adr:0035",
+  "generatedAt": "2026-05-06T18:27:00.330Z",
+  "messageCount": 1,
+  "root": {
+    "id": "root",
+    "title": "--- status: shipped date: 2026-02-17 decision-makers: Joel Hooks consulted:…",
+    "summary": "1 messages; roles custom:1; terms status, shipped, date, 2026-02-17, decision-makers, joel, hooks, consulted",
+    "start": 0,
+    "end": 0,
+    "roleMix": {
+      "custom": 1
+    },
+    "children": [
+      {
+        "id": "n1",
+        "title": "--- status: shipped date: 2026-02-17 decision-makers: Joel Hooks consulted:…",
+        "summary": "1 messages; roles custom:1; terms status, shipped, date, 2026-02-17, decision-makers, joel, hooks, consulted",
+        "start": 0,
+        "end": 0,
+        "roleMix": {
+          "custom": 1
+        },
+        "trace": [
+          "segment from message 0 to 0"
+        ]
+      }
+    ],
+    "trace": [
+      "root covers whole session but content retrieval remains bounded"
+    ]
+  },
+  "trace": [
+    "deterministic hierarchy built from 1 messages",
+    "top-level window size 12, child window size 4"
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "sessionId": "turn:gateway:3c9cc68c-3a16-4d5a-bc69-61265d87a32b:62",
+  "generatedAt": "2026-05-07T16:34:23.381Z",
+  "messageCount": 1,
+  "root": {
+    "id": "root",
+    "title": "source: gateway agent: gateway-daemon channel: internal session: 3c9cc68c-3…",
+    "summary": "1 messages; roles custom:1; terms source, gateway, agent, gateway-daemon, channel, internal, session, 3c9cc68c-3a16-4d5a-bc69-61265d87a32b",
+    "start": 0,
+    "end": 0,
+    "roleMix": {
+      "custom": 1
+    },
+    "children": [
+      {
+        "id": "n1",
+        "title": "source: gateway agent: gateway-daemon channel: internal session: 3c9cc68c-3…",
+        "summary": "1 messages; roles custom:1; terms source, gateway, agent, gateway-daemon, channel, internal, session, 3c9cc68c-3a16-4d5a-bc69-61265d87a32b",
+        "start": 0,
+        "end": 0,
+        "roleMix": {
+          "custom": 1
+        },
+        "trace": [
+          "segment from message 0 to 0"
+        ]
+      }
+    ],
+    "trace": [
+      "root covers whole session but content retrieval remains bounded"
+    ]
+  },
+  "trace": [
+    "deterministic hierarchy built from 1 messages",
+    "top-level window size 12, child window size 4"
+  ]
+}
