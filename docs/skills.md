@@ -88,8 +88,10 @@ joelclaw skills ensure <name>
 If the skill is **external** and does not live in a local repo `skills/` directory, use the upstream installer instead:
 
 ```bash
-npx skills add -y -g <source>
+npx -y skills add <owner>/<repo> --skill <skill-name> -g -y
 ```
+
+Use both `-y` flags. The first answers `npx` package-install prompts; the trailing `-y` answers the `skills` agent-selection prompt. `-g` alone still prompts.
 
 ## Update a Skill
 

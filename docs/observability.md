@@ -15,6 +15,18 @@ Canonical notes for joelclaw telemetry, OTEL events, and triage semantics.
 
 This split is deliberate. O11y triage escalates failed operations, so non-critical degradations must stay visible without looking like a failed health-check operation.
 
+## CLI emission
+
+Use `--metadata` for JSON context on manual OTEL events. The CLI does not have an `--attributes` flag.
+
+```bash
+joelclaw otel emit "task.completed" \
+  --source system \
+  --component skills \
+  --success true \
+  --metadata '{"session":"NimbleBadger","task":"install wzrrd-publish skill"}'
+```
+
 ### Metadata contract
 
 `system.health.checked` metadata should include:

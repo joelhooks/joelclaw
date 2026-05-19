@@ -86,6 +86,18 @@ await emitGatewayOtel({
 });
 ```
 
+### CLI emission
+
+Use `--metadata` for JSON context. There is no `--attributes` flag.
+
+```bash
+joelclaw otel emit "task.completed" \
+  --source system \
+  --component skills \
+  --success true \
+  --metadata '{"session":"NimbleBadger","task":"install wzrrd-publish skill"}'
+```
+
 ## Definition of Done
 
 - Structured OTEL events added for the changed path.

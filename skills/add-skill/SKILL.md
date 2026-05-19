@@ -105,6 +105,24 @@ git commit -m "feat(skills): add <skill-name> — <short description>"
 - **Write for another agent** — the consumer is another Claude instance, not Joel. Include what's non-obvious.
 - **Include trigger phrases** in the description — this is how pi matches user requests to skills.
 
+## Installing External Skill Packs
+
+External/third-party skills are installed globally, not copied into `joelclaw/skills/`, unless Joel explicitly wants to curate them into the repo.
+
+For unattended installs, pass `-y` to both `npx` and the `skills` CLI:
+
+```bash
+npx -y skills add <owner>/<repo> --skill <skill-name> -g -y
+```
+
+Gotcha: `-g` installs globally but still opens the agent-selection prompt. The trailing `-y` accepts the default global agent set. Without it, headless sessions hang at the picker like a stunned mullet.
+
+Verify the install:
+
+```bash
+ls -l ~/.agents/skills/<skill-name> ~/.pi/agent/skills/<skill-name>
+```
+
 ## Updating Existing Skills
 
 1. Edit the SKILL.md (or references) in the repo copy

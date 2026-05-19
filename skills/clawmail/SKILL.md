@@ -117,6 +117,11 @@ joelclaw mail search --query "Status:"
 - Your compiled `~/.bun/bin/joelclaw` may be stale relative to source.
 - Rebuild CLI from `packages/cli/src/cli.ts` and retry.
 
+### If wrapper output says `ok: true` but the nested result contains an error
+- Treat the operation as failed. Some CLI paths can return a successful envelope while `result.result` or `result.raw` contains backend errors such as `Too many open files`, `Agent not found`, or stale project metadata.
+- Verify reservations/register/inbox calls by reading the nested result, not only the top-level `ok` flag.
+- Retry once if the backend says it freed cached repos; if it still fails, continue only for low-risk edits and report the coordination failure in the final summary.
+
 ## Prompt Authoring Checklist (shore up prompts)
 
 Any prompt/role/system contract that mentions coordination should:
