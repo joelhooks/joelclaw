@@ -72,7 +72,7 @@ Extraction returns session ID, path, dates, cwd, user prompts, decisions, comman
 
 Shape rules:
 
-- `search --extract` attaches `extraction` directly to each emitted hit when available. `.result.extractions` is a compatibility convenience list.
+- `search --extract` attaches `extraction` directly to each emitted hit when available. `.result.extractions` is a compatibility convenience list. Piped `| jq` usage is supported for large envelopes.
 - `extract --format markdown` still emits the canonical JSON envelope; rendered markdown is at `.result.markdown`.
 - `chunks` exposes top-level `.result.chunks` / `.result.hits`, with source mirrors under `.result.local.chunks` and `.result.typesense.chunks`.
 - Source metadata distinguishes `rawReturned` from `emittedHits` / `emittedChunks`.

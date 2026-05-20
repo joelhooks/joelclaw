@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 
@@ -57,6 +57,13 @@ type RemoteSearchResponse = {
     snippets?: string[]
   }>
   error?: string
+}
+
+function writeEnvelope(output: string): Effect.Effect<void> {
+  return Effect.sync(() => {
+    process.stdout.write(output)
+    process.stdout.write("\n")
+  })
 }
 
 function asString(value: unknown): string | undefined {
@@ -778,7 +785,7 @@ const searchCmd = Command.make(
           ? hitsWithExtractions.flatMap((hit) => hit.extraction ? [hit.extraction] : [])
           : undefined
 
-        yield* Console.log(respond("sessions search", {
+        yield* writeEnvelope(respond("sessions search", {
           query,
           source,
           resolvedRawSource: source === "both" ? rawSource : undefined,
@@ -815,7 +822,7 @@ const searchCmd = Command.make(
         ]))
       } catch (error) {
         if (isTypesenseApiKeyError(error)) {
-          yield* Console.log(respondError(
+          yield* writeEnvelope(respondError(
             "sessions search",
             error.message,
             error.code,
@@ -831,7 +838,7 @@ const searchCmd = Command.make(
 
         const message = error instanceof Error ? error.message : String(error)
         const code = message.includes("ssh") ? "SESSION_SEARCH_SSH_FAILED" : "SESSION_SEARCH_FAILED"
-        yield* Console.log(respondError(
+        yield* writeEnvelope(respondError(
           "sessions search",
           message,
           code,
@@ -855,7 +862,7 @@ const extractCmd = Command.make(
   ({ session, query, format }) => Effect.gen(function* () {
     try {
       const extraction = extractSession(session, query || session)
-      yield* Console.log(respond("sessions extract", {
+      yield* writeEnvelope(respond("sessions extract", {
         format,
         extraction,
         markdown: format === "markdown" ? extractionMarkdown(extraction) : undefined,
@@ -864,7 +871,7 @@ const extractCmd = Command.make(
         { command: `sessions extract ${JSON.stringify(extraction.path)} --query ${JSON.stringify(query || session)} --format markdown`, description: "Render the same extraction as markdown" },
       ]))
     } catch (error) {
-      yield* Console.log(respondError("sessions extract", error instanceof Error ? error.message : String(error), "SESSION_EXTRACT_FAILED", "Verify the session id/path exists locally under ~/.pi/agent/sessions", [
+      yield* writeEnvelope(respondError("sessions extract", error instanceof Error ? error.message : String(error), "SESSION_EXTRACT_FAILED", "Verify the session id/path exists locally under ~/.pi/agent/sessions", [
         { command: "sessions search <query> --source local --extract", description: "Find local candidate sessions first", params: { query: { required: true } } },
       ]))
     }
@@ -876,11 +883,11 @@ const inspectCmd = Command.make(
   { session: sessionArg, around: aroundOpt, before: beforeOpt, after: afterOpt },
   ({ session, around, before, after }) => Effect.gen(function* () {
     try {
-      yield* Console.log(respond("sessions inspect", inspectSession(session, around, before, after), [
+      yield* writeEnvelope(respond("sessions inspect", inspectSession(session, around, before, after), [
         { command: `sessions extract ${JSON.stringify(session)} --query ${JSON.stringify(around)}`, description: "Extract structured task context for this match" },
       ]))
     } catch (error) {
-      yield* Console.log(respondError("sessions inspect", error instanceof Error ? error.message : String(error), "SESSION_INSPECT_FAILED", "Verify the regex and local session id/path", []))
+      yield* writeEnvelope(respondError("sessions inspect", error instanceof Error ? error.message : String(error), "SESSION_INSPECT_FAILED", "Verify the regex and local session id/path", []))
     }
   })
 ).pipe(Command.withDescription("Deterministically inspect raw transcript lines around a regex"))
@@ -903,7 +910,7 @@ const chunksCmd = Command.make(
       chunks.local = { found: local.found, rawReturned: local.hits.length, emittedChunks: localChunks.length, searchedFiles: local.searchedFiles, chunks: localChunks }
       allChunks.push(...localChunks)
     }
-    yield* Console.log(respond("sessions chunks", { ...chunks, chunks: allChunks, hits: allChunks }, [
+    yield* writeEnvelope(respond("sessions chunks", { ...chunks, chunks: allChunks, hits: allChunks }, [
       { command: `sessions search ${JSON.stringify(query)} --source ${source} --machine ${machine} --extract --limit ${limit}`, description: "Search and extract task context from candidate sessions" },
     ]))
   })
@@ -912,7 +919,7 @@ const chunksCmd = Command.make(
 function sessionsRoot(name: "sessions" | "session") {
   return Command.make(name, {}, () =>
     Effect.gen(function* () {
-    yield* Console.log(respond("sessions", {
+    yield* writeEnvelope(respond("sessions", {
       description: "Search captured agent Runs in Typesense and raw local/remote Pi session files",
       commands: {
         search: "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--extract] [--machine dark-wizard] [--ssh-target joel@dark-wizard] [--limit 8]",
