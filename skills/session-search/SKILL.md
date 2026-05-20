@@ -1,7 +1,7 @@
 ---
 name: session-search
 displayName: Session Search
-description: Search captured agent Runs and raw remote Pi sessions, especially dark-wizard sessions, using the joelclaw sessions bridge. Use when the user asks to search sessions, find prior dark-wizard/Panda/pi/codex/claude context, recover conversation history, verify session indexing, or bypass stale rag_search_sessions/Typesense results.
+description: Search captured agent Runs and raw local/remote Pi sessions, especially dark-wizard sessions, using the joelclaw sessions bridge. Use when the user asks to search sessions, find prior dark-wizard/Panda/pi/codex/claude context, recover conversation history, verify session indexing, or bypass stale rag_search_sessions/Typesense results.
 version: 0.1.0
 author: joel
 tags:
@@ -20,11 +20,11 @@ Canonical terms:
 
 - **Run**: captured agent invocation in Central/Typesense.
 - **Conversation**: sibling Runs sharing interactive context.
-- **Session Search Bridge**: CLI convenience that searches Central's derived Run index plus raw Pi session JSONL on a remote Machine over SSH.
+- **Session Search Bridge**: CLI convenience that searches Central's derived Run index plus raw Pi session JSONL on the local Machine or a remote Machine over SSH.
 
 ## Fast path
 
-Search both Central Typesense and raw dark-wizard Pi sessions:
+Search both Central Typesense and raw dark-wizard Pi sessions from Panda:
 
 ```bash
 joelclaw sessions search "<query>" \
@@ -37,7 +37,8 @@ joelclaw sessions search "<query>" \
 Read the JSON. Prefer hits with:
 
 - `source: "typesense"` when the derived index is current
-- `source: "ssh"` when Typesense is stale or you need raw remote session files
+- `source: "local"` when running on the Machine that has the raw Pi files
+- `source: "ssh"` when Typesense is stale or you need raw remote session files from another Machine
 
 ## Source-specific searches
 
@@ -45,6 +46,12 @@ Typesense only:
 
 ```bash
 joelclaw sessions search "<query>" --source typesense --machine dark-wizard --limit 8
+```
+
+Raw local Pi sessions only, for example on dark-wizard itself:
+
+```bash
+joelclaw sessions search "<query>" --source local --machine dark-wizard --limit 8
 ```
 
 Raw remote Pi sessions only:
@@ -81,19 +88,30 @@ curl -fsS -G http://localhost:8108/collections/runs_dev/documents/search \
   | jq '[.hits[].document | {id,machine_id,started_at:(.started_at/1000|todateiso8601)}]'
 ```
 
-## SSH requirements
+## Local and SSH requirements
 
-The bridge expects dark-wizard to have:
+The bridge expects the Machine being scanned to have:
 
-- `ssh joel@dark-wizard` access
 - `python3`
 - raw Pi sessions under `~/.pi/agent/sessions/**/*.jsonl`
+
+SSH mode also needs:
+
+- `ssh joel@dark-wizard` access
 
 Smoke test:
 
 ```bash
 ssh joel@dark-wizard 'hostname && python3 --version && find ~/.pi/agent/sessions -type f -name "*.jsonl" | head'
 ```
+
+On dark-wizard itself:
+
+```bash
+joelclaw sessions search "<query>" --source local --machine dark-wizard --limit 8
+```
+
+With `--source both`, the raw side uses `local` when the current hostname matches `--machine`; otherwise it uses `ssh`. That keeps dark-wizard from SSHing to itself. If the local Machine has no Typesense credential, `both` skips Typesense and returns raw local hits with `typesenseSkipped`; use `--source local` when you want that explicitly.
 
 ## Rules
 

@@ -38,9 +38,12 @@ export function loadConfig(): Config {
     redisUrl: env.REDIS_URL ?? process.env.REDIS_URL ?? "redis://localhost:6379",
   }
 
-  if (!_cached.eventKey) {
+  return _cached
+}
+
+export function requireInngestEventKey(config: Config): string {
+  if (!config.eventKey) {
     throw new Error(`No INNGEST_EVENT_KEY — create ${ENV_PATH} or set env var`)
   }
-
-  return _cached
+  return config.eventKey
 }

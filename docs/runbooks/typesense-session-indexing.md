@@ -45,7 +45,7 @@ joelclaw log write \
 
 ## Fast path: search sessions before diagnosing
 
-Use the bridge first. It searches the Central Typesense derived index and raw remote Pi session files over SSH.
+Use the bridge first. It searches the Central Typesense derived index and raw Pi session files, locally when running on that Machine or remotely over SSH.
 
 ```bash
 joelclaw sessions search "<query>" \
@@ -55,7 +55,7 @@ joelclaw sessions search "<query>" \
   --limit 8
 ```
 
-If `source=typesense` has nothing but `source=ssh` finds hits, raw sessions exist and the derived Typesense index is stale. Continue with this runbook.
+If `source=typesense` has nothing but `source=local` or `source=ssh` finds hits, raw sessions exist and the derived Typesense index is stale. Continue with this runbook.
 
 If SSH fails:
 
@@ -284,7 +284,9 @@ Canonical CLI surface:
 joelclaw sessions search "<query>" --source both --machine dark-wizard --ssh-target joel@dark-wizard
 ```
 
-Use `--source ssh` to bypass Typesense entirely and scan raw Pi session files on dark-wizard.
+Use `--source local` on dark-wizard itself to bypass Typesense and scan raw Pi session files without SSH-to-self.
+
+Use `--source ssh` from Panda to bypass Typesense and scan raw Pi session files on dark-wizard over SSH.
 
 Use `--source typesense` to check only `run_chunks_dev`.
 

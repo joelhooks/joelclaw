@@ -4,7 +4,7 @@ import {
   summarizeSkippedCandidates,
 } from "@joelclaw/endpoint-resolver"
 import { Effect, Schema } from "effect"
-import { loadConfig } from "./config"
+import { loadConfig, requireInngestEventKey } from "./config"
 import {
   EventsV2Response,
   InngestFunction,
@@ -16,7 +16,9 @@ import {
 
 const cfg = loadConfig()
 const GQL = `${cfg.inngestUrl}/v0/gql`
-const EVENT_API = `${cfg.inngestUrl}/e/${cfg.eventKey}`
+function eventApiUrl(): string {
+  return `${cfg.inngestUrl}/e/${requireInngestEventKey(cfg)}`
+}
 const GQL_TIMEOUT_MS = Math.max(
   5000,
   Number.parseInt(process.env.JOELCLAW_INNGEST_GQL_TIMEOUT_MS ?? "20000", 10),
@@ -152,7 +154,7 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
     ) {
       return yield* Effect.tryPromise({
         try: async () => {
-          const res = await fetch(EVENT_API, {
+          const res = await fetch(eventApiUrl(), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name, data }),

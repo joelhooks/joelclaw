@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer"
 import { spawnSync } from "node:child_process"
+import { existsSync } from "node:fs"
+import { join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
@@ -7,12 +9,12 @@ import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-aut
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const RUN_CHUNKS_COLLECTION = "run_chunks_dev"
-const SESSION_SEARCH_SOURCES = ["typesense", "ssh", "both"] as const
+const SESSION_SEARCH_SOURCES = ["typesense", "ssh", "local", "both"] as const
 
 type SessionSearchSource = typeof SESSION_SEARCH_SOURCES[number]
 
 type SessionHit = {
-  source: "typesense" | "ssh"
+  source: "typesense" | "ssh" | "local"
   id: string
   runId?: string
   sessionId?: string
@@ -276,19 +278,67 @@ print(json.dumps({
 }))
 `
 
+function parseRawSessionSearch(input: {
+  parsed: RemoteSearchResponse
+  source: "ssh" | "local"
+  machineId: string
+}): { ok: true; found: number; searchedFiles?: number; hits: SessionHit[] } {
+  if (input.parsed.ok === false) throw new Error(input.parsed.error ?? `${input.source} session search failed`)
+
+  const hits = (input.parsed.hits ?? []).map<SessionHit>((hit) => ({
+    source: input.source,
+    id: asString(hit.session_id) ?? asString(hit.path) ?? "unknown",
+    sessionId: asString(hit.session_id),
+    machineId: input.machineId,
+    startedAt: asString(hit.started_at),
+    path: asString(hit.path),
+    cwdKey: asString(hit.cwd_key),
+    snippets: Array.isArray(hit.snippets) ? hit.snippets.filter((item): item is string => typeof item === "string") : [],
+  }))
+
+  return { ok: true, found: input.parsed.found ?? hits.length, searchedFiles: input.parsed.searched_files, hits }
+}
+
+function rawSessionPayload(input: { query: string; limit: number; maxFiles: number }): string {
+  return Buffer.from(JSON.stringify({
+    query: input.query,
+    limit: input.limit,
+    max_files: input.maxFiles,
+  })).toString("base64")
+}
+
+function searchLocal(input: {
+  query: string
+  limit: number
+  machine: string
+  maxFiles: number
+}): { ok: true; found: number; searchedFiles?: number; hits: SessionHit[] } {
+  const proc = spawnSync("python3", ["-", rawSessionPayload(input)], {
+    input: REMOTE_SESSION_SEARCH_SCRIPT,
+    encoding: "utf8",
+    timeout: 45_000,
+    maxBuffer: 1024 * 1024 * 4,
+  })
+
+  if (proc.error) throw proc.error
+  if (proc.status !== 0) {
+    throw new Error(`local session search failed (${proc.status}): ${proc.stderr || proc.stdout}`)
+  }
+
+  return parseRawSessionSearch({
+    parsed: JSON.parse(proc.stdout) as RemoteSearchResponse,
+    source: "local",
+    machineId: input.machine,
+  })
+}
+
 function searchRemote(input: {
   query: string
   limit: number
   sshTarget: string
   maxFiles: number
 }): { ok: true; found: number; searchedFiles?: number; hits: SessionHit[] } {
-  const payload = Buffer.from(JSON.stringify({
-    query: input.query,
-    limit: input.limit,
-    max_files: input.maxFiles,
-  })).toString("base64")
-
-  const proc = spawnSync("ssh", [input.sshTarget, "python3", "-", payload], {
+  const proc = spawnSync("ssh", [input.sshTarget, "python3", "-", rawSessionPayload(input)], {
     input: REMOTE_SESSION_SEARCH_SCRIPT,
     encoding: "utf8",
     timeout: 45_000,
@@ -300,21 +350,30 @@ function searchRemote(input: {
     throw new Error(`ssh session search failed (${proc.status}): ${proc.stderr || proc.stdout}`)
   }
 
-  const parsed = JSON.parse(proc.stdout) as RemoteSearchResponse
-  if (parsed.ok === false) throw new Error(parsed.error ?? "remote session search failed")
-
-  const hits = (parsed.hits ?? []).map<SessionHit>((hit) => ({
+  return parseRawSessionSearch({
+    parsed: JSON.parse(proc.stdout) as RemoteSearchResponse,
     source: "ssh",
-    id: asString(hit.session_id) ?? asString(hit.path) ?? "unknown",
-    sessionId: asString(hit.session_id),
     machineId: input.sshTarget.includes("dark-wizard") ? "dark-wizard" : input.sshTarget,
-    startedAt: asString(hit.started_at),
-    path: asString(hit.path),
-    cwdKey: asString(hit.cwd_key),
-    snippets: Array.isArray(hit.snippets) ? hit.snippets.filter((item): item is string => typeof item === "string") : [],
-  }))
+  })
+}
 
-  return { ok: true, found: parsed.found ?? hits.length, searchedFiles: parsed.searched_files, hits }
+function localHostname(): string | undefined {
+  const proc = spawnSync("hostname", [], { encoding: "utf8", timeout: 2_000 })
+  if (proc.status !== 0) return undefined
+  return proc.stdout.trim().toLowerCase()
+}
+
+function isLocalMachine(machine: string): boolean {
+  const hostname = localHostname()
+  if (!hostname) return false
+  const normalized = machine.toLowerCase()
+  return hostname === normalized || hostname === `${normalized}.local`
+}
+
+function hasLocalTypesenseCredential(): boolean {
+  if (process.env.TYPESENSE_API_KEY?.trim()) return true
+  const systemBusEnv = join(process.env.HOME ?? "", ".config", "system-bus.env")
+  return existsSync(systemBusEnv)
 }
 
 function mergeHits(typesenseHits: SessionHit[], sshHits: SessionHit[], limit: number): SessionHit[] {
@@ -336,7 +395,7 @@ const searchQueryArg = Args.text({ name: "query" }).pipe(
 
 const sourceOpt = Options.choice("source", SESSION_SEARCH_SOURCES).pipe(
   Options.withDefault("both" as SessionSearchSource),
-  Options.withDescription("Search source: Typesense derived chunks, SSH raw Pi sessions, or both")
+  Options.withDescription("Search source: Typesense derived chunks, local raw Pi sessions, SSH raw Pi sessions, or both")
 )
 
 const machineOpt = Options.text("machine").pipe(
@@ -373,28 +432,42 @@ const searchCmd = Command.make(
   ({ query, source, machine, sshTarget, limit, maxFiles }) =>
     Effect.gen(function* () {
       try {
-        const sources = source === "both" ? ["typesense", "ssh"] as const : [source]
-        const typesense = sources.includes("typesense")
+        const rawSource = source === "both"
+          ? (isLocalMachine(machine) ? "local" : "ssh")
+          : source
+        const sources = source === "both" ? ["typesense", rawSource] as const : [rawSource]
+        const skipTypesense = source === "both" && rawSource === "local" && !hasLocalTypesenseCredential()
+        const typesense = sources.includes("typesense") && !skipTypesense
           ? yield* Effect.promise(() => searchTypesense({ query, machine, limit }))
+          : undefined
+        const local = sources.includes("local")
+          ? searchLocal({ query, limit, machine, maxFiles })
           : undefined
         const remote = sources.includes("ssh")
           ? searchRemote({ query, limit, sshTarget, maxFiles })
           : undefined
 
-        const hits = mergeHits(typesense?.hits ?? [], remote?.hits ?? [], limit)
+        const hits = mergeHits(typesense?.hits ?? [], [...(local?.hits ?? []), ...(remote?.hits ?? [])], limit)
 
         yield* Console.log(respond("sessions search", {
           query,
           source,
+          resolvedRawSource: source === "both" ? rawSource : undefined,
           machine,
           sshTarget: sources.includes("ssh") ? sshTarget : undefined,
           typesense: typesense ? { found: typesense.found, returned: typesense.hits.length } : undefined,
+          typesenseSkipped: skipTypesense ? "missing local TYPESENSE_API_KEY or ~/.config/system-bus.env; raw local search still ran" : undefined,
+          local: local ? { found: local.found, returned: local.hits.length, searchedFiles: local.searchedFiles } : undefined,
           ssh: remote ? { found: remote.found, returned: remote.hits.length, searchedFiles: remote.searchedFiles } : undefined,
           hits,
         }, [
           {
             command: `sessions search "${query.replace(/"/g, "\\\"")}" --source typesense --machine ${machine} --limit ${limit}`,
             description: "Search Central Typesense session chunks only",
+          },
+          {
+            command: `sessions search "${query.replace(/"/g, "\\\"")}" --source local --machine ${machine} --limit ${limit}`,
+            description: "Search raw local Pi session files",
           },
           {
             command: `sessions search "${query.replace(/"/g, "\\\"")}" --source ssh --ssh-target ${sshTarget} --limit ${limit}`,
@@ -414,6 +487,7 @@ const searchCmd = Command.make(
             error.fix,
             [
               { command: "secrets status", description: "Check agent-secrets health" },
+              { command: "sessions search <query> --source local", description: "Bypass Typesense and search raw local session files", params: { query: { required: true } } },
               { command: "sessions search <query> --source ssh", description: "Bypass Typesense and search raw remote session files", params: { query: { required: true } } },
             ]
           ))
@@ -428,7 +502,9 @@ const searchCmd = Command.make(
           code,
           code === "SESSION_SEARCH_SSH_FAILED"
             ? "Verify SSH access: ssh joel@dark-wizard 'hostname && python3 --version'"
-            : "Check Typesense health and the session indexing runbook",
+            : message.includes("local session search")
+              ? "Verify local Pi sessions and Python: python3 --version && find ~/.pi/agent/sessions -type f -name '*.jsonl' | head"
+              : "Check Typesense health and the session indexing runbook",
           [
             { command: "status", description: "Check joelclaw service health" },
             { command: "knowledge search \"typesense session indexing recovery runbook\"", description: "Find the session indexing recovery runbook" },
@@ -441,9 +517,9 @@ const searchCmd = Command.make(
 export const sessionsCmd = Command.make("sessions", {}, () =>
   Effect.gen(function* () {
     yield* Console.log(respond("sessions", {
-      description: "Search captured agent Runs in Typesense and raw Pi session files over SSH",
+      description: "Search captured agent Runs in Typesense and raw local/remote Pi session files",
       commands: {
-        search: "joelclaw sessions search <query> [--source typesense|ssh|both] [--machine dark-wizard] [--ssh-target joel@dark-wizard] [--limit 8]",
+        search: "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--machine dark-wizard] [--ssh-target joel@dark-wizard] [--limit 8]",
       },
     }, [
       {
