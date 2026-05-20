@@ -40,6 +40,34 @@ Read the JSON. Prefer hits with:
 - `source: "local"` when running on the Machine that has the raw Pi files
 - `source: "ssh"` when Typesense is stale or you need raw remote session files from another Machine
 
+## Extract task context
+
+When search finds a candidate but snippets are too thin, extract bounded task context without a background reader agent:
+
+```bash
+joelclaw sessions search "<query>" --source both --machine dark-wizard --limit 5 --extract
+```
+
+For a known raw transcript path or session id:
+
+```bash
+joelclaw sessions extract <session-id-or-path> --query "<topic>" --format markdown
+```
+
+Use `sessions inspect` for deterministic evidence around exact text:
+
+```bash
+joelclaw sessions inspect <session-id-or-path> --around "<regex>" --before 20 --after 80
+```
+
+Use `sessions chunks` when you want matching chunks/snippets and neighboring raw context without full extraction:
+
+```bash
+joelclaw sessions chunks "<query>" --source local --machine dark-wizard --limit 20 --context-before 2 --context-after 4
+```
+
+Extraction returns session ID, path, dates, cwd, user prompts, decisions, commands run, files touched, outputs/receipts, verification, blockers, next actions, and transcript line evidence. It redacts likely secrets and does not dump whole transcripts.
+
 ## Source-specific searches
 
 Typesense only:
@@ -111,7 +139,7 @@ On dark-wizard itself:
 joelclaw sessions search "<query>" --source local --machine dark-wizard --limit 8
 ```
 
-With `--source both`, the raw side uses `local` when the current hostname matches `--machine`; otherwise it uses `ssh`. That keeps dark-wizard from SSHing to itself. If the local Machine has no Typesense credential, `both` skips Typesense and returns raw local hits with `typesenseSkipped`; use `--source local` when you want that explicitly.
+With `--source both`, the raw side uses `local` when the current hostname matches `--machine`; otherwise it uses `ssh`. That keeps dark-wizard from SSHing to itself. If the local Machine has no Typesense credential, `both` skips Typesense and returns raw local hits with `typesenseSkipped`; use `--source local` when you want that explicitly. If Typesense is unavailable in `both` mode, the CLI reports `typesenseUnavailable` and continues with raw results.
 
 ## Rules
 

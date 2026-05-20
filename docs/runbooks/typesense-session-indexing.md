@@ -55,7 +55,7 @@ joelclaw sessions search "<query>" \
   --limit 8
 ```
 
-If `source=typesense` has nothing but `source=local` or `source=ssh` finds hits, raw sessions exist and the derived Typesense index is stale. Continue with this runbook.
+If `source=typesense` has nothing but `source=local` or `source=ssh` finds hits, raw sessions exist and the derived Typesense index is stale. Continue with this runbook. If `sessions search --source both` reports `typesenseUnavailable` but still returns raw hits, treat that as derived-index or credential unavailability, not raw capture loss.
 
 If SSH fails:
 
@@ -289,6 +289,14 @@ Use `--source local` on dark-wizard itself to bypass Typesense and scan raw Pi s
 Use `--source ssh` from Panda to bypass Typesense and scan raw Pi session files on dark-wizard over SSH.
 
 Use `--source typesense` to check only `run_chunks_dev`.
+
+Use extraction before spelunking raw JSONL manually:
+
+```bash
+joelclaw sessions search "<query>" --source both --machine dark-wizard --limit 5 --extract
+joelclaw sessions extract <session-id-or-path> --query "<topic>" --format markdown
+joelclaw sessions inspect <session-id-or-path> --around "<regex>" --before 20 --after 80
+```
 
 ## 11. pi-rag breadcrumb
 

@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer"
 import { spawnSync } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
@@ -376,6 +376,268 @@ function hasLocalTypesenseCredential(): boolean {
   return existsSync(systemBusEnv)
 }
 
+type TranscriptEntry = {
+  line: number
+  raw: unknown
+  text: string
+  role?: string
+  kind?: string
+}
+
+type Evidence = {
+  line: number
+  role?: string
+  kind?: string
+  text: string
+}
+
+type Extraction = {
+  sessionId?: string
+  path: string
+  startedAt?: string
+  cwdKey?: string
+  query: string
+  lineCount: number
+  evidence: Evidence[]
+  userPrompts: Evidence[]
+  decisions: Evidence[]
+  commandsRun: Evidence[]
+  filesTouched: string[]
+  outputsReceipts: Evidence[]
+  verification: Evidence[]
+  blockers: Evidence[]
+  nextActions: Evidence[]
+  redacted: boolean
+}
+
+const SECRET_PATTERNS: Array<[RegExp, string]> = [
+  [/Bearer\s+[A-Za-z0-9._~+\/-]+=*/giu, "Bearer [REDACTED]"],
+  [/(authorization\s*[:=]\s*)[^\s"']+/giu, "$1[REDACTED]"],
+  [/(cookie\s*[:=]\s*)[^\n]+/giu, "$1[REDACTED]"],
+  [/sk_live_[A-Za-z0-9]+/gu, "sk_live_[REDACTED]"],
+  [/sk_test_[A-Za-z0-9]+/gu, "sk_test_[REDACTED]"],
+  [/rk_live_[A-Za-z0-9]+/gu, "rk_live_[REDACTED]"],
+  [/vercel_[A-Za-z0-9]+/giu, "vercel_[REDACTED]"],
+  [/lin_api_[A-Za-z0-9]+/giu, "lin_api_[REDACTED]"],
+  [/[a-z][a-z0-9+.-]+:\/\/[^\s:@]+:[^\s@]+@[^\s"']+/giu, "[REDACTED_DATABASE_URL]"],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, "[REDACTED_PRIVATE_KEY]"],
+  [/([A-Z0-9_]*(?:API|AUTH|TOKEN|SECRET|KEY|PASSWORD)[A-Z0-9_]*\s*[:=]\s*)["']?[^"'\s]+["']?/giu, "$1[REDACTED]"],
+]
+
+function redactSecrets(input: string): { text: string; redacted: boolean } {
+  let text = input
+  for (const [pattern, replacement] of SECRET_PATTERNS) text = text.replace(pattern, replacement)
+  return { text, redacted: text !== input }
+}
+
+function flattenTranscript(value: unknown): string {
+  if (value == null) return ""
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map(flattenTranscript).filter(Boolean).join(" ")
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>
+    const parts: string[] = []
+    for (const key of ["role", "type", "toolName", "name", "command", "path", "content", "text", "message", "stdout", "stderr", "arguments", "result"]) {
+      if (key in record) parts.push(flattenTranscript(record[key]))
+    }
+    if (parts.length === 0) {
+      for (const item of Object.values(record)) parts.push(flattenTranscript(item))
+    }
+    return parts.filter(Boolean).join(" ")
+  }
+  return String(value)
+}
+
+function roleOf(raw: unknown, text: string): string | undefined {
+  if (typeof raw === "object" && raw !== null) {
+    const record = raw as Record<string, unknown>
+    const role = asString(record.role) ?? asString((record.message as Record<string, unknown> | undefined)?.role)
+    if (role) return role
+  }
+  if (/\buser\b/i.test(text)) return "user"
+  if (/\bassistant\b/i.test(text)) return "assistant"
+  return undefined
+}
+
+function kindOf(raw: unknown, text: string): string | undefined {
+  if (typeof raw === "object" && raw !== null) {
+    const record = raw as Record<string, unknown>
+    return asString(record.type) ?? asString(record.kind) ?? asString(record.toolName)
+  }
+  if (/toolCall|tool call/i.test(text)) return "tool_call"
+  if (/toolResult|tool result/i.test(text)) return "tool_result"
+  return undefined
+}
+
+function sessionMetaFromPath(path: string): { sessionId?: string; startedAt?: string; cwdKey?: string } {
+  const base = path.split("/").pop() ?? path
+  const stem = base.endsWith(".jsonl") ? base.slice(0, -6) : base
+  const underscore = stem.lastIndexOf("_")
+  const rawStarted = underscore >= 0 ? stem.slice(0, underscore) : undefined
+  const sessionId = underscore >= 0 ? stem.slice(underscore + 1) : stem
+  return {
+    sessionId,
+    startedAt: rawStarted?.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d+)Z$/, "T$1:$2:$3.$4Z"),
+    cwdKey: path.split("/").at(-2),
+  }
+}
+
+function findSessionPath(idOrPath: string): string {
+  if (existsSync(idOrPath)) return idOrPath
+  const root = join(process.env.HOME ?? "", ".pi", "agent", "sessions")
+  const matches: string[] = []
+  function walk(dir: string): void {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name)
+      const stat = statSync(path)
+      if (stat.isDirectory()) walk(path)
+      else if (name.endsWith(".jsonl") && path.includes(idOrPath)) matches.push(path)
+    }
+  }
+  if (existsSync(root)) walk(root)
+  if (matches.length === 0) throw new Error(`No local session transcript found for ${idOrPath}`)
+  matches.sort()
+  return matches.at(-1) ?? matches[0]
+}
+
+function readTranscript(path: string): { entries: TranscriptEntry[]; redacted: boolean } {
+  let redacted = false
+  const entries = readFileSync(path, "utf8").split("\n").flatMap((line, index): TranscriptEntry[] => {
+    if (!line.trim()) return []
+    let raw: unknown = line
+    try { raw = JSON.parse(line) } catch { /* raw text */ }
+    const flattened = flattenTranscript(raw).replace(/\s+/g, " ").trim()
+    const safe = redactSecrets(flattened)
+    if (safe.redacted) redacted = true
+    return [{ line: index + 1, raw, text: safe.text, role: roleOf(raw, flattened), kind: kindOf(raw, flattened) }]
+  })
+  return { entries, redacted }
+}
+
+function queryTerms(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).map((term) => term.trim()).filter((term) => term.length > 2)
+}
+
+function matchesQuery(text: string, query: string): boolean {
+  const lower = text.toLowerCase()
+  const q = query.toLowerCase().trim()
+  if (q && lower.includes(q)) return true
+  const terms = queryTerms(query)
+  return terms.length > 0 && terms.every((term) => lower.includes(term))
+}
+
+function evidence(entry: TranscriptEntry): Evidence {
+  return { line: entry.line, role: entry.role, kind: entry.kind, text: entry.text.slice(0, 600) }
+}
+
+function uniqueEvidence(entries: TranscriptEntry[], limit: number): Evidence[] {
+  const seen = new Set<number>()
+  const out: Evidence[] = []
+  for (const entry of entries) {
+    if (seen.has(entry.line) || !entry.text) continue
+    seen.add(entry.line)
+    out.push(evidence(entry))
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+function regexEntries(entries: TranscriptEntry[], regex: RegExp, limit: number): Evidence[] {
+  return uniqueEvidence(entries.filter((entry) => regex.test(entry.text)), limit)
+}
+
+function extractFiles(entries: TranscriptEntry[]): string[] {
+  const files = new Set<string>()
+  const filePattern = /(?:\.{0,2}\/|~\/|\/Users\/|packages\/|apps\/|docs\/|skills\/|scripts\/)[A-Za-z0-9._/@:+-]+/gu
+  for (const entry of entries) {
+    for (const match of entry.text.matchAll(filePattern)) files.add(match[0])
+    if (files.size >= 80) break
+  }
+  return [...files].slice(0, 80)
+}
+
+function extractSession(idOrPath: string, query: string): Extraction {
+  const path = findSessionPath(idOrPath)
+  const { entries, redacted } = readTranscript(path)
+  const matchedIndexes = new Set<number>()
+  entries.forEach((entry, index) => {
+    if (matchesQuery(entry.text, query)) {
+      for (let i = Math.max(0, index - 4); i <= Math.min(entries.length - 1, index + 10); i++) matchedIndexes.add(i)
+    }
+  })
+  const relevant = [...matchedIndexes].sort((a, b) => a - b).map((index) => entries[index])
+  const fallback = relevant.length > 0 ? relevant : entries.slice(0, 80)
+  const commandRe = /\b(bun|pnpm|npm|yarn|git|ssh|scp|rsync|kubectl|curl|joelclaw|slog|python3?|node|jq|rg|find|ls|cat|sed|awk)\b[^\n]{0,500}/iu
+  const decisionRe = /\b(decid(?:e|ed|ing)|decision|ADR|accepted|rejected|instead|tradeoff|root cause|because)\b/iu
+  const outputRe = /\b(receipt|output|result|returned|status|commit|run id|eventId|verified|passed|failed|error)\b/iu
+  const verifyRe = /\b(test|check|verify|verified|passes|passed|build|tsc|biome|lint|smoke)\b/iu
+  const blockerRe = /\b(blocked|blocker|fail(?:ed|ing)?|error|missing|unavailable|timeout|denied|cannot|can't|stuck)\b/iu
+  const nextRe = /\b(next action|next step|TODO|follow[- ]?up|remaining|blocker|handoff)\b/iu
+  return {
+    ...sessionMetaFromPath(path),
+    path,
+    query,
+    lineCount: entries.length,
+    evidence: uniqueEvidence(fallback, 16),
+    userPrompts: uniqueEvidence(entries.filter((entry) => entry.role === "user" && (matchesQuery(entry.text, query) || relevant.includes(entry))), 10),
+    decisions: regexEntries(fallback, decisionRe, 12),
+    commandsRun: regexEntries(fallback, commandRe, 16),
+    filesTouched: extractFiles(fallback),
+    outputsReceipts: regexEntries(fallback, outputRe, 12),
+    verification: regexEntries(fallback, verifyRe, 12),
+    blockers: regexEntries(fallback, blockerRe, 12),
+    nextActions: regexEntries(fallback, nextRe, 10),
+    redacted,
+  }
+}
+
+function extractionMarkdown(extraction: Extraction): string {
+  const section = (title: string, items: Evidence[]) => [`## ${title}`, ...(items.length ? items.map((item) => `- L${item.line}${item.role ? ` ${item.role}` : ""}${item.kind ? `/${item.kind}` : ""}: ${item.text}`) : ["- none found"]), ""].join("\n")
+  return [
+    `# Session extraction`,
+    `- session: ${extraction.sessionId ?? "unknown"}`,
+    `- path: ${extraction.path}`,
+    `- started: ${extraction.startedAt ?? "unknown"}`,
+    `- cwd: ${extraction.cwdKey ?? "unknown"}`,
+    `- query: ${extraction.query}`,
+    `- lines: ${extraction.lineCount}`,
+    `- redacted: ${extraction.redacted}`,
+    "",
+    section("User prompts", extraction.userPrompts),
+    section("Decisions", extraction.decisions),
+    section("Commands run", extraction.commandsRun),
+    `## Files touched\n${extraction.filesTouched.length ? extraction.filesTouched.map((file) => `- ${file}`).join("\n") : "- none found"}\n`,
+    section("Outputs / receipts", extraction.outputsReceipts),
+    section("Verification", extraction.verification),
+    section("Blockers", extraction.blockers),
+    section("Next actions", extraction.nextActions),
+    section("Evidence", extraction.evidence),
+  ].join("\n")
+}
+
+function inspectSession(idOrPath: string, around: string, before: number, after: number): { sessionId?: string; path: string; around: string; matches: Array<{ matchLine: number; startLine: number; endLine: number; entries: Evidence[] }>; redacted: boolean } {
+  const path = findSessionPath(idOrPath)
+  const { entries, redacted } = readTranscript(path)
+  const regex = new RegExp(around, "iu")
+  const matches = entries.flatMap((entry, index) => {
+    if (!regex.test(entry.text)) return []
+    const start = Math.max(0, index - before)
+    const end = Math.min(entries.length - 1, index + after)
+    return [{ matchLine: entry.line, startLine: entries[start]?.line ?? entry.line, endLine: entries[end]?.line ?? entry.line, entries: entries.slice(start, end + 1).map(evidence) }]
+  }).slice(0, 8)
+  return { ...sessionMetaFromPath(path), path, around, matches, redacted }
+}
+
+async function searchTypesenseChunks(input: { query: string; machine: string; limit: number }): Promise<{ found: number; chunks: SessionHit[]; unavailable?: string }> {
+  try {
+    const result = await searchTypesense(input)
+    return { found: result.found, chunks: result.hits }
+  } catch (error) {
+    return { found: 0, chunks: [], unavailable: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 function mergeHits(typesenseHits: SessionHit[], sshHits: SessionHit[], limit: number): SessionHit[] {
   const merged: SessionHit[] = []
   const seen = new Set<string>()
@@ -419,6 +681,49 @@ const maxFilesOpt = Options.integer("max-files").pipe(
   Options.withDescription("Maximum remote .jsonl files to scan over SSH")
 )
 
+const extractOpt = Options.boolean("extract").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Extract bounded task context for matching local/raw session hits")
+)
+
+const formatOpt = Options.choice("format", ["json", "markdown"] as const).pipe(
+  Options.withDefault("json" as const),
+  Options.withDescription("Output format for extraction payloads")
+)
+
+const contextBeforeOpt = Options.integer("context-before").pipe(
+  Options.withDefault(2),
+  Options.withDescription("Chunks or transcript lines before a match")
+)
+
+const contextAfterOpt = Options.integer("context-after").pipe(
+  Options.withDefault(4),
+  Options.withDescription("Chunks or transcript lines after a match")
+)
+
+const beforeOpt = Options.integer("before").pipe(
+  Options.withDefault(20),
+  Options.withDescription("Transcript lines before inspect match")
+)
+
+const afterOpt = Options.integer("after").pipe(
+  Options.withDefault(80),
+  Options.withDescription("Transcript lines after inspect match")
+)
+
+const aroundOpt = Options.text("around").pipe(
+  Options.withDescription("Regex to inspect around")
+)
+
+const extractQueryOpt = Options.text("query").pipe(
+  Options.withDefault(""),
+  Options.withDescription("Topic/query to extract relevant context for")
+)
+
+const sessionArg = Args.text({ name: "session-id-or-path" }).pipe(
+  Args.withDescription("Local raw session JSONL path or session id substring")
+)
+
 const searchCmd = Command.make(
   "search",
   {
@@ -428,8 +733,9 @@ const searchCmd = Command.make(
     sshTarget: sshTargetOpt,
     limit: limitOpt,
     maxFiles: maxFilesOpt,
+    extract: extractOpt,
   },
-  ({ query, source, machine, sshTarget, limit, maxFiles }) =>
+  ({ query, source, machine, sshTarget, limit, maxFiles, extract }) =>
     Effect.gen(function* () {
       try {
         const rawSource = source === "both"
@@ -437,8 +743,19 @@ const searchCmd = Command.make(
           : source
         const sources = source === "both" ? ["typesense", rawSource] as const : [rawSource]
         const skipTypesense = source === "both" && rawSource === "local" && !hasLocalTypesenseCredential()
+        let typesenseUnavailable: string | undefined
         const typesense = sources.includes("typesense") && !skipTypesense
-          ? yield* Effect.promise(() => searchTypesense({ query, machine, limit }))
+          ? yield* Effect.promise(async () => {
+            try {
+              return await searchTypesense({ query, machine, limit })
+            } catch (error) {
+              if (source === "both") {
+                typesenseUnavailable = error instanceof Error ? error.message : String(error)
+                return undefined
+              }
+              throw error
+            }
+          })
           : undefined
         const local = sources.includes("local")
           ? searchLocal({ query, limit, machine, maxFiles })
@@ -449,6 +766,13 @@ const searchCmd = Command.make(
 
         const hits = mergeHits(typesense?.hits ?? [], [...(local?.hits ?? []), ...(remote?.hits ?? [])], limit)
 
+        const extractions = extract
+          ? hits.filter((hit) => hit.path).slice(0, limit).map((hit) => {
+            try { return extractSession(hit.path ?? hit.id, query) }
+            catch (error) { return { id: hit.id, path: hit.path, error: error instanceof Error ? error.message : String(error) } }
+          })
+          : undefined
+
         yield* Console.log(respond("sessions search", {
           query,
           source,
@@ -457,9 +781,11 @@ const searchCmd = Command.make(
           sshTarget: sources.includes("ssh") ? sshTarget : undefined,
           typesense: typesense ? { found: typesense.found, returned: typesense.hits.length } : undefined,
           typesenseSkipped: skipTypesense ? "missing local TYPESENSE_API_KEY or ~/.config/system-bus.env; raw local search still ran" : undefined,
+          typesenseUnavailable,
           local: local ? { found: local.found, returned: local.hits.length, searchedFiles: local.searchedFiles } : undefined,
           ssh: remote ? { found: remote.found, returned: remote.hits.length, searchedFiles: remote.searchedFiles } : undefined,
           hits,
+          extractions,
         }, [
           {
             command: `sessions search "${query.replace(/"/g, "\\\"")}" --source typesense --machine ${machine} --limit ${limit}`,
@@ -472,6 +798,10 @@ const searchCmd = Command.make(
           {
             command: `sessions search "${query.replace(/"/g, "\\\"")}" --source ssh --ssh-target ${sshTarget} --limit ${limit}`,
             description: "Search raw remote Pi session files over SSH",
+          },
+          {
+            command: `sessions search "${query.replace(/"/g, "\\\"")}" --source ${source} --machine ${machine} --limit ${limit} --extract`,
+            description: "Search and extract bounded task context from top raw hits",
           },
           {
             command: "knowledge search \"typesense session indexing recovery runbook\"",
@@ -514,17 +844,75 @@ const searchCmd = Command.make(
     })
 ).pipe(Command.withDescription("Search captured Runs and raw remote Pi sessions"))
 
+const extractCmd = Command.make(
+  "extract",
+  { session: sessionArg, query: extractQueryOpt, format: formatOpt },
+  ({ session, query, format }) => Effect.gen(function* () {
+    try {
+      const extraction = extractSession(session, query || session)
+      yield* Console.log(respond("sessions extract", {
+        format,
+        extraction,
+        markdown: format === "markdown" ? extractionMarkdown(extraction) : undefined,
+      }, [
+        { command: `sessions inspect ${JSON.stringify(extraction.path)} --around <regex>`, description: "Inspect exact transcript lines around a regex", params: { regex: { required: true } } },
+        { command: `sessions extract ${JSON.stringify(extraction.path)} --query ${JSON.stringify(query || session)} --format markdown`, description: "Render the same extraction as markdown" },
+      ]))
+    } catch (error) {
+      yield* Console.log(respondError("sessions extract", error instanceof Error ? error.message : String(error), "SESSION_EXTRACT_FAILED", "Verify the session id/path exists locally under ~/.pi/agent/sessions", [
+        { command: "sessions search <query> --source local --extract", description: "Find local candidate sessions first", params: { query: { required: true } } },
+      ]))
+    }
+  })
+).pipe(Command.withDescription("Extract bounded task context from a raw local session transcript"))
+
+const inspectCmd = Command.make(
+  "inspect",
+  { session: sessionArg, around: aroundOpt, before: beforeOpt, after: afterOpt },
+  ({ session, around, before, after }) => Effect.gen(function* () {
+    try {
+      yield* Console.log(respond("sessions inspect", inspectSession(session, around, before, after), [
+        { command: `sessions extract ${JSON.stringify(session)} --query ${JSON.stringify(around)}`, description: "Extract structured task context for this match" },
+      ]))
+    } catch (error) {
+      yield* Console.log(respondError("sessions inspect", error instanceof Error ? error.message : String(error), "SESSION_INSPECT_FAILED", "Verify the regex and local session id/path", []))
+    }
+  })
+).pipe(Command.withDescription("Deterministically inspect raw transcript lines around a regex"))
+
+const chunksCmd = Command.make(
+  "chunks",
+  { query: searchQueryArg, source: sourceOpt, machine: machineOpt, limit: limitOpt, maxFiles: maxFilesOpt, contextBefore: contextBeforeOpt, contextAfter: contextAfterOpt },
+  ({ query, source, machine, limit, maxFiles, contextBefore, contextAfter }) => Effect.gen(function* () {
+    const rawSource = source === "both" ? (isLocalMachine(machine) ? "local" : "ssh") : source
+    const chunks: Record<string, unknown> = { query, source, resolvedRawSource: source === "both" ? rawSource : undefined, machine, contextBefore, contextAfter }
+    if ((source === "typesense" || source === "both") && !(source === "both" && rawSource === "local" && !hasLocalTypesenseCredential())) {
+      chunks.typesense = yield* Effect.promise(() => searchTypesenseChunks({ query, machine, limit }))
+    }
+    if (rawSource === "local" || source === "local") {
+      const local = searchLocal({ query, limit, machine, maxFiles })
+      chunks.local = { found: local.found, searchedFiles: local.searchedFiles, chunks: local.hits.map((hit) => hit.path ? inspectSession(hit.path, query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), contextBefore, contextAfter) : hit) }
+    }
+    yield* Console.log(respond("sessions chunks", chunks, [
+      { command: `sessions search ${JSON.stringify(query)} --source ${source} --machine ${machine} --extract --limit ${limit}`, description: "Search and extract task context from candidate sessions" },
+    ]))
+  })
+).pipe(Command.withDescription("Show matching chunks/snippets with neighboring raw transcript context where available"))
+
 export const sessionsCmd = Command.make("sessions", {}, () =>
   Effect.gen(function* () {
     yield* Console.log(respond("sessions", {
       description: "Search captured agent Runs in Typesense and raw local/remote Pi session files",
       commands: {
-        search: "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--machine dark-wizard] [--ssh-target joel@dark-wizard] [--limit 8]",
+        search: "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--extract] [--machine dark-wizard] [--ssh-target joel@dark-wizard] [--limit 8]",
+        extract: "joelclaw sessions extract <session-id-or-path> --query <topic> [--format json|markdown]",
+        chunks: "joelclaw sessions chunks <query> [--source typesense|local|both] [--context-before 2] [--context-after 4]",
+        inspect: "joelclaw sessions inspect <session-id-or-path> --around <regex> [--before 20] [--after 80]",
       },
     }, [
       {
-        command: "sessions search <query> --source both --machine dark-wizard",
-        description: "Search dark-wizard sessions through Typesense and raw SSH fallback",
+        command: "sessions search <query> --source both --machine dark-wizard --extract",
+        description: "Search dark-wizard sessions and extract bounded task context",
         params: { query: { required: true, description: "Search terms" } },
       },
       {
@@ -534,6 +922,6 @@ export const sessionsCmd = Command.make("sessions", {}, () =>
     ]))
   })
 ).pipe(
-  Command.withDescription("Search agent session history across Typesense and SSH bridges"),
-  Command.withSubcommands([searchCmd])
+  Command.withDescription("Search and extract agent session history across Typesense and raw transcript bridges"),
+  Command.withSubcommands([searchCmd, extractCmd, chunksCmd, inspectCmd])
 )
