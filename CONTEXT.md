@@ -75,6 +75,10 @@ The string stored on each Chunk identifying which model + dimension produced its
 **Run Status**:
 One of `active` (default, searchable) or `deleted` (hard-removed from NAS + Typesense, tombstoned only via optional PDS audit record). `archived` is reserved as a future tri-state addition (NAS-retained, Typesense-dropped) and not implemented in v1.
 
+**Session Search Bridge**:
+An operator convenience that searches Central's derived Run index and, when needed, raw runtime session files on a remote Machine over SSH. It is not a new source of truth. It returns pointers into Runs or raw Pi session files so agents can recover context quickly when Typesense/RAG tooling is stale.
+_Avoid_: session store, second memory index, remote Central
+
 ## Relationships
 
 - A **Network** has one **Central** and many **Users**

@@ -654,6 +654,8 @@ joelclaw o11y {session|system}
 
 joelclaw recall <query> [--limit N] [--min-score F] [--raw] [--include-hold] [--include-discard] [--budget auto|lean|balanced|deep] [--category <id|alias>]
 
+joelclaw sessions search <query> [--source typesense|ssh|both] [--machine dark-wizard] [--ssh-target joel@dark-wizard] [--limit N]
+
 joelclaw subscribe {list|add|remove|check|summary}
 ```
 
@@ -669,6 +671,7 @@ Semantics:
 - `otel list` and `otel search` accept exact `--session` / `--system` filters, mapped to `sessionId` / `systemId` in Typesense.
 - `knowledge search` now auto-heals the common post-rebuild failure mode where `system_knowledge` is missing: on a `404 Collection not found` response it creates the collection, reindexes ADRs + skills once, retries the query, and reports the repair in-band.
 - `o11y session` / `o11y system` run a unified multi-search across `otel_events` and `system_log`, merge both timelines by `timestamp`, and tag each hit with its source collection.
+- `sessions search` is the operator bridge for agent session lookup. It searches Central `run_chunks_dev` by default and can also SSH to a remote Machine such as `joel@dark-wizard` to scan raw Pi session JSONL when the derived Typesense index is stale.
 - Software surfaces should route OTEL through this command contract (or shared CLI ingest helper), not ad-hoc raw HTTP calls.
 - `mail search` auto-falls back to `/mail/api/unified-inbox` filtering when MCP `search_messages` returns transient DB/tool errors, so steering signals remain usable.
 - `mail reserve` now sends explicit lease TTL (`--ttl-seconds`, default `900`) and enforces a minimum of 60s.

@@ -43,6 +43,7 @@ import { schemaCmd } from "./commands/schema";
 import { search } from "./commands/search";
 import { secretsCmd } from "./commands/secrets";
 import { sendCmd } from "./commands/send";
+import { sessionsCmd } from "./commands/sessions";
 import { skillsCmd } from "./commands/skills";
 import { sleepCmd, wakeCmd } from "./commands/sleep";
 import { functionsCmd, statusCmd } from "./commands/status";
@@ -185,6 +186,8 @@ const root = Command.make("joelclaw", {}, () =>
               "joelclaw memory {write <text> [--category ops|rules|arch|projects|prefs|people|memory] [--tags a,b]|search <query>|recent}",
             search:
               "joelclaw search <query> [-c collection] [-n limit] [-f filter] [--semantic]",
+            sessions:
+              "joelclaw sessions search <query> [--source typesense|ssh|both] [--machine dark-wizard] [--ssh-target joel@dark-wizard]",
             docs: "joelclaw docs {add|search|context|list|show|status|enrich|reindex}",
             vault: "joelclaw vault {read|search|ls|tree|adr}",
             skills: "joelclaw skills audit [--deep]",
@@ -319,6 +322,7 @@ const root = Command.make("joelclaw", {}, () =>
     mailCmd,
     callCmd,
     search,
+    sessionsCmd,
     modelsCmd,
     queueCmd,
     workloadCmd,
