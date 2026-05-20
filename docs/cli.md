@@ -660,6 +660,9 @@ joelclaw sessions extract <session-id-or-path> --query <topic> [--format json|ma
 joelclaw sessions chunks <query> [--source typesense|local|both] [--limit N] [--context-before N] [--context-after N]
 joelclaw sessions inspect <session-id-or-path> --around <regex> [--before N] [--after N]
 
+joelclaw satellite health [--notify] [--central-ssh joel@panda] [--priority high]
+joelclaw satellite repair-request [--central-ssh joel@panda] [--priority high]
+
 joelclaw subscribe {list|add|remove|check|summary}
 ```
 
@@ -681,6 +684,8 @@ Semantics:
 - `sessions chunks` exposes matching Typesense chunks and/or raw local neighboring transcript context. Use top-level `.result.chunks`/`.result.hits`; source-specific mirrors remain under `.result.local.chunks` and `.result.typesense.chunks`.
 - Source metadata uses `rawReturned` for pre-dedupe raw source count and `emittedHits` / `emittedChunks` for top-level emitted counts.
 - `joelclaw session ...` is a singular alias for `joelclaw sessions ...`.
+- `satellite health` is the thin-Machine self-check surface. It verifies local prerequisites like `python3`, `jq`, `joelclaw`, raw Pi session storage, and local session search JSON. With `--notify`, degraded health is relayed to Central via SSH (`--central-ssh`, default `joel@panda`) using `joelclaw notify send --type satellite/repair.requested`; this lets a satellite ask the gateway for repair without local Redis/secrets.
+- `satellite repair-request` always sends the Central gateway a repair request with the local probe payload.
 - Software surfaces should route OTEL through this command contract (or shared CLI ingest helper), not ad-hoc raw HTTP calls.
 - `mail search` auto-falls back to `/mail/api/unified-inbox` filtering when MCP `search_messages` returns transient DB/tool errors, so steering signals remain usable.
 - `mail reserve` now sends explicit lease TTL (`--ttl-seconds`, default `900`) and enforces a minimum of 60s.

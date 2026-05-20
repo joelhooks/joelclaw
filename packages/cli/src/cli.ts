@@ -39,6 +39,7 @@ import { refresh } from "./commands/refresh";
 import { restateCmd } from "./commands/restate";
 import { reviewCmd } from "./commands/review";
 import { runCmd, runsCmd } from "./commands/runs";
+import { satelliteCmd } from "./commands/satellite";
 import { schemaCmd } from "./commands/schema";
 import { search } from "./commands/search";
 import { secretsCmd } from "./commands/secrets";
@@ -186,6 +187,8 @@ const root = Command.make("joelclaw", {}, () =>
               "joelclaw memory {write <text> [--category ops|rules|arch|projects|prefs|people|memory] [--tags a,b]|search <query>|recent}",
             search:
               "joelclaw search <query> [-c collection] [-n limit] [-f filter] [--semantic]",
+            satellite:
+              "joelclaw satellite {health|repair-request} [--notify] [--central-ssh joel@panda]",
             sessions:
               "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--extract] [--machine dark-wizard] [--ssh-target joel@dark-wizard]",
             session:
@@ -324,6 +327,7 @@ const root = Command.make("joelclaw", {}, () =>
     mailCmd,
     callCmd,
     search,
+    satelliteCmd,
     sessionsCmd,
     sessionCmd,
     modelsCmd,
