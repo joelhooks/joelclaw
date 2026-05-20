@@ -25,6 +25,7 @@ type SessionHit = {
   cwdKey?: string
   score?: number
   snippets: string[]
+  extraction?: Extraction | { id: string; path?: string; error: string }
 }
 
 type TypesenseHit = {
@@ -766,11 +767,15 @@ const searchCmd = Command.make(
 
         const hits = mergeHits(typesense?.hits ?? [], [...(local?.hits ?? []), ...(remote?.hits ?? [])], limit)
 
-        const extractions = extract
-          ? hits.filter((hit) => hit.path).slice(0, limit).map((hit) => {
-            try { return extractSession(hit.path ?? hit.id, query) }
-            catch (error) { return { id: hit.id, path: hit.path, error: error instanceof Error ? error.message : String(error) } }
+        const hitsWithExtractions = extract
+          ? hits.map((hit) => {
+            if (!hit.path) return hit
+            try { return { ...hit, extraction: extractSession(hit.path, query) } }
+            catch (error) { return { ...hit, extraction: { id: hit.id, path: hit.path, error: error instanceof Error ? error.message : String(error) } } }
           })
+          : hits
+        const extractions = extract
+          ? hitsWithExtractions.flatMap((hit) => hit.extraction ? [hit.extraction] : [])
           : undefined
 
         yield* Console.log(respond("sessions search", {
@@ -782,9 +787,9 @@ const searchCmd = Command.make(
           typesense: typesense ? { found: typesense.found, returned: typesense.hits.length } : undefined,
           typesenseSkipped: skipTypesense ? "missing local TYPESENSE_API_KEY or ~/.config/system-bus.env; raw local search still ran" : undefined,
           typesenseUnavailable,
-          local: local ? { found: local.found, returned: local.hits.length, searchedFiles: local.searchedFiles } : undefined,
-          ssh: remote ? { found: remote.found, returned: remote.hits.length, searchedFiles: remote.searchedFiles } : undefined,
-          hits,
+          local: local ? { found: local.found, rawReturned: local.hits.length, emittedHits: hitsWithExtractions.filter((hit) => hit.source === "local").length, searchedFiles: local.searchedFiles } : undefined,
+          ssh: remote ? { found: remote.found, rawReturned: remote.hits.length, emittedHits: hitsWithExtractions.filter((hit) => hit.source === "ssh").length, searchedFiles: remote.searchedFiles } : undefined,
+          hits: hitsWithExtractions,
           extractions,
         }, [
           {
@@ -885,22 +890,28 @@ const chunksCmd = Command.make(
   { query: searchQueryArg, source: sourceOpt, machine: machineOpt, limit: limitOpt, maxFiles: maxFilesOpt, contextBefore: contextBeforeOpt, contextAfter: contextAfterOpt },
   ({ query, source, machine, limit, maxFiles, contextBefore, contextAfter }) => Effect.gen(function* () {
     const rawSource = source === "both" ? (isLocalMachine(machine) ? "local" : "ssh") : source
+    const allChunks: unknown[] = []
     const chunks: Record<string, unknown> = { query, source, resolvedRawSource: source === "both" ? rawSource : undefined, machine, contextBefore, contextAfter }
     if ((source === "typesense" || source === "both") && !(source === "both" && rawSource === "local" && !hasLocalTypesenseCredential())) {
-      chunks.typesense = yield* Effect.promise(() => searchTypesenseChunks({ query, machine, limit }))
+      const typesenseChunks = yield* Effect.promise(() => searchTypesenseChunks({ query, machine, limit }))
+      chunks.typesense = typesenseChunks
+      allChunks.push(...typesenseChunks.chunks)
     }
     if (rawSource === "local" || source === "local") {
       const local = searchLocal({ query, limit, machine, maxFiles })
-      chunks.local = { found: local.found, searchedFiles: local.searchedFiles, chunks: local.hits.map((hit) => hit.path ? inspectSession(hit.path, query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), contextBefore, contextAfter) : hit) }
+      const localChunks = local.hits.map((hit) => hit.path ? inspectSession(hit.path, query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), contextBefore, contextAfter) : hit)
+      chunks.local = { found: local.found, rawReturned: local.hits.length, emittedChunks: localChunks.length, searchedFiles: local.searchedFiles, chunks: localChunks }
+      allChunks.push(...localChunks)
     }
-    yield* Console.log(respond("sessions chunks", chunks, [
+    yield* Console.log(respond("sessions chunks", { ...chunks, chunks: allChunks, hits: allChunks }, [
       { command: `sessions search ${JSON.stringify(query)} --source ${source} --machine ${machine} --extract --limit ${limit}`, description: "Search and extract task context from candidate sessions" },
     ]))
   })
 ).pipe(Command.withDescription("Show matching chunks/snippets with neighboring raw transcript context where available"))
 
-export const sessionsCmd = Command.make("sessions", {}, () =>
-  Effect.gen(function* () {
+function sessionsRoot(name: "sessions" | "session") {
+  return Command.make(name, {}, () =>
+    Effect.gen(function* () {
     yield* Console.log(respond("sessions", {
       description: "Search captured agent Runs in Typesense and raw local/remote Pi session files",
       commands: {
@@ -925,3 +936,7 @@ export const sessionsCmd = Command.make("sessions", {}, () =>
   Command.withDescription("Search and extract agent session history across Typesense and raw transcript bridges"),
   Command.withSubcommands([searchCmd, extractCmd, chunksCmd, inspectCmd])
 )
+}
+
+export const sessionsCmd = sessionsRoot("sessions")
+export const sessionCmd = sessionsRoot("session")

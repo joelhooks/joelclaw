@@ -46,6 +46,8 @@ When search finds a candidate but snippets are too thin, extract bounded task co
 
 ```bash
 joelclaw sessions search "<query>" --source both --machine dark-wizard --limit 5 --extract
+# singular alias also works:
+joelclaw session search "<query>" --source both --machine dark-wizard --limit 5 --extract
 ```
 
 For a known raw transcript path or session id:
@@ -67,6 +69,13 @@ joelclaw sessions chunks "<query>" --source local --machine dark-wizard --limit 
 ```
 
 Extraction returns session ID, path, dates, cwd, user prompts, decisions, commands run, files touched, outputs/receipts, verification, blockers, next actions, and transcript line evidence. It redacts likely secrets and does not dump whole transcripts.
+
+Shape rules:
+
+- `search --extract` attaches `extraction` directly to each emitted hit when available. `.result.extractions` is a compatibility convenience list.
+- `extract --format markdown` still emits the canonical JSON envelope; rendered markdown is at `.result.markdown`.
+- `chunks` exposes top-level `.result.chunks` / `.result.hits`, with source mirrors under `.result.local.chunks` and `.result.typesense.chunks`.
+- Source metadata distinguishes `rawReturned` from `emittedHits` / `emittedChunks`.
 
 ## Source-specific searches
 

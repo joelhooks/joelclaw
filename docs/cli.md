@@ -655,6 +655,7 @@ joelclaw o11y {session|system}
 joelclaw recall <query> [--limit N] [--min-score F] [--raw] [--include-hold] [--include-discard] [--budget auto|lean|balanced|deep] [--category <id|alias>]
 
 joelclaw sessions search <query> [--source typesense|local|ssh|both] [--extract] [--machine dark-wizard] [--ssh-target joel@dark-wizard] [--limit N]
+joelclaw session search <query> ...  # singular alias
 joelclaw sessions extract <session-id-or-path> --query <topic> [--format json|markdown]
 joelclaw sessions chunks <query> [--source typesense|local|both] [--limit N] [--context-before N] [--context-after N]
 joelclaw sessions inspect <session-id-or-path> --around <regex> [--before N] [--after N]
@@ -675,9 +676,11 @@ Semantics:
 - `knowledge search` now auto-heals the common post-rebuild failure mode where `system_knowledge` is missing: on a `404 Collection not found` response it creates the collection, reindexes ADRs + skills once, retries the query, and reports the repair in-band.
 - `o11y session` / `o11y system` run a unified multi-search across `otel_events` and `system_log`, merge both timelines by `timestamp`, and tag each hit with its source collection.
 - `sessions search` is the operator bridge for agent session lookup. It searches Central `run_chunks_dev` by default and can scan raw Pi session JSONL either locally (`--source local`) or over SSH to a remote Machine such as `joel@dark-wizard` when the derived Typesense index is stale. With `--source both`, the raw side resolves to `local` when the current hostname matches `--machine`, otherwise `ssh`; this avoids dumb SSH-to-self on dark-wizard. On thin Machines without a local Typesense credential, `both` skips Typesense and still returns local raw results with `typesenseSkipped`. If Typesense is unavailable in `both` mode, the command reports `typesenseUnavailable` and continues with raw results.
-- `sessions search --extract` runs bounded deterministic extraction for top raw hits so recovery prompts can include decisions, commands, files, receipts, verification, blockers, next actions, and exact transcript line pointers without dumping the full JSONL.
-- `sessions extract` reads one raw local transcript by path or session-id substring, redacts likely secrets, and returns either JSON extraction fields or markdown inside the JSON envelope.
-- `sessions chunks` exposes matching Typesense chunks and/or raw local neighboring transcript context. `sessions inspect` is grep-style raw transcript evidence around a regex with before/after line windows.
+- `sessions search --extract` runs bounded deterministic extraction for top raw hits so recovery prompts can include decisions, commands, files, receipts, verification, blockers, next actions, and exact transcript line pointers without dumping the full JSONL. Each emitted hit carries its own `extraction` when available; `.result.extractions` remains as a backward-compatible convenience list.
+- `sessions extract` reads one raw local transcript by path or session-id substring, redacts likely secrets, and returns JSON extraction fields. `--format markdown` still uses the standard JSON envelope and places rendered markdown at `.result.markdown`; raw markdown stdout would violate the CLI JSON contract.
+- `sessions chunks` exposes matching Typesense chunks and/or raw local neighboring transcript context. Use top-level `.result.chunks`/`.result.hits`; source-specific mirrors remain under `.result.local.chunks` and `.result.typesense.chunks`.
+- Source metadata uses `rawReturned` for pre-dedupe raw source count and `emittedHits` / `emittedChunks` for top-level emitted counts.
+- `joelclaw session ...` is a singular alias for `joelclaw sessions ...`.
 - Software surfaces should route OTEL through this command contract (or shared CLI ingest helper), not ad-hoc raw HTTP calls.
 - `mail search` auto-falls back to `/mail/api/unified-inbox` filtering when MCP `search_messages` returns transient DB/tool errors, so steering signals remain usable.
 - `mail reserve` now sends explicit lease TTL (`--ttl-seconds`, default `900`) and enforces a minimum of 60s.
