@@ -433,6 +433,32 @@ Do **not** mutate `main.db` without a point-in-time backup.
   3. warning is logged with file path + parse error for operator visibility
 - impact: transient YAML/frontmatter edits no longer leave new ADRs missing from `/adrs`; they degrade to default metadata (`status: proposed`, empty rubric) until frontmatter is fixed
 
+### Runs-based memory capture (ADR-0243)
+
+- function: `memory/run.captured`
+- file: `packages/system-bus/src/inngest/functions/memory/run-captured.ts`
+- trigger: `memory/run.captured`
+- derived indexes:
+  - `runs_dev`
+  - `run_chunks_dev`
+- source of truth: `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/<run-id>.jsonl` plus `.metadata.json`
+- recovery rule: if raw run blobs exist but Typesense is stale, restart Inngest only after logging the restart, force worker registration with `PUT /api/inngest`, then backfill missing blobs with:
+
+```bash
+TYPESENSE_API_KEY=$(secrets lease typesense_api_key) \
+  bun scripts/backfill-run-typesense.ts \
+  --since <iso-or-ms> \
+  --machine dark-wizard \
+  --runtime pi \
+  --limit 0 \
+  --sleep-ms 250
+```
+
+- validation gates:
+  1. `joelclaw runs --count 5 --hours 1 --compact` returns quickly and shows recent `memory/run.captured` completions
+  2. `runs_dev` latest `agent_runtime:=pi` doc advances past the stale timestamp
+  3. `run_chunks_dev` latest matching chunks exist for the same `run_id`
+
 ### Knowledge turn-write contract (ADR-0202)
 
 - function: `knowledge-turn-write`

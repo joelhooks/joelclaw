@@ -170,6 +170,38 @@ joelclaw recall "<query>" --category jc:memory-system --limit 10
 joelclaw recall "<query>" --include-hold --raw
 ```
 
+## 9a) Runs archive derived-index recovery (ADR-0243)
+
+Raw Pi/Claude/Codex Run capture and searchable Typesense indexes are separate layers:
+
+- source of truth: `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/<run-id>.jsonl` plus `.metadata.json`
+- derived indexes: `runs_dev`, `run_chunks_dev`
+- Inngest function: `memory/run.captured`
+
+When Typesense is stale but raw blobs still arrive:
+
+1. Verify raw capture and latest Typesense timestamp separately.
+2. Check Inngest queue health. `joelclaw runs --count 5 --hours 1 --compact` should return quickly.
+3. If Inngest GQL hangs and logs show stale queue leases, log first, restart `inngest-0`, wait Ready, then force worker sync:
+
+```bash
+kubectl -n joelclaw delete pod inngest-0 --grace-period=30
+kubectl -n joelclaw wait --for=condition=Ready pod/inngest-0 --timeout=180s
+curl -fsS -X PUT http://127.0.0.1:3111/api/inngest
+```
+
+4. Backfill missing raw blobs into Typesense with the controlled script, not by flooding Inngest with thousands of replay events:
+
+```bash
+TYPESENSE_API_KEY=$(secrets lease typesense_api_key) \
+  bun scripts/backfill-run-typesense.ts \
+  --since <iso-or-ms> \
+  --machine dark-wizard \
+  --runtime pi \
+  --limit 0 \
+  --sleep-ms 250
+```
+
 ## 9) Canonical code paths
 
 - Observe: `packages/system-bus/src/inngest/functions/observe.ts`

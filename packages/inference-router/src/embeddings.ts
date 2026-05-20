@@ -44,6 +44,8 @@ const DEFAULT_MODEL = "qwen3-embedding:8b";
 const DEFAULT_DIMENSIONS = 768;
 const DEFAULT_HOST = "http://localhost:11434";
 const DEFAULT_PRIORITY: EmbeddingPriority = "query";
+const OLLAMA_EMBED_MAX_ATTEMPTS = 3;
+const OLLAMA_EMBED_RETRY_MS = [500, 1500];
 
 interface QueueEntry {
   priority: EmbeddingPriority;
@@ -120,22 +122,46 @@ export function embedQueueDepth(): Record<EmbeddingPriority, number> {
   return defaultClient.peekDepthByPriority();
 }
 
-async function callOllama(
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableEmbedError(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function isOllamaNanEncodeError(err: unknown): boolean {
+  return String((err as Error | undefined)?.message ?? err).includes(
+    "unsupported value: NaN"
+  );
+}
+
+function embeddingInputVariants(input: string): string[] {
+  // qwen3-embedding:8b can return NaN vectors for some code-only snippets
+  // that start with parser-ish tokens like `import`. Prefixing with a natural
+  // language label avoids that Ollama JSON encode failure while preserving the
+  // searchable payload semantics.
+  return [input, `passage:\n${input}`];
+}
+
+async function callOllamaOnce(
   input: string,
   model: string,
   dimensions: number,
   host: string
-): Promise<{ embedding: number[]; compute_ms: number }> {
-  const t0 = performance.now();
+): Promise<{ embedding: number[] }> {
   const response = await fetch(`${host}/api/embed`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, input, dimensions }),
   });
   if (!response.ok) {
-    throw new Error(
-      `ollama embed failed: ${response.status} ${response.statusText}`
-    );
+    const detail = await response.text().catch(() => "");
+    const error = new Error(
+      `ollama embed failed: ${response.status} ${response.statusText}${detail ? ` — ${detail.slice(0, 240)}` : ""}`
+    ) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
   }
   const data = (await response.json()) as { embeddings: number[][] };
   const embedding = data.embeddings?.[0];
@@ -145,7 +171,36 @@ async function callOllama(
       `ollama embed returned ${embedding.length} dims, expected ${dimensions}`
     );
   }
-  return { embedding, compute_ms: performance.now() - t0 };
+  return { embedding };
+}
+
+async function callOllama(
+  input: string,
+  model: string,
+  dimensions: number,
+  host: string
+): Promise<{ embedding: number[]; compute_ms: number }> {
+  const t0 = performance.now();
+  let lastError: unknown;
+  for (const variant of embeddingInputVariants(input)) {
+    for (let attempt = 0; attempt < OLLAMA_EMBED_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const { embedding } = await callOllamaOnce(variant, model, dimensions, host);
+        return { embedding, compute_ms: performance.now() - t0 };
+      } catch (err) {
+        lastError = err;
+        if (variant === input && isOllamaNanEncodeError(err)) break;
+        const status = (err as { status?: number }).status;
+        const retryable =
+          typeof status === "number" && isRetryableEmbedError(status);
+        if (!retryable || attempt >= OLLAMA_EMBED_MAX_ATTEMPTS - 1) break;
+        await sleep(
+          OLLAMA_EMBED_RETRY_MS[attempt] ?? OLLAMA_EMBED_RETRY_MS.at(-1)!
+        );
+      }
+    }
+  }
+  throw lastError;
 }
 
 export async function embed(
