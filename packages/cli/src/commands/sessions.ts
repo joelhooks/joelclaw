@@ -1,7 +1,8 @@
 import { Buffer } from "node:buffer"
 import { spawnSync } from "node:child_process"
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
-import { join } from "node:path"
+import { createHash } from "node:crypto"
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { Effect } from "effect"
 import { respond, respondError } from "../response"
@@ -12,6 +13,13 @@ const RUN_CHUNKS_COLLECTION = "run_chunks_dev"
 const SESSION_SEARCH_SOURCES = ["typesense", "ssh", "local", "both"] as const
 
 type SessionSearchSource = typeof SESSION_SEARCH_SOURCES[number]
+type OptionalText = { _tag: "Some"; value: string } | { _tag: "None" }
+
+function parseOptionalText(value: OptionalText): string | undefined {
+  if (value._tag !== "Some") return undefined
+  const normalized = value.value.trim()
+  return normalized.length > 0 ? normalized : undefined
+}
 
 type SessionHit = {
   source: "typesense" | "ssh" | "local"
@@ -798,6 +806,57 @@ function mineSignalsFromSession(path: string, kind: SignalKind, phrases = DEFAUL
   })
 }
 
+function signalHitId(hit: FrictionHit): string {
+  return createHash("sha256").update(`${hit.path}:${hit.line}:${hit.kind}:${hit.category}:${hit.phrase}`).digest("hex").slice(0, 16)
+}
+
+function sampleSignals(hits: FrictionHit[], sample: number): FrictionHit[] {
+  if (sample <= 0 || hits.length <= sample) return hits
+  const buckets = new Map<string, FrictionHit[]>()
+  for (const hit of hits) {
+    const key = `${hit.kind}:${hit.category}`
+    buckets.set(key, [...(buckets.get(key) ?? []), hit])
+  }
+  const out: FrictionHit[] = []
+  const bucketList = [...buckets.values()].sort((a, b) => b.length - a.length)
+  let index = 0
+  while (out.length < sample && bucketList.some((bucket) => index < bucket.length)) {
+    for (const bucket of bucketList) {
+      const hit = bucket[index]
+      if (hit) out.push(hit)
+      if (out.length >= sample) break
+    }
+    index++
+  }
+  return out
+}
+
+function reviewRow(hit: FrictionHit): Record<string, unknown> {
+  return {
+    hitId: signalHitId(hit),
+    verdict: null,
+    correctedKind: null,
+    note: null,
+    predictedKind: hit.kind,
+    predictedCategory: hit.category,
+    severity: hit.severity,
+    signals: hit.signals,
+    phrase: hit.phrase,
+    path: hit.path,
+    line: hit.line,
+    text: hit.userTurn.text,
+    previousAssistant: hit.previousAssistant?.text,
+    nextAssistant: hit.nextAssistant?.text,
+  }
+}
+
+function writeReviewOut(path: string, hits: FrictionHit[]): { path: string; rows: number } {
+  const expanded = path.startsWith("~/") ? join(process.env.HOME ?? "", path.slice(2)) : path
+  mkdirSync(dirname(expanded), { recursive: true })
+  writeFileSync(expanded, `${hits.map((hit) => JSON.stringify(reviewRow(hit))).join("\n")}\n`, "utf8")
+  return { path: expanded, rows: hits.length }
+}
+
 function summarizeFriction(hits: FrictionHit[]): Array<{ kind: string; category: string; count: number; severity: string; examples: Array<{ path: string; line: number; phrase: string; text: string }> }> {
   const byCategory = new Map<string, FrictionHit[]>()
   for (const hit of hits) byCategory.set(hit.category, [...(byCategory.get(hit.category) ?? []), hit])
@@ -911,6 +970,16 @@ const sinceOpt = Options.text("since").pipe(
 const signalKindOpt = Options.choice("kind", ["friction", "preference", "decision", "praise", "correction", "workflow-pattern", "failure", "repair-request", "any"] as const).pipe(
   Options.withDefault("friction" as const),
   Options.withDescription("Session signal kind to mine")
+)
+
+const sampleOpt = Options.integer("sample").pipe(
+  Options.withDefault(0),
+  Options.withDescription("Balanced sample size across signal categories; 0 disables sampling")
+)
+
+const reviewOutOpt = Options.text("review-out").pipe(
+  Options.optional,
+  Options.withDescription("Write sampled candidates as JSONL review rows for golden-set labeling")
 )
 
 const sessionArg = Args.text({ name: "session-id-or-path" }).pipe(
@@ -1080,8 +1149,8 @@ const inspectCmd = Command.make(
 function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
   return Command.make(
     name,
-    { source: sourceOpt, machine: machineOpt, sshTarget: sshTargetOpt, limit: limitOpt, maxFiles: maxFilesOpt, since: sinceOpt, kind: signalKindOpt },
-    ({ source, machine, sshTarget, limit, maxFiles, since, kind }) => Effect.gen(function* () {
+    { source: sourceOpt, machine: machineOpt, sshTarget: sshTargetOpt, limit: limitOpt, maxFiles: maxFilesOpt, since: sinceOpt, kind: signalKindOpt, sample: sampleOpt, reviewOut: reviewOutOpt },
+    ({ source, machine, sshTarget, limit, maxFiles, since, kind, sample, reviewOut }) => Effect.gen(function* () {
       const resolvedKind = fixedKind ?? kind
       try {
         if (source === "typesense") {
@@ -1092,7 +1161,8 @@ function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
         }
 
         if (source === "ssh" || (source === "both" && !isLocalMachine(machine))) {
-          const remote = `joelclaw session ${name} --source local --machine ${machine} --limit ${limit} --max-files ${maxFiles} --since ${since}${fixedKind ? "" : ` --kind ${resolvedKind}`}`
+          const reviewPath = parseOptionalText(reviewOut)
+          const remote = `joelclaw session ${name} --source local --machine ${machine} --limit ${limit} --max-files ${maxFiles} --since ${since}${sample > 0 ? ` --sample ${sample}` : ""}${reviewPath ? ` --review-out ${JSON.stringify(reviewPath)}` : ""}${fixedKind ? "" : ` --kind ${resolvedKind}`}`
           const proc = spawnSync("ssh", [sshTarget, remote], { encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 * 8 })
           if (proc.status !== 0 || proc.error) throw new Error(proc.stderr || proc.stdout || proc.error?.message || "remote signal mining failed")
           process.stdout.write(proc.stdout.endsWith("\n") ? proc.stdout : `${proc.stdout}\n`)
@@ -1101,7 +1171,10 @@ function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
 
         const files = listLocalSessionFiles(maxFiles, since)
         const allHits = files.flatMap((path) => mineSignalsFromSession(path, resolvedKind))
-        const hits = allHits.slice(0, limit)
+        const sampledHits = sampleSignals(allHits, sample)
+        const hits = sampledHits.slice(0, limit)
+        const reviewPath = parseOptionalText(reviewOut)
+        const review = reviewPath ? writeReviewOut(reviewPath, hits) : undefined
         yield* writeEnvelope(respond(`sessions ${name}`, {
           kind: resolvedKind,
           source,
@@ -1110,12 +1183,14 @@ function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
           since,
           scannedFiles: files.length,
           found: allHits.length,
+          sampledHits: sampledHits.length,
           emittedHits: hits.length,
+          review,
           actorFilter: "role=user only in v1; assistant/tool turns are included only as evidence context",
           identityFilter: "best-effort local user; explicit user identity metadata is not available in raw Pi JSONL yet",
           phrases: resolvedKind === "friction" ? DEFAULT_FRICTION_PHRASES : DEFAULT_SIGNAL_PHRASES,
           clusters: summarizeFriction(allHits),
-          hits,
+          hits: hits.map((hit) => ({ hitId: signalHitId(hit), ...hit })),
         }, [
           { command: "joelclaw session inspect <session-id-or-path> --around <regex>", description: "Verify a signal hit with exact surrounding transcript lines", params: { "session-id-or-path": { required: true }, regex: { required: true } } },
           { command: "joelclaw session search <query> --extract", description: "Recover broader task context for a signal hit", params: { query: { required: true } } },

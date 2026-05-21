@@ -659,7 +659,7 @@ joelclaw session search <query> ...  # singular alias
 joelclaw sessions extract <session-id-or-path> --query <topic> [--format json|markdown]
 joelclaw sessions chunks <query> [--source typesense|local|both] [--limit N] [--context-before N] [--context-after N]
 joelclaw sessions inspect <session-id-or-path> --around <regex> [--before N] [--after N]
-joelclaw sessions signals [--kind friction|preference|decision|praise|any] [--source local|ssh|both] [--machine dark-wizard] [--since 14d] [--limit N]
+joelclaw sessions signals [--kind friction|preference|decision|praise|any] [--source local|ssh|both] [--machine dark-wizard] [--since 14d] [--limit N] [--sample N] [--review-out path.jsonl]
 joelclaw sessions friction [--source local|ssh|both] [--machine dark-wizard] [--since 14d] [--limit N]
 
 joelclaw satellite health [--notify] [--central-ssh joel@panda] [--priority high]
@@ -686,7 +686,7 @@ Semantics:
 - `sessions chunks` exposes matching Typesense chunks and/or raw local neighboring transcript context. Use top-level `.result.chunks`/`.result.hits`; source-specific mirrors remain under `.result.local.chunks` and `.result.typesense.chunks`.
 - Source metadata uses `rawReturned` for pre-dedupe raw source count and `emittedHits` / `emittedChunks` for top-level emitted counts.
 - `joelclaw session ...` is a singular alias for `joelclaw sessions ...`.
-- `sessions signals` mines role-aware high-signal user turns from raw local/remote Pi transcripts. It is ADR-0247-backed and starts deterministic: user turns are the primary signal source; assistant/tool turns are bounded evidence context. `--kind friction` detects correction/frustration/output-quality signals, including Joel's strong-emphasis profanity where it is attached to critique. `sessions friction` is an alias for `sessions signals --kind friction`.
+- `sessions signals` mines role-aware high-signal user turns from raw local/remote Pi transcripts. It is ADR-0247-backed and starts deterministic: user turns are the primary signal source; assistant/tool turns are bounded evidence context. `--kind friction` detects correction/frustration/output-quality signals, including Joel's strong-emphasis profanity where it is attached to critique. `sessions friction` is an alias for `sessions signals --kind friction`. `--sample N` balances candidates across signal categories; `--review-out path.jsonl` writes a tiny golden-set review file with stable `hitId`, prediction, evidence, and empty review fields.
 - `satellite health` is the thin-Machine self-check surface. It verifies local prerequisites like `python3`, `jq`, `joelclaw`, raw Pi session storage, and local session search JSON. With `--notify`, degraded health is relayed to Central via SSH (`--central-ssh`, default `joel@panda`) using `joelclaw notify send --type satellite/repair.requested`; this lets a satellite ask the gateway for repair without local Redis/secrets.
 - `satellite repair-request` always sends the Central gateway a repair request with the local probe payload.
 - Software surfaces should route OTEL through this command contract (or shared CLI ingest helper), not ad-hoc raw HTTP calls.

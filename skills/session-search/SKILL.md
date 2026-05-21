@@ -72,6 +72,7 @@ Use `sessions signals` when the job is not recovery but analysis: finding high-s
 
 ```bash
 joelclaw sessions signals --kind friction --source local --machine dark-wizard --since 14d --limit 20
+joelclaw sessions signals --kind any --source local --machine dark-wizard --since 14d --sample 20 --review-out ~/.joelclaw/session-signals/review.jsonl
 joelclaw sessions friction --source local --machine dark-wizard --since 14d
 ```
 
@@ -85,7 +86,8 @@ Shape rules:
 - `extract --format markdown` still emits the canonical JSON envelope; rendered markdown is at `.result.markdown`.
 - `chunks` exposes top-level `.result.chunks` / `.result.hits`, with source mirrors under `.result.local.chunks` and `.result.typesense.chunks`.
 - Source metadata distinguishes `rawReturned` from `emittedHits` / `emittedChunks`.
-- `signals` returns `kind`, `clusters`, `hits`, `signals[]`, exact `path`, and transcript line numbers. Treat it as a signal radar, not memory truth; promote only derived reusable guidance.
+- `signals` returns `kind`, `clusters`, `hits`, `signals[]`, stable `hitId`, exact `path`, and transcript line numbers. Treat it as a signal radar, not memory truth; promote only derived reusable guidance.
+- Use `--sample N --review-out path.jsonl` to create a small golden set for human/agent labeling before tuning the classifier. Review rows include `verdict`, `correctedKind`, and `note` placeholders.
 
 ## Source-specific searches
 
