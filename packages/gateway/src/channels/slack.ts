@@ -140,7 +140,10 @@ async function pushSlackMentionTelegramAlert(input: {
       telegramButtons: [
         [
           { text: "Send suggested", action: `replygrant:send:${approvalId}` },
+          { text: "Edit first", action: `replygrant:edit:${approvalId}` },
           { text: "Grant", action: `replygrant:grant:${approvalId}` },
+        ],
+        [
           { text: "Ignore", action: `replygrant:ignore:${approvalId}` },
         ],
         [

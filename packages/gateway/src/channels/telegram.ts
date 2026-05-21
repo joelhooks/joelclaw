@@ -1343,6 +1343,30 @@ async function startTelegramChannel(
           userId?: string;
           text?: string;
         };
+        if (actionName === "edit") {
+          await pushGatewayEvent({
+            type: "telegram.message.received",
+            source: chatId ? `telegram:${chatId}` : "telegram:replygrant-edit",
+            payload: {
+              originSession: chatId ? `telegram:${chatId}` : undefined,
+              prompt: [
+                "Draft a concise Slack reply for Joel to edit before sending.",
+                "Do not send anything to Slack. Do not create or close the Reply Grant. Return only the proposed reply text and remind Joel he can tap Send suggested or Grant on the original approval when ready.",
+                "Original Slack message:",
+                approval.text ?? "",
+              ].join("\n"),
+            },
+          });
+          await ctx.answerCallbackQuery({ text: "Draft queued" });
+          void emitGatewayOtel({
+            level: "info",
+            component: "telegram-channel",
+            action: "reply_grant.edit_requested",
+            success: true,
+            metadata: { approvalId, channelId: approval.channelId, threadTs: approval.threadTs },
+          });
+          return;
+        }
         if (actionName === "ignore") {
           await redis.del(key);
           await ctx.answerCallbackQuery({ text: "Ignored" });

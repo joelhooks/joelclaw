@@ -156,7 +156,7 @@ Objective: ship durable Slack public-reply routing backed by ADR + PRD, implemen
 | Implement pure policy/state package | `packages/channel-routing` with CASL policy, XState machine shell, grant helpers, approval resolver; commits `97821811`, `64bb5eb4` | Done |
 | Gateway Slack routing adapter | `packages/gateway/src/channels/slack.ts`; non-DM mentions and active grants route through `routeSlackMention`; commits `4b51b06a`, `c863970f`, `b00b9261` | Done |
 | Redis Reply Grant runtime state | Slack adapter writes `replyGrant:slack:<channel>:<thread>` with TTL; Telegram approval callback writes same key | Done |
-| Telegram approval UI | Alert includes `Send suggested`, `Grant`, `Ignore`, `Open thread`; `replygrant:*` callback handler in `packages/gateway/src/channels/telegram.ts` | Partial: `Edit first` not implemented |
+| Telegram approval UI | Alert includes `Send suggested`, `Edit first`, `Grant`, `Ignore`, `Open thread`; `replygrant:*` callback handler in `packages/gateway/src/channels/telegram.ts` | Done for v1; `Edit first` drafts privately for Joel instead of sending public Slack |
 | Non-Joel mention without grant must not post publicly | `routeSlackMention` unit test expects notify/draft/otel and no `postPublicReply`; Slack adapter returns before enqueue when no post intent | Done by unit/adapter evidence; needs live human event confirmation |
 | Active grant follow-up | Functional test covers no-grant mention → grant decision → active follow-up → `postPublicReply` intent | Done by functional test |
 | `:joelclaw:` reaction creates grant | `handleReactionAdded` writes Reply Grant only for `joelclaw` reaction and ignores other reactions | Done by adapter code; no live canary yet |
@@ -170,5 +170,4 @@ Objective: ship durable Slack public-reply routing backed by ADR + PRD, implemen
 Open gaps before completion:
 
 1. Strong E2E proof from a real human/non-bot Slack event in `#brain-joel` or equivalent.
-2. `Edit first` approval path from the PRD remains unimplemented. Current safe substitute is `Send suggested` / `Grant` / `Ignore` / `Open thread`.
-3. Gateway-wide TypeScript still has unrelated pre-existing daemon errors (`AgentSession.newSession`, optional telemetry fields), so gateway verification currently relies on targeted Bun bundle checks for edited adapters plus package tsc.
+2. Gateway-wide TypeScript still has unrelated pre-existing daemon errors (`AgentSession.newSession`, optional telemetry fields), so gateway verification currently relies on targeted Bun bundle checks for edited adapters plus package tsc.
