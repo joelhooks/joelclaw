@@ -879,7 +879,9 @@ function routeSignals(hits: FrictionHit[]): FrictionHit[] {
   return hits.map((hit) => ({ ...hit, improvement: routeSignalImprovement(hit) }))
 }
 
-function evaluateRoutes(hits: FrictionHit[]): { total: number; routed: number; unrouted: number; bySurface: Record<string, number>; byKind: Record<string, number>; byTurnKind: Record<string, number>; byConfidence: Record<string, number>; byReviewPriority: Record<string, number>; warnings: string[] } {
+type RouteEvaluation = { total: number; routed: number; unrouted: number; bySurface: Record<string, number>; byKind: Record<string, number>; byTurnKind: Record<string, number>; byConfidence: Record<string, number>; byReviewPriority: Record<string, number>; warnings: string[] }
+
+function evaluateRoutes(hits: FrictionHit[]): RouteEvaluation {
   const bySurface: Record<string, number> = {}
   const byKind: Record<string, number> = {}
   const byTurnKind: Record<string, number> = {}
@@ -900,6 +902,33 @@ function evaluateRoutes(hits: FrictionHit[]): { total: number; routed: number; u
   if ((bySurface.none ?? 0) > 0) warnings.push("Some signals have no improvement route; label them in review-out before tuning rules")
   if ((bySurface["system-prompt"] ?? 0) > 0) warnings.push("System-prompt routes require proposal/review, not unilateral SOUL.md edits")
   return { total: hits.length, routed, unrouted: hits.length - routed, bySurface, byKind, byTurnKind, byConfidence, byReviewPriority, warnings }
+}
+
+function emptyEvaluation(): RouteEvaluation {
+  return { total: 0, routed: 0, unrouted: 0, bySurface: {}, byKind: {}, byTurnKind: {}, byConfidence: {}, byReviewPriority: {}, warnings: [] }
+}
+
+function increment(map: Record<string, number>, key: string): void {
+  map[key] = (map[key] ?? 0) + 1
+}
+
+function addRouteEvaluation(evaluation: RouteEvaluation, hit: FrictionHit): void {
+  evaluation.total++
+  const surface = hit.improvement?.surface ?? "none"
+  if (surface === "none") evaluation.unrouted++
+  else evaluation.routed++
+  increment(evaluation.bySurface, surface)
+  increment(evaluation.byKind, hit.kind)
+  increment(evaluation.byTurnKind, hit.turnKind)
+  increment(evaluation.byConfidence, hit.improvement?.confidence ?? "low")
+  increment(evaluation.byReviewPriority, hit.improvement?.reviewPriority ?? "low")
+}
+
+function finalizeEvaluation(evaluation: RouteEvaluation): RouteEvaluation {
+  const warnings: string[] = []
+  if ((evaluation.bySurface.none ?? 0) > 0) warnings.push("Some signals have no improvement route; label them in review-out before tuning rules")
+  if ((evaluation.bySurface["system-prompt"] ?? 0) > 0) warnings.push("System-prompt routes require proposal/review, not unilateral SOUL.md edits")
+  return { ...evaluation, warnings }
 }
 
 function signalHitId(hit: FrictionHit): string {
@@ -1029,6 +1058,11 @@ const extractOpt = Options.boolean("extract").pipe(
 const formatOpt = Options.choice("format", ["json", "markdown"] as const).pipe(
   Options.withDefault("json" as const),
   Options.withDescription("Output format for extraction payloads")
+)
+
+const signalFormatOpt = Options.choice("format", ["json", "ndjson"] as const).pipe(
+  Options.withDefault("json" as const),
+  Options.withDescription("Output format for signal mining; ndjson streams meta/hit/summary rows")
 )
 
 const contextBeforeOpt = Options.integer("context-before").pipe(
@@ -1252,8 +1286,8 @@ const inspectCmd = Command.make(
 function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
   return Command.make(
     name,
-    { source: sourceOpt, machine: machineOpt, sshTarget: sshTargetOpt, limit: limitOpt, maxFiles: maxFilesOpt, since: sinceOpt, kind: signalKindOpt, sample: sampleOpt, reviewOut: reviewOutOpt, evaluate: evaluateOpt },
-    ({ source, machine, sshTarget, limit, maxFiles, since, kind, sample, reviewOut, evaluate }) => Effect.gen(function* () {
+    { source: sourceOpt, machine: machineOpt, sshTarget: sshTargetOpt, limit: limitOpt, maxFiles: maxFilesOpt, since: sinceOpt, kind: signalKindOpt, sample: sampleOpt, reviewOut: reviewOutOpt, evaluate: evaluateOpt, format: signalFormatOpt },
+    ({ source, machine, sshTarget, limit, maxFiles, since, kind, sample, reviewOut, evaluate, format }) => Effect.gen(function* () {
       const resolvedKind = fixedKind ?? kind
       try {
         if (source === "typesense") {
@@ -1265,7 +1299,7 @@ function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
 
         if (source === "ssh" || (source === "both" && !isLocalMachine(machine))) {
           const reviewPath = parseOptionalText(reviewOut)
-          const remote = `joelclaw session ${name} --source local --machine ${machine} --limit ${limit} --max-files ${maxFiles} --since ${since}${sample > 0 ? ` --sample ${sample}` : ""}${evaluate ? " --evaluate" : ""}${reviewPath ? ` --review-out ${JSON.stringify(reviewPath)}` : ""}${fixedKind ? "" : ` --kind ${resolvedKind}`}`
+          const remote = `joelclaw session ${name} --source local --machine ${machine} --limit ${limit} --max-files ${maxFiles} --since ${since}${sample > 0 ? ` --sample ${sample}` : ""}${evaluate ? " --evaluate" : ""} --format ${format}${reviewPath ? ` --review-out ${JSON.stringify(reviewPath)}` : ""}${fixedKind ? "" : ` --kind ${resolvedKind}`}`
           const proc = spawnSync("ssh", [sshTarget, remote], { encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 * 8 })
           if (proc.status !== 0 || proc.error) throw new Error(proc.stderr || proc.stdout || proc.error?.message || "remote signal mining failed")
           process.stdout.write(proc.stdout.endsWith("\n") ? proc.stdout : `${proc.stdout}\n`)
@@ -1273,10 +1307,35 @@ function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
         }
 
         const files = listLocalSessionFiles(maxFiles, since)
+        const reviewPath = parseOptionalText(reviewOut)
+
+        if (format === "ndjson") {
+          yield* Effect.sync(() => {
+            process.stdout.write(JSON.stringify({ type: "meta", command: `sessions ${name}`, kind: resolvedKind, source, resolvedRawSource: "local", machine, since, scannedFiles: files.length, limit, sample, evaluate }) + "\n")
+            const evaluation = emptyEvaluation()
+            const reviewRows: FrictionHit[] = []
+            let found = 0
+            let emitted = 0
+            scan: for (const file of files) {
+              const hits = routeSignals(mineSignalsFromSession(file, resolvedKind))
+              for (const hit of hits) {
+                found++
+                if (emitted >= limit) break scan
+                emitted++
+                addRouteEvaluation(evaluation, hit)
+                reviewRows.push(hit)
+                process.stdout.write(JSON.stringify({ type: "hit", hitId: signalHitId(hit), ...hit }) + "\n")
+              }
+            }
+            const review = reviewPath ? writeReviewOut(reviewPath, reviewRows) : undefined
+            process.stdout.write(JSON.stringify({ type: "summary", found, emittedHits: emitted, review, evaluation: evaluate ? finalizeEvaluation(evaluation) : undefined }) + "\n")
+          })
+          return
+        }
+
         const allHits = files.flatMap((path) => mineSignalsFromSession(path, resolvedKind))
         const routedSample = routeSignals(sampleSignals(allHits, sample))
         const hits = routedSample.slice(0, limit)
-        const reviewPath = parseOptionalText(reviewOut)
         const review = reviewPath ? writeReviewOut(reviewPath, hits) : undefined
         yield* writeEnvelope(respond(`sessions ${name}`, {
           kind: resolvedKind,

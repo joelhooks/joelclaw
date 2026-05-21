@@ -74,6 +74,7 @@ Use `sessions signals` when the job is not recovery but analysis: finding high-s
 joelclaw sessions signals --kind friction --source local --machine dark-wizard --since 14d --limit 20
 joelclaw sessions signals --kind any --source local --machine dark-wizard --since 14d --sample 20 --review-out ~/.joelclaw/session-signals/review.jsonl --evaluate
 joelclaw sessions signals --kind mode-mismatch --source local --machine dark-wizard --since 14d --evaluate
+joelclaw sessions signals --kind any --source local --machine dark-wizard --since 8w --format ndjson | jq -c 'select(.type=="hit" and .improvement.reviewPriority=="high")'
 joelclaw sessions friction --source local --machine dark-wizard --since 14d
 ```
 
@@ -90,6 +91,7 @@ Shape rules:
 - `signals` returns `kind`, `clusters`, `hits`, `signals[]`, stable `hitId`, exact `path`, and transcript line numbers. Treat it as a signal radar, not memory truth; promote only derived reusable guidance.
 - Use `--sample N --review-out path.jsonl` to create a small golden set for human/agent labeling before tuning the classifier. Review rows include `verdict`, `correctedKind`, and `note` placeholders.
 - Each signal includes `turnKind` plus a small reducer-shaped `improvement` route: surface (`system-prompt`, `skill`, `cli`, `harness`, `docs`, `memory`, `adr`, `none`), target, confidence, reviewPriority, suggested next step, and reason. Use `--evaluate` to summarize routing coverage by surface, kind, turnKind, confidence, and review priority.
+- Use `--format ndjson` for balls-deep scans over SSH or thin Machines. It streams one JSON object per line: `meta`, many `hit` rows, then `summary`, so consumers can pipe through `jq` without requiring a giant response envelope.
 
 ## Source-specific searches
 
