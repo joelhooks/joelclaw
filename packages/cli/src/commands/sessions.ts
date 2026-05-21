@@ -647,6 +647,16 @@ function inspectSession(idOrPath: string, around: string, before: number, after:
 
 type SignalKind = "friction" | "preference" | "decision" | "praise" | "correction" | "workflow-pattern" | "failure" | "repair-request" | "any"
 
+type ImprovementSurface = "system-prompt" | "skill" | "cli" | "harness" | "docs" | "memory" | "adr" | "none"
+
+type ImprovementRoute = {
+  machineState: "unrouted" | "routeByCategory" | "routeBySignals" | "assignSurface" | "done"
+  surface: ImprovementSurface
+  target?: string
+  suggestedNextStep: string
+  reason: string
+}
+
 type FrictionHit = {
   sessionId?: string
   path: string
@@ -662,6 +672,7 @@ type FrictionHit = {
   previousAssistant?: Evidence
   nextAssistant?: Evidence
   evidence: Evidence[]
+  improvement?: ImprovementRoute
 }
 
 const DEFAULT_FRICTION_PHRASES = [
@@ -806,6 +817,57 @@ function mineSignalsFromSession(path: string, kind: SignalKind, phrases = DEFAUL
   })
 }
 
+function routeSignalImprovement(hit: FrictionHit): ImprovementRoute {
+  const base = { machineState: "done" as const }
+  if (hit.category === "stale-or-wrong-context") {
+    return { ...base, surface: "skill", target: "session-search", suggestedNextStep: "Tighten source-material/current-session/user-turn distinction in the session-search skill or prompt guidance", reason: "stale/wrong context failures usually mean retrieval or recovery instructions are underspecified" }
+  }
+  if (hit.category === "generic-or-bad-output") {
+    return { ...base, surface: "skill", target: "joel-writing-style", suggestedNextStep: "Add a concrete anti-sludge example or tighten output-quality guidance", reason: "generic/bad output is usually a writing-style or task-framing failure" }
+  }
+  if (hit.category === "violated-preference-or-boundary") {
+    return { ...base, surface: "system-prompt", target: "SOUL/agency guidance proposal", suggestedNextStep: "Propose a prompt or skill clarification only if the same boundary violation recurs", reason: "explicit stop/don't corrections indicate preference or boundary handling" }
+  }
+  if (hit.category === "operator-frustration") {
+    return { ...base, surface: "harness", target: "prompt/harness tuning dataset", suggestedNextStep: "Review adjacent evidence and route the repeated frustration to a prompt, skill, or harness patch", reason: "operator frustration is high-signal but needs context before choosing a mutation surface" }
+  }
+  if (hit.signals.includes("memory-worthy")) {
+    return { ...base, surface: "memory", target: "memory proposal", suggestedNextStep: "Stage derived reusable guidance, not raw transcript text", reason: "memory-worthy signal was explicit in the user turn" }
+  }
+  if (hit.kind === "decision") {
+    return { ...base, surface: "adr", target: "docs/decisions or project docs", suggestedNextStep: "Consider ADR/docs capture if the decision is durable, surprising, and trade-off backed", reason: "decision/rule signals may need durable architectural context" }
+  }
+  if (hit.kind === "praise") {
+    return { ...base, surface: "skill", target: "positive pattern candidate", suggestedNextStep: "Preserve the behavior as a positive example if repeated", reason: "praise/approval identifies harness behavior worth keeping" }
+  }
+  if (hit.signals.includes("strong-emphasis")) {
+    return { ...base, surface: "harness", target: "prompt/harness tuning dataset", suggestedNextStep: "Use as high-signal review example before changing prompts", reason: "strong emphasis marks an important turn but does not identify the fix surface by itself" }
+  }
+  if (hit.kind === "correction") {
+    return { ...base, surface: "docs", target: "task or skill docs", suggestedNextStep: "Review adjacent evidence and route manually if repeated", reason: "low-confidence correction needs human/agent review before mutation" }
+  }
+  return { ...base, surface: "none", suggestedNextStep: "No obvious system improvement route yet", reason: "signal did not match a routing rule" }
+}
+
+function routeSignals(hits: FrictionHit[]): FrictionHit[] {
+  return hits.map((hit) => ({ ...hit, improvement: routeSignalImprovement(hit) }))
+}
+
+function evaluateRoutes(hits: FrictionHit[]): { total: number; routed: number; unrouted: number; bySurface: Record<string, number>; byKind: Record<string, number>; warnings: string[] } {
+  const bySurface: Record<string, number> = {}
+  const byKind: Record<string, number> = {}
+  const warnings: string[] = []
+  for (const hit of hits) {
+    const surface = hit.improvement?.surface ?? "none"
+    bySurface[surface] = (bySurface[surface] ?? 0) + 1
+    byKind[hit.kind] = (byKind[hit.kind] ?? 0) + 1
+  }
+  const routed = hits.filter((hit) => hit.improvement && hit.improvement.surface !== "none").length
+  if ((bySurface.none ?? 0) > 0) warnings.push("Some signals have no improvement route; label them in review-out before tuning rules")
+  if ((bySurface["system-prompt"] ?? 0) > 0) warnings.push("System-prompt routes require proposal/review, not unilateral SOUL.md edits")
+  return { total: hits.length, routed, unrouted: hits.length - routed, bySurface, byKind, warnings }
+}
+
 function signalHitId(hit: FrictionHit): string {
   return createHash("sha256").update(`${hit.path}:${hit.line}:${hit.kind}:${hit.category}:${hit.phrase}`).digest("hex").slice(0, 16)
 }
@@ -839,6 +901,7 @@ function reviewRow(hit: FrictionHit): Record<string, unknown> {
     note: null,
     predictedKind: hit.kind,
     predictedCategory: hit.category,
+    improvement: hit.improvement,
     severity: hit.severity,
     signals: hit.signals,
     phrase: hit.phrase,
@@ -980,6 +1043,11 @@ const sampleOpt = Options.integer("sample").pipe(
 const reviewOutOpt = Options.text("review-out").pipe(
   Options.optional,
   Options.withDescription("Write sampled candidates as JSONL review rows for golden-set labeling")
+)
+
+const evaluateOpt = Options.boolean("evaluate").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Include a small routing evaluation summary for sampled/emitted signals")
 )
 
 const sessionArg = Args.text({ name: "session-id-or-path" }).pipe(
@@ -1149,8 +1217,8 @@ const inspectCmd = Command.make(
 function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
   return Command.make(
     name,
-    { source: sourceOpt, machine: machineOpt, sshTarget: sshTargetOpt, limit: limitOpt, maxFiles: maxFilesOpt, since: sinceOpt, kind: signalKindOpt, sample: sampleOpt, reviewOut: reviewOutOpt },
-    ({ source, machine, sshTarget, limit, maxFiles, since, kind, sample, reviewOut }) => Effect.gen(function* () {
+    { source: sourceOpt, machine: machineOpt, sshTarget: sshTargetOpt, limit: limitOpt, maxFiles: maxFilesOpt, since: sinceOpt, kind: signalKindOpt, sample: sampleOpt, reviewOut: reviewOutOpt, evaluate: evaluateOpt },
+    ({ source, machine, sshTarget, limit, maxFiles, since, kind, sample, reviewOut, evaluate }) => Effect.gen(function* () {
       const resolvedKind = fixedKind ?? kind
       try {
         if (source === "typesense") {
@@ -1162,7 +1230,7 @@ function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
 
         if (source === "ssh" || (source === "both" && !isLocalMachine(machine))) {
           const reviewPath = parseOptionalText(reviewOut)
-          const remote = `joelclaw session ${name} --source local --machine ${machine} --limit ${limit} --max-files ${maxFiles} --since ${since}${sample > 0 ? ` --sample ${sample}` : ""}${reviewPath ? ` --review-out ${JSON.stringify(reviewPath)}` : ""}${fixedKind ? "" : ` --kind ${resolvedKind}`}`
+          const remote = `joelclaw session ${name} --source local --machine ${machine} --limit ${limit} --max-files ${maxFiles} --since ${since}${sample > 0 ? ` --sample ${sample}` : ""}${evaluate ? " --evaluate" : ""}${reviewPath ? ` --review-out ${JSON.stringify(reviewPath)}` : ""}${fixedKind ? "" : ` --kind ${resolvedKind}`}`
           const proc = spawnSync("ssh", [sshTarget, remote], { encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 * 8 })
           if (proc.status !== 0 || proc.error) throw new Error(proc.stderr || proc.stdout || proc.error?.message || "remote signal mining failed")
           process.stdout.write(proc.stdout.endsWith("\n") ? proc.stdout : `${proc.stdout}\n`)
@@ -1171,8 +1239,8 @@ function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
 
         const files = listLocalSessionFiles(maxFiles, since)
         const allHits = files.flatMap((path) => mineSignalsFromSession(path, resolvedKind))
-        const sampledHits = sampleSignals(allHits, sample)
-        const hits = sampledHits.slice(0, limit)
+        const routedSample = routeSignals(sampleSignals(allHits, sample))
+        const hits = routedSample.slice(0, limit)
         const reviewPath = parseOptionalText(reviewOut)
         const review = reviewPath ? writeReviewOut(reviewPath, hits) : undefined
         yield* writeEnvelope(respond(`sessions ${name}`, {
@@ -1183,9 +1251,10 @@ function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
           since,
           scannedFiles: files.length,
           found: allHits.length,
-          sampledHits: sampledHits.length,
+          sampledHits: routedSample.length,
           emittedHits: hits.length,
           review,
+          evaluation: evaluate ? evaluateRoutes(hits) : undefined,
           actorFilter: "role=user only in v1; assistant/tool turns are included only as evidence context",
           identityFilter: "best-effort local user; explicit user identity metadata is not available in raw Pi JSONL yet",
           phrases: resolvedKind === "friction" ? DEFAULT_FRICTION_PHRASES : DEFAULT_SIGNAL_PHRASES,
