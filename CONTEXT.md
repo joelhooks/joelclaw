@@ -58,6 +58,14 @@ _Avoid_: macOS account, Messages database, inbox, account
 A User-issued, short-lived permission for joelclaw to send public replies into a specific external thread.
 _Avoid_: ambient permission, public mode, bot chat
 
+**Invoker Allowlist**:
+The set of external participants allowed to consume a Reply Grant by sending follow-up messages.
+_Avoid_: public access, anyone in thread, trusted users
+
+**Channel Participation Policy**:
+The durable allow/block policy that decides which external people and channels may ever invoke public joelclaw participation.
+_Avoid_: vibe check, trust list, moderation rules
+
 **Credential Proxy**:
 A Central-owned service that brokers outbound API credentials to agent runtimes without exposing the underlying secrets to those agents.
 _Avoid_: secrets dump, env sync, API key pass-through
@@ -97,6 +105,8 @@ _Avoid_: session store, second memory index, remote Central
 - A **Channel Account** belongs to exactly one **User**
 - A **User** may issue a **Reply Grant** for a specific external thread on one **Channel Account**
 - A **Reply Grant** expires and does not make the whole Channel Account interactive
+- A **Reply Grant** has an **Invoker Allowlist** for follow-up messages
+- A **Channel Participation Policy** bounds who can be added to an **Invoker Allowlist**
 - **Central** may expose a **Credential Proxy** for agent runtimes
 - A **Machine** produces many **Runs**
 - A **Run** is owned by exactly one **User** (via the Machine that produced it)
@@ -161,6 +171,7 @@ Runs = raw. Memory = derived from Runs. Keep them namespaced apart.
 - **"Panda as family Machine"** — resolved: Panda is not a normal family-use **Machine** after cutover; it exists to relay account-bound services for multiple **Users**.
 - **"iMessage account"** — resolved: use **Channel Account** for the external account bound to a joelclaw **User**; iCloud account, macOS login, and Messages database are implementation details unless specifically discussing relay mechanics.
 - **"Slack public participation"** — resolved: use **Reply Grant** for a User-authorized, thread-scoped public reply window; passive channel monitoring is not the same as permission to speak.
+- **"Anyone in the thread can invoke"** — resolved: follow-up invocation uses an **Invoker Allowlist**, bounded by a durable **Channel Participation Policy** with both allow and block lists.
 - **"Panda user account"** — resolved: use **Relay Sandbox** for the per-User isolation boundary on Panda; Standard macOS user accounts are the implementation for iMessage relay, but not the domain term.
 - **"Relay Sandbox as dev account"** — resolved: Relay Sandboxes are low-privilege non-development service identities with only the joelclaw Central service access needed for relay work.
 - **"Agent Vault"** — resolved: use **Credential Proxy** for the domain concept; Infisical Agent Vault is the current roadmap implementation candidate.
