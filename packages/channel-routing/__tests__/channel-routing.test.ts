@@ -136,6 +136,28 @@ describe("reply grant approval resolution", () => {
     expect(followUp.map((intent) => intent.type)).toEqual(["postPublicReply", "updateGrant", "notifyUser", "recordOtel"]);
   });
 
+  it("uses the same grant decision for Send Suggested before gateway queues the public reply", () => {
+    const decision = resolveReplyGrantApproval({
+      action: "grant",
+      grantedByUserId: "UJOEL",
+      now,
+      approval: {
+        platform: "slack",
+        channelId: "CBRAIN",
+        threadTs: "111.222",
+        messageTs: "333.444",
+        userId: "UJOHN",
+        text: "@joelclaw answer this",
+        createdAt: now,
+      },
+    });
+
+    expect(decision.type).toBe("granted");
+    if (decision.type !== "granted") throw new Error("expected granted decision");
+    expect(decision.grant.invokerUserIds).toEqual(["UJOHN"]);
+    expect(decision.grant.repliesUsed).toBe(0);
+  });
+
   it("turns a Telegram Grant approval into a thread-scoped Reply Grant", () => {
     const decision = resolveReplyGrantApproval({
       action: "grant",

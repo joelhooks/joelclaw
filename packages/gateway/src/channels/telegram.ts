@@ -1330,7 +1330,7 @@ async function startTelegramChannel(
     if (data.startsWith("replygrant:")) {
       const [, actionName, approvalId] = data.split(":");
       try {
-        const { getRedisClient } = await import("./redis");
+        const { getRedisClient, pushGatewayEvent } = await import("./redis");
         const redis = getRedisClient();
         if (!redis || !approvalId) throw new Error("reply grant approval state unavailable");
         const key = `replyGrantApproval:${approvalId}`;
@@ -1355,7 +1355,7 @@ async function startTelegramChannel(
           });
           return;
         }
-        if (actionName === "grant") {
+        if (actionName === "grant" || actionName === "send") {
           const { resolveReplyGrantApproval } = await import("@joelclaw/channel-routing");
           const decision = resolveReplyGrantApproval({
             action: "grant",
@@ -1375,14 +1375,29 @@ async function startTelegramChannel(
           const grant = decision.grant;
           await redis.psetex(`replyGrant:slack:${approval.channelId}:${approval.threadTs}`, Math.max(1_000, grant.absoluteExpiresAt - Date.now()), JSON.stringify(grant));
           await redis.del(key);
-          await ctx.answerCallbackQuery({ text: "Grant created" });
+          if (actionName === "send") {
+            await pushGatewayEvent({
+              type: "slack.message.received",
+              source: `slack:${approval.channelId}:${approval.threadTs}`,
+              payload: {
+                originSession: `slack:${approval.channelId}:${approval.threadTs}`,
+                prompt: [
+                  "Joel approved a public Slack reply via Reply Grant.",
+                  "Reply in the Slack thread with a concise, useful answer. Do not mention internal routing, Reply Grants, Telegram, Redis, or this approval workflow.",
+                  "Original Slack message:",
+                  approval.text ?? "",
+                ].join("\n"),
+              },
+            });
+          }
+          await ctx.answerCallbackQuery({ text: actionName === "send" ? "Grant created + queued" : "Grant created" });
           if (chatId && messageId) {
             await bot!.api.editMessageReplyMarkup(chatId, messageId, { reply_markup: { inline_keyboard: [] } }).catch(() => {});
           }
           void emitGatewayOtel({
             level: "info",
             component: "telegram-channel",
-            action: "reply_grant.approved",
+            action: actionName === "send" ? "reply_grant.approved_and_queued" : "reply_grant.approved",
             success: true,
             metadata: { approvalId, channelId: approval.channelId, threadTs: approval.threadTs, invokerCount: grant.invokerUserIds.length },
           });
