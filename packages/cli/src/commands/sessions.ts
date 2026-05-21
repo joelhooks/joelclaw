@@ -645,7 +645,7 @@ function inspectSession(idOrPath: string, around: string, before: number, after:
   return { ...sessionMetaFromPath(path), path, around, matches, redacted }
 }
 
-type SignalKind = "friction" | "preference" | "decision" | "praise" | "correction" | "workflow-pattern" | "failure" | "repair-request" | "any"
+type SignalKind = "friction" | "preference" | "decision" | "praise" | "correction" | "workflow-pattern" | "failure" | "repair-request" | "mode-mismatch" | "any"
 
 type ImprovementSurface = "system-prompt" | "skill" | "cli" | "harness" | "docs" | "memory" | "adr" | "none"
 
@@ -720,6 +720,12 @@ const DEFAULT_SIGNAL_PHRASES = [
   "this is the pattern",
   "we should",
   "the rule is",
+  "inline",
+  "background",
+  "visual",
+  "feedback",
+  "inngest",
+  "blocking",
 ]
 
 function parseSinceMs(input: string): number {
@@ -778,7 +784,9 @@ function classifySignal(text: string): { kind: Exclude<SignalKind, "any">; categ
   if (/remember this|capture this|make this durable|the rule is|this is the pattern/u.test(lower)) signals.push("memory-worthy")
   if (/approved|ship it|fuck yeah|love this|fuckin love/u.test(lower)) signals.push("approval-or-praise")
   if (/we should|decision|decided|the rule is/u.test(lower)) signals.push("decision-or-preference")
+  if (/inline|background|visual|feedback|inngest|blocking|stop after|don't stop|dont stop|not gettin any feedback|no feedback|script you are running|llm response|external page|sub-?agents?.*background|manual publish|manual .*surgery/u.test(lower)) signals.push("mode-mismatch")
 
+  if (/not gettin any feedback|no feedback from the script|script you are running|wish this was using .*inngest|using fuckin inngest|i want .*inline|do it inline|old school|don't want .*background|dont want .*background|blocking and not background|don't fuck with feedback|dont fuck with feedback|can't run \/feedback|stop after outputting|i don't want .*visual|dont want .*visual|visual page|llm response|external page|manual publish surgery|manual .*surgery/u.test(lower)) return { kind: "mode-mismatch", category: "wrong-execution-mode", severity: "high", signals }
   if (/stale|old|current-session echo|source material|tweet archive/u.test(lower)) return { kind: "friction", category: "stale-or-wrong-context", severity: "high", signals }
   if (/generic|sludge|fluff|bullshit|dogshit|horseshit|trash|garbage|sucks/u.test(lower)) return { kind: "friction", category: "generic-or-bad-output", severity: "high", signals }
   if (/wrong|not that|not what i asked|i asked|why did you/u.test(lower)) return { kind: "friction", category: "ignored-or-misread-instruction", severity: "high", signals }
@@ -831,6 +839,9 @@ function mineSignalsFromSession(path: string, kind: SignalKind, phrases = DEFAUL
 
 function routeSignalImprovement(hit: FrictionHit): ImprovementRoute {
   const base = { machineState: "done" as const }
+  if (hit.kind === "mode-mismatch") {
+    return { ...base, surface: "harness", target: "work-mode selection", confidence: "high", reviewPriority: "high", suggestedNextStep: "Add or tune the workMode/feedbackMode/visibility contract before task execution", reason: "mode mismatch signals mean the agent chose the wrong execution shape, not merely poor content" }
+  }
   if (hit.category === "stale-or-wrong-context") {
     return { ...base, surface: "skill", target: "session-search", confidence: "high", reviewPriority: "high", suggestedNextStep: "Tighten source-material/current-session/user-turn distinction in the session-search skill or prompt guidance", reason: "stale/wrong context failures usually mean retrieval or recovery instructions are underspecified" }
   }
@@ -1054,7 +1065,7 @@ const sinceOpt = Options.text("since").pipe(
   Options.withDescription("Time window for local signal mining, e.g. 24h, 7d, 4w")
 )
 
-const signalKindOpt = Options.choice("kind", ["friction", "preference", "decision", "praise", "correction", "workflow-pattern", "failure", "repair-request", "any"] as const).pipe(
+const signalKindOpt = Options.choice("kind", ["friction", "preference", "decision", "praise", "correction", "workflow-pattern", "failure", "repair-request", "mode-mismatch", "any"] as const).pipe(
   Options.withDefault("friction" as const),
   Options.withDescription("Session signal kind to mine")
 )

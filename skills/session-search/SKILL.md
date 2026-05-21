@@ -73,10 +73,11 @@ Use `sessions signals` when the job is not recovery but analysis: finding high-s
 ```bash
 joelclaw sessions signals --kind friction --source local --machine dark-wizard --since 14d --limit 20
 joelclaw sessions signals --kind any --source local --machine dark-wizard --since 14d --sample 20 --review-out ~/.joelclaw/session-signals/review.jsonl --evaluate
+joelclaw sessions signals --kind mode-mismatch --source local --machine dark-wizard --since 14d --evaluate
 joelclaw sessions friction --source local --machine dark-wizard --since 14d
 ```
 
-`friction` is an alias for `signals --kind friction`. The command filters to user turns first, classifies turnKind, and includes assistant/tool turns only as bounded evidence context. V1 includes `operator_intent`, `review_feedback`, and `approval`; it excludes task payloads, source material, and handoffs by default because those caused noisy false positives. Joel's `fuck`, `fucking`, and `fuckin` are strong emphasis signals, not automatic anger; classify by nearby critique/praise/correction language. `ShitRat` is agent identity, not friction.
+`friction` is an alias for `signals --kind friction`. The command filters to user turns first, classifies turnKind, and includes assistant/tool turns only as bounded evidence context. V1 includes `operator_intent`, `review_feedback`, and `approval`; it excludes task payloads, source material, and handoffs by default because those caused noisy false positives. Joel's `fuck`, `fucking`, and `fuckin` are strong emphasis signals, not automatic anger; classify by nearby critique/praise/correction language. `ShitRat` is agent identity, not friction. Use `--kind mode-mismatch` when hunting wrong execution shape: inline vs background, visual vs response, durable Inngest vs ad-hoc script, or feedback-blocking vs async.
 
 Extraction returns session ID, path, dates, cwd, user prompts, decisions, commands run, files touched, outputs/receipts, verification, blockers, next actions, and transcript line evidence. It redacts likely secrets and does not dump whole transcripts.
 
