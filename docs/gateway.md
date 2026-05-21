@@ -368,6 +368,8 @@ Current contract:
 
 The Slack live listener still only invokes the gateway for Joel DMs, explicit bot mentions, and tracked mention threads. Important channels are different: they are **collected**, not auto-answered.
 
+Direct human channel invokes (`telegram:`, `discord:`, `imessage:`, `slack:`) use a shorter stuck-session watchdog than internal/system turns. Default: `JOELCLAW_GATEWAY_HUMAN_STUCK_THRESHOLD_MS=180000` (3 minutes), with a 60s floor. Internal turns keep the conservative 10-minute threshold. This prevents Slack @mentions and other conversational turns from sitting wedged until a later Telegram nudge wakes the gateway session.
+
 Configure selected channels with private runtime env vars:
 
 - `SLACK_IMPORTANT_CHANNEL_IDS` — comma-separated Slack channel IDs; preferred because IDs survive renames

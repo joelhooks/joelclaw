@@ -1454,11 +1454,18 @@ function shouldSuppressDirectOperatorTelegramMessage(text: string, source: strin
 }
 
 // Track prompt dispatch timing for stuck-session detection.
-// If a turn is stuck for >10m, abort once, then restart daemon if no recovery
-// signal (turn_end or next model turn start) arrives within grace window.
+// Default stuck guard is conservative for internal/system turns, but direct human
+// channel turns should recover faster. Slack/Telegram/iMessage/Discord invokes
+// are conversational surfaces; waiting 10m there looks like the bot ignored Joel.
+// If a turn is stuck past its threshold, abort once, then restart daemon if no
+// recovery signal (turn_end or next model turn start) arrives within grace window.
 let _lastTurnEndAt = Date.now();
 let _lastPromptAt = 0;
 const STUCK_THRESHOLD_MS = 10 * 60 * 1000;
+const HUMAN_CHANNEL_STUCK_THRESHOLD_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.JOELCLAW_GATEWAY_HUMAN_STUCK_THRESHOLD_MS ?? "180000", 10),
+);
 const STUCK_RECOVERY_GRACE_MS = 90_000;
 type StuckRecoveryState = {
   startedAt: number;
@@ -1472,6 +1479,19 @@ type PendingPromptDispatch = {
 };
 const pendingPromptDispatches: PendingPromptDispatch[] = [];
 let turnInProgress = false;
+
+function getStuckThresholdMsForSource(source: string | undefined): number {
+  if (!source) return STUCK_THRESHOLD_MS;
+  if (
+    source.startsWith("telegram:")
+    || source.startsWith("discord:")
+    || source.startsWith("imessage:")
+    || source.startsWith("slack:")
+  ) {
+    return HUMAN_CHANNEL_STUCK_THRESHOLD_MS;
+  }
+  return STUCK_THRESHOLD_MS;
+}
 
 function onModelTurnStart(trigger: "turn_start" | "message_start"): void {
   const pendingDispatch = pendingPromptDispatches.shift();
@@ -4957,7 +4977,8 @@ const watchdogTimer = setInterval(() => {
   const waitingForTurnEnd = Boolean(_idleResolve);
   const maintenanceActive = isGatewayMaintenanceActive();
   const stuckMs = waitingForTurnEnd && !maintenanceActive && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
-  const isStuck = stuckMs > STUCK_THRESHOLD_MS;
+  const stuckThresholdMs = getStuckThresholdMsForSource(lastPromptSource);
+  const isStuck = stuckMs > stuckThresholdMs;
   const failures = getConsecutiveFailures();
   const fallbackGraceRemainingMs = getFallbackWatchdogGraceRemainingMs({
     fallbackActive: fallbackController.state.active,
@@ -5015,7 +5036,12 @@ const watchdogTimer = setInterval(() => {
             maintenanceElapsedMs: activeGatewayMaintenance ? now - activeGatewayMaintenance.startedAt : undefined,
           }
         : {}),
-      ...(isStuck ? { stuckForMs: stuckMs, lastPromptAt: new Date(_lastPromptAt).toISOString() } : {}),
+      ...(isStuck ? {
+        stuckForMs: stuckMs,
+        stuckThresholdMs,
+        lastPromptSource,
+        lastPromptAt: new Date(_lastPromptAt).toISOString(),
+      } : {}),
       ...(stuckRecovery
         ? {
             recoveryPending: true,
@@ -5040,6 +5066,8 @@ const watchdogTimer = setInterval(() => {
 
     console.error("[gateway:watchdog] session appears stuck — attempting abort", {
       stuckForMs: stuckMs,
+      stuckThresholdMs,
+      lastPromptSource,
       recoveryGraceMs: STUCK_RECOVERY_GRACE_MS,
     });
     void emitGatewayOtel({
@@ -5049,6 +5077,8 @@ const watchdogTimer = setInterval(() => {
       success: false,
       metadata: {
         stuckForMs: stuckMs,
+        stuckThresholdMs,
+        lastPromptSource,
         queueDepth: getQueueDepth(),
         recoveryGraceMs: STUCK_RECOVERY_GRACE_MS,
       },
@@ -5113,6 +5143,7 @@ function getHealthStatus(): {
   const waitingForTurnEnd = Boolean(_idleResolve);
   const maintenanceActive = isGatewayMaintenanceActive();
   const stuckMs = waitingForTurnEnd && !maintenanceActive && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
+  const stuckThresholdMs = getStuckThresholdMsForSource(lastPromptSource);
   const failures = getConsecutiveFailures();
   const fallbackGraceRemainingMs = getFallbackWatchdogGraceRemainingMs({
     fallbackActive: fallbackController.state.active,
@@ -5131,7 +5162,7 @@ function getHealthStatus(): {
   const recoveryDeadlineInMs = stuckRecovery
     ? Math.max(0, stuckRecovery.deadlineAt - now)
     : 0;
-  const available = stuckMs < STUCK_THRESHOLD_MS && !isDead;
+  const available = stuckMs < stuckThresholdMs && !isDead;
   const healthy = redisOk && available;
   const degradedCapabilities = getDegradedCapabilities();
   const channels = getChannelRuntimeSnapshots();
@@ -5172,7 +5203,7 @@ function getHealthStatus(): {
           ? `recovering (${Math.round(recoveryDeadlineInMs / 1000)}s)`
           : maintenanceActive
             ? `maintenance (${activeGatewayMaintenance?.kind ?? (session.isCompacting ? "compact" : "active")})`
-            : stuckMs > STUCK_THRESHOLD_MS
+            : stuckMs > stuckThresholdMs
               ? `stuck (${Math.round(stuckMs / 1000)}s)`
               : "ok",
       consecutivePromptFailures: failures,
