@@ -54,6 +54,10 @@ _Avoid_: API key, token, auth secret
 An external communication account bound to exactly one joelclaw User for one channel.
 _Avoid_: macOS account, Messages database, inbox, account
 
+**Reply Grant**:
+A User-issued, short-lived permission for joelclaw to send public replies into a specific external thread.
+_Avoid_: ambient permission, public mode, bot chat
+
 **Credential Proxy**:
 A Central-owned service that brokers outbound API credentials to agent runtimes without exposing the underlying secrets to those agents.
 _Avoid_: secrets dump, env sync, API key pass-through
@@ -91,6 +95,8 @@ _Avoid_: session store, second memory index, remote Central
 - A **Relay Sandbox** belongs to exactly one **User**
 - A **User** owns zero or more **Channel Accounts**
 - A **Channel Account** belongs to exactly one **User**
+- A **User** may issue a **Reply Grant** for a specific external thread on one **Channel Account**
+- A **Reply Grant** expires and does not make the whole Channel Account interactive
 - **Central** may expose a **Credential Proxy** for agent runtimes
 - A **Machine** produces many **Runs**
 - A **Run** is owned by exactly one **User** (via the Machine that produced it)
@@ -154,6 +160,7 @@ Runs = raw. Memory = derived from Runs. Keep them namespaced apart.
 - **"Panda as Central"** — resolved: **Central** is logical and can move hosts; Panda is a **Machine** and becomes a relay-only **Relay Machine** after Mac Studio becomes Central.
 - **"Panda as family Machine"** — resolved: Panda is not a normal family-use **Machine** after cutover; it exists to relay account-bound services for multiple **Users**.
 - **"iMessage account"** — resolved: use **Channel Account** for the external account bound to a joelclaw **User**; iCloud account, macOS login, and Messages database are implementation details unless specifically discussing relay mechanics.
+- **"Slack public participation"** — resolved: use **Reply Grant** for a User-authorized, thread-scoped public reply window; passive channel monitoring is not the same as permission to speak.
 - **"Panda user account"** — resolved: use **Relay Sandbox** for the per-User isolation boundary on Panda; Standard macOS user accounts are the implementation for iMessage relay, but not the domain term.
 - **"Relay Sandbox as dev account"** — resolved: Relay Sandboxes are low-privilege non-development service identities with only the joelclaw Central service access needed for relay work.
 - **"Agent Vault"** — resolved: use **Credential Proxy** for the domain concept; Infisical Agent Vault is the current roadmap implementation candidate.
