@@ -106,6 +106,36 @@ describe("reply grant routing", () => {
 });
 
 describe("reply grant approval resolution", () => {
+  it("covers the functional mention approval to active follow-up path", () => {
+    const initial = routeSlackMention({ event: event(), policy });
+    expect(initial.map((intent) => intent.type)).toEqual(["notifyUser", "draftPrivateReply", "recordOtel"]);
+
+    const decision = resolveReplyGrantApproval({
+      action: "grant",
+      grantedByUserId: "UJOEL",
+      now: now + 1_000,
+      approval: {
+        platform: "slack",
+        channelId: "CBRAIN",
+        threadTs: "111.222",
+        messageTs: "333.444",
+        userId: "UJOHN",
+        userLabel: "John",
+        text: "@joelclaw can you answer?",
+        createdAt: now,
+      },
+    });
+    if (decision.type !== "granted") throw new Error("expected grant decision");
+
+    const followUp = routeSlackMention({
+      event: event({ botMentioned: false, now: now + 2_000 }),
+      policy,
+      activeGrant: decision.grant,
+    });
+
+    expect(followUp.map((intent) => intent.type)).toEqual(["postPublicReply", "updateGrant", "notifyUser", "recordOtel"]);
+  });
+
   it("turns a Telegram Grant approval into a thread-scoped Reply Grant", () => {
     const decision = resolveReplyGrantApproval({
       action: "grant",
