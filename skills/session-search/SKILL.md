@@ -88,7 +88,7 @@ Shape rules:
 - Source metadata distinguishes `rawReturned` from `emittedHits` / `emittedChunks`.
 - `signals` returns `kind`, `clusters`, `hits`, `signals[]`, stable `hitId`, exact `path`, and transcript line numbers. Treat it as a signal radar, not memory truth; promote only derived reusable guidance.
 - Use `--sample N --review-out path.jsonl` to create a small golden set for human/agent labeling before tuning the classifier. Review rows include `verdict`, `correctedKind`, and `note` placeholders.
-- Each signal includes a small reducer-shaped `improvement` route: surface (`system-prompt`, `skill`, `cli`, `harness`, `docs`, `memory`, `adr`, `none`), target, suggested next step, and reason. Use `--evaluate` to summarize routing coverage.
+- Each signal includes a small reducer-shaped `improvement` route: surface (`system-prompt`, `skill`, `cli`, `harness`, `docs`, `memory`, `adr`, `none`), target, confidence, reviewPriority, suggested next step, and reason. Use `--evaluate` to summarize routing coverage by surface, kind, confidence, and review priority.
 
 ## Source-specific searches
 
