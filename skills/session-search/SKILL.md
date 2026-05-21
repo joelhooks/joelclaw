@@ -68,6 +68,15 @@ Use `sessions chunks` when you want matching chunks/snippets and neighboring raw
 joelclaw sessions chunks "<query>" --source local --machine dark-wizard --limit 20 --context-before 2 --context-after 4
 ```
 
+Use `sessions signals` when the job is not recovery but analysis: finding high-signal user turns, friction, preferences, approvals, or decisions. This is ADR-0247-backed and deterministic in v1:
+
+```bash
+joelclaw sessions signals --kind friction --source local --machine dark-wizard --since 14d --limit 20
+joelclaw sessions friction --source local --machine dark-wizard --since 14d
+```
+
+`friction` is an alias for `signals --kind friction`. The command filters to user turns first and includes assistant/tool turns only as bounded evidence context. Joel's `fuck`, `fucking`, and `fuckin` are strong emphasis signals, not automatic anger; classify by nearby critique/praise/correction language. `ShitRat` is agent identity, not friction.
+
 Extraction returns session ID, path, dates, cwd, user prompts, decisions, commands run, files touched, outputs/receipts, verification, blockers, next actions, and transcript line evidence. It redacts likely secrets and does not dump whole transcripts.
 
 Shape rules:
@@ -76,6 +85,7 @@ Shape rules:
 - `extract --format markdown` still emits the canonical JSON envelope; rendered markdown is at `.result.markdown`.
 - `chunks` exposes top-level `.result.chunks` / `.result.hits`, with source mirrors under `.result.local.chunks` and `.result.typesense.chunks`.
 - Source metadata distinguishes `rawReturned` from `emittedHits` / `emittedChunks`.
+- `signals` returns `kind`, `clusters`, `hits`, `signals[]`, exact `path`, and transcript line numbers. Treat it as a signal radar, not memory truth; promote only derived reusable guidance.
 
 ## Source-specific searches
 

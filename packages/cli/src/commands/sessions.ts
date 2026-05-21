@@ -624,7 +624,7 @@ function extractionMarkdown(extraction: Extraction): string {
   ].join("\n")
 }
 
-function inspectSession(idOrPath: string, around: string, before: number, after: number): { sessionId?: string; path: string; around: string; matches: Array<{ matchLine: number; startLine: number; endLine: number; entries: Evidence[] }>; redacted: boolean } {
+function inspectSession(idOrPath: string, around: string, before: number, after: number): { sessionId?: string; startedAt?: string; cwdKey?: string; path: string; around: string; matches: Array<{ matchLine: number; startLine: number; endLine: number; entries: Evidence[] }>; redacted: boolean } {
   const path = findSessionPath(idOrPath)
   const { entries, redacted } = readTranscript(path)
   const regex = new RegExp(around, "iu")
@@ -635,6 +635,181 @@ function inspectSession(idOrPath: string, around: string, before: number, after:
     return [{ matchLine: entry.line, startLine: entries[start]?.line ?? entry.line, endLine: entries[end]?.line ?? entry.line, entries: entries.slice(start, end + 1).map(evidence) }]
   }).slice(0, 8)
   return { ...sessionMetaFromPath(path), path, around, matches, redacted }
+}
+
+type SignalKind = "friction" | "preference" | "decision" | "praise" | "correction" | "workflow-pattern" | "failure" | "repair-request" | "any"
+
+type FrictionHit = {
+  sessionId?: string
+  path: string
+  startedAt?: string
+  cwdKey?: string
+  line: number
+  phrase: string
+  kind: Exclude<SignalKind, "any">
+  category: string
+  severity: "low" | "medium" | "high"
+  signals: string[]
+  userTurn: Evidence
+  previousAssistant?: Evidence
+  nextAssistant?: Evidence
+  evidence: Evidence[]
+}
+
+const DEFAULT_FRICTION_PHRASES = [
+  "don't",
+  "dont",
+  "stop",
+  "why did you",
+  "i asked",
+  "not that",
+  "generic",
+  "sludge",
+  "pisses me off",
+  "pissed me off",
+  "wrong",
+  "stale",
+  "not what i asked",
+  "you should",
+  "instead",
+  "bullshit",
+  "dogshit",
+  "horseshit",
+  "trash",
+  "garbage",
+  "sucks",
+]
+
+const DEFAULT_SIGNAL_PHRASES = [
+  ...DEFAULT_FRICTION_PHRASES,
+  "fuck",
+  "fucking",
+  "fuckin",
+  "fuck yeah",
+  "fuckin love",
+  "love this",
+  "approved",
+  "ship it",
+  "remember this",
+  "capture this",
+  "make this durable",
+  "this is the pattern",
+  "we should",
+  "the rule is",
+]
+
+function parseSinceMs(input: string): number {
+  const trimmed = input.trim().toLowerCase()
+  const match = trimmed.match(/^(\d+)([hdw])$/u)
+  if (!match) return 14 * 24 * 60 * 60 * 1000
+  const amount = Number(match[1])
+  const unit = match[2]
+  if (unit === "h") return amount * 60 * 60 * 1000
+  if (unit === "d") return amount * 24 * 60 * 60 * 1000
+  return amount * 7 * 24 * 60 * 60 * 1000
+}
+
+function listLocalSessionFiles(maxFiles: number, since: string): string[] {
+  const root = join(process.env.HOME ?? "", ".pi", "agent", "sessions")
+  const cutoff = Date.now() - parseSinceMs(since)
+  const files: Array<{ path: string; mtime: number }> = []
+  function walk(dir: string): void {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name)
+      const stat = statSync(path)
+      if (stat.isDirectory()) walk(path)
+      else if (name.endsWith(".jsonl") && stat.mtimeMs >= cutoff) files.push({ path, mtime: stat.mtimeMs })
+    }
+  }
+  if (existsSync(root)) walk(root)
+  return files.sort((a, b) => b.mtime - a.mtime).slice(0, maxFiles).map((file) => file.path)
+}
+
+function matchedPhrase(text: string, phrases = DEFAULT_SIGNAL_PHRASES): string | undefined {
+  const lower = text.toLowerCase()
+  return phrases.find((phrase) => lower.includes(phrase))
+}
+
+function isLikelyPastedContext(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/^message user text\s+/u, "")
+  return normalized.startsWith("<skill ")
+    || normalized.startsWith("# session briefing")
+    || normalized.startsWith("## session recovery")
+    || normalized.startsWith("you are taking over from")
+    || normalized.includes("<read-files>")
+    || normalized.includes("<modified-files>")
+}
+
+function classifySignal(text: string): { kind: Exclude<SignalKind, "any">; category: string; severity: "low" | "medium" | "high"; signals: string[] } {
+  const lower = text.toLowerCase()
+  const signals: string[] = []
+  if (/fuck|fucking|fuckin/u.test(lower)) signals.push("strong-emphasis")
+  if (/bullshit|dogshit|horseshit|trash|garbage|sucks|sludge/u.test(lower)) signals.push("output-or-process-insult")
+  if (/don't|dont|stop|why did you|i asked|not that|not what i asked|wrong|stale|generic/u.test(lower)) signals.push("user-correction")
+  if (/remember this|capture this|make this durable|the rule is|this is the pattern/u.test(lower)) signals.push("memory-worthy")
+  if (/approved|ship it|fuck yeah|love this|fuckin love/u.test(lower)) signals.push("approval-or-praise")
+  if (/we should|decision|decided|the rule is/u.test(lower)) signals.push("decision-or-preference")
+
+  if (/stale|old|current-session echo|source material|tweet archive/u.test(lower)) return { kind: "friction", category: "stale-or-wrong-context", severity: "high", signals }
+  if (/generic|sludge|fluff|bullshit|dogshit|horseshit|trash|garbage|sucks/u.test(lower)) return { kind: "friction", category: "generic-or-bad-output", severity: "high", signals }
+  if (/wrong|not that|not what i asked|i asked|why did you/u.test(lower)) return { kind: "friction", category: "ignored-or-misread-instruction", severity: "high", signals }
+  if (/don't|dont|stop/u.test(lower)) return { kind: "friction", category: "violated-preference-or-boundary", severity: "high", signals }
+  if (/piss|pissed/u.test(lower)) return { kind: "friction", category: "operator-frustration", severity: "high", signals }
+  if (/approved|ship it|fuck yeah|love this|fuckin love/u.test(lower)) return { kind: "praise", category: "approval-or-positive-preference", severity: "medium", signals }
+  if (/remember this|capture this|make this durable|this is the pattern/u.test(lower)) return { kind: "preference", category: "memory-worthy-guidance", severity: "high", signals }
+  if (/we should|the rule is|decision|decided/u.test(lower)) return { kind: "decision", category: "decision-or-rule", severity: "medium", signals }
+  if (/fuck|fucking|fuckin/u.test(lower)) return { kind: "workflow-pattern", category: "strong-emphasis", severity: "medium", signals }
+  return { kind: "correction", category: "correction", severity: "low", signals }
+}
+
+function nearbyAssistant(entries: TranscriptEntry[], index: number, direction: -1 | 1): Evidence | undefined {
+  for (let offset = 1; offset <= 8; offset++) {
+    const entry = entries[index + offset * direction]
+    if (!entry) break
+    if (entry.role === "assistant") return evidence(entry)
+  }
+  return undefined
+}
+
+function mineSignalsFromSession(path: string, kind: SignalKind, phrases = DEFAULT_SIGNAL_PHRASES): FrictionHit[] {
+  const { entries } = readTranscript(path)
+  const meta = sessionMetaFromPath(path)
+  return entries.flatMap((entry, index): FrictionHit[] => {
+    if (entry.role !== "user") return []
+    if (entry.kind && /tool|custom|system|summary|briefing/i.test(entry.kind)) return []
+    if (isLikelyPastedContext(entry.text)) return []
+    const phrase = matchedPhrase(entry.text, phrases)
+    if (!phrase) return []
+    const classified = classifySignal(entry.text)
+    if (kind !== "any" && classified.kind !== kind) return []
+    const start = Math.max(0, index - 3)
+    const end = Math.min(entries.length - 1, index + 5)
+    return [{
+      ...meta,
+      path,
+      line: entry.line,
+      phrase,
+      ...classified,
+      userTurn: evidence(entry),
+      previousAssistant: nearbyAssistant(entries, index, -1),
+      nextAssistant: nearbyAssistant(entries, index, 1),
+      evidence: entries.slice(start, end + 1).map(evidence),
+    }]
+  })
+}
+
+function summarizeFriction(hits: FrictionHit[]): Array<{ kind: string; category: string; count: number; severity: string; examples: Array<{ path: string; line: number; phrase: string; text: string }> }> {
+  const byCategory = new Map<string, FrictionHit[]>()
+  for (const hit of hits) byCategory.set(hit.category, [...(byCategory.get(hit.category) ?? []), hit])
+  return [...byCategory.entries()]
+    .map(([category, items]) => ({
+      kind: items[0]?.kind ?? "unknown",
+      category,
+      count: items.length,
+      severity: items.some((item) => item.severity === "high") ? "high" : items.some((item) => item.severity === "medium") ? "medium" : "low",
+      examples: items.slice(0, 3).map((item) => ({ path: item.path, line: item.line, phrase: item.phrase, text: item.userTurn.text })),
+    }))
+    .sort((a, b) => b.count - a.count)
 }
 
 async function searchTypesenseChunks(input: { query: string; machine: string; limit: number }): Promise<{ found: number; chunks: SessionHit[]; unavailable?: string }> {
@@ -726,6 +901,16 @@ const aroundOpt = Options.text("around").pipe(
 const extractQueryOpt = Options.text("query").pipe(
   Options.withDefault(""),
   Options.withDescription("Topic/query to extract relevant context for")
+)
+
+const sinceOpt = Options.text("since").pipe(
+  Options.withDefault("14d"),
+  Options.withDescription("Time window for local signal mining, e.g. 24h, 7d, 4w")
+)
+
+const signalKindOpt = Options.choice("kind", ["friction", "preference", "decision", "praise", "correction", "workflow-pattern", "failure", "repair-request", "any"] as const).pipe(
+  Options.withDefault("friction" as const),
+  Options.withDescription("Session signal kind to mine")
 )
 
 const sessionArg = Args.text({ name: "session-id-or-path" }).pipe(
@@ -892,6 +1077,61 @@ const inspectCmd = Command.make(
   })
 ).pipe(Command.withDescription("Deterministically inspect raw transcript lines around a regex"))
 
+function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
+  return Command.make(
+    name,
+    { source: sourceOpt, machine: machineOpt, sshTarget: sshTargetOpt, limit: limitOpt, maxFiles: maxFilesOpt, since: sinceOpt, kind: signalKindOpt },
+    ({ source, machine, sshTarget, limit, maxFiles, since, kind }) => Effect.gen(function* () {
+      const resolvedKind = fixedKind ?? kind
+      try {
+        if (source === "typesense") {
+          yield* writeEnvelope(respondError(`sessions ${name}`, "Typesense-only signal mining is not supported yet because it needs role-aware raw transcript context", "SIGNALS_TYPESENSE_UNSUPPORTED", "Use --source local on the Machine with raw Pi sessions, or --source both from Central to relay to the satellite", [
+            { command: `joelclaw session ${name} --source local --machine <machine>`, description: "Mine local raw session transcripts", params: { machine: { value: machine } } },
+          ]))
+          return
+        }
+
+        if (source === "ssh" || (source === "both" && !isLocalMachine(machine))) {
+          const remote = `joelclaw session ${name} --source local --machine ${machine} --limit ${limit} --max-files ${maxFiles} --since ${since}${fixedKind ? "" : ` --kind ${resolvedKind}`}`
+          const proc = spawnSync("ssh", [sshTarget, remote], { encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 * 8 })
+          if (proc.status !== 0 || proc.error) throw new Error(proc.stderr || proc.stdout || proc.error?.message || "remote signal mining failed")
+          process.stdout.write(proc.stdout.endsWith("\n") ? proc.stdout : `${proc.stdout}\n`)
+          return
+        }
+
+        const files = listLocalSessionFiles(maxFiles, since)
+        const allHits = files.flatMap((path) => mineSignalsFromSession(path, resolvedKind))
+        const hits = allHits.slice(0, limit)
+        yield* writeEnvelope(respond(`sessions ${name}`, {
+          kind: resolvedKind,
+          source,
+          resolvedRawSource: "local",
+          machine,
+          since,
+          scannedFiles: files.length,
+          found: allHits.length,
+          emittedHits: hits.length,
+          actorFilter: "role=user only in v1; assistant/tool turns are included only as evidence context",
+          identityFilter: "best-effort local user; explicit user identity metadata is not available in raw Pi JSONL yet",
+          phrases: resolvedKind === "friction" ? DEFAULT_FRICTION_PHRASES : DEFAULT_SIGNAL_PHRASES,
+          clusters: summarizeFriction(allHits),
+          hits,
+        }, [
+          { command: "joelclaw session inspect <session-id-or-path> --around <regex>", description: "Verify a signal hit with exact surrounding transcript lines", params: { "session-id-or-path": { required: true }, regex: { required: true } } },
+          { command: "joelclaw session search <query> --extract", description: "Recover broader task context for a signal hit", params: { query: { required: true } } },
+        ]))
+      } catch (error) {
+        yield* writeEnvelope(respondError(`sessions ${name}`, error instanceof Error ? error.message : String(error), "SIGNAL_MINING_FAILED", "Verify raw session files and rerun with --source local on the target Machine", [
+          { command: "joelclaw satellite health --notify", description: "Ask Central for repair if this satellite looks broken" },
+        ]))
+      }
+    })
+  ).pipe(Command.withDescription(name === "friction" ? "Alias for sessions signals --kind friction" : "Mine role-aware high-signal user turns from raw session transcripts"))
+}
+
+const signalsCmd = signalCommand("signals")
+const frictionCmd = signalCommand("friction", "friction")
+
 const chunksCmd = Command.make(
   "chunks",
   { query: searchQueryArg, source: sourceOpt, machine: machineOpt, limit: limitOpt, maxFiles: maxFilesOpt, contextBefore: contextBeforeOpt, contextAfter: contextAfterOpt },
@@ -926,6 +1166,8 @@ function sessionsRoot(name: "sessions" | "session") {
         extract: "joelclaw sessions extract <session-id-or-path> --query <topic> [--format json|markdown]",
         chunks: "joelclaw sessions chunks <query> [--source typesense|local|both] [--context-before 2] [--context-after 4]",
         inspect: "joelclaw sessions inspect <session-id-or-path> --around <regex> [--before 20] [--after 80]",
+        signals: "joelclaw sessions signals [--kind friction|preference|decision|praise|any] [--source local|ssh|both] [--machine dark-wizard] [--since 14d] [--limit 20]",
+        friction: "joelclaw sessions friction [--source local|ssh|both] [--machine dark-wizard] [--since 14d] [--limit 20]",
       },
     }, [
       {
@@ -941,7 +1183,7 @@ function sessionsRoot(name: "sessions" | "session") {
   })
 ).pipe(
   Command.withDescription("Search and extract agent session history across Typesense and raw transcript bridges"),
-  Command.withSubcommands([searchCmd, extractCmd, chunksCmd, inspectCmd])
+  Command.withSubcommands([searchCmd, extractCmd, chunksCmd, inspectCmd, signalsCmd, frictionCmd])
 )
 }
 
