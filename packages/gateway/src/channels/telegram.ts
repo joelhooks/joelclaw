@@ -1356,21 +1356,23 @@ async function startTelegramChannel(
           return;
         }
         if (actionName === "grant") {
-          const { createReplyGrantFromEvent } = await import("@joelclaw/channel-routing");
-          const grantEvent = {
-            platform: "slack" as const,
-            channelId: approval.channelId,
-            threadTs: approval.threadTs,
-            messageTs: approval.messageTs ?? approval.threadTs,
-            senderUserId: process.env.SLACK_ALLOWED_USER_ID ?? "telegram-operator",
-            senderRole: "owner" as const,
-            text: approval.text ?? "",
-            botMentioned: false,
-            isJoelOriginated: true,
+          const { resolveReplyGrantApproval } = await import("@joelclaw/channel-routing");
+          const decision = resolveReplyGrantApproval({
+            action: "grant",
+            grantedByUserId: process.env.SLACK_ALLOWED_USER_ID ?? "telegram-operator",
             now: Date.now(),
-          };
-          const invokers = approval.userId ? [approval.userId] : [];
-          const grant = createReplyGrantFromEvent(grantEvent, process.env.SLACK_ALLOWED_USER_ID ?? "telegram-operator", invokers);
+            approval: {
+              platform: "slack",
+              channelId: approval.channelId,
+              threadTs: approval.threadTs,
+              messageTs: approval.messageTs ?? approval.threadTs,
+              userId: approval.userId,
+              text: approval.text ?? "",
+              createdAt: Date.now(),
+            },
+          });
+          if (decision.type !== "granted") throw new Error("reply grant approval did not grant");
+          const grant = decision.grant;
           await redis.psetex(`replyGrant:slack:${approval.channelId}:${approval.threadTs}`, Math.max(1_000, grant.absoluteExpiresAt - Date.now()), JSON.stringify(grant));
           await redis.del(key);
           await ctx.answerCallbackQuery({ text: "Grant created" });
@@ -1382,7 +1384,7 @@ async function startTelegramChannel(
             component: "telegram-channel",
             action: "reply_grant.approved",
             success: true,
-            metadata: { approvalId, channelId: approval.channelId, threadTs: approval.threadTs, invokerCount: invokers.length },
+            metadata: { approvalId, channelId: approval.channelId, threadTs: approval.threadTs, invokerCount: grant.invokerUserIds.length },
           });
           return;
         }

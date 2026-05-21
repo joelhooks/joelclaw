@@ -5,6 +5,7 @@ import {
   DEFAULT_REPLY_GRANT_LIMITS,
   recordGrantHumanMessage,
   recordGrantPublicReply,
+  resolveReplyGrantApproval,
   routeSlackMention,
   type ChannelPermissionPolicy,
   type ReplyGrant,
@@ -101,5 +102,51 @@ describe("reply grant routing", () => {
     const once = recordGrantHumanMessage(grant(), now + 1_000, DEFAULT_REPLY_GRANT_LIMITS);
     const twice = recordGrantHumanMessage(once, now + 2_000, DEFAULT_REPLY_GRANT_LIMITS);
     expect(twice.conversationMode).toBe("idle");
+  });
+});
+
+describe("reply grant approval resolution", () => {
+  it("turns a Telegram Grant approval into a thread-scoped Reply Grant", () => {
+    const decision = resolveReplyGrantApproval({
+      action: "grant",
+      grantedByUserId: "UJOEL",
+      now,
+      approval: {
+        platform: "slack",
+        channelId: "CBRAIN",
+        threadTs: "111.222",
+        messageTs: "333.444",
+        userId: "UJOHN",
+        userLabel: "John",
+        text: "@joelclaw can you answer?",
+        createdAt: now - 1_000,
+      },
+    });
+
+    expect(decision.type).toBe("granted");
+    if (decision.type !== "granted") throw new Error("expected granted decision");
+    expect(decision.grant.channelId).toBe("CBRAIN");
+    expect(decision.grant.threadTs).toBe("111.222");
+    expect(decision.grant.grantedByUserId).toBe("UJOEL");
+    expect(decision.grant.invokerUserIds).toEqual(["UJOHN"]);
+  });
+
+  it("keeps Ignore as a non-granting terminal approval decision", () => {
+    const decision = resolveReplyGrantApproval({
+      action: "ignore",
+      grantedByUserId: "UJOEL",
+      now,
+      approval: {
+        platform: "slack",
+        channelId: "CBRAIN",
+        threadTs: "111.222",
+        messageTs: "333.444",
+        userId: "UJOHN",
+        text: "nope",
+        createdAt: now,
+      },
+    });
+
+    expect(decision).toEqual({ type: "ignored" });
   });
 });
