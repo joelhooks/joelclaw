@@ -2,6 +2,22 @@
 
 Canonical notes for the always-on gateway daemon (`packages/gateway`) and its automated health checks.
 
+## Public channel replies: Reply Grants (ADR-0244)
+
+Slack public participation is governed by **Reply Grants**, not ambient channel monitoring.
+
+V1 contract:
+
+- Passive Slack intelligence never implies permission to post publicly.
+- Non-Joel Slack mentions alert Joel on Telegram and may produce a private draft, but do not post publicly without approval or an active grant.
+- Joel can create/extend a grant through direct Slack instruction, a cross-channel Slack URL command, or a `:joelclaw:` reaction.
+- Active grants live in Redis and emit OTEL receipts for creation, use, rejection, and expiration.
+- Durable channel permission policy lives at `~/.joelclaw/gateway/channel-permissions.json`; Redis is only the runtime projection/cache.
+- `@joelclaw/channel-routing` owns pure CASL permission checks and XState routing lifecycle; `packages/gateway` owns side effects such as Slack send, Telegram buttons, Redis writes, draft generation, and OTEL.
+- Defaults: Slack-only, 5 replies, 30-minute idle TTL, 2-hour absolute TTL.
+
+See `docs/prd-reply-grants-channel-routing.md` for implementation requirements and test coverage.
+
 ## Extension scope (context-local only)
 
 The `gateway` pi extension is now **context-local**, not global:
