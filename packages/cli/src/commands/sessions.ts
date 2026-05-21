@@ -659,6 +659,8 @@ type ImprovementRoute = {
   reason: string
 }
 
+type TurnKind = "operator_intent" | "task_payload" | "source_material" | "review_feedback" | "handoff" | "approval" | "unknown"
+
 type FrictionHit = {
   sessionId?: string
   path: string
@@ -670,6 +672,7 @@ type FrictionHit = {
   category: string
   severity: "low" | "medium" | "high"
   signals: string[]
+  turnKind: TurnKind
   userTurn: Evidence
   previousAssistant?: Evidence
   nextAssistant?: Evidence
@@ -751,14 +754,19 @@ function matchedPhrase(text: string, phrases = DEFAULT_SIGNAL_PHRASES): string |
   return phrases.find((phrase) => lower.includes(phrase))
 }
 
-function isLikelyPastedContext(text: string): boolean {
-  const normalized = text.toLowerCase().replace(/^message user text\s+/u, "")
-  return normalized.startsWith("<skill ")
-    || normalized.startsWith("# session briefing")
-    || normalized.startsWith("## session recovery")
-    || normalized.startsWith("you are taking over from")
-    || normalized.includes("<read-files>")
-    || normalized.includes("<modified-files>")
+function classifyTurnKind(text: string): TurnKind {
+  const normalized = text.toLowerCase().replace(/^message user text\s+/u, "").trim()
+  if (normalized.startsWith("## review feedback from cursor") || normalized.includes("i edited last assistant message")) return "review_feedback"
+  if (normalized.startsWith("## handoff") || normalized.startsWith("handoff:") || normalized.startsWith("continue ") || normalized.startsWith("you are taking over from") || normalized.startsWith("## session recovery")) return "handoff"
+  if (normalized.startsWith("task:") || normalized.startsWith("[read from:") || normalized.includes("read this transcript chunk in full") || normalized.includes("your job is ")) return "task_payload"
+  if (normalized.startsWith("<skill ") || normalized.startsWith("# session briefing") || normalized.includes("<read-files>") || normalized.includes("<modified-files>") || normalized.includes("```md")) return "source_material"
+  if (/^(approved|ship it|sure|yes|yep|ok|do it)\b/u.test(normalized)) return "approval"
+  if (normalized.length > 1800 && /context:|goal:|requirements:|current state:|instructions:/u.test(normalized)) return "task_payload"
+  return "operator_intent"
+}
+
+function isSignalEligibleTurn(turnKind: TurnKind): boolean {
+  return turnKind === "operator_intent" || turnKind === "review_feedback" || turnKind === "approval"
 }
 
 function classifySignal(text: string): { kind: Exclude<SignalKind, "any">; category: string; severity: "low" | "medium" | "high"; signals: string[] } {
@@ -798,7 +806,8 @@ function mineSignalsFromSession(path: string, kind: SignalKind, phrases = DEFAUL
   return entries.flatMap((entry, index): FrictionHit[] => {
     if (entry.role !== "user") return []
     if (entry.kind && /tool|custom|system|summary|briefing/i.test(entry.kind)) return []
-    if (isLikelyPastedContext(entry.text)) return []
+    const turnKind = classifyTurnKind(entry.text)
+    if (!isSignalEligibleTurn(turnKind)) return []
     const phrase = matchedPhrase(entry.text, phrases)
     if (!phrase) return []
     const classified = classifySignal(entry.text)
@@ -811,6 +820,7 @@ function mineSignalsFromSession(path: string, kind: SignalKind, phrases = DEFAUL
       line: entry.line,
       phrase,
       ...classified,
+      turnKind,
       userTurn: evidence(entry),
       previousAssistant: nearbyAssistant(entries, index, -1),
       nextAssistant: nearbyAssistant(entries, index, 1),
@@ -826,6 +836,9 @@ function routeSignalImprovement(hit: FrictionHit): ImprovementRoute {
   }
   if (hit.category === "generic-or-bad-output") {
     return { ...base, surface: "skill", target: "joel-writing-style", confidence: "high", reviewPriority: "high", suggestedNextStep: "Add a concrete anti-sludge example or tighten output-quality guidance", reason: "generic/bad output is usually a writing-style or task-framing failure" }
+  }
+  if (hit.category === "ignored-or-misread-instruction") {
+    return { ...base, surface: "harness", target: "instruction-following review", confidence: "high", reviewPriority: "high", suggestedNextStep: "Review the previous assistant/action and add a harness guard if this instruction miss recurs", reason: "wrong/not-that/I-asked signals usually mean the agent violated or misread a concrete instruction" }
   }
   if (hit.category === "violated-preference-or-boundary") {
     return { ...base, surface: "system-prompt", target: "SOUL/agency guidance proposal", confidence: "medium", reviewPriority: "high", suggestedNextStep: "Propose a prompt or skill clarification only if the same boundary violation recurs", reason: "explicit stop/don't corrections indicate preference or boundary handling" }
@@ -855,9 +868,10 @@ function routeSignals(hits: FrictionHit[]): FrictionHit[] {
   return hits.map((hit) => ({ ...hit, improvement: routeSignalImprovement(hit) }))
 }
 
-function evaluateRoutes(hits: FrictionHit[]): { total: number; routed: number; unrouted: number; bySurface: Record<string, number>; byKind: Record<string, number>; byConfidence: Record<string, number>; byReviewPriority: Record<string, number>; warnings: string[] } {
+function evaluateRoutes(hits: FrictionHit[]): { total: number; routed: number; unrouted: number; bySurface: Record<string, number>; byKind: Record<string, number>; byTurnKind: Record<string, number>; byConfidence: Record<string, number>; byReviewPriority: Record<string, number>; warnings: string[] } {
   const bySurface: Record<string, number> = {}
   const byKind: Record<string, number> = {}
+  const byTurnKind: Record<string, number> = {}
   const byConfidence: Record<string, number> = {}
   const byReviewPriority: Record<string, number> = {}
   const warnings: string[] = []
@@ -865,6 +879,7 @@ function evaluateRoutes(hits: FrictionHit[]): { total: number; routed: number; u
     const surface = hit.improvement?.surface ?? "none"
     bySurface[surface] = (bySurface[surface] ?? 0) + 1
     byKind[hit.kind] = (byKind[hit.kind] ?? 0) + 1
+    byTurnKind[hit.turnKind] = (byTurnKind[hit.turnKind] ?? 0) + 1
     const confidence = hit.improvement?.confidence ?? "low"
     const priority = hit.improvement?.reviewPriority ?? "low"
     byConfidence[confidence] = (byConfidence[confidence] ?? 0) + 1
@@ -873,7 +888,7 @@ function evaluateRoutes(hits: FrictionHit[]): { total: number; routed: number; u
   const routed = hits.filter((hit) => hit.improvement && hit.improvement.surface !== "none").length
   if ((bySurface.none ?? 0) > 0) warnings.push("Some signals have no improvement route; label them in review-out before tuning rules")
   if ((bySurface["system-prompt"] ?? 0) > 0) warnings.push("System-prompt routes require proposal/review, not unilateral SOUL.md edits")
-  return { total: hits.length, routed, unrouted: hits.length - routed, bySurface, byKind, byConfidence, byReviewPriority, warnings }
+  return { total: hits.length, routed, unrouted: hits.length - routed, bySurface, byKind, byTurnKind, byConfidence, byReviewPriority, warnings }
 }
 
 function signalHitId(hit: FrictionHit): string {
@@ -909,6 +924,7 @@ function reviewRow(hit: FrictionHit): Record<string, unknown> {
     note: null,
     predictedKind: hit.kind,
     predictedCategory: hit.category,
+    turnKind: hit.turnKind,
     improvement: hit.improvement,
     severity: hit.severity,
     signals: hit.signals,
@@ -1264,6 +1280,7 @@ function signalCommand(name: "signals" | "friction", fixedKind?: SignalKind) {
           review,
           evaluation: evaluate ? evaluateRoutes(hits) : undefined,
           actorFilter: "role=user only in v1; assistant/tool turns are included only as evidence context",
+          turnKindFilter: "operator_intent, review_feedback, and approval only; task_payload/source_material/handoff are excluded by default",
           identityFilter: "best-effort local user; explicit user identity metadata is not available in raw Pi JSONL yet",
           phrases: resolvedKind === "friction" ? DEFAULT_FRICTION_PHRASES : DEFAULT_SIGNAL_PHRASES,
           clusters: summarizeFriction(allHits),

@@ -76,7 +76,7 @@ joelclaw sessions signals --kind any --source local --machine dark-wizard --sinc
 joelclaw sessions friction --source local --machine dark-wizard --since 14d
 ```
 
-`friction` is an alias for `signals --kind friction`. The command filters to user turns first and includes assistant/tool turns only as bounded evidence context. Joel's `fuck`, `fucking`, and `fuckin` are strong emphasis signals, not automatic anger; classify by nearby critique/praise/correction language. `ShitRat` is agent identity, not friction.
+`friction` is an alias for `signals --kind friction`. The command filters to user turns first, classifies turnKind, and includes assistant/tool turns only as bounded evidence context. V1 includes `operator_intent`, `review_feedback`, and `approval`; it excludes task payloads, source material, and handoffs by default because those caused noisy false positives. Joel's `fuck`, `fucking`, and `fuckin` are strong emphasis signals, not automatic anger; classify by nearby critique/praise/correction language. `ShitRat` is agent identity, not friction.
 
 Extraction returns session ID, path, dates, cwd, user prompts, decisions, commands run, files touched, outputs/receipts, verification, blockers, next actions, and transcript line evidence. It redacts likely secrets and does not dump whole transcripts.
 
@@ -88,7 +88,7 @@ Shape rules:
 - Source metadata distinguishes `rawReturned` from `emittedHits` / `emittedChunks`.
 - `signals` returns `kind`, `clusters`, `hits`, `signals[]`, stable `hitId`, exact `path`, and transcript line numbers. Treat it as a signal radar, not memory truth; promote only derived reusable guidance.
 - Use `--sample N --review-out path.jsonl` to create a small golden set for human/agent labeling before tuning the classifier. Review rows include `verdict`, `correctedKind`, and `note` placeholders.
-- Each signal includes a small reducer-shaped `improvement` route: surface (`system-prompt`, `skill`, `cli`, `harness`, `docs`, `memory`, `adr`, `none`), target, confidence, reviewPriority, suggested next step, and reason. Use `--evaluate` to summarize routing coverage by surface, kind, confidence, and review priority.
+- Each signal includes `turnKind` plus a small reducer-shaped `improvement` route: surface (`system-prompt`, `skill`, `cli`, `harness`, `docs`, `memory`, `adr`, `none`), target, confidence, reviewPriority, suggested next step, and reason. Use `--evaluate` to summarize routing coverage by surface, kind, turnKind, confidence, and review priority.
 
 ## Source-specific searches
 
