@@ -98,12 +98,30 @@ function extractMentionedUserIds(text: string): string[] {
 async function pushSlackMentionTelegramAlert(input: {
   channelId: string;
   threadTs: string;
+  messageTs?: string;
+  userId?: string;
   userLabel: string;
   text: string;
   grantActive: boolean;
   reason: string;
 }): Promise<void> {
+  const redis = getRedisClient();
+  const approvalId = crypto.randomUUID().slice(0, 12);
+  if (redis) {
+    await redis.setex(`replyGrantApproval:${approvalId}`, 2 * 60 * 60, JSON.stringify({
+      platform: "slack",
+      channelId: input.channelId,
+      threadTs: input.threadTs,
+      messageTs: input.messageTs ?? input.threadTs,
+      userId: input.userId,
+      userLabel: input.userLabel,
+      text: input.text,
+      createdAt: Date.now(),
+    }));
+  }
+  const threadUrl = slackThreadUrl(input.channelId, input.threadTs);
   await pushGatewayEvent({
+
     type: "slack.mention.approval_requested",
     source: `slack:${input.channelId}:${input.threadTs}`,
     payload: {
@@ -117,8 +135,17 @@ async function pushSlackMentionTelegramAlert(input: {
         "",
         input.text.length > 500 ? `${input.text.slice(0, 497)}...` : input.text,
         "",
-        slackThreadUrl(input.channelId, input.threadTs),
+        threadUrl,
       ].join("\n"),
+      telegramButtons: [
+        [
+          { text: "Grant", action: `replygrant:grant:${approvalId}` },
+          { text: "Ignore", action: `replygrant:ignore:${approvalId}` },
+        ],
+        [
+          { text: "Open thread", url: threadUrl },
+        ],
+      ],
     },
   });
 }
@@ -668,6 +695,8 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       await pushSlackMentionTelegramAlert({
         channelId: message.channel,
         threadTs: effectiveThreadTs,
+        messageTs: message.ts,
+        userId: message.user,
         userLabel,
         text,
         grantActive: Boolean(activeGrant),
@@ -886,6 +915,8 @@ async function handleReactionAdded(rawEvent: unknown): Promise<void> {
   await pushSlackMentionTelegramAlert({
     channelId: event.item.channel,
     threadTs: event.item.ts,
+    messageTs: event.item.ts,
+    userId: event.itemUser,
     userLabel,
     text: `:${event.reaction}: created Reply Grant for ${event.itemUser ?? "thread"}`,
     grantActive: true,

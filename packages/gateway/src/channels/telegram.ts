@@ -1327,6 +1327,80 @@ async function startTelegramChannel(
 
     console.log("[gateway:telegram] callback_query", { data, chatId, messageId });
 
+    if (data.startsWith("replygrant:")) {
+      const [, actionName, approvalId] = data.split(":");
+      try {
+        const { getRedisClient } = await import("./redis");
+        const redis = getRedisClient();
+        if (!redis || !approvalId) throw new Error("reply grant approval state unavailable");
+        const key = `replyGrantApproval:${approvalId}`;
+        const raw = await redis.get(key);
+        if (!raw) throw new Error("reply grant approval expired");
+        const approval = JSON.parse(raw) as {
+          channelId: string;
+          threadTs: string;
+          messageTs?: string;
+          userId?: string;
+          text?: string;
+        };
+        if (actionName === "ignore") {
+          await redis.del(key);
+          await ctx.answerCallbackQuery({ text: "Ignored" });
+          void emitGatewayOtel({
+            level: "info",
+            component: "telegram-channel",
+            action: "reply_grant.approval_ignored",
+            success: true,
+            metadata: { approvalId, channelId: approval.channelId, threadTs: approval.threadTs },
+          });
+          return;
+        }
+        if (actionName === "grant") {
+          const { createReplyGrantFromEvent } = await import("@joelclaw/channel-routing");
+          const grantEvent = {
+            platform: "slack" as const,
+            channelId: approval.channelId,
+            threadTs: approval.threadTs,
+            messageTs: approval.messageTs ?? approval.threadTs,
+            senderUserId: process.env.SLACK_ALLOWED_USER_ID ?? "telegram-operator",
+            senderRole: "owner" as const,
+            text: approval.text ?? "",
+            botMentioned: false,
+            isJoelOriginated: true,
+            now: Date.now(),
+          };
+          const invokers = approval.userId ? [approval.userId] : [];
+          const grant = createReplyGrantFromEvent(grantEvent, process.env.SLACK_ALLOWED_USER_ID ?? "telegram-operator", invokers);
+          await redis.psetex(`replyGrant:slack:${approval.channelId}:${approval.threadTs}`, Math.max(1_000, grant.absoluteExpiresAt - Date.now()), JSON.stringify(grant));
+          await redis.del(key);
+          await ctx.answerCallbackQuery({ text: "Grant created" });
+          if (chatId && messageId) {
+            await bot!.api.editMessageReplyMarkup(chatId, messageId, { reply_markup: { inline_keyboard: [] } }).catch(() => {});
+          }
+          void emitGatewayOtel({
+            level: "info",
+            component: "telegram-channel",
+            action: "reply_grant.approved",
+            success: true,
+            metadata: { approvalId, channelId: approval.channelId, threadTs: approval.threadTs, invokerCount: invokers.length },
+          });
+          return;
+        }
+        throw new Error(`unknown replygrant action: ${actionName}`);
+      } catch (error) {
+        await ctx.answerCallbackQuery({ text: "Reply Grant failed" }).catch(() => {});
+        void emitGatewayOtel({
+          level: "error",
+          component: "telegram-channel",
+          action: "reply_grant.callback_failed",
+          success: false,
+          error: String(error),
+          metadata: { data },
+        });
+        return;
+      }
+    }
+
     // Let dedicated grammy middleware handlers process their own prefixes.
     if (data.startsWith("pitch:") || data.startsWith("mcq:") || data.startsWith("worktree:") || data.startsWith("cmd:")) {
       console.log(`[gateway:telegram] delegating ${data.split(":")[0]}: callback to dedicated handler`);
