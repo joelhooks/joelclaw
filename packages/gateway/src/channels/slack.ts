@@ -1,8 +1,9 @@
 import { execSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import { createReplyGrantFromEvent, recordGrantPublicReply, routeSlackMention, type ChannelPermissionPolicy, type ChannelRole, type ReplyGrant, type SlackMentionEvent } from "@joelclaw/channel-routing";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
-import { type EnqueueFn, pushGatewayEvent } from "./redis";
+import { type EnqueueFn, getRedisClient, pushGatewayEvent } from "./redis";
 import type {
   Channel,
   ChannelPlatform,
@@ -44,6 +45,84 @@ function emitChannelMessageEvent(msg: {
   }).catch(() => {}); // silent — indexing failure must not break message flow
 }
 
+function grantKey(channelId: string, threadTs: string): string {
+  return `${REPLY_GRANT_KEY_PREFIX}:${channelId}:${threadTs}`;
+}
+
+function roleForSlackUser(userId: string, allowedUserId?: string): ChannelRole {
+  if (allowedUserId && userId === allowedUserId) return "owner";
+  if (SLACK_TRUSTED_USER_IDS.has(userId)) return "trusted-collaborator";
+  return "observer";
+}
+
+function buildSlackPolicy(allowedUserId: string | undefined, importantChannelIds: string[]): ChannelPermissionPolicy {
+  const principals: Record<string, ChannelRole> = {};
+  if (allowedUserId) principals[allowedUserId] = "owner";
+  for (const userId of SLACK_TRUSTED_USER_IDS) principals[userId] = "trusted-collaborator";
+  return {
+    principals,
+    channelAllowlist: importantChannelIds,
+  };
+}
+
+async function readReplyGrant(channelId: string, threadTs: string): Promise<ReplyGrant | undefined> {
+  const redis = getRedisClient();
+  if (!redis) return undefined;
+  const raw = await redis.get(grantKey(channelId, threadTs));
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as ReplyGrant;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeReplyGrant(grant: ReplyGrant): Promise<void> {
+  const redis = getRedisClient();
+  if (!redis) return;
+  const ttlMs = Math.max(1_000, grant.absoluteExpiresAt - Date.now());
+  await redis.psetex(grantKey(grant.channelId, grant.threadTs), ttlMs, JSON.stringify(grant));
+}
+
+function slackThreadUrl(channelId: string, threadTs: string): string {
+  const compact = threadTs.replace(".", "");
+  return `https://eggheadio.slack.com/archives/${channelId}/p${compact}?thread_ts=${threadTs}&channel=${channelId}`;
+}
+
+function extractMentionedUserIds(text: string): string[] {
+  const matches = text.matchAll(/<@([A-Z0-9]+)>/gu);
+  return [...new Set([...matches].map((match) => match[1]).filter((id): id is string => Boolean(id)))]
+    .filter((id) => id !== botUserId && id !== allowedUserId);
+}
+
+async function pushSlackMentionTelegramAlert(input: {
+  channelId: string;
+  threadTs: string;
+  userLabel: string;
+  text: string;
+  grantActive: boolean;
+  reason: string;
+}): Promise<void> {
+  await pushGatewayEvent({
+    type: "slack.mention.approval_requested",
+    source: `slack:${input.channelId}:${input.threadTs}`,
+    payload: {
+      immediateTelegram: true,
+      telegramOnly: true,
+      telegramFormat: "plain",
+      telegramMessage: [
+        `Slack mention: ${input.userLabel}`,
+        input.grantActive ? "Reply Grant: active" : "Reply Grant: inactive",
+        `Reason: ${input.reason}`,
+        "",
+        input.text.length > 500 ? `${input.text.slice(0, 497)}...` : input.text,
+        "",
+        slackThreadUrl(input.channelId, input.threadTs),
+      ].join("\n"),
+    },
+  });
+}
+
 const CHUNK_MAX = 4000;
 const DEDUPE_MAX = 500;
 const MEDIA_FETCH_TIMEOUT_MS = 15_000;
@@ -56,6 +135,13 @@ const PERMANENT_CHANNEL_RESOLVE_ERRORS = new Set([
   "is_archived",
   "method_not_supported_for_channel_type",
 ]);
+const REPLY_GRANT_KEY_PREFIX = "replyGrant:slack";
+const SLACK_TRUSTED_USER_IDS = new Set(
+  (process.env.SLACK_TRUSTED_USER_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean),
+);
 
 type SlackStartOptions = {
   botToken?: string;
@@ -152,6 +238,7 @@ type SlackMessageEvent = {
 type SlackReactionEvent = {
   reaction?: string;
   user?: string;
+  itemUser?: string;
   item?: {
     type?: string;
     channel?: string;
@@ -372,6 +459,7 @@ function parseReactionEvent(input: unknown): SlackReactionEvent | undefined {
   return {
     reaction: typeof value.reaction === "string" ? value.reaction : undefined,
     user: typeof value.user === "string" ? value.user : undefined,
+    itemUser: typeof value.item_user === "string" ? value.item_user : undefined,
     item,
   };
 }
@@ -531,17 +619,20 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
 
   const startedAt = Date.now();
   const threadTs = extractThreadTs(message);
-  const context = await resolveSlackContext(message.channel, message.channel_type, threadTs);
+  const effectiveThreadTs = threadTs ?? (kind === "mention" ? message.ts : undefined);
+  const context = await resolveSlackContext(message.channel, message.channel_type, effectiveThreadTs);
   const isDm = message.channel_type === "im" || message.channel.startsWith("D");
   const channelName = isDm ? undefined : await resolveChannelName(message.channel);
   const isAllowedUser = allowedUserId ? message.user === allowedUserId : false;
   const isImportantChannel = !isDm && isImportantSlackChannel(message.channel, channelName);
-  const isInvoke = (isDm && isAllowedUser)
+  let replyGrantShouldPost = false;
+  const isInvoke = () => (isDm && isAllowedUser)
+    || replyGrantShouldPost
     || kind === "mention"
     || (threadTs && mentionThreads.has(threadTs));
 
   if (kind === "mention" && message.channel && message.ts) {
-    const threadKey = threadTs ?? message.ts;
+    const threadKey = effectiveThreadTs ?? message.ts;
     mentionThreads.add(threadKey);
     if (mentionThreads.size > 200) {
       const first = mentionThreads.values().next().value;
@@ -551,16 +642,74 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
 
   const userLabel = await resolveUserLabel(message.user);
 
-  // ADR-0131/0210: Slack routing.
-  // Invoke: Joel DM, @mentions, and tracked mention threads.
+  const activeGrant = !isDm && effectiveThreadTs ? await readReplyGrant(message.channel, effectiveThreadTs) : undefined;
+
+  if (!isDm && effectiveThreadTs && (kind === "mention" || activeGrant)) {
+    const policy = buildSlackPolicy(allowedUserId, [
+      ...importantChannelIds,
+      ...(isImportantChannel ? [message.channel] : []),
+    ]);
+    const routingEvent: SlackMentionEvent = {
+      platform: "slack",
+      channelId: message.channel,
+      threadTs: effectiveThreadTs,
+      messageTs: message.ts,
+      senderUserId: message.user,
+      senderRole: roleForSlackUser(message.user, allowedUserId),
+      text,
+      botMentioned: kind === "mention",
+      isJoelOriginated: isAllowedUser,
+      now: Date.now(),
+    };
+    const intents = routeSlackMention({ event: routingEvent, policy, activeGrant });
+    const shouldPost = intents.some((intent) => intent.type === "postPublicReply");
+
+    if (!shouldPost) {
+      await pushSlackMentionTelegramAlert({
+        channelId: message.channel,
+        threadTs: effectiveThreadTs,
+        userLabel,
+        text,
+        grantActive: Boolean(activeGrant),
+        reason: intents.map((intent) => intent.type === "recordOtel" ? intent.action : `${intent.type}:${intent.reason}`).join(", "),
+      });
+      void emitGatewayOtel({
+        level: "info",
+        component: "slack-channel",
+        action: "slack.mention.approval_requested",
+        success: true,
+        duration_ms: Date.now() - startedAt,
+        metadata: {
+          channelId: message.channel,
+          threadTs: effectiveThreadTs,
+          userId: message.user,
+          intentTypes: intents.map((intent) => intent.type),
+        },
+      });
+      return;
+    }
+
+    replyGrantShouldPost = true;
+
+    if (intents.some((intent) => intent.type === "createGrant")) {
+      const invokerUserIds = [...new Set([message.user, ...extractMentionedUserIds(message.text ?? "")])]
+        .filter((userId) => userId !== allowedUserId && userId !== botUserId);
+      await writeReplyGrant(createReplyGrantFromEvent(routingEvent, allowedUserId ?? message.user, invokerUserIds));
+    } else if (activeGrant && intents.some((intent) => intent.type === "updateGrant")) {
+      await writeReplyGrant(recordGrantPublicReply(activeGrant, routingEvent.now));
+    }
+  }
+
+  // ADR-0131/0210 + ADR-0244: Slack routing.
+  // Invoke: Joel DM, Joel-authorized @mentions, active Reply Grants, and tracked mention threads.
   // Passive intel: Joel-authored channel messages and messages from selected important channels.
   // Everything else stays quiet to avoid turning Slack into a firehose.
-  if (isInvoke) {
+  if (isInvoke()) {
     const prompt = `${context.prefix} ${userLabel}: ${text}`;
 
     await enqueuePrompt(context.source, prompt, {
       slackChannelId: message.channel,
-      slackThreadTs: threadTs,
+      slackThreadTs: effectiveThreadTs,
       slackUserId: message.user,
       slackTs: message.ts,
       slackEventKind: kind,
@@ -575,7 +724,7 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       metadata: {
         kind,
         channelId: message.channel,
-        threadTs,
+        threadTs: effectiveThreadTs,
         userId: message.user,
         length: text.length,
       },
@@ -589,7 +738,7 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       userName: userLabel,
       text,
       timestamp: Math.floor(Date.now() / 1000),
-      threadId: threadTs,
+      threadId: effectiveThreadTs,
     });
 
     return;
@@ -599,7 +748,7 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       prompt: intelPrompt,
       slackChannelId: message.channel,
       slackChannelName: channelName,
-      slackThreadTs: threadTs,
+      slackThreadTs: effectiveThreadTs,
       slackUserId: message.user,
       slackUserName: userLabel,
       slackTs: message.ts,
@@ -627,7 +776,7 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       metadata: {
         channelId: message.channel,
         channelName,
-        threadTs,
+        threadTs: effectiveThreadTs,
         userId: message.user,
         joelSignal: isAllowedUser,
         importantChannel: isImportantChannel,
@@ -647,7 +796,7 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       userName: userLabel,
       text,
       timestamp: Math.floor(Date.now() / 1000),
-      threadId: threadTs,
+      threadId: effectiveThreadTs,
     });
 
     return;
@@ -700,27 +849,62 @@ async function handleReactionAdded(rawEvent: unknown): Promise<void> {
   const startedAt = Date.now();
   const context = await resolveSlackContext(event.item.channel, undefined, event.item.ts);
   const userLabel = await resolveUserLabel(event.user);
-  const text = `${context.prefix} ${userLabel} reacted :${event.reaction}:`;
 
-  await enqueuePrompt(context.source, text, {
-    slackChannelId: event.item.channel,
-    slackThreadTs: event.item.ts,
-    slackUserId: event.user,
-    slackReaction: event.reaction,
-    slackEventKind: "reaction_added",
+  if (event.reaction !== "joelclaw") {
+    void emitGatewayOtel({
+      level: "debug",
+      component: "slack-channel",
+      action: "slack.reaction.ignored",
+      success: true,
+      metadata: {
+        channelId: event.item.channel,
+        ts: event.item.ts,
+        userId: event.user,
+        reaction: event.reaction,
+      },
+    });
+    return;
+  }
+
+  const grantEvent: SlackMentionEvent = {
+    platform: "slack",
+    channelId: event.item.channel,
+    threadTs: event.item.ts,
+    messageTs: event.item.ts,
+    senderUserId: event.user,
+    senderRole: roleForSlackUser(event.user, allowedUserId),
+    text: `${context.prefix} ${userLabel} reacted :${event.reaction}:`,
+    botMentioned: false,
+    isJoelOriginated: true,
+    now: Date.now(),
+  };
+  const invokerUserIds = event.itemUser && event.itemUser !== allowedUserId && event.itemUser !== botUserId
+    ? [event.itemUser]
+    : [];
+  const grant = createReplyGrantFromEvent(grantEvent, allowedUserId ?? event.user, invokerUserIds);
+  await writeReplyGrant(grant);
+  await pushSlackMentionTelegramAlert({
+    channelId: event.item.channel,
+    threadTs: event.item.ts,
+    userLabel,
+    text: `:${event.reaction}: created Reply Grant for ${event.itemUser ?? "thread"}`,
+    grantActive: true,
+    reason: "reaction-created-grant",
   });
 
   void emitGatewayOtel({
     level: "info",
     component: "slack-channel",
-    action: "slack.reaction.received",
+    action: "slack.reply_grant.created_by_reaction",
     success: true,
     duration_ms: Date.now() - startedAt,
     metadata: {
       channelId: event.item.channel,
       ts: event.item.ts,
       userId: event.user,
+      itemUser: event.itemUser,
       reaction: event.reaction,
+      invokerCount: invokerUserIds.length,
     },
   });
 
