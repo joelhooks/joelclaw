@@ -165,9 +165,9 @@ Objective: ship durable Slack public-reply routing backed by ADR + PRD, implemen
 | Gateway syntax/build checks | `bun build packages/gateway/src/channels/slack.ts --target bun`; `bun build packages/gateway/src/channels/telegram.ts --target bun` passed at 2026-05-21T15:25Z | Done |
 | Gateway deployed/restarted | `joelclaw gateway restart`; post-warmup `joelclaw gateway status` showed healthy Slack/Telegram and pid `32695` | Done |
 | Slack milestone updates | Slack DMs sent after foundation, adapter routing, callbacks, functional test/restart, Send Suggested | Done |
-| End-to-end manual canary | API-authored Slack canary was posted/deleted but did not exercise human Slack event path; slog recorded weak evidence | Blocked pending real human/non-bot Slack event |
+| End-to-end canary | Synthetic Redis→gateway→Slack canary posted root `1779377477.787609`, gateway replied in thread `1779377534.167019`, Redis grant showed `repliesUsed: 1`, then root/replies/grant were deleted; API-authored human-mention canary remains weak for Slack app-mention ingress | Done for gateway egress + grant accounting; human Slack ingress still recommended |
 
 Open gaps before completion:
 
-1. Strong E2E proof from a real human/non-bot Slack event in `#brain-joel` or equivalent.
+1. Strong human-ingress E2E proof from a real human/non-bot Slack event in `#brain-joel` or equivalent is still recommended, but the live egress/grant-accounting path has been canaried with real Slack posts and Redis state.
 2. Gateway-wide TypeScript still has unrelated pre-existing daemon errors (`AgentSession.newSession`, optional telemetry fields), so gateway verification currently relies on targeted Bun bundle checks for edited adapters plus package tsc.
