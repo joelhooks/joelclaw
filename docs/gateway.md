@@ -2,6 +2,12 @@
 
 Canonical notes for the always-on gateway daemon (`packages/gateway`) and its automated health checks.
 
+## Project Threads and public channel replies
+
+Use **Project Threads** in `#brain-joel` as the operator-facing workroom for bounded system objectives that need milestone updates, approvals, canary evidence, or handoffs. Project Threads keep implementation chatter out of incident/public threads.
+
+A Project Thread does **not** authorize public replies. It is coordination space only.
+
 ## Public channel replies: Reply Grants (ADR-0244)
 
 Slack public participation is governed by **Reply Grants**, not ambient channel monitoring.
