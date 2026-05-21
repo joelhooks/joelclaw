@@ -158,7 +158,7 @@ Objective: ship durable Slack public-reply routing backed by ADR + PRD, implemen
 | Redis Reply Grant runtime state | Slack adapter writes `replyGrant:slack:<channel>:<thread>` with TTL; Telegram approval callback writes same key | Done |
 | Telegram approval UI | Alert includes `Send suggested`, `Edit first`, `Grant`, `Ignore`, `Open thread`; `replygrant:*` callback handler in `packages/gateway/src/channels/telegram.ts` | Done for v1; `Edit first` drafts privately for Joel instead of sending public Slack |
 | Non-Joel mention without grant must not post publicly | `routeSlackMention` unit test expects notify/draft/otel and no `postPublicReply`; Slack adapter returns before enqueue when no post intent | Done by unit/adapter evidence; needs live human event confirmation |
-| Active grant follow-up | Functional test covers no-grant mention → grant decision → active follow-up → `postPublicReply` intent | Done by functional test |
+| Active grant follow-up | Functional test covers no-grant mention → grant decision → active follow-up → `postPublicReply` intent; Slack send success updates grant usage and sends Telegram receipt with Close Grant/Open Thread | Done by functional test + adapter code |
 | `:joelclaw:` reaction creates grant | `handleReactionAdded` writes Reply Grant only for `joelclaw` reaction and ignores other reactions | Done by adapter code; no live canary yet |
 | Unit tests | `pnpm --filter @joelclaw/channel-routing test` → 13 tests passing at 2026-05-21T15:25Z | Done |
 | Type checks | `pnpm --filter @joelclaw/channel-routing exec tsc --noEmit` passed at 2026-05-21T15:25Z | Done for package |

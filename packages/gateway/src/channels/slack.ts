@@ -728,8 +728,6 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       const invokerUserIds = [...new Set([message.user, ...extractMentionedUserIds(message.text ?? "")])]
         .filter((userId) => userId !== allowedUserId && userId !== botUserId);
       await writeReplyGrant(createReplyGrantFromEvent(routingEvent, allowedUserId ?? message.user, invokerUserIds));
-    } else if (activeGrant && intents.some((intent) => intent.type === "updateGrant")) {
-      await writeReplyGrant(recordGrantPublicReply(activeGrant, routingEvent.now));
     }
   }
 
@@ -1241,6 +1239,35 @@ async function sendSlackChannel(
         metadata: {
           channelId: target.channelId,
           reaction: options.reaction,
+        },
+      });
+    }
+  }
+
+  if (target.threadTs) {
+    const grant = await readReplyGrant(target.channelId, target.threadTs);
+    if (grant) {
+      const updatedGrant = recordGrantPublicReply(grant, Date.now());
+      await writeReplyGrant(updatedGrant);
+      const threadUrl = slackThreadUrl(target.channelId, target.threadTs);
+      await pushGatewayEvent({
+        type: "slack.reply_grant.receipt",
+        source: `slack:${target.channelId}:${target.threadTs}`,
+        payload: {
+          immediateTelegram: true,
+          telegramOnly: true,
+          telegramFormat: "plain",
+          telegramMessage: [
+            "Slack Reply Grant used",
+            `${updatedGrant.repliesUsed}/${updatedGrant.maxReplies} replies used`,
+            threadUrl,
+          ].join("\n"),
+          telegramButtons: [
+            [
+              { text: "Close Grant", action: `replygrant:close:${target.channelId}:${target.threadTs}` },
+              { text: "Open thread", url: threadUrl },
+            ],
+          ],
         },
       });
     }

@@ -1328,11 +1328,28 @@ async function startTelegramChannel(
     console.log("[gateway:telegram] callback_query", { data, chatId, messageId });
 
     if (data.startsWith("replygrant:")) {
-      const [, actionName, approvalId] = data.split(":");
+      const [, actionName, approvalId, ...restParts] = data.split(":");
       try {
         const { getRedisClient, pushGatewayEvent } = await import("./redis");
         const redis = getRedisClient();
         if (!redis || !approvalId) throw new Error("reply grant approval state unavailable");
+        if (actionName === "close") {
+          const threadTs = restParts.join(":");
+          if (!threadTs) throw new Error("reply grant close missing thread");
+          await redis.del(`replyGrant:slack:${approvalId}:${threadTs}`);
+          await ctx.answerCallbackQuery({ text: "Grant closed" });
+          if (chatId && messageId) {
+            await bot!.api.editMessageReplyMarkup(chatId, messageId, { reply_markup: { inline_keyboard: [] } }).catch(() => {});
+          }
+          void emitGatewayOtel({
+            level: "info",
+            component: "telegram-channel",
+            action: "reply_grant.closed",
+            success: true,
+            metadata: { channelId: approvalId, threadTs },
+          });
+          return;
+        }
         const key = `replyGrantApproval:${approvalId}`;
         const raw = await redis.get(key);
         if (!raw) throw new Error("reply grant approval expired");
