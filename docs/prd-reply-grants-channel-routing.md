@@ -143,3 +143,32 @@ any
 4. Telegram approval UI.
 5. Slack functional tests with mocked adapters.
 6. Manual canary in `#brain-joel` with Joel notified in Slack at each milestone.
+
+## Implementation Audit — 2026-05-21
+
+Objective: ship durable Slack public-reply routing backed by ADR + PRD, implemented with Reply Grants, tested at unit/functional/E2E levels, and keep Joel updated in Slack.
+
+| Requirement | Evidence | Status |
+| --- | --- | --- |
+| Write ADR | `docs/decisions/0244-reply-grants-channel-routing.md`; committed in `97821811` | Done |
+| Write full PRD | `docs/prd-reply-grants-channel-routing.md`; committed in `97821811`; this audit records live status | Done |
+| Lock in domain language | `CONTEXT.md` terms for Reply Grant, Invoker Allowlist, Channel Participation Policy; commits `aa4726f0`, `8237831f` | Done |
+| Implement pure policy/state package | `packages/channel-routing` with CASL policy, XState machine shell, grant helpers, approval resolver; commits `97821811`, `64bb5eb4` | Done |
+| Gateway Slack routing adapter | `packages/gateway/src/channels/slack.ts`; non-DM mentions and active grants route through `routeSlackMention`; commits `4b51b06a`, `c863970f`, `b00b9261` | Done |
+| Redis Reply Grant runtime state | Slack adapter writes `replyGrant:slack:<channel>:<thread>` with TTL; Telegram approval callback writes same key | Done |
+| Telegram approval UI | Alert includes `Send suggested`, `Grant`, `Ignore`, `Open thread`; `replygrant:*` callback handler in `packages/gateway/src/channels/telegram.ts` | Partial: `Edit first` not implemented |
+| Non-Joel mention without grant must not post publicly | `routeSlackMention` unit test expects notify/draft/otel and no `postPublicReply`; Slack adapter returns before enqueue when no post intent | Done by unit/adapter evidence; needs live human event confirmation |
+| Active grant follow-up | Functional test covers no-grant mention → grant decision → active follow-up → `postPublicReply` intent | Done by functional test |
+| `:joelclaw:` reaction creates grant | `handleReactionAdded` writes Reply Grant only for `joelclaw` reaction and ignores other reactions | Done by adapter code; no live canary yet |
+| Unit tests | `pnpm --filter @joelclaw/channel-routing test` → 13 tests passing at 2026-05-21T15:25Z | Done |
+| Type checks | `pnpm --filter @joelclaw/channel-routing exec tsc --noEmit` passed at 2026-05-21T15:25Z | Done for package |
+| Gateway syntax/build checks | `bun build packages/gateway/src/channels/slack.ts --target bun`; `bun build packages/gateway/src/channels/telegram.ts --target bun` passed at 2026-05-21T15:25Z | Done |
+| Gateway deployed/restarted | `joelclaw gateway restart`; post-warmup `joelclaw gateway status` showed healthy Slack/Telegram and pid `32695` | Done |
+| Slack milestone updates | Slack DMs sent after foundation, adapter routing, callbacks, functional test/restart, Send Suggested | Done |
+| End-to-end manual canary | API-authored Slack canary was posted/deleted but did not exercise human Slack event path; slog recorded weak evidence | Blocked pending real human/non-bot Slack event |
+
+Open gaps before completion:
+
+1. Strong E2E proof from a real human/non-bot Slack event in `#brain-joel` or equivalent.
+2. `Edit first` approval path from the PRD remains unimplemented. Current safe substitute is `Send suggested` / `Grant` / `Ignore` / `Open thread`.
+3. Gateway-wide TypeScript still has unrelated pre-existing daemon errors (`AgentSession.newSession`, optional telemetry fields), so gateway verification currently relies on targeted Bun bundle checks for edited adapters plus package tsc.
