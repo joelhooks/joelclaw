@@ -1,6 +1,6 @@
-import { readdir, readFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { Effect, ParseResult, Schema } from "effect"
 import { callMcpTool, fetchMailApi, getAgentMailUrl } from "../../lib/agent-mail"
 import { type CapabilityPort, capabilityError } from "../contract"
@@ -9,6 +9,7 @@ const DEFAULT_MAIL_RESERVE_TTL_SECONDS = 900
 const MIN_MAIL_RESERVE_TTL_SECONDS = 60
 const DEFAULT_MAIL_RENEW_EXTEND_SECONDS = 900
 const DEFAULT_AGENT_MAIL_GIT_MAILBOX_REPO = join(homedir(), ".mcp_agent_mail_git_mailbox_repo")
+const AGENT_ALIAS_PATH = join(homedir(), ".joelclaw", "mail-agent-aliases.json")
 
 const MailStatusArgsSchema = Schema.Struct({})
 const MailStatusResultSchema = Schema.Unknown
@@ -224,6 +225,52 @@ function extractMessages(input: unknown): Record<string, unknown>[] {
   }
 
   return []
+}
+
+function aliasKey(project: string, requestedAgent: string): string {
+  return `${project}\t${requestedAgent.toLowerCase()}`
+}
+
+function canonicalAgentFromRegisterResult(value: unknown): string | undefined {
+  const normalized = normalizeToolResult(value)
+  const record = asRecord(normalized)
+  if (!record) return undefined
+  return asString(record.name)
+    ?? asString(asRecord(record.agent)?.name)
+    ?? asString(asRecord(record.result)?.name)
+}
+
+async function readAgentAliases(): Promise<Record<string, string>> {
+  try {
+    const raw = await readFile(AGENT_ALIAS_PATH, "utf8")
+    const parsed = JSON.parse(raw) as unknown
+    const record = asRecord(parsed)
+    if (!record) return {}
+    const aliases: Record<string, string> = {}
+    for (const [key, value] of Object.entries(record)) {
+      if (typeof value === "string" && value.trim()) aliases[key] = value.trim()
+    }
+    return aliases
+  } catch {
+    return {}
+  }
+}
+
+async function writeAgentAliases(aliases: Record<string, string>): Promise<void> {
+  await mkdir(dirname(AGENT_ALIAS_PATH), { recursive: true })
+  await writeFile(AGENT_ALIAS_PATH, `${JSON.stringify(aliases, null, 2)}\n`, "utf8")
+}
+
+async function rememberAgentAlias(project: string, requestedAgent: string, canonicalAgent: string): Promise<void> {
+  if (!requestedAgent.trim() || !canonicalAgent.trim()) return
+  const aliases = await readAgentAliases()
+  aliases[aliasKey(project, requestedAgent)] = canonicalAgent
+  await writeAgentAliases(aliases)
+}
+
+async function resolveAgentAlias(project: string, requestedAgent: string): Promise<string> {
+  const aliases = await readAgentAliases()
+  return aliases[aliasKey(project, requestedAgent)] ?? requestedAgent
 }
 
 function messageIdOf(message: Record<string, unknown>): string | undefined {
@@ -681,10 +728,17 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
             Effect.map(normalizeToolResult),
             Effect.mapError(mapMailError("MAIL_REGISTER_FAILED", "Verify project/agent and mcp_agent_mail availability"))
           )
+          const canonicalAgent = canonicalAgentFromRegisterResult(result)
+          if (canonicalAgent) {
+            yield* Effect.tryPromise(() => rememberAgentAlias(args.project, args.agent, canonicalAgent)).pipe(
+              Effect.mapError(mapMailError("MAIL_REGISTER_ALIAS_FAILED", "Verify ~/.joelclaw is writable"))
+            )
+          }
 
           return {
             project: args.project,
             agent: args.agent,
+            canonicalAgent,
             program: args.program,
             model: args.model,
             task: args.task,
@@ -693,11 +747,17 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
         }
         case "send": {
           const args = yield* decodeArgs("send", rawArgs)
+          const fromAgent = yield* Effect.tryPromise(() => resolveAgentAlias(args.project, args.from)).pipe(
+            Effect.mapError(mapMailError("MAIL_ALIAS_RESOLVE_FAILED", "Verify ~/.joelclaw/mail-agent-aliases.json is readable"))
+          )
+          const toAgent = yield* Effect.tryPromise(() => resolveAgentAlias(args.project, args.to)).pipe(
+            Effect.mapError(mapMailError("MAIL_ALIAS_RESOLVE_FAILED", "Verify ~/.joelclaw/mail-agent-aliases.json is readable"))
+          )
           const result = yield* Effect.tryPromise(() =>
             callMcpTool("send_message", {
               project_key: args.project,
-              sender_name: args.from,
-              to: [args.to],
+              sender_name: fromAgent,
+              to: [toAgent],
               subject: args.subject,
               body_md: args.body,
             })
@@ -709,7 +769,9 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
           return {
             project: args.project,
             from: args.from,
+            canonicalFrom: fromAgent,
             to: args.to,
+            canonicalTo: toAgent,
             subject: args.subject,
             body: args.body,
             result,
@@ -717,10 +779,13 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
         }
         case "inbox": {
           const args = yield* decodeArgs("inbox", rawArgs)
+          const agentName = yield* Effect.tryPromise(() => resolveAgentAlias(args.project, args.agent)).pipe(
+            Effect.mapError(mapMailError("MAIL_ALIAS_RESOLVE_FAILED", "Verify ~/.joelclaw/mail-agent-aliases.json is readable"))
+          )
           const raw = yield* Effect.tryPromise(() =>
             callMcpTool("fetch_inbox", {
               project_key: args.project,
-              agent_name: args.agent,
+              agent_name: agentName,
             })
           ).pipe(
             Effect.mapError(mapMailError("MAIL_INBOX_FAILED", "Verify project/agent and server availability"))
@@ -733,6 +798,7 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
           return {
             project: args.project,
             agent: args.agent,
+            canonicalAgent: agentName,
             unread_only: args.unread,
             total_messages: allMessages.length,
             unread_messages: allMessages.filter(isUnreadMessage).length,
@@ -743,10 +809,13 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
         }
         case "read": {
           const args = yield* decodeArgs("read", rawArgs)
+          const agentName = yield* Effect.tryPromise(() => resolveAgentAlias(args.project, args.agent)).pipe(
+            Effect.mapError(mapMailError("MAIL_ALIAS_RESOLVE_FAILED", "Verify ~/.joelclaw/mail-agent-aliases.json is readable"))
+          )
           const marked = yield* Effect.tryPromise(() =>
             callMcpTool("mark_message_read", {
               project_key: args.project,
-              agent_name: args.agent,
+              agent_name: agentName,
               message_id: args.id,
             })
           ).pipe(
@@ -757,7 +826,7 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
           const inboxRaw = yield* Effect.tryPromise(() =>
             callMcpTool("fetch_inbox", {
               project_key: args.project,
-              agent_name: args.agent,
+              agent_name: agentName,
             })
           ).pipe(
             Effect.mapError(mapMailError("MAIL_READ_FAILED", "Verify message id and retry"))
@@ -769,6 +838,7 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
           return {
             project: args.project,
             agent: args.agent,
+            canonicalAgent: agentName,
             message_id: args.id,
             marked_read: marked,
             message,
@@ -797,10 +867,13 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
             )
           }
 
+          const agentName = yield* Effect.tryPromise(() => resolveAgentAlias(args.project, args.agent)).pipe(
+            Effect.mapError(mapMailError("MAIL_ALIAS_RESOLVE_FAILED", "Verify ~/.joelclaw/mail-agent-aliases.json is readable"))
+          )
           const result = yield* Effect.tryPromise(() =>
             callMcpTool("file_reservation_paths", {
               project_key: args.project,
-              agent_name: args.agent,
+              agent_name: agentName,
               paths: args.paths,
               ttl_seconds: ttlSeconds,
             })
@@ -812,6 +885,7 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
           return {
             project: args.project,
             agent: args.agent,
+            canonicalAgent: agentName,
             paths: args.paths,
             ttlSeconds,
             result,
@@ -831,9 +905,12 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
             )
           }
 
+          const agentName = yield* Effect.tryPromise(() => resolveAgentAlias(args.project, args.agent)).pipe(
+            Effect.mapError(mapMailError("MAIL_ALIAS_RESOLVE_FAILED", "Verify ~/.joelclaw/mail-agent-aliases.json is readable"))
+          )
           const payload: Record<string, unknown> = {
             project_key: args.project,
-            agent_name: args.agent,
+            agent_name: agentName,
             extend_seconds: extendSeconds,
           }
           if (args.paths.length > 0) payload.paths = args.paths
@@ -848,6 +925,7 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
           return {
             project: args.project,
             agent: args.agent,
+            canonicalAgent: agentName,
             paths: args.paths,
             extendSeconds,
             result,
@@ -865,7 +943,10 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
             )
           }
 
-          const payload = buildReleaseReservationPayload(args)
+          const agentName = yield* Effect.tryPromise(() => resolveAgentAlias(args.project, args.agent)).pipe(
+            Effect.mapError(mapMailError("MAIL_ALIAS_RESOLVE_FAILED", "Verify ~/.joelclaw/mail-agent-aliases.json is readable"))
+          )
+          const payload = buildReleaseReservationPayload({ ...args, agent: agentName })
 
           const result = yield* Effect.tryPromise(() =>
             callMcpTool("release_file_reservations", payload)
@@ -877,6 +958,7 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
           return {
             project: args.project,
             agent: args.agent,
+            canonicalAgent: agentName,
             all: args.all,
             paths: args.paths,
             result,
@@ -1025,5 +1107,7 @@ export const __mailAdapterTestUtils = {
   messageMatchesQuery,
   filterProjectMessagesByQuery,
   searchResultLooksDegraded,
+  aliasKey,
+  canonicalAgentFromRegisterResult,
   messageIdOf,
 }

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { __mailAdapterTestUtils } from "./mcp-agent-mail"
 
 const {
+  aliasKey,
   buildReleaseReservationPayload,
+  canonicalAgentFromRegisterResult,
   filterProjectMessagesByQuery,
   messageIdOf,
   normalizeProjectSlug,
@@ -11,6 +13,13 @@ const {
 } = __mailAdapterTestUtils
 
 describe("mcp-agent-mail search fallback helpers", () => {
+  test("maps requested session handles to canonical mail agent names", () => {
+    expect(aliasKey("/Users/joel/Code/joelhooks/joelclaw", "StubbornFerret"))
+      .toBe("/Users/joel/Code/joelhooks/joelclaw\tstubbornferret")
+    expect(canonicalAgentFromRegisterResult({ name: "JadeLake" })).toBe("JadeLake")
+    expect(canonicalAgentFromRegisterResult({ agent: { name: "JadeLake" } })).toBe("JadeLake")
+  })
+
   test("normalizes project paths into stable slugs", () => {
     expect(normalizeProjectSlug("/Users/joel/Code/joelhooks/joelclaw")).toBe("users-joel-code-joelhooks-joelclaw")
   })
