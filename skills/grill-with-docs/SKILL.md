@@ -92,7 +92,7 @@ During a grill, if the emerging plan crosses the Project Thread threshold, ask o
 
 > Recommended: create/use a `#brain-joel` Project Thread for this objective so milestones and evidence stay out of public/incident threads. Approve?
 
-If approved, create or reuse a `#brain-joel` Project Thread, then carry the Project Thread URL/ID into the PRD (`project_thread_url`) or working notes. Post milestones, blockers, approval requests, and canary evidence there. If declined, continue in the current conversation and keep updates concise.
+If approved, create or reuse a `#brain-joel` Project Thread. When creating one, the root message must mention Joel directly (`<@U030BJ3CK>`) and state the bounded objective. Then carry the Project Thread URL/ID into the PRD (`project_thread_url`) or working notes. Post milestones, blockers, approval requests, and canary evidence there. If declined, continue in the current conversation and keep updates concise.
 
 ### Offer ADRs sparingly
 

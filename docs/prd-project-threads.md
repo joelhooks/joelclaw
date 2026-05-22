@@ -19,6 +19,7 @@ Implement Project Threads as the standard operator-facing workroom for bounded j
 - PRDs can store `project_thread_url` metadata.
 - Gateway documentation clearly separates Project Threads from Reply Grants.
 - A real `#brain-joel` Project Thread exists for this work and is referenced here.
+- Project Thread root messages mention Joel directly (`<@U030BJ3CK>`).
 - Milestone updates for this work are posted in that Project Thread.
 
 ## Non-goals
@@ -42,10 +43,10 @@ Recommend a Project Thread when a grill or plan crosses any of these:
 1. Agent detects threshold during `grill-with-docs`.
 2. Agent asks: “Recommended: create/use a `#brain-joel` Project Thread for this objective so milestones and evidence stay out of public/incident threads. Approve?”
 3. If approved, agent creates or reuses a `#brain-joel` thread.
-4. Agent stores the Slack thread URL in the PRD or working artifact.
-5. Agent posts milestone updates, blockers, approval requests, and canary evidence in that thread.
-6. Agent keeps Reply Grants separate for public/external channel replies.
-
+4. When creating a thread, the root message mentions Joel directly (`<@U030BJ3CK>`) and states the bounded objective.
+5. Agent stores the Slack thread URL in the PRD or working artifact.
+6. Agent posts milestone updates, blockers, approval requests, and canary evidence in that thread.
+7. Agent keeps Reply Grants separate for public/external channel replies.
 ## Artifact fields
 
 When a PRD exists, include:
@@ -62,6 +63,7 @@ When no PRD exists, include the Project Thread URL in the handoff/final audit.
 - Verify `skills/grill-with-docs/SKILL.md` contains the threshold and approval prompt.
 - Verify `docs/gateway.md` distinguishes Project Threads from Reply Grants.
 - Verify this PRD includes a valid `project_thread_url`.
+- Verify the Project Thread root message mentions Joel directly.
 - Verify a milestone update was posted in the Project Thread.
 
 ## Current Project Thread

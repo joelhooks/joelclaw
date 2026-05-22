@@ -39,7 +39,7 @@ ADR-0244 introduced **Reply Grants** for public replies. Reply Grants solve perm
 
 Use **Project Threads** as the standard operator-facing Slack workroom for bounded joelclaw implementation efforts.
 
-A Project Thread is a User-approved Slack thread in `#brain-joel` for one bounded objective. Agents post milestone updates, blockers, approvals, canary evidence, and handoff links there. A Project Thread is coordination space only; it does **not** grant permission to post into any public/customer/external thread.
+A Project Thread is a User-approved Slack thread in `#brain-joel` for one bounded objective. The root message must mention Joel directly (`<@U030BJ3CK>`) so the workroom is visible and actionable from creation. Agents post milestone updates, blockers, approvals, canary evidence, and handoff links there. A Project Thread is coordination space only; it does **not** grant permission to post into any public/customer/external thread.
 
 `grill-with-docs` must recommend creating or reusing a Project Thread when the emerging plan crosses any threshold:
 
@@ -83,6 +83,7 @@ V1 is process + documentation + skill behavior:
 - Project Thread domain language lives in `CONTEXT.md`.
 - `grill-with-docs` asks for approval when the threshold is crossed.
 - PRDs include `project_thread_url` metadata when available.
+- Project Thread root messages mention Joel directly.
 - Gateway docs explain Project Threads versus Reply Grants.
 
 Future automation may add a `joelclaw gateway project-thread create|reuse` command, but V1 does not require a new command surface.

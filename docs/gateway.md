@@ -8,7 +8,7 @@ Use **Project Threads** in `#brain-joel` as the operator-facing workroom for bou
 
 A Project Thread does **not** authorize public replies. It is coordination space only.
 
-When `grill-with-docs` crosses the Project Thread threshold, ask for operator approval, create or reuse a `#brain-joel` thread, and store the Slack URL in the PRD (`project_thread_url`) or handoff artifact. Route milestones, blockers, approvals, and canary evidence to that thread.
+When `grill-with-docs` crosses the Project Thread threshold, ask for operator approval, create or reuse a `#brain-joel` thread, and store the Slack URL in the PRD (`project_thread_url`) or handoff artifact. New Project Thread root messages must mention Joel directly (`<@U030BJ3CK>`) and state the bounded objective. Route milestones, blockers, approvals, and canary evidence to that thread.
 
 See `docs/decisions/0245-project-threads-operator-workrooms.md` and `docs/prd-project-threads.md`.
 
