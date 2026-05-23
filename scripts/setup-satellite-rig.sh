@@ -8,6 +8,7 @@ set -euo pipefail
 REPO_URL="${JOELCLAW_REPO_URL:-git@github.com:joelhooks/joelclaw.git}"
 REPO_DIR="${JOELCLAW_REPO_DIR:-$HOME/Code/joelhooks/joelclaw}"
 CENTRAL_SSH="${JOELCLAW_CENTRAL_SSH:-joel@panda}"
+SKIP_GIT_SYNC="${JOELCLAW_SKIP_GIT_SYNC:-false}"
 
 say() { printf '\n==> %s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1; }
@@ -53,6 +54,8 @@ say "materializing joelclaw repo"
 mkdir -p "$(dirname "$REPO_DIR")"
 if [[ ! -d "$REPO_DIR/.git" ]]; then
   git clone "$REPO_URL" "$REPO_DIR"
+elif [[ "$SKIP_GIT_SYNC" == "true" ]]; then
+  echo "Skipping git sync for existing repo because JOELCLAW_SKIP_GIT_SYNC=true"
 else
   git -C "$REPO_DIR" fetch origin main
   git -C "$REPO_DIR" checkout main
