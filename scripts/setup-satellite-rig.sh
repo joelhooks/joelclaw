@@ -35,6 +35,25 @@ if ! need bun; then
   export PATH="$HOME/.bun/bin:$PATH"
 fi
 
+if ! need node; then
+  say "installing node"
+  NODE_VERSION="${JOELCLAW_NODE_VERSION:-24.13.1}"
+  NODE_ARCH="arm64"
+  if [[ "$(uname -m)" == "x86_64" ]]; then
+    NODE_ARCH="x64"
+  fi
+  NODE_DIR="$HOME/.local/node-v$NODE_VERSION-darwin-$NODE_ARCH"
+  mkdir -p "$HOME/.local"
+  if [[ ! -x "$NODE_DIR/bin/node" ]]; then
+    curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-darwin-$NODE_ARCH.tar.xz" | tar -xJ -C "$HOME/.local"
+  fi
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$NODE_DIR/bin/node" "$HOME/.local/bin/node"
+  ln -sf "$NODE_DIR/bin/npm" "$HOME/.local/bin/npm"
+  ln -sf "$NODE_DIR/bin/npx" "$HOME/.local/bin/npx"
+  export PATH="$HOME/.local/bin:$NODE_DIR/bin:$PATH"
+fi
+
 if ! need pnpm; then
   say "installing pnpm"
   if need corepack; then
