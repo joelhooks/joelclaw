@@ -35,11 +35,17 @@ if ! need bun; then
 fi
 
 if ! need pnpm; then
-  say "enabling pnpm via corepack"
+  say "installing pnpm"
   if need corepack; then
     corepack enable pnpm
-  else
+  elif need npm; then
     npm install -g pnpm
+  elif need bun; then
+    bun install -g pnpm
+    export PATH="$HOME/.bun/bin:$PATH"
+  else
+    echo "Missing pnpm installer: need corepack, npm, or bun" >&2
+    exit 1
   fi
 fi
 
