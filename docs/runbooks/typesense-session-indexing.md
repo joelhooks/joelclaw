@@ -1,6 +1,6 @@
 # Runbook: Typesense session indexing recovery
 
-Use this when Pi sessions, especially `dark-wizard` sessions, stop appearing in Typesense `runs_dev` / `run_chunks_dev`.
+Use this when agent sessions, especially `dark-wizard` Pi/Codex sessions, stop appearing in Typesense `runs_dev` / `run_chunks_dev`.
 
 Backed by ADR-0243. Raw Run blobs are authoritative. Typesense is the rebuildable search index.
 
@@ -52,6 +52,14 @@ joelclaw sessions search "<query>" \
   --source both \
   --machine dark-wizard \
   --ssh-target joel@dark-wizard \
+  --runtime pi \
+  --limit 8
+
+# Codex-derived runs are Typesense-backed; raw fallback still scans Pi JSONL.
+joelclaw sessions search "<query>" \
+  --source typesense \
+  --machine dark-wizard \
+  --runtime codex \
   --limit 8
 ```
 
@@ -288,7 +296,7 @@ Use `--source local` on dark-wizard itself to bypass Typesense and scan raw Pi s
 
 Use `--source ssh` from Panda to bypass Typesense and scan raw Pi session files on dark-wizard over SSH.
 
-Use `--source typesense` to check only `run_chunks_dev`.
+Use `--source typesense` to check only `run_chunks_dev`. Add `--runtime codex` for Codex chunks, `--runtime claude-code` for Claude Code chunks, or `--runtime all` to remove the runtime filter.
 
 Use extraction before spelunking raw JSONL manually:
 

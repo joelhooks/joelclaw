@@ -98,7 +98,9 @@ Shape rules:
 Typesense only:
 
 ```bash
-joelclaw sessions search "<query>" --source typesense --machine dark-wizard --limit 8
+joelclaw sessions search "<query>" --source typesense --machine dark-wizard --runtime pi --limit 8
+joelclaw sessions search "<query>" --source typesense --machine dark-wizard --runtime codex --limit 8
+joelclaw sessions search "<query>" --source typesense --machine all --runtime all --limit 8
 ```
 
 Raw local Pi sessions only, for example on dark-wizard itself:
@@ -116,8 +118,17 @@ joelclaw sessions search "<query>" --source ssh --ssh-target joel@dark-wizard --
 All Machines in Typesense:
 
 ```bash
-joelclaw sessions search "<query>" --source typesense --machine all --limit 8
+joelclaw sessions search "<query>" --source typesense --machine all --runtime all --limit 8
 ```
+
+Runtime filter:
+
+- default: `--runtime pi`
+- Codex: `--runtime codex`
+- Claude Code: `--runtime claude-code`
+- everything: `--runtime all`
+
+Codex raw fallback is not scanned directly yet; Codex capture writes transcript deltas through Central `/api/runs`, then `memory/run.captured` indexes `runs_dev` / `run_chunks_dev`.
 
 ## When results disagree
 
