@@ -11,10 +11,11 @@ import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-aut
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const RUN_CHUNKS_COLLECTION = "run_chunks_dev"
 const SESSION_SEARCH_SOURCES = ["typesense", "ssh", "local", "both"] as const
-const SESSION_SEARCH_RUNTIMES = ["pi", "codex", "claude-code", "all"] as const
+const SESSION_SEARCH_RUNTIMES = ["pi", "codex", "claude-code", "claude", "all"] as const
 
 type SessionSearchSource = typeof SESSION_SEARCH_SOURCES[number]
 type SessionSearchRuntime = typeof SESSION_SEARCH_RUNTIMES[number]
+type LocalTranscriptRuntime = "pi" | "codex" | "claude-code"
 type OptionalText = { _tag: "Some"; value: string } | { _tag: "None" }
 
 function parseOptionalText(value: OptionalText): string | undefined {
@@ -63,6 +64,7 @@ type RemoteSearchResponse = {
     session_id?: string
     started_at?: string
     cwd_key?: string
+    agent_runtime?: string
     mtime?: string
     snippets?: string[]
   }>
@@ -129,7 +131,8 @@ async function searchTypesense(input: {
     exclude_fields: "embedding",
   })
 
-  const filters = input.runtime === "all" ? [] : [`agent_runtime:=${quoteFilterValue(input.runtime)}`]
+  const normalizedRuntime = input.runtime === "claude" ? "claude-code" : input.runtime
+  const filters = normalizedRuntime === "all" ? [] : [`agent_runtime:=${quoteFilterValue(normalizedRuntime)}`]
   if (input.machine && input.machine !== "all") {
     filters.push(`machine_id:=${quoteFilterValue(input.machine)}`)
   }
@@ -179,7 +182,12 @@ args = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
 query = str(args.get("query") or "")
 limit = int(args.get("limit") or 8)
 max_files = int(args.get("max_files") or 2000)
-root = os.path.expanduser(str(args.get("root") or "~/.pi/agent/sessions"))
+roots_arg = args.get("roots") or [{"runtime": "pi", "root": "~/.pi/agent/sessions"}]
+roots = []
+for item in roots_arg:
+    if isinstance(item, dict):
+        roots.append({"runtime": str(item.get("runtime") or "pi"), "root": os.path.expanduser(str(item.get("root") or ""))})
+root = ",".join(item["root"] for item in roots)
 query_l = query.lower()
 terms = [term for term in query_l.split() if term]
 
@@ -230,9 +238,18 @@ def normalize_started(raw):
     except Exception:
         return raw
 
-def session_meta(path):
+def session_meta(path, runtime):
     base = os.path.basename(path)
     stem = base[:-6] if base.endswith(".jsonl") else base
+    if runtime == "codex" and stem.startswith("rollout-"):
+        # rollout-2026-05-25T16-15-18-019e616b-d7ea-7e33-8004-1e47ac0424b0
+        try:
+            rest = stem[len("rollout-"):]
+            date, tail = rest.split("T", 1)
+            hour, minute, second, session_id = tail.split("-", 3)
+            return f"{date}T{hour}:{minute}:{second}Z", session_id
+        except Exception:
+            pass
     if "_" in stem:
         started, session_id = stem.rsplit("_", 1)
     else:
@@ -240,23 +257,30 @@ def session_meta(path):
     return normalize_started(started), session_id
 
 files = []
-for dirpath, _dirnames, filenames in os.walk(root):
-    for name in filenames:
-        if not name.endswith(".jsonl"):
-            continue
-        path = os.path.join(dirpath, name)
-        try:
-            stat = os.stat(path)
-        except OSError:
-            continue
-        files.append((stat.st_mtime, path))
+for root_item in roots:
+    runtime = root_item["runtime"]
+    root_dir = root_item["root"]
+    if not root_dir or not os.path.exists(root_dir):
+        continue
+    for dirpath, _dirnames, filenames in os.walk(root_dir):
+        for name in filenames:
+            if not name.endswith(".jsonl"):
+                continue
+            path = os.path.join(dirpath, name)
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            files.append((stat.st_mtime, runtime, path))
 files.sort(reverse=True)
 
 hits = []
 searched = 0
-for _mtime, path in files[:max_files]:
+for _mtime, runtime, path in files[:max_files]:
     searched += 1
     snippets = []
+    if matches(path):
+        snippets.append(snippet(path))
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as handle:
             for line in handle:
@@ -274,12 +298,13 @@ for _mtime, path in files[:max_files]:
     if not snippets:
         continue
 
-    started, session_id = session_meta(path)
+    started, session_id = session_meta(path, runtime)
     hits.append({
         "path": path,
         "session_id": session_id,
         "started_at": started,
         "cwd_key": os.path.basename(os.path.dirname(path)),
+        "agent_runtime": runtime,
         "mtime": datetime.datetime.fromtimestamp(_mtime, datetime.timezone.utc).isoformat(),
         "snippets": snippets,
     })
@@ -312,17 +337,30 @@ function parseRawSessionSearch(input: {
     startedAt: asString(hit.started_at),
     path: asString(hit.path),
     cwdKey: asString(hit.cwd_key),
+    role: asString(hit.agent_runtime),
     snippets: Array.isArray(hit.snippets) ? hit.snippets.filter((item): item is string => typeof item === "string") : [],
   }))
 
   return { ok: true, found: input.parsed.found ?? hits.length, searchedFiles: input.parsed.searched_files, hits }
 }
 
-function rawSessionPayload(input: { query: string; limit: number; maxFiles: number }): string {
+function rawTranscriptRoots(runtime: SessionSearchRuntime): Array<{ runtime: LocalTranscriptRuntime; root: string }> {
+  const home = process.env.HOME ?? ""
+  const roots = [
+    { runtime: "pi" as const, root: join(home, ".pi", "agent", "sessions") },
+    { runtime: "claude-code" as const, root: join(home, ".claude", "projects") },
+    { runtime: "codex" as const, root: join(home, ".codex", "sessions") },
+  ]
+  const normalized = runtime === "claude" ? "claude-code" : runtime
+  return normalized === "all" ? roots : roots.filter((root) => root.runtime === normalized)
+}
+
+function rawSessionPayload(input: { query: string; limit: number; maxFiles: number; runtime: SessionSearchRuntime }): string {
   return Buffer.from(JSON.stringify({
     query: input.query,
     limit: input.limit,
     max_files: input.maxFiles,
+    roots: rawTranscriptRoots(input.runtime),
   })).toString("base64")
 }
 
@@ -330,6 +368,7 @@ function searchLocal(input: {
   query: string
   limit: number
   machine: string
+  runtime: SessionSearchRuntime
   maxFiles: number
 }): { ok: true; found: number; searchedFiles?: number; hits: SessionHit[] } {
   const proc = spawnSync("python3", ["-", rawSessionPayload(input)], {
@@ -355,6 +394,7 @@ function searchRemote(input: {
   query: string
   limit: number
   sshTarget: string
+  runtime: SessionSearchRuntime
   maxFiles: number
 }): { ok: true; found: number; searchedFiles?: number; hits: SessionHit[] } {
   const proc = spawnSync("ssh", [input.sshTarget, "python3", "-", rawSessionPayload(input)], {
@@ -492,6 +532,12 @@ function kindOf(raw: unknown, text: string): string | undefined {
 function sessionMetaFromPath(path: string): { sessionId?: string; startedAt?: string; cwdKey?: string } {
   const base = path.split("/").pop() ?? path
   const stem = base.endsWith(".jsonl") ? base.slice(0, -6) : base
+  if (path.includes("/.codex/sessions/") && stem.startsWith("rollout-")) {
+    const match = stem.match(/^rollout-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(.+)$/u)
+    if (match) {
+      return { sessionId: match[5], startedAt: `${match[1]}T${match[2]}:${match[3]}:${match[4]}Z`, cwdKey: path.split("/").at(-2) }
+    }
+  }
   const underscore = stem.lastIndexOf("_")
   const rawStarted = underscore >= 0 ? stem.slice(0, underscore) : undefined
   const sessionId = underscore >= 0 ? stem.slice(underscore + 1) : stem
@@ -504,7 +550,6 @@ function sessionMetaFromPath(path: string): { sessionId?: string; startedAt?: st
 
 function findSessionPath(idOrPath: string): string {
   if (existsSync(idOrPath)) return idOrPath
-  const root = join(process.env.HOME ?? "", ".pi", "agent", "sessions")
   const matches: string[] = []
   function walk(dir: string): void {
     for (const name of readdirSync(dir)) {
@@ -514,8 +559,10 @@ function findSessionPath(idOrPath: string): string {
       else if (name.endsWith(".jsonl") && path.includes(idOrPath)) matches.push(path)
     }
   }
-  if (existsSync(root)) walk(root)
-  if (matches.length === 0) throw new Error(`No local session transcript found for ${idOrPath}`)
+  for (const { root } of rawTranscriptRoots("all")) {
+    if (existsSync(root)) walk(root)
+  }
+  if (matches.length === 0) throw new Error(`No local Pi/Claude/Codex session transcript found for ${idOrPath}`)
   matches.sort()
   return matches.at(-1) ?? matches[0]
 }
@@ -743,7 +790,6 @@ function parseSinceMs(input: string): number {
 }
 
 function listLocalSessionFiles(maxFiles: number, since: string): string[] {
-  const root = join(process.env.HOME ?? "", ".pi", "agent", "sessions")
   const cutoff = Date.now() - parseSinceMs(since)
   const files: Array<{ path: string; mtime: number }> = []
   function walk(dir: string): void {
@@ -754,7 +800,9 @@ function listLocalSessionFiles(maxFiles: number, since: string): string[] {
       else if (name.endsWith(".jsonl") && stat.mtimeMs >= cutoff) files.push({ path, mtime: stat.mtimeMs })
     }
   }
-  if (existsSync(root)) walk(root)
+  for (const { root } of rawTranscriptRoots("all")) {
+    if (existsSync(root)) walk(root)
+  }
   return files.sort((a, b) => b.mtime - a.mtime).slice(0, maxFiles).map((file) => file.path)
 }
 
@@ -1029,7 +1077,7 @@ const searchQueryArg = Args.text({ name: "query" }).pipe(
 
 const sourceOpt = Options.choice("source", SESSION_SEARCH_SOURCES).pipe(
   Options.withDefault("both" as SessionSearchSource),
-  Options.withDescription("Search source: Typesense derived chunks, local raw Pi sessions, SSH raw Pi sessions, or both")
+  Options.withDescription("Search source: Typesense derived chunks, local raw Pi/Claude/Codex sessions, SSH raw sessions, or both")
 )
 
 const machineOpt = Options.text("machine").pipe(
@@ -1038,8 +1086,8 @@ const machineOpt = Options.text("machine").pipe(
 )
 
 const runtimeOpt = Options.choice("runtime", SESSION_SEARCH_RUNTIMES).pipe(
-  Options.withDefault("pi" as SessionSearchRuntime),
-  Options.withDescription("Agent runtime filter for Typesense results: pi, codex, claude-code, or all")
+  Options.withDefault("all" as SessionSearchRuntime),
+  Options.withDescription("Agent runtime filter for Typesense and raw transcript roots: pi, codex, claude-code/claude, or all")
 )
 
 const sshTargetOpt = Options.text("ssh-target").pipe(
@@ -1055,7 +1103,7 @@ const limitOpt = Options.integer("limit").pipe(
 
 const maxFilesOpt = Options.integer("max-files").pipe(
   Options.withDefault(2000),
-  Options.withDescription("Maximum remote .jsonl files to scan over SSH")
+  Options.withDescription("Maximum raw .jsonl files to scan")
 )
 
 const extractOpt = Options.boolean("extract").pipe(
@@ -1166,10 +1214,10 @@ const searchCmd = Command.make(
           })
           : undefined
         const local = sources.includes("local")
-          ? searchLocal({ query, limit, machine, maxFiles })
+          ? searchLocal({ query, limit, machine, runtime, maxFiles })
           : undefined
         const remote = sources.includes("ssh")
-          ? searchRemote({ query, limit, sshTarget, maxFiles })
+          ? searchRemote({ query, limit, sshTarget, runtime, maxFiles })
           : undefined
 
         const hits = mergeHits(typesense?.hits ?? [], [...(local?.hits ?? []), ...(remote?.hits ?? [])], limit)
@@ -1205,12 +1253,12 @@ const searchCmd = Command.make(
             description: "Search Central Typesense session chunks only",
           },
           {
-            command: `sessions search "${query.replace(/"/g, "\\\"")}" --source local --machine ${machine} --limit ${limit}`,
-            description: "Search raw local Pi session files",
+            command: `sessions search "${query.replace(/"/g, "\\\"")}" --source local --machine ${machine} --runtime all --limit ${limit}`,
+            description: "Search raw local Pi/Claude/Codex session files",
           },
           {
-            command: `sessions search "${query.replace(/"/g, "\\\"")}" --source ssh --ssh-target ${sshTarget} --limit ${limit}`,
-            description: "Search raw remote Pi session files over SSH",
+            command: `sessions search "${query.replace(/"/g, "\\\"")}" --source ssh --ssh-target ${sshTarget} --runtime all --limit ${limit}`,
+            description: "Search raw remote Pi/Claude/Codex session files over SSH",
           },
           {
             command: `sessions search "${query.replace(/"/g, "\\\"")}" --source ${source} --machine ${machine} --runtime ${runtime} --limit ${limit} --extract`,
@@ -1246,7 +1294,7 @@ const searchCmd = Command.make(
           code === "SESSION_SEARCH_SSH_FAILED"
             ? "Verify SSH access: ssh joel@dark-wizard 'hostname && python3 --version'"
             : message.includes("local session search")
-              ? "Verify local Pi sessions and Python: python3 --version && find ~/.pi/agent/sessions -type f -name '*.jsonl' | head"
+              ? "Verify local Pi/Claude/Codex sessions and Python: python3 --version && find ~/.pi/agent/sessions ~/.claude/projects ~/.codex/sessions -type f -name '*.jsonl' | head"
               : "Check Typesense health and the session indexing runbook",
           [
             { command: "status", description: "Check joelclaw service health" },
