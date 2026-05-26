@@ -1,5 +1,5 @@
 ---
-name: capture_progress
+name: capture-progress
 displayName: Capture Progress
 description: Turn ephemeral discussion into durable truth in the right artifact. Use when Joel says "capture this", "note this", "write this down", "make this durable", "put this in the doc", or whenever a conversation conclusion should be preserved in project docs, launch plans, lat.md, ADRs, tasks, or memory.
 version: 0.1.0

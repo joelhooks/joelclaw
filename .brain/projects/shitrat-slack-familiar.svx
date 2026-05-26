@@ -1,0 +1,151 @@
+---
+title: ShitRat Slack Familiar
+kind: Project
+status: shaping
+created: 2026-05-20
+tags:
+  - slack
+  - gateway
+  - familiar
+  - shitrat
+---
+
+# ShitRat Slack Familiar
+
+## Decision
+
+ShitRat is **Joel-only infrastructure**, not a SaaS Slack app. Treat it as Joel's digital familiar: loyal, opinionated, competent first, weird second, and not servile.
+
+Source framing: [What is a Digital Familiar?](https://grimlock.ai/garden/digital-familiar) defines the pattern as not merely assistant/tool/agent, but a companion with agency that can argue, have preferences, and help without sycophancy.
+
+## Product boundary
+
+- One human principal: Joel Hooks.
+- One familiar identity: ShitRat.
+- No multi-tenant OAuth/product flow until Joel explicitly chooses that path.
+- Prefer local/private infrastructure under `joelclaw` gateway and system-bus.
+- Read broadly, speak deliberately.
+
+## Slack platform constraint
+
+Slack bot tokens only see events for conversations the bot is party to. User-level omnipresence across channels Joel belongs to requires a user-authorized Slack token/scopes. Slack Events API docs say events are tied to OAuth scopes and only delivered for data visible to the authorized user/app installation.
+
+## Working architecture
+
+Use a split-brain Slack identity:
+
+- **Joel user token** for ears: membership discovery, history, backfill, passive observation of conversations Joel can see.
+- **ShitRat bot token** for mouth: posting replies as ShitRat, reactions, App Home/DMs, explicit invocations.
+
+Do not auto-reply everywhere. Default mode is ambient sensing plus operator relay. ShitRat speaks when:
+
+- Joel DMs ShitRat.
+- Someone mentions ShitRat.
+- Joel uses an explicit reaction/command trigger.
+- A channel/thread is allowlisted.
+- The operator relay classifies a signal as needing immediate action or asks Joel first.
+
+## First tracer slice
+
+1. Sync Joel's Slack conversation membership with `users.conversations` for public/private/MPIM/IM conversations.
+2. Store the roster as durable channel memory.
+3. Backfill a small recent window for selected channels through the existing `channel/slack.backfill.requested` path.
+4. Realtime ingest observed messages into existing `channel/message.received` → `channel-message-ingest` → `channel-message-classify`.
+5. Route only high-signal output through `operator-relay`; keep the rest as searchable context.
+
+## Local code evidence
+
+Context artifacts:
+
+- `context-build/shitrat-slack-local.md`
+- `context-build/slack-platform-research.md`
+
+Sharp implementation notes:
+
+- Current Slack Socket Mode path is **not** user-level omnipresence.
+- Ambient Slack should emit `slack.signal.received` with `source: slack-intel:<channel>`, not direct gateway prompts.
+- `channel/message.signal` is currently emitted by classification but has no consumer; close this bridge or do relevance before emitting operator events.
+- Realtime Slack timestamps appear seconds-based while `channel-message-ingest` expects ms; fix units before relying on freshness/thread logic.
+- Top-level Slack messages may not become `conversation_threads`; decide whether top-level `ts` becomes the thread key.
+- Deduplicate by Slack `channel:ts` across Socket Mode, polling, and backfill paths.
+
+## State machine sketch
+
+```text
+stopped
+  -> starting
+  -> syncMembership
+  -> observing
+      -> normalize
+      -> emitRawMessage
+      -> awaitClassifier / emitOperatorSignal
+      -> persistCursor
+  -> backoff on rate_limit/transient API error
+  -> degraded on auth/revocation/missing_scope
+  -> stopped on shutdown
+```
+
+## Recommended v1 speak boundary
+
+DM + mention + Joel reaction trigger. No selected channel allowlist until the observer proves its signal filter is boring and safe.
+
+Joel approved that ShitRat can react. Reactions are **summon/ack affordances**, not proof that the local machine agent should run inline in the Slack event handler.
+
+## Runtime boundary
+
+Slack should stay a thin interface layer:
+
+```text
+Slack reaction / DM / mention
+  -> normalized ShitRat intent
+  -> gateway/system-bus event
+  -> local or sandbox executor
+  -> Slack thread progress/result
+```
+
+Do not run heavy local pi work inside Slack event handling. The handler should ack fast, add a reaction/status message, enqueue durable work, and let the executor report back.
+
+## Runtime candidates
+
+- **Current joelclaw Slack gateway**: best v1 start. Existing Socket Mode, operator relay, passive intel, message indexing, and Slack send/reaction plumbing already exist.
+- **joelclaw workload / Restate / k8s sandbox**: best for local-machine and repo-affecting work because the restate-worker image already has pi, skills, repo cache, and sandbox lanes.
+- **Cloudflare Agents SDK**: worth a spike as edge/session/orchestration layer. Durable Objects give per-familiar state, WebSockets, scheduling, queues, Workflows, and persistent agent state. Not the place to directly run local pi unless paired with a remote executor/container bridge.
+- **Flue**: promising headless agent harness. Can target Node or Cloudflare and model agents as sessions/skills/sandboxes. Experimental; better as a spike for a ShitRat harness than as the first production dependency.
+
+## Runtime decision
+
+Joel prefers the **full Cloudflare Agent** path for ShitRat.
+
+Use Cloudflare Agents SDK as the primary familiar control plane:
+
+- Durable Object agent instance: `ShitRatAgent:joel`.
+- Owns Slack event ingress, reaction/mention/DM routing, schedules, state, cursors, dedupe, mode flags, and active run status.
+- Uses Cloudflare Workflows / durable fibers for long-running intent processing and retryable steps.
+- Broadcasts progress/status over WebSocket or Slack thread updates.
+
+Keep joelclaw/Panda as the privileged execution substrate:
+
+- Local pi, repo work, filesystem work, and private machine actions stay behind a signed `joelclaw` executor bridge.
+- Cloudflare enqueues signed intent jobs; Panda executes with local tools and reports progress/results back.
+- Cloudflare should not pretend it can directly run the local pi rig without a bridge/container.
+
+Flue is not disqualified for being experimental. Joel explicitly likes experimental tools in this house. Treat experimental as a feature when the tool gives leverage, but keep blast-radius controls: narrow spike, explicit seams, and an escape hatch.
+
+## Repository
+
+Implementation repo scaffolded at `/Users/joel/Code/joelhooks/shitrat-slack-agent` with Cloudflare Agents SDK, Wrangler, pi-notes Brain, Slack ingress, and a signed joelclaw executor bridge skeleton.
+
+## Recommended next move
+
+Design a Cloudflare-first ShitRat architecture and build the smallest vertical slice:
+
+```text
+Slack :rat: reaction
+  -> Cloudflare ShitRatAgent receives/verifies event
+  -> records intent + dedupes channel:ts
+  -> posts/sets an ack reaction or thread status
+  -> dispatches signed job to joelclaw/Panda executor
+  -> executor runs bounded local pi task
+  -> result returns to Cloudflare
+  -> ShitRat posts a threaded reply
+```
