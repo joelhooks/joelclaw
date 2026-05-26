@@ -1,0 +1,1 @@
+/Users/joel/Code/joelhooks/dark-wizard/skills/joels-inbox/SKILL.md
