@@ -54,12 +54,20 @@ require_env_file() {
 }
 
 compose() {
-  require_command docker
-  docker compose \
-    --project-name "$COMPOSE_PROJECT_NAME" \
-    --env-file "$ENV_FILE" \
-    --file "$COMPOSE_FILE" \
-    "$@"
+  if docker compose version >/dev/null 2>&1; then
+    docker compose \
+      --project-name "$COMPOSE_PROJECT_NAME" \
+      --env-file "$ENV_FILE" \
+      --file "$COMPOSE_FILE" \
+      "$@"
+  else
+    require_command docker-compose
+    docker-compose \
+      --project-name "$COMPOSE_PROJECT_NAME" \
+      --env-file "$ENV_FILE" \
+      --file "$COMPOSE_FILE" \
+      "$@"
+  fi
 }
 
 ensure_service_dirs() {

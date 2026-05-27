@@ -80,6 +80,10 @@ codex_installed() {
   command -v codex >/dev/null
 }
 
+compose_cli_installed() {
+  docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null
+}
+
 central_launchdaemon_plists_installed() {
   local label
   for label in \
@@ -99,7 +103,7 @@ system_tailscaled_healthy() {
 }
 
 compose_config_valid() {
-  docker compose --project-name "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" --file "$COMPOSE_FILE" config --quiet
+  compose config --quiet
 }
 
 printf 'Flagg Central preflight\n'
@@ -126,6 +130,7 @@ if launchctl print system/com.tailscale.tailscaled >/dev/null 2>&1; then
 fi
 check_warn 'colima installed' have colima
 check_warn 'docker installed' have docker
+check_warn 'docker compose installed' compose_cli_installed
 check_warn 'pi installed' pi_installed
 check_warn 'codex installed' codex_installed
 check_warn 'central LaunchDaemon plists installed' central_launchdaemon_plists_installed

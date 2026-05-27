@@ -43,7 +43,9 @@ for cmd in colima docker pi codex; do
 done
 
 docker --version
-if ! docker compose version; then
+if docker compose version >/dev/null 2>&1; then
+  docker compose version
+else
   docker-compose version
 fi
 pi --version
