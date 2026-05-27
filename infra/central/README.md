@@ -97,10 +97,18 @@ The script:
 - quits/disables the GUI login-session Tailscale path,
 - moves `/Applications/Tailscale.app` into `/Users/Shared/joelclaw/backups/`,
 - runs `tailscaled install-system-daemon`,
-- runs `tailscale up --hostname=flagg --operator=joel --ssh`,
+- runs `tailscale --socket=/var/run/tailscaled.socket up --hostname=flagg --operator=joel --ssh --accept-routes`,
 - writes a receipt under `/Users/Shared/joelclaw/run/`.
 
 If it prints an auth URL, open it locally and approve the new node. The old GUI node may remain in the tailnet until removed from the admin console.
+
+Important: the normal `tailscale` command may still talk to a stale GUI NetworkExtension while both variants are present. For this migration, always target the system daemon explicitly:
+
+```bash
+/opt/homebrew/bin/tailscale --socket=/var/run/tailscaled.socket status
+```
+
+If verification says the GUI network extension is still running, reboot Flagg and verify again before any GUI login. The GUI app was moved out of `/Applications`, so it should not come back after reboot.
 
 Rollback:
 

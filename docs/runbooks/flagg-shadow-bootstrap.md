@@ -225,7 +225,18 @@ Flagg should use the open-source `tailscaled` system LaunchDaemon (`com.tailscal
 sudo ./infra/central/scripts/install-system-tailscaled.sh
 ```
 
-Run it locally on Flagg, not over the Tailscale SSH session it is replacing. It may print an auth URL for the new system-daemon node. Rollback helper:
+Run it locally on Flagg, not over the Tailscale SSH session it is replacing. It may print an auth URL for the new system-daemon node.
+
+Known gotcha from first migration attempt: the normal `tailscale` command can still talk to the stale GUI NetworkExtension. Target the system daemon explicitly when debugging:
+
+```bash
+/opt/homebrew/bin/tailscale --socket=/var/run/tailscaled.socket status
+/opt/homebrew/bin/tailscale --socket=/var/run/tailscaled.socket up --hostname=flagg --operator=joel --ssh --accept-routes
+```
+
+If `verify-system-tailscaled.sh` reports that the GUI network extension is still running, reboot Flagg and verify again before any GUI login. The GUI app has been moved out of `/Applications`, so it should not come back after reboot.
+
+Rollback helper:
 
 ```bash
 sudo ./infra/central/scripts/rollback-system-tailscaled.sh
@@ -254,7 +265,7 @@ warn colima installed
 warn docker installed
 ```
 
-After adding the system tailscaled gate, expected pre-Gate-3 warnings are `.env`, system tailscaled, Colima, and Docker.
+After adding the system tailscaled gate, expected pre-Gate-3 warnings are `.env`, system tailscaled, Colima, and Docker. After the first local migration attempt, `com.tailscale.tailscaled` existed but the system socket still needed login while the stale GUI NetworkExtension was still answering the default CLI path; patch `584945d5` was followed by a socket-targeting fix so all migration helpers use `/var/run/tailscaled.socket` explicitly.
 
 No hand-edited plist is the source of truth.
 

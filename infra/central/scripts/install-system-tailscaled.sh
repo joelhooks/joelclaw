@@ -11,9 +11,10 @@ RECEIPT_DIR="${SERVICE_ROOT}/run"
 BACKUP_DIR="${SERVICE_ROOT}/backups/tailscale-gui-${STAMP}"
 TAILSCALE_BIN="${TAILSCALE_BIN:-/opt/homebrew/bin/tailscale}"
 TAILSCALED_BIN="${TAILSCALED_BIN:-/opt/homebrew/bin/tailscaled}"
+TAILSCALE_SOCKET="${TAILSCALE_SOCKET:-/var/run/tailscaled.socket}"
 TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME:-flagg}"
 TAILSCALE_OPERATOR="${TAILSCALE_OPERATOR:-joel}"
-TAILSCALE_UP_FLAGS="${TAILSCALE_UP_FLAGS:---hostname=${TAILSCALE_HOSTNAME} --operator=${TAILSCALE_OPERATOR} --ssh}"
+TAILSCALE_UP_FLAGS="${TAILSCALE_UP_FLAGS:---hostname=${TAILSCALE_HOSTNAME} --operator=${TAILSCALE_OPERATOR} --ssh --accept-routes}"
 ALLOW_REMOTE_TAILSCALE_MIGRATION="${ALLOW_REMOTE_TAILSCALE_MIGRATION:-0}"
 MOVE_GUI_APP="${MOVE_GUI_APP:-1}"
 
@@ -45,11 +46,15 @@ write_receipt_header() {
     echo "hostname=${TAILSCALE_HOSTNAME}"
     echo "tailscale_bin=${TAILSCALE_BIN}"
     echo "tailscaled_bin=${TAILSCALED_BIN}"
+    echo "tailscale_socket=${TAILSCALE_SOCKET}"
     echo "backup_dir=${BACKUP_DIR}"
     echo "up_flags=${TAILSCALE_UP_FLAGS}"
     echo
-    echo "--- before tailscale status ---"
+    echo "--- before default tailscale status (may be GUI) ---"
     "$TAILSCALE_BIN" status || true
+    echo
+    echo "--- before system tailscaled status ---"
+    "$TAILSCALE_BIN" --socket="$TAILSCALE_SOCKET" status || true
     echo
     echo "--- before processes ---"
     ps aux | grep -i '[t]ailscale' || true
@@ -71,6 +76,7 @@ stop_gui_variant() {
   fi
 
   pkill -x Tailscale >/dev/null 2>&1 || true
+  pkill -f 'io.tailscale.ipn.macsys.network-extension' >/dev/null 2>&1 || true
   sleep 2
 
   if [[ "$MOVE_GUI_APP" == "1" && -d /Applications/Tailscale.app ]]; then
@@ -90,7 +96,7 @@ bring_up_tailnet() {
   log "running tailscale up for system daemon"
   log "if this prints an auth URL, open it locally and approve the new node"
   # shellcheck disable=SC2086
-  "$TAILSCALE_BIN" up $TAILSCALE_UP_FLAGS
+  "$TAILSCALE_BIN" --socket="$TAILSCALE_SOCKET" up $TAILSCALE_UP_FLAGS
 }
 
 verify() {
@@ -101,8 +107,11 @@ verify() {
 write_receipt_footer() {
   {
     echo
-    echo "--- after tailscale status ---"
+    echo "--- after default tailscale status ---"
     "$TAILSCALE_BIN" status || true
+    echo
+    echo "--- after system tailscaled status ---"
+    "$TAILSCALE_BIN" --socket="$TAILSCALE_SOCKET" status || true
     echo
     echo "--- after processes ---"
     ps aux | grep -i '[t]ailscale' || true
@@ -124,8 +133,14 @@ main() {
   stop_gui_variant
   install_daemon
   bring_up_tailnet
-  verify
+  local verify_status=0
+  verify || verify_status=$?
   write_receipt_footer
+  if [[ "$verify_status" -ne 0 ]]; then
+    log "system tailscaled migration needs follow-up; verification failed"
+    log "if the stale GUI network extension is still present, reboot Flagg and run verify-system-tailscaled.sh again before any GUI login"
+    exit "$verify_status"
+  fi
   log "system tailscaled migration complete"
 }
 
