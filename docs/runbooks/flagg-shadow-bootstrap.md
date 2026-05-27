@@ -314,6 +314,12 @@ Start Flagg services without touching Panda's active Central writes.
 
 Shadow mode is read/verify only unless a migration step explicitly authorizes a controlled write.
 
+If Gate 4 health fails, run the repo-managed diagnostic script locally on Flagg instead of pasting shell blocks:
+
+```bash
+sudo ./infra/central/scripts/diagnose.sh
+```
+
 Required checks:
 
 - Redis responds on Flagg-local endpoint.

@@ -133,6 +133,12 @@ sudo ./infra/central/scripts/install-launchdaemons.sh --no-bootstrap
 
 `install-launchdaemons.sh --no-bootstrap` installs the system plists and explicitly disables the labels so a reboot does not start the shadow stack before Gate 4. Use `--bootstrap` in Gate 4 when the shadow runtime start is approved; it enables and starts the labels.
 
+Gate 4 diagnostics are one command; do not paste ad-hoc heredocs when the shell is already annoyed:
+
+```bash
+sudo ./infra/central/scripts/diagnose.sh
+```
+
 After Gate 3 installs Colima/Docker and mirrors the repo into `/Users/Shared/joelclaw/src/joelclaw`, the service-user commands are:
 
 ```bash
