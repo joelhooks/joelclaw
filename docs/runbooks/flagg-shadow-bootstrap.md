@@ -157,7 +157,15 @@ admin users -> root _mbsetupuser joel clawadmin
 joelclaw -> user is not a member of admin
 ```
 
-Result: the service account portion is complete and the separate-admin safety requirement is verified. Run the helper one more time from the `joel` account so it records the final clean gate completion instead of the earlier blocked receipt.
+Final Gate 1 completion on 2026-05-27:
+
+```text
+separate non-Joel admin account detected: clawadmin
+account gate complete
+receipt check verified by Joel
+```
+
+Result: Gate 1 is complete. The service account exists, `clawadmin` is the separate admin backstop, and the final account-gate run was verified. Do not demote `joel` yet; treat that as a later hardening step after Flagg is stable and boring.
 
 Repo-managed helper script:
 
@@ -185,22 +193,7 @@ What it does when run with sudo on Flagg:
 - reports whether a separate non-Joel admin account exists,
 - exits `2` if no separate non-Joel admin exists so nobody mistakes this for a completed gate.
 
-Final completion run from the `joel` account on Flagg:
-
-```bash
-cd ~/Code/joelhooks/joelclaw
-git pull --ff-only
-sudo ./infra/central/setup-macos-account-gate.sh
-```
-
-Expected ending:
-
-```text
-separate non-Joel admin account detected: clawadmin
-account gate complete
-```
-
-Receipt check must avoid zsh expanding a private `0700` path before `sudo` runs:
+For future receipt checks, avoid zsh expanding a private `0700` path before `sudo` runs:
 
 ```bash
 sudo zsh -c 'ls -lt /Users/Shared/joelclaw/run/account-gate-*.txt | head -3'
