@@ -72,6 +72,14 @@ docker_reachable() {
   docker info >/dev/null
 }
 
+system_tailscaled_loaded() {
+  launchctl print system/com.tailscale.tailscaled >/dev/null
+}
+
+system_tailscaled_healthy() {
+  "${SCRIPT_DIR}/verify-system-tailscaled.sh" >/dev/null
+}
+
 compose_config_valid() {
   docker compose --project-name "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" --file "$COMPOSE_FILE" config --quiet
 }
@@ -94,6 +102,10 @@ if [[ -f "$ENV_FILE" ]]; then
   printf 'info minio_root_user=%s\n' "$(redact_value "${MINIO_ROOT_USER:-}")"
 fi
 
+check_warn 'system tailscaled LaunchDaemon loaded' system_tailscaled_loaded
+if launchctl print system/com.tailscale.tailscaled >/dev/null 2>&1; then
+  check_warn 'system tailscaled healthy' system_tailscaled_healthy
+fi
 check_warn 'colima installed' have colima
 check_warn 'docker installed' have docker
 if have docker; then

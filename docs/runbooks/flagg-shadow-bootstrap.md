@@ -217,11 +217,23 @@ Contents:
 
 Default service binds are local-only (`127.0.0.1`). Do not expose Flagg services over Tailscale/LAN until cutover planning explicitly says so.
 
-The pillar: Flagg Central must survive a hard reboot with **no GUI login**. If services require Joel, `clawadmin`, Screen Sharing, Terminal, auto-login, or a manual `colima start`, they are not Central infrastructure. They are dev toys wearing a fake moustache.
+The pillar: Flagg Central must survive a hard reboot with **no GUI login**. If services require Joel, `clawadmin`, Screen Sharing, Terminal, auto-login, the GUI Tailscale app, or a manual `colima start`, they are not Central infrastructure. They are dev toys wearing a fake moustache.
+
+Flagg should use the open-source `tailscaled` system LaunchDaemon (`com.tailscale.tailscaled`) rather than the GUI/login-session Tailscale path. The repo-managed local migration helper is:
+
+```bash
+sudo ./infra/central/scripts/install-system-tailscaled.sh
+```
+
+Run it locally on Flagg, not over the Tailscale SSH session it is replacing. It may print an auth URL for the new system-daemon node. Rollback helper:
+
+```bash
+sudo ./infra/central/scripts/rollback-system-tailscaled.sh
+```
 
 The real runtime owner is `joelclaw`, not the `joel` dev account. Start/stop scripts are intended for the future service-owned checkout at `/Users/Shared/joelclaw/src/joelclaw` via launchd or a batched admin command. Running them from Joel's dev shell would recreate the Panda coupling ADR-0246 is trying to kill. Bad trade. Don't.
 
-Gate 2 now includes `scripts/reboot-proof.sh`. It is expected to fail until Gate 3 installs system LaunchDaemons and the shadow stack is running. It becomes mandatory before Gate 5.
+Gate 2 now includes `scripts/reboot-proof.sh`. It is expected to fail until Gate 3 installs system LaunchDaemons, system tailscaled, and the shadow stack. It becomes mandatory before Gate 5.
 
 Next non-sudo check on Flagg after pulling the latest repo:
 
@@ -242,7 +254,7 @@ warn colima installed
 warn docker installed
 ```
 
-This is the expected Gate 2 result: account checks pass, and Gate 3 still needs `.env`, Colima, and Docker.
+After adding the system tailscaled gate, expected pre-Gate-3 warnings are `.env`, system tailscaled, Colima, and Docker.
 
 No hand-edited plist is the source of truth.
 
@@ -252,6 +264,7 @@ Install only after Gate 1/2 are ready or explicitly waived.
 
 Required for Central shadow:
 
+- system `tailscaled` LaunchDaemon (`com.tailscale.tailscaled`) replacing GUI/login-session Tailscale
 - `pi`
 - `codex`
 - Colima
@@ -263,7 +276,7 @@ Optional/dev-only:
 
 All LaunchDaemons must set explicit PATH. Do not rely on `~/.zshenv` for service runtime.
 
-Gate 3 is not complete until system LaunchDaemons are installed in `/Library/LaunchDaemons` and configured to run as `UserName=joelclaw` where practical. User LaunchAgents do not count.
+Gate 3 is not complete until system LaunchDaemons are installed in `/Library/LaunchDaemons` and configured to run as `UserName=joelclaw` where practical. User LaunchAgents do not count. GUI Tailscale does not count.
 
 ### Gate 4 — shadow runtime
 

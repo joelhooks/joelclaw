@@ -10,11 +10,12 @@ Central is not accepted until it survives a hard reboot with **no GUI login** an
 
 Proof means:
 
-- services are installed as system LaunchDaemons, not user LaunchAgents;
+- Tailscale is the open-source `tailscaled` system LaunchDaemon (`com.tailscale.tailscaled`), not the GUI/login item;
+- Central services are installed as system LaunchDaemons, not user LaunchAgents;
 - LaunchDaemons run as `UserName=joelclaw` where practical;
 - no auto-login, no Screen Sharing login, no Terminal session, no manual `colima start`, no manual `docker compose up`;
 - after the machine reboots, another machine can SSH in and run `infra/central/scripts/reboot-proof.sh`;
-- `reboot-proof.sh` passes, including `console_user=root`, launchd labels loaded, post-boot logs, Docker reachability, and service health.
+- `reboot-proof.sh` passes, including `console_user=root`, system tailscaled health, launchd labels loaded, post-boot logs, Docker reachability, and service health.
 
 If this proof fails, Flagg is not eligible for cutover. Full stop.
 
@@ -77,7 +78,35 @@ cd /Users/joel/Code/joelhooks/joelclaw
 ./infra/central/scripts/preflight.sh
 ```
 
-This checks the account gate, local env file, service root, and whether Docker/Colima are available. It does not install anything.
+This checks the account gate, system tailscaled, local env file, service root, and whether Docker/Colima are available. It does not install anything.
+
+## System tailscaled migration
+
+Flagg Central should not depend on the GUI Tailscale app or a logged-in user session.
+
+Run this **locally on Flagg**, not over SSH:
+
+```bash
+cd /Users/joel/Code/joelhooks/joelclaw
+sudo ./infra/central/scripts/install-system-tailscaled.sh
+```
+
+The script:
+
+- sets the no-sleep server power profile (`sleep=0`, `disksleep=0`, `womp=1`, `tcpkeepalive=1`, `autorestart=1`),
+- quits/disables the GUI login-session Tailscale path,
+- moves `/Applications/Tailscale.app` into `/Users/Shared/joelclaw/backups/`,
+- runs `tailscaled install-system-daemon`,
+- runs `tailscale up --hostname=flagg --operator=joel --ssh`,
+- writes a receipt under `/Users/Shared/joelclaw/run/`.
+
+If it prints an auth URL, open it locally and approve the new node. The old GUI node may remain in the tailnet until removed from the admin console.
+
+Rollback:
+
+```bash
+sudo ./infra/central/scripts/rollback-system-tailscaled.sh
+```
 
 ## Shadow start
 

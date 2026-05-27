@@ -72,6 +72,8 @@ printf 'service_root=%s\n' "$SERVICE_ROOT"
 printf '\n'
 
 probe 'no GUI console login active' console_is_loginwindow
+probe 'system tailscaled label loaded' launchd_label_loaded com.tailscale.tailscaled
+probe 'system tailscaled healthy' "${SCRIPT_DIR}/verify-system-tailscaled.sh"
 probe 'launchd colima label loaded' launchd_label_loaded com.joelclaw.central.colima
 probe 'launchd compose label loaded' launchd_label_loaded com.joelclaw.central.compose
 probe 'launchd health label loaded' launchd_label_loaded com.joelclaw.central.health
