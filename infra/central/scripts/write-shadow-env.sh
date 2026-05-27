@@ -54,11 +54,12 @@ CENTRAL_BACKUP_DIR=${CENTRAL_BACKUP_DIR}
 CENTRAL_LOG_DIR=${CENTRAL_LOG_DIR}
 
 # Shadow-only credentials. Do not reuse Panda production secrets unless a later migration step explicitly says so.
+# Inngest self-hosted signing/event keys must be valid even-length hex strings.
 TYPESENSE_API_KEY=flagg_shadow_typesense_$(random_hex 24)
 MINIO_ROOT_USER=flaggshadow$(random_alnum 12)
 MINIO_ROOT_PASSWORD=flagg_shadow_minio_$(random_hex 24)
-INNGEST_EVENT_KEY=flagg_shadow_event_$(random_hex 24)
-INNGEST_SIGNING_KEY=flagg_shadow_signing_$(random_hex 24)
+INNGEST_EVENT_KEY=$(random_hex 32)
+INNGEST_SIGNING_KEY=$(random_hex 32)
 
 COLIMA_PROFILE=${COLIMA_PROFILE}
 COLIMA_CPU=${COLIMA_CPU:-8}

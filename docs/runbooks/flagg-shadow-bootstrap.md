@@ -320,6 +320,13 @@ If Gate 4 health fails, run the repo-managed diagnostic script locally on Flagg 
 sudo ./infra/central/scripts/diagnose.sh
 ```
 
+Known Gate 4 gotchas already fixed in the repo:
+
+- Typesense must receive image entrypoint args directly, including `--api-key`; do not wrap the Typesense image in `/bin/sh -c`.
+- Inngest must bind `--host 0.0.0.0` and its self-hosted event/signing keys must be even-length hex strings.
+- SSH/no-login verification must not require Joel to read the service user's Docker socket or `.env`; use TCP/HTTP probes for health and keep `.env` `0600`.
+- `/Users/Shared/joelclaw` is traverse-only, while `/Users/Shared/joelclaw/src/joelclaw` is readable/executable for remote proof scripts after `sync-service-checkout.sh` runs.
+
 Required checks:
 
 - Redis responds on Flagg-local endpoint.

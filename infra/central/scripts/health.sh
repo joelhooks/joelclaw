@@ -35,13 +35,13 @@ tcp_ok() {
 }
 
 redis_ok() {
-  compose exec -T redis redis-cli ping | grep -q PONG
+  local out
+  out="$( { printf '*1\r\n$4\r\nPING\r\n'; sleep 0.1; } | nc -w 5 "$CENTRAL_BIND_ADDR" 6379 2>/dev/null || true )"
+  grep -q PONG <<<"$out"
 }
 
-require_env_file
 require_command curl
 require_command nc
-require_command docker
 
 printf 'Flagg Central shadow health\n'
 probe 'redis ping' redis_ok

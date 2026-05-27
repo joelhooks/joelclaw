@@ -75,8 +75,9 @@ require_command launchctl
 
 [[ -d "${SERVICE_ROOT}/src/joelclaw" ]] || fail "service checkout missing: ${SERVICE_ROOT}/src/joelclaw"
 [[ -f "${SERVICE_ROOT}/src/joelclaw/infra/central/.env" ]] || fail "service env missing: ${SERVICE_ROOT}/src/joelclaw/infra/central/.env"
-mkdir -p "$CENTRAL_LOG_DIR"
-chown "${SERVICE_USER}:${SERVICE_GROUP}" "$CENTRAL_LOG_DIR"
+mkdir -p "${SERVICE_ROOT}/logs" "$CENTRAL_LOG_DIR"
+chown "${SERVICE_USER}:${SERVICE_GROUP}" "${SERVICE_ROOT}/logs" "$CENTRAL_LOG_DIR"
+chmod 750 "${SERVICE_ROOT}/logs" "$CENTRAL_LOG_DIR"
 
 for label in "${LABELS[@]}"; do
   install_one "$label"

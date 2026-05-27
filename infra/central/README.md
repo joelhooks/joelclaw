@@ -15,7 +15,7 @@ Proof means:
 - LaunchDaemons run as `UserName=joelclaw` where practical;
 - no auto-login, no Screen Sharing login, no Terminal session, no manual `colima start`, no manual `docker compose up`;
 - after the machine reboots, another machine can SSH in and run `infra/central/scripts/reboot-proof.sh`;
-- `reboot-proof.sh` passes, including `console_user=root`, system tailscaled health, launchd labels loaded, post-boot logs, Docker reachability, and service health.
+- `reboot-proof.sh` passes, including `console_user=root`, system tailscaled health, launchd labels loaded, post-boot logs, and service health.
 
 If this proof fails, Flagg is not eligible for cutover. Full stop.
 
@@ -68,7 +68,7 @@ cd /Users/joel/Code/joelhooks/joelclaw
 ./infra/central/scripts/write-shadow-env.sh
 ```
 
-Never commit `.env`.
+Never commit `.env`. Inngest self-hosted `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` must be even-length hex strings; `write-shadow-env.sh` generates that shape.
 
 ## Preflight
 
@@ -117,7 +117,7 @@ sudo ./infra/central/scripts/rollback-system-tailscaled.sh
 
 ## Shadow start
 
-The service data root is `0700` and owned by `joelclaw`, so the real start path is service-user execution via launchd. Do not accidentally make Joel's dev account the runtime owner.
+The service data dirs stay owned by `joelclaw`, so the real start path is service-user execution via launchd. The repo mirror is readable/executable for SSH verification, but `.env` remains `0600`. Do not accidentally make Joel's dev account the runtime owner.
 
 Gate 3 install path:
 

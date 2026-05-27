@@ -42,6 +42,10 @@ require_command() {
 
 load_env_if_present() {
   if [[ -f "$ENV_FILE" ]]; then
+    if [[ ! -r "$ENV_FILE" ]]; then
+      warn "env file exists but is not readable by $(id -un); using process env/defaults"
+      return 0
+    fi
     set -a
     # shellcheck disable=SC1090
     source "$ENV_FILE"

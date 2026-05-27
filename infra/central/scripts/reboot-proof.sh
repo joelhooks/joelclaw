@@ -54,13 +54,6 @@ file_written_after_boot() {
   (( mtime >= BOOT_EPOCH ))
 }
 
-docker_reachable() {
-  docker info >/dev/null
-}
-
-require_env_file
-load_env_if_present
-require_command docker
 require_command launchctl
 require_command sysctl
 require_command stat
@@ -79,7 +72,6 @@ probe 'launchd compose label loaded' launchd_label_loaded com.joelclaw.central.c
 probe 'launchd health label loaded' launchd_label_loaded com.joelclaw.central.health
 probe 'colima launchd log written after boot' file_written_after_boot "${CENTRAL_LOG_DIR}/colima.out.log"
 probe 'compose launchd log written after boot' file_written_after_boot "${CENTRAL_LOG_DIR}/compose.out.log"
-probe 'docker daemon reachable' docker_reachable
 probe 'central service health passes' "${SCRIPT_DIR}/health.sh"
 
 if [[ "$status" -eq 0 ]]; then
