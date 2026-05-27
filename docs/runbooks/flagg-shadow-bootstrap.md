@@ -132,7 +132,24 @@ normal users -> joel:501
 service user -> missing
 ```
 
-Result: the account gate cannot be completed fully from a non-interactive agent session. This is correct. We should not ask for or paste a sudo password into chat.
+Manual account-gate run on 2026-05-27:
+
+```text
+service user exists: joelclaw
+service user is not admin: joelclaw
+receipt=/Users/Shared/joelclaw/run/account-gate-20260527T160904Z.txt
+blocked: no separate non-Joel admin account detected. Do not demote joel.
+```
+
+Verified after manual run:
+
+```text
+uid=502(joelclaw) gid=20(staff)
+/Users/joelclaw -> drwx------ joelclaw:staff
+/Users/Shared/joelclaw -> drwx------ joelclaw:staff
+```
+
+Result: the service account portion is complete. Gate 1 remains incomplete only because no separate non-Joel admin account exists yet. This is correct. We should not ask for or paste a sudo password into chat.
 
 Repo-managed helper script:
 
