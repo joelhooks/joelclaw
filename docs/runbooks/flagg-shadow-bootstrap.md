@@ -1,17 +1,18 @@
-# Derry shadow bootstrap runbook
+# Flagg shadow bootstrap runbook
 
-Derry is the Mac Studio target for ADR-0246: Mac Studio Central runtime migration.
+Flagg is the Mac Studio target for ADR-0246: Mac Studio Central runtime migration.
 
-This runbook is for **shadow bootstrap only**. It does not cut over Central, freeze Panda writes, create split-brain, or make Derry authoritative.
+This runbook is for **shadow bootstrap only**. It does not cut over Central, freeze Panda writes, create split-brain, or make Flagg authoritative.
 
 ## Current reviewed state
 
 Reviewed: 2026-05-27 by `SleepySprocket`.
 
-Host facts from `ssh joel@derry`:
+Host facts from `ssh joel@100.69.174.22` while Tailscale name propagation settles:
 
-- Hostname: `derry.localdomain`
-- Tailscale device: `Joel’s Mac Studio`
+- macOS hostname: `derry.localdomain` during review
+- Tailscale DNS name observed from Panda status: `flagg.tail7af24.ts.net.`
+- Tailscale short name works inside `tailscale ping flagg`, but `ssh joel@flagg` did not resolve via system DNS from Panda yet
 - Tailscale IP: `100.69.174.22`
 - macOS: 26.3 / 25D125
 - CPU: Apple M4 Max
@@ -64,7 +65,7 @@ These directories currently exist and are locked to `0700`, owned by `joel` unti
 
 ### Non-interactive SSH PATH
 
-Derry SSH sessions originally started with:
+Flagg SSH sessions originally started with:
 
 ```text
 /usr/bin:/bin:/usr/sbin:/sbin
@@ -84,7 +85,7 @@ A backup was written next to the original file as `~/.zshenv.pre-derry-bootstrap
 Verification:
 
 ```bash
-ssh joel@derry 'command -v bun; command -v brew; command -v joelclaw; joelclaw --version'
+ssh joel@100.69.174.22 'command -v bun; command -v brew; command -v joelclaw; joelclaw --version'
 ```
 
 Expected:
@@ -101,10 +102,10 @@ Expected:
 Created without sudo:
 
 ```bash
-ssh joel@derry 'for d in /Users/Shared/joelclaw /Users/Shared/joelclaw/services /Users/Shared/joelclaw/src /Users/Shared/joelclaw/logs /Users/Shared/joelclaw/backups /Users/Shared/joelclaw/run; do mkdir -p "$d" && chmod 700 "$d"; done'
+ssh joel@100.69.174.22 'for d in /Users/Shared/joelclaw /Users/Shared/joelclaw/services /Users/Shared/joelclaw/src /Users/Shared/joelclaw/logs /Users/Shared/joelclaw/backups /Users/Shared/joelclaw/run; do mkdir -p "$d" && chmod 700 "$d"; done'
 ```
 
-Tool audit written on Derry:
+Tool audit written on Flagg:
 
 ```text
 /Users/Shared/joelclaw/run/tool-audit-20260527T082953.txt
@@ -122,7 +123,49 @@ Do this before installing critical Central services.
 - Move `/Users/Shared/joelclaw` ownership to the service identity after it exists.
 - Keep service-private paths `0700` unless a service specifically needs group access.
 
-Open commands need human/admin confirmation. Do not script blind account surgery over SSH like a clown.
+Preflight on 2026-05-27:
+
+```text
+sudo -n true -> sudo: a password is required
+admin users -> root _mbsetupuser joel
+normal users -> joel:501
+service user -> missing
+```
+
+Result: the account gate cannot be completed fully from a non-interactive agent session. This is correct. We should not ask for or paste a sudo password into chat.
+
+Repo-managed helper script:
+
+```bash
+infra/central/setup-macos-account-gate.sh
+```
+
+The helper has also been copied into Flagg's working tree at:
+
+```text
+~/Code/joelhooks/joelclaw/infra/central/setup-macos-account-gate.sh
+```
+
+Remote dry-run verification passed with the expected blocker: no separate non-Joel admin account detected.
+
+What it does when run with sudo on Flagg:
+
+- creates a hidden Standard `joelclaw` service user with no password hash,
+- ensures `joelclaw` is not in the admin group,
+- owns `/Users/Shared/joelclaw` as `joelclaw:staff`,
+- keeps service directories `0700` and files `0600`,
+- writes an account-gate receipt under `/Users/Shared/joelclaw/run/`,
+- reports whether a separate non-Joel admin account exists,
+- exits `2` if no separate non-Joel admin exists so nobody mistakes this for a completed gate.
+
+Run manually on Flagg after the script is present there:
+
+```bash
+cd ~/Code/joelhooks/joelclaw
+sudo ./infra/central/setup-macos-account-gate.sh
+```
+
+Do not demote `joel` until a separate admin account exists and Joel has verified login/recovery.
 
 ### Gate 2 — repo-managed runtime assets
 
@@ -158,17 +201,17 @@ All LaunchDaemons must set explicit PATH. Do not rely on `~/.zshenv` for service
 
 ### Gate 4 — shadow runtime
 
-Start Derry services without touching Panda's active Central writes.
+Start Flagg services without touching Panda's active Central writes.
 
 Shadow mode is read/verify only unless a migration step explicitly authorizes a controlled write.
 
 Required checks:
 
-- Redis responds on Derry-local endpoint.
+- Redis responds on Flagg-local endpoint.
 - Typesense health passes.
 - Inngest health passes.
 - Restate health passes.
-- `system-bus-worker` can start against Derry services.
+- `system-bus-worker` can start against Flagg services.
 - OTEL emit/query works.
 - Run capture/search path from ADR-0243 works in a shadow-safe way.
 
@@ -183,13 +226,13 @@ Do not perform it from this runbook.
 Remove PATH block from `~/.zshenv` using the `JOELCLAW_DERRY_BOOTSTRAP_PATH` markers, or restore the backup:
 
 ```bash
-ssh joel@derry 'ls -1t ~/.zshenv.pre-derry-bootstrap-*.bak | head -1'
+ssh joel@100.69.174.22 'ls -1t ~/.zshenv.pre-derry-bootstrap-*.bak | head -1'
 ```
 
 Remove the temporary service root only if it contains no useful audit artifacts:
 
 ```bash
-ssh joel@derry 'rm -rf /Users/Shared/joelclaw'
+ssh joel@100.69.174.22 'rm -rf /Users/Shared/joelclaw'
 ```
 
 Do not remove it after real service state lands there.
