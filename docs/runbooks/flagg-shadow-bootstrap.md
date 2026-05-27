@@ -6,19 +6,21 @@ This runbook is for **shadow bootstrap only**. It does not cut over Central, fre
 
 ## Current reviewed state
 
-Reviewed: 2026-05-27 by `SleepySprocket`.
+Reviewed: 2026-05-27 by `MintySprocket`.
 
-Host facts from `ssh joel@100.69.174.22` while Tailscale name propagation settles:
+Current host facts after Gate 2 system Tailscale proof:
 
-- macOS hostname: `derry.localdomain` during review
-- Tailscale DNS name observed from Panda status: `flagg.tail7af24.ts.net.`
-- Tailscale short name works inside `tailscale ping flagg`, but `ssh joel@flagg` did not resolve via system DNS from Panda yet
-- Tailscale IP: `100.69.174.22`
+- macOS hostname: `flagg.localdomain`
+- Tailscale DNS name: `flagg.tail7af24.ts.net.`
+- Tailscale short name: `flagg`
+- Tailscale IP: `100.127.252.116`
+- system `tailscaled` LaunchDaemon: installed and authenticated
+- GUI Tailscale NetworkExtension: removed from active runtime after no-login reboot proof, but may briefly reappear if macOS still has the old system extension registered; use `disable-gui-tailscale-system-extension.sh` if verify fails
 - macOS: 26.3 / 25D125
 - CPU: Apple M4 Max
 - RAM: 128 GB
 - Disk: about 3.5 TiB free on `/`
-- Repo: `~/Code/joelhooks/joelclaw` exists on `main` at `8c12b717` during review
+- Repo: `~/Code/joelhooks/joelclaw` exists on `main`; Gate 3 scripts start at `7bbd5fc6` plus later Gate 3 commits
 
 Tooling present:
 
@@ -85,7 +87,7 @@ A backup was written next to the original file as `~/.zshenv.pre-derry-bootstrap
 Verification:
 
 ```bash
-ssh joel@100.69.174.22 'command -v bun; command -v brew; command -v joelclaw; joelclaw --version'
+ssh joel@flagg 'command -v bun; command -v brew; command -v joelclaw; joelclaw --version'
 ```
 
 Expected:
@@ -102,7 +104,7 @@ Expected:
 Created without sudo:
 
 ```bash
-ssh joel@100.69.174.22 'for d in /Users/Shared/joelclaw /Users/Shared/joelclaw/services /Users/Shared/joelclaw/src /Users/Shared/joelclaw/logs /Users/Shared/joelclaw/backups /Users/Shared/joelclaw/run; do mkdir -p "$d" && chmod 700 "$d"; done'
+ssh joel@flagg 'for d in /Users/Shared/joelclaw /Users/Shared/joelclaw/services /Users/Shared/joelclaw/src /Users/Shared/joelclaw/logs /Users/Shared/joelclaw/backups /Users/Shared/joelclaw/run; do mkdir -p "$d" && chmod 700 "$d"; done'
 ```
 
 Tool audit written on Flagg:
@@ -280,10 +282,27 @@ Required for Central shadow:
 - `codex`
 - Colima
 - Docker CLI / Compose
+- generated shadow `.env`
+- service-owned checkout at `/Users/Shared/joelclaw/src/joelclaw`
+- Central LaunchDaemon plists installed in `/Library/LaunchDaemons`
 
 Optional/dev-only:
 
 - `claude`
+
+Repo-managed Gate 3 command sequence on Flagg:
+
+```bash
+cd /Users/joel/Code/joelhooks/joelclaw
+./infra/central/scripts/install-runtime-tools.sh
+./infra/central/scripts/write-shadow-env.sh
+sudo ./infra/central/scripts/disable-gui-tailscale-system-extension.sh
+sudo ./infra/central/scripts/sync-service-checkout.sh
+sudo ./infra/central/scripts/install-launchdaemons.sh --no-bootstrap
+./infra/central/scripts/preflight.sh
+```
+
+`install-launchdaemons.sh --no-bootstrap` installs root-owned system plists but does not start the shadow stack. Gate 4 can run the same script with `--bootstrap` when shadow runtime start is approved.
 
 All LaunchDaemons must set explicit PATH. Do not rely on `~/.zshenv` for service runtime.
 
@@ -307,7 +326,7 @@ Required checks:
 - Hard-reboot/no-login proof passes from Panda before any GUI login on Flagg:
 
 ```bash
-ssh joel@100.69.174.22 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
+ssh joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
 ```
 
 Expected:
@@ -327,13 +346,13 @@ Do not perform it from this runbook.
 Remove PATH block from `~/.zshenv` using the `JOELCLAW_DERRY_BOOTSTRAP_PATH` markers, or restore the backup:
 
 ```bash
-ssh joel@100.69.174.22 'ls -1t ~/.zshenv.pre-derry-bootstrap-*.bak | head -1'
+ssh joel@flagg 'ls -1t ~/.zshenv.pre-derry-bootstrap-*.bak | head -1'
 ```
 
 Remove the temporary service root only if it contains no useful audit artifacts:
 
 ```bash
-ssh joel@100.69.174.22 'rm -rf /Users/Shared/joelclaw'
+ssh joel@flagg 'rm -rf /Users/Shared/joelclaw'
 ```
 
 Do not remove it after real service state lands there.

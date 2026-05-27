@@ -72,6 +72,24 @@ docker_reachable() {
   docker info >/dev/null
 }
 
+pi_installed() {
+  command -v pi >/dev/null
+}
+
+codex_installed() {
+  command -v codex >/dev/null
+}
+
+central_launchdaemon_plists_installed() {
+  local label
+  for label in \
+    com.joelclaw.central.colima \
+    com.joelclaw.central.compose \
+    com.joelclaw.central.health; do
+    [[ -f "/Library/LaunchDaemons/${label}.plist" ]] || return 1
+  done
+}
+
 system_tailscaled_loaded() {
   launchctl print system/com.tailscale.tailscaled >/dev/null
 }
@@ -84,7 +102,7 @@ compose_config_valid() {
   docker compose --project-name "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" --file "$COMPOSE_FILE" config --quiet
 }
 
-printf 'Flagg Central Gate 2 preflight\n'
+printf 'Flagg Central preflight\n'
 printf 'repo=%s\n' "$REPO_ROOT"
 printf 'service_root=%s\n' "$SERVICE_ROOT"
 printf '\n'
@@ -108,6 +126,9 @@ if launchctl print system/com.tailscale.tailscaled >/dev/null 2>&1; then
 fi
 check_warn 'colima installed' have colima
 check_warn 'docker installed' have docker
+check_warn 'pi installed' pi_installed
+check_warn 'codex installed' codex_installed
+check_warn 'central LaunchDaemon plists installed' central_launchdaemon_plists_installed
 if have docker; then
   check_warn 'docker daemon reachable' docker_reachable
 fi

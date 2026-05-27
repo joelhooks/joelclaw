@@ -61,12 +61,11 @@ Then create a local env file in the checkout that will run the services. During 
 /Users/Shared/joelclaw/src/joelclaw/infra/central/.env
 ```
 
-For review/preflight from Joel's dev checkout, use:
+For review/preflight from Joel's dev checkout, generate shadow-only credentials:
 
 ```bash
-cd /Users/joel/Code/joelhooks/joelclaw/infra/central
-cp .env.example .env
-$EDITOR .env
+cd /Users/joel/Code/joelhooks/joelclaw
+./infra/central/scripts/write-shadow-env.sh
 ```
 
 Never commit `.env`.
@@ -120,6 +119,20 @@ sudo ./infra/central/scripts/rollback-system-tailscaled.sh
 
 The service data root is `0700` and owned by `joelclaw`, so the real start path is service-user execution via launchd. Do not accidentally make Joel's dev account the runtime owner.
 
+Gate 3 install path:
+
+```bash
+cd /Users/joel/Code/joelhooks/joelclaw
+./infra/central/scripts/install-runtime-tools.sh
+./infra/central/scripts/write-shadow-env.sh
+sudo ./infra/central/scripts/disable-gui-tailscale-system-extension.sh
+sudo ./infra/central/scripts/sync-service-checkout.sh
+sudo ./infra/central/scripts/install-launchdaemons.sh --no-bootstrap
+./infra/central/scripts/preflight.sh
+```
+
+`install-launchdaemons.sh --no-bootstrap` installs the system plists without starting the shadow stack. Use `--bootstrap` in Gate 4 when the shadow runtime start is approved.
+
 After Gate 3 installs Colima/Docker and mirrors the repo into `/Users/Shared/joelclaw/src/joelclaw`, the service-user commands are:
 
 ```bash
@@ -155,7 +168,7 @@ After Gate 3 installs LaunchDaemons and starts the shadow stack, the acceptance 
 
 ```bash
 # From Panda, before any GUI login on Flagg after reboot:
-ssh joel@100.69.174.22 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
+ssh joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
 ```
 
 Expected final line:
