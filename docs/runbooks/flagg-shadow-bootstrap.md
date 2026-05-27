@@ -203,16 +203,30 @@ Do not demote `joel` yet. The admin backstop is verified, but demotion is a late
 
 ### Gate 2 — repo-managed runtime assets
 
-Create `infra/central/` before installing long-running services.
+Status: scaffolded in `infra/central/` on 2026-05-27.
 
-Minimum contents:
+Contents:
 
-- Compose file or native service definitions for Redis, Typesense, Inngest, Restate, and any object-store surface.
-- `.env.example` with no secrets.
-- health-check script.
-- backup/snapshot script.
-- start/stop/status scripts.
-- LaunchDaemon plist templates in `infra/launchd/` using `UserName` / `GroupName` where possible.
+- `compose.yaml` for Redis, Typesense, Inngest, Restate, and MinIO shadow services.
+- `.env.example` with placeholders only. Copy to `.env` on Flagg and replace locally; never commit `.env`.
+- `scripts/preflight.sh` for account/env/tool checks.
+- `scripts/start-colima.sh`, `start.sh`, `stop.sh`, `status.sh`, and `health.sh`.
+- `scripts/backup.sh` and `restore.sh` for shadow filesystem snapshot/restore.
+- `launchd/*.plist.template` for future system LaunchDaemon install under `UserName=joelclaw`.
+- `README.md` with the operator path.
+
+Default service binds are local-only (`127.0.0.1`). Do not expose Flagg services over Tailscale/LAN until cutover planning explicitly says so.
+
+The real runtime owner is `joelclaw`, not the `joel` dev account. Start/stop scripts are intended for the future service-owned checkout at `/Users/Shared/joelclaw/src/joelclaw` via launchd or a batched admin command. Running them from Joel's dev shell would recreate the Panda coupling ADR-0246 is trying to kill. Bad trade. Don't.
+
+Next non-sudo check on Flagg after pulling the latest repo:
+
+```bash
+cd /Users/joel/Code/joelhooks/joelclaw
+./infra/central/scripts/preflight.sh
+```
+
+Expected current result before Gate 3: account checks pass; `.env`, Colima, and Docker may warn until installed/configured.
 
 No hand-edited plist is the source of truth.
 

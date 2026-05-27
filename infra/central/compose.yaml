@@ -1,0 +1,91 @@
+name: ${COMPOSE_PROJECT_NAME:-joelclaw-central-shadow}
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+    ports:
+      - "${CENTRAL_BIND_ADDR:-127.0.0.1}:6379:6379"
+    volumes:
+      - ${CENTRAL_REDIS_DATA:-/Users/Shared/joelclaw/services/redis}:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  typesense:
+    image: typesense/typesense:30.1
+    restart: unless-stopped
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        ulimit -n 1048576 2>/dev/null || ulimit -n 65535 || true
+        exec /opt/typesense-server \
+          --data-dir=/data \
+          --api-address=0.0.0.0 \
+          --api-port=8108 \
+          --enable-search-analytics=true \
+          --analytics-dir=/data/analytics
+    environment:
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY:-replace-with-flagg-shadow-typesense-key}
+    ports:
+      - "${CENTRAL_BIND_ADDR:-127.0.0.1}:8108:8108"
+    volumes:
+      - ${CENTRAL_TYPESENSE_DATA:-/Users/Shared/joelclaw/services/typesense}:/data
+
+  inngest:
+    image: inngest/inngest:latest
+    restart: unless-stopped
+    command:
+      - inngest
+      - start
+      - --verbose
+    environment:
+      INNGEST_SQLITE_DIR: /data
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:-replace-with-flagg-shadow-inngest-event-key}
+      INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:-replace-with-flagg-shadow-inngest-signing-key}
+    ports:
+      - "${CENTRAL_BIND_ADDR:-127.0.0.1}:8288:8288"
+      - "${CENTRAL_BIND_ADDR:-127.0.0.1}:8289:8289"
+    volumes:
+      - ${CENTRAL_INNGEST_DATA:-/Users/Shared/joelclaw/services/inngest}:/data
+
+  restate:
+    image: restatedev/restate:1.6.2
+    restart: unless-stopped
+    ports:
+      - "${CENTRAL_BIND_ADDR:-127.0.0.1}:8080:8080"
+      - "${CENTRAL_BIND_ADDR:-127.0.0.1}:9070:9070"
+      - "${CENTRAL_BIND_ADDR:-127.0.0.1}:9071:9071"
+    volumes:
+      - ${CENTRAL_RESTATE_DATA:-/Users/Shared/joelclaw/services/restate}:/restate-data
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command:
+      - minio
+      - server
+      - /data
+      - --console-address
+      - :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-replace-with-flagg-shadow-minio-user}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-replace-with-flagg-shadow-minio-password}
+    ports:
+      - "${CENTRAL_BIND_ADDR:-127.0.0.1}:9000:9000"
+      - "${CENTRAL_BIND_ADDR:-127.0.0.1}:9001:9001"
+    volumes:
+      - ${CENTRAL_MINIO_DATA:-/Users/Shared/joelclaw/services/minio}:/data

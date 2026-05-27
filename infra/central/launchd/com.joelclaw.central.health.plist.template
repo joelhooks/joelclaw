@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.joelclaw.central.health</string>
+
+    <key>UserName</key>
+    <string>joelclaw</string>
+
+    <key>GroupName</key>
+    <string>staff</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/Shared/joelclaw/src/joelclaw</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/joelclaw</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/Users/joelclaw/.docker/bin:/Users/joelclaw/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>ENV_FILE</key>
+        <string>/Users/Shared/joelclaw/src/joelclaw/infra/central/.env</string>
+    </dict>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/health.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StartInterval</key>
+    <integer>60</integer>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/Shared/joelclaw/logs/central/health.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/Shared/joelclaw/logs/central/health.err.log</string>
+</dict>
+</plist>
