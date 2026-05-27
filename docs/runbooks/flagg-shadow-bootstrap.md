@@ -148,6 +148,8 @@ The helper has also been copied into Flagg's working tree at:
 
 Remote dry-run verification passed with the expected blocker: no separate non-Joel admin account detected.
 
+Known first-run behavior on macOS 26.3: `dscl . -create /Users/joelclaw` may print `eDSPermissionError` while still creating the local directory record. The helper is idempotent and now treats that partial-create as recoverable. If you hit that error, pull/reset the latest repo and rerun the same command; it should detect the existing record, create `/Users/joelclaw`, and continue.
+
 What it does when run with sudo on Flagg:
 
 - creates a hidden Standard `joelclaw` service user with no password hash,

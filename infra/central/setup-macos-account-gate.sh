@@ -81,16 +81,33 @@ non_joel_admins() {
   admin_users | grep -Ev '^(root|_mbsetupuser|joel)$' || true
 }
 
+ensure_service_home() {
+  # No password hash is set. This account is for launchd UserName ownership, not login.
+  run mkdir -p "$SERVICE_HOME"
+  run chown "$SERVICE_USER:staff" "$SERVICE_HOME"
+  run chmod 700 "$SERVICE_HOME"
+}
+
 create_service_user() {
   if user_exists "$SERVICE_USER"; then
     log "service user exists: $SERVICE_USER"
+    ensure_service_home
     return
   fi
 
   local uid="${SERVICE_UID:-$(next_uid)}"
   log "creating hidden Standard service user: $SERVICE_USER uid=$uid home=$SERVICE_HOME"
 
-  run dscl . -create "/Users/$SERVICE_USER"
+  if ! run dscl . -create "/Users/$SERVICE_USER"; then
+    # macOS can return eDSPermissionError while still creating the local record.
+    # Treat that as a recoverable partial-create and continue idempotently.
+    if user_exists "$SERVICE_USER"; then
+      log "service user record appeared after dscl create warning; continuing idempotently"
+    else
+      echo "Failed to create /Users/$SERVICE_USER local directory record" >&2
+      exit 1
+    fi
+  fi
   run dscl . -create "/Users/$SERVICE_USER" UserShell /usr/bin/false
   run dscl . -create "/Users/$SERVICE_USER" RealName "$SERVICE_FULL_NAME"
   run dscl . -create "/Users/$SERVICE_USER" UniqueID "$uid"
@@ -99,10 +116,7 @@ create_service_user() {
   run dscl . -create "/Users/$SERVICE_USER" IsHidden 1
   run dscl . -create "/Users/$SERVICE_USER" GeneratedUID "$(uuidgen)"
 
-  # No password hash is set. This account is for launchd UserName ownership, not login.
-  run mkdir -p "$SERVICE_HOME"
-  run chown "$SERVICE_USER:staff" "$SERVICE_HOME"
-  run chmod 700 "$SERVICE_HOME"
+  ensure_service_home
 }
 
 ensure_not_admin() {
