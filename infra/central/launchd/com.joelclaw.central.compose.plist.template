@@ -33,7 +33,10 @@
     <true/>
 
     <key>KeepAlive</key>
-    <false/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
 
     <key>ProcessType</key>
     <string>Background</string>

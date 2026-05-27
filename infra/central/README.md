@@ -4,6 +4,20 @@ Repo-managed runtime assets for ADR-0246 Gate 2: Mac Studio Central shadow boots
 
 This directory does **not** cut over Central. Panda remains authoritative until an explicit whole-Central cutover gate is approved.
 
+## Non-negotiable reboot pillar
+
+Central is not accepted until it survives a hard reboot with **no GUI login** and recovers itself through system `launchd`.
+
+Proof means:
+
+- services are installed as system LaunchDaemons, not user LaunchAgents;
+- LaunchDaemons run as `UserName=joelclaw` where practical;
+- no auto-login, no Screen Sharing login, no Terminal session, no manual `colima start`, no manual `docker compose up`;
+- after the machine reboots, another machine can SSH in and run `infra/central/scripts/reboot-proof.sh`;
+- `reboot-proof.sh` passes, including `console_user=root`, launchd labels loaded, post-boot logs, Docker reachability, and service health.
+
+If this proof fails, Flagg is not eligible for cutover. Full stop.
+
 ## Shape
 
 ```text
@@ -95,6 +109,25 @@ Templates live in `infra/central/launchd/` and assume the service-owned checkout
 ```
 
 They are templates only. Do not install them by hand as the source of truth. Render/install with a repo-managed script when Gate 3 starts.
+
+The Colima and Compose templates retry on failed exit via `KeepAlive.SuccessfulExit=false`. That matters at boot because Compose can race the container substrate. Success exits cleanly; failures get another shove.
+
+## Hard reboot proof
+
+After Gate 3 installs LaunchDaemons and starts the shadow stack, the acceptance test is:
+
+```bash
+# From Panda, before any GUI login on Flagg after reboot:
+ssh joel@100.69.174.22 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
+```
+
+Expected final line:
+
+```text
+PASS: Central recovered after hard reboot with no GUI login.
+```
+
+If the proof requires logging into Flagg first, it failed. We do not rationalize that away.
 
 ## Sudo discipline
 

@@ -217,7 +217,11 @@ Contents:
 
 Default service binds are local-only (`127.0.0.1`). Do not expose Flagg services over Tailscale/LAN until cutover planning explicitly says so.
 
+The pillar: Flagg Central must survive a hard reboot with **no GUI login**. If services require Joel, `clawadmin`, Screen Sharing, Terminal, auto-login, or a manual `colima start`, they are not Central infrastructure. They are dev toys wearing a fake moustache.
+
 The real runtime owner is `joelclaw`, not the `joel` dev account. Start/stop scripts are intended for the future service-owned checkout at `/Users/Shared/joelclaw/src/joelclaw` via launchd or a batched admin command. Running them from Joel's dev shell would recreate the Panda coupling ADR-0246 is trying to kill. Bad trade. Don't.
+
+Gate 2 now includes `scripts/reboot-proof.sh`. It is expected to fail until Gate 3 installs system LaunchDaemons and the shadow stack is running. It becomes mandatory before Gate 5.
 
 Next non-sudo check on Flagg after pulling the latest repo:
 
@@ -259,6 +263,8 @@ Optional/dev-only:
 
 All LaunchDaemons must set explicit PATH. Do not rely on `~/.zshenv` for service runtime.
 
+Gate 3 is not complete until system LaunchDaemons are installed in `/Library/LaunchDaemons` and configured to run as `UserName=joelclaw` where practical. User LaunchAgents do not count.
+
 ### Gate 4 — shadow runtime
 
 Start Flagg services without touching Panda's active Central writes.
@@ -274,6 +280,17 @@ Required checks:
 - `system-bus-worker` can start against Flagg services.
 - OTEL emit/query works.
 - Run capture/search path from ADR-0243 works in a shadow-safe way.
+- Hard-reboot/no-login proof passes from Panda before any GUI login on Flagg:
+
+```bash
+ssh joel@100.69.174.22 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
+```
+
+Expected:
+
+```text
+PASS: Central recovered after hard reboot with no GUI login.
+```
 
 ### Gate 5 — cutover
 
