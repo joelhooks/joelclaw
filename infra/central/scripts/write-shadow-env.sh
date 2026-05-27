@@ -48,7 +48,8 @@ CENTRAL_REPO_ROOT=/Users/Shared/joelclaw/src/joelclaw
 CENTRAL_REDIS_DATA=${SERVICE_ROOT}/services/redis
 CENTRAL_TYPESENSE_DATA=${SERVICE_ROOT}/services/typesense
 CENTRAL_INNGEST_DATA=${SERVICE_ROOT}/services/inngest
-CENTRAL_RESTATE_DATA=${SERVICE_ROOT}/services/restate
+# Restate stores data in a Docker named volume inside Colima because it needs Unix sockets.
+CENTRAL_RESTATE_VOLUME=${CENTRAL_RESTATE_VOLUME}
 CENTRAL_MINIO_DATA=${SERVICE_ROOT}/services/minio
 CENTRAL_BACKUP_DIR=${CENTRAL_BACKUP_DIR}
 CENTRAL_LOG_DIR=${CENTRAL_LOG_DIR}

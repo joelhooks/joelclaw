@@ -11,6 +11,7 @@ Usage: $0 <backup-tar.gz>
 
 Restores a Flagg Central shadow filesystem snapshot into ${SERVICE_ROOT}/services.
 This is destructive to shadow service data. It is not a Panda cutover/rollback tool.
+Restate uses Docker volume ${CENTRAL_RESTATE_VOLUME}; this filesystem restore does not restore that volume.
 USAGE
 }
 

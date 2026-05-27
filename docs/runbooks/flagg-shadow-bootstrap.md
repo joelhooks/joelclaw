@@ -324,6 +324,7 @@ Known Gate 4 gotchas already fixed in the repo:
 
 - Typesense must receive image entrypoint args directly, including `--api-key`; do not wrap the Typesense image in `/bin/sh -c`.
 - Inngest must bind `--host 0.0.0.0` and its self-hosted event/signing keys must be even-length hex strings.
+- Restate must use a Docker named volume for `/restate-data`, not a `/Users/Shared` bind mount, because it writes Unix sockets and host bind mounts fail with `Operation not supported` (`RT0004`).
 - SSH/no-login verification must not require Joel to read the service user's Docker socket or `.env`; use TCP/HTTP probes for health and keep `.env` `0600`.
 - `/Users/Shared/joelclaw` is traverse-only, while `/Users/Shared/joelclaw/src/joelclaw` is readable/executable for remote proof scripts after `sync-service-checkout.sh` runs.
 

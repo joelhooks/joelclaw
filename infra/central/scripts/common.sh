@@ -17,6 +17,7 @@ CENTRAL_BACKUP_DIR="${CENTRAL_BACKUP_DIR:-${SERVICE_ROOT}/backups/central}"
 CENTRAL_LOG_DIR="${CENTRAL_LOG_DIR:-${SERVICE_ROOT}/logs/central}"
 COLIMA_PROFILE="${COLIMA_PROFILE:-joelclaw-central}"
 COLIMA_DOCKER_SOCKET="${COLIMA_DOCKER_SOCKET:-${SERVICE_HOME}/.colima/${COLIMA_PROFILE}/docker.sock}"
+CENTRAL_RESTATE_VOLUME="${CENTRAL_RESTATE_VOLUME:-joelclaw-central-restate-data}"
 CENTRAL_BIND_ADDR="${CENTRAL_BIND_ADDR:-127.0.0.1}"
 
 log() {
@@ -88,7 +89,6 @@ ensure_service_dirs() {
     "${SERVICE_ROOT}/services/redis" \
     "${SERVICE_ROOT}/services/typesense" \
     "${SERVICE_ROOT}/services/inngest" \
-    "${SERVICE_ROOT}/services/restate" \
     "${SERVICE_ROOT}/services/minio" \
     "$CENTRAL_BACKUP_DIR" \
     "$CENTRAL_LOG_DIR"

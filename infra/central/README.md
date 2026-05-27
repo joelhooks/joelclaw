@@ -27,7 +27,6 @@ If this proof fails, Flagg is not eligible for cutover. Full stop.
     redis/
     typesense/
     inngest/
-    restate/
     minio/
   backups/
     central/
@@ -44,6 +43,8 @@ If this proof fails, Flagg is not eligible for cutover. Full stop.
 - Inngest self-hosted server
 - Restate `1.6.2`
 - MinIO S3-compatible object store
+
+Restate data uses a Docker named volume inside the Colima VM (`CENTRAL_RESTATE_VOLUME`) instead of a `/Users/Shared` bind mount. Restate writes Unix sockets under `/restate-data`; macOS/Colima host bind mounts reject that with `Operation not supported`.
 
 All ports bind to `127.0.0.1` by default. Do not expose this over Tailscale/LAN until cutover planning says so.
 

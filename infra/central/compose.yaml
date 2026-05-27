@@ -68,7 +68,7 @@ services:
       - "${CENTRAL_BIND_ADDR:-127.0.0.1}:9070:9070"
       - "${CENTRAL_BIND_ADDR:-127.0.0.1}:9071:9071"
     volumes:
-      - ${CENTRAL_RESTATE_DATA:-/Users/Shared/joelclaw/services/restate}:/restate-data
+      - restate-data:/restate-data
 
   minio:
     image: minio/minio:latest
@@ -87,3 +87,7 @@ services:
       - "${CENTRAL_BIND_ADDR:-127.0.0.1}:9001:9001"
     volumes:
       - ${CENTRAL_MINIO_DATA:-/Users/Shared/joelclaw/services/minio}:/data
+
+volumes:
+  restate-data:
+    name: ${CENTRAL_RESTATE_VOLUME:-joelclaw-central-restate-data}
