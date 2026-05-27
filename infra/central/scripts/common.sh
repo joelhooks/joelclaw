@@ -12,9 +12,11 @@ COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-joelclaw-central-shadow}"
 SERVICE_ROOT="${SERVICE_ROOT:-/Users/Shared/joelclaw}"
 SERVICE_USER="${SERVICE_USER:-joelclaw}"
 SERVICE_GROUP="${SERVICE_GROUP:-staff}"
+SERVICE_HOME="${SERVICE_HOME:-/Users/${SERVICE_USER}}"
 CENTRAL_BACKUP_DIR="${CENTRAL_BACKUP_DIR:-${SERVICE_ROOT}/backups/central}"
 CENTRAL_LOG_DIR="${CENTRAL_LOG_DIR:-${SERVICE_ROOT}/logs/central}"
 COLIMA_PROFILE="${COLIMA_PROFILE:-joelclaw-central}"
+COLIMA_DOCKER_SOCKET="${COLIMA_DOCKER_SOCKET:-${SERVICE_HOME}/.colima/${COLIMA_PROFILE}/docker.sock}"
 CENTRAL_BIND_ADDR="${CENTRAL_BIND_ADDR:-127.0.0.1}"
 
 log() {
@@ -53,7 +55,14 @@ require_env_file() {
   fi
 }
 
+configure_docker_host() {
+  if [[ -z "${DOCKER_HOST:-}" && -S "$COLIMA_DOCKER_SOCKET" ]]; then
+    export DOCKER_HOST="unix://${COLIMA_DOCKER_SOCKET}"
+  fi
+}
+
 compose() {
+  configure_docker_host
   if docker compose version >/dev/null 2>&1; then
     docker compose \
       --project-name "$COMPOSE_PROJECT_NAME" \

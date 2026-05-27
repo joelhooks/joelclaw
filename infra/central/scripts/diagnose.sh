@@ -7,9 +7,11 @@ source "${SCRIPT_DIR}/common.sh"
 load_env_if_present
 
 TAIL_LINES="${TAIL_LINES:-120}"
-SERVICE_HOME="/Users/${SERVICE_USER}"
+SERVICE_REPO="${SERVICE_ROOT}/src/joelclaw"
+SERVICE_ENV_FILE="${SERVICE_REPO}/infra/central/.env"
+SERVICE_COMPOSE_FILE="${SERVICE_REPO}/infra/central/compose.yaml"
 SERVICE_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-DOCKER_SOCK="${SERVICE_HOME}/.colima/${COLIMA_PROFILE}/docker.sock"
+DOCKER_SOCK="${COLIMA_DOCKER_SOCKET}"
 
 section() {
   printf '\n-- %s --\n' "$1"
@@ -39,6 +41,8 @@ printf 'service_root=%s\n' "$SERVICE_ROOT"
 printf 'colima_profile=%s\n' "$COLIMA_PROFILE"
 printf 'docker_sock=%s\n' "$DOCKER_SOCK"
 printf 'docker_sock_present=%s\n' "$([[ -S "$DOCKER_SOCK" ]] && echo yes || echo no)"
+printf 'service_env_file=%s\n' "$SERVICE_ENV_FILE"
+printf 'service_compose_file=%s\n' "$SERVICE_COMPOSE_FILE"
 
 section "launchd"
 for label in \
@@ -88,8 +92,8 @@ service_run docker ps -a
 section "compose ps as service user"
 service_run docker-compose \
   --project-name "$COMPOSE_PROJECT_NAME" \
-  --env-file "$ENV_FILE" \
-  --file "$COMPOSE_FILE" \
+  --env-file "$SERVICE_ENV_FILE" \
+  --file "$SERVICE_COMPOSE_FILE" \
   ps -a
 
 section "ports"
@@ -114,12 +118,8 @@ done
 section "container logs"
 for service in redis typesense inngest restate minio; do
   printf '### %s\n' "$service"
-  service_run docker-compose \
-    --project-name "$COMPOSE_PROJECT_NAME" \
-    --env-file "$ENV_FILE" \
-    --file "$COMPOSE_FILE" \
-    logs --tail "$TAIL_LINES" "$service"
+  service_run docker logs --tail "$TAIL_LINES" "${COMPOSE_PROJECT_NAME}-${service}-1"
 done
 
 section "central health"
-run_or_true "${SCRIPT_DIR}/health.sh"
+service_run env ENV_FILE="$SERVICE_ENV_FILE" "$SERVICE_REPO/infra/central/scripts/health.sh"

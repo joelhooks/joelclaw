@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/common.sh"
 require_env_file
 load_env_if_present
 ensure_service_dirs
+configure_docker_host
 
 wait_for_docker() {
   local attempts="${CENTRAL_DOCKER_WAIT_ATTEMPTS:-60}"

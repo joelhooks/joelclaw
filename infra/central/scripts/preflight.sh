@@ -69,6 +69,7 @@ env_file_has_no_placeholders() {
 }
 
 docker_reachable() {
+  configure_docker_host
   docker info >/dev/null
 }
 

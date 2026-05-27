@@ -22,6 +22,8 @@
         <string>/opt/homebrew/bin:/Users/joelclaw/.docker/bin:/Users/joelclaw/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>ENV_FILE</key>
         <string>/Users/Shared/joelclaw/src/joelclaw/infra/central/.env</string>
+        <key>DOCKER_HOST</key>
+        <string>unix:///Users/joelclaw/.colima/joelclaw-central/docker.sock</string>
     </dict>
 
     <key>ProgramArguments</key>
