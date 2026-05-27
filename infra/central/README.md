@@ -131,7 +131,7 @@ sudo ./infra/central/scripts/install-launchdaemons.sh --no-bootstrap
 ./infra/central/scripts/preflight.sh
 ```
 
-`install-launchdaemons.sh --no-bootstrap` installs the system plists without starting the shadow stack. Use `--bootstrap` in Gate 4 when the shadow runtime start is approved.
+`install-launchdaemons.sh --no-bootstrap` installs the system plists and explicitly disables the labels so a reboot does not start the shadow stack before Gate 4. Use `--bootstrap` in Gate 4 when the shadow runtime start is approved; it enables and starts the labels.
 
 After Gate 3 installs Colima/Docker and mirrors the repo into `/Users/Shared/joelclaw/src/joelclaw`, the service-user commands are:
 
@@ -158,7 +158,7 @@ Templates live in `infra/central/launchd/` and assume the service-owned checkout
 /Users/Shared/joelclaw/src/joelclaw
 ```
 
-They are templates only. Do not install them by hand as the source of truth. Render/install with a repo-managed script when Gate 3 starts.
+They are templates only. Do not install them by hand as the source of truth. Render/install with `scripts/install-launchdaemons.sh`.
 
 The Colima and Compose templates retry on failed exit via `KeepAlive.SuccessfulExit=false`. That matters at boot because Compose can race the container substrate. Success exits cleanly; failures get another shove.
 

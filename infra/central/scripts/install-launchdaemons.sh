@@ -32,6 +32,18 @@ bootout_if_loaded() {
     || true
 }
 
+disable_one() {
+  local label="$1"
+  bootout_if_loaded "$label"
+  launchctl disable "system/${label}" || true
+  log "disabled system/${label} until Gate 4 bootstrap"
+}
+
+enable_one() {
+  local label="$1"
+  launchctl enable "system/${label}" || true
+}
+
 install_one() {
   local label="$1"
   local src="${CENTRAL_DIR}/launchd/${label}.plist.template"
@@ -49,6 +61,7 @@ bootstrap_one() {
   local label="$1"
   local plist_path="/Library/LaunchDaemons/${label}.plist"
 
+  enable_one "$label"
   bootout_if_loaded "$label"
   launchctl bootstrap system "$plist_path"
   launchctl kickstart -k "system/${label}" >/dev/null 2>&1 || true
@@ -74,7 +87,10 @@ if [[ "$BOOTSTRAP" == "1" ]]; then
     bootstrap_one "$label"
   done
 else
-  log "launchd plists installed but not bootstrapped; pass --bootstrap during Gate 4 to start shadow runtime"
+  for label in "${LABELS[@]}"; do
+    disable_one "$label"
+  done
+  log "launchd plists installed and disabled; pass --bootstrap during Gate 4 to enable/start shadow runtime"
 fi
 
 log "central launchd install complete"

@@ -302,7 +302,7 @@ sudo ./infra/central/scripts/install-launchdaemons.sh --no-bootstrap
 ./infra/central/scripts/preflight.sh
 ```
 
-`install-launchdaemons.sh --no-bootstrap` installs root-owned system plists but does not start the shadow stack. Gate 4 can run the same script with `--bootstrap` when shadow runtime start is approved.
+`install-launchdaemons.sh --no-bootstrap` installs root-owned system plists and explicitly disables the labels so a reboot does not start the shadow stack before Gate 4. Gate 4 can run the same script with `--bootstrap` when shadow runtime start is approved; it enables and starts the labels.
 
 All LaunchDaemons must set explicit PATH. Do not rely on `~/.zshenv` for service runtime.
 
