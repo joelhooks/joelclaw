@@ -226,7 +226,19 @@ cd /Users/joel/Code/joelhooks/joelclaw
 ./infra/central/scripts/preflight.sh
 ```
 
-Expected current result before Gate 3: account checks pass; `.env`, Colima, and Docker may warn until installed/configured.
+Verified on Flagg after syncing commit `3a1798b6`:
+
+```text
+ok   service user exists
+ok   service user is not admin
+ok   separate non-Joel admin exists
+ok   service root owned by service user
+warn env file exists
+warn colima installed
+warn docker installed
+```
+
+This is the expected Gate 2 result: account checks pass, and Gate 3 still needs `.env`, Colima, and Docker.
 
 No hand-edited plist is the source of truth.
 
