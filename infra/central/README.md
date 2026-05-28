@@ -99,7 +99,8 @@ sudo ./infra/central/scripts/mount-nas.sh unmount
 
 # Prepare object roots on the NAS over SSH. These are the write targets for the proof.
 # NFSv3 uses numeric uid/gid. Flagg service user joelclaw is 502:20, so the NAS dirs must match.
-ssh -t joel@three-body 'sudo mkdir -p /volume2/data/s3 /volume1/joelclaw/s3 && sudo chown -R 502:20 /volume2/data/s3 /volume1/joelclaw/s3 && sudo chmod -R u+rwX,g+rwX,o-rwx /volume2/data/s3 /volume1/joelclaw/s3 && sudo chmod 2770 /volume2/data/s3 /volume1/joelclaw/s3'
+# three-body privileged shell is admin@three-body and requires interactive 2FA/OTP.
+ssh -t admin@three-body 'sudo mkdir -p /volume2/data/s3 /volume1/joelclaw/s3 && sudo chown -R 502:20 /volume2/data/s3 /volume1/joelclaw/s3 && sudo chmod -R u+rwX,g+rwX,o-rwx /volume2/data/s3 /volume1/joelclaw/s3 && sudo chmod 2770 /volume2/data/s3 /volume1/joelclaw/s3'
 
 # Gate 5 proof receipt: route/media/MTU/mounts plus 64 MiB write/read probes against the hot/cold object paths.
 ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
