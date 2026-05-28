@@ -46,6 +46,31 @@ If this proof fails, Flagg is not eligible for cutover. Full stop.
 
 Restate data uses a Docker named volume inside the Colima VM (`CENTRAL_RESTATE_VOLUME`) instead of a `/Users/Shared` bind mount. Restate writes Unix sockets under `/restate-data`; macOS/Colima host bind mounts reject that with `Operation not supported`.
 
+## NAS/object-storage contract
+
+Shadow MinIO may use `/Users/Shared/joelclaw/services/minio` only for isolated smoke tests. That path is **not** the Gate 5 object-storage target.
+
+For cutover, MinIO should be an S3-compatible facade over `three-body` NAS tiers:
+
+| Tier | Flagg mount | NAS path | Role |
+| --- | --- | --- | --- |
+| Tier 1 local SSD | `/Users/Shared/joelclaw/services/*` | Flagg internal SSD | Redis, Inngest, Restate, active Typesense, scratch/cache |
+| NAS NVMe warm/hot | `/Volumes/nas-nvme` | `three-body:/volume2/data` | fast shared artifacts, snapshots, models, docs artifacts, sessions, transcripts, hot object data |
+| NAS HDD cold | `/Volumes/three-body` | `three-body:/volume1/joelclaw` | archives, books, video/media refs, bulk/cold object data |
+
+Do not blend NAS NVMe and NAS HDD into one opaque MinIO erasure set. Keep tier boundaries visible. Preferred Gate 5 shape is either:
+
+1. two explicit object-store surfaces (`minio-hot` backed by NAS NVMe, `minio-cold` backed by NAS HDD), or
+2. one hot MinIO surface plus explicit lifecycle/copy jobs to cold HDD.
+
+Before cutover, prove:
+
+- Flagg routes `three-body` traffic over the 10GbE interface, not Tailscale/Wi-Fi;
+- MTU/NFS tuning matches ADR-0088 or the reason for divergence is documented;
+- `/Volumes/nas-nvme` and `/Volumes/three-body` survive hard reboot/no-login;
+- read/write latency and throughput are good enough for the selected tier;
+- MinIO bucket/object smoke tests write to the NAS-backed path, not local Flagg SSD.
+
 All ports bind to `127.0.0.1` by default. Do not expose this over Tailscale/LAN until cutover planning says so.
 
 ## Before running

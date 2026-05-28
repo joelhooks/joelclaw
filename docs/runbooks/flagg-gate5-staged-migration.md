@@ -162,15 +162,42 @@ Flagg can resolve and reach `three-body` over the network:
 - DNS/ping: ok
 - NFS `2049/tcp`: reachable
 - SSH `22/tcp`: reachable
+- route to `192.168.1.163` uses `en10`, which reports `10Gbase-T <full-duplex,flow-control>`
 
-But Flagg does **not** currently have a persistent NAS mount:
+But Flagg is **not** storage-ready yet:
 
+- route MTU currently reports `1500`, not the ADR-0088 jumbo-frame target
+- no `/Volumes/nas-nvme` mount
 - no `/Volumes/three-body` mount
 - no NFS/SMB mount in `mount`
 - no `/etc/auto_*` map entry for `three-body`
 - no matching system LaunchDaemon
 
-Gate 5 should not assume NAS-backed rebuilds or artifact reads work on Flagg until the persistent `three-body` mount path is installed and reboot-proven. If we choose SSH/SCP fallback for backups instead of a live mount, document that explicitly before cutover.
+Gate 5 should not assume NAS-backed rebuilds, artifact reads, backups, or object storage work on Flagg until the NAS path is installed and reboot-proven.
+
+### Gate 5 NAS/object-storage target
+
+MinIO should be an interface to `three-body`, not a pile of object data hidden on Flagg's local SSD. Local MinIO storage under `/Users/Shared/joelclaw/services/minio` is shadow-smoke-only.
+
+Target tiering:
+
+| Tier | Path | Backing storage | Use |
+| --- | --- | --- | --- |
+| Local SSD | `/Users/Shared/joelclaw/services/*` | Flagg internal SSD | Redis, Inngest, Restate, active Typesense, caches/scratch |
+| NAS NVMe | `/Volumes/nas-nvme` | `three-body:/volume2/data` | fast shared artifacts, snapshots, models, docs artifacts, sessions, transcripts, hot object data |
+| NAS HDD | `/Volumes/three-body` | `three-body:/volume1/joelclaw` | archives, books, bulk object data, cold retention |
+
+Do not mix NAS NVMe and NAS HDD into one opaque MinIO erasure set. Preferred shape is either:
+
+1. two explicit S3 surfaces: hot MinIO backed by NAS NVMe and cold MinIO backed by NAS HDD; or
+2. one hot MinIO surface backed by NAS NVMe plus explicit lifecycle/copy jobs to NAS HDD.
+
+Before cutover, prove the selected shape with:
+
+- persistent no-login mounts for `/Volumes/nas-nvme` and `/Volumes/three-body`, or an explicitly scoped fallback for non-MinIO backup/export paths;
+- route/MTU proof showing Flagg uses 10GbE to `three-body`, not Tailscale/Wi-Fi;
+- read/write latency and throughput receipts against both NAS tiers;
+- MinIO bucket/object smoke tests that prove writes land on NAS-backed storage.
 
 ### Phase C — coordinated authority cutover
 
@@ -183,7 +210,7 @@ Preconditions:
 - Panda health is green enough to snapshot.
 - Flagg Gate 4 reboot proof remains valid.
 - Flagg shadow smoke tests pass.
-- Flagg has a documented and reboot-proven `three-body` NAS access path, either persistent mount or explicit SSH/SCP fallback.
+- Flagg has a documented and reboot-proven `three-body` NAS access path, including `/Volumes/nas-nvme`, `/Volumes/three-body`, 10GbE route proof, and performance receipt.
 - Active loops/runs/workloads are drained, cancelled, or explicitly accepted as disposable.
 - Rollback commands are written before the freeze.
 
@@ -213,7 +240,8 @@ Cutover sequence:
 - [ ] Active Panda workloads are drained/cancelled before final sync.
 - [ ] Flagg owns Redis, Typesense, Inngest, Restate, MinIO wave-1 state after cutover.
 - [ ] Flagg workers execute against Flagg state only.
-- [ ] Flagg has reboot-proven NAS access to `three-body` for rebuilds/artifacts/backups, or Gate 5 explicitly chooses SSH/SCP fallback with no live mount.
+- [ ] Flagg has reboot-proven NAS access to `three-body` for rebuilds/artifacts/backups/object storage, with 10GbE route proof and latency/throughput receipts.
+- [ ] MinIO wave-1 data is NAS-backed, not local Flagg SSD, or MinIO is explicitly omitted from wave 1.
 - [ ] Clients and relay paths post to Flagg Central only.
 - [ ] Panda Central stack is stopped/frozen and labelled rollback-only.
 - [ ] At least one known event completes through Flagg Inngest.
@@ -245,7 +273,8 @@ Cutover sequence:
 5. Does gateway move in Gate 5 or remain on Panda as Relay while pointing at Flagg Central?
 6. What is the rollback window cutoff after Flagg accepts writes?
 7. Should we create a `#brain-joel` Project Thread for Gate 5 evidence?
-8. Should Flagg use a persistent `/Volumes/three-body` mount, an autofs mount, or SSH/SCP-only fallback for NAS-dependent jobs?
+8. Should Flagg use LaunchDaemon-mounted NFS or autofs for `/Volumes/nas-nvme` and `/Volumes/three-body`?
+9. Should MinIO wave 1 use two explicit hot/cold S3 surfaces, or one hot S3 surface plus lifecycle/copy jobs to HDD?
 
 ## Phase A smoke harness
 
@@ -268,7 +297,8 @@ This performs isolated shadow writes only. It does not freeze Panda, flip endpoi
 
 ## Recommended next work
 
-1. Decide and prove Flagg's `three-body` NAS access path: persistent mount, autofs mount, or SSH/SCP-only fallback.
-2. Write the freeze/rollback command sheet before any final sync.
-3. Decide the open questions above before scheduling Gate 5.
-4. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.
+1. Decide and prove Flagg's `three-body` NAS access path: LaunchDaemon-mounted NFS or autofs for `/Volumes/nas-nvme` and `/Volumes/three-body`.
+2. Decide MinIO wave-1 shape: two hot/cold S3 surfaces, or one hot S3 surface plus lifecycle/copy jobs to HDD.
+3. Write the freeze/rollback command sheet before any final sync.
+4. Decide the open questions above before scheduling Gate 5.
+5. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.
