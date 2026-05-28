@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SMOKE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
-source "${SCRIPT_DIR}/lib.sh"
+source "${SMOKE_SCRIPT_DIR}/lib.sh"
 
 mkdir -p "${CENTRAL_LOG_DIR}/smoke"
 receipt="${CENTRAL_LOG_DIR}/smoke/phase-a-$(date -u +%Y%m%dT%H%M%SZ).log"
@@ -19,7 +19,7 @@ log "receipt=${receipt}"
 log "mode=shadow-only; no Panda freeze; isolated temp writes only"
 
 for service in "${services[@]}"; do
-  script="${SCRIPT_DIR}/${service}.sh"
+  script="${SMOKE_SCRIPT_DIR}/${service}.sh"
   printf '\n== %s ==\n' "$service"
   if "$script"; then
     printf 'ok   %s\n' "$service"
