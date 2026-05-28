@@ -205,10 +205,28 @@ Cutover sequence:
 6. What is the rollback window cutoff after Flagg accepts writes?
 7. Should we create a `#brain-joel` Project Thread for Gate 5 evidence?
 
+## Phase A smoke harness
+
+Repo-managed scripts live under `infra/central/scripts/smoke/`:
+
+- `redis.sh` — isolated temp key write/read/delete.
+- `typesense.sh` — temp collection create/index/search/delete.
+- `inngest.sh` — health check plus isolated `central/smoke.test` event submit.
+- `restate.sh` — ingress/admin/metrics reachability.
+- `minio.sh` — temp bucket/object write/read/delete through the S3 API.
+- `run.sh` — aggregate harness that writes a receipt under `${CENTRAL_LOG_DIR}/smoke/`.
+
+Run from Flagg's service checkout as the `joelclaw` service user so `.env` stays private and readable only to the runtime identity:
+
+```bash
+ssh -t joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && sudo -u joelclaw -H ./infra/central/scripts/smoke/run.sh'
+```
+
+This performs isolated shadow writes only. It does not freeze Panda, flip endpoints, or make Flagg authoritative.
+
 ## Recommended next work
 
-1. Add service-specific smoke scripts under `infra/central/scripts/smoke/`.
+1. Run Phase A smoke tests on Flagg and post the receipt to the Project Thread.
 2. Add a dry-run inventory command for Panda state: Redis keys, Typesense collections, Inngest active runs, Restate jobs, MinIO buckets.
 3. Write the freeze/rollback command sheet before any final sync.
-4. Run Phase A smoke tests on Flagg and collect receipts.
-5. Decide the open questions above before scheduling Gate 5.
+4. Decide the open questions above before scheduling Gate 5.

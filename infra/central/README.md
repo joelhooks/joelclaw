@@ -169,6 +169,19 @@ They are templates only. Do not install them by hand as the source of truth. Ren
 
 The Colima and Compose templates retry on failed exit via `KeepAlive.SuccessfulExit=false`. That matters at boot because Compose can race the container substrate. Success exits cleanly; failures get another shove.
 
+## Gate 5 Phase A smoke tests
+
+After Gate 4 is green, use the smoke harness for service-by-service shadow proof before any cutover gate:
+
+```bash
+cd /Users/Shared/joelclaw/src/joelclaw
+sudo -u joelclaw -H ./infra/central/scripts/smoke/run.sh
+```
+
+The harness performs isolated temp writes against Flagg shadow services only: Redis temp key, Typesense temp collection, Inngest smoke event, Restate port/admin reachability, and MinIO temp bucket/object. Receipts are written under `/Users/Shared/joelclaw/logs/central/smoke/`.
+
+This does not freeze Panda, flip endpoints, or make Flagg authoritative.
+
 ## Hard reboot proof
 
 After Gate 3 installs LaunchDaemons and starts the shadow stack, the acceptance test is:
