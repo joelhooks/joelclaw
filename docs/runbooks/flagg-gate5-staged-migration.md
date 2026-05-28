@@ -19,6 +19,14 @@ Project Thread for approvals, milestone updates, blockers, and smoke-test eviden
 
 Gate 4 is complete: Flagg shadow Central recovered after hard reboot with no GUI login.
 
+Gate 5 Phase A stateful-service shadow smoke passed on 2026-05-28. Receipt on Flagg:
+
+```text
+/Users/Shared/joelclaw/logs/central/smoke/phase-a-20260528T162118Z.log
+```
+
+Verified services: Redis, Typesense, Inngest, Restate, and MinIO. This was shadow-only; Panda was not frozen and no endpoints were flipped.
+
 Gate 5 is not complete until Flagg owns Central state, workers, endpoints, and verification while Panda is frozen as rollback-only.
 
 ## Definitions
@@ -167,7 +175,7 @@ Cutover sequence:
 
 ## Acceptance criteria
 
-- [ ] Each stateful service has a shadow smoke-test receipt.
+- [x] Each stateful service has a shadow smoke-test receipt. Flagg receipt: `/Users/Shared/joelclaw/logs/central/smoke/phase-a-20260528T162118Z.log`.
 - [ ] Each stateful service has a rehearsal/reset path or an explicit “start clean” decision.
 - [ ] Panda write freeze procedure is documented and tested dry-run where safe.
 - [ ] Active Panda workloads are drained/cancelled before final sync.
@@ -226,7 +234,6 @@ This performs isolated shadow writes only. It does not freeze Panda, flip endpoi
 
 ## Recommended next work
 
-1. Run Phase A smoke tests on Flagg and post the receipt to the Project Thread.
-2. Add a dry-run inventory command for Panda state: Redis keys, Typesense collections, Inngest active runs, Restate jobs, MinIO buckets.
-3. Write the freeze/rollback command sheet before any final sync.
-4. Decide the open questions above before scheduling Gate 5.
+1. Add a dry-run inventory command for Panda state: Redis keys, Typesense collections, Inngest active runs, Restate jobs, MinIO buckets.
+2. Write the freeze/rollback command sheet before any final sync.
+3. Decide the open questions above before scheduling Gate 5.
