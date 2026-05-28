@@ -95,6 +95,27 @@ central_launchdaemon_plists_installed() {
   done
 }
 
+nas_mount_launchdaemon_installed() {
+  [[ -f /Library/LaunchDaemons/com.joelclaw.central.nas-mounts.plist ]]
+}
+
+nas_nfs_reachable() {
+  nc -z -G 3 "$NAS_HOST" 2049 >/dev/null 2>&1 || nc -z -w 3 "$NAS_HOST" 2049 >/dev/null 2>&1
+}
+
+nas_route_expected() {
+  local iface
+  iface="$(route -n get "$NAS_IP" 2>/dev/null | awk '/interface:/ {print $2; exit}')"
+  [[ "$iface" == "$NAS_EXPECTED_INTERFACE" ]] || {
+    printf 'route interface=%s expected=%s\n' "${iface:-unknown}" "$NAS_EXPECTED_INTERFACE"
+    return 1
+  }
+}
+
+nas_mounts_present() {
+  "${SCRIPT_DIR}/mount-nas.sh" status >/dev/null
+}
+
 system_tailscaled_loaded() {
   launchctl print system/com.tailscale.tailscaled >/dev/null
 }
@@ -135,6 +156,16 @@ check_warn 'docker compose installed' compose_cli_installed
 check_warn 'pi installed' pi_installed
 check_warn 'codex installed' codex_installed
 check_warn 'central LaunchDaemon plists installed' central_launchdaemon_plists_installed
+check_warn 'NAS mount LaunchDaemon installed' nas_mount_launchdaemon_installed
+if have nc && have route; then
+  check_warn 'NAS NFS reachable' nas_nfs_reachable
+  check_warn 'NAS route uses expected 10GbE interface' nas_route_expected
+fi
+if [[ "${CENTRAL_REQUIRE_NAS}" == "1" ]]; then
+  check 'NAS mounts present' nas_mounts_present
+else
+  check_warn 'NAS mounts present' nas_mounts_present
+fi
 if have docker; then
   check_warn 'docker daemon reachable' docker_reachable
 fi

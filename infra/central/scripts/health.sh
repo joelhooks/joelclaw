@@ -44,6 +44,9 @@ require_command curl
 require_command nc
 
 printf 'Flagg Central shadow health\n'
+if [[ "${CENTRAL_REQUIRE_NAS}" == "1" ]]; then
+  probe 'nas mounts verified' "${SCRIPT_DIR}/verify-nas.sh"
+fi
 probe 'redis ping' redis_ok
 probe 'typesense /health' http_ok "http://${CENTRAL_BIND_ADDR}:8108/health"
 probe 'inngest /health' http_ok "http://${CENTRAL_BIND_ADDR}:8288/health"

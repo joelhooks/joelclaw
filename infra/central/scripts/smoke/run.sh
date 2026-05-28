@@ -10,6 +10,9 @@ receipt="${CENTRAL_LOG_DIR}/smoke/phase-a-$(date -u +%Y%m%dT%H%M%SZ).log"
 
 status=0
 services=(redis typesense inngest restate minio)
+if [[ "${CENTRAL_REQUIRE_NAS}" == "1" ]]; then
+  services=(nas "${services[@]}")
+fi
 
 exec > >(tee "$receipt") 2>&1
 

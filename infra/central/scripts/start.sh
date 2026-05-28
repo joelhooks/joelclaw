@@ -26,6 +26,10 @@ wait_for_docker() {
 }
 
 wait_for_docker
+if [[ "${CENTRAL_REQUIRE_NAS}" == "1" ]]; then
+  log "CENTRAL_REQUIRE_NAS=1; verifying NAS mounts before compose start"
+  "${SCRIPT_DIR}/verify-nas.sh"
+fi
 log "starting Flagg Central shadow compose stack"
 compose up -d
 log "started; run ./infra/central/scripts/health.sh"

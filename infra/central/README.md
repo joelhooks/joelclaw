@@ -71,6 +71,38 @@ Before cutover, prove:
 - read/write latency and throughput are good enough for the selected tier;
 - MinIO bucket/object smoke tests write to the NAS-backed path, not local Flagg SSD.
 
+NAS mount lifecycle is an explicit state machine, not boolean soup:
+
+```text
+boot/kickstart
+  -> wait_for_route(en10, three-body:2049)
+  -> assert_10gbe_media
+  -> mount_nas_nvme
+  -> mount_nas_hdd
+  -> verify_mounts
+  -> ready | failed_retry_next_interval
+```
+
+Repo-managed scripts:
+
+```bash
+# Install the root LaunchDaemon and mount points; disabled unless --bootstrap is passed.
+sudo ./infra/central/scripts/install-nas-mounts.sh --no-bootstrap
+
+# Start the NAS mount daemon after validating exports/options.
+sudo ./infra/central/scripts/install-nas-mounts.sh --bootstrap
+
+# Manual mount/status/unmount when debugging.
+sudo ./infra/central/scripts/mount-nas.sh mount
+./infra/central/scripts/mount-nas.sh status
+sudo ./infra/central/scripts/mount-nas.sh unmount
+
+# Gate 5 proof receipt: route/media/MTU/mounts plus 64 MiB write/read probes per tier.
+./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
+```
+
+Set `CENTRAL_REQUIRE_NAS=1` only after mount proof passes. With that flag, `start.sh`, `health.sh`, and the smoke harness require NAS verification before treating the Central stack as healthy.
+
 All ports bind to `127.0.0.1` by default. Do not expose this over Tailscale/LAN until cutover planning says so.
 
 ## Before running

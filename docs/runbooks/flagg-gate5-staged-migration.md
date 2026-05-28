@@ -199,6 +199,15 @@ Before cutover, prove the selected shape with:
 - read/write latency and throughput receipts against both NAS tiers;
 - MinIO bucket/object smoke tests that prove writes land on NAS-backed storage.
 
+Repo-managed NAS proof scripts now live under `infra/central/scripts/`:
+
+- `install-nas-mounts.sh` — installs the root `com.joelclaw.central.nas-mounts` LaunchDaemon and prepares `/Volumes/nas-nvme` + `/Volumes/three-body`.
+- `mount-nas.sh` — mount/status/unmount action with route, NFS, 10GbE media, and MTU checks.
+- `verify-nas.sh` — non-privileged proof script for route/media/MTU/mounts plus optional write/read benchmarks.
+- `smoke/nas.sh` — smoke harness wrapper for NAS write probes when `CENTRAL_REQUIRE_NAS=1`.
+
+The NAS mount lifecycle is: `boot/kickstart -> wait_for_route -> assert_10gbe_media -> mount_nas_nvme -> mount_nas_hdd -> verify_mounts -> ready | failed_retry_next_interval`.
+
 ### Phase C — coordinated authority cutover
 
 This is the actual Gate 5.
@@ -285,6 +294,7 @@ Repo-managed scripts live under `infra/central/scripts/smoke/`:
 - `inngest.sh` — health check plus isolated `central/smoke.test` event submit.
 - `restate.sh` — ingress/admin/metrics reachability.
 - `minio.sh` — temp bucket/object write/read/delete through the S3 API.
+- `nas.sh` — route/mount/write-probe check; included automatically when `CENTRAL_REQUIRE_NAS=1`.
 - `run.sh` — aggregate harness that writes a receipt under `${CENTRAL_LOG_DIR}/smoke/`.
 
 Run from Flagg's service checkout as the `joelclaw` service user so `.env` stays private and readable only to the runtime identity:
@@ -297,8 +307,17 @@ This performs isolated shadow writes only. It does not freeze Panda, flip endpoi
 
 ## Recommended next work
 
-1. Decide and prove Flagg's `three-body` NAS access path: LaunchDaemon-mounted NFS or autofs for `/Volumes/nas-nvme` and `/Volumes/three-body`.
-2. Decide MinIO wave-1 shape: two hot/cold S3 surfaces, or one hot S3 surface plus lifecycle/copy jobs to HDD.
-3. Write the freeze/rollback command sheet before any final sync.
-4. Decide the open questions above before scheduling Gate 5.
-5. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.
+1. Sync the NAS mount scripts to Flagg's service checkout.
+2. Have Joel run the privileged install/bootstrap on Flagg:
+   ```bash
+   ssh -t joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && sudo ./infra/central/scripts/install-nas-mounts.sh --bootstrap'
+   ```
+3. Verify from Flagg, preferably as the service user:
+   ```bash
+   ssh -t joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && sudo -u joelclaw -H ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64'
+   ```
+4. Hard-reboot Flagg, then repeat `verify-nas.sh` before any GUI login.
+5. Decide MinIO wave-1 shape: two hot/cold S3 surfaces, or one hot surface plus lifecycle/copy jobs to HDD.
+6. Write the freeze/rollback command sheet before any final sync.
+7. Decide the open questions above before scheduling Gate 5.
+8. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.
