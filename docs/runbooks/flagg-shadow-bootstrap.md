@@ -349,6 +349,8 @@ Expected:
 PASS: Central recovered after hard reboot with no GUI login.
 ```
 
+Gate 4 shadow runtime proof passed on 2026-05-28 after the Restate named-volume fix (`38bed86c`). Verified from Panda with `console_user=root`; system `tailscaled`, Colima, Compose, and Health LaunchDaemons loaded; post-boot logs were written; and Redis, Typesense, Inngest, Restate, and MinIO passed health.
+
 ### Gate 5 — cutover
 
 Cutover needs a separate go/no-go confirmation.
