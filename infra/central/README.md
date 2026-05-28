@@ -98,13 +98,14 @@ sudo ./infra/central/scripts/mount-nas.sh mount
 sudo ./infra/central/scripts/mount-nas.sh unmount
 
 # Prepare object roots on the NAS over SSH. These are the write targets for the proof.
-ssh joel@three-body 'mkdir -p /volume2/data/s3 /volume1/joelclaw/s3 && chmod 2775 /volume2/data/s3 /volume1/joelclaw/s3'
+# NFSv3 uses numeric uid/gid. Flagg service user joelclaw is 502:20, so the NAS dirs must match.
+ssh -t joel@three-body 'sudo mkdir -p /volume2/data/s3 /volume1/joelclaw/s3 && sudo chown -R 502:20 /volume2/data/s3 /volume1/joelclaw/s3 && sudo chmod -R u+rwX,g+rwX,o-rwx /volume2/data/s3 /volume1/joelclaw/s3 && sudo chmod 2770 /volume2/data/s3 /volume1/joelclaw/s3'
 
 # Gate 5 proof receipt: route/media/MTU/mounts plus 64 MiB write/read probes against the hot/cold object paths.
 ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
 ```
 
-`verify-nas.sh` intentionally writes under `CENTRAL_MINIO_HOT_DATA` and `CENTRAL_MINIO_COLD_DATA`, not the export roots. If those paths are missing or not writable by `joelclaw`, the fix belongs on `three-body` NAS permissions/ACLs, not by making Flagg write random proof files at the mount root.
+`verify-nas.sh` intentionally writes under `CENTRAL_MINIO_HOT_DATA` and `CENTRAL_MINIO_COLD_DATA`, not the export roots. If those paths are missing or not writable by `joelclaw`, the fix belongs on `three-body` NAS permissions/ACLs, not by making Flagg write random proof files at the mount root. For NFSv3, use numeric ownership for Flagg's service identity (`uid=502`, `gid=20`) unless the NAS export has a deliberate id-mapping policy.
 
 Set `CENTRAL_REQUIRE_NAS=1` only after mount proof passes. With that flag, `start.sh`, `health.sh`, and the smoke harness require NAS verification before treating the Central stack as healthy.
 
