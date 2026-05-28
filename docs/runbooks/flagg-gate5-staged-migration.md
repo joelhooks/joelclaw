@@ -13,6 +13,10 @@ The safe shape is **staged proof, atomic authority**: rehearse and smoke-test ea
 
 Draft plan. Do not execute without explicit go/no-go.
 
+Project Thread for approvals, milestone updates, blockers, and smoke-test evidence:
+
+- https://eggheadio.slack.com/archives/C09LKT871PE/p1779975813335049
+
 Gate 4 is complete: Flagg shadow Central recovered after hard reboot with no GUI login.
 
 Gate 5 is not complete until Flagg owns Central state, workers, endpoints, and verification while Panda is frozen as rollback-only.
