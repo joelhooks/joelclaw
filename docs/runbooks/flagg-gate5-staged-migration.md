@@ -155,6 +155,23 @@ Read-only Panda inventory found:
 
 This inventory created temporary read-only SQLite inspection pods for Inngest and deleted them immediately after logs were collected. No Panda freeze, endpoint flip, queue drain, data copy, or cutover happened.
 
+### Flagg NAS persistence check — 2026-05-28
+
+Flagg can resolve and reach `three-body` over the network:
+
+- DNS/ping: ok
+- NFS `2049/tcp`: reachable
+- SSH `22/tcp`: reachable
+
+But Flagg does **not** currently have a persistent NAS mount:
+
+- no `/Volumes/three-body` mount
+- no NFS/SMB mount in `mount`
+- no `/etc/auto_*` map entry for `three-body`
+- no matching system LaunchDaemon
+
+Gate 5 should not assume NAS-backed rebuilds or artifact reads work on Flagg until the persistent `three-body` mount path is installed and reboot-proven. If we choose SSH/SCP fallback for backups instead of a live mount, document that explicitly before cutover.
+
 ### Phase C — coordinated authority cutover
 
 This is the actual Gate 5.
@@ -166,6 +183,7 @@ Preconditions:
 - Panda health is green enough to snapshot.
 - Flagg Gate 4 reboot proof remains valid.
 - Flagg shadow smoke tests pass.
+- Flagg has a documented and reboot-proven `three-body` NAS access path, either persistent mount or explicit SSH/SCP fallback.
 - Active loops/runs/workloads are drained, cancelled, or explicitly accepted as disposable.
 - Rollback commands are written before the freeze.
 
@@ -195,6 +213,7 @@ Cutover sequence:
 - [ ] Active Panda workloads are drained/cancelled before final sync.
 - [ ] Flagg owns Redis, Typesense, Inngest, Restate, MinIO wave-1 state after cutover.
 - [ ] Flagg workers execute against Flagg state only.
+- [ ] Flagg has reboot-proven NAS access to `three-body` for rebuilds/artifacts/backups, or Gate 5 explicitly chooses SSH/SCP fallback with no live mount.
 - [ ] Clients and relay paths post to Flagg Central only.
 - [ ] Panda Central stack is stopped/frozen and labelled rollback-only.
 - [ ] At least one known event completes through Flagg Inngest.
@@ -226,6 +245,7 @@ Cutover sequence:
 5. Does gateway move in Gate 5 or remain on Panda as Relay while pointing at Flagg Central?
 6. What is the rollback window cutoff after Flagg accepts writes?
 7. Should we create a `#brain-joel` Project Thread for Gate 5 evidence?
+8. Should Flagg use a persistent `/Volumes/three-body` mount, an autofs mount, or SSH/SCP-only fallback for NAS-dependent jobs?
 
 ## Phase A smoke harness
 
@@ -248,6 +268,7 @@ This performs isolated shadow writes only. It does not freeze Panda, flip endpoi
 
 ## Recommended next work
 
-1. Write the freeze/rollback command sheet before any final sync.
-2. Decide the open questions above before scheduling Gate 5.
-3. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.
+1. Decide and prove Flagg's `three-body` NAS access path: persistent mount, autofs mount, or SSH/SCP-only fallback.
+2. Write the freeze/rollback command sheet before any final sync.
+3. Decide the open questions above before scheduling Gate 5.
+4. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.
