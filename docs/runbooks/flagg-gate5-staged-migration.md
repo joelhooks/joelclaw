@@ -312,7 +312,7 @@ This performs isolated shadow writes only. It does not freeze Panda, flip endpoi
    ```bash
    ssh -t joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && sudo ./infra/central/scripts/install-nas-mounts.sh --bootstrap'
    ```
-3. Prepare NAS object roots on `three-body` if missing/not writable. NFSv3 uses numeric uid/gid; Flagg service user `joelclaw` is `502:20`, so the NAS dirs must match that identity unless an explicit id-mapping policy exists. Because pasted one-liners get mangled, stage the repo-managed helper and run it from the already logged-in `admin` shell:
+3. Prepare NAS object roots on `three-body` if missing/not writable. NFSv3 uses numeric uid/gid; Flagg service user `joelclaw` is `502:20`, so the NAS dirs must match that identity unless an explicit id-mapping policy exists. The helper creates a real `joelclaw` uid `502` / `staff` gid `20` identity on `three-body` if missing, then prepares the object roots. Because pasted one-liners get mangled, stage the repo-managed helper and run it from the already logged-in `admin` shell:
    ```bash
    scp infra/central/scripts/three-body-prepare-object-roots.sh joel@three-body:/tmp/three-body-prepare-object-roots.sh
    # On three-body as admin:

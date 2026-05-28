@@ -107,7 +107,7 @@ sudo sh /tmp/three-body-prepare-object-roots.sh
 
 `verify-nas.sh` intentionally writes under `CENTRAL_MINIO_HOT_DATA` and `CENTRAL_MINIO_COLD_DATA`, not the export roots. If those paths are missing or not writable by `joelclaw`, the fix belongs on `three-body` NAS permissions/ACLs, not by making Flagg write random proof files at the mount root.
 
-For NFSv3, numeric ownership matters. Flagg's service identity is `uid=502`, `gid=20`. The helper script `infra/central/scripts/three-body-prepare-object-roots.sh` prepares `/volume2/data/s3` and `/volume1/joelclaw/s3` for that identity. It defaults to `2777` for proof mode because the NAS export/id-map layer has already shown weird permission behavior even with `502:20` + `2770`. After proof, retry with `USE_FINAL_MODE=1 sudo sh /tmp/three-body-prepare-object-roots.sh` if we want to harden to `2770`.
+For NFSv3, numeric ownership matters. Flagg's service identity is `uid=502`, `gid=20`. The helper script `infra/central/scripts/three-body-prepare-object-roots.sh` creates a real `joelclaw`/`staff` identity on `three-body` if uid `502` / gid `20` are absent, then prepares `/volume2/data/s3` and `/volume1/joelclaw/s3` for that identity. It defaults to `2777` for proof mode because the NAS export/id-map layer has already shown weird permission behavior even with `502:20` + `2770`. After proof, retry with `USE_FINAL_MODE=1 sudo sh /tmp/three-body-prepare-object-roots.sh` if we want to harden to `2770`.
 
 If permissions were changed on `three-body` while Flagg had the NFS exports mounted, first sync the latest helper scripts into the service checkout, then remount before rerunning the proof so macOS drops any stale NFS access-cache verdict:
 
