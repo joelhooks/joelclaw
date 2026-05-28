@@ -203,7 +203,7 @@ Repo-managed NAS proof scripts now live under `infra/central/scripts/`:
 
 - `install-nas-mounts.sh` — installs the root `com.joelclaw.central.nas-mounts` LaunchDaemon and prepares `/Volumes/nas-nvme` + `/Volumes/three-body`.
 - `mount-nas.sh` — mount/status/unmount action with route, NFS, 10GbE media, and MTU checks.
-- `verify-nas.sh` — non-privileged proof script for route/media/MTU/mounts plus optional write/read benchmarks.
+- `verify-nas.sh` — non-privileged proof script for route/media/MTU/mounts plus optional write/read benchmarks against `CENTRAL_MINIO_HOT_DATA` and `CENTRAL_MINIO_COLD_DATA`.
 - `smoke/nas.sh` — smoke harness wrapper for NAS write probes when `CENTRAL_REQUIRE_NAS=1`.
 
 The NAS mount lifecycle is: `boot/kickstart -> wait_for_route -> assert_10gbe_media -> mount_nas_nvme -> mount_nas_hdd -> verify_mounts -> ready | failed_retry_next_interval`.
@@ -312,12 +312,16 @@ This performs isolated shadow writes only. It does not freeze Panda, flip endpoi
    ```bash
    ssh -t joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && sudo ./infra/central/scripts/install-nas-mounts.sh --bootstrap'
    ```
-3. Verify from Flagg, preferably as the service user:
+3. Prepare NAS object roots on `three-body` if missing/not writable:
+   ```bash
+   ssh joel@three-body 'mkdir -p /volume2/data/s3 /volume1/joelclaw/s3 && chmod 2775 /volume2/data/s3 /volume1/joelclaw/s3'
+   ```
+4. Verify from Flagg, preferably as the service user:
    ```bash
    ssh -t joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && sudo -u joelclaw -H ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64'
    ```
-4. Hard-reboot Flagg, then repeat `verify-nas.sh` before any GUI login.
-5. Decide MinIO wave-1 shape: two hot/cold S3 surfaces, or one hot surface plus lifecycle/copy jobs to HDD.
-6. Write the freeze/rollback command sheet before any final sync.
-7. Decide the open questions above before scheduling Gate 5.
-8. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.
+5. Hard-reboot Flagg, then repeat `verify-nas.sh` before any GUI login.
+6. Decide MinIO wave-1 shape: two hot/cold S3 surfaces, or one hot surface plus lifecycle/copy jobs to HDD.
+7. Write the freeze/rollback command sheet before any final sync.
+8. Decide the open questions above before scheduling Gate 5.
+9. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.

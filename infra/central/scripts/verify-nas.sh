@@ -121,8 +121,12 @@ path_writable() {
 
 write_probe_one() {
   local label="$1"
-  local mount_point="$2"
-  local probe_dir="${mount_point}/.joelclaw-flagg-nas-proof"
+  local data_path="$2"
+  local probe_dir="${data_path}/.joelclaw-flagg-nas-proof"
+  [[ -d "$data_path" ]] || {
+    printf 'missing data path: %s\n' "$data_path"
+    return 1
+  }
   mkdir -p "$probe_dir"
   local probe_file="${probe_dir}/${label}-$(hostname)-$(date -u +%Y%m%dT%H%M%SZ)-$$.bin"
 
@@ -182,11 +186,13 @@ probe 'nas-hdd mount is nfs' mount_is_nfs "$CENTRAL_NAS_HDD_MOUNT"
 if [[ "$WRITE_PROBE" == "1" ]]; then
   require_command python3
   printf '\nWrite/latency probes (%s MiB each):\n' "$BENCHMARK_MIB"
-  probe 'nas-nvme writable/benchmarked' write_probe_one nas-nvme "$CENTRAL_NAS_NVME_MOUNT"
-  probe 'nas-hdd writable/benchmarked' write_probe_one nas-hdd "$CENTRAL_NAS_HDD_MOUNT"
+  printf 'hot_data_path=%s\n' "$CENTRAL_MINIO_HOT_DATA"
+  printf 'cold_data_path=%s\n' "$CENTRAL_MINIO_COLD_DATA"
+  probe 'nas-nvme hot object path writable/benchmarked' write_probe_one nas-nvme-hot "$CENTRAL_MINIO_HOT_DATA"
+  probe 'nas-hdd cold object path writable/benchmarked' write_probe_one nas-hdd-cold "$CENTRAL_MINIO_COLD_DATA"
 else
-  warn_probe 'nas-nvme writable' path_writable "$CENTRAL_NAS_NVME_MOUNT"
-  warn_probe 'nas-hdd writable' path_writable "$CENTRAL_NAS_HDD_MOUNT"
+  warn_probe 'nas-nvme hot object path writable' path_writable "$CENTRAL_MINIO_HOT_DATA"
+  warn_probe 'nas-hdd cold object path writable' path_writable "$CENTRAL_MINIO_COLD_DATA"
 fi
 
 exit "$status"

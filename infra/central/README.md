@@ -97,9 +97,14 @@ sudo ./infra/central/scripts/mount-nas.sh mount
 ./infra/central/scripts/mount-nas.sh status
 sudo ./infra/central/scripts/mount-nas.sh unmount
 
-# Gate 5 proof receipt: route/media/MTU/mounts plus 64 MiB write/read probes per tier.
+# Prepare object roots on the NAS over SSH. These are the write targets for the proof.
+ssh joel@three-body 'mkdir -p /volume2/data/s3 /volume1/joelclaw/s3 && chmod 2775 /volume2/data/s3 /volume1/joelclaw/s3'
+
+# Gate 5 proof receipt: route/media/MTU/mounts plus 64 MiB write/read probes against the hot/cold object paths.
 ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
 ```
+
+`verify-nas.sh` intentionally writes under `CENTRAL_MINIO_HOT_DATA` and `CENTRAL_MINIO_COLD_DATA`, not the export roots. If those paths are missing or not writable by `joelclaw`, the fix belongs on `three-body` NAS permissions/ACLs, not by making Flagg write random proof files at the mount root.
 
 Set `CENTRAL_REQUIRE_NAS=1` only after mount proof passes. With that flag, `start.sh`, `health.sh`, and the smoke harness require NAS verification before treating the Central stack as healthy.
 
