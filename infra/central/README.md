@@ -97,16 +97,17 @@ sudo ./infra/central/scripts/mount-nas.sh mount
 ./infra/central/scripts/mount-nas.sh status
 sudo ./infra/central/scripts/mount-nas.sh unmount
 
-# Prepare object roots on the NAS over SSH. These are the write targets for the proof.
-# NFSv3 uses numeric uid/gid. Flagg service user joelclaw is 502:20, so the NAS dirs must match.
-# three-body privileged shell is admin@three-body and requires interactive 2FA/OTP.
-ssh -t admin@three-body 'sudo mkdir -p /volume2/data/s3 /volume1/joelclaw/s3 && sudo chown -R 502:20 /volume2/data/s3 /volume1/joelclaw/s3 && sudo chmod -R u+rwX,g+rwX,o-rwx /volume2/data/s3 /volume1/joelclaw/s3 && sudo chmod 2770 /volume2/data/s3 /volume1/joelclaw/s3'
+# Prepare object roots on the NAS. This avoids fragile pasted one-liners.
+# Copy or stage this script to three-body, then run it from the admin shell:
+sudo sh /tmp/three-body-prepare-object-roots.sh
 
 # Gate 5 proof receipt: route/media/MTU/mounts plus 64 MiB write/read probes against the hot/cold object paths.
 ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
 ```
 
-`verify-nas.sh` intentionally writes under `CENTRAL_MINIO_HOT_DATA` and `CENTRAL_MINIO_COLD_DATA`, not the export roots. If those paths are missing or not writable by `joelclaw`, the fix belongs on `three-body` NAS permissions/ACLs, not by making Flagg write random proof files at the mount root. For NFSv3, use numeric ownership for Flagg's service identity (`uid=502`, `gid=20`) unless the NAS export has a deliberate id-mapping policy.
+`verify-nas.sh` intentionally writes under `CENTRAL_MINIO_HOT_DATA` and `CENTRAL_MINIO_COLD_DATA`, not the export roots. If those paths are missing or not writable by `joelclaw`, the fix belongs on `three-body` NAS permissions/ACLs, not by making Flagg write random proof files at the mount root.
+
+For NFSv3, numeric ownership matters. Flagg's service identity is `uid=502`, `gid=20`. The helper script `infra/central/scripts/three-body-prepare-object-roots.sh` prepares `/volume2/data/s3` and `/volume1/joelclaw/s3` for that identity. It defaults to `2777` for proof mode because the NAS export/id-map layer has already shown weird permission behavior even with `502:20` + `2770`. After proof, retry with `USE_FINAL_MODE=1 sudo sh /tmp/three-body-prepare-object-roots.sh` if we want to harden to `2770`.
 
 Set `CENTRAL_REQUIRE_NAS=1` only after mount proof passes. With that flag, `start.sh`, `health.sh`, and the smoke harness require NAS verification before treating the Central stack as healthy.
 
