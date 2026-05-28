@@ -11,7 +11,7 @@ require_secret_env MINIO_ROOT_USER
 require_secret_env MINIO_ROOT_PASSWORD
 
 endpoint="http://${CENTRAL_BIND_ADDR}:9000"
-bucket="$(smoke_id | tr '_' '-')-minio"
+bucket="$(smoke_id | tr '[:upper:]' '[:lower:]' | tr '_' '-')-minio"
 object="smoke.txt"
 body="minio-ok-${RANDOM}"
 export MINIO_SMOKE_ENDPOINT="$endpoint"
