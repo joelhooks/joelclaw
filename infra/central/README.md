@@ -109,9 +109,20 @@ sudo sh /tmp/three-body-prepare-object-roots.sh
 
 For NFSv3, numeric ownership matters. Flagg's service identity is `uid=502`, `gid=20`. The helper script `infra/central/scripts/three-body-prepare-object-roots.sh` prepares `/volume2/data/s3` and `/volume1/joelclaw/s3` for that identity. It defaults to `2777` for proof mode because the NAS export/id-map layer has already shown weird permission behavior even with `502:20` + `2770`. After proof, retry with `USE_FINAL_MODE=1 sudo sh /tmp/three-body-prepare-object-roots.sh` if we want to harden to `2770`.
 
-If permissions were changed on `three-body` while Flagg had the NFS exports mounted, remount before rerunning the proof so macOS drops any stale NFS access-cache verdict:
+If permissions were changed on `three-body` while Flagg had the NFS exports mounted, first sync the latest helper scripts into the service checkout, then remount before rerunning the proof so macOS drops any stale NFS access-cache verdict:
 
 ```bash
+cd /Users/joel/Code/joelhooks/joelclaw
+sudo rsync -aR \
+  infra/central/scripts/mount-nas.sh \
+  infra/central/scripts/verify-nas.sh \
+  /Users/Shared/joelclaw/src/joelclaw/
+sudo chown joelclaw:staff \
+  /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/mount-nas.sh \
+  /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh
+sudo chmod 755 \
+  /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/mount-nas.sh \
+  /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh
 cd /Users/Shared/joelclaw/src/joelclaw
 sudo ./infra/central/scripts/mount-nas.sh unmount
 sudo ./infra/central/scripts/mount-nas.sh mount

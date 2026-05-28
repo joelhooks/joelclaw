@@ -318,9 +318,9 @@ This performs isolated shadow writes only. It does not freeze Panda, flip endpoi
    # On three-body as admin:
    sudo sh /tmp/three-body-prepare-object-roots.sh
    ```
-4. Remount on Flagg after NAS-side permission changes so macOS drops stale NFS access-cache verdicts:
+4. Sync the latest NAS helpers into Flagg's service checkout, then remount after NAS-side permission changes so macOS drops stale NFS access-cache verdicts:
    ```bash
-   ssh -t joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && sudo ./infra/central/scripts/mount-nas.sh unmount && sudo ./infra/central/scripts/mount-nas.sh mount'
+   ssh -t joel@flagg 'cd /Users/joel/Code/joelhooks/joelclaw && sudo rsync -aR infra/central/scripts/mount-nas.sh infra/central/scripts/verify-nas.sh /Users/Shared/joelclaw/src/joelclaw/ && sudo chown joelclaw:staff /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/mount-nas.sh /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh && sudo chmod 755 /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/mount-nas.sh /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh && cd /Users/Shared/joelclaw/src/joelclaw && sudo ./infra/central/scripts/mount-nas.sh unmount && sudo ./infra/central/scripts/mount-nas.sh mount'
    ```
 5. Verify from Flagg, preferably as the service user:
    ```bash

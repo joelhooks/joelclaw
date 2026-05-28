@@ -89,7 +89,19 @@ unmount_one() {
   local mount_point="$2"
   if mounted_at "$mount_point"; then
     log "unmounting ${label}: ${mount_point}"
-    umount "$mount_point"
+    if umount "$mount_point"; then
+      return 0
+    fi
+    warn "normal umount failed for ${label}; trying forced unmount"
+    if umount -f "$mount_point"; then
+      return 0
+    fi
+    if have diskutil; then
+      warn "forced umount failed for ${label}; trying diskutil unmount force"
+      diskutil unmount force "$mount_point"
+    else
+      fail "failed to unmount ${label}: ${mount_point}"
+    fi
   else
     log "${label} not mounted: ${mount_point}"
   fi
