@@ -119,6 +119,17 @@ path_writable() {
   [[ -d "$path" && -w "$path" ]]
 }
 
+path_details() {
+  local path="$1"
+  printf 'path_details=%s\n' "$path"
+  id || true
+  ls -ldn "$path" 2>&1 || true
+  if have stat; then
+    stat -f 'mode=%Sp uid=%u gid=%g flags=%Sf path=%N' "$path" 2>/dev/null || true
+  fi
+  mount | grep -F " ${path%%/s3} " 2>/dev/null || true
+}
+
 write_probe_one() {
   local label="$1"
   local data_path="$2"
@@ -127,7 +138,11 @@ write_probe_one() {
     printf 'missing data path: %s\n' "$data_path"
     return 1
   }
-  mkdir -p "$probe_dir"
+  if ! mkdir -p "$probe_dir"; then
+    printf 'failed_to_create_probe_dir=%s\n' "$probe_dir"
+    path_details "$data_path"
+    return 1
+  fi
   local probe_file="${probe_dir}/${label}-$(hostname)-$(date -u +%Y%m%dT%H%M%SZ)-$$.bin"
 
   python3 - "$probe_file" "$BENCHMARK_MIB" <<'PY'

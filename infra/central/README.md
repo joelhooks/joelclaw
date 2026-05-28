@@ -109,6 +109,14 @@ sudo sh /tmp/three-body-prepare-object-roots.sh
 
 For NFSv3, numeric ownership matters. Flagg's service identity is `uid=502`, `gid=20`. The helper script `infra/central/scripts/three-body-prepare-object-roots.sh` prepares `/volume2/data/s3` and `/volume1/joelclaw/s3` for that identity. It defaults to `2777` for proof mode because the NAS export/id-map layer has already shown weird permission behavior even with `502:20` + `2770`. After proof, retry with `USE_FINAL_MODE=1 sudo sh /tmp/three-body-prepare-object-roots.sh` if we want to harden to `2770`.
 
+If permissions were changed on `three-body` while Flagg had the NFS exports mounted, remount before rerunning the proof so macOS drops any stale NFS access-cache verdict:
+
+```bash
+cd /Users/Shared/joelclaw/src/joelclaw
+sudo ./infra/central/scripts/mount-nas.sh unmount
+sudo ./infra/central/scripts/mount-nas.sh mount
+```
+
 Set `CENTRAL_REQUIRE_NAS=1` only after mount proof passes. With that flag, `start.sh`, `health.sh`, and the smoke harness require NAS verification before treating the Central stack as healthy.
 
 All ports bind to `127.0.0.1` by default. Do not expose this over Tailscale/LAN until cutover planning says so.

@@ -318,11 +318,15 @@ This performs isolated shadow writes only. It does not freeze Panda, flip endpoi
    # On three-body as admin:
    sudo sh /tmp/three-body-prepare-object-roots.sh
    ```
-4. Verify from Flagg, preferably as the service user:
+4. Remount on Flagg after NAS-side permission changes so macOS drops stale NFS access-cache verdicts:
+   ```bash
+   ssh -t joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && sudo ./infra/central/scripts/mount-nas.sh unmount && sudo ./infra/central/scripts/mount-nas.sh mount'
+   ```
+5. Verify from Flagg, preferably as the service user:
    ```bash
    ssh -t joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && sudo -u joelclaw -H ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64'
    ```
-5. Hard-reboot Flagg, then repeat `verify-nas.sh` before any GUI login.
+6. Hard-reboot Flagg, then repeat `verify-nas.sh` before any GUI login.
 6. Decide MinIO wave-1 shape: two hot/cold S3 surfaces, or one hot surface plus lifecycle/copy jobs to HDD.
 7. Write the freeze/rollback command sheet before any final sync.
 8. Decide the open questions above before scheduling Gate 5.
