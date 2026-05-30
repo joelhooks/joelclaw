@@ -155,29 +155,77 @@ Read-only Panda inventory found:
 
 This inventory created temporary read-only SQLite inspection pods for Inngest and deleted them immediately after logs were collected. No Panda freeze, endpoint flip, queue drain, data copy, or cutover happened.
 
-### Flagg NAS persistence check — 2026-05-28/29
+### Flagg NAS persistence check — 2026-05-28/30
 
-Current pickup state:
+Current proved state:
 
 - Flagg's real 10GbE interface is `en0`, not the stale `en10` assumption. `en0` has `192.168.1.10` and reports `10Gbase-T`.
 - `three-body` is `192.168.1.163`.
 - NFS `2049/tcp` is reachable over `en0` after Wi-Fi/route drift is corrected.
 - `/Volumes/nas-nvme` mounts from `three-body:/volume2/data`.
 - `/Volumes/three-body` mounts from `three-body:/volume1/joelclaw`.
-- route MTU currently reports `1500`, not the ADR-0088 jumbo-frame target `9000`.
+- route MTU is currently proved at `1500`. An attempted jumbo-frame `9000` setting produced an NFS blackhole: Flagg route showed MTU `9000`, but `ping -D -s 8972 192.168.1.163` failed while 1500-byte traffic worked. Treat jumbo frames as a separate ADR-0088 follow-up, not a Gate 5 NAS write blocker.
 - NAS object roots exist and show `uid=502`, `gid=20`, mode `2777`:
   - `/Volumes/nas-nvme/s3`
   - `/Volumes/three-body/s3`
 - `three-body` has a Linux passwd/group identity for Flagg's service user: `joelclaw` uid `502`, `staff` gid `20`.
 - Local writes on `three-body` to both object roots succeed as NAS user `joel`.
+- Flagg NFS writes now succeed from the `joelclaw` service user against both object roots.
 
-Still blocked:
+Working ASUSTOR NFS setting for both shared folders `data` and `joelclaw`:
 
-- NFS writes from Flagg fail with `Operation not permitted` for both `root` and `joelclaw` against both object roots.
-- ASUSTOR GUI `root Mapping: admin (999)` only produced exports with `root_squash,anonuid=999,anongid=999`; it did not grant effective write access.
-- Because even `sudo mkdir` from Flagg fails, this is now an ASUSTOR shared-folder/NFS export policy issue, not POSIX owner/mode, local uid mismatch, or route/mount failure.
+```text
+Client: 192.168.1.10
+Privilege: Read & Write
+root Mapping: admin (999)
+Asynchronous: Yes
+Allow connections from non-reserved ports (ports greater than 1024): enabled
+```
 
-Gate 5 should not assume NAS-backed rebuilds, artifact reads, backups, or object storage work on Flagg until the NFS write policy is fixed and reboot-proven.
+Runtime `/etc/exports` / `exportfs -v` shape for Flagg after that GUI setting:
+
+```text
+192.168.1.10(rw,async,root_squash,anonuid=999,anongid=999,subtree_check,no_wdelay,insecure)
+```
+
+The initially recommended `root Mapping: root (0)` generated `no_root_squash,anonuid=0,anongid=0,insecure`, but Flagg writes still failed with `Operation not permitted`. Mapping root to ASUSTOR `admin (999)` is the setting that made Flagg NFS writes pass. The broader `192.168.1.0/24` rules already existed for other machines; leave them in place unless deliberately reworking NAS access.
+
+Proof receipts on 2026-05-30:
+
+```bash
+# mounted after Flagg reboot with conservative proof options
+sudo env \
+  NAS_EXPECTED_INTERFACE=en0 \
+  NAS_EXPECTED_MTU=1500 \
+  NAS_NFS_OPTIONS='rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=8192,wsize=8192,dsize=8192' \
+  ./infra/central/scripts/mount-nas.sh mount
+
+sudo -u joelclaw -H mkdir /Volumes/nas-nvme/s3/.svc-proof && sudo -u joelclaw -H rmdir /Volumes/nas-nvme/s3/.svc-proof
+sudo -u joelclaw -H mkdir /Volumes/three-body/s3/.svc-proof && sudo -u joelclaw -H rmdir /Volumes/three-body/s3/.svc-proof
+
+sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \
+  ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 1
+
+sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \
+  ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
+```
+
+The 64 MiB verification reported all route/media/mount checks ok and both object paths writable/benchmarked:
+
+```text
+ok   nfs port reachable
+ok   route uses expected 10GbE interface
+ok   interface media is 10GbE
+ok   route MTU matches ADR-0088 target
+ok   nas-nvme mounted
+ok   nas-nvme mount is nfs
+ok   nas-hdd mounted
+ok   nas-hdd mount is nfs
+ok   nas-nvme hot object path writable/benchmarked
+ok   nas-hdd cold object path writable/benchmarked
+```
+
+Still not complete: hard-reboot/no-GUI NAS verification remains the next proof before Gate 5 can use NAS-backed object storage.
 
 ### Gate 5 NAS/object-storage target
 
@@ -311,35 +359,28 @@ This performs isolated shadow writes only. It does not freeze Panda, flip endpoi
 
 ## Recommended next work
 
-Pick up at the ASUSTOR NFS write-policy blocker. Do **not** keep changing Flagg uid/mode bits until the NAS export is proven writable by root.
+NAS writes are now proved from Flagg after mapping the Flagg NFS client to ASUSTOR `admin (999)` and using conservative 1500-MTU proof mounts. Continue with the remaining NAS hardening/proof steps; do not cut over Central yet.
 
-1. In ASUSTOR ADM, for both shared folders `data` and `joelclaw`, remove/recreate the `192.168.1.10` NFS privilege rule or otherwise force the NFS service to reload it:
-   - Client: `192.168.1.10`
-   - Privilege: `Read & Write`
-   - Root Mapping: try `root (0)` first; if that fails, use the most permissive all-users/admin mapping ASUSTOR exposes for proof only.
-   - Allow connections from ports greater than `1024`: enabled.
-   - Apply recursively / include subfolders if offered.
-2. If the GUI still leaves exports unwritable, inspect/reload NFS on `three-body` before changing Flagg again:
+1. Sync the latest NAS script defaults from the dev checkout into the service checkout so launchd/proof commands stop inheriting stale `en10` assumptions:
    ```bash
-   ssh joel@three-body 'grep -E "/volume(1/joelclaw|2/data)" /etc/exports'
-   ssh joel@three-body 'for p in /volume2/data/s3 /volume1/joelclaw/s3; do /usr/builtin/bin/effectiveperm -query admin 1 "$p" 0; /usr/builtin/bin/effectiveperm -query joelclaw 1 "$p" 0; done'
+   cd /Users/joel/Code/joelhooks/joelclaw
+   sudo rsync -aR infra/central/scripts/common.sh infra/central/scripts/mount-nas.sh infra/central/scripts/verify-nas.sh /Users/Shared/joelclaw/src/joelclaw/
+   sudo chown joelclaw:staff /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/common.sh /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/mount-nas.sh /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh
+   sudo chmod 755 /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/common.sh /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/mount-nas.sh /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh
    ```
-3. Remount from Flagg over the real 10GbE interface and test **root writes first**:
+2. Hard-reboot Flagg, then before any GUI login repeat the NAS proof over the 10GbE path:
    ```bash
+   sudo ifconfig en0 mtu 1500
    cd /Users/Shared/joelclaw/src/joelclaw
-   sudo ./infra/central/scripts/mount-nas.sh unmount
-   sudo env NAS_EXPECTED_INTERFACE=en0 ./infra/central/scripts/mount-nas.sh mount
-   sudo mkdir /Volumes/nas-nvme/s3/.root-proof && sudo rmdir /Volumes/nas-nvme/s3/.root-proof
-   sudo mkdir /Volumes/three-body/s3/.root-proof && sudo rmdir /Volumes/three-body/s3/.root-proof
-   ```
-4. Only after root writes pass, verify the service user benchmark:
-   ```bash
-   sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 \
+   sudo env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \
+     NAS_NFS_OPTIONS='rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=8192,wsize=8192,dsize=8192' \
+     ./infra/central/scripts/mount-nas.sh mount
+   sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \
      ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
    ```
-5. After NAS write proof passes, hard-reboot Flagg, then repeat `verify-nas.sh` before any GUI login.
-6. Fix or explicitly document MTU `1500` vs ADR-0088 target `9000`.
-7. Decide MinIO wave-1 shape: two hot/cold S3 surfaces, or one hot surface plus lifecycle/copy jobs to HDD.
-8. Write the freeze/rollback command sheet before any final sync.
-9. Decide the open questions above before scheduling Gate 5.
-10. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.
+3. Decide whether the conservative proof NFS options should become the launchd default or only a diagnostic override. `soft` avoids wedged proof sessions, but final MinIO-on-NFS durability semantics need an explicit decision.
+4. Fix or explicitly document MTU `1500` vs ADR-0088 target `9000`. Jumbo `9000` currently blackholes large packets to `three-body` from Flagg.
+5. Decide MinIO wave-1 shape: two hot/cold S3 surfaces, or one hot surface plus lifecycle/copy jobs to HDD.
+6. Write the freeze/rollback command sheet before any final sync.
+7. Decide the open questions above before scheduling Gate 5.
+8. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.

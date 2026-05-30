@@ -109,6 +109,10 @@ sudo sh /tmp/three-body-prepare-object-roots.sh
 
 For NFSv3, numeric ownership matters. Flagg's service identity is `uid=502`, `gid=20`. The helper script `infra/central/scripts/three-body-prepare-object-roots.sh` creates a real `joelclaw`/`staff` identity on `three-body` if uid `502` / gid `20` are absent, then prepares `/volume2/data/s3` and `/volume1/joelclaw/s3` for that identity. It defaults to `2777` for proof mode because the NAS export/id-map layer has already shown weird permission behavior even with `502:20` + `2770`. After proof, retry with `USE_FINAL_MODE=1 sudo sh /tmp/three-body-prepare-object-roots.sh` if we want to harden to `2770`.
 
+ASUSTOR ADM NFS privileges also matter beyond POSIX mode. For Flagg's client rule on both shared folders `data` and `joelclaw`, the working proof setting is `Privilege: Read & Write`, `root Mapping: admin (999)`, `Asynchronous: Yes`, and `Allow connections from non-reserved ports` enabled. This generates `root_squash,anonuid=999,anongid=999,insecure` for `192.168.1.10` and allowed Flagg `joelclaw` writes. The earlier `root (0)` / `no_root_squash` export looked correct but still returned `Operation not permitted` from macOS NFS.
+
+Flagg also hit an NFS blackhole when `en0`/route MTU was set to `9000`: jumbo ping failed while 1500-byte traffic worked, and hard NFS mounts wedged. The successful 2026-05-30 proof used MTU `1500` plus conservative diagnostic mount options: `rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=8192,wsize=8192,dsize=8192`. Decide separately whether those options are acceptable for final MinIO-on-NFS; do not silently treat `soft` as a production durability default.
+
 If permissions were changed on `three-body` while Flagg had the NFS exports mounted, first sync the latest helper scripts into the service checkout, then remount before rerunning the proof so macOS drops any stale NFS access-cache verdict:
 
 ```bash
