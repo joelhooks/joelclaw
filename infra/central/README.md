@@ -75,7 +75,7 @@ NAS mount lifecycle is an explicit state machine, not boolean soup:
 
 ```text
 boot/kickstart
-  -> wait_for_route(en10, three-body:2049)
+  -> wait_for_route(en0, three-body:2049)
   -> assert_10gbe_media
   -> mount_nas_nvme
   -> mount_nas_hdd
