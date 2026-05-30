@@ -7,8 +7,8 @@ Personal AI infrastructure monorepo. Event-driven pipelines, always-on gateway, 
 ```
 ┌─ Mac Mini "Panda" (M4 Pro, 64GB, always-on) ──────────────────────┐
 │                                                                     │
-│  Colima VM (VZ framework, aarch64)                                  │
-│    └─ Talos v1.12.4 container → k8s v1.35.0 (single node)         │
+│  Colima VM (VZ framework, aarch64, grpc port-forwarder, 24 GiB)     │
+│    └─ Talos v1.12.4 container (18 GiB cap) → k8s v1.35.0 (single node) │
 │        └─ namespace: joelclaw                                       │
 │            ├─ inngest-0          (StatefulSet, ports 8288/8289)     │
 │            ├─ redis-0            (StatefulSet, port 6379)          │
@@ -22,6 +22,7 @@ Personal AI infrastructure monorepo. Event-driven pipelines, always-on gateway, 
 │            ├─ livekit-server     (Deployment, ports 7880/7881)     │
 │            └─ bluesky-pds        (Deployment, port 3000)           │
 │                                                                     │
+│  Operator access: direct Colima ports 6443 (kube) / 50000 (Talos)   │
 │  Gateway daemon (pi session, always-on, Redis event bridge)         │
 │  NAS "three-body" (ASUSTOR, 10GbE NFS, 64TB RAID5 + 1.9TB NVMe)  │
 │  Tailscale mesh (all devices)                                       │

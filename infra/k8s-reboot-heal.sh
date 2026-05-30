@@ -54,6 +54,9 @@ run_colima_proof_snapshot() {
 COLIMA_DOCKER_HOST="unix:///Users/joel/.colima/default/docker.sock"
 COLIMA_SSH_CONFIG="$HOME/.colima/_lima/colima/ssh.config"
 COLIMA_SSH_HOST="lima-colima"
+TALOS_CONTAINER_NAME="${TALOS_CONTAINER_NAME:-joelclaw-controlplane-1}"
+TALOS_CONTAINER_MEMORY="${TALOS_CONTAINER_MEMORY:-18g}"
+TALOS_CONTAINER_MEMORY_SWAP="${TALOS_CONTAINER_MEMORY_SWAP:-18g}"
 KUBELET_PROXY_RBAC_MANIFEST="$HOME/Code/joelhooks/joelclaw/k8s/apiserver-kubelet-client-rbac.yaml"
 CORE_WARMUP_TIMEOUT_SECS=300
 WARMUP_GRACE_SECS="${WARMUP_GRACE_SECS:-120}"
@@ -930,14 +933,15 @@ if ! docker_socket_healthy && ! colima_ssh_healthy; then
   fi
 fi
 
-# Ensure Talos control-plane container is up and persistent.
-if ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker inspect joelclaw-controlplane-1 >/dev/null 2>&1"; then
-  TALOS_RUNNING=$(ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker inspect --format '{{.State.Running}}' joelclaw-controlplane-1" 2>/dev/null || echo false)
+# Ensure Talos control-plane container is up, persistent, and not stuck at Docker's default 4 GiB cap.
+if ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker inspect ${TALOS_CONTAINER_NAME} >/dev/null 2>&1"; then
+  TALOS_RUNNING=$(ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker inspect --format '{{.State.Running}}' ${TALOS_CONTAINER_NAME}" 2>/dev/null || echo false)
   if [ "$TALOS_RUNNING" != "true" ]; then
     log "Talos container stopped; starting"
-    ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker start joelclaw-controlplane-1" >>"$LOG_FILE" 2>&1 || log "WARNING: failed to start Talos container"
+    ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker start ${TALOS_CONTAINER_NAME}" >>"$LOG_FILE" 2>&1 || log "WARNING: failed to start Talos container"
   fi
-  ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker update --restart unless-stopped joelclaw-controlplane-1" >>"$LOG_FILE" 2>&1 || true
+  ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker update --restart unless-stopped --memory=${TALOS_CONTAINER_MEMORY} --memory-swap=${TALOS_CONTAINER_MEMORY_SWAP} ${TALOS_CONTAINER_NAME}" >>"$LOG_FILE" 2>&1 \
+    || log "WARNING: failed to enforce Talos container restart/memory policy"
 fi
 
 ensure_vm_br_netfilter || true

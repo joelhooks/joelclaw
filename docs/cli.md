@@ -82,6 +82,19 @@ Semantics:
 3. kickstart Talon + run `talon --check` when server/k8s checks fail
 4. re-collect status and return before/after snapshots
 
+## Inngest memory probes
+
+```bash
+joelclaw inngest memory-e2e [--wait-ms 90000] [--poll-ms 1500]
+joelclaw inngest memory-health [--hours 24]
+```
+
+Semantics:
+
+- `memory-e2e` sends a `memory/session.ended` marker, waits for observe → Typesense propagation, verifies direct keyword search against `memory_observations.observation`, then runs `joelclaw recall` for retrieval coverage.
+- `memory_observations.embedding` is a raw float vector field, not a Typesense auto-embedding field; the CLI must not use `query_by=embedding` with `vector_query=embedding:([], ...)` for this probe.
+- `memory-health` is a broad health snapshot. During live reboot/export work, high-churn failures can reflect transient worker reachability, so inspect recent failed run traces before treating the whole memory store as bad.
+
 ## Inngest Connect WebSocket auth probe
 
 ```bash

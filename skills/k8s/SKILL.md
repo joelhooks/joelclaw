@@ -21,10 +21,10 @@ tags: [joelclaw, kubernetes, talos, colima, infrastructure]
 
 ```
 Mac Mini (localhost ports)
-  └─ Lima SSH mux (~/.colima/_lima/colima/ssh.sock) ← NEVER KILL
-      └─ Colima VM (8 CPU, 16 GiB, 100 GiB, VZ framework, aarch64)
+  └─ Colima/Lima port forwarding (grpc; avoid persistent SSH tunnels)
+      └─ Colima VM (8 CPU, 24 GiB, 100 GiB, VZ framework, aarch64)
           └─ Docker 29.x + buildx (joelclaw-builder, docker-container driver)
-              └─ Talos v1.12.4 container (joelclaw-controlplane-1)
+              └─ Talos v1.12.4 container (joelclaw-controlplane-1, 18 GiB cap)
                   └─ k8s v1.35.0 (single node, Flannel CNI)
                       └─ joelclaw namespace (privileged PSA)
 ```
@@ -36,7 +36,7 @@ Mac Mini (localhost ports)
 | Setting | Value | Reason |
 |---------|-------|--------|
 | CPU | 8 | Match k8s workload requests (~2.8 CPU, 72%) |
-| Memory | 16 GiB | 32GB causes macOS memory pressure → VM kill |
+| Memory | 24 GiB | Current post-reboot profile; 16 GiB left too little headroom once the Talos container cap is raised. Re-evaluate if macOS memory pressure returns. |
 | nestedVirtualization | **OFF by default** | Crashes VM under load (image builds, heavy scheduling). Toggle ON only for Firecracker testing |
 | vmType | vz | Required for Apple Silicon |
 | mountType | virtiofs | Fastest option with VZ |
@@ -114,29 +114,26 @@ Persist at least:
 
 Why this matters: kubelet `FailedCreatePodSandBox` events mentioning missing `subnet.env` can stay recent for minutes after the first repair. If the healer forgets that it already restarted flannel, the next launchd tick can bounce flannel again and knock healthy services like Typesense back into 503 warmup for no good reason. The extra failed-recovery marker also stops the system from counting a one-minute green flash as success and then force-cycling Colima again when the control path collapses.
 
-### Kubeconfig Port Drift (2026-03-21 incident)
+### Kubeconfig / Talos Endpoint Contract (2026-05-30 incident)
 
-Docker port mappings for k8s API (6443) and Talos API (50000) are **not pinned** — they use random host ports assigned at container creation. All service ports (3111, 8288, 6379, etc.) ARE pinned 1:1.
+Current operator access uses Colima/Lima's direct grpc-published ports:
 
-When the Colima VM or Talos container restarts, Docker may reassign different random ports for 6443/50000. Kubeconfig goes stale, kubectl fails, and everything that depends on it (joelclaw CLI, health checks, pod inspection) breaks silently.
+- Kubernetes API: `https://127.0.0.1:6443`
+- Talos API: `127.0.0.1:50000`
 
-**Symptoms**: `kubectl` returns `tls: internal error` or `connection refused`. All pods are actually running — only the kubeconfig routing is wrong.
+Do **not** rewrite kubeconfig/Talos back to the older SSH-only tunnel ports (`16443` / `15000`) unless explicitly testing `KUBE_OPERATOR_MODE=ssh`. After the reboot/usernet collapse, the VM and pods stayed healthy while the SSH/usernet operator path died. Direct grpc-published ports stayed reachable.
 
-**Fix**:
+**Fix/verify**:
 ```bash
-# 1. Regenerate kubeconfig from talosctl (which has the correct port)
-talosctl --talosconfig ~/.talos/config --nodes 127.0.0.1 kubeconfig --force
-
-# 2. Switch to the new context
-kubectl config use-context "$(kubectl config get-contexts -o name | grep joelclaw | head -1)"
-
-# 3. Clean stale contexts (optional)
-kubectl config delete-context admin@joelclaw  # if stale entry exists
+talosctl config endpoint 127.0.0.1:50000
+talosctl config node 10.5.0.2
+kubectl config set-cluster joelclaw --server=https://127.0.0.1:6443 --insecure-skip-tls-verify=true
+kubectl config use-context admin@joelclaw
+kubectl get nodes --request-timeout=10s
+talosctl -e 127.0.0.1:50000 -n 10.5.0.2 version --client=false
 ```
 
-**Self-heal**: `health.sh` now auto-detects and fixes this before running checks.
-
-**Root cause**: Container was created without pinning these ports. To permanently fix, recreate the container with explicit port bindings for 6443:6443 and 50000:50000. This requires cluster recreation — a bigger operation.
+`infra/kube-operator-access.sh` now defaults to `KUBE_OPERATOR_MODE=direct` and runs as a boring launchd monitor that keeps configs pointed at `6443` / `50000`. It still has an `ssh` mode for deliberate fallback testing.
 
 ### Durable recovery rule (ADR-0244)
 
@@ -336,9 +333,9 @@ Rules:
 - do not run a second autossh daemon on ports Colima/Lima already publishes for `joelclaw-controlplane-1` (`3838`, `6379`, `7880`, `7881`, `8108`, `8288`, `8289`, `9627`, `64784`)
 - do not kill generic `ssh` listeners on those host ports; that can kill Lima's own forwarders
 - `infra/colima-tunnel.sh` is now only a deprecated compatibility stub so stale launchd installs exit cleanly instead of fighting Lima
-- `com.joel.kube-operator-access` is the allowed exception because it owns dedicated operator-only loopback ports that Colima/Lima do not publish themselves: `16443 -> 10.5.0.2:6443` for kube-apiserver and `15000 -> 10.5.0.2:50000` for Talos
-- the operator daemon must use `ssh -F ~/.colima/_lima/colima/ssh.config -S none -o ControlPath=none -o ControlMaster=no -o ControlPersist=no`; do not trust the generic Lima mux path for long-lived kubectl/talos access after a rebuild
-- once the daemon is installed, kubectl should use `https://127.0.0.1:16443` and talosctl should use `127.0.0.1:15000`
+- `com.joel.kube-operator-access` is now a direct-mode monitor, not a persistent tunnel. It keeps kubectl/talosctl aimed at Colima/Lima's grpc-published loopback ports: `6443` for kube-apiserver and `50000` for Talos
+- the old SSH tunnel mode (`16443 -> 10.5.0.2:6443`, `15000 -> 10.5.0.2:50000`) is fallback-only via `KUBE_OPERATOR_MODE=ssh`; do not leave it crash-looping under launchd
+- once the daemon is installed, kubectl should use `https://127.0.0.1:6443` and talosctl should use `127.0.0.1:50000`
 - `com.joel.k8s-reboot-heal` must use the same JSON status check; a plain `colima status` false-negative can force-cycle the VM and retrigger the flannel/NAS failure cascade during reboot recovery
 - do not trust status output alone when deciding to cycle Colima; if the Docker socket or Colima SSH path is still healthy, treat the VM as alive and keep your hands off it
 - a Colima force-cycle now requires confirmed evidence; one ugly observation is not enough to panic-cycle the VM
@@ -495,9 +492,9 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 15. **PDS rebuilds are a two-step restore, not just a Helm install** — recreate `bluesky-pds-secrets`, reinstall the `bluesky-pds` Helm release, force the service `nodePort` back to `3000`, then recreate Joel's account if the PVC was wiped. The new account returns a fresh DID, so update the `pds_joel_did` secret afterward or host dual-write will keep authenticating against a dead repo.
 16. **PDS session auth is handle-first in practice** — on the rebuilt PDS, `com.atproto.server.createSession` succeeded against `joel.pds.panda.tail7af24.ts.net` but rejected the raw DID. `packages/system-bus/src/lib/pds.ts` now resolves the handle from `pds_joel_did` via `describeRepo` before it asks for a session, which keeps the dual-write path aligned with reality.
 17. **Typesense "Too many open files" masquerades as raft ERROR** — during large HNSW reindexes (e.g. `docs_chunks_v2` ~223k rows), Typesense exhausts its 1024 default FD limit and starts logging `Fail to open /proc/self/fd: Too many open files`. The pod stays `Running` but 503s everything, and the external symptom is identical to a raft leader-election failure. Fix: wrap the container command with `ulimit -n 1048576` before exec-ing `/opt/typesense-server`. Canonical form lives in `k8s/typesense.yaml` since 2026-04-19.
-18. **Talos container memory cap is 4 GiB by default, not the Colima VM size** — `docker inspect joelclaw-controlplane-1 --format '{{.HostConfig.Memory}}'` returns `4294967296` even though the Colima VM has 16 GiB. Every k8s pod inside Talos shares those 4 GiB. Under Typesense otel_events / docs_chunks_v2 load the Talos container pegs at 99.8% and typesense + kubectl tunnel both go unresponsive together. Live fix without restart: `ssh -F ~/.colima/_lima/colima/ssh.config lima-colima "sudo docker update --memory=12g --memory-swap=12g joelclaw-controlplane-1"`. After that, bump per-pod `resources.limits.memory` to match the real workload (Typesense raised from 4 Gi → 8 Gi on 2026-04-20).
+18. **Talos container memory cap is separate from the Colima VM size** — Docker can leave `joelclaw-controlplane-1` at a 4 GiB cap even when the VM has 24 GiB. Every k8s pod inside Talos shares that cap. Under Typesense `otel_events` / `docs_chunks_v2` load the Talos container can peg and make Typesense plus operator access look dead together. Live fix without restart: `ssh -F ~/.colima/_lima/colima/ssh.config lima-colima "sudo docker update --restart unless-stopped --memory=18g --memory-swap=18g joelclaw-controlplane-1"`. `infra/k8s-reboot-heal.sh` now reasserts this cap on each recovery tick.
 19. **`joelclaw.com/api/docs/*` 502 can be a host-port exposure failure, not a docs-api pod failure** — the public web route proxies to `https://panda.tail7af24.ts.net/api/docs`, and Tailscale Funnel serves `/api/docs` by proxying Panda-local `localhost:3838`. If `kubectl get pod -n joelclaw -l app=docs-api` is healthy but `lsof -nP -iTCP:3838 -sTCP:LISTEN` is empty, Funnel returns bare 502s and Vercel propagates them. Fast proof: `curl -i https://panda.tail7af24.ts.net/api/docs/health` fails while `kubectl port-forward -n joelclaw svc/docs-api 3838:3838` makes it pass. Temporary repair: start that port-forward; durable repair is restoring the Colima/Lima host-published NodePort path for `3838`, not declaring the pod healthy and moving on.
-20. **Root cause pattern for closed NodePorts after Colima churn** — if most host-published ports are closed and only manual `kubectl port-forward` listeners exist, inspect `~/.colima/_lima/_networks/user-v2/usernet.user-v2.stderr.log`. Lima 2.0.3 can panic in `pkg/networks/usernet/gvproxy.go` (`Failed to get FD via socketinvalid argument`, `index out of range`) and leave host publishing half-dead. After a Colima force-cycle, `joelclaw-controlplane-1` may remain `Exited (255)` unless its Docker restart policy is `unless-stopped`. Durable recovery sequence: clean stale usernet/SSH state, `colima stop --force && colima start`, `docker start joelclaw-controlplane-1`, `docker update --restart unless-stopped joelclaw-controlplane-1`, `ssh lima-colima "sudo modprobe br_netfilter"`, then restart flannel if pods fail with missing `/run/flannel/subnet.env`. Verify `localhost:3838`, `8108`, `8288`, `9070`, and `9627` are real Docker/Lima listeners, not ad hoc `kubectl port-forward` stand-ins.
+20. **Root cause pattern for closed NodePorts after Colima churn** — if most host-published ports are closed and only manual `kubectl port-forward` listeners exist, inspect `~/.colima/_lima/_networks/user-v2/usernet.user-v2.stderr.log`. Lima 2.0.3 can panic in `pkg/networks/usernet/gvproxy.go` (`Failed to get FD via socketinvalid argument`, `index out of range`) and leave host publishing half-dead. The current mitigation is Colima `portForwarder: grpc` plus direct operator ports (`6443` / `50000`). After a Colima force-cycle, `joelclaw-controlplane-1` may remain `Exited (255)` unless its Docker restart policy is `unless-stopped`. Durable recovery sequence: clean stale usernet/SSH state, `colima stop --force && colima start`, `docker start joelclaw-controlplane-1`, `docker update --restart unless-stopped --memory=18g --memory-swap=18g joelclaw-controlplane-1`, `ssh lima-colima "sudo modprobe br_netfilter"`, then restart flannel if pods fail with missing `/run/flannel/subnet.env`. Verify `localhost:3838`, `8108`, `8288`, `9070`, `9627`, `6443`, and `50000` are real Docker/Lima listeners, not ad hoc `kubectl port-forward` stand-ins.
 
 ## Key Files
 
@@ -512,12 +509,13 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 | `~/Code/joelhooks/joelclaw/k8s/dkron.yaml` | Dkron scheduler StatefulSet + services |
 | `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh` | Build/push/deploy system-bus worker to k8s |
 | `~/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh` | Reboot auto-heal script for Colima/Talos/taint/flannel |
-| `~/Code/joelhooks/joelclaw/infra/kube-operator-access.sh` | launchd-managed kubectl/talos operator tunnel on 16443/15000 |
+| `~/Code/joelhooks/joelclaw/infra/colima-start.sh` | launchd one-shot Colima startup wrapper; exits 0 if profile is already running |
+| `~/Code/joelhooks/joelclaw/infra/kube-operator-access.sh` | launchd-managed direct kubectl/talos operator monitor on 6443/50000; SSH tunnel mode is fallback-only |
 | `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.k8s-reboot-heal.plist` | launchd timer for reboot auto-heal |
 | `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.kube-operator-access.plist` | launchd service for stable operator access |
 | `~/Code/joelhooks/joelclaw/skills/k8s/references/operations.md` | Cluster operations + recovery notes |
-| `~/.talos/config` | Talos client config (stable endpoint: `127.0.0.1:15000`) |
-| `~/.kube/config` | Kubeconfig (stable server: `https://127.0.0.1:16443`) |
+| `~/.talos/config` | Talos client config (stable endpoint: `127.0.0.1:50000`) |
+| `~/.kube/config` | Kubeconfig (stable server: `https://127.0.0.1:6443`) |
 | `~/.colima/default/colima.yaml` | Colima VM config |
 | `~/Code/joelhooks/joelclaw/infra/colima-tunnel.sh` | Deprecated compatibility stub; exits cleanly so stale launchd installs stop fighting Lima |
 | `~/.local/bin/colima-tunnel` | Compatibility wrapper for the deprecated tunnel stub |

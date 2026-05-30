@@ -25,10 +25,12 @@
         <string>/Users/joel</string>
         <key>PATH</key>
         <string>/Users/joel/.local/bin:/Users/joel/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>KUBE_OPERATOR_MODE</key>
+        <string>direct</string>
         <key>KUBE_OPERATOR_LOCAL_KUBE_PORT</key>
-        <string>16443</string>
+        <string>6443</string>
         <key>KUBE_OPERATOR_LOCAL_TALOS_PORT</key>
-        <string>15000</string>
+        <string>50000</string>
         <key>KUBE_OPERATOR_TARGET_NODE</key>
         <string>10.5.0.2</string>
     </dict>

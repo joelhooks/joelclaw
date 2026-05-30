@@ -849,11 +849,13 @@ async function memoryMarkerCount(apiKey: string, marker: string): Promise<number
   return typeof data.found === "number" ? data.found : 0
 }
 
-async function vectorProbe(apiKey: string, query: string): Promise<{ found: number; hitCount: number }> {
+async function memorySearchProbe(apiKey: string, query: string): Promise<{ found: number; hitCount: number }> {
+  // memory_observations.embedding is a raw float[] field, not a Typesense auto-embedding field.
+  // The E2E probe only needs proof that the marker is searchable after observe writes it;
+  // semantic coverage is exercised by the recall probe below.
   const params = new URLSearchParams({
     q: query,
-    query_by: "embedding",
-    vector_query: "embedding:([], k:3)",
+    query_by: "observation",
     per_page: "3",
     exclude_fields: "embedding",
   })
@@ -864,7 +866,7 @@ async function vectorProbe(apiKey: string, query: string): Promise<{ found: numb
   )
   if (!resp.ok) {
     const body = await resp.text()
-    throw new Error(`Typesense vector query failed (${resp.status}): ${body}`)
+    throw new Error(`Typesense memory search probe failed (${resp.status}): ${body}`)
   }
   const data = await resp.json() as { found?: number; hits?: unknown[] }
   return {
@@ -3601,13 +3603,13 @@ const inngestMemoryE2ECmd = Command.make(
       const typesenseChanged = markerMatches > 0 || sessionMatches > 0 || countChanged || updatedChanged || observeStoreChanged
       const observeRunCompleted = observeRunStatus === "COMPLETED"
 
-      const vector = yield* Effect.tryPromise(() => vectorProbe(apiKey, probeId))
-      const vectorOk = vector.hitCount > 0
+      const searchProbe = yield* Effect.tryPromise(() => memorySearchProbe(apiKey, probeId))
+      const searchProbeOk = searchProbe.hitCount > 0
 
       const recall = runRecallProbe(probeId)
       const recallOk = recall.ok
 
-      const ok = eventAccepted && observeRunCompleted && typesenseChanged && vectorOk && recallOk
+      const ok = eventAccepted && observeRunCompleted && typesenseChanged && searchProbeOk && recallOk
 
         yield* Console.log(respond("inngest memory-e2e", {
           ok,
@@ -3637,10 +3639,10 @@ const inngestMemoryE2ECmd = Command.make(
               observeStoreChanged,
             },
           },
-          vectorQuery: {
-            ok: vectorOk,
-            found: vector.found,
-            hitCount: vector.hitCount,
+          memorySearchProbe: {
+            ok: searchProbeOk,
+            found: searchProbe.found,
+            hitCount: searchProbe.hitCount,
           },
           recallProbe: {
             ok: recallOk,
