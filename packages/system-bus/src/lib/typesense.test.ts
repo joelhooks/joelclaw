@@ -47,7 +47,7 @@ describe("ensureChannelMessagesCollection", () => {
   });
 
   test("never includes id in Typesense schema patch payloads", async () => {
-    let patchBody: { fields?: Array<Record<string, unknown>> } | null = null;
+    const patchRef: { body?: { fields?: Array<Record<string, unknown>> } } = {};
 
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
@@ -61,7 +61,7 @@ describe("ensureChannelMessagesCollection", () => {
       }
 
       if (url.endsWith("/collections/channel_messages") && method === "PATCH") {
-        patchBody = JSON.parse(String(init?.body ?? "{}")) as { fields?: Array<Record<string, unknown>> };
+        patchRef.body = JSON.parse(String(init?.body ?? "{}")) as { fields?: Array<Record<string, unknown>> };
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -73,7 +73,7 @@ describe("ensureChannelMessagesCollection", () => {
 
     await ensureChannelMessagesCollection();
 
-    const fieldNames = (patchBody?.fields ?? []).map((field) => String(field.name ?? ""));
+    const fieldNames = (patchRef.body?.fields ?? []).map((field) => String(field.name ?? ""));
     expect(fieldNames).not.toContain("id");
     expect(fieldNames).toContain("channel_type");
     expect(fieldNames).toContain("concept_ids");

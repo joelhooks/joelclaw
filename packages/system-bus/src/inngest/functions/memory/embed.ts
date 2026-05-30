@@ -45,14 +45,21 @@ export const memoryEmbed = inngest.createFunction(
     });
 
     await step.run("emit-otel", async () => {
-      emitOtelEvent("memory.embed.completed", {
-        priority,
-        dimensions: result.dimensions,
-        model: result.model,
-        queued_ms: Math.round(result.queued_ms),
-        compute_ms: Math.round(result.compute_ms),
-        total_ms: Math.round(result.total_ms),
-        correlation_id,
+      await emitOtelEvent({
+        level: "info",
+        source: "system-bus",
+        component: "memory-embed",
+        action: "memory.embed.completed",
+        success: true,
+        metadata: {
+          priority,
+          dimensions: result.dimensions,
+          model: result.model,
+          queued_ms: Math.round(result.queued_ms),
+          compute_ms: Math.round(result.compute_ms),
+          total_ms: Math.round(result.total_ms),
+          correlation_id,
+        },
       });
     });
 

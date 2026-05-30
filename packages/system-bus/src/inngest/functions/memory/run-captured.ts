@@ -117,11 +117,18 @@ export const memoryRunCaptured = inngest.createFunction(
 
     if (candidates.length === 0) {
       await step.run("emit-empty", async () => {
-        emitOtelEvent("memory.run.captured.empty", {
-          run_id,
-          user_id,
-          reason: "no usable turns extracted from jsonl",
-          format,
+        await emitOtelEvent({
+          level: "warn",
+          source: "system-bus",
+          component: "memory-run-captured",
+          action: "memory.run.captured.empty",
+          success: true,
+          metadata: {
+            run_id,
+            user_id,
+            reason: "no usable turns extracted from jsonl",
+            format,
+          },
         });
       });
       return {
@@ -247,16 +254,23 @@ export const memoryRunCaptured = inngest.createFunction(
     const duration_ms = performance.now() - t0;
 
     await step.run("emit-otel", async () => {
-      emitOtelEvent("memory.run.captured", {
-        run_id,
-        user_id,
-        machine_id,
-        agent_runtime,
-        chunk_count: chunks.length,
-        chunk_errors: chunkImport.errors,
-        turn_count: turns.length,
+      await emitOtelEvent({
+        level: "info",
+        source: "system-bus",
+        component: "memory-run-captured",
+        action: "memory.run.captured",
+        success: chunkImport.errors === 0,
         duration_ms: Math.round(duration_ms),
-        format,
+        metadata: {
+          run_id,
+          user_id,
+          machine_id,
+          agent_runtime,
+          chunk_count: chunks.length,
+          chunk_errors: chunkImport.errors,
+          turn_count: turns.length,
+          format,
+        },
       });
     });
 

@@ -458,6 +458,7 @@ TYPESENSE_API_KEY=$(secrets lease typesense_api_key) \
   1. `joelclaw runs --count 5 --hours 1 --compact` returns quickly and shows recent `memory/run.captured` completions
   2. `runs_dev` latest `agent_runtime:=pi` doc advances past the stale timestamp
   3. `run_chunks_dev` latest matching chunks exist for the same `run_id`
+  4. OTEL emission uses the canonical single-object `emitOtelEvent({ level, source, component, action, success, metadata })` contract; old two-argument calls are type failures and should not be reintroduced
 
 ### Knowledge turn-write contract (ADR-0202)
 
