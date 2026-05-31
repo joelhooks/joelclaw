@@ -39,6 +39,13 @@ type VaultHit = {
   tags?: string[];
 };
 
+type ThreadSummaryPayload = {
+  summary: string;
+  needsJoel: boolean;
+  urgency: "low" | "normal" | "high" | "critical";
+  vaultGapSignal: string | null;
+};
+
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string") throw new Error(`${field} must be a string`);
   const normalized = value.trim();
@@ -137,6 +144,47 @@ function rankUrgency(messages: ChannelMessageDoc[]): "low" | "normal" | "high" |
   return "normal";
 }
 
+function buildFallbackSummary(messages: ChannelMessageDoc[]): string {
+  const latest = messages[messages.length - 1];
+  const raw = latest?.summary || latest?.text || "Thread captured for later review.";
+  return raw.trim().replace(/\s+/g, " ").slice(0, 240) || "Thread captured for later review.";
+}
+
+function parseThreadSummaryPayload(
+  summaryResult: { data?: unknown; text?: string },
+  messages: ChannelMessageDoc[],
+  fallbackVaultGapSignal: string | null,
+): ThreadSummaryPayload {
+  let raw: Record<string, unknown> = {};
+  if (summaryResult.data && typeof summaryResult.data === "object" && !Array.isArray(summaryResult.data)) {
+    raw = summaryResult.data as Record<string, unknown>;
+  } else if (typeof summaryResult.text === "string" && summaryResult.text.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(summaryResult.text) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        raw = parsed as Record<string, unknown>;
+      }
+    } catch {
+      raw = {};
+    }
+  }
+
+  const summary = typeof raw.summary === "string" && raw.summary.trim().length > 0
+    ? raw.summary.trim()
+    : buildFallbackSummary(messages);
+  const inferredUrgency = rankUrgency(messages);
+  const urgencyRaw = typeof raw.urgency === "string" ? raw.urgency.trim().toLowerCase() : "";
+  const urgency = ["low", "normal", "high", "critical"].includes(urgencyRaw)
+    ? urgencyRaw as "low" | "normal" | "high" | "critical"
+    : inferredUrgency;
+  const needsJoel = raw.needsJoel === true || String(raw.needsJoel).toLowerCase() === "true" || urgency === "high" || urgency === "critical";
+  const vaultGapSignal = typeof raw.vaultGapSignal === "string" && raw.vaultGapSignal.trim().length > 0
+    ? raw.vaultGapSignal.trim()
+    : fallbackVaultGapSignal;
+
+  return { summary, needsJoel, urgency, vaultGapSignal };
+}
+
 function buildSummaryPrompt(
   input: {
     source: SupportedThreadSource;
@@ -186,15 +234,18 @@ Rules:
 - Reuse the supplied relatedProjects and vaultGapSignal if they are relevant.
 - Do not invent facts.`;
 
-async function searchVaultForMessage(message: ChannelMessageDoc): Promise<VaultHit[]> {
-  const response = await typesense.search({
+function buildVaultSearchParams(messageText: string): typesense.TypesenseSearchParams {
+  return {
     collection: "vault_notes",
-    q: message.text,
+    q: messageText,
     query_by: "title,content,path,tags",
-    vector_query: `embedding:([], k:${VAULT_MATCHES_PER_MESSAGE})`,
     per_page: VAULT_MATCHES_PER_MESSAGE,
     include_fields: "id,title,path,type,tags",
-  });
+  };
+}
+
+async function searchVaultForMessage(message: ChannelMessageDoc): Promise<VaultHit[]> {
+  const response = await typesense.search(buildVaultSearchParams(message.text));
 
   return (Array.isArray(response.hits) ? response.hits : []).map((hit) => normalizeVaultHit(hit.document));
 }
@@ -268,21 +319,9 @@ export const conversationThreadEnrich = inngest.createFunction(
         timeout: 45_000,
       });
 
-      const payload = (
-        summaryResult.data && typeof summaryResult.data === "object" && !Array.isArray(summaryResult.data)
-          ? summaryResult.data as Record<string, unknown>
-          : JSON.parse(summaryResult.text)
-      ) as Record<string, unknown>;
-
-      const summary = requireString(payload.summary, "summary");
-      const needsJoel = payload.needsJoel === true || String(payload.needsJoel).toLowerCase() === "true";
-      const urgencyRaw = typeof payload.urgency === "string" ? payload.urgency.trim().toLowerCase() : "normal";
-      const urgency = ["low", "normal", "high", "critical"].includes(urgencyRaw)
-        ? urgencyRaw as "low" | "normal" | "high" | "critical"
-        : rankUrgency(messages);
-      const modelVaultGapSignal = typeof payload.vaultGapSignal === "string" && payload.vaultGapSignal.trim().length > 0
-        ? payload.vaultGapSignal.trim()
-        : fallbackVaultGapSignal;
+      const summaryPayload = parseThreadSummaryPayload(summaryResult, messages, fallbackVaultGapSignal);
+      const { summary, needsJoel, urgency } = summaryPayload;
+      const modelVaultGapSignal = summaryPayload.vaultGapSignal;
 
       await typesense.upsert(typesense.CONVERSATION_THREADS_COLLECTION, {
         id: threadKey,
@@ -344,3 +383,9 @@ export const conversationThreadEnrich = inngest.createFunction(
     return enriched;
   },
 );
+
+export const __conversationThreadEnrichTestUtils = {
+  buildFallbackSummary,
+  buildVaultSearchParams,
+  parseThreadSummaryPayload,
+};

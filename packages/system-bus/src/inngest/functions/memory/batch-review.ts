@@ -314,6 +314,9 @@ export const batchReview = inngest.createFunction(
             system: SYSTEM_PROMPT,
             component: "memory.batch-review",
             action: "memory.batch_review.llm",
+            timeout: 45_000,
+            requireTextOutput: true,
+            policy: { maxFallbackAttempts: 1 },
             metadata: {
               proposalCount: proposals.length,
             },
@@ -326,7 +329,11 @@ export const batchReview = inngest.createFunction(
 
           return stdout;
         } catch (error) {
-          throw error instanceof Error ? error : new Error(String(error));
+          console.error(
+            "[batch-review] LLM review unavailable; leaving proposals queued for later:",
+            error instanceof Error ? error.message : String(error),
+          );
+          return "";
         }
       });
 
@@ -344,15 +351,14 @@ export const batchReview = inngest.createFunction(
       });
 
       if (decisions.unparsed || decisions.decisions.length === 0) {
-        const result = { status: "error", reason: "LLM response unparseable", proposalCount: proposals.length };
-        await step.run("otel-batch-review-completed", async () => {
+        const result = { status: "deferred", reason: "LLM response unavailable or unparseable", proposalCount: proposals.length };
+        await step.run("otel-batch-review-deferred", async () => {
           await emitOtelEvent({
             level: "warn",
             source: "worker",
             component: "batch-review",
-            action: "batch-review.completed",
-            success: false,
-            error: "LLM response unparseable",
+            action: "batch-review.deferred",
+            success: true,
             duration_ms: Date.now() - startedAt,
             metadata: {
               eventId,
@@ -360,6 +366,7 @@ export const batchReview = inngest.createFunction(
               promoted: 0,
               rejected: 0,
               flagged: 0,
+              reason: result.reason,
             },
           });
         });
