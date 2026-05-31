@@ -28,6 +28,7 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 - For inference calls that must return machine-readable output, set `json: true` plus `requireJson: true` (and `requireTextOutput: true` where needed) so null/empty outputs are treated as failures, not successes.
 - ADR pitch automation now has a closed funnel: `system-heartbeat` emits `adr/pitch.requested` once per local morning window (8:00–10:00 America/Los_Angeles) behind Redis key `adr:pitch:last-fired` with a 20h TTL; `adr-daily-pitch` emits OTEL `pitch.sent`; `telegram-callback` emits OTEL `pitch.responded`; `adr-pitch-execute` handles `adr/pitch.approved` by reading the ADR file from `~/Vault/docs/decisions`, running `codex exec --full-auto -C <repo> "<prompt>"` (prompt is positional; `-p` is Codex profile, not prompt), verifying `bunx tsc --noEmit`, storing rollback metadata at `adr:pitch:rollback:<adr_number>`, and sending Telegram success/failure notifications via `pushGatewayEvent`.
 - Worker code must not import `packages/cli/src/*` via relative paths. Keep recovery-runbook helpers local to `packages/system-bus` (or move them to a leaf package) and avoid introducing `@joelclaw/system-bus` ↔ `@joelclaw/sdk` dependency cycles that break Turbo/Vercel builds.
+- `memory/friction-fix` automation is disabled by default (`FRICTION_FIX_AUTOMATION_ENABLED` must be exactly `true`). It previously checked out branches in the canonical host repo and left the worker on `friction-fix/*`; do not re-enable until the implementation uses an isolated worktree/sandbox and cannot mutate the serving checkout.
 - Host worker `serve.ts` must set a high Bun `idleTimeout` for `/api/inngest`. Self-hosted Inngest registration PUTs can exceed Bun's 10s default under cron/backlog pressure; when that happens the CLI sees `curl: (52) Empty reply from server`, the worker logs a Bun request timeout, and the runtime keeps stale triggers.
 - Agent-loop PRDs are preflight-normalized at runtime (`normalizePrdOrThrow`): accepts `acceptance_criteria` plus aliases (`acceptance`, `acceptanceCriteria`), defaults missing `passes`/`priority`, and fails fast with explicit errors when story shape is invalid.
 
@@ -135,8 +136,10 @@ Operational boundary for Phase 1:
   - `packages/restate/src/queue-drainer.ts` reaps expired pauses, emits `queue.control.expired`, and filters paused families out of dispatch candidates without dropping queued work.
   - the installed CLI now exposes `joelclaw queue pause`, `joelclaw queue resume`, and `joelclaw queue control status`.
   - queue operator commands resolve Redis from the canonical CLI config (`~/.config/system-bus.env` → `REDIS_URL`) before ambient shell env so manual controls target the same localhost queue as the worker and drainer.
-- Phase 3 Story 4 now has a live host-worker runtime path in `packages/system-bus/src/inngest/functions/queue-observer.ts`:
+- Phase 3 Story 4 now has a live cluster-worker runtime path in `packages/system-bus/src/inngest/functions/queue-observer.ts`:
   - the durable cron controller stays on `queue/observer` (`TZ=America/Los_Angeles */1 * * * *`), while manual `queue/observer.requested` probes now run through a separate `queue/observer-requested` function so operator requests do not queue behind the cron pass.
+  - `memory/observe-session`, `queue/observer`, `queue/observer-requested`, and `check/memory-review` are owned by the cluster worker so callbacks stay inside Kubernetes via `http://system-bus-worker:3111`; they must not depend on host-only filesystem, GUI, or local CLI state. `memory/observe-session` must tolerate missing host-only model tooling by using deterministic extraction/embedding fallbacks while still writing canonical Typesense records. The cluster deployment must override `TYPESENSE_URL=http://typesense:8108`; inherited host `localhost:8108` config is wrong inside the pod.
+  - Host-owned functions must advertise an SDK callback URL that the Inngest pod can actually reach. On Panda the host worker uses `INNGEST_SERVE_HOST=http://100.93.201.72:3111`; `host.lima.internal`/`host.docker.internal` are not valid unless a live pod-to-host probe proves the alias reaches macOS.
   - runtime flags are `QUEUE_OBSERVER_MODE=off|dry-run|enforce`, `QUEUE_OBSERVER_FAMILIES=discovery,content,subscriptions,github`, `QUEUE_OBSERVER_AUTO_FAMILIES=content`, and `QUEUE_OBSERVER_INTERVAL_SECONDS` (currently clamped to 60s minimum on the durable cron path).
   - both paths build the same bounded snapshot and call Sonnet through `infer()`, but only the cron controller may auto-apply `pause_family`, `resume_family`, and `escalate`; manual probes are read-only even if the configured mode is `enforce`.
   - the shared observer short-circuits deterministic noops for both truly empty queues and empty queues that only still have active pauses hanging around, so the cron path does not waste a full model call on obvious nothing-to-do snapshots.
@@ -198,14 +201,15 @@ The running host worker is launched by `com.joel.system-bus-worker` through `wor
 
 After changing host-role functions in the monorepo:
 
-1. restart launchd: `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`
+1. restart launchd: `launchctl kickstart -k system/com.joel.system-bus-worker` if permitted, or kill the Bun child and let the system LaunchDaemon's `worker-supervisor` restart it
 2. re-register functions: `curl -X PUT http://127.0.0.1:3111/api/inngest`
 3. verify with `joelclaw inngest status` or a targeted synthetic event
 
 Reboot recovery gotchas that bit for real:
 
 - `localhost:3111` belongs to the **host worker**, not the Talos container. If `docker inspect joelclaw-controlplane-1` still shows a stale `3111/tcp` port binding while `k8s/system-bus-worker.yaml` is `ClusterIP`, remove that Docker binding or the host worker cannot bind and Inngest runs fail with `Unable to reach SDK URL`.
-- If the reboot lands in a headless/non-Aqua session and the `com.joel.system-bus-worker` LaunchAgent is unavailable, start `worker-supervisor` manually with the launchd env (`HOME`, `PATH`, `VAULT_PATH`, `WORKER_ROLE=host`, `INNGEST_DEV=1` for local/self-hosted Inngest) until the normal GUI launchd domain is back. The SDK must run in dev mode against local self-hosted Inngest callbacks, otherwise it expects signed cloud callbacks and functions fail with `No x-inngest-signature provided`.
+- `com.joel.system-bus-worker` is a system LaunchDaemon on Panda. Talon must detect it through `launchctl print system/com.joel.system-bus-worker`; checking only `launchctl list <label>` in the user bootstrap domain creates a false negative and starts a second supervisor that fights over port 3111.
+- If the reboot lands in a headless/non-Aqua session and the system worker is truly unavailable, start `worker-supervisor` manually with the launchd env (`HOME`, `PATH`, `VAULT_PATH`, `WORKER_ROLE=host`, `INNGEST_DEV=1` for local/self-hosted Inngest) until launchd is back. The SDK must run in dev mode against local self-hosted Inngest callbacks, otherwise it expects signed cloud callbacks and functions fail with `No x-inngest-signature provided`.
 
 Do not rely on stale instructions about a separate `~/Code/system-bus-worker/` checkout unless the launchd plist/supervisor config has been deliberately changed back to that topology.
 

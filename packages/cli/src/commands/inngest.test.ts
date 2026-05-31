@@ -6,6 +6,8 @@ const {
   parseCsvList,
   buildSweepStalePredicate,
   parseSqliteJsonRows,
+  parseRunTimestampMs,
+  partitionMemoryRunsForHealth,
   runIdHexToUlid,
   mapSweepCandidates,
   decodeConnectStartResponse,
@@ -120,6 +122,38 @@ describe("inngest sweep-stale-runs helpers", () => {
     expect(candidate?.hasFinish).toBe(false)
     expect(candidate?.hasTerminalHistory).toBe(true)
     expect(candidate?.startedAtIso).toMatch(/^2026-03-02T/) // deterministic enough for fixture
+  })
+})
+
+describe("inngest memory-health helpers", () => {
+  test("parseRunTimestampMs handles valid and invalid timestamps", () => {
+    expect(parseRunTimestampMs("2026-05-31T01:21:33.881Z")).toBeGreaterThan(0)
+    expect(parseRunTimestampMs("nope")).toBeNull()
+    expect(parseRunTimestampMs(null)).toBeNull()
+  })
+
+  test("partitions historical failures and stale active runs away from current health", () => {
+    const latestSuccessTimestampMs = Date.parse("2026-05-31T01:41:33.000Z")
+    const workerStartedAtMs = Date.parse("2026-05-31T01:21:50.000Z")
+    const runs = [
+      { id: "old-failed", status: "FAILED", functionName: "Reflect Observations", startedAt: "2026-05-31T01:00:00.000Z" },
+      { id: "new-failed", status: "FAILED", functionName: "Reflect Observations", startedAt: "2026-05-31T01:42:00.000Z" },
+      { id: "stale-running", status: "RUNNING", functionName: "Reflect Observations", startedAt: "2026-05-31T01:20:00.000Z" },
+      { id: "live-running", status: "RUNNING", functionName: "Reflect Observations", startedAt: "2026-05-31T01:42:00.000Z" },
+      { id: "done", status: "COMPLETED", functionName: "Observe Session", startedAt: "2026-05-31T01:43:00.000Z" },
+    ]
+
+    const result = partitionMemoryRunsForHealth(runs, {
+      latestSuccessTimestampMs,
+      workerStartedAtMs,
+      staleActiveGraceMinutes: 0,
+    })
+
+    expect(result.failedRuns.map((run) => run.id)).toEqual(["old-failed", "new-failed"])
+    expect(result.currentFailedRuns.map((run) => run.id)).toEqual(["new-failed"])
+    expect(result.historicalFailedRuns.map((run) => run.id)).toEqual(["old-failed"])
+    expect(result.staleSdkActiveRuns.map((run) => run.id)).toEqual(["stale-running"])
+    expect(result.operationalActiveRuns.map((run) => run.id)).toEqual(["live-running"])
   })
 })
 

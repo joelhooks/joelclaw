@@ -39,3 +39,7 @@ joelclaw otel emit "task.completed" \
 - full `services` inventory with per-service `critical` flag
 
 That keeps dashboards honest while preventing noisy tier-3 escalations from warn-only, non-critical drift.
+
+## Talon worker supervision
+
+Talon must not supervise the host system-bus worker when the canonical `com.joel.system-bus-worker` LaunchDaemon is loaded. The worker LaunchDaemon lives in the `system` bootstrap domain, so Talon checks both the current `launchctl list <label>` path and `launchctl print system/<label>` before deciding to start its internal worker supervisor. Dynamic `launchd.*` service probes also check `launchctl list`, `launchctl print system/<label>`, and `launchctl print gui/$(id -u)/<label>` so system LaunchDaemons like `com.joel.gateway` do not look dead from Talon's user LaunchAgent domain. If this detection regresses, Talon and `worker-supervisor` will fight over `localhost:3111`, producing repeated `EADDRINUSE`, SIGTERM/SIGKILL churn, and Inngest runs stuck at `Unable to reach SDK URL` or `RUNNING`.

@@ -170,9 +170,7 @@ fn iso8601_now() -> String {
 
     let (year, month, day) = civil_from_days(days);
 
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 fn civil_from_days(days_since_epoch: i64) -> (i64, i64, i64) {

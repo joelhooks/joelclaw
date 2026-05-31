@@ -2,6 +2,7 @@
 // ADR-0082: Migrated from Qdrant+embed.py (Qdrant fully retired 2026-02-22) to Typesense with built-in auto-embedding.
 // ADR-0077 Workstream 1/2: query rewrite + trust pass + usage-signal-aware ranking.
 
+import { embed } from "@joelclaw/inference-router"
 import { Effect, ParseResult, Schema } from "effect"
 import { traceRecallRewrite } from "../../lib/langfuse"
 import { createOtelEventPayload, ingestOtelPayload } from "../../lib/otel-ingest"
@@ -13,11 +14,12 @@ const MAX_INJECT = 10
 const DECAY_CONSTANT = 0.01
 const STALENESS_DAYS = 90
 const MIN_OBSERVATION_CHARS = 12
+const RECALL_EMBED_DIMS = 384
 // ADR-0192: Bumped default from 2s to 6s. Pi cold-start on M4 Pro is ~3-4s,
 // so 2s guaranteed timeout on every first invocation. 6s gives enough headroom
 // for cold start + Haiku inference while the circuit breaker catches persistent failures.
 const REWRITE_TIMEOUT_MS = Number(process.env.JOELCLAW_RECALL_REWRITE_TIMEOUT) || 6_000
-const RECALL_REWRITE_MODEL = process.env.JOELCLAW_RECALL_REWRITE_MODEL?.trim() || "anthropic/claude-haiku-4-5"
+const RECALL_REWRITE_MODEL = process.env.JOELCLAW_RECALL_REWRITE_MODEL?.trim() || "openai-codex/gpt-5.5"
 const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
 const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
 
@@ -411,7 +413,7 @@ function detectRewriteSkipReason(query: string): string | null {
     return "skip.literal_query"
   }
 
-  if (/^[\w./:-]+$/u.test(query) && /[/:.]/u.test(query)) {
+  if (/^[\w./:-]+$/u.test(query) && /[/:.-]/u.test(query)) {
     return "skip.direct_identifier"
   }
 
@@ -954,7 +956,52 @@ async function runRewriteQuery(query: string): Promise<RewrittenQuery> {
   return runRewriteQueryWith(query)
 }
 
-/** Hybrid semantic+keyword search over memory_observations */
+function formatRecallVectorQuery(embedding: number[], fetchLimit: number): string {
+  const vector = embedding.map((value) => Number.isFinite(value) ? Number(value.toFixed(8)) : 0)
+  return `embedding:([${vector.join(",")}], k:${fetchLimit}, alpha:0.7)`
+}
+
+function buildRecallSearchParams(input: {
+  query: string
+  fetchLimit: number
+  filterBy?: string
+  vectorQuery?: string
+}): URLSearchParams {
+  const params = new URLSearchParams({
+    q: input.query,
+    query_by: "observation",
+    per_page: String(input.fetchLimit),
+    exclude_fields: "embedding",
+  })
+  if (input.vectorQuery) {
+    params.set("vector_query", input.vectorQuery)
+  }
+  if (input.filterBy) {
+    params.set("filter_by", input.filterBy)
+  }
+  return params
+}
+
+async function recallVectorQuery(query: string, fetchLimit: number): Promise<string | undefined> {
+  try {
+    const result = await embed(query, {
+      priority: "query",
+      dimensions: RECALL_EMBED_DIMS,
+    })
+    return formatRecallVectorQuery(result.embedding, fetchLimit)
+  } catch {
+    // Fail open: recall must still work as keyword search when Ollama or the
+    // embedding lane is unavailable. Silent recall failures are worse than a
+    // temporary downgrade from hybrid to text search.
+    return undefined
+  }
+}
+
+function isVectorSearchError(message: string): boolean {
+  return /vector field|vector_query|auto-embedding|embedding field|do not use `query_by`/iu.test(message)
+}
+
+/** Hybrid semantic+keyword search over memory_observations; text-only fallback when embeddings are unavailable. */
 async function searchTypesense(
   query: string,
   limit: number,
@@ -966,29 +1013,63 @@ async function searchTypesense(
     ? Math.max(1, options.fetchMultiplier)
     : 3
   const fetchLimit = Math.min(Math.max(Math.ceil(bounded * fetchMultiplier), bounded + 4), 60)
-  const params = new URLSearchParams({
-    q: query,
-    query_by: "embedding,observation",
-    vector_query: "embedding:([], alpha: 0.7)",
-    per_page: String(fetchLimit),
-    exclude_fields: "embedding",
+  const vectorQuery = await recallVectorQuery(query, fetchLimit)
+
+  async function runSearch(params: URLSearchParams): Promise<{ hits: TypesenseHit[]; found: number }> {
+    const search = Object.fromEntries(params.entries())
+    const resp = await fetch(
+      `${TYPESENSE_URL}/multi_search`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-TYPESENSE-API-KEY": apiKey,
+        },
+        body: JSON.stringify({
+          searches: [
+            {
+              collection: "memory_observations",
+              ...search,
+            },
+          ],
+        }),
+      }
+    )
+
+    if (!resp.ok) {
+      const text = await resp.text()
+      throw new Error(`Typesense search failed (${resp.status}): ${text}`)
+    }
+
+    const data = await resp.json() as {
+      results?: Array<{ found?: number; hits?: TypesenseHit[]; error?: string; code?: number }>
+    }
+    const first = data.results?.[0]
+    if (!first) return { hits: [], found: 0 }
+    if (first.error) {
+      throw new Error(`Typesense search failed (${first.code ?? 400}): ${first.error}`)
+    }
+    return { hits: first.hits ?? [], found: first.found ?? 0 }
+  }
+
+  const params = buildRecallSearchParams({
+    query,
+    fetchLimit,
+    filterBy: options?.filterBy,
+    vectorQuery,
   })
-  if (options?.filterBy) {
-    params.set("filter_by", options.filterBy)
+
+  try {
+    return await runSearch(params)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!vectorQuery || !isVectorSearchError(message)) throw error
+    return await runSearch(buildRecallSearchParams({
+      query,
+      fetchLimit,
+      filterBy: options?.filterBy,
+    }))
   }
-
-  const resp = await fetch(
-    `${TYPESENSE_URL}/collections/memory_observations/documents/search?${params}`,
-    { headers: { "X-TYPESENSE-API-KEY": apiKey } }
-  )
-
-  if (!resp.ok) {
-    const text = await resp.text()
-    throw new Error(`Typesense search failed (${resp.status}): ${text}`)
-  }
-
-  const data = await resp.json() as { found: number; hits: TypesenseHit[] }
-  return { hits: data.hits ?? [], found: data.found ?? 0 }
 }
 
 type RecallCapabilityArgs = {
@@ -1328,6 +1409,8 @@ export const __recallTestUtils = {
   rankHits,
   trustPassFilter,
   runRewriteQueryWith,
+  buildRecallSearchParams,
+  formatRecallVectorQuery,
   // ADR-0192 testing exports
   detectRewriteSkipReason,
   get rewriteCircuit() { return rewriteCircuit },
@@ -1339,7 +1422,9 @@ export const __recallTestUtils = {
       lastOpenTs: 0,
       totalOpens: 0,
     }
+    saveCircuitState(rewriteCircuit)
     rewriteCache.clear()
+    saveCache()
   },
   circuitShouldSkip,
   circuitRecordSuccess,

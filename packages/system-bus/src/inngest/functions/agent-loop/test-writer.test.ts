@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { type Subprocess } from "bun";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -70,6 +70,14 @@ beforeEach(() => {
   mockStdout = "";
   mockExitCode = 0;
   installMock();
+});
+
+afterEach(() => {
+  uninstallMock();
+});
+
+afterAll(() => {
+  uninstallMock();
 });
 
 // ── AC-1: test-writer.ts exists and exports agentLoopTestWriter ─────────

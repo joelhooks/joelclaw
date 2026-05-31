@@ -639,7 +639,14 @@ timeout_secs = 5
 fn parse_services_toml(
     raw: &str,
     default_timeout_secs: u64,
-) -> Result<(Vec<HttpServiceProbe>, Vec<LaunchdServiceProbe>, Vec<ScriptServiceProbe>), DynError> {
+) -> Result<
+    (
+        Vec<HttpServiceProbe>,
+        Vec<LaunchdServiceProbe>,
+        Vec<ScriptServiceProbe>,
+    ),
+    DynError,
+> {
     let mut section = String::new();
     let mut http_sections: BTreeMap<String, HttpServiceProbe> = BTreeMap::new();
     let mut launchd_sections: BTreeMap<String, LaunchdServiceProbe> = BTreeMap::new();
@@ -1000,7 +1007,8 @@ critical = true
 url = "http://127.0.0.1:8081/"
 "#;
 
-        let (http, launchd, _script) = parse_services_toml(raw, 7).expect("services TOML should parse");
+        let (http, launchd, _script) =
+            parse_services_toml(raw, 7).expect("services TOML should parse");
 
         assert_eq!(http.len(), 1);
         assert_eq!(launchd.len(), 1);

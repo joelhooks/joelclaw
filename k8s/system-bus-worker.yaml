@@ -23,7 +23,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: system-bus-worker
-          image: ghcr.io/joelhooks/system-bus-worker:20260506-191804
+          image: ghcr.io/joelhooks/system-bus-worker:20260530-1823-observe-cluster
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
@@ -57,6 +57,9 @@ spec:
               value: "redis"
             - name: REDIS_PORT
               value: "6379"
+            # Cluster-owned functions must use in-cluster Typesense, not host localhost.
+            - name: TYPESENSE_URL
+              value: "http://typesense:8108"
           ports:
             - containerPort: 3111
               name: http

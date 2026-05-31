@@ -53,10 +53,7 @@ pub fn should_supervise_worker(config: &Config) -> bool {
         Err(error) => {
             log::warn_fields(
                 "failed to detect external worker supervisor; proceeding",
-                &[
-                    ("label", label.to_string()),
-                    ("error", error.to_string()),
-                ],
+                &[("label", label.to_string()), ("error", error.to_string())],
             );
             true
         }
@@ -65,7 +62,19 @@ pub fn should_supervise_worker(config: &Config) -> bool {
 
 fn launchd_job_loaded(label: &str) -> Result<bool, DynError> {
     let output = Command::new("launchctl").arg("list").arg(label).output()?;
-    Ok(output.status.success())
+    if output.status.success() {
+        return Ok(true);
+    }
+
+    // `launchctl list <label>` only checks the current bootstrap domain. The
+    // canonical system-bus worker runs as a LaunchDaemon in the `system` domain,
+    // so Talon must also check `system/<label>` or it will start a second worker
+    // supervisor and both supervisors will fight over port 3111.
+    let system_output = Command::new("launchctl")
+        .arg("print")
+        .arg(format!("system/{label}"))
+        .output()?;
+    Ok(system_output.status.success())
 }
 
 unsafe extern "C" {
@@ -134,7 +143,8 @@ fn monitor_child(
             return Ok(SessionOutcome::Restart);
         }
 
-        if !synced && start.elapsed() >= Duration::from_secs(config.worker.startup_sync_delay_secs) {
+        if !synced && start.elapsed() >= Duration::from_secs(config.worker.startup_sync_delay_secs)
+        {
             if http_request_ok(
                 "PUT",
                 config.worker.port,
@@ -150,7 +160,8 @@ fn monitor_child(
         }
 
         if synced
-            && last_health_check.elapsed() >= Duration::from_secs(config.worker.health_interval_secs)
+            && last_health_check.elapsed()
+                >= Duration::from_secs(config.worker.health_interval_secs)
         {
             if http_request_ok(
                 "GET",
@@ -208,7 +219,10 @@ fn spawn_worker(
 
     let worker_dir = expand_home(&config.worker.dir);
     let (program, args) = config.worker.command.split_first().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "worker.command must not be empty")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "worker.command must not be empty",
+        )
     })?;
 
     let mut command = Command::new(program);
@@ -311,10 +325,7 @@ fn lease_secret(secret_name: &str) -> Result<Option<String>, DynError> {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            log::warn_fields(
-                "failed to run secrets CLI",
-                &[("error", error.to_string())],
-            );
+            log::warn_fields("failed to run secrets CLI", &[("error", error.to_string())]);
             return Ok(None);
         }
     };

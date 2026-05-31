@@ -166,7 +166,7 @@ pub fn run_all_probes(config: &Config) -> Vec<ProbeResult> {
                 COLIMA_SSH_HOST.to_string(),
                 "python3".to_string(),
                 "-c".to_string(),
-                vm_tcp_probe_script(64784),
+                vm_tcp_probe_script(6443),
             ],
             timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
             critical: false,
@@ -220,12 +220,15 @@ pub fn run_all_probes(config: &Config) -> Vec<ProbeResult> {
     ];
 
     for monitor in &config.launchd_service_probes {
+        let label = shell_single_quote(&monitor.label);
         probes.push(Probe {
             name: format!("launchd:{}", monitor.name),
             args: vec![
-                "launchctl".to_string(),
-                "list".to_string(),
-                monitor.label.clone(),
+                "sh".to_string(),
+                "-lc".to_string(),
+                format!(
+                    "label={label}; launchctl list \"$label\" 2>/dev/null || launchctl print \"system/$label\" 2>/dev/null || launchctl print \"gui/$(id -u)/$label\" 2>/dev/null",
+                ),
             ],
             timeout: Duration::from_secs(monitor.timeout_secs),
             critical: monitor.critical,
@@ -254,11 +257,7 @@ pub fn run_all_probes(config: &Config) -> Vec<ProbeResult> {
     for monitor in &config.script_service_probes {
         probes.push(Probe {
             name: format!("script:{}", monitor.name),
-            args: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                monitor.command.clone(),
-            ],
+            args: vec!["sh".to_string(), "-c".to_string(), monitor.command.clone()],
             timeout: Duration::from_secs(monitor.timeout_secs),
             critical: monitor.critical,
             env: vec![],
@@ -373,13 +372,29 @@ fn validate_probe_output(name: &str, raw_output: &str) -> bool {
         "flannel" => is_flannel_ready(output),
         "redis" => output.contains("PONG"),
         _ if name.starts_with("http:") => output.contains("200"),
-        _ if name.starts_with("launchd:") => launchd_list_running(output),
+        _ if name.starts_with("launchd:") => launchd_probe_running(output),
         _ => true,
     }
 }
 
-fn launchd_list_running(output: &str) -> bool {
-    let pid_marker = output.lines().find(|line| line.contains("\"PID\" ="));
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn launchd_probe_running(output: &str) -> bool {
+    let normalized = output.trim();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    if normalized
+        .lines()
+        .any(|line| line.trim() == "state = running")
+    {
+        return true;
+    }
+
+    let pid_marker = normalized.lines().find(|line| line.contains("\"PID\" ="));
     let Some(line) = pid_marker else {
         return false;
     };
@@ -458,7 +473,10 @@ fn vm_tcp_probe_script(port: u16) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_flannel_ready, kubelet_proxy_rbac_probe_script, vm_tcp_probe_script};
+    use super::{
+        is_flannel_ready, kubelet_proxy_rbac_probe_script, launchd_probe_running,
+        shell_single_quote, vm_tcp_probe_script,
+    };
 
     #[test]
     fn flannel_probe_passes_when_available_matches_desired() {
@@ -480,6 +498,21 @@ mod tests {
         assert!(script.contains("kube-apiserver-kubelet-client"));
         assert!(script.contains("get nodes --subresource=proxy"));
         assert!(script.contains("create nodes --subresource=proxy"));
+    }
+
+    #[test]
+    fn launchd_probe_accepts_system_print_and_legacy_list_output() {
+        assert!(launchd_probe_running(
+            "system/com.joel.gateway = {\n\tstate = running\n}"
+        ));
+        assert!(launchd_probe_running("{ \"PID\" = 123; }"));
+        assert!(!launchd_probe_running("{ \"PID\" = 0; }"));
+    }
+
+    #[test]
+    fn shell_single_quote_escapes_embedded_quotes() {
+        assert_eq!(shell_single_quote("com.joel.gateway"), "'com.joel.gateway'");
+        assert_eq!(shell_single_quote("team'o"), "'team'\\''o'");
     }
 
     #[test]

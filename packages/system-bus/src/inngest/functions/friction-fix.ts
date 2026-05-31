@@ -93,6 +93,29 @@ export const frictionFix = inngest.createFunction(
   { event: "memory/friction.fix.requested" },
   async ({ event, step, gateway }) => {
     const { patternId, title, summary, suggestion, evidence, todoistTaskId } = event.data;
+
+    if (process.env.FRICTION_FIX_AUTOMATION_ENABLED !== "true") {
+      const message = "Auto-fix disabled: memory/friction-fix must not mutate the canonical host checkout. Use an isolated worktree/sandbox before enabling.";
+      await step.sendEvent("emit-friction-fix-disabled", {
+        name: "memory/friction.fix.completed",
+        data: {
+          patternId,
+          status: "skipped",
+          commitSha: undefined,
+          filesChanged: [],
+          message,
+        },
+      });
+
+      return {
+        patternId,
+        status: "skipped" as const,
+        commitSha: undefined,
+        filesChanged: [],
+        message,
+      };
+    }
+
     const branchName = `friction-fix/${patternId.replace(/[^a-zA-Z0-9._/-]/g, "-")}`;
 
     await step.run("create-fix-branch", async () => {

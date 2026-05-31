@@ -604,6 +604,9 @@ importers:
 
   packages/sdk:
     dependencies:
+      '@joelclaw/inference-router':
+        specifier: workspace:*
+        version: link:../inference-router
       '@joelclaw/queue':
         specifier: workspace:*
         version: link:../queue

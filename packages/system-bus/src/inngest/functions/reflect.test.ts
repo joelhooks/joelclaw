@@ -27,28 +27,22 @@ const originalRedisMethods = {
   rpush: Redis.prototype.rpush,
   hset: Redis.prototype.hset,
   hmset: (Redis.prototype as { hmset?: unknown }).hmset,
+  get: Redis.prototype.get,
+  set: Redis.prototype.set,
+  mget: Redis.prototype.mget,
 };
-const originalBunDollar = Bun.$;
+const originalBunSpawn = Bun.spawn;
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalTodoistCreateTask = TodoistTaskAdapter.prototype.createTask;
 
 const redisLists = new Map<string, string[]>();
 const redisHashes = new Map<string, Record<string, string>>();
-let shellCalls: string[] = [];
+const redisStrings = new Map<string, string>();
 let shellPromptContents: string[] = [];
 let shellResultQueue: MockShellResult[] = [];
 let todoistCreateTaskCalls: CreateTaskInput[] = [];
 let tempHome = "";
-
-function buildCommandText(strings: TemplateStringsArray, values: unknown[]): string {
-  let out = "";
-  for (let i = 0; i < strings.length; i += 1) {
-    out += strings[i] ?? "";
-    if (i < values.length) out += String(values[i] ?? "");
-  }
-  return out;
-}
 
 function upsertHash(key: string, args: unknown[]): number {
   const existing = redisHashes.get(key) ?? {};
@@ -143,33 +137,41 @@ beforeAll(() => {
     return upsertHash(String(key), args);
   };
 
-  // @ts-expect-error test monkey patch for deterministic subprocess behavior.
-  Bun.$ = ((strings: TemplateStringsArray, ...values: unknown[]) => {
-    shellCalls.push(buildCommandText(strings, values));
-    for (const value of values) {
-      if (typeof value !== "string" || !value.startsWith("@")) continue;
-      const path = value.slice(1);
-      try {
-        shellPromptContents.push(readFileSync(path, "utf8"));
-      } catch {
-        // Prompt file may be gone for failed runs; ignore in tests.
-      }
-    }
+  (Redis.prototype as any).get = async function (key: string) {
+    return redisStrings.get(String(key)) ?? null;
+  };
+
+  (Redis.prototype as any).set = async function (key: string, value: string) {
+    redisStrings.set(String(key), String(value));
+    return "OK";
+  };
+
+  (Redis.prototype as any).mget = async function (...keys: string[]) {
+    return keys.map((key) => redisStrings.get(String(key)) ?? null);
+  };
+
+  // Test monkey patch for deterministic subprocess behavior.
+  Bun.spawn = ((_: string[], opts?: { stdin?: { text?: () => Promise<string> }; stdout?: unknown; stderr?: unknown }) => {
     const next = shellResultQueue.shift() ?? {
       exitCode: 0,
       stdout: "<proposals></proposals>",
       stderr: "",
     };
+    const promptCapture = opts?.stdin?.text
+      ? opts.stdin.text().then((text) => shellPromptContents.push(text)).catch(() => undefined)
+      : Promise.resolve(undefined);
+    const writes = Promise.all([
+      promptCapture,
+      opts?.stdout ? Bun.write(opts.stdout as any, next.stdout) : Promise.resolve(0),
+      opts?.stderr ? Bun.write(opts.stderr as any, next.stderr) : Promise.resolve(0),
+    ]);
 
     return {
-      quiet() {
-        return this;
-      },
-      async nothrow() {
-        return next;
-      },
+      exited: writes.then(() => next.exitCode),
+      exitCode: next.exitCode,
+      kill() {},
     };
-  }) as typeof Bun.$;
+  }) as typeof Bun.spawn;
 
   (TodoistTaskAdapter.prototype as any).createTask = async function (task: CreateTaskInput) {
     todoistCreateTaskCalls.push(task);
@@ -196,14 +198,14 @@ beforeAll(() => {
 
 afterAll(() => {
   Object.assign(Redis.prototype, originalRedisMethods);
-  Bun.$ = originalBunDollar;
+  Bun.spawn = originalBunSpawn;
   TodoistTaskAdapter.prototype.createTask = originalTodoistCreateTask;
 });
 
 beforeEach(() => {
   redisLists.clear();
   redisHashes.clear();
-  shellCalls = [];
+  redisStrings.clear();
   shellPromptContents = [];
   shellResultQueue = [];
   todoistCreateTaskCalls = [];
@@ -446,12 +448,12 @@ describe("MEM-16 reflect acceptance tests", () => {
 
   test("6 AM cron still processes backfill observations accumulated in Redis", async () => {
     const today = new Date().toISOString().slice(0, 10);
-    redisLists.set(`memory:observations:${today}`, [
-      JSON.stringify({
-        summary: "Backfill summary block available for cron reflect.",
-        metadata: { trigger: "backfill" },
-      }),
-    ]);
+    const observationRecord = JSON.stringify({
+      summary: "Backfill summary block available for cron reflect.",
+      metadata: { trigger: "backfill", captured_at: `${today}T06:00:00.000Z` },
+    });
+    redisLists.set(`memory:observations:${today}`, [observationRecord]);
+    redisStrings.set(`memory:latest:${today}`, observationRecord);
 
     shellResultQueue = [
       {

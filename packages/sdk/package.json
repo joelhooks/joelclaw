@@ -9,6 +9,7 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
+    "@joelclaw/inference-router": "workspace:*",
     "@joelclaw/queue": "workspace:*",
     "@langfuse/otel": "^4.6.1",
     "@langfuse/tracing": "^4.6.1",

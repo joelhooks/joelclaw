@@ -181,7 +181,7 @@ After `cargo build`, the binary has adhoc linker-signed signature. macOS launchd
 | `exec format error` in pod | Built for amd64, not arm64 | Rebuild with `--platform linux/arm64` |
 | GHCR push fails with `403 Forbidden` on blob HEAD | `gh auth token` missing package scopes | Use `ghcr_pat` via `agent-secrets` or export `GHCR_TOKEN` with package scope |
 | `docker-credential-desktop` error | Docker config has credsStore | Script uses temp config dir — if manual, remove `"credsStore": "desktop"` |
-| Function missing after deploy | Not in index file | Add to both `index.host.ts` AND `index.cluster.ts` |
+| Function missing after deploy | Not in the index for the worker that should own it | Add it to `index.cluster.ts` for cluster-owned callbacks or `index.host.ts` for host-only work; do **not** blindly add to both or Inngest will create duplicate runs |
 | Function still missing | Stale Inngest registration | `joelclaw refresh` then check again |
 | "Unable to reach SDK URL" | Worker pod not ready | Wait for rollout, then `joelclaw refresh` |
 | Runs stuck after deploy | `retries: 0` on the function | Set `retries: 2` minimum (ADR-0156) |

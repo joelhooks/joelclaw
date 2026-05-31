@@ -24,7 +24,6 @@ import { checkEmail } from "./check-email";
 import { checkGatewayHealth } from "./check-gateway-health";
 import { checkGranola, granolaCheckCron } from "./check-granola";
 import { checkLoops } from "./check-loops";
-import { checkMemoryReview } from "./check-memory-review";
 import { checkSessions } from "./check-sessions";
 import {
   checkSystemHealth,
@@ -84,10 +83,8 @@ import {
 import { nasSoakReview, nasSoakSample } from "./nas-soak";
 import { networkStatusUpdate } from "./network-status-update";
 import { o11yTriage } from "./o11y-triage";
-import { observeSessionFunction } from "./observe";
 import { observeSessionNoted } from "./observe-session-noted";
 import { promote } from "./promote";
-import { queueObserver, queueObserverRequested } from "./queue-observer";
 import { reflect } from "./reflect";
 import { selfHealingGatewayBridge } from "./self-healing-gateway-bridge";
 import { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
@@ -148,7 +145,6 @@ export const hostFunctionDefinitions = [
   summarize,
   summarizeLegacyAlias,
   systemLogger,
-  observeSessionFunction,
   reflect,
   contentSync,
   contentVerify,
@@ -206,7 +202,6 @@ export const hostFunctionDefinitions = [
   checkSystemHealth,
   checkSystemHealthSignalsSchedule,
   networkStatusUpdate,
-  checkMemoryReview,
   checkVaultSync,
   checkGranola,
   granolaCheckCron,
@@ -221,8 +216,6 @@ export const hostFunctionDefinitions = [
   subscriptionCheckFeeds,
   subscriptionCheckSingle,
   o11yTriage,
-  queueObserver,
-  queueObserverRequested,
   selfHealingInvestigator,
   selfHealingRouter,
   selfHealingGatewayBridge,

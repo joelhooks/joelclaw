@@ -92,8 +92,8 @@ joelclaw inngest memory-health [--hours 24]
 Semantics:
 
 - `memory-e2e` sends a `memory/session.ended` marker, waits for observe → Typesense propagation, verifies direct keyword search against `memory_observations.observation`, then runs `joelclaw recall` for retrieval coverage.
-- `memory_observations.embedding` is a raw float vector field, not a Typesense auto-embedding field; the CLI must not use `query_by=embedding` with `vector_query=embedding:([], ...)` for this probe.
-- `memory-health` is a broad health snapshot. During live reboot/export work, high-churn failures can reflect transient worker reachability, so inspect recent failed run traces before treating the whole memory store as bad.
+- `memory_observations.embedding` is a raw float vector field, not a Typesense auto-embedding field; the CLI must not use `query_by=embedding` or empty auto-embedding syntax. Recall and `joelclaw search --semantic --collection memory_observations` generate a 384-d query embedding via `@joelclaw/inference-router`, send it through Typesense `vector_query` (never `query_by`), and fall back to `query_by=observation` text search when embedding is unavailable. Collections without an explicit semantic vector field stay keyword-only even when `--semantic` is passed.
+- `memory-health` is a broad health snapshot. During live reboot/export work, high-churn failures can reflect transient worker reachability, so inspect recent failed run traces before treating the whole memory store as bad. Its category gates use current-window observations when any were written in the window, while still reporting corpus-wide category coverage as advisory; stale RUNNING memory runs that started before the current worker are reported as `staleSdkActiveMemoryRuns` but excluded from the live backlog gate.
 
 ## Inngest Connect WebSocket auth probe
 
@@ -710,7 +710,7 @@ Semantics:
 - `mail locks` now prefers the local git-mailbox `file_reservations/` artifact store when available because `/mail/api/locks` can under-report advisory file reservations while still reporting mailbox internals like archive/commit locks. Responses expose `source` and `fallback_reason` when artifact fallback was required.
 - `subscribe check` emits Inngest request events for scoped checks and for all-subscription checks when the queue pilot is off; `response.ids` are event/request IDs (inspect via `joelclaw event <event-id>`), not run IDs unless explicitly returned as `runIds`.
 - when `QUEUE_PILOTS=subscriptions`, unscoped `subscribe check` returns queue metadata instead of Inngest response ids because the request first lands in Redis and is forwarded by the Restate drainer.
-- `recall` rewrite telemetry now exposes `rewrite.strategy` (`disabled|skipped|haiku|openai|fallback`) and `rewrite.reason` so low-ROI rewrite skips/fallbacks are queryable; short/literal/direct-id queries skip LLM rewrite by design.
+- `recall` rewrite telemetry now exposes `rewrite.strategy` (`disabled|skipped|haiku|openai|fallback`) and `rewrite.reason` so low-ROI rewrite skips/fallbacks are queryable; short/literal/direct-id queries skip LLM rewrite by design. The default rewrite model is `openai-codex/gpt-5.5`; set `JOELCLAW_RECALL_REWRITE_MODEL` only to an approved model.
 
 ## Webhook command tree (ADR-0185)
 

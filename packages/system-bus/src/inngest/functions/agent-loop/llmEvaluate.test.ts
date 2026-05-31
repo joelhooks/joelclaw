@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { type Subprocess, spawn } from "bun";
 
 // ── AC-1: llmEvaluate is exported from utils.ts ────────────────────────
@@ -72,6 +72,14 @@ beforeEach(() => {
   mockExitCode = 0;
   process.env.CLAUDE_CODE_OAUTH_TOKEN = "test-token";
   installMock();
+});
+
+afterEach(() => {
+  uninstallMock();
+});
+
+afterAll(() => {
+  uninstallMock();
 });
 
 // ── AC-2: Accepts criteria, diff, testFile, testResults, conventions ────

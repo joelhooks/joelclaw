@@ -5,6 +5,7 @@ const {
   COLLECTIONS,
   resolveRequestedCollections,
   buildSearchRequest,
+  formatSearchVectorQuery,
   CollectionSelectionError,
 } = __searchTestUtils
 
@@ -47,7 +48,22 @@ describe("search request building", () => {
     expect(request.vector_query).toBeUndefined()
   })
 
-  test("semantic search is enabled for memory_observations", () => {
+  test("semantic search uses vector_query without adding embedding to query_by", () => {
+    const memoryCollection = COLLECTIONS.find((collection) => collection.name === "memory_observations")
+    expect(memoryCollection).toBeDefined()
+
+    const request = buildSearchRequest(memoryCollection!, "redis dedupe", {
+      perPage: 5,
+      semantic: true,
+      queryEmbedding: [0.1, -0.2, Number.NaN],
+    })
+
+    expect(request.query_by).toBe(memoryCollection!.queryBy)
+    expect(request.query_by).not.toContain("embedding")
+    expect(request.vector_query).toBe("embedding:([0.1,-0.2,0], k:10, alpha:0.7)")
+  })
+
+  test("semantic search falls back to keyword-only without a query vector", () => {
     const memoryCollection = COLLECTIONS.find((collection) => collection.name === "memory_observations")
     expect(memoryCollection).toBeDefined()
 
@@ -56,7 +72,13 @@ describe("search request building", () => {
       semantic: true,
     })
 
-    expect(request.query_by).toContain("embedding")
-    expect(typeof request.vector_query).toBe("string")
+    expect(request.query_by).toBe(memoryCollection!.queryBy)
+    expect(request.vector_query).toBeUndefined()
+  })
+
+  test("formats finite search vectors and zeroes invalid values", () => {
+    expect(formatSearchVectorQuery("embedding", [0.1, -0.2, Number.NaN], 7)).toBe(
+      "embedding:([0.1,-0.2,0], k:7, alpha:0.7)",
+    )
   })
 })

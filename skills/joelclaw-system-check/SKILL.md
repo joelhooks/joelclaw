@@ -25,7 +25,7 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 | inngest server | :8288 reachable | responding | — | down |
 | redis/gateway | Redis + gateway session queues | connected, low pending queue | connected, backlog rising | unavailable |
 | typesense/otel | Typesense health + OTEL query path | healthy + queryable | healthy, query degraded | unavailable |
-| tests | `bun test` in system-bus | 0 fail | — | failures |
+| tests | isolated per-file `bun test` in system-bus | 0 fail | — | failures |
 | tsc | `tsc --noEmit` | clean | — | type errors |
 | repo sync | monorepo HEAD vs `origin/main` | in sync | ahead/behind | repo unavailable |
 | memory pipeline | `joelclaw inngest memory-health` | healthy checks | degraded checks | failing checks |
@@ -54,6 +54,8 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 **Worker down**: `joelclaw inngest restart-worker --register`
 
 **Stale tests**: `rm -rf ~/Code/joelhooks/joelclaw/packages/system-bus/__tests__/ && find ~/Code/joelhooks/joelclaw/packages/system-bus/src -name "*.acceptance.test.ts" -delete`
+
+**System-bus test false reds**: the health script runs each `src/**/*.test.ts` file in its own Bun process because several legacy tests monkey-patch globals or use `mock.module`. If the aggregate health check is green but raw `bun test` is red, suspect inter-file mock leakage before treating runtime code as broken.
 
 **Loop tmp bloat**: `rm -rf /tmp/agent-loop/loop-*/` (only when no loops are running)
 

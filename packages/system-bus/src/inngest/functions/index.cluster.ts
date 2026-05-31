@@ -1,4 +1,5 @@
 import { approvalRequest, approvalResolve } from "./approval";
+import { checkMemoryReview } from "./check-memory-review";
 import {
   frontAssigneeChanged,
   frontMessageReceived,
@@ -8,6 +9,8 @@ import {
   githubPackagePublished,
   githubWorkflowRunCompleted,
 } from "./github-notify";
+import { observeSessionFunction } from "./observe";
+import { queueObserver, queueObserverRequested } from "./queue-observer";
 import { swarmAgentExec } from "./swarm-agent-exec";
 import { swarmOrchestrator } from "./swarm-orchestrator";
 import { todoistMemoryReviewBridge } from "./todoist-memory-review-bridge";
@@ -36,6 +39,10 @@ export const clusterFunctionDefinitions = [
   githubWorkflowRunCompleted,
   githubPackagePublished,
   webhookSubscriptionDispatchGithubWorkflowRunCompleted,
+  observeSessionFunction,
+  checkMemoryReview,
+  queueObserver,
+  queueObserverRequested,
   swarmOrchestrator,
   swarmAgentExec,
 ];

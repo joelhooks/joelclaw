@@ -96,6 +96,12 @@ function getReviewTaskProjectPlan(): ReviewTaskProjectPlan {
   return { targets, blockedHumanFacingProjects };
 }
 
+function summarizeProposalChange(change: string, max = 160): string {
+  const normalized = change.replace(/\s+/gu, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 3).trimEnd()}...`;
+}
+
 type ReviewTaskOutcome = {
   attempted: boolean;
   created: boolean;
@@ -310,16 +316,19 @@ export const proposalTriage = inngest.createFunction(
           const taskAdapter = new TodoistTaskAdapter();
           const { targets: projectTargets, blockedHumanFacingProjects } = getReviewTaskProjectPlan();
           const summary = proposal.change.replace(/\s+/gu, " ").trim().slice(0, 90);
+          const reviewSummary = summarizeProposalChange(proposal.change);
           const source = proposal.source?.trim() || "unknown";
           const capturedAt = proposal.timestamp?.trim() || "unknown";
           const baseTaskInput = {
             content: `Memory: ${proposal.section} (${resolvedProposalId}) — ${summary}`,
             description: [
               `Proposal: ${resolvedProposalId}`,
+              `Review summary: ${reviewSummary}`,
               `Section: ${proposal.section}`,
-              `Reason: ${triaged.reason}`,
+              `Needs review because: ${triaged.reason}`,
               `Source: ${source}`,
               `CapturedAt: ${capturedAt}`,
+              "Review question: Should this exact change be written to MEMORY.md?",
               "Decision: Complete = approve. Add @rejected label, then complete = reject.",
               "",
               "Change:",

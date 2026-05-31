@@ -84,6 +84,19 @@ kubectl create secret generic pi-auth \
 kubectl rollout restart deployment/restate-worker -n joelclaw
 ```
 
+### Refresh the GitHub token secret
+
+The worker mounts `/root/.github-token` from `secret/github-token`. Use a short-lived `ghcr_pat` lease for runtime bootstrap only; never print it.
+
+```bash
+TOKEN=$(joelclaw secrets lease ghcr_pat --ttl 1h --client-id restate-worker-bootstrap --json | jq -r '.result.parsed.result.value // .result.value')
+kubectl create secret generic github-token \
+  -n joelclaw \
+  --from-literal=token="$TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+unset TOKEN
+```
+
 ### Refresh the agent identity configmap
 
 The worker image symlinks these files into `/root/.joelclaw/` at container start:
@@ -103,7 +116,12 @@ kubectl rollout restart deployment/restate-worker -n joelclaw
 
 ### Populate the Firecracker PVC
 
-`pvc/firecracker-images` is mounted at `/tmp/firecracker-test` inside `deployment/restate-worker`.
+`pvc/firecracker-images` is mounted at `/tmp/firecracker-test` inside `deployment/restate-worker`. Recreate the PVC first if post-reboot recovery finds the deployment stuck on `persistentvolumeclaim "firecracker-images" not found`:
+
+```bash
+kubectl apply -f k8s/firecracker-pvc.yaml
+```
+
 Seed it with the kernel, rootfs, and optional snapshot artifacts:
 
 ```bash

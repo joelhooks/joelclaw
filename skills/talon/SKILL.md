@@ -74,8 +74,8 @@ talon (single binary)
 └── Escalation (on failure)
     ├── Tier 1a: bridge-heal (force-cycle Colima on localhost↔VM split-brain)
     ├── Tier 1b: k8s-reboot-heal.sh (300s timeout, RBAC drift guard, VM `br_netfilter` repair, warmup-aware post-Colima invariants including deployment readiness + ImagePullBackOff pod reset, then voice-agent stale cleanup + launchd kickstart via `infra/voice-agent/cleanup-stale.sh`)
-    ├── Tier 2: pi agent (cloud model, 10min cooldown)
-    ├── Tier 3: pi agent (Ollama local, network-down fallback)
+    ├── Tier 2: pi agent (cloud model, 10min cooldown, bounded by `agent.timeout_secs`; subprocess output uses temp files and timeout kills the whole process group so a stuck pi child cannot freeze Talon's health loop)
+    ├── Tier 3: pi agent (Ollama local, network-down fallback, same process-group timeout guard)
     └── Tier 4: Telegram + iMessage SOS fan-out (15min critical threshold)
 ```
 
@@ -105,7 +105,7 @@ any → healthy (all probes pass)
 | redis | `kubectl exec redis-0 -- redis-cli ping` | Yes |
 | kubelet_proxy_rbac | `kubectl auth can-i --as=<apiserver-kubelet-client*> {get,create} nodes --subresource=proxy` | Yes |
 | vm:docker | `ssh -F ~/.colima/_lima/colima/ssh.config lima-colima docker ps` | No |
-| vm:k8s_api | `ssh ... python socket probe :64784` | No |
+| vm:k8s_api | `ssh ... python socket probe :6443` | No |
 | vm:redis | `ssh ... python socket probe :6379` | No |
 | vm:inngest | `ssh ... python socket probe :8288` | No |
 | vm:typesense | `ssh ... python socket probe :8108` | No |
@@ -157,7 +157,7 @@ critical_after_consecutive_failures = 1
 timeout_secs = 10
 ```
 
-- `launchd.<name>` passes when `launchctl list <label>` reports a non-zero PID
+- `launchd.<name>` passes when `launchctl list <label>` reports a non-zero PID, or when `launchctl print system/<label>` / `launchctl print gui/$(id -u)/<label>` reports `state = running`. This matters because `com.joel.gateway` is a system LaunchDaemon while Talon itself is a user LaunchAgent.
 - `http.<name>` passes on HTTP `200`
 - `script.<name>` passes on exit code 0, fails on non-zero (runs via `sh -c`)
 - `critical = true` escalates when the probe is marked critical (or after debounce if configured)
@@ -202,11 +202,12 @@ launchctl kickstart -k gui/$(id -u)/com.joel.talon
 ```
 
 **Single owner for worker supervision is mandatory:**
-- If `com.joel.system-bus-worker` is loaded, Talon now auto-disables its internal worker supervisor to prevent port-3111 thrash.
-- Preferred end-state is Talon-only supervision, but coexistence no longer causes kill/restart loops.
+- If `com.joel.system-bus-worker` is loaded, Talon auto-disables its internal worker supervisor to prevent port-3111 thrash.
+- `com.joel.system-bus-worker` is a system LaunchDaemon, so verify it with `launchctl print system/...`; `launchctl list <label>` only checks the current user bootstrap domain and can lie by omission.
+- Preferred end-state is Talon-only supervision, but coexistence must not cause kill/restart loops.
 
 ```bash
-launchctl list com.joel.system-bus-worker
+launchctl print system/com.joel.system-bus-worker | rg "state =|pid =|program =|last exit code ="
 ```
 
 **Legacy services should stay disabled when fully cut over:**

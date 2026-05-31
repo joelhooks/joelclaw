@@ -1,13 +1,23 @@
 use std::collections::BTreeSet;
-use std::io::{Read, Write};
-use std::path::Path;
+use std::fs;
+use std::io::{self, Write};
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{expand_home, now_unix_secs, Config, DEFAULT_PATH};
 
 const COLIMA_DOCKER_HOST: &str = "unix:///Users/joel/.colima/default/docker.sock";
+type CInt = i32;
+const SIGKILL: CInt = 9;
+
+unsafe extern "C" {
+    fn setpgid(pid: CInt, pgid: CInt) -> CInt;
+    fn kill(pid: CInt, sig: CInt) -> CInt;
+}
+
 use crate::log;
 use crate::probes::ProbeResult;
 use crate::state::PersistentState;
@@ -762,12 +772,16 @@ fn run_process(
     timeout: Duration,
     stdin_input: Option<&str>,
 ) -> Result<(bool, String), DynError> {
+    let (stdout_path, stderr_path) = process_output_paths();
+    let stdout_file = fs::File::create(&stdout_path)?;
+    let stderr_file = fs::File::create(&stderr_path)?;
+
     let mut command = Command::new(program);
     command
         .args(args)
         .env("PATH", DEFAULT_PATH)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file));
 
     if stdin_input.is_some() {
         command.stdin(Stdio::piped());
@@ -777,6 +791,15 @@ fn run_process(
 
     for (key, value) in env {
         command.env(key, value);
+    }
+
+    unsafe {
+        command.pre_exec(|| {
+            if setpgid(0, 0) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
     }
 
     let mut child = match command.spawn() {
@@ -791,45 +814,66 @@ fn run_process(
         }
     }
 
+    let child_process_group = child.id() as CInt;
     let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
                 if Instant::now() >= deadline {
+                    kill_process_group(child_process_group);
                     let _ = child.kill();
                     let _ = child.wait();
                     break None;
                 }
                 thread::sleep(Duration::from_millis(100));
             }
-            Err(error) => return Ok((false, format!("wait failed: {error}"))),
+            Err(error) => {
+                let output = collect_child_output(&stdout_path, &stderr_path);
+                cleanup_process_output(&stdout_path, &stderr_path);
+                return Ok((false, format!("wait failed: {error}\n{output}")));
+            }
         }
     };
 
-    let output = collect_child_output(&mut child);
+    let output = collect_child_output(&stdout_path, &stderr_path);
+    cleanup_process_output(&stdout_path, &stderr_path);
 
     match status {
         Some(status) => Ok((status.success(), output)),
-        None => Ok((false, format!("timeout after {}s", timeout.as_secs()))),
+        None => {
+            let timeout_message = format!("timeout after {}s", timeout.as_secs());
+            if output == "ok" {
+                Ok((false, timeout_message))
+            } else {
+                Ok((false, format!("{timeout_message}\n{output}")))
+            }
+        }
     }
 }
 
-fn collect_child_output(child: &mut std::process::Child) -> String {
-    let mut stdout = String::new();
-    let mut stderr = String::new();
+fn process_output_paths() -> (PathBuf, PathBuf) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let prefix = format!("talon-process-{}-{timestamp}", std::process::id());
+    let temp_dir = std::env::temp_dir();
+    (
+        temp_dir.join(format!("{prefix}.stdout")),
+        temp_dir.join(format!("{prefix}.stderr")),
+    )
+}
 
-    if let Some(mut handle) = child.stdout.take() {
-        let mut bytes = Vec::new();
-        let _ = handle.read_to_end(&mut bytes);
-        stdout = String::from_utf8_lossy(&bytes).trim().to_string();
+fn kill_process_group(process_group: CInt) {
+    unsafe {
+        let _ = kill(-process_group, SIGKILL);
     }
+}
 
-    if let Some(mut handle) = child.stderr.take() {
-        let mut bytes = Vec::new();
-        let _ = handle.read_to_end(&mut bytes);
-        stderr = String::from_utf8_lossy(&bytes).trim().to_string();
-    }
+fn collect_child_output(stdout_path: &Path, stderr_path: &Path) -> String {
+    let stdout = read_output_file(stdout_path).trim().to_string();
+    let stderr = read_output_file(stderr_path).trim().to_string();
 
     if stdout.is_empty() && stderr.is_empty() {
         return "ok".to_string();
@@ -844,6 +888,17 @@ fn collect_child_output(child: &mut std::process::Child) -> String {
     }
 
     format!("{stdout}\n{stderr}")
+}
+
+fn read_output_file(path: &Path) -> String {
+    fs::read(path)
+        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+        .unwrap_or_default()
+}
+
+fn cleanup_process_output(stdout_path: &Path, stderr_path: &Path) {
+    let _ = fs::remove_file(stdout_path);
+    let _ = fs::remove_file(stderr_path);
 }
 
 fn escape_applescript(value: &str) -> String {
@@ -998,6 +1053,23 @@ mod tests {
         assert!(!looks_like_voice_agent_command(
             "/usr/bin/python3 other-service.py"
         ));
+    }
+
+    #[test]
+    fn run_process_timeout_does_not_block_on_background_pipe_holder() {
+        let started = Instant::now();
+        let (success, output) = run_process(
+            "/bin/zsh",
+            &["-lc", "(sleep 5; echo late)& echo start; sleep 10"],
+            &[],
+            Duration::from_millis(500),
+            None,
+        )
+        .expect("process runner should return");
+
+        assert!(!success);
+        assert!(output.contains("timeout after"));
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     #[test]

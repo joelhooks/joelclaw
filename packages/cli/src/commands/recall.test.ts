@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { __recallTestUtils } from "./recall"
 
-const { runRewriteQueryWith, trustPassFilter } = __recallTestUtils
+const { buildRecallSearchParams, formatRecallVectorQuery, runRewriteQueryWith, trustPassFilter } = __recallTestUtils
 
 beforeEach(() => {
   __recallTestUtils.resetCircuit()
@@ -53,6 +53,20 @@ describe("recall rewrite", () => {
     expect(result.rewriteReason).toBe("skip.short_query")
   })
 
+  test("skips rewrite for hyphenated direct identifiers", async () => {
+    const result = await runRewriteQueryWith("memory-e2e-mpt3s18s-57cf25", {
+      rewriteEnabled: true,
+      spawn: () => {
+        throw new Error("rewrite should be skipped for direct ids")
+      },
+    })
+
+    expect(result.strategy).toBe("skipped")
+    expect(result.rewritten).toBe(false)
+    expect(result.rewrittenQuery).toBe("memory-e2e-mpt3s18s-57cf25")
+    expect(result.rewriteReason).toBe("skip.direct_identifier")
+  })
+
   test("falls back cleanly when rewrite subprocess fails", async () => {
     const result = await runRewriteQueryWith("redis setnx pattern for distributed job dedupe", {
       rewriteEnabled: true,
@@ -76,6 +90,28 @@ describe("recall rewrite", () => {
     expect(result.rewriteReason).toBe("success")
     expect(result.rewritten).toBe(true)
     expect(result.rewrittenQuery).toBe("Redis SETNX idempotency strategy")
+  })
+})
+
+describe("recall Typesense query", () => {
+  test("does not put raw embedding fields in query_by", () => {
+    const vectorQuery = formatRecallVectorQuery([0.1, -0.2, Number.NaN], 7)
+    const params = buildRecallSearchParams({
+      query: "memory probe marker",
+      fetchLimit: 7,
+      vectorQuery,
+    })
+
+    expect(params.get("query_by")).toBe("observation")
+    expect(params.get("query_by")).not.toContain("embedding")
+    expect(params.get("vector_query")).toBe("embedding:([0.1,-0.2,0], k:7, alpha:0.7)")
+  })
+
+  test("falls back to text-only params when no query vector is available", () => {
+    const params = buildRecallSearchParams({ query: "memory probe marker", fetchLimit: 5 })
+
+    expect(params.get("query_by")).toBe("observation")
+    expect(params.has("vector_query")).toBe(false)
   })
 })
 

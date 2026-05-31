@@ -1719,6 +1719,62 @@ function isMemoryFunctionName(value: unknown): boolean {
   return /(memory|observe|reflect|proposal|batch|promote|echo|nightly)/iu.test(value)
 }
 
+function parseRunTimestampMs(value: unknown): number | null {
+  if (typeof value !== "string" || value.trim().length === 0) return null
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function partitionMemoryRunsForHealth(
+  memoryRuns: Array<{ status?: unknown; startedAt?: unknown; id?: unknown; functionName?: unknown }>,
+  input: { latestSuccessTimestampMs?: number | null; workerStartedAtMs?: number | null; staleActiveGraceMinutes?: number },
+): {
+  failedRuns: typeof memoryRuns
+  currentFailedRuns: typeof memoryRuns
+  historicalFailedRuns: typeof memoryRuns
+  activeRuns: typeof memoryRuns
+  staleSdkActiveRuns: typeof memoryRuns
+  operationalActiveRuns: typeof memoryRuns
+} {
+  const latestSuccessTimestampMs = typeof input.latestSuccessTimestampMs === "number" && Number.isFinite(input.latestSuccessTimestampMs)
+    ? input.latestSuccessTimestampMs
+    : null
+  const workerStartedAtMs = typeof input.workerStartedAtMs === "number" && Number.isFinite(input.workerStartedAtMs)
+    ? input.workerStartedAtMs
+    : null
+  const staleActiveGraceMs = Math.max(0, input.staleActiveGraceMinutes ?? 5) * 60 * 1000
+  const now = Date.now()
+
+  const failedRuns = memoryRuns.filter((run) => ["FAILED", "CANCELLED"].includes(String(run.status)))
+  const currentFailedRuns = latestSuccessTimestampMs === null
+    ? failedRuns
+    : failedRuns.filter((run) => {
+      const startedMs = parseRunTimestampMs(run.startedAt)
+      return startedMs === null || startedMs > latestSuccessTimestampMs
+    })
+  const historicalFailedRuns = failedRuns.filter((run) => !currentFailedRuns.includes(run))
+  const activeRuns = memoryRuns.filter((run) => {
+    const status = String(run.status)
+    return status !== "COMPLETED" && status !== "FAILED" && status !== "CANCELLED"
+  })
+  const staleSdkActiveRuns = workerStartedAtMs === null
+    ? []
+    : activeRuns.filter((run) => {
+      const startedMs = parseRunTimestampMs(run.startedAt)
+      return startedMs !== null && startedMs < workerStartedAtMs && now - startedMs >= staleActiveGraceMs
+    })
+  const operationalActiveRuns = activeRuns.filter((run) => !staleSdkActiveRuns.includes(run))
+
+  return {
+    failedRuns,
+    currentFailedRuns,
+    historicalFailedRuns,
+    activeRuns,
+    staleSdkActiveRuns,
+    operationalActiveRuns,
+  }
+}
+
 function isTypesenseUnreachableMessage(message: string): boolean {
   return /ECONNREFUSED|Connection refused|TYPESENSE_UNREACHABLE|fetch failed/iu.test(message)
 }
@@ -4110,6 +4166,7 @@ const inngestMemoryHealthCmd = Command.make(
         latestSuccess,
         memoryTotals,
         runs,
+        workerProbeResult,
       ] = yield* Effect.all([
         Effect.tryPromise(() => typesenseCount(apiKey, "otel_events", OTEL_QUERY_BY, otelBaseFilter)),
         Effect.tryPromise(() => typesenseCount(apiKey, "otel_events", OTEL_QUERY_BY, otelErrorFilter)),
@@ -4127,19 +4184,24 @@ const inngestMemoryHealthCmd = Command.make(
                 }
                 throw error
               }),
+            typesenseCount(apiKey, "memory_observations", "observation", `timestamp:>=${Math.floor(cutoffUnix / 1000)}`)
+              .then((count) => ({ count, supported: true, reason: null as string | null }))
+              .catch((error) => {
+                const message = error instanceof Error ? error.message : String(error)
+                if (/filter field named `timestamp`/iu.test(message)) {
+                  return { count: 0, supported: false, reason: "timestamp field missing in Typesense schema" }
+                }
+                throw error
+              }),
           ])
         ),
         inngestClient.runs({ count: 300, hours: safeHours }),
+        workerProbe().pipe(Effect.either),
       ])
 
       const memoryRuns = runs.filter((run) => isMemoryFunctionName(run.functionName))
-      const failedRuns = memoryRuns.filter((run) => ["FAILED", "CANCELLED"].includes(String(run.status)))
-      const activeRuns = memoryRuns.filter((run) => {
-        const status = String(run.status)
-        return status !== "COMPLETED" && status !== "FAILED" && status !== "CANCELLED"
-      })
 
-      const [memoryCount, staleState] = memoryTotals
+      const [memoryCount, staleState, recentMemoryState] = memoryTotals
       const staleCount = staleState.count
       const staleRatio = memoryCount > 0 ? staleCount / memoryCount : 0
       const errorRate = otelTotal > 0 ? otelErrors / otelTotal : 0
@@ -4149,6 +4211,16 @@ const inngestMemoryHealthCmd = Command.make(
       const minutesSinceSuccess = typeof latestSuccess.timestamp === "number"
         ? (Date.now() - latestSuccess.timestamp) / 60000
         : Number.POSITIVE_INFINITY
+      const workerDiagnosticsState = workerProbeResult._tag === "Right"
+        ? workerDiagnostics(workerProbeResult.right.body)
+        : null
+      const workerStartedAtMs = parseRunTimestampMs(workerDiagnosticsState?.startedAt)
+      const runHealth = partitionMemoryRunsForHealth(memoryRuns, {
+        latestSuccessTimestampMs: typeof latestSuccess.timestamp === "number" ? latestSuccess.timestamp : null,
+        workerStartedAtMs,
+        staleActiveGraceMinutes: 5,
+      })
+      const recentMemoryFilter = `timestamp:>=${Math.floor(cutoffUnix / 1000)}`
 
       const categoryCoverageState = yield* Effect.tryPromise(() =>
         typesenseFacetCounts(apiKey, "memory_observations", "observation", "category_id")
@@ -4178,6 +4250,46 @@ const inngestMemoryHealthCmd = Command.make(
               }
             }
             throw error
+          })
+      )
+
+      const recentCategoryCoverageState = yield* Effect.tryPromise(() =>
+        recentMemoryState.supported
+          ? typesenseFacetCounts(apiKey, "memory_observations", "observation", "category_id", recentMemoryFilter)
+            .then((buckets) => {
+              const categorizedCount = buckets.reduce((sum, bucket) => sum + bucket.count, 0)
+              const uncategorizedCount = Math.max(0, recentMemoryState.count - categorizedCount)
+              const coverageRatio = recentMemoryState.count > 0 ? categorizedCount / recentMemoryState.count : 0
+              return {
+                supported: true,
+                reason: null as string | null,
+                buckets,
+                categorizedCount,
+                uncategorizedCount,
+                coverageRatio,
+              }
+            })
+            .catch((error) => {
+              const message = error instanceof Error ? error.message : String(error)
+              if (/facet|category_id/iu.test(message)) {
+                return {
+                  supported: false,
+                  reason: "category_id facet missing in Typesense schema",
+                  buckets: [] as Array<{ value: string; count: number }>,
+                  categorizedCount: 0,
+                  uncategorizedCount: recentMemoryState.count,
+                  coverageRatio: 0,
+                }
+              }
+              throw error
+            })
+          : Promise.resolve({
+            supported: false,
+            reason: recentMemoryState.reason,
+            buckets: [] as Array<{ value: string; count: number }>,
+            categorizedCount: 0,
+            uncategorizedCount: recentMemoryState.count,
+            coverageRatio: 0,
           })
       )
 
@@ -4213,6 +4325,51 @@ const inngestMemoryHealthCmd = Command.make(
               }
             }
             throw error
+          })
+      )
+
+      const recentCategoryConfidenceState = yield* Effect.tryPromise(() =>
+        recentMemoryState.supported
+          ? Promise.all([
+            typesenseCount(apiKey, "memory_observations", "observation", `${recentMemoryFilter} && category_confidence:>=0.8`),
+            typesenseCount(apiKey, "memory_observations", "observation", `${recentMemoryFilter} && category_confidence:>=0.6 && category_confidence:<0.8`),
+            typesenseCount(apiKey, "memory_observations", "observation", `${recentMemoryFilter} && category_confidence:<0.6`),
+          ])
+            .then(([high, medium, low]) => {
+              const knownCount = high + medium + low
+              return {
+                supported: true,
+                reason: null as string | null,
+                knownCount,
+                high,
+                medium,
+                low,
+                highRatio: knownCount > 0 ? high / knownCount : 0,
+              }
+            })
+            .catch((error) => {
+              const message = error instanceof Error ? error.message : String(error)
+              if (/filter field named `category_confidence`/iu.test(message)) {
+                return {
+                  supported: false,
+                  reason: "category_confidence field missing in Typesense schema",
+                  knownCount: 0,
+                  high: 0,
+                  medium: 0,
+                  low: 0,
+                  highRatio: 0,
+                }
+              }
+              throw error
+            })
+          : Promise.resolve({
+            supported: false,
+            reason: recentMemoryState.reason,
+            knownCount: 0,
+            high: 0,
+            medium: 0,
+            low: 0,
+            highRatio: 0,
           })
       )
 
@@ -4258,22 +4415,25 @@ const inngestMemoryHealthCmd = Command.make(
           })
       )
 
+      const hasRecentMemory = recentMemoryState.supported && recentMemoryState.count > 0
       const checks = {
         memoryStageStall: minutesSinceSuccess <= safeStallMinutes,
         otelErrorRate: otelTotal >= 20 ? errorRate <= maxErrorRate : true,
         staleRatio: staleState.supported ? (memoryCount >= 25 ? staleRatio <= maxStaleRatio : true) : true,
-        categoryCoverage:
-          categoryCoverageState.supported
+        categoryCoverage: hasRecentMemory
+          ? recentCategoryCoverageState.supported && recentCategoryCoverageState.coverageRatio >= minCategoryCoverage
+          : (categoryCoverageState.supported
             ? (categoryCoverageState.categorizedCount >= 25
               ? categoryCoverageState.coverageRatio >= minCategoryCoverage
               : true)
-            : true,
-        categoryConfidence:
-          categoryConfidenceState.supported
+            : true),
+        categoryConfidence: hasRecentMemory
+          ? recentCategoryConfidenceState.supported && recentCategoryConfidenceState.highRatio >= minCategoryHighConfidence
+          : (categoryConfidenceState.supported
             ? (categoryConfidenceState.knownCount >= 25
               ? categoryConfidenceState.highRatio >= minCategoryHighConfidence
               : true)
-            : true,
+            : true),
         writeGateFallbackRate:
           writeGateState.supported
             ? (writeGateState.totalWithVerdict >= 25
@@ -4286,8 +4446,8 @@ const inngestMemoryHealthCmd = Command.make(
               ? writeGateState.discardRatio <= maxWriteGateDiscardRatio
               : true)
             : true,
-        failedMemoryRuns: failedRuns.length <= maxFailedRuns,
-        memoryBacklog: activeRuns.length <= maxBacklog,
+        failedMemoryRuns: runHealth.currentFailedRuns.length <= maxFailedRuns,
+        memoryBacklog: runHealth.operationalActiveRuns.length <= maxBacklog,
       }
 
       const ok = Object.values(checks).every(Boolean)
@@ -4320,6 +4480,26 @@ const inngestMemoryHealthCmd = Command.make(
               uncategorizedCount: categoryCoverageState.uncategorizedCount,
               coverageRatio: categoryCoverageState.coverageRatio,
               topCategories: categoryCoverageState.buckets.slice(0, 10),
+              healthBasis: hasRecentMemory ? "current-window" : "corpus",
+              currentWindow: {
+                supported: recentMemoryState.supported && recentCategoryCoverageState.supported,
+                reason: recentMemoryState.reason ?? recentCategoryCoverageState.reason,
+                filter: recentMemoryFilter,
+                count: recentMemoryState.count,
+                categorizedCount: recentCategoryCoverageState.categorizedCount,
+                uncategorizedCount: recentCategoryCoverageState.uncategorizedCount,
+                coverageRatio: recentCategoryCoverageState.coverageRatio,
+                topCategories: recentCategoryCoverageState.buckets.slice(0, 10),
+                confidence: {
+                  supported: recentMemoryState.supported && recentCategoryConfidenceState.supported,
+                  reason: recentMemoryState.reason ?? recentCategoryConfidenceState.reason,
+                  knownCount: recentCategoryConfidenceState.knownCount,
+                  highCount: recentCategoryConfidenceState.high,
+                  mediumCount: recentCategoryConfidenceState.medium,
+                  lowCount: recentCategoryConfidenceState.low,
+                  highRatio: recentCategoryConfidenceState.highRatio,
+                },
+              },
               confidence: {
                 supported: categoryConfidenceState.supported,
                 reason: categoryConfidenceState.reason,
@@ -4346,9 +4526,23 @@ const inngestMemoryHealthCmd = Command.make(
           runs: {
             totalWindowRuns: runs.length,
             memoryWindowRuns: memoryRuns.length,
-            failedMemoryRuns: failedRuns.length,
-            activeMemoryRuns: activeRuns.length,
-            recentFailed: failedRuns.slice(0, 5).map((run) => ({
+            failedMemoryRuns: runHealth.failedRuns.length,
+            currentFailedMemoryRuns: runHealth.currentFailedRuns.length,
+            historicalFailedMemoryRuns: runHealth.historicalFailedRuns.length,
+            activeMemoryRuns: runHealth.activeRuns.length,
+            staleSdkActiveMemoryRuns: runHealth.staleSdkActiveRuns.length,
+            operationalActiveMemoryRuns: runHealth.operationalActiveRuns.length,
+            workerStartedAt: workerDiagnosticsState?.startedAt ?? null,
+            staleSdkRunReason: workerStartedAtMs === null
+              ? "worker_start_unknown"
+              : "run_started_before_current_worker",
+            recentFailed: runHealth.currentFailedRuns.slice(0, 5).map((run) => ({
+              id: run.id,
+              status: run.status,
+              function: run.functionName,
+              startedAt: run.startedAt,
+            })),
+            staleActiveSamples: runHealth.staleSdkActiveRuns.slice(0, 5).map((run) => ({
               id: run.id,
               status: run.status,
               function: run.functionName,
@@ -4474,6 +4668,8 @@ export const __inngestTestUtils = {
   parseCsvList,
   buildSweepStalePredicate,
   parseSqliteJsonRows,
+  parseRunTimestampMs,
+  partitionMemoryRunsForHealth,
   runIdHexToUlid,
   mapSweepCandidates,
   decodeConnectStartResponse,

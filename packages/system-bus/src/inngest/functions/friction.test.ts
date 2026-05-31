@@ -53,12 +53,18 @@ async function executeCron() {
 
 beforeAll(() => {
   // @ts-ignore deterministic subprocess shim for tests.
-  Bun.spawn = ((args: string[]) => {
+  Bun.spawn = ((args: string[], opts?: { stdout?: unknown; stderr?: unknown }) => {
     spawnCalls.push(args);
+    const writes = Promise.all([
+      opts?.stdout ? Bun.write(opts.stdout as any, spawnStdout) : Promise.resolve(0),
+      opts?.stderr ? Bun.write(opts.stderr as any, spawnStderr) : Promise.resolve(0),
+    ]);
+
     return {
       stdout: textStream(spawnStdout),
       stderr: textStream(spawnStderr),
-      exited: Promise.resolve(spawnExitCode),
+      exited: writes.then(() => spawnExitCode),
+      kill() {},
     };
   }) as typeof Bun.spawn;
 
@@ -140,7 +146,7 @@ describe("MEM-FRICTION-1 friction function", () => {
     const { result } = await executeCron();
 
     expect(spawnCalls).toHaveLength(1);
-    expect(spawnCalls[0]).toContain("--model");
+    expect(spawnCalls[0]).toContain("--models");
     expect(spawnCalls[0]).toContain("anthropic/claude-sonnet-4-6");
     expect(result).toMatchObject({
       status: "ok",

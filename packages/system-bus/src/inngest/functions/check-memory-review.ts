@@ -7,13 +7,14 @@ import { getRedisPort } from "../../lib/redis";
  */
 
 import Redis from "ioredis";
-import { getCurrentTasks, hasTaskMatching } from "../../tasks";
+import { TodoistTaskAdapter, getCurrentTasks, hasTaskMatching, tasksWithLabel } from "../../tasks";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
 
 const REVIEW_PENDING_KEY = "memory:review:pending";
 const NUDGE_COOLDOWN_KEY = "memory:review:nudge-sent";
 const NUDGE_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+const MEMORY_REVIEW_LABEL = "memory-review";
 
 let redisClient: Redis | null = null;
 
@@ -53,18 +54,53 @@ export const checkMemoryReview = inngest.createFunction(
       return { count: pending.length, ids: pending.slice(0, 10), expiringSoon, alreadyNudged: !!alreadyNudged };
     });
 
-    // NOOP: no proposals or already nudged today
-    if (state.count === 0 || state.alreadyNudged) {
-      return { status: "noop", pendingCount: state.count, reason: state.count === 0 ? "no proposals" : "nudge cooldown" };
+    if (state.count === 0) {
+      return { status: "noop", pendingCount: state.count, reason: "no proposals" };
     }
 
-    const alreadyTracked = await step.run("check-existing-memory-task", async () => {
+    const taskState = await step.run("load-memory-review-tasks", async () => {
       const tasks = await getCurrentTasks();
-      return hasTaskMatching(tasks, "memory") || hasTaskMatching(tasks, "proposal");
+      const memoryReviewTasks = tasksWithLabel(tasks, MEMORY_REVIEW_LABEL);
+
+      return {
+        alreadyTracked:
+          memoryReviewTasks.length > 0
+          || hasTaskMatching(tasks, "memory")
+          || hasTaskMatching(tasks, "proposal"),
+        memoryReviewTaskIds: memoryReviewTasks.map((task) => task.id),
+      };
     });
 
-    if (alreadyTracked) {
-      return { status: "noop", pendingCount: state.count, reason: "already tracked in tasks" };
+    let prioritizedCount = 0;
+
+    if (taskState.memoryReviewTaskIds.length > 0) {
+      prioritizedCount = await step.run("prioritize-memory-review-tasks", async () => {
+        const adapter = new TodoistTaskAdapter();
+        let updated = 0;
+
+        for (const taskId of taskState.memoryReviewTaskIds) {
+          await adapter.updateTask(taskId, {
+            priority: 4,
+            dueString: "today",
+          });
+          updated += 1;
+        }
+
+        return updated;
+      });
+    }
+
+    if (taskState.alreadyTracked) {
+      return {
+        status: prioritizedCount > 0 ? "prioritized" : "noop",
+        pendingCount: state.count,
+        prioritizedCount,
+        reason: prioritizedCount > 0 ? "memory review tasks prioritized" : "already tracked in tasks",
+      };
+    }
+
+    if (state.alreadyNudged) {
+      return { status: "noop", pendingCount: state.count, prioritizedCount, reason: "nudge cooldown" };
     }
 
     // Proposals pending and haven't nudged in 24h

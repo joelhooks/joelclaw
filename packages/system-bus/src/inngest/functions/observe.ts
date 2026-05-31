@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { embed } from "@joelclaw/inference-router";
 import { NonRetriableError } from "inngest";
 import Redis from "ioredis";
 // Observability is centralized in packages/system-bus/src/lib/inference.ts (inference router).
@@ -83,10 +84,12 @@ type TypesenseObservationDoc = {
   category_confidence?: number;
   category_source?: CategorySource;
   taxonomy_version?: string;
+  embedding?: number[];
 };
 
 let redisClient: Redis | null = null;
 const MEMORY_OBSERVATIONS_COLLECTION = "memory_observations";
+const MEMORY_OBSERVATION_EMBED_DIMS = 384;
 
 function isVectorSearchConfigError(message: string): boolean {
   if (/embedded fields|vector query|vector field|no field found for vector query/iu.test(message)) {
@@ -232,6 +235,25 @@ function textSimilarity(a: string, b: string): number {
   const union = left.size + right.size - intersection;
   if (union <= 0) return 0;
   return intersection / union;
+}
+
+function fallbackObservationEmbedding(text: string, dimensions = MEMORY_OBSERVATION_EMBED_DIMS): number[] {
+  const vector = Array.from({ length: dimensions }, () => 0);
+  const tokens = [...normalizeTokens(text)];
+  const values = tokens.length > 0 ? tokens : [text.trim() || "observation"];
+
+  for (const token of values) {
+    let hash = 2166136261;
+    for (let index = 0; index < token.length; index += 1) {
+      hash ^= token.charCodeAt(index);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    const bucket = hash % dimensions;
+    vector[bucket] = (vector[bucket] ?? 0) + ((hash & 1) === 0 ? 1 : -1);
+  }
+
+  const norm = Math.hypot(...vector) || 1;
+  return vector.map((value) => value / norm);
 }
 
 function normalizeTypesenseObservationDoc(input: Record<string, unknown> | null | undefined): TypesenseObservationDoc | null {
@@ -724,6 +746,27 @@ Session context:
           }
         }
 
+        const embeddingFallbackResults = await Promise.all(docs.map(async (doc) => {
+          if (process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1") {
+            doc.embedding = fallbackObservationEmbedding(doc.observation);
+            return false;
+          }
+          try {
+            const result = await embed(doc.observation, {
+              priority: "ingest-realtime",
+              dimensions: MEMORY_OBSERVATION_EMBED_DIMS,
+            });
+            doc.embedding = result.embedding;
+            return false;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`[observe] embedding fallback: ${message}`);
+            doc.embedding = fallbackObservationEmbedding(doc.observation);
+            return true;
+          }
+        }));
+        const embeddingFallbackCount = embeddingFallbackResults.filter(Boolean).length;
+
         const result = await typesense.bulkImport(MEMORY_OBSERVATIONS_COLLECTION, docs);
         const allowCount = docs.filter((doc) => doc.write_verdict === "allow").length;
         const holdCount = docs.filter((doc) => doc.write_verdict === "hold").length;
@@ -792,6 +835,7 @@ Session context:
           holdCount,
           discardCount,
           fallbackCount,
+          embeddingFallbackCount,
           categorizedCount,
           uncategorizedCount: Math.max(0, docs.length - categorizedCount),
           highConfidenceCategoryCount,
@@ -821,6 +865,7 @@ Session context:
       const holdCount = "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0;
       const discardCount = "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0;
       const fallbackCount = "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0;
+      const embeddingFallbackCount = "embeddingFallbackCount" in typesenseStoreResult ? typesenseStoreResult.embeddingFallbackCount : 0;
       const categorizedCount = "categorizedCount" in typesenseStoreResult ? typesenseStoreResult.categorizedCount : 0;
       const uncategorizedCount = "uncategorizedCount" in typesenseStoreResult ? typesenseStoreResult.uncategorizedCount : 0;
       const highConfidenceCategoryCount = "highConfidenceCategoryCount" in typesenseStoreResult
@@ -863,6 +908,7 @@ Session context:
           holdCount,
           discardCount,
           fallbackCount,
+          embeddingFallbackCount,
           categorizedCount,
           uncategorizedCount,
           categoryCoverageRatio: typesenseStoreResult.count > 0 ? categorizedCount / typesenseStoreResult.count : 0,
@@ -935,6 +981,7 @@ Session context:
             hold_count: "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0,
             discard_count: "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0,
             fallback_count: "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0,
+            embedding_fallback_count: "embeddingFallbackCount" in typesenseStoreResult ? typesenseStoreResult.embeddingFallbackCount : 0,
             error: "error" in typesenseStoreResult ? typesenseStoreResult.error : undefined,
           },
         },

@@ -14,7 +14,7 @@ type MockShellResult = {
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
-const originalBunDollar = Bun.$;
+const originalBunSpawn = Bun.spawn;
 const originalRedisMethods = {
   set: Redis.prototype.set,
   rpush: Redis.prototype.rpush,
@@ -24,15 +24,6 @@ const redisStrings = new Map<string, string>();
 const redisLists = new Map<string, string[]>();
 let shellResultQueue: MockShellResult[] = [];
 let tempHome = "";
-
-function buildCommandText(strings: TemplateStringsArray, values: unknown[]): string {
-  let out = "";
-  for (let i = 0; i < strings.length; i += 1) {
-    out += strings[i] ?? "";
-    if (i < values.length) out += String(values[i] ?? "");
-  }
-  return out;
-}
 
 function dailyLogPathFor(date: string): string {
   return join(tempHome, ".joelclaw", "workspace", "memory", `${date}.md`);
@@ -82,31 +73,31 @@ beforeAll(() => {
     return 1;
   };
 
-  // @ts-expect-error test monkey patch for deterministic subprocess behavior.
-  Bun.$ = ((strings: TemplateStringsArray, ...values: unknown[]) => {
-    buildCommandText(strings, values);
+  // Test monkey patch for deterministic subprocess behavior.
+  Bun.spawn = ((_: string[], opts?: { stdout?: unknown; stderr?: unknown }) => {
     const next = shellResultQueue.shift() ?? {
       exitCode: 0,
       stdout: "<observations> </observations>",
       stderr: "",
     };
+    const writes = Promise.all([
+      opts?.stdout ? Bun.write(opts.stdout as any, next.stdout) : Promise.resolve(0),
+      opts?.stderr ? Bun.write(opts.stderr as any, next.stderr) : Promise.resolve(0),
+    ]);
 
     return {
-      quiet() {
-        return this;
-      },
-      async nothrow() {
-        return next;
-      },
+      exited: writes.then(() => next.exitCode),
+      exitCode: next.exitCode,
+      kill() {},
     };
-  }) as typeof Bun.$;
+  }) as typeof Bun.spawn;
 });
 
 afterAll(() => {
   Redis.prototype.set = originalRedisMethods.set;
   Redis.prototype.rpush = originalRedisMethods.rpush;
   Redis.prototype.expire = originalRedisMethods.expire;
-  Bun.$ = originalBunDollar;
+  Bun.spawn = originalBunSpawn;
 });
 
 beforeEach(() => {

@@ -422,5 +422,8 @@ describe("memory/proposal-triage review task reliability", () => {
       reviewTaskProjectId: "Agent Work",
     });
     expect(createTaskCalls).toHaveLength(1);
+    expect(createTaskCalls[0]?.description).toContain("Review summary: Unclear preference call that still needs manual review.");
+    expect(createTaskCalls[0]?.description).toContain("Needs review because:");
+    expect(createTaskCalls[0]?.description).toContain("Review question: Should this exact change be written to MEMORY.md?");
   });
 });

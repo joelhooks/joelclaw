@@ -147,11 +147,29 @@ fi
 
 # -- tests -------------------------------------------------------------
 if [[ -d "$SBUS_DIR" ]]; then
-  TEST_OUTPUT=$(cd "$SBUS_DIR" && bun test 2>&1)
-  TEST_PASS=$(echo "$TEST_OUTPUT" | grep -oE '[0-9]+ pass' | head -1 | awk '{print $1}')
-  TEST_FAIL=$(echo "$TEST_OUTPUT" | grep -oE '[0-9]+ fail' | head -1 | awk '{print $1}')
-  [[ -z "$TEST_PASS" ]] && TEST_PASS=0
-  [[ -z "$TEST_FAIL" ]] && TEST_FAIL=0
+  # Run test files in isolated Bun processes. Several legacy system-bus tests
+  # monkey-patch globals or use `mock.module`, which leaks across files in a
+  # single `bun test` process and creates false red health checks.
+  TEST_PASS=0
+  TEST_FAIL=0
+  TEST_FILES=$(cd "$SBUS_DIR" && find src -name '*.test.ts' | sort)
+
+  if [[ -n "$TEST_FILES" ]]; then
+    while IFS= read -r TEST_FILE; do
+      [[ -z "$TEST_FILE" ]] && continue
+      TEST_STATUS=0
+      TEST_OUTPUT=$(cd "$SBUS_DIR" && bun test "$TEST_FILE" 2>&1) || TEST_STATUS=$?
+      FILE_PASS=$(echo "$TEST_OUTPUT" | grep -oE '[0-9]+ pass' | tail -1 | awk '{print $1}')
+      FILE_FAIL=$(echo "$TEST_OUTPUT" | grep -oE '[0-9]+ fail' | tail -1 | awk '{print $1}')
+      [[ -z "$FILE_PASS" ]] && FILE_PASS=0
+      [[ -z "$FILE_FAIL" ]] && FILE_FAIL=0
+      if [[ "$TEST_STATUS" -ne 0 && "$FILE_FAIL" == "0" ]]; then
+        FILE_FAIL=1
+      fi
+      TEST_PASS=$((TEST_PASS + FILE_PASS))
+      TEST_FAIL=$((TEST_FAIL + FILE_FAIL))
+    done <<< "$TEST_FILES"
+  fi
 
   if [[ "$TEST_FAIL" == "0" && "$TEST_PASS" -gt 0 ]]; then
     check "tests" 10 "${TEST_PASS} pass / ${TEST_FAIL} fail"

@@ -8,11 +8,13 @@
  * system_knowledge, and pi_mono_artifacts.
  */
 import { Args, Command, Options } from "@effect/cli"
+import { embed } from "@joelclaw/inference-router"
 import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
+const SEARCH_EMBED_DIMS = 384
 
 interface SearchHit {
   collection: string
@@ -28,11 +30,12 @@ type SearchCollection = {
   readonly queryBy: string
   readonly titleField: string
   readonly supportsSemantic: boolean
+  readonly semanticVectorField?: string
 }
 
 const COLLECTIONS: readonly SearchCollection[] = [
   { name: "vault_notes", queryBy: "title,content", titleField: "title", supportsSemantic: true },
-  { name: "memory_observations", queryBy: "observation", titleField: "observation", supportsSemantic: true },
+  { name: "memory_observations", queryBy: "observation", titleField: "observation", supportsSemantic: true, semanticVectorField: "embedding" },
   { name: "blog_posts", queryBy: "title,content", titleField: "title", supportsSemantic: true },
   { name: "system_log", queryBy: "detail,tool,action", titleField: "detail", supportsSemantic: false },
   { name: "discoveries", queryBy: "title,summary", titleField: "title", supportsSemantic: true },
@@ -84,6 +87,7 @@ function buildSearchRequest(
     semantic?: boolean
     filter?: string
     facet?: string
+    queryEmbedding?: number[]
   }
 ): Record<string, unknown> {
   const search: Record<string, unknown> = {
@@ -98,12 +102,33 @@ function buildSearchRequest(
   if (options.facet) search.facet_by = options.facet
   if (options.filter) search.filter_by = options.filter
 
-  if (options.semantic && collection.supportsSemantic) {
-    search.query_by = `${collection.queryBy},embedding`
-    search.vector_query = `embedding:([], k:${options.perPage * 2})`
+  if (options.semantic && collection.supportsSemantic && collection.semanticVectorField && options.queryEmbedding) {
+    search.vector_query = formatSearchVectorQuery(collection.semanticVectorField, options.queryEmbedding, options.perPage * 2)
   }
 
   return search
+}
+
+function formatSearchVectorQuery(field: string, embedding: number[], fetchLimit: number): string {
+  const vector = embedding.map((value) => Number.isFinite(value) ? Number(value.toFixed(8)) : 0)
+  return `${field}:([${vector.join(",")}], k:${fetchLimit}, alpha:0.7)`
+}
+
+async function buildSearchQueryEmbedding(collections: readonly SearchCollection[], query: string, semantic?: boolean): Promise<number[] | undefined> {
+  if (!semantic || !collections.some((collection) => collection.supportsSemantic && collection.semanticVectorField)) {
+    return undefined
+  }
+
+  try {
+    const result = await embed(query, {
+      priority: "query",
+      dimensions: SEARCH_EMBED_DIMS,
+    })
+    return result.embedding
+  } catch {
+    // Search must fail open to keyword search if the embedding lane is down.
+    return undefined
+  }
 }
 
 async function multiSearch(
@@ -118,6 +143,7 @@ async function multiSearch(
   }
 ): Promise<{ hits: SearchHit[]; facets: Record<string, { value: string; count: number }[]>; totalFound: number }> {
   const collections = resolveRequestedCollections(options.collection)
+  const queryEmbedding = await buildSearchQueryEmbedding(collections, query, options.semantic)
 
   const searches = collections.map((collection) =>
     buildSearchRequest(collection, query, {
@@ -125,6 +151,7 @@ async function multiSearch(
       semantic: options.semantic,
       filter: options.filter,
       facet: options.facet,
+      queryEmbedding,
     })
   )
 
@@ -319,5 +346,6 @@ export const __searchTestUtils = {
   COLLECTIONS,
   resolveRequestedCollections,
   buildSearchRequest,
+  formatSearchVectorQuery,
   CollectionSelectionError,
 }
