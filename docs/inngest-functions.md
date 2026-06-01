@@ -85,6 +85,7 @@ Operational boundary for Phase 1:
   - `runSubscriptionCheckSingleDirect()` now does the same for feed-published discovery items on the direct Restate/Dkron path, and this has been proved live with `publishMode: queue` on a real subscription check.
   - `QUEUE_PILOTS=discovery-captured` makes the `discovery-capture` function enqueue its follow-up `discovery/captured` event into the shared queue instead of using `step.sendEvent` directly.
   - `discovery-capture` now resolves routing metadata from the written note, computes a `finalLink`, and returns/forwards `site`, `visibility`, and `finalLink` in its completion payload.
+  - `discovery-capture` gives the note-generation model a 5-minute budget with no fallback chain. If generation still times out or errors, it writes a source-grounded degraded fallback note (`captureStatus: degraded`, `needs-review`) with a source fingerprint in the filename/slug, then continues to `discovery/captured` with `captureStatus: degraded` so `/cool` captures do not disappear behind a model stall.
   - the legacy Inngest `subscription/check-single` path still uses `step.sendEvent` for now, so pilot cutover remains incremental and reversible.
 - Subscription-request pilot cutover has now started behind `QUEUE_PILOTS=subscriptions`:
   - unscoped `joelclaw subscribe check` enqueues `subscription/check-feeds.requested` into the shared queue instead of posting directly to Inngest.

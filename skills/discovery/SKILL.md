@@ -90,7 +90,8 @@ Don't wait. Joel flagged something and moved on — match that energy.
 1. **Investigate** — clone repos, extract articles via defuddle, read content
 2. **Analyze via pi** — decides title, tags, relevance, writes summary in Joel's voice
 3. **Embed media** — if source is a video (YouTube, etc.), auto-embeds `<YouTubeEmbed url="..." />` in the note
-4. **Write** — vault note to `~/Vault/Resources/discoveries/{slug}.md`
+4. **Write** — vault note to `~/Vault/Resources/discoveries/{Title}.md` (normal path) or a unique `{Title} {fingerprint}.md` degraded fallback
+   - If pi note generation times out or errors, the function writes a source-grounded degraded fallback note (`captureStatus: degraded`, `needs-review`) and still forwards `discovery/captured` with `captureStatus: degraded`. This keeps `/cool` capture durable instead of losing the find behind a model stall.
 5. **Sync** — fires `discovery/captured` event which syncs to joelclaw.com/cool/
 6. **Log** — `slog write --action noted --tool discovery`
 

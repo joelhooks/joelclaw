@@ -790,6 +790,8 @@ export type Events = {
       url?: string;
       title?: string;
       tags?: string[];
+      captureStatus?: "ok" | "degraded";
+      degradedReason?: string;
     };
   };
 

@@ -1,13 +1,18 @@
+import { createHash } from "node:crypto";
 import { $ } from "bun";
 import matter from "gray-matter";
-import { infer } from "../../lib/inference";
 import { buildDiscoveryFinalLink, resolveDiscoveryRouting } from "../../lib/discovery-routing";
+import { infer } from "../../lib/inference";
 import { enqueueRegisteredQueueEvent, isQueuePilotEnabled } from "../../lib/queue";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { DISCOVERY_PROMPT } from "../prompts/discovery";
 
 const VAULT_DISCOVERIES = `${process.env.HOME}/Vault/Resources/discoveries`;
+const DISCOVERY_GENERATE_TIMEOUT_MS = 5 * 60_000;
+const DISCOVERY_FALLBACK_EXCERPT_CHARS = 1_500;
+
+type DiscoveryCaptureStatus = "ok" | "degraded";
 
 type DiscoveryCapturedEventData = {
   vaultPath: string;
@@ -18,6 +23,8 @@ type DiscoveryCapturedEventData = {
   finalLink: string;
   url?: string;
   title?: string;
+  captureStatus?: DiscoveryCaptureStatus;
+  degradedReason?: string;
 };
 
 function shouldQueueDiscoveryCaptured(): boolean {
@@ -42,11 +49,131 @@ function buildDiscoveryCapturedEventData(input: DiscoveryCapturedEventData): Dis
     data.title = input.title.trim();
   }
 
+  if (input.captureStatus) {
+    data.captureStatus = input.captureStatus;
+  }
+
+  if (input.degradedReason?.trim()) {
+    data.degradedReason = input.degradedReason.trim();
+  }
+
   return data;
+}
+
+function titleCaseToken(value: string): string {
+  return value
+    .split(/[\s-]+/u)
+    .filter(Boolean)
+    .map((token) => `${token.slice(0, 1).toUpperCase()}${token.slice(1)}`)
+    .join(" ");
+}
+
+function fallbackTitleFromUrl(url: string | undefined): string {
+  if (!url?.trim()) return "Discovery Capture";
+
+  try {
+    const host = new URL(url).hostname.replace(/^www\./u, "");
+    const [label] = host.split(".");
+    return titleCaseToken(label ?? host) || "Discovery Capture";
+  } catch {
+    return "Discovery Capture";
+  }
+}
+
+function slugifyDiscovery(value: string): string {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, 80);
+
+  return slug || "discovery-capture";
+}
+
+function sourceFingerprint(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 8);
+}
+
+function yamlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function quotedExcerpt(content: string): string {
+  const excerpt = content
+    .replace(/\r\n?/gu, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, DISCOVERY_FALLBACK_EXCERPT_CHARS);
+
+  if (!excerpt) return "> No extractable source text was captured.";
+
+  return excerpt
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+}
+
+function buildFallbackDiscoveryNote(opts: {
+  url: string | undefined;
+  context: string | undefined;
+  sourceType: string;
+  sourceContent: string;
+  today: string;
+  site: string;
+  visibility: string;
+  captureId?: string;
+}): { noteName: string; slug: string; markdown: string } {
+  const title = fallbackTitleFromUrl(opts.url);
+  const source = opts.url?.trim() || "conversation";
+  const context = opts.context?.trim() || "Joel flagged this as interesting.";
+  const sourceLink = opts.url?.trim() ? `[${title}](${opts.url.trim()})` : title;
+  const fingerprintSeed = [source, context, opts.sourceContent.trim().slice(0, 500), opts.captureId?.trim()]
+    .filter(Boolean)
+    .join("\n");
+  const fingerprint = sourceFingerprint(fingerprintSeed || title);
+  const noteName = `${title} ${fingerprint}`;
+  const slug = slugifyDiscovery(`${title}-${fingerprint}`);
+
+  return {
+    noteName,
+    slug,
+    markdown: `---
+type: discovery
+slug: ${yamlString(slug)}
+source: ${yamlString(source)}
+discovered: ${yamlString(opts.today)}
+site: ${yamlString(opts.site)}
+visibility: ${yamlString(opts.visibility)}
+tags: [discovery, ${opts.sourceType || "unknown"}, needs-review]
+relevance: ${yamlString(context)}
+captureStatus: degraded
+---
+
+# ${title}
+
+Joel flagged ${sourceLink} for \`/cool\`.
+
+## Capture Context
+
+${context}
+
+## Source Excerpt
+
+${quotedExcerpt(opts.sourceContent)}
+
+## Links
+
+- ${sourceLink}
+`,
+  };
 }
 
 export const __discoveryCaptureTestUtils = {
   buildDiscoveryCapturedEventData,
+  buildFallbackDiscoveryNote,
+  discoveryGenerateTimeoutMs: DISCOVERY_GENERATE_TIMEOUT_MS,
   shouldQueueDiscoveryCaptured,
 };
 
@@ -149,25 +276,76 @@ export const discoveryCapture = inngest.createFunction(
               site: requestedRouting.site,
               visibility: requestedRouting.visibility,
             });
-            const output = await infer(prompt, {
-              task: "summary",
-              component: "discovery-capture",
-              action: "discovery.capture.generate",
-              system: "You are a discovery analysis assistant that writes discovery notes using Vault conventions.",
-              metadata: {
+            try {
+              const output = await infer(prompt, {
+                task: "summary",
+                component: "discovery-capture",
+                action: "discovery.capture.generate",
+                system: "You are a discovery analysis assistant that writes discovery notes using Vault conventions.",
+                model: "openai-codex/gpt-5.5",
+                maxAttempts: 1,
+                timeout: DISCOVERY_GENERATE_TIMEOUT_MS,
+                metadata: {
+                  sourceType: material.sourceType ?? "unknown",
+                  hasContext: Boolean(context),
+                  hasUrl: Boolean(url),
+                  site: requestedRouting.site,
+                  visibility: requestedRouting.visibility,
+                },
+              });
+              const textOutput = output.text;
+              const match = textOutput.match(/DISCOVERY_WRITTEN:(.+)/);
+              const noteName = match?.[1]?.trim() ?? `Discovery ${today}`;
+              const vaultPath = `${VAULT_DISCOVERIES}/${noteName}.md`;
+
+              return {
+                noteName,
+                vaultPath,
+                piOutput: textOutput.slice(-200),
+                captureStatus: "ok" as const,
+                degradedReason: undefined as string | undefined,
+              };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              const fallback = buildFallbackDiscoveryNote({
+                url: url ?? undefined,
+                context: context ?? undefined,
                 sourceType: material.sourceType ?? "unknown",
-                hasContext: Boolean(context),
-                hasUrl: Boolean(url),
+                sourceContent: material.content ?? "",
+                today: today as string,
                 site: requestedRouting.site,
                 visibility: requestedRouting.visibility,
-              },
-            });
-            const textOutput = output.text;
-            const match = textOutput.match(/DISCOVERY_WRITTEN:(.+)/);
-            const noteName = match?.[1]?.trim() ?? `Discovery ${today}`;
-            const vaultPath = `${VAULT_DISCOVERIES}/${noteName}.md`;
+                captureId: typeof event.id === "string" ? event.id : undefined,
+              });
+              const vaultPath = `${VAULT_DISCOVERIES}/${fallback.noteName}.md`;
 
-            return { noteName, vaultPath, piOutput: textOutput.slice(-200) };
+              await $`mkdir -p ${VAULT_DISCOVERIES}`.quiet();
+              await Bun.write(vaultPath, fallback.markdown);
+              await emitOtelEvent({
+                level: "warn",
+                source: "worker",
+                component: "discovery-capture",
+                action: "discovery.capture.generate.degraded",
+                success: false,
+                error: message,
+                metadata: {
+                  url: url ?? null,
+                  fallbackNoteName: fallback.noteName,
+                  fallbackSlug: fallback.slug,
+                  sourceType: material.sourceType ?? "unknown",
+                  site: requestedRouting.site,
+                  visibility: requestedRouting.visibility,
+                },
+              });
+
+              return {
+                noteName: fallback.noteName,
+                vaultPath,
+                piOutput: `fallback:${message.slice(0, 180)}`,
+                captureStatus: "degraded" as const,
+                degradedReason: message.slice(0, 500),
+              };
+            }
           });
 
           // Step 3: Verify + slog
@@ -212,7 +390,7 @@ export const discoveryCapture = inngest.createFunction(
               routing,
             });
 
-            await $`slog write --action noted --tool discovery --detail "${resolvedTitle}" --reason "vault:Resources/discoveries/${result.noteName}.md"`.quiet();
+            await $`slog write --session system-bus --system panda --action noted --tool discovery --detail "${resolvedTitle}" --reason "vault:Resources/discoveries/${result.noteName}.md"`.quiet();
             return {
               title: resolvedTitle,
               slug,
@@ -237,6 +415,8 @@ export const discoveryCapture = inngest.createFunction(
                 site: resolved.site,
                 visibility: resolved.visibility,
                 finalLink: resolved.finalLink,
+                captureStatus: result.captureStatus,
+                degradedReason: result.degradedReason ?? null,
               },
             });
           });
@@ -263,6 +443,8 @@ export const discoveryCapture = inngest.createFunction(
             finalLink: resolved.finalLink,
             url,
             title: resolved.title,
+            captureStatus: result.captureStatus,
+            degradedReason: result.degradedReason,
           });
 
           const discoveryCapturedMode = shouldQueueDiscoveryCaptured() ? "queue" : "inngest";
@@ -298,6 +480,8 @@ export const discoveryCapture = inngest.createFunction(
                 visibility: resolved.visibility,
                 finalLink: resolved.finalLink,
                 url: url ?? null,
+                captureStatus: result.captureStatus,
+                degradedReason: result.degradedReason ?? null,
                 queueStreamId: queueResult?.streamId ?? null,
                 eventId: queueResult?.eventId ?? null,
               },
@@ -313,6 +497,8 @@ export const discoveryCapture = inngest.createFunction(
                 finalLink: resolved.finalLink,
                 site: resolved.site,
                 visibility: resolved.visibility,
+                captureStatus: result.captureStatus,
+                degradedReason: result.degradedReason ?? null,
               });
             } catch {}
           }
