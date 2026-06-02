@@ -551,6 +551,23 @@ joelclaw knowledge note \
 
 Use `--skip-reason routine-heartbeat|duplicate-signal|no-new-information` when a turn is eligible but has no durable signal to capture.
 
+## Gateway channel control
+
+```bash
+joelclaw gateway channel list
+joelclaw gateway channel status [channel]
+joelclaw gateway channel disable <channel> [--restart] [--force]
+joelclaw gateway channel enable <channel> [--restart]
+```
+
+Semantics:
+
+- edits `~/.joelclaw/scripts/gateway-start.sh` for the known runtime channels: `telegram`, `discord`, `imessage`, `slack`.
+- writes a `/tmp/joelclaw/gateway-start.sh.*` backup before changing the script.
+- never prints secret values; output reports variable names plus source classes (`secret`, `derived`, `literal`, `blank`, `missing`).
+- `--restart` applies the change immediately via `joelclaw gateway restart`; otherwise next actions tell the agent to restart.
+- disabling `telegram` requires `--force` because it is a primary operator channel.
+
 ## Gateway known issues / muted channels
 
 ```bash

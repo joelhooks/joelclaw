@@ -24,10 +24,26 @@ joelclaw gateway push --type <type> [--payload JSON]  # Push an event to all ses
 joelclaw gateway events    # Peek at pending events per session
 joelclaw gateway drain     # Clear all event queues
 joelclaw gateway stream    # NDJSON stream of all gateway events (ADR-0058)
+joelclaw gateway channel {list|status|enable|disable}  # Enable/disable runtime channels
 joelclaw gateway behavior {add|list|promote|remove|apply|stats}  # ADR-0211 behavior control plane
 ```
 
 `joelclaw gateway restart` is the canonical restart. It kills the process, cleans Redis state, re-enables `com.joel.gateway` if launchd disabled it, waits for launchd to respawn, and verifies the new session. `joelclaw gateway enable` is the direct recovery path when launchd drift disabled the service. Never use `launchctl bootout/bootstrap` directly.
+
+## Channel enable/disable
+
+Use the CLI. Do not hand-edit `~/.joelclaw/scripts/gateway-start.sh` unless the CLI is broken.
+
+```bash
+joelclaw gateway channel list
+joelclaw gateway channel disable discord --restart
+joelclaw gateway channel enable discord --restart
+joelclaw gateway channel status discord
+```
+
+The CLI blanks/restores the channel env assignments in `~/.joelclaw/scripts/gateway-start.sh`, writes a `/tmp/joelclaw/gateway-start.sh.*` backup before changes, and can restart the gateway when `--restart` is present. Telegram disable requires `--force` because it is a primary operator channel. Do not revoke or delete stored secrets for a temporary disable.
+
+Expected disabled Discord state: component `disabled`; channel `configured:false`, `started:false`, `ready:false`, `botUserId:null`; health entry `status:"disabled"`.
 
 ## Quick Triage
 

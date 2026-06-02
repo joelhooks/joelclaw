@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs"
+import { execSync } from "node:child_process"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { type NextAction, respond, respondError } from "../response"
@@ -650,6 +651,483 @@ const muteReason = Options.text("reason").pipe(
   Options.optional,
 )
 
+const channelRestart = Options.boolean("restart").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Restart gateway after changing channel config"),
+)
+
+const channelForce = Options.boolean("force").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Required when disabling high-risk operator channels like telegram"),
+)
+
+const channelArg = Args.text({ name: "channel" }).pipe(
+  Args.withDescription("Gateway channel: telegram, discord, imessage, or slack"),
+)
+
+const optionalChannelArg = Args.text({ name: "channel" }).pipe(
+  Args.withDescription("Optional gateway channel filter"),
+  Args.optional,
+)
+
+type GatewayChannelName = "telegram" | "discord" | "imessage" | "slack"
+
+type GatewayChannelAssignment = {
+  variable: string
+  enabled: string
+  disabled: string
+}
+
+type GatewayChannelConfig = {
+  channel: GatewayChannelName
+  label: string
+  disableRisk: "low" | "medium" | "high"
+  assignments: GatewayChannelAssignment[]
+}
+
+const GATEWAY_CHANNEL_NAMES: GatewayChannelName[] = ["telegram", "discord", "imessage", "slack"]
+
+const GATEWAY_CHANNEL_CONFIGS: Record<GatewayChannelName, GatewayChannelConfig> = {
+  telegram: {
+    channel: "telegram",
+    label: "Telegram",
+    disableRisk: "high",
+    assignments: [
+      {
+        variable: "TELEGRAM_BOT_TOKEN",
+        enabled: 'export TELEGRAM_BOT_TOKEN="$(lease_secret_or_empty telegram_bot_token)"',
+        disabled: 'export TELEGRAM_BOT_TOKEN=""',
+      },
+      {
+        variable: "TELEGRAM_USER_ID",
+        enabled: 'export TELEGRAM_USER_ID="7718912466"',
+        disabled: 'export TELEGRAM_USER_ID=""',
+      },
+    ],
+  },
+  discord: {
+    channel: "discord",
+    label: "Discord",
+    disableRisk: "low",
+    assignments: [
+      {
+        variable: "DISCORD_BOT_TOKEN",
+        enabled: 'export DISCORD_BOT_TOKEN="$(lease_secret_or_empty discord_bot_token)"',
+        disabled: 'export DISCORD_BOT_TOKEN=""',
+      },
+      {
+        variable: "DISCORD_ALLOWED_USER_ID",
+        enabled: 'export DISCORD_ALLOWED_USER_ID="$(lease_secret_or_empty discord_allowed_user_id)"',
+        disabled: 'export DISCORD_ALLOWED_USER_ID=""',
+      },
+    ],
+  },
+  imessage: {
+    channel: "imessage",
+    label: "iMessage",
+    disableRisk: "medium",
+    assignments: [
+      {
+        variable: "IMESSAGE_ALLOWED_SENDER",
+        enabled: 'export IMESSAGE_ALLOWED_SENDER="$(lease_secret_or_empty imessage_allowed_sender)"',
+        disabled: 'export IMESSAGE_ALLOWED_SENDER=""',
+      },
+    ],
+  },
+  slack: {
+    channel: "slack",
+    label: "Slack",
+    disableRisk: "medium",
+    assignments: [
+      {
+        variable: "SLACK_BOT_TOKEN",
+        enabled: 'SLACK_BOT_TOKEN="$(lease_secret_or_empty slack_bot_token)"',
+        disabled: 'SLACK_BOT_TOKEN=""',
+      },
+      {
+        variable: "SLACK_USER_TOKEN",
+        enabled: 'SLACK_USER_TOKEN="$(lease_secret_or_empty slack_user_token)"',
+        disabled: 'SLACK_USER_TOKEN=""',
+      },
+      {
+        variable: "SLACK_ALLOWED_USER_ID",
+        enabled: 'export SLACK_ALLOWED_USER_ID="$(slack_user_id_from_token "$SLACK_USER_TOKEN")"',
+        disabled: 'export SLACK_ALLOWED_USER_ID=""',
+      },
+      {
+        variable: "SLACK_DEFAULT_CHANNEL_ID",
+        enabled: 'export SLACK_DEFAULT_CHANNEL_ID="$(slack_dm_channel_from_bot "$SLACK_BOT_TOKEN" "$SLACK_ALLOWED_USER_ID")"',
+        disabled: 'export SLACK_DEFAULT_CHANNEL_ID=""',
+      },
+    ],
+  },
+}
+
+function gatewayChannelNextActions(channel?: GatewayChannelName): NextAction[] {
+  const channelParam = channel ? { value: channel, required: true } : { enum: GATEWAY_CHANNEL_NAMES, required: true }
+  return [
+    { command: "joelclaw gateway channel list", description: "List gateway channel config and live status" },
+    {
+      command: "joelclaw gateway channel disable <channel> [--restart]",
+      description: "Disable a gateway channel in runtime config",
+      params: { channel: channelParam, restart: { default: "false", description: "Restart after config change" } },
+    },
+    {
+      command: "joelclaw gateway channel enable <channel> [--restart]",
+      description: "Enable a gateway channel in runtime config",
+      params: { channel: channelParam, restart: { default: "false", description: "Restart after config change" } },
+    },
+    { command: "joelclaw gateway status", description: "Verify live channel health" },
+  ]
+}
+
+function resolveGatewayChannel(channel: string): GatewayChannelConfig | null {
+  const normalized = normalizeChannelId(channel)
+  if (!normalized || !GATEWAY_CHANNEL_NAMES.includes(normalized as GatewayChannelName)) return null
+  return GATEWAY_CHANNEL_CONFIGS[normalized as GatewayChannelName]
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function assignmentLineRegex(variable: string): RegExp {
+  return new RegExp(`^\\s*(?:export\\s+)?${escapeRegex(variable)}=.*$`, "m")
+}
+
+function readGatewayStartScript(): string {
+  if (!existsSync(GATEWAY_START_SCRIPT_PATH)) {
+    throw new Error(`Gateway start script not found: ${GATEWAY_START_SCRIPT_PATH}`)
+  }
+  return readFileSync(GATEWAY_START_SCRIPT_PATH, "utf-8")
+}
+
+function assignmentValue(content: string, variable: string): string | null {
+  const match = content.match(assignmentLineRegex(variable))
+  if (!match) return null
+  const line = match[0].trim()
+  const index = line.indexOf("=")
+  return index >= 0 ? line.slice(index + 1).trim() : null
+}
+
+function assignmentSource(value: string | null): "missing" | "blank" | "secret" | "derived" | "literal" {
+  if (value === null) return "missing"
+  if (value === "" || value === '""' || value === "''") return "blank"
+  if (value.includes("lease_secret_or_empty")) return "secret"
+  if (value.includes("$(") || value.includes("$")) return "derived"
+  return "literal"
+}
+
+function gatewayChannelScriptState(config: GatewayChannelConfig, content: string) {
+  const variables = config.assignments.map((assignment) => {
+    const value = assignmentValue(content, assignment.variable)
+    const source = assignmentSource(value)
+    return {
+      name: assignment.variable,
+      present: value !== null,
+      configured: source !== "missing" && source !== "blank",
+      source,
+    }
+  })
+  const missing = variables.filter((variable) => !variable.present).map((variable) => variable.name)
+  const configuredCount = variables.filter((variable) => variable.configured).length
+  const state = missing.length > 0
+    ? "partial"
+    : configuredCount === 0
+      ? "disabled"
+      : configuredCount === variables.length
+        ? "enabled"
+        : "partial"
+  return { state, variables, missing }
+}
+
+function gatewayChannelLiveState(channel: GatewayChannelName, health: (GatewayHealthSnapshot & { wsPort: number }) | null) {
+  const status = health?.status ?? {}
+  const channels = typeof status.channels === "object" && status.channels !== null
+    ? status.channels as Record<string, unknown>
+    : {}
+  const channelHealth = typeof status.channelHealth === "object" && status.channelHealth !== null
+    ? status.channelHealth as Record<string, unknown>
+    : {}
+  const entries = typeof channelHealth.entries === "object" && channelHealth.entries !== null
+    ? channelHealth.entries as Record<string, unknown>
+    : {}
+  return {
+    component: health?.components?.[channel] ?? null,
+    channel: channels[channel] ?? null,
+    health: entries[channel] ?? null,
+  }
+}
+
+async function waitForGatewayHealthSnapshot(timeoutMs = 30_000): Promise<(GatewayHealthSnapshot & { wsPort: number }) | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const snapshot = await readGatewayHealthSnapshot()
+    if (snapshot) return snapshot
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+  }
+  return readGatewayHealthSnapshot()
+}
+
+function gatewayChannelSummary(content: string, health: (GatewayHealthSnapshot & { wsPort: number }) | null) {
+  return GATEWAY_CHANNEL_NAMES.map((channel) => {
+    const config = GATEWAY_CHANNEL_CONFIGS[channel]
+    return {
+      channel,
+      label: config.label,
+      disableRisk: config.disableRisk,
+      script: gatewayChannelScriptState(config, content),
+      live: gatewayChannelLiveState(channel, health),
+    }
+  })
+}
+
+function applyGatewayChannelScriptState(config: GatewayChannelConfig, mode: "enable" | "disable") {
+  const before = readGatewayStartScript()
+  let after = before
+  const missing: string[] = []
+  const changedVariables: string[] = []
+
+  for (const assignment of config.assignments) {
+    const pattern = assignmentLineRegex(assignment.variable)
+    if (!pattern.test(after)) {
+      missing.push(assignment.variable)
+      continue
+    }
+    const replacement = mode === "enable" ? assignment.enabled : assignment.disabled
+    const previous = after.match(pattern)?.[0] ?? ""
+    after = after.replace(pattern, () => replacement)
+    if (previous !== replacement) changedVariables.push(assignment.variable)
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`Missing expected gateway env assignment(s): ${missing.join(", ")}`)
+  }
+
+  const changed = before !== after
+  let backupPath: string | null = null
+  if (changed) {
+    const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
+    backupPath = `/tmp/joelclaw/gateway-start.sh.${mode}-${config.channel}.${timestamp}`
+    writeFileSync(backupPath, before)
+    writeFileSync(GATEWAY_START_SCRIPT_PATH, after)
+  }
+
+  return {
+    changed,
+    changedVariables,
+    backupPath,
+    state: gatewayChannelScriptState(config, after),
+  }
+}
+
+function restartGatewayFromChannelCommand(): { ok: boolean; result?: unknown; error?: string; raw?: string } {
+  try {
+    const raw = execSync("joelclaw gateway restart", { encoding: "utf-8", timeout: 45_000 })
+    try {
+      const parsed = JSON.parse(raw) as { ok?: boolean; result?: unknown }
+      return { ok: parsed.ok === true, result: parsed.result, raw }
+    } catch {
+      return { ok: true, raw }
+    }
+  } catch (error) {
+    return { ok: false, error: String(error) }
+  }
+}
+
+const gatewayChannelList = Command.make("list", {}, () =>
+  Effect.gen(function* () {
+    const content = readGatewayStartScript()
+    const health = yield* Effect.promise(() => readGatewayHealthSnapshot())
+    yield* Console.log(respond(
+      "gateway channel list",
+      {
+        scriptPath: GATEWAY_START_SCRIPT_PATH,
+        channels: gatewayChannelSummary(content, health),
+      },
+      gatewayChannelNextActions(),
+      true,
+    ))
+  }),
+).pipe(Command.withDescription("List gateway channel config and live status"))
+
+const gatewayChannelStatus = Command.make(
+  "status",
+  { channel: optionalChannelArg },
+  ({ channel }) =>
+    Effect.gen(function* () {
+      const requested = parseOptionalText(channel as OptionalText)
+      const config = requested ? resolveGatewayChannel(requested) : null
+      if (requested && !config) {
+        yield* Console.log(respondError(
+          "gateway channel status",
+          `Unknown gateway channel: ${requested}`,
+          "INVALID_CHANNEL",
+          "Use one of: telegram, discord, imessage, slack.",
+          gatewayChannelNextActions(),
+        ))
+        return
+      }
+
+      const content = readGatewayStartScript()
+      const health = yield* Effect.promise(() => readGatewayHealthSnapshot())
+      const channels = gatewayChannelSummary(content, health)
+      yield* Console.log(respond(
+        "gateway channel status",
+        {
+          scriptPath: GATEWAY_START_SCRIPT_PATH,
+          channels: config ? channels.filter((entry) => entry.channel === config.channel) : channels,
+        },
+        gatewayChannelNextActions(config?.channel),
+        true,
+      ))
+    }),
+).pipe(Command.withDescription("Show gateway channel config and live status"))
+
+const gatewayChannelDisable = Command.make(
+  "disable",
+  { channel: channelArg, restart: channelRestart, force: channelForce },
+  ({ channel, restart, force }) =>
+    Effect.gen(function* () {
+      const config = resolveGatewayChannel(channel)
+      if (!config) {
+        yield* Console.log(respondError(
+          "gateway channel disable",
+          `Unknown gateway channel: ${channel}`,
+          "INVALID_CHANNEL",
+          "Use one of: telegram, discord, imessage, slack.",
+          gatewayChannelNextActions(),
+        ))
+        return
+      }
+
+      if (config.disableRisk === "high" && !force) {
+        yield* Console.log(respondError(
+          "gateway channel disable",
+          `${config.label} is a high-risk operator channel; refusing to disable without --force.`,
+          "CONFIRMATION_REQUIRED",
+          `Retry with \`joelclaw gateway channel disable ${config.channel} --force\` if you really want that channel down.`,
+          [
+            {
+              command: "joelclaw gateway channel disable <channel> --force [--restart]",
+              description: "Disable high-risk channel after explicit confirmation",
+              params: {
+                channel: { value: config.channel, required: true },
+                restart: { default: "false", description: "Restart after config change" },
+              },
+            },
+            ...gatewayChannelNextActions(config.channel),
+          ],
+        ))
+        return
+      }
+
+      const applied = applyGatewayChannelScriptState(config, "disable")
+      const restartResult = restart ? restartGatewayFromChannelCommand() : null
+      const health = yield* Effect.promise(() => restart ? waitForGatewayHealthSnapshot() : readGatewayHealthSnapshot())
+
+      yield* Console.log(respond(
+        "gateway channel disable",
+        {
+          channel: config.channel,
+          label: config.label,
+          mode: "disabled",
+          scriptPath: GATEWAY_START_SCRIPT_PATH,
+          changed: applied.changed,
+          changedVariables: applied.changedVariables,
+          backupPath: applied.backupPath,
+          script: applied.state,
+          restart: restartResult,
+          live: gatewayChannelLiveState(config.channel, health),
+        },
+        restart
+          ? gatewayChannelNextActions(config.channel)
+          : [
+            { command: "joelclaw gateway restart", description: "Apply the channel config change" },
+            ...gatewayChannelNextActions(config.channel),
+          ],
+        true,
+      ))
+    }),
+).pipe(Command.withDescription("Disable a gateway channel in runtime config"))
+
+const gatewayChannelEnable = Command.make(
+  "enable",
+  { channel: channelArg, restart: channelRestart },
+  ({ channel, restart }) =>
+    Effect.gen(function* () {
+      const config = resolveGatewayChannel(channel)
+      if (!config) {
+        yield* Console.log(respondError(
+          "gateway channel enable",
+          `Unknown gateway channel: ${channel}`,
+          "INVALID_CHANNEL",
+          "Use one of: telegram, discord, imessage, slack.",
+          gatewayChannelNextActions(),
+        ))
+        return
+      }
+
+      const applied = applyGatewayChannelScriptState(config, "enable")
+      const restartResult = restart ? restartGatewayFromChannelCommand() : null
+      const health = yield* Effect.promise(() => restart ? waitForGatewayHealthSnapshot() : readGatewayHealthSnapshot())
+
+      yield* Console.log(respond(
+        "gateway channel enable",
+        {
+          channel: config.channel,
+          label: config.label,
+          mode: "enabled",
+          scriptPath: GATEWAY_START_SCRIPT_PATH,
+          changed: applied.changed,
+          changedVariables: applied.changedVariables,
+          backupPath: applied.backupPath,
+          script: applied.state,
+          restart: restartResult,
+          live: gatewayChannelLiveState(config.channel, health),
+        },
+        restart
+          ? gatewayChannelNextActions(config.channel)
+          : [
+            { command: "joelclaw gateway restart", description: "Apply the channel config change" },
+            ...gatewayChannelNextActions(config.channel),
+          ],
+        true,
+      ))
+    }),
+).pipe(Command.withDescription("Enable a gateway channel in runtime config"))
+
+const gatewayChannelCmd = Command.make("channel", {}, () =>
+  Effect.gen(function* () {
+    const content = readGatewayStartScript()
+    const health = yield* Effect.promise(() => readGatewayHealthSnapshot())
+    yield* Console.log(respond(
+      "gateway channel",
+      {
+        description: "Enable/disable gateway channels without hand-editing the private launch script.",
+        scriptPath: GATEWAY_START_SCRIPT_PATH,
+        channels: gatewayChannelSummary(content, health),
+        subcommands: {
+          list: "joelclaw gateway channel list — list configured and live channel state",
+          status: "joelclaw gateway channel status [channel] — show one/all channel states",
+          disable: "joelclaw gateway channel disable <channel> [--restart] — blank channel env and optionally restart",
+          enable: "joelclaw gateway channel enable <channel> [--restart] — restore channel env and optionally restart",
+        },
+      },
+      gatewayChannelNextActions(),
+      true,
+    ))
+  }),
+).pipe(
+  Command.withDescription("Enable/disable gateway channels"),
+  Command.withSubcommands([
+    gatewayChannelList,
+    gatewayChannelStatus,
+    gatewayChannelDisable,
+    gatewayChannelEnable,
+  ]),
+)
+
 const gatewayKnownIssues = Command.make("known-issues", {}, () =>
   Effect.gen(function* () {
     const redis = yield* makeRedis()
@@ -831,8 +1309,6 @@ const gatewayUnmute = Command.make(
 ).pipe(Command.withDescription("Remove a channel from muted health alerts"))
 
 // ── gateway restart ─────────────────────────────────────────────────
-
-import { execSync } from "node:child_process"
 
 const gatewayRestart = Command.make("restart", {}, () =>
   Effect.gen(function* () {
@@ -1230,6 +1706,7 @@ const GATEWAY_DAEMON_MATCH = "/Users/joel/Code/joelhooks/joelclaw/packages/gatew
 const GATEWAY_SYSTEM_PLIST_PATH = `/Library/LaunchDaemons/${GATEWAY_LAUNCHD_LABEL}.plist`
 const GATEWAY_GUI_PLIST_PATH = `${process.env.HOME}/Library/LaunchAgents/${GATEWAY_LAUNCHD_LABEL}.plist`
 const GATEWAY_INSTALLER_PATH = `${process.env.HOME}/Code/joelhooks/joelclaw/infra/install-critical-launchdaemons.sh`
+const GATEWAY_START_SCRIPT_PATH = `${process.env.HOME}/.joelclaw/scripts/gateway-start.sh`
 
 type GatewayLaunchdDomain = "system" | "gui"
 
@@ -2465,6 +2942,7 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
         test: "joelclaw gateway test — Push test event to all sessions",
         restart: "joelclaw gateway restart — Roll the pi session, clean Redis, restart daemon",
         enable: "joelclaw gateway enable — Re-enable launch agent and start daemon",
+        channel: "joelclaw gateway channel {list|status|enable|disable} — Enable/disable runtime channels",
         stream: "joelclaw gateway stream — NDJSON stream of all gateway events (ADR-0058)",
         diagnose: "joelclaw gateway diagnose [--hours N] — Full diagnostic across all layers",
         review: "joelclaw gateway review [--hours N] — Recent session context (exchanges, tools, errors)",
@@ -2479,6 +2957,7 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
       { command: "joelclaw gateway diagnose", description: "Full diagnostic (process → redis → model → delivery)" },
       { command: "joelclaw gateway review", description: "Recent session context (what happened?)" },
       { command: "joelclaw gateway behavior list", description: "Inspect active behavior contract + pending candidates" },
+      { command: "joelclaw gateway channel list", description: "Inspect enabled/disabled channel state" },
       { command: "joelclaw gateway known-issues", description: "List muted channels that won't trigger alerts" },
       { command: "joelclaw gateway stream", description: "Stream all gateway events (NDJSON)" },
       { command: "joelclaw gateway test", description: "Push test event + verify" },
@@ -2499,6 +2978,7 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
     gatewayUnmute,
     gatewayRestart,
     gatewayEnable,
+    gatewayChannelCmd,
     gatewayStream,
     gatewayDiagnose,
     gatewayReview,

@@ -43,6 +43,21 @@ Daemon startup now enforces this invariant:
 
 This prevents non-gateway pi sessions from loading gateway automation hooks.
 
+## Runtime channel toggles
+
+Use the CLI to enable or disable gateway channels. Do not hand-edit `~/.joelclaw/scripts/gateway-start.sh` unless the CLI is broken.
+
+```bash
+joelclaw gateway channel list
+joelclaw gateway channel status discord
+joelclaw gateway channel disable discord --restart
+joelclaw gateway channel enable discord --restart
+```
+
+The command rewrites the channel env assignments in `~/.joelclaw/scripts/gateway-start.sh`, saves a `/tmp/joelclaw/gateway-start.sh.*` backup before changes, and restarts the gateway when `--restart` is present. Telegram disable requires `--force` because it is a primary operator channel.
+
+Disabled Discord should report component `disabled`, channel `configured:false`, `started:false`, `ready:false`, `botUserId:null`, and health entry `status:"disabled"`. Do not delete or revoke stored secrets for a temporary disable.
+
 ## Manual CLI checks
 
 ```bash
