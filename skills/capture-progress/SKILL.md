@@ -202,6 +202,6 @@ Capture:
 User: "capture this means make it durable, not just noted"
 
 Capture:
-- add or update the `capture_progress` skill
+- add or update the `capture-progress` skill
 - optionally write memory if the pattern should be globally recalled
 - commit

@@ -1,5 +1,7 @@
 # Context Budget Analysis — 2026-03-04
 
+> 2026-06-05 update: `memory-enforcer` no longer calls `pi.sendMessage` from a delayed `session_start` callback. It starts recall without captured `pi`/ctx state, then `before_agent_start` injects the ready result via that hook's returned hidden message. This avoids stale captured objects after `/reload`, `newSession`, `fork`, or `switchSession`.
+
 ## Problem
 
 Pi sessions are hitting frequent, long compactions. A single 8-hour session
@@ -141,11 +143,12 @@ Same instructions, slightly different wording. ~160 tokens wasted.
 
 1. **identity-inject**: Reads 5 identity files from `~/.joelclaw/`, prepends to system prompt (~11.6KB)
 2. **memory-enforcer**: Appends MEMORY_NUDGE to system prompt (~640 bytes)
-3. **memory-enforcer**: Runs `joelclaw knowledge search` subprocess (async, doesn't inject result into prompt but adds latency)
+3. **memory-enforcer**: Waits briefly for a ready recall result and injects one hidden `memory-recall` message for the current session
+4. **memory-enforcer**: Runs `joelclaw knowledge search` subprocess and injects one hidden `system-knowledge` message per session when results exist
 
 ### session_start (fires once)
 
-1. **memory-enforcer**: Runs `joelclaw recall` subprocess
+1. **memory-enforcer**: Resets per-session recall/knowledge injection guards and starts recall without using captured `pi` or ctx in delayed callbacks
 2. **langfuse-cost**: Initializes Langfuse trace
 3. **inngest-monitor**: Sets up TUI widget
 
@@ -172,8 +175,7 @@ Target: ~50 active skills for interactive, full set for gateway.
 
 ### 2. IMMEDIATE: Remove duplicate memory-enforcer
 
-Delete `~/.pi/agent/git/github.com/joelhooks/pi-tools/memory-enforcer/` —
-the extensions/ version is the canonical one. Or vice versa, but only keep ONE.
+The canonical active extension is `~/Code/joelhooks/joelclaw/pi/extensions/memory-enforcer`, symlinked from `~/.pi/agent/extensions/memory-enforcer`. The old `pi-tools/memory-enforcer/` directory may still exist in the package checkout, but current `pi-tools/package.json` no longer lists it in `pi.extensions`; do not re-enable both copies.
 
 ### 3. IMMEDIATE: Remove duplicate identity-inject
 

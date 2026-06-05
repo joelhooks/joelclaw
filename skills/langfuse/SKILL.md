@@ -197,6 +197,7 @@ curl -s -u "$LF_PK:$LF_SK" "https://us.cloud.langfuse.com/api/public/observation
 | No traces at all | Langfuse creds missing | Check `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` env |
 | `channel:interactive` on gateway | `GATEWAY_ROLE` not set | Must be in `gateway-start.sh` |
 | Stale extension code | Gateway/interactive session not reloaded after change | Restart gateway and start a fresh interactive session |
+| `langfuse-cost: cannot load optional dependency 'langfuse'` | The extension resolves `langfuse` from the joelclaw repo realpath, but root `node_modules` is missing or stale | From `~/Code/joelhooks/joelclaw`, run `pnpm install --frozen-lockfile`, then verify `node -e "require('langfuse')"` and start a fresh pi session |
 | OTEL emit errors in gateway | system-bus-worker port-forward down | `kubectl port-forward -n joelclaw svc/system-bus-worker 3111:3111` |
 
 ## Key Files

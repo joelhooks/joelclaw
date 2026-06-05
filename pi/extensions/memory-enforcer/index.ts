@@ -15,6 +15,7 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 }
 
 const RECALL_TIMEOUT_MS = parsePositiveInt(process.env.JOELCLAW_MEMORY_RECALL_TIMEOUT_MS, 15_000);
+const RECALL_INJECTION_WAIT_MS = parsePositiveInt(process.env.JOELCLAW_MEMORY_RECALL_INJECTION_WAIT_MS, 250);
 const RECALL_LIMIT = parsePositiveInt(process.env.JOELCLAW_MEMORY_RECALL_LIMIT, 5);
 const DEFAULT_RECALL_QUERY = "recent decisions, active work, unresolved failures, and operational context";
 const GATEWAY_RECALL_QUERY = "gateway daemon telegram redis session routing compaction";
@@ -218,11 +219,10 @@ async function querySystemKnowledge(query: string): Promise<string> {
   });
 }
 
-async function seedSystemKnowledge(
+async function buildSystemKnowledgeMessage(
   sessionId: string | null,
-  pi: ExtensionAPI,
   trigger: "before_agent_start" | "session_start" = "before_agent_start",
-): Promise<void> {
+): Promise<HiddenCustomMessage | null> {
   const startedAt = Date.now();
   const recallQuery = getRecallQuery();
 
@@ -248,18 +248,20 @@ async function seedSystemKnowledge(
     // ADR-0204: inject system knowledge ONCE per session (not every turn!)
     // before_agent_start fires every turn — without this guard, each turn
     // adds a new hidden message that accumulates and causes compaction cascades.
-    if (result.length > 0 && !knowledgeInjected) {
-      knowledgeInjected = true;
-      pi.sendMessage(
-        { customType: "system-knowledge", content: `## System Knowledge (auto-retrieved)\n${result}`, display: false },
-      );
+    if (result.length === 0 || knowledgeInjected) return null;
 
-      emitOtel("system_knowledge.injected", {
-        session_id: sessionId,
-        channel: CHANNEL,
-        result_length: result.length,
-      });
-    }
+    knowledgeInjected = true;
+    emitOtel("system_knowledge.injected", {
+      session_id: sessionId,
+      channel: CHANNEL,
+      result_length: result.length,
+    });
+
+    return {
+      customType: "system-knowledge",
+      content: `## System Knowledge (auto-retrieved)\n${result}`,
+      display: false,
+    };
   } catch (error) {
     emitOtel(
       "system_knowledge.retrieval.failed",
@@ -273,6 +275,7 @@ async function seedSystemKnowledge(
       },
       { level: "warn", success: false },
     );
+    return null;
   }
 }
 
@@ -324,7 +327,13 @@ function formatKnowledgeHits(rawOutput: string, maxHits = 3): string[] {
   }
 }
 
-function seedRecall(sessionId: string | null, pi: ExtensionAPI): void {
+type HiddenCustomMessage = {
+  customType: string;
+  content: string;
+  display: false;
+};
+
+async function buildRecallMessage(sessionId: string | null): Promise<HiddenCustomMessage | null> {
   const startedAt = Date.now();
   const recallQuery = getRecallQuery();
 
@@ -335,57 +344,55 @@ function seedRecall(sessionId: string | null, pi: ExtensionAPI): void {
     timeout_ms: RECALL_TIMEOUT_MS,
   });
 
-  void runRecallCommand()
-    .then((output) => {
-      const resultCount = extractResultCount(output);
-      const hitLines = formatRecallHits(output, RECALL_LIMIT);
+  try {
+    const output = await runRecallCommand();
+    const resultCount = extractResultCount(output);
+    const hitLines = formatRecallHits(output, RECALL_LIMIT);
 
-      emitOtel("memory.recall.completed", {
+    emitOtel("memory.recall.completed", {
+      session_id: sessionId,
+      channel: CHANNEL,
+      query: recallQuery,
+      result_count: resultCount,
+      injected_count: hitLines.length,
+      latency_ms: Date.now() - startedAt,
+    });
+
+    // ADR-0204: inject recall results ONCE per session (not every turn)
+    if (hitLines.length === 0 || recallInjected) return null;
+
+    recallInjected = true;
+    const content = [
+      "## Relevant Memory (auto-retrieved)",
+      ...hitLines,
+    ].join("\n");
+
+    emitOtel("memory.recall.injected", {
+      session_id: sessionId,
+      channel: CHANNEL,
+      hit_count: hitLines.length,
+    });
+
+    return { customType: "memory-recall", content, display: false };
+  } catch (error) {
+    emitOtel(
+      "memory.recall.failed",
+      {
         session_id: sessionId,
         channel: CHANNEL,
         query: recallQuery,
-        result_count: resultCount,
-        injected_count: hitLines.length,
         latency_ms: Date.now() - startedAt,
-      });
+        error: errorMessage(error),
+      },
+      {
+        level: "warn",
+        success: false,
+      },
+    );
 
-      // ADR-0204: inject recall results ONCE per session (not every turn)
-      if (hitLines.length > 0 && !recallInjected) {
-        recallInjected = true;
-        const content = [
-          "## Relevant Memory (auto-retrieved)",
-          ...hitLines,
-        ].join("\n");
-
-        pi.sendMessage(
-          { customType: "memory-recall", content, display: false },
-        );
-
-        emitOtel("memory.recall.injected", {
-          session_id: sessionId,
-          channel: CHANNEL,
-          hit_count: hitLines.length,
-        });
-      }
-    })
-    .catch((error) => {
-      emitOtel(
-        "memory.recall.failed",
-        {
-          session_id: sessionId,
-          channel: CHANNEL,
-          query: recallQuery,
-          latency_ms: Date.now() - startedAt,
-          error: errorMessage(error),
-        },
-        {
-          level: "warn",
-          success: false,
-        },
-      );
-
-      console.warn(`[memory-enforcer] recall seed failed: ${errorMessage(error)}`);
-    });
+    console.warn(`[memory-enforcer] recall seed failed: ${errorMessage(error)}`);
+    return null;
+  }
 }
 
 function requestObserve(sessionId: string | null): void {
@@ -431,8 +438,9 @@ function requestObserve(sessionId: string | null): void {
 }
 
 // Module-level injection guards — reset per session in session_start.
-// These must be module-scope so seedRecall() and seedSystemKnowledge() can access them.
+// These must be module-scope so buildRecallMessage() and buildSystemKnowledgeMessage() can access them.
 let recallInjected = false;
+let recallMessageDelivered = false;
 let knowledgeInjected = false;
 
 const MEMORY_NUDGE =
@@ -449,13 +457,52 @@ const MEMORY_NUDGE =
 
 export default function memoryEnforcer(pi: ExtensionAPI): void {
   let currentSessionId: string | null = null;
+  let recallMessage: HiddenCustomMessage | null | undefined;
+  let recallMessagePromise: Promise<HiddenCustomMessage | null> | null = null;
+
+  async function getReadyRecallMessage(): Promise<HiddenCustomMessage | null> {
+    if (recallMessageDelivered) return null;
+    if (recallMessage !== undefined) {
+      if (!recallMessage) return null;
+      recallMessageDelivered = true;
+      return recallMessage;
+    }
+
+    if (!recallMessagePromise) return null;
+
+    const maybeMessage = await Promise.race([
+      recallMessagePromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), RECALL_INJECTION_WAIT_MS)),
+    ]);
+
+    if (!maybeMessage || recallMessageDelivered) return null;
+    recallMessageDelivered = true;
+    return maybeMessage;
+  }
 
   // ── Per-turn: inject memory-write pressure into system prompt ──
-  pi.on("before_agent_start", async (event: { systemPrompt?: string }) => {
-    return {
-      systemPrompt: (event.systemPrompt ?? "") + MEMORY_NUDGE,
-    };
-  });
+  pi.on(
+    "before_agent_start",
+    async (
+      event: { systemPrompt?: string },
+      ctx: { sessionManager?: { getSessionId?: () => string | null | undefined } },
+    ) => {
+      let sessionId = currentSessionId;
+      try {
+        sessionId = ctx.sessionManager?.getSessionId?.() ?? currentSessionId;
+      } catch {
+        sessionId = currentSessionId;
+      }
+
+      currentSessionId = sessionId;
+      const message = await getReadyRecallMessage();
+
+      return {
+        systemPrompt: (event.systemPrompt ?? "") + MEMORY_NUDGE,
+        ...(message ? { message } : {}),
+      };
+    },
+  );
 
   pi.on("session_start", (_event: unknown, ctx: { sessionManager?: { getSessionId?: () => string | null | undefined } }) => {
     try {
@@ -465,9 +512,13 @@ export default function memoryEnforcer(pi: ExtensionAPI): void {
     }
 
     recallInjected = false;
+    recallMessageDelivered = false;
     knowledgeInjected = false;
-    const sessionId = currentSessionId;
-    setTimeout(() => seedRecall(sessionId, pi), 0);
+    recallMessage = undefined;
+    recallMessagePromise = buildRecallMessage(currentSessionId).then((message) => {
+      recallMessage = message;
+      return message;
+    });
   });
 
   pi.on(
@@ -481,7 +532,8 @@ export default function memoryEnforcer(pi: ExtensionAPI): void {
       }
 
       currentSessionId = sessionId;
-      await seedSystemKnowledge(sessionId, pi, "before_agent_start");
+      const message = await buildSystemKnowledgeMessage(sessionId, "before_agent_start");
+      return message ? { message } : undefined;
     },
   );
 
