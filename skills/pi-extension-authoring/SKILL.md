@@ -21,7 +21,7 @@ Use this before changing Pi extension code or debugging Pi startup warnings.
 - Active symlinks: `~/.pi/agent/extensions/<name>` → repo-local source
 - Package extensions: `~/.pi/agent/git/github.com/<owner>/<repo>`
 - Package config: `~/.pi/agent/settings.json`
-- Pi SDK/docs: global package under `~/.local/share/fnm/node-versions/*/installation/lib/node_modules/@mariozechner/pi-coding-agent/`
+- Pi SDK/docs: global package under `~/.local/share/fnm/node-versions/*/installation/lib/node_modules/@earendil-works/pi-coding-agent/` (older installs used `@mariozechner/pi-coding-agent`)
 
 ## Rules
 
@@ -97,12 +97,15 @@ For package updates:
 
 ```bash
 pi update
+which -a pi
 pi --version
 pi list
-npm list -g --depth=0 | rg '@mariozechner/pi-coding-agent|pi-gitnexus|pi-mcp-adapter|pi-subagents'
+npm list -g --depth=0 | rg '@earendil-works/pi-coding-agent|@mariozechner/pi-coding-agent|pi-gitnexus|pi-mcp-adapter|pi-subagents'
 ```
 
 Clean untracked npm lockfiles generated inside git package checkouts when the package does not track them.
+
+If multiple `pi` binaries exist, verify they resolve to the same version. On Panda, `~/.bun/bin/pi` should be a symlink to `~/.local/bin/pi`; Bun's global installer can lag behind npm because of `minimum-release-age`.
 
 ## Common fixes
 
