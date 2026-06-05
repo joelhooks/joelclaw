@@ -96,11 +96,28 @@ rg -n "Skill conflicts|cannot load optional dependency|stale after session|<exte
 For package updates:
 
 ```bash
+# Update Pi plus settings-managed packages. Current Pi self-update migrates
+# @mariozechner/pi-coding-agent installs to @earendil-works/pi-coding-agent.
 pi update
+
+# Keep npm-global tools current. Do not install the unrelated `pi` npm package.
+npm install -g @earendil-works/pi-coding-agent@latest pi-mcp-adapter@latest pi-gitnexus@latest pi-subagents@latest pi-interactive-shell@latest
+
+# If Bun's shadow global is present, either point ~/.bun/bin/pi at ~/.local/bin/pi
+# or force the exact current version. Bun may block fresh releases via minimum-release-age.
+bun add -g --minimum-release-age=0 @earendil-works/pi-coding-agent@$(pi --version)
+
 which -a pi
 pi --version
 pi list
-npm list -g --depth=0 | rg '@earendil-works/pi-coding-agent|@mariozechner/pi-coding-agent|pi-gitnexus|pi-mcp-adapter|pi-subagents'
+npm list -g --depth=0 | rg '@earendil-works/pi-coding-agent|@mariozechner/pi-coding-agent|pi-gitnexus|pi-mcp-adapter|pi-subagents|pi-interactive-shell'
+```
+
+Smoke-test both base Pi and full extension/tool startup with an approved model:
+
+```bash
+pi -p --no-session --no-tools --no-extensions --no-context-files --model openai-codex/gpt-5.5 "Reply with exactly OK."
+pi -p --no-session --no-context-files --model openai-codex/gpt-5.5 "Reply with exactly OK."
 ```
 
 Clean untracked npm lockfiles generated inside git package checkouts when the package does not track them.
