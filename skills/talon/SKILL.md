@@ -100,7 +100,7 @@ any → healthy (all probes pass)
 | talos_container | `docker inspect joelclaw-controlplane-1` | Yes |
 | k8s_api | `kubectl get nodes` | Yes |
 | node_ready | kubectl jsonpath for Ready condition | Yes |
-| node_schedulable | kubectl jsonpath for spec (taints/cordon) | Yes |
+| node_schedulable | kubectl jsonpath for spec (cordon + non-control-plane `NoSchedule` taints; allows the normal single-node control-plane taint) | Yes |
 | flannel | `kubectl -n kube-system get daemonset kube-flannel -o jsonpath=...` | No |
 | redis | `kubectl exec redis-0 -- redis-cli ping` | Yes |
 | kubelet_proxy_rbac | `kubectl auth can-i --as=<apiserver-kubelet-client*> {get,create} nodes --subresource=proxy` | Yes |

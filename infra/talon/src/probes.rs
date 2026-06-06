@@ -408,11 +408,19 @@ fn is_node_schedulable(spec_output: &str) -> bool {
         return false;
     }
 
-    if spec_output.contains("NoSchedule") {
-        return false;
-    }
+    // Single-node control-plane clusters legitimately carry the default
+    // control-plane NoSchedule taint. Talos/Colima still runs the joelclaw
+    // workloads because the manifests tolerate it. Treat only other NoSchedule
+    // taints as unschedulable; disk-pressure is covered by its dedicated probe.
+    let has_non_control_plane_noschedule = spec_output
+        .split("}")
+        .filter(|taint| taint.contains("NoSchedule"))
+        .any(|taint| {
+            !taint.contains("node-role.kubernetes.io/control-plane")
+                && !taint.contains("node-role.kubernetes.io/master")
+        });
 
-    true
+    !has_non_control_plane_noschedule
 }
 
 fn is_flannel_ready(status_output: &str) -> bool {
@@ -474,8 +482,8 @@ fn vm_tcp_probe_script(port: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_flannel_ready, kubelet_proxy_rbac_probe_script, launchd_probe_running,
-        shell_single_quote, vm_tcp_probe_script,
+        is_flannel_ready, is_node_schedulable, kubelet_proxy_rbac_probe_script,
+        launchd_probe_running, shell_single_quote, vm_tcp_probe_script,
     };
 
     #[test]
@@ -489,6 +497,21 @@ mod tests {
         assert!(!is_flannel_ready("0/1"));
         assert!(!is_flannel_ready("0/0"));
         assert!(!is_flannel_ready("not-ready"));
+    }
+
+    #[test]
+    fn node_schedulable_allows_single_node_control_plane_taint() {
+        assert!(is_node_schedulable(
+            "{\"podCIDR\":\"10.244.0.0/24\",\"taints\":[{\"effect\":\"NoSchedule\",\"key\":\"node-role.kubernetes.io/control-plane\"}]}"
+        ));
+    }
+
+    #[test]
+    fn node_schedulable_fails_for_unschedulable_or_other_noschedule_taints() {
+        assert!(!is_node_schedulable("{\"unschedulable\":true}"));
+        assert!(!is_node_schedulable(
+            "{\"taints\":[{\"effect\":\"NoSchedule\",\"key\":\"node.kubernetes.io/disk-pressure\"}]}"
+        ));
     }
 
     #[test]
