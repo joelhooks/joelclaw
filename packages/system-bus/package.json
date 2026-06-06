@@ -33,7 +33,7 @@
     "convex": "^1.32.0",
     "fast-xml-parser": "^5.3.7",
     "gray-matter": "^4.0.3",
-    "hono": "^4.11.9",
+    "hono": "^4.12.21",
     "inngest": "^3.54.2",
     "ioredis": "^5.9.3",
     "oauth-1.0a": "^2.2.6",
