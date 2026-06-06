@@ -8,6 +8,7 @@ const {
   parseSqliteJsonRows,
   parseRunTimestampMs,
   partitionMemoryRunsForHealth,
+  categoryConfidencePassesHealth,
   runIdHexToUlid,
   mapSweepCandidates,
   decodeConnectStartResponse,
@@ -154,6 +155,12 @@ describe("inngest memory-health helpers", () => {
     expect(result.historicalFailedRuns.map((run) => run.id)).toEqual(["old-failed"])
     expect(result.staleSdkActiveRuns.map((run) => run.id)).toEqual(["stale-running"])
     expect(result.operationalActiveRuns.map((run) => run.id)).toEqual(["live-running"])
+  })
+
+  test("does not fail category confidence health on tiny recent samples", () => {
+    expect(categoryConfidencePassesHealth({ supported: true, knownCount: 3, highRatio: 1 / 3 }, 0.6)).toBe(true)
+    expect(categoryConfidencePassesHealth({ supported: true, knownCount: 25, highRatio: 0.2 }, 0.6)).toBe(false)
+    expect(categoryConfidencePassesHealth({ supported: false, knownCount: 0, highRatio: 0 }, 0.6)).toBe(true)
   })
 })
 

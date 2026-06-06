@@ -238,9 +238,14 @@ fi
 
 # -- pi-tools ----------------------------------------------------------
 PI_DEPS_OK=0
-[[ -f ~/.pi/agent/git/github.com/joelhooks/pi-tools/node_modules/@sinclair/typebox/package.json ]] && PI_DEPS_OK=$((PI_DEPS_OK + 1))
-[[ -d ~/.pi/agent/git/github.com/joelhooks/pi-tools/node_modules/@mariozechner/pi-coding-agent ]] && PI_DEPS_OK=$((PI_DEPS_OK + 1))
-[[ -d ~/.pi/agent/git/github.com/joelhooks/pi-tools/node_modules/@mariozechner/pi-tui ]] && PI_DEPS_OK=$((PI_DEPS_OK + 1))
+PI_TOOLS_NODE_MODULES="$HOME/.pi/agent/git/github.com/joelhooks/pi-tools/node_modules"
+[[ -f "$PI_TOOLS_NODE_MODULES/@sinclair/typebox/package.json" ]] && PI_DEPS_OK=$((PI_DEPS_OK + 1))
+if [[ -d "$PI_TOOLS_NODE_MODULES/@earendil-works/pi-coding-agent" || -d "$PI_TOOLS_NODE_MODULES/@mariozechner/pi-coding-agent" ]]; then
+  PI_DEPS_OK=$((PI_DEPS_OK + 1))
+fi
+if [[ -d "$PI_TOOLS_NODE_MODULES/@earendil-works/pi-tui" || -d "$PI_TOOLS_NODE_MODULES/@mariozechner/pi-tui" ]]; then
+  PI_DEPS_OK=$((PI_DEPS_OK + 1))
+fi
 if [[ "$PI_DEPS_OK" == "3" ]]; then
   check "pi-tools" 10 "all deps present"
 else

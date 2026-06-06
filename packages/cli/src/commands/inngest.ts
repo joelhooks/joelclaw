@@ -1775,6 +1775,22 @@ function partitionMemoryRunsForHealth(
   }
 }
 
+type CategoryConfidenceState = {
+  supported: boolean
+  knownCount: number
+  highRatio: number
+}
+
+function categoryConfidencePassesHealth(
+  state: CategoryConfidenceState,
+  minHighConfidenceRatio: number,
+  minSampleSize = 25,
+): boolean {
+  if (!state.supported) return true
+  if (state.knownCount < minSampleSize) return true
+  return state.highRatio >= minHighConfidenceRatio
+}
+
 function isTypesenseUnreachableMessage(message: string): boolean {
   return /ECONNREFUSED|Connection refused|TYPESENSE_UNREACHABLE|fetch failed/iu.test(message)
 }
@@ -4428,12 +4444,8 @@ const inngestMemoryHealthCmd = Command.make(
               : true)
             : true),
         categoryConfidence: hasRecentMemory
-          ? recentCategoryConfidenceState.supported && recentCategoryConfidenceState.highRatio >= minCategoryHighConfidence
-          : (categoryConfidenceState.supported
-            ? (categoryConfidenceState.knownCount >= 25
-              ? categoryConfidenceState.highRatio >= minCategoryHighConfidence
-              : true)
-            : true),
+          ? categoryConfidencePassesHealth(recentCategoryConfidenceState, minCategoryHighConfidence)
+          : categoryConfidencePassesHealth(categoryConfidenceState, minCategoryHighConfidence),
         writeGateFallbackRate:
           writeGateState.supported
             ? (writeGateState.totalWithVerdict >= 25
@@ -4670,6 +4682,7 @@ export const __inngestTestUtils = {
   parseSqliteJsonRows,
   parseRunTimestampMs,
   partitionMemoryRunsForHealth,
+  categoryConfidencePassesHealth,
   runIdHexToUlid,
   mapSweepCandidates,
   decodeConnectStartResponse,

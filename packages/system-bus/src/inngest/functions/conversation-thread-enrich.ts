@@ -6,6 +6,10 @@ import { inngest } from "../client";
 const THREAD_SUMMARIZER_MODEL = "anthropic/claude-haiku-4-5";
 const VAULT_MATCHES_PER_MESSAGE = 3;
 const MAX_MESSAGES_FOR_PROMPT = 12;
+// Typesense rejects URL query strings over 4000 bytes. Thread messages can be
+// whole emails or pasted logs, so cap the vault recall query well below that
+// after whitespace normalization.
+const MAX_VAULT_SEARCH_QUERY_CHARS = 1_200;
 
 type SupportedThreadSource = "slack" | "email";
 
@@ -234,10 +238,16 @@ Rules:
 - Reuse the supplied relatedProjects and vaultGapSignal if they are relevant.
 - Do not invent facts.`;
 
+function normalizeVaultSearchQuery(messageText: string): string {
+  const normalized = messageText.trim().replace(/\s+/g, " ");
+  if (normalized.length <= MAX_VAULT_SEARCH_QUERY_CHARS) return normalized;
+  return normalized.slice(0, MAX_VAULT_SEARCH_QUERY_CHARS).trim();
+}
+
 function buildVaultSearchParams(messageText: string): typesense.TypesenseSearchParams {
   return {
     collection: "vault_notes",
-    q: messageText,
+    q: normalizeVaultSearchQuery(messageText),
     query_by: "title,content,path,tags",
     per_page: VAULT_MATCHES_PER_MESSAGE,
     include_fields: "id,title,path,type,tags",

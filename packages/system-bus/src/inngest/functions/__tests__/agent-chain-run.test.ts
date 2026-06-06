@@ -172,13 +172,16 @@ describe("agentChainRun", () => {
       ],
     });
 
-    expect(inferCalls[1]?.prompt).toBe("Parallel plan using Scout context");
-    expect(inferCalls[2]?.prompt).toBe("Parallel review using Scout context");
+    const plannerCall = inferCalls.find((call) => call.opts.agent === "planner");
+    const reviewerCall = inferCalls.find((call) => call.opts.agent === "reviewer");
+    expect(plannerCall?.prompt).toBe("Parallel plan using Scout context");
+    expect(reviewerCall?.prompt).toBe("Parallel review using Scout context");
 
     const expectedAggregate =
       "=== Parallel Task 1 (planner) ===\nPlanner output\n\n=== Parallel Task 2 (reviewer) ===\nReviewer output";
 
-    expect(inferCalls[3]?.prompt).toBe(`Implement with\n${expectedAggregate}`);
+    const coderCall = inferCalls.find((call) => call.opts.agent === "coder");
+    expect(coderCall?.prompt).toBe(`Implement with\n${expectedAggregate}`);
   });
 
   test("continues chain on step failure when failFast is false", async () => {

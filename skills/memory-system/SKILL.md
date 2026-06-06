@@ -170,7 +170,11 @@ joelclaw recall "<query>" --category jc:memory-system --limit 10
 joelclaw recall "<query>" --include-hold --raw
 ```
 
-## 9a) Runs archive derived-index recovery (ADR-0243)
+## 9a) `joelclaw inngest memory-health` interpretation
+
+`memory-health` uses recent/current-window observations when any were written in the lookback. Do not fail the system on a tiny current-window category-confidence sample: fewer than 25 known-confidence observations is reported as evidence but treated as too small to gate. Stale RUNNING memory runs that started before the current worker are stale SDK ghosts, not live backlog.
+
+## 9b) Runs archive derived-index recovery (ADR-0243)
 
 Raw Pi/Claude/Codex Run capture and searchable Typesense indexes are separate layers:
 

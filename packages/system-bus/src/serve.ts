@@ -4,6 +4,7 @@ import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type InboxResult, isSandboxExecutionResult } from "@joelclaw/agent-execution";
 import { Hono } from "hono";
+import { connect as inngestConnect } from "inngest/connect";
 import { serve as inngestServe } from "inngest/hono";
 import { type Events, inngest } from "./inngest/client";
 import { webhookApp } from "./webhooks/server";
@@ -102,6 +103,9 @@ function findDuplicateIds(ids: string[]): string[] {
 const WORKER_ROLE = parseWorkerRole(process.env.WORKER_ROLE);
 let lastRegistrationAt = WORKER_STARTED_AT;
 const configuredServeHost = process.env.INNGEST_SERVE_HOST?.trim();
+const useInngestConnectMode = ["1", "true", "yes"].includes(
+  (process.env.INNGEST_CONNECT_MODE ?? "").trim().toLowerCase()
+);
 const serveHost = configuredServeHost
   ? configuredServeHost
   : (WORKER_ROLE === "host" ? "http://host.docker.internal:3111" : undefined);
@@ -684,6 +688,34 @@ if (serveHost) {
   console.log("🌐 serveHost: (connect-mode default)");
 }
 console.log(`📋 ${registeredFunctions.length} functions registered`);
+if (useInngestConnectMode) {
+  void inngestConnect({
+    apps: [{ client: inngest, functions: registeredFunctions }],
+    instanceId: `system-bus-${WORKER_ROLE}-${process.env.HOSTNAME ?? "panda"}`,
+    maxWorkerConcurrency: 8,
+  })
+    .then((connection) => {
+      console.log(`🔌 Inngest connect active: ${connection.connectionId}`);
+      void connection.closed.then(() => {
+        console.warn("[inngest:connect] connection closed");
+      });
+    })
+    .catch((error) => {
+      console.error("[inngest:connect] failed to start", error);
+      void emitOtelEvent({
+        level: "error",
+        source: "worker",
+        component: "serve",
+        action: "worker.connect.failed",
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {
+          workerRole: WORKER_ROLE,
+          registeredFunctions: registeredFunctions.length,
+        },
+      }).catch(() => {});
+    });
+}
 if (duplicateFunctionIds.length > 0) {
   console.warn(
     `[worker] duplicate function ids detected across roles: ${duplicateFunctionIds.join(", ")}`
