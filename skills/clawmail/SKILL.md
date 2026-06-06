@@ -121,6 +121,7 @@ joelclaw mail search --query "Status:"
 - Treat the operation as failed. Some CLI paths can return a successful envelope while `result.result` or `result.raw` contains backend errors such as `Too many open files`, `Agent not found`, or stale project metadata.
 - Verify reservations/register/inbox calls by reading the nested result, not only the top-level `ok` flag.
 - Retry once if the backend says it freed cached repos; if it still fails, continue only for low-risk edits and report the coordination failure in the final summary.
+- For repeated `Too many open files. Freed 0 cached repos`, inspect `lsof -p $(pgrep -f 'mcp_agent_mail.*serve-http') | rg '\.(archive|commit)\.lock'`. The durable fix is in `joelhooks/mcp_agent_mail`: close orphaned lock FDs, avoid treating metadata-missing locks as immediately stale, and run `com.joelclaw.agent-mail` with `NumberOfFiles=8192` via `infra/agent-mail-daemon.sh` + `infra/launchd/com.joelclaw.agent-mail.plist`.
 
 ## Prompt Authoring Checklist (shore up prompts)
 

@@ -41,6 +41,18 @@
     <key>ProcessType</key>
     <string>Background</string>
 
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
+
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
+
     <key>StandardOutPath</key>
     <string>/Users/joel/.joelclaw/logs/agent-mail.stdout.log</string>
 

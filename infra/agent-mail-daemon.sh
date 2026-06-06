@@ -24,6 +24,12 @@ if [ -d "$CHECKOUT/.git" ]; then
   fi
 fi
 
+# launchd's default file descriptor soft limit is too low for git-backed
+# multi-agent traffic. Keep this in the wrapper so the service survives even
+# before the repo-managed plist is reinstalled.
+ulimit -n "${AGENT_MAIL_NOFILE_LIMIT:-8192}" 2>/dev/null || \
+  echo "warning: could not raise agent-mail file descriptor limit" >&2
+
 exec /Users/joel/.local/bin/uv run --directory "$CHECKOUT" \
   python -c 'from mcp_agent_mail.cli import app; app()' -- \
   serve-http --port "$PORT"

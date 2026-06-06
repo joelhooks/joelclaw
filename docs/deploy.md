@@ -242,7 +242,7 @@ What the installer does:
 - removes stale manual kube operator tunnels on `16443` and `15000` before reinstalling the canonical daemon
 - bootstraps the critical services directly into the `system` launchd domain, using `UserName=joel` where the process should run as Joel
 
-Agent-mail note: `com.joelclaw.agent-mail` now goes through `infra/agent-mail-daemon.sh`, which resolves the joelclaw-managed `joelhooks/mcp_agent_mail` checkout instead of baking a third-party path into the plist. If the local checkout still lives under a legacy directory name, that is fine as long as the git `origin` remote is `joelhooks/mcp_agent_mail`.
+Agent-mail note: `com.joelclaw.agent-mail` now goes through `infra/agent-mail-daemon.sh`, which resolves the joelclaw-managed `joelhooks/mcp_agent_mail` checkout instead of baking a third-party path into the plist. If the local checkout still lives under a legacy directory name, that is fine as long as the git `origin` remote is `joelhooks/mcp_agent_mail`. The launchd plist and wrapper both raise `NumberOfFiles` to 8192 because git-backed mailbox writes can temporarily hold hundreds of descriptors under multi-agent traffic; the wrapper fallback matters when the installed system plist is stale.
 
 This replaces the failed ADR-0239 bridge design. We no longer try to bounce LaunchAgents into `user/$UID` from a system daemon.
 
