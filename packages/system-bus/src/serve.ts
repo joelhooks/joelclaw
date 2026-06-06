@@ -565,6 +565,7 @@ if (serveHost) {
 const inngestApiHandler = inngestServe(inngestApiOptions);
 
 const INNGEST_DEBUG_KEYS = ["fnId", "stepId", "runId", "probe", "sync", "batch"] as const;
+const INNGEST_ALLOWED_METHODS = "GET, POST, PUT";
 
 function parseQueryMap(req: Request): Record<string, string> {
   const url = new URL(req.url);
@@ -625,6 +626,22 @@ function summarizeInngestBody(rawBody: string | null): Record<string, unknown> |
     };
   }
 }
+
+app.on(
+  ["PATCH", "OPTIONS", "DELETE"],
+  "/api/inngest",
+  (c) => {
+    c.header("Allow", INNGEST_ALLOWED_METHODS);
+    return c.json(
+      {
+        ok: false,
+        error: "Method not allowed",
+        allowedMethods: INNGEST_ALLOWED_METHODS.split(", "),
+      },
+      405
+    );
+  }
+);
 
 app.on(
   ["GET", "POST", "PUT"],
