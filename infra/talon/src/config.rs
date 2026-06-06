@@ -652,17 +652,16 @@ timeout_secs = 5
     .to_string()
 }
 
+type ParsedServiceProbes = (
+    Vec<HttpServiceProbe>,
+    Vec<LaunchdServiceProbe>,
+    Vec<ScriptServiceProbe>,
+);
+
 fn parse_services_toml(
     raw: &str,
     default_timeout_secs: u64,
-) -> Result<
-    (
-        Vec<HttpServiceProbe>,
-        Vec<LaunchdServiceProbe>,
-        Vec<ScriptServiceProbe>,
-    ),
-    DynError,
-> {
+) -> Result<ParsedServiceProbes, DynError> {
     let mut section = String::new();
     let mut http_sections: BTreeMap<String, HttpServiceProbe> = BTreeMap::new();
     let mut launchd_sections: BTreeMap<String, LaunchdServiceProbe> = BTreeMap::new();
@@ -840,12 +839,11 @@ fn strip_comment(line: &str) -> &str {
 
 fn parse_toml_string(value: &str) -> Result<String, DynError> {
     let value = value.trim();
-    if value.len() >= 2 {
-        if (value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\''))
-        {
-            return Ok(unescape_string(&value[1..value.len() - 1]));
-        }
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        return Ok(unescape_string(&value[1..value.len() - 1]));
     }
 
     if value.is_empty() {

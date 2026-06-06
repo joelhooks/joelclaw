@@ -301,12 +301,11 @@ fn parse_env_file(path: &Path) -> Result<HashMap<String, String>, DynError> {
 }
 
 fn strip_wrapping_quotes(value: &str) -> &str {
-    if value.len() >= 2 {
-        if (value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\''))
-        {
-            return &value[1..value.len() - 1];
-        }
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        return &value[1..value.len() - 1];
     }
     value
 }

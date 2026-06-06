@@ -51,7 +51,7 @@ pub fn run_heal(
     let (success, output) = run_process(
         script_path
             .to_str()
-            .ok_or_else(|| "heal script path contains invalid UTF-8")?,
+            .ok_or("heal script path contains invalid UTF-8")?,
         &[],
         &[],
         Duration::from_secs(config.heal_timeout_secs),
