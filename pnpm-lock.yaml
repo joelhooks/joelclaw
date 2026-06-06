@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  inngest: 3.54.2
+
 importers:
 
   .:
@@ -693,7 +696,7 @@ importers:
         specifier: ^4.11.9
         version: 4.11.9
       inngest:
-        specifier: ^3.54.2
+        specifier: 3.54.2
         version: 3.54.2(@opentelemetry/core@2.5.1(@opentelemetry/api@1.9.0))(express@5.2.1)(hono@4.11.9)(next@16.1.6(@opentelemetry/api@1.9.0)(react-dom@19.2.0(react@19.2.4))(react@19.2.4))(typescript@5.9.2)(zod@4.3.6)
       ioredis:
         specifier: ^5.9.3

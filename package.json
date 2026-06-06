@@ -25,6 +25,14 @@
     "node": ">=18"
   },
   "packageManager": "pnpm@9.0.0",
+  "pnpm": {
+    "overrides": {
+      "inngest": "3.54.2"
+    }
+  },
+  "overrides": {
+    "inngest": "3.54.2"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
