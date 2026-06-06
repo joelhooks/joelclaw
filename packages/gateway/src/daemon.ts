@@ -136,6 +136,7 @@ const WS_PORT_FILE = `${PID_DIR}/gateway.ws.port`;
 const JOELCLAW_DIR = join(HOME, ".joelclaw");
 const SESSION_ID_FILE = join(JOELCLAW_DIR, "gateway.session");
 const GATEWAY_SESSION_DIR = join(JOELCLAW_DIR, "sessions", "gateway");
+const GATEWAY_FORCE_NEW_SESSION_FILE = join(PID_DIR, "gateway.force-new-session.json");
 // Gateway-specific working dir — has its own .pi/settings.json with aggressive compaction.
 // Project-level settings (cwd/.pi/settings.json) override global (~/.pi/agent/settings.json).
 // This keeps gateway compaction isolated from interactive pi sessions.
@@ -972,15 +973,50 @@ function withChannelMcqOverride(base: LoadExtensionsResult): LoadExtensionsResul
 
 mkdirSync(GATEWAY_SESSION_DIR, { recursive: true });
 
-// Always resume the existing session — context continuity is critical.
-// Pi's compaction handles what gets sent to the API (reserveTokens/keepRecentTokens).
-// The JSONL file grows but that's fine — pi summarizes old turns automatically.
-const hasExistingSession = readdirSync(GATEWAY_SESSION_DIR).some(f => f.endsWith(".jsonl"));
+type PendingSessionRotation = {
+  reason: string;
+  requestedAt: string;
+  summary?: string;
+};
+
+async function readPendingSessionRotation(): Promise<PendingSessionRotation | null> {
+  try {
+    const raw = await readFile(GATEWAY_FORCE_NEW_SESSION_FILE, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const record = parsed as Record<string, unknown>;
+    return {
+      reason: typeof record.reason === "string" && record.reason.trim().length > 0
+        ? record.reason.trim()
+        : "unspecified",
+      requestedAt: typeof record.requestedAt === "string" && record.requestedAt.trim().length > 0
+        ? record.requestedAt.trim()
+        : new Date().toISOString(),
+      summary: typeof record.summary === "string" && record.summary.trim().length > 0
+        ? record.summary.trim()
+        : undefined,
+    };
+  } catch (error: unknown) {
+    if (typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "ENOENT") {
+      return null;
+    }
+    console.error("[gateway] failed to read pending session rotation request", { error: String(error) });
+    return null;
+  }
+}
+
+const pendingSessionRotation = await readPendingSessionRotation();
+
+// Resume the existing session unless the previous daemon explicitly requested a
+// fresh session. Pi SDK removed AgentSession.newSession(); runtime replacement
+// now happens by letting launchd restart the daemon with a new SessionManager.
+const hasExistingSession = !pendingSessionRotation && readdirSync(GATEWAY_SESSION_DIR).some(f => f.endsWith(".jsonl"));
 const sessionManager = hasExistingSession
   ? SessionManager.continueRecent(HOME, GATEWAY_SESSION_DIR)
   : SessionManager.create(HOME, GATEWAY_SESSION_DIR);
 console.log("[gateway] session", {
-  mode: hasExistingSession ? "resumed" : "new",
+  mode: pendingSessionRotation ? "rotated" : hasExistingSession ? "resumed" : "new",
+  rotationReason: pendingSessionRotation?.reason ?? null,
   sessionId: sessionManager.getSessionId(),
   file: sessionManager.getSessionFile(),
   entries: sessionManager.getEntries().length,
@@ -1211,16 +1247,33 @@ setSession({
   reload: () => session.reload(),
   compact: (instructions?: string) => session.compact(instructions),
   newSession: async (compressionSummary?: string) => {
-    await session.newSession();
-    if (compressionSummary) {
-      // Inject the summary as the first user message so the agent has context
-      console.log("[gateway] injecting compression summary into fresh session", {
-        summaryLength: compressionSummary.length,
-      });
-      await session.prompt(compressionSummary);
-    }
+    await requestGatewaySessionRotation("operator-command", compressionSummary);
   },
 });
+
+if (pendingSessionRotation) {
+  try {
+    if (pendingSessionRotation.summary) {
+      sessionManager.appendCustomMessageEntry(
+        "gateway-session-rotation-summary",
+        pendingSessionRotation.summary,
+        false,
+        {
+          reason: pendingSessionRotation.reason,
+          requestedAt: pendingSessionRotation.requestedAt,
+        },
+      );
+      console.log("[gateway] injected pending session rotation summary", {
+        reason: pendingSessionRotation.reason,
+        summaryLength: pendingSessionRotation.summary.length,
+      });
+    }
+  } finally {
+    await rm(GATEWAY_FORCE_NEW_SESSION_FILE, { force: true }).catch((error) => {
+      console.error("[gateway] failed to clear pending session rotation request", { error });
+    });
+  }
+}
 
 // ── Context overflow recovery: build compression summary from dying session ──
 function buildCompressionSummary(): string {
@@ -1281,6 +1334,35 @@ function buildCompressionSummary(): string {
   );
 
   return parts.join("\n");
+}
+
+async function requestGatewaySessionRotation(reason: string, summary?: string): Promise<void> {
+  const payload: PendingSessionRotation = {
+    reason,
+    requestedAt: new Date().toISOString(),
+    ...(summary?.trim() ? { summary: summary.trim() } : {}),
+  };
+
+  await mkdir(PID_DIR, { recursive: true });
+  await writeFile(GATEWAY_FORCE_NEW_SESSION_FILE, JSON.stringify(payload, null, 2));
+  console.warn("[gateway:session] queued fresh-session restart", {
+    reason,
+    hasSummary: Boolean(payload.summary),
+    markerFile: GATEWAY_FORCE_NEW_SESSION_FILE,
+  });
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon",
+    action: "daemon.session.rotation_restart_requested",
+    success: true,
+    metadata: {
+      reason,
+      hasSummary: Boolean(payload.summary),
+      summaryLength: payload.summary?.length ?? 0,
+    },
+  });
+
+  await gracefulShutdown(`session-rotation:${reason}`);
 }
 
 onContextOverflowRecovery(async () => {
@@ -2388,12 +2470,7 @@ async function rotateSessionForPromptBudget(
       modelContextWindow,
     },
     async () => {
-      sessionCreatedAt = Date.now();
-      lastCompactionAt = Date.now();
-      await session.newSession();
-      if (summary) {
-        await session.prompt(summary, { streamingBehavior: "followUp" });
-      }
+      await requestGatewaySessionRotation("prompt_budget", summary);
     },
   );
 }
@@ -2474,14 +2551,7 @@ async function maybeRunIdleGatewayMaintenance(): Promise<void> {
         modelContextWindow: snapshot.maxTokens,
       },
       async () => {
-        sessionCreatedAt = Date.now();
-        lastCompactionAt = Date.now();
-        await session.newSession();
-        lastProactiveCompactionAt = 0;
-        lastProactiveCompactionUsagePercent = 0;
-        if (summary) {
-          await session.prompt(summary, { streamingBehavior: "followUp" });
-        }
+        await requestGatewaySessionRotation(`idle_${decision.reason}`, summary);
       },
     );
     return;
@@ -4101,12 +4171,7 @@ session.subscribe((event: any) => {
           sessionCreatedAt = now;
           lastCompactionAt = now;
           try {
-            await session.newSession();
-            lastProactiveCompactionAt = 0;
-            lastProactiveCompactionUsagePercent = 0;
-            if (summary) {
-              await session.prompt(summary, { streamingBehavior: "followUp" });
-            }
+            await requestGatewaySessionRotation("session_age", summary);
           } catch (err) {
             console.error("[gateway:health] session recycle failed", { err });
           }
@@ -4210,14 +4275,7 @@ session.subscribe((event: any) => {
                 modelContextWindow,
               },
               async () => {
-                sessionCreatedAt = Date.now();
-                lastCompactionAt = Date.now();
-                await session.newSession();
-                lastProactiveCompactionAt = 0;
-                lastProactiveCompactionUsagePercent = 0;
-                if (summary) {
-                  await session.prompt(summary, { streamingBehavior: "followUp" });
-                }
+                await requestGatewaySessionRotation("context_ceiling", summary);
               },
             );
             console.log("[gateway:health] context-ceiling rotation complete");

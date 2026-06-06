@@ -115,7 +115,7 @@ The daemon emits OTEL under `daemon.session-pressure` (`session_pressure.alert.s
 Idle maintenance is autonomous for time-based pressure:
 - watchdog evaluates idle session pressure even when no turn is active
 - overdue compaction gaps trigger autonomous compaction instead of waiting for the next human/event turn
-- age-triggered rotation can also happen from the watchdog path, seeding the fresh session with the compression summary before the next inbound turn
+- age-triggered rotation can also happen from the watchdog path; because Pi removed `AgentSession.newSession()`, gateway writes `/tmp/joelclaw/gateway.force-new-session.json` and exits cleanly so launchd restarts into a fresh `SessionManager`, then injects the compression summary as hidden context before the next inbound turn
 - those watchdog-triggered runs emit the same `daemon.maintenance.started|completed|failed` telemetry as turn-bound maintenance
 
 ## Interruptibility and supersession (ADR-0196 / ADR-0218 rank 4 slice)

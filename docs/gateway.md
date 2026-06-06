@@ -533,7 +533,7 @@ Three guards prevent context bloat and overnight fallback thrash:
 After every `turn_end`, if >4 hours since last compaction, force `session.compact()` regardless of token count. Prevents the scenario where context grows unchecked when pi's auto-compaction misses (e.g. model_change entries disrupting threshold calculation).
 
 ### Session age limit (8h max)
-After every `turn_end`, if session is >8 hours old, create a fresh session with compression summary. Prevents multi-day JSONL growth before fallback thrash starts. Session recycle is no longer an operator-facing Telegram notice by default; it stays in logs/OTEL/status unless a higher-signal failure path escalates it.
+After every `turn_end`, if session is >8 hours old, queue a fresh-session marker and let launchd restart the daemon into a new `SessionManager` with the compression summary injected as hidden context. Pi removed `AgentSession.newSession()`, so gateway rotation is now restart-backed instead of in-process session replacement. Session recycle is no longer an operator-facing Telegram notice by default; it stays in logs/OTEL/status unless a higher-signal failure path escalates it.
 
 ### Quiet hours auto-batching (11 PM – 7 AM PST)
 During quiet hours, all non-interactive events are batched (not immediate). Batch digest flush is deferred until wake hours. Human messages (telegram, imessage, etc.) and error events always process immediately.
