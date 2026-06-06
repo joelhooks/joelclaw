@@ -300,4 +300,4 @@ Talon detects each stage:
 - ADR-0158: Worker supervisor (superseded by talon)
 - `infra/k8s-reboot-heal.sh`: Tier 1 heal script
 - `infra/worker-supervisor/`: Original standalone worker supervisor (superseded)
-- Ollama + qwen3:8b: Tier 3 local fallback model
+- `anthropic/claude-opus-4.7`: Tier 3 approved secondary fallback model
