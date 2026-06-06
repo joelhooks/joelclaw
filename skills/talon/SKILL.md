@@ -74,9 +74,9 @@ talon (single binary)
 └── Escalation (on failure)
     ├── Tier 1a: bridge-heal (force-cycle Colima on localhost↔VM split-brain)
     ├── Tier 1b: k8s-reboot-heal.sh (300s timeout, RBAC drift guard, VM `br_netfilter` repair, warmup-aware post-Colima invariants including deployment readiness + ImagePullBackOff pod reset, then voice-agent stale cleanup + launchd kickstart via `infra/voice-agent/cleanup-stale.sh`)
-    ├── Tier 2: pi agent (cloud model, 10min cooldown, bounded by `agent.timeout_secs`; subprocess output uses temp files and timeout kills the whole process group so a stuck pi child cannot freeze Talon's health loop)
-    ├── Tier 3: pi agent (Ollama local, network-down fallback, same process-group timeout guard)
-    └── Tier 4: Telegram + iMessage SOS fan-out (15min critical threshold)
+    ├── Tier 2: pi agent (approved cloud model, 10min cooldown, bounded by `agent.timeout_secs`; subprocess output uses temp files and timeout kills the whole process group so a stuck pi child cannot freeze Talon's health loop)
+    ├── Tier 3: pi agent (approved secondary model fallback, same process-group timeout guard)
+    └── Tier 4: Telegram + iMessage SOS fan-out (15min critical threshold, 4h repeat cooldown)
 ```
 
 ## State Machine
@@ -113,7 +113,7 @@ any → healthy (all probes pass)
 | typesense | `curl localhost:8108/health` | No |
 | worker | `curl localhost:3111/api/inngest` | No |
 
-Critical probes trigger escalation immediately. Non-critical need 3 consecutive failures.
+Built-in critical probes use `probes.critical_after_consecutive_failures` (default `2`) before escalation, so one transient probe miss does not launch heal/agent/SOS theatre. Dynamic critical probes use their own `critical_after_consecutive_failures` values. Non-critical probes need the global consecutive failure threshold.
 
 VM probes are witness probes only. They let Talon classify "service alive in VM but dead on localhost" as a Colima bridge split-brain and run bridge-heal instead of full recovery first.
 
@@ -183,10 +183,12 @@ Recent dynamic probes added for the 2026-03-17 Colima/Restate incident:
 ### SOS channel config
 
 - Tier 4 sends to both Telegram and iMessage
+- Repeated SOS for the same persistent outage is throttled by `sos_cooldown_secs` (default 4h) to avoid paging spam after the first actionable alert.
 - Telegram fields in `[escalation]`:
   - `sos_telegram_chat_id`
   - `sos_telegram_secret_name` (defaults to `telegram_bot_token`)
 - Talon now leases Telegram tokens via `secrets lease <name> --ttl ...` (no `--raw`). If you still see `curl: (3) URL rejected: Malformed input to a URL function`, redeploy the latest Talon binary.
+- Agent fallback commands must stay on approved models only: `openai-codex/gpt-5.5` primary and `anthropic/claude-opus-4.7` secondary. Do not restore Ollama/Azure/provider drift in Talon config.
 - iMessage recipient remains `sos_recipient`
 
 ## Launchd Management

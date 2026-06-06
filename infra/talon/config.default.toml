@@ -22,21 +22,22 @@ http_timeout_secs = 5
 
 [escalation]
 agent_cooldown_secs = 600
-sos_cooldown_secs = 1800
+sos_cooldown_secs = 14400
 sos_recipient = "joelhooks@gmail.com"
 sos_telegram_chat_id = "7718912466"
 sos_telegram_secret_name = "telegram_bot_token"
 critical_threshold_secs = 900
 
 [agent]
-cloud_command = "pi -p --no-extensions --model openai-codex/gpt-5.4"
-local_command = "pi -p --no-extensions --model ollama/qwen3:8b"
+cloud_command = "pi -p --no-extensions --model openai-codex/gpt-5.5"
+local_command = "pi -p --no-extensions --model anthropic/claude-opus-4.7"
 timeout_secs = 300
 
 [probes]
 colima_timeout_secs = 5
 k8s_timeout_secs = 10
 service_timeout_secs = 5
+critical_after_consecutive_failures = 2
 consecutive_failures_before_escalate = 3
 
 [health]

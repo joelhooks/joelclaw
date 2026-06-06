@@ -69,6 +69,7 @@ pub struct ProbesConfig {
     pub colima_timeout_secs: u64,
     pub k8s_timeout_secs: u64,
     pub service_timeout_secs: u64,
+    pub critical_after_consecutive_failures: u32,
     pub consecutive_failures_before_escalate: u32,
 }
 
@@ -170,7 +171,7 @@ impl Default for EscalationConfig {
     fn default() -> Self {
         Self {
             agent_cooldown_secs: 600,
-            sos_cooldown_secs: 1800,
+            sos_cooldown_secs: 14_400,
             sos_recipient: "joelhooks@gmail.com".to_string(),
             sos_telegram_chat_id: "7718912466".to_string(),
             sos_telegram_secret_name: "telegram_bot_token".to_string(),
@@ -182,9 +183,10 @@ impl Default for EscalationConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            cloud_command: "pi -p --no-session --no-extensions --model anthropic/claude-sonnet-4"
+            cloud_command: "pi -p --no-session --no-extensions --model openai-codex/gpt-5.5"
                 .to_string(),
-            local_command: "pi -p --no-session --no-extensions --model ollama/qwen3:8b".to_string(),
+            local_command: "pi -p --no-session --no-extensions --model anthropic/claude-opus-4.7"
+                .to_string(),
             timeout_secs: 120,
         }
     }
@@ -196,6 +198,7 @@ impl Default for ProbesConfig {
             colima_timeout_secs: 5,
             k8s_timeout_secs: 10,
             service_timeout_secs: 5,
+            critical_after_consecutive_failures: 2,
             consecutive_failures_before_escalate: 3,
         }
     }
@@ -212,17 +215,7 @@ impl Default for HealthConfig {
 
 impl Config {
     pub fn is_critical_probe(&self, name: &str) -> bool {
-        if matches!(
-            name,
-            "colima"
-                | "docker"
-                | "talos_container"
-                | "k8s_api"
-                | "node_ready"
-                | "node_schedulable"
-                | "redis"
-                | "kubelet_proxy_rbac"
-        ) {
+        if self.is_builtin_critical_probe(name) {
             return true;
         }
 
@@ -256,7 +249,25 @@ impl Config {
         false
     }
 
+    fn is_builtin_critical_probe(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "colima"
+                | "docker"
+                | "talos_container"
+                | "k8s_api"
+                | "node_ready"
+                | "node_schedulable"
+                | "redis"
+                | "kubelet_proxy_rbac"
+        )
+    }
+
     pub fn critical_failure_threshold(&self, name: &str) -> u32 {
+        if self.is_builtin_critical_probe(name) {
+            return self.probes.critical_after_consecutive_failures.max(1);
+        }
+
         if let Some(service_name) = name.strip_prefix("http:") {
             return self
                 .http_service_probes
@@ -411,21 +422,22 @@ http_timeout_secs = 5
 
 [escalation]
 agent_cooldown_secs = 600
-sos_cooldown_secs = 1800
+sos_cooldown_secs = 14400
 sos_recipient = "joelhooks@gmail.com"
 sos_telegram_chat_id = "7718912466"
 sos_telegram_secret_name = "telegram_bot_token"
 critical_threshold_secs = 900
 
 [agent]
-cloud_command = "pi -p --no-session --no-extensions --model anthropic/claude-sonnet-4"
-local_command = "pi -p --no-session --no-extensions --model ollama/qwen3:8b"
+cloud_command = "pi -p --no-session --no-extensions --model openai-codex/gpt-5.5"
+local_command = "pi -p --no-session --no-extensions --model anthropic/claude-opus-4.7"
 timeout_secs = 120
 
 [probes]
 colima_timeout_secs = 5
 k8s_timeout_secs = 10
 service_timeout_secs = 5
+critical_after_consecutive_failures = 2
 consecutive_failures_before_escalate = 3
 
 [health]
@@ -534,6 +546,10 @@ fn apply_toml_overrides(config: &mut Config, raw: &str) -> Result<(), DynError> 
             }
             ("probes", "service_timeout_secs") => {
                 config.probes.service_timeout_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("probes", "critical_after_consecutive_failures") => {
+                config.probes.critical_after_consecutive_failures =
+                    parse_toml_int(value, line_number + 1)? as u32
             }
             ("probes", "consecutive_failures_before_escalate") => {
                 config.probes.consecutive_failures_before_escalate =
@@ -1118,9 +1134,9 @@ critical_after_consecutive_failures = 3
     }
 
     #[test]
-    fn critical_failure_threshold_defaults_to_one_for_unknown_probe() {
+    fn critical_failure_threshold_debounces_builtin_critical_probes() {
         let config = Config::default();
         assert_eq!(config.critical_failure_threshold("http:missing"), 1);
-        assert_eq!(config.critical_failure_threshold("redis"), 1);
+        assert_eq!(config.critical_failure_threshold("redis"), 2);
     }
 }
