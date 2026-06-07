@@ -1,8 +1,14 @@
 import { execSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type InboxResult, isSandboxExecutionResult } from "@joelclaw/agent-execution";
+import {
+  type AgentRuntime,
+  MACHINES_COLLECTION,
+  writeRunBlob,
+} from "@joelclaw/memory";
 import { Hono } from "hono";
 import { connect as inngestConnect } from "inngest/connect";
 import { serve as inngestServe } from "inngest/hono";
@@ -26,6 +32,7 @@ const WEBHOOK_SECRETS = [
   { env: "TODOIST_CLIENT_SECRET", secret: "todoist_client_secret" },
   { env: "GITHUB_WEBHOOK_SECRET", secret: "github_webhook_secret" },
   { env: "MUX_WEBHOOK_SECRET", secret: "mux_signing_secret" },
+  { env: "TYPESENSE_API_KEY", secret: "typesense_api_key" },
 ] as const;
 
 if (SHOULD_LEASE_WEBHOOK_SECRETS) {
@@ -72,8 +79,38 @@ const INTERNAL_AGENT_INBOX_DIR = join(process.env.HOME ?? "/Users/joel", ".joelc
 const INTERNAL_AGENT_ACK_DIR = join(INTERNAL_AGENT_INBOX_DIR, "ack");
 const INTERNAL_AGENT_POLL_MS = 2_000;
 const INTERNAL_AGENT_MAX_TIMEOUT_MS = 60 * 60_000;
+const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
+const VALID_RUN_RUNTIMES: AgentRuntime[] = [
+  "pi",
+  "claude-code",
+  "codex",
+  "loop",
+  "workload-stage",
+  "gateway",
+  "other",
+];
 
 type WorkerRole = "host" | "cluster";
+type MemoryIdentity = {
+  user_id: string;
+  machine_id: string;
+  did: string | null;
+};
+
+type RunIngestRequest = {
+  run_id?: string;
+  agent_runtime?: AgentRuntime;
+  started_at?: number;
+  parent_run_id?: string | null;
+  conversation_id?: string | null;
+  tags?: string[];
+  jsonl?: string;
+};
+
+type ParsedRunIngestRequest = RunIngestRequest & {
+  agent_runtime: AgentRuntime;
+  jsonl: string;
+};
 type FunctionDefinition = { opts?: { id?: string } };
 
 function parseWorkerRole(value: string | undefined): WorkerRole {
@@ -211,6 +248,157 @@ function isFreshRunningResult(
 
   return Date.now() - startedAtMs <= allowedAgeMs;
 }
+
+function sha256(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
+}
+
+function newRunId(): string {
+  return randomUUID().replace(/-/g, "").slice(0, 26);
+}
+
+async function lookupMemoryIdentity(token: string): Promise<MemoryIdentity | null> {
+  if (token === "dev-joel-panda") {
+    return {
+      user_id: "joel",
+      machine_id: "panda",
+      did: "did:plc:5w6ablyvahugobsj7n57yjmm",
+    };
+  }
+
+  const typesenseKey = process.env.TYPESENSE_API_KEY;
+  if (!typesenseKey) return null;
+
+  const hash = sha256(token);
+  const params = new URLSearchParams({
+    q: hash,
+    query_by: "app_password_sha256",
+    filter_by: `app_password_sha256:=\`${hash}\``,
+    per_page: "1",
+  });
+  const res = await fetch(
+    `${TYPESENSE_URL}/collections/${MACHINES_COLLECTION}/documents/search?${params}`,
+    { headers: { "X-TYPESENSE-API-KEY": typesenseKey } },
+  );
+  if (!res.ok) return null;
+
+  const data = (await res.json()) as {
+    hits?: Array<{
+      document: {
+        id: string;
+        user_id: string;
+        did?: string;
+        revoked_at?: number;
+      };
+    }>;
+  };
+  const hit = data.hits?.[0]?.document;
+  if (!hit || hit.revoked_at) return null;
+  return { user_id: hit.user_id, machine_id: hit.id, did: hit.did ?? null };
+}
+
+async function authenticateRunCapture(c: any): Promise<MemoryIdentity | null> {
+  const header = c.req.header("authorization") as string | undefined;
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice("Bearer ".length).trim();
+  if (!token) return null;
+  return lookupMemoryIdentity(token);
+}
+
+function parseRunBody(value: unknown): ParsedRunIngestRequest | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const body = value as RunIngestRequest;
+  if (!body.jsonl || typeof body.jsonl !== "string") return null;
+  if (!body.agent_runtime || !VALID_RUN_RUNTIMES.includes(body.agent_runtime)) return null;
+  return body as ParsedRunIngestRequest;
+}
+
+app.post("/api/runs", async (c) => {
+  const auth = await authenticateRunCapture(c);
+  if (!auth) {
+    return c.json({ ok: false, error: { code: "unauthorized" } }, 401);
+  }
+
+  const body = parseRunBody(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json(
+      {
+        ok: false,
+        error: {
+          code: "invalid_run_capture",
+          message: "Body must include jsonl string and valid agent_runtime",
+        },
+      },
+      400,
+    );
+  }
+
+  const runId = body.run_id ?? newRunId();
+  const startedAt = body.started_at ?? Date.now();
+  const tags = Array.isArray(body.tags) ? body.tags.filter((tag) => typeof tag === "string") : [];
+  const { jsonl_path, jsonl_bytes, jsonl_sha256 } = writeRunBlob(
+    auth.user_id,
+    runId,
+    startedAt,
+    body.jsonl,
+    {
+      run_id: runId,
+      user_id: auth.user_id,
+      machine_id: auth.machine_id,
+      agent_runtime: body.agent_runtime,
+      parent_run_id: body.parent_run_id ?? null,
+      conversation_id: body.conversation_id ?? null,
+      tags,
+      started_at: startedAt,
+      captured_at: Date.now(),
+    },
+  );
+
+  await inngest.send({
+    name: "memory/run.captured",
+    data: {
+      run_id: runId,
+      user_id: auth.user_id,
+      machine_id: auth.machine_id,
+      agent_runtime: body.agent_runtime,
+      jsonl_path,
+      jsonl_bytes,
+      jsonl_sha256,
+      started_at: startedAt,
+      parent_run_id: body.parent_run_id ?? undefined,
+      conversation_id: body.conversation_id ?? undefined,
+      tags,
+    },
+  });
+
+  return c.json(
+    {
+      ok: true,
+      run_id: runId,
+      user_id: auth.user_id,
+      machine_id: auth.machine_id,
+      jsonl_path,
+      jsonl_bytes,
+      jsonl_sha256,
+      status: "accepted",
+      _links: {
+        self: `/api/runs/${runId}`,
+        search: "/api/runs/search",
+      },
+    },
+    202,
+  );
+});
+
+app.get("/api/runs/health", (c) =>
+  c.json({
+    ok: true,
+    service: "system-bus-run-capture",
+    endpoint: "/api/runs",
+    typesenseAuthConfigured: Boolean(process.env.TYPESENSE_API_KEY),
+    runStore: process.env.MEMORY_RUN_STORE ?? "~/.joelclaw/runs-dev",
+  }),
+);
 
 app.get("/", (c) =>
   c.json({

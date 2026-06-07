@@ -449,6 +449,8 @@ Do **not** mutate `main.db` without a point-in-time backup.
   - `runs_dev`
   - `run_chunks_dev`
 - source of truth: `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/<run-id>.jsonl` plus `.metadata.json`
+- live ingest endpoint while Panda is Central: `POST https://panda.tail7af24.ts.net/api/runs`, served by the host system-bus worker on `localhost:3111` through Tailscale Funnel root proxy. This mirrors the web app ADR-0243 route because no durable `localhost:3000` Central web listener currently exists on Panda.
+- auth: satellite hooks send `Authorization: Bearer <~/.joelclaw/auth.json token>`; worker hashes the token and resolves identity from Typesense `machines_dev`.
 - recovery rule: if raw run blobs exist but Typesense is stale, restart Inngest only after logging the restart, force worker registration with `PUT /api/inngest`, then backfill missing blobs with:
 
 ```bash

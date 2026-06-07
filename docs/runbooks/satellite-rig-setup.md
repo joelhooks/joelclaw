@@ -4,6 +4,14 @@ Use this when bringing a thin joelclaw satellite Machine onto the tailnet.
 
 A satellite is not Panda. It should have enough local rig to run Pi, capture local sessions, search those sessions, and ask Central for repair. Panda remains Central for Redis, gateway, Inngest, OTEL, secrets, and durable runtime work.
 
+Current live Run-capture endpoint on satellites:
+
+```bash
+export JOELCLAW_CENTRAL_URL=https://panda.tail7af24.ts.net
+```
+
+Do **not** point capture hooks at `http://panda:3000` or `http://panda.tail7af24.ts.net:3000`; Panda currently has no durable Central web listener on port 3000. Tailscale Funnel root proxies to the host system-bus worker on `localhost:3111`, which serves `POST /api/runs` for ADR-0243 capture.
+
 ## Current target: blaine
 
 Joel said `blain`; Tailscale currently advertises the Machine as `blaine`:
@@ -67,13 +75,20 @@ ssh joel@100.72.79.112 'bash -s' < scripts/setup-satellite-rig.sh
 
 ## Manual checks after bootstrap
 
-Pi auth is intentionally not copied by this script. Do that by the normal Pi login flow on the satellite.
+Pi auth is intentionally not copied by this script. Do that by the normal Pi login flow on the satellite. Run-capture auth is separate: each satellite also needs `~/.joelclaw/auth.json` from `scripts/joelclaw-machine-register.ts --name <machine>`, with token permissions `0600`.
 
 ```bash
 command -v pi
 pi --version
 joelclaw satellite health
 joelclaw sessions search "joel-writing-style" --source local --machine "$(hostname -s)" --limit 1
+python3 - <<'PY'
+import json, os, urllib.request
+p=os.path.expanduser('~/.joelclaw/auth.json')
+a=json.load(open(p))
+req=urllib.request.Request('https://panda.tail7af24.ts.net/api/runs/health', headers={'Authorization': 'Bearer '+a['token']})
+print(urllib.request.urlopen(req, timeout=10).status)
+PY
 ```
 
 If `satellite health` fails on local session search, start and exit one Pi session on the satellite so raw session files exist, then rerun health.
