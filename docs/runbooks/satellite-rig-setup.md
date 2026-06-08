@@ -12,7 +12,9 @@ export JOELCLAW_CENTRAL_URL=https://panda.tail7af24.ts.net
 
 Do **not** point capture hooks at `http://panda:3000` or `http://panda.tail7af24.ts.net:3000`; Panda currently has no durable Central web listener on port 3000. Tailscale Funnel root proxies to the host system-bus worker on `localhost:3111`, which serves `POST /api/runs` for ADR-0243 capture.
 
-## Current target: blaine
+## Current targets
+
+### blaine
 
 Joel said `blain`; Tailscale currently advertises the Machine as `blaine`:
 
@@ -22,7 +24,16 @@ Joel said `blain`; Tailscale currently advertises the Machine as `blaine`:
 - SSH status from Panda: previously blocked by TCP/22 refusal; later reachable directly at `joel@100.72.79.112`
 - Hostname may report as `Dark-Tower.local` even though Tailscale advertises the Machine as `blaine`
 
-If SSH is refused, Central cannot install the rig remotely until Remote Login or Tailscale SSH is enabled on blaine. Not a vibes problem. The door is shut.
+### flagg
+
+Tailscale advertises:
+
+- Tailnet IP: `100.127.252.116`
+- SSH target from Panda: `joel@flagg`
+- Hostname reports as `flagg.localdomain`
+- If `~/Code/joelhooks/joelclaw` has user changes, bootstrap into `~/Code/joelhooks/joelclaw-runtime` instead of touching the dirty checkout.
+
+If SSH is refused, Central cannot install the rig remotely until Remote Login or Tailscale SSH is enabled on the satellite. Not a vibes problem. The door is shut.
 
 ## Central preflight from Panda
 
@@ -46,24 +57,35 @@ ssh joel@100.72.79.112 'hostname && whoami'
 
 ```bash
 cd ~/Code/joelhooks/joelclaw
-ssh joel@100.72.79.112 'bash -s' < scripts/setup-satellite-rig.sh
+KEY="$(secrets lease typesense_api_key --ttl 1h)"
+{
+  printf 'export TYPESENSE_API_KEY=%q\n' "$KEY"
+  printf 'export JOELCLAW_CENTRAL_URL=%q\n' 'https://panda.tail7af24.ts.net'
+  printf 'export JOELCLAW_TYPESENSE_URL=%q\n' 'http://panda:8108'
+  cat scripts/setup-satellite-rig.sh
+} | ssh joel@100.72.79.112 'bash -s'
+unset KEY
 ```
 
-Optional env overrides:
+For a satellite with a dirty existing checkout, keep it intact and use a runtime checkout:
 
 ```bash
-JOELCLAW_REPO_URL=git@github.com:joelhooks/joelclaw.git \
-JOELCLAW_REPO_DIR="$HOME/Code/joelhooks/joelclaw" \
-JOELCLAW_CENTRAL_SSH=joel@panda \
-JOELCLAW_CENTRAL_URL=https://panda.tail7af24.ts.net \
-JOELCLAW_TYPESENSE_URL=http://panda:8108 \
-ssh joel@100.72.79.112 'bash -s' < scripts/setup-satellite-rig.sh
+KEY="$(secrets lease typesense_api_key --ttl 1h)"
+{
+  printf 'export TYPESENSE_API_KEY=%q\n' "$KEY"
+  printf 'export JOELCLAW_CENTRAL_URL=%q\n' 'https://panda.tail7af24.ts.net'
+  printf 'export JOELCLAW_TYPESENSE_URL=%q\n' 'http://panda:8108'
+  printf 'export JOELCLAW_REPO_DIR="$HOME/Code/joelhooks/joelclaw-runtime"\n'
+  cat scripts/setup-satellite-rig.sh
+} | ssh joel@flagg 'bash -s'
+unset KEY
 ```
 
 ## What the bootstrap does
 
 - verifies macOS identity and base tools: `git`, `python3`, `jq`
 - installs Bun if missing
+- prefers `fnm` default Node when available, avoiding Homebrew Node 26 native-build failures
 - enables or installs pnpm
 - clones or fast-forwards `~/Code/joelhooks/joelclaw`
 - runs `pnpm install`

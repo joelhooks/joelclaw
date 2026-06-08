@@ -70,6 +70,12 @@ if ! need bun; then
   export PATH="$HOME/.bun/bin:$PATH"
 fi
 
+if need fnm; then
+  say "using fnm default node"
+  eval "$(fnm env --shell bash)"
+  fnm use default >/dev/null 2>&1 || true
+fi
+
 if ! need node; then
   say "installing node"
   NODE_VERSION="${JOELCLAW_NODE_VERSION:-24.13.1}"

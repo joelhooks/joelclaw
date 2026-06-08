@@ -39,10 +39,10 @@ Tailscale advertises:
 
 The host itself may report:
 
-- `hostname`: `Dark-Tower.local`
-- `hostname -s`: `Dark-Tower`
+- blaine host reports `Dark-Tower.local` / `Dark-Tower`
+- flagg host reports `flagg.localdomain`
 
-This mismatch is normal. When searching Central Typesense, use `--machine blaine` for captured runs. When searching raw local files on the satellite, use `--machine "$(hostname -s)"`.
+This mismatch is normal. When searching Central Typesense, use the Tailscale Machine name (`blaine`, `flagg`) for captured runs. When searching raw local files on the satellite, use the reported local machine name from `joelclaw satellite health` or `hostname`.
 
 ## Fast path from Panda
 
@@ -61,6 +61,21 @@ KEY="$(secrets lease typesense_api_key --ttl 1h)"
   cat scripts/setup-satellite-rig.sh
 } | ssh joel@100.72.79.112 'bash -s'
 unset KEY
+```
+
+If the target already has a dirty `~/Code/joelhooks/joelclaw` checkout, keep it intact and bootstrap a runtime checkout instead:
+
+```bash
+KEY="$(secrets lease typesense_api_key --ttl 1h)"
+TARGET=joel@flagg
+{
+  printf 'export TYPESENSE_API_KEY=%q\n' "$KEY"
+  printf 'export JOELCLAW_CENTRAL_URL=%q\n' 'https://panda.tail7af24.ts.net'
+  printf 'export JOELCLAW_TYPESENSE_URL=%q\n' 'http://panda:8108'
+  printf 'export JOELCLAW_REPO_DIR="$HOME/Code/joelhooks/joelclaw-runtime"\n'
+  cat scripts/setup-satellite-rig.sh
+} | ssh "$TARGET" 'bash -s'
+unset KEY TARGET
 ```
 
 This avoids the brittle two-step "manually write remote env, then bootstrap" dance. The key goes through the SSH pipe and is written only to the satellite's `~/.config/system-bus.env` with `0600` permissions. Do not print it.
@@ -180,6 +195,38 @@ TYPESENSE_API_KEY="$KEY" ssh joel@host 'bash -s' < script.sh
 ```
 
 Use the piped export prelude shown in the fast path, or explicitly write the remote env file over SSH without echoing the key.
+
+### Homebrew Node 26 can break native installs
+
+Flagg had Homebrew Node `v26.0.0`; `pnpm install` tried to compile `better-sqlite3` and failed. The bootstrap now prefers `fnm`'s default Node when available before checking `node` on PATH. If this regresses, run the script with an explicit prelude:
+
+```bash
+{
+  printf 'eval "$(/opt/homebrew/bin/fnm env --shell bash)"\n'
+  printf 'fnm use default >/dev/null\n'
+  cat scripts/setup-satellite-rig.sh
+} | ssh joel@flagg 'bash -s'
+```
+
+### Do not quote literal `$HOME` into `JOELCLAW_REPO_DIR`
+
+This creates `/Users/joel/$HOME/...`, which is exactly as dumb as it looks:
+
+```bash
+printf 'export JOELCLAW_REPO_DIR=%q\n' '$HOME/Code/joelhooks/joelclaw-runtime'
+```
+
+Use this instead so the remote shell expands `$HOME`:
+
+```bash
+printf 'export JOELCLAW_REPO_DIR="$HOME/Code/joelhooks/joelclaw-runtime"\n'
+```
+
+If the bad path exists, remove it:
+
+```bash
+ssh joel@flagg 'rm -rf "$HOME/\$HOME"'
+```
 
 ### Tailscale DNS may fail while IP works
 
