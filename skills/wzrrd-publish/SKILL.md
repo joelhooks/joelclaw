@@ -62,6 +62,14 @@ Projects can add `wzrrd.config.json` with `site.slug` and `publish.source` so ag
 - Only add `--index` when the user explicitly wants search indexing.
 - Prefer small static artifacts. Current anonymous limits are aggressive: 5 MB total, 1 MB per file, 50 files, 10 anonymous publishes per IP/hour.
 
+## Review page and diagram defaults
+
+- Default to black text on white or near-white paper, compact hero, modest H1, sane letter spacing, and paragraphs over card grids.
+- Use boxes sparingly. Reserve them for receipts, controls, and data that truly needs a boundary.
+- For workflow, lifecycle, triage, approval, runtime, or operator-report graphics, prefer tall vertical D2 flowcharts rendered as static SVG. Use `direction: down` and let labels breathe.
+- Avoid crushed wide diagrams. If the chart explains how work moves, vertical flow is usually more readable on wzrrd pages and pi-notes surfaces.
+- Add cache-busting query params to regenerated SVGs when republishing a wzrrd page so stale browser cache does not show the old chart.
+
 ## Diagnostics
 
 Before debugging, run:
