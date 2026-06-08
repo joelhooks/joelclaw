@@ -36,6 +36,7 @@ Recent examples:
 - `skills/joel-writing-style/` captures the public joelclaw.com prose constraints so site articles stop relying on fuzzy vibe-matching.
 - `skills/discovery/` now carries explicit site + visibility guidance, defaults, and the requirement to return the final created link instead of only firing a background event and shrugging.
 - `skills/workflow-rig/` is now the canonical front door for ADR-0217 workload planning, runtime mode selection, workflow-rig dogfood, and `joelclaw workload run` invocation.
+- `skills/satellite-rig/` captures the thin-Machine setup SOP for blaine/Dark-Tower-style satellites: joelclaw CLI, Typesense access, session search/capture, Central relay, and the `cat > symlink` footgun.
 - `skills/agent-workloads/` remains as a compatibility alias for older prompts that still name the legacy front door.
 - `skills/restate-workflows/` remains the substrate bridge compatibility alias for cross-repo ADR-0217 handoff patterns after workload planning is already clear.
 
