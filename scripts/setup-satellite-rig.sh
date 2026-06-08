@@ -170,7 +170,12 @@ say "checking satellite health"
 joelclaw satellite health || true
 
 say "checking Central relay path"
-if ssh -o BatchMode=yes -o ConnectTimeout=8 "$CENTRAL_SSH" 'command -v joelclaw >/dev/null && hostname' >/tmp/joelclaw-central-check 2>/tmp/joelclaw-central-check.err; then
+if ssh -o BatchMode=yes -o ConnectTimeout=8 "$CENTRAL_SSH" '
+JOELCLAW=$(command -v joelclaw || true)
+if [[ -z "$JOELCLAW" && -x "$HOME/.local/bin/joelclaw" ]]; then JOELCLAW="$HOME/.local/bin/joelclaw"; fi
+if [[ -z "$JOELCLAW" && -x "$HOME/.bun/bin/joelclaw" ]]; then JOELCLAW="$HOME/.bun/bin/joelclaw"; fi
+test -n "$JOELCLAW" && hostname
+' >/tmp/joelclaw-central-check 2>/tmp/joelclaw-central-check.err; then
   joelclaw satellite repair-request --central-ssh "$CENTRAL_SSH" --priority normal || true
 else
   echo "Central SSH check failed; repair-request skipped." >&2
