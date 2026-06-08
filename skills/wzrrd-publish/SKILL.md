@@ -69,6 +69,9 @@ Projects can add `wzrrd.config.json` with `site.slug` and `publish.source` so ag
 - For workflow, lifecycle, triage, approval, runtime, or operator-report graphics, prefer tall vertical D2 flowcharts rendered as static SVG. Use `direction: down` and let labels breathe.
 - Avoid crushed wide diagrams. If the chart explains how work moves, vertical flow is usually more readable on wzrrd pages and pi-notes surfaces.
 - Add cache-busting query params to regenerated SVGs when republishing a wzrrd page so stale browser cache does not show the old chart.
+- For reusable report pages, prefer SvelteKit rendering MDSvX with reusable components for flowcharts, marginalia, stat lines, paragraph lists, tables, and receipts.
+- Prefer Tufte-style marginalia for footnotes, source notes, privacy notes, and link context. Collapse marginalia into a left-rule note on mobile.
+- Use Shiki with a Catppuccin theme for code blocks when the page includes source snippets.
 
 ## Diagnostics
 
