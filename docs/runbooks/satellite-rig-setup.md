@@ -19,9 +19,10 @@ Joel said `blain`; Tailscale currently advertises the Machine as `blaine`:
 - Tailnet IP: `100.72.79.112`
 - Tailscale DNS: `blaine.tail7af24.ts.net.`
 - Status from Panda: active/direct
-- SSH status from Panda: blocked, TCP/22 refused
+- SSH status from Panda: previously blocked by TCP/22 refusal; later reachable directly at `joel@100.72.79.112`
+- Hostname may report as `Dark-Tower.local` even though Tailscale advertises the Machine as `blaine`
 
-That means Central cannot install the rig remotely until Remote Login or Tailscale SSH is enabled on blaine. Not a vibes problem. The door is shut.
+If SSH is refused, Central cannot install the rig remotely until Remote Login or Tailscale SSH is enabled on blaine. Not a vibes problem. The door is shut.
 
 ## Central preflight from Panda
 
@@ -54,6 +55,8 @@ Optional env overrides:
 JOELCLAW_REPO_URL=git@github.com:joelhooks/joelclaw.git \
 JOELCLAW_REPO_DIR="$HOME/Code/joelhooks/joelclaw" \
 JOELCLAW_CENTRAL_SSH=joel@panda \
+JOELCLAW_CENTRAL_URL=https://panda.tail7af24.ts.net \
+JOELCLAW_TYPESENSE_URL=http://panda:8108 \
 ssh joel@100.72.79.112 'bash -s' < scripts/setup-satellite-rig.sh
 ```
 
@@ -64,8 +67,9 @@ ssh joel@100.72.79.112 'bash -s' < scripts/setup-satellite-rig.sh
 - enables or installs pnpm
 - clones or fast-forwards `~/Code/joelhooks/joelclaw`
 - runs `pnpm install`
+- writes `~/.config/system-bus.env` with `JOELCLAW_CENTRAL_URL`, `TYPESENSE_URL`, and `TYPESENSE_API_KEY` when that key is provided in the bootstrap environment
 - builds `~/.bun/bin/joelclaw`
-- links `~/.local/bin/joelclaw`
+- writes `~/.local/bin/joelclaw` as a wrapper that sources `~/.config/system-bus.env` before execing the compiled binary
 - symlinks canonical repo skills into:
   - `~/.pi/agent/skills`
   - `~/.agents/skills`
@@ -77,11 +81,14 @@ ssh joel@100.72.79.112 'bash -s' < scripts/setup-satellite-rig.sh
 
 Pi auth is intentionally not copied by this script. Do that by the normal Pi login flow on the satellite. Run-capture auth is separate: each satellite also needs `~/.joelclaw/auth.json` from `scripts/joelclaw-machine-register.ts --name <machine>`, with token permissions `0600`.
 
+Typesense access is intentionally local-config based on satellites, not agent-secrets based. Put the key in `~/.config/system-bus.env` with mode `0600`; the `~/.local/bin/joelclaw` wrapper sources it for non-interactive SSH commands.
+
 ```bash
 command -v pi
 pi --version
 joelclaw satellite health
 joelclaw sessions search "joel-writing-style" --source local --machine "$(hostname -s)" --limit 1
+joelclaw sessions search "joel-writing-style" --source typesense --machine blaine --runtime all --limit 1
 python3 - <<'PY'
 import json, os, urllib.request
 p=os.path.expanduser('~/.joelclaw/auth.json')

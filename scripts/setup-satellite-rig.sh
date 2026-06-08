@@ -8,10 +8,45 @@ set -euo pipefail
 REPO_URL="${JOELCLAW_REPO_URL:-git@github.com:joelhooks/joelclaw.git}"
 REPO_DIR="${JOELCLAW_REPO_DIR:-$HOME/Code/joelhooks/joelclaw}"
 CENTRAL_SSH="${JOELCLAW_CENTRAL_SSH:-joel@panda}"
+CENTRAL_URL="${JOELCLAW_CENTRAL_URL:-https://panda.tail7af24.ts.net}"
+SATELLITE_TYPESENSE_URL="${TYPESENSE_URL:-${JOELCLAW_TYPESENSE_URL:-http://panda:8108}}"
 SKIP_GIT_SYNC="${JOELCLAW_SKIP_GIT_SYNC:-false}"
 
 say() { printf '\n==> %s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1; }
+
+upsert_env_var() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  [[ -n "$value" ]] || return 0
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  chmod 600 "$file"
+  python3 - "$file" "$key" "$value" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+line = f"{key}={value}\n"
+lines = path.read_text().splitlines(True) if path.exists() else []
+replaced = False
+out = []
+for existing in lines:
+    if existing.startswith(f"{key}="):
+        out.append(line)
+        replaced = True
+    else:
+        out.append(existing)
+if not replaced:
+    if out and not out[-1].endswith("\n"):
+        out[-1] += "\n"
+    out.append(line)
+path.write_text("".join(out))
+PY
+}
 
 say "satellite identity"
 hostname
@@ -86,10 +121,31 @@ cd "$REPO_DIR"
 say "installing workspace deps"
 pnpm install
 
+say "writing satellite environment"
+ENV_FILE="$HOME/.config/system-bus.env"
+upsert_env_var "$ENV_FILE" "JOELCLAW_CENTRAL_URL" "$CENTRAL_URL"
+upsert_env_var "$ENV_FILE" "TYPESENSE_URL" "$SATELLITE_TYPESENSE_URL"
+if [[ -n "${TYPESENSE_API_KEY:-}" ]]; then
+  upsert_env_var "$ENV_FILE" "TYPESENSE_API_KEY" "$TYPESENSE_API_KEY"
+fi
+
 say "building joelclaw CLI"
 mkdir -p "$HOME/.local/bin" "$HOME/.bun/bin"
 bun build packages/cli/src/cli.ts --compile --outfile "$HOME/.bun/bin/joelclaw"
-ln -sf "$HOME/.bun/bin/joelclaw" "$HOME/.local/bin/joelclaw"
+rm -f "$HOME/.local/bin/joelclaw"
+cat > "$HOME/.local/bin/joelclaw" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+ENV_FILE="$HOME/.config/system-bus.env"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+exec "$HOME/.bun/bin/joelclaw" "$@"
+SH
+chmod 755 "$HOME/.local/bin/joelclaw"
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 
 say "linking canonical skills"
@@ -128,4 +184,5 @@ Manual checks still needed:
 - `pi` installed and authenticated on this Machine
 - Remote Login or Tailscale SSH enabled if Central should operate this Machine
 - `joelclaw sessions search "test" --source local --machine $(hostname -s) --limit 1`
+- `joelclaw sessions search "test" --source typesense --machine $(hostname -s) --runtime all --limit 1`
 DONE
