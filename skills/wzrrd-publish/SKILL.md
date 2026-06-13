@@ -40,6 +40,8 @@ wzrrd publish --file ./site --slug demo --expires-in 7d
 
 Duration aliases include `1h`, `24h`, `7d`, and `month` (30 days).
 
+For review or feedback URLs, default to `--expires-in 3h` unless the user specifies another expiry or asks for permanence.
+
 Compatibility check: only use `--expires-in` after `wzrrd publish --help` lists it. Local CLI `0.3.0` currently rejects this flag.
 
 ## Permanent publishing
@@ -83,7 +85,7 @@ wzrrd doctor && wzrrd auth-status
 
 ## Return format
 
-Always give the user the live URL. If the publish was anonymous, also include the `claimUrl` and remind them it expires in 24 hours unless claimed.
+Always give the user the live URL. For review or feedback URLs, state the configured expiry, defaulting to 3 hours unless otherwise specified. If the publish was anonymous, also include the `claimUrl` and remind them it expires in 24 hours unless claimed.
 
 ## Current joelclaw compatibility notes
 
