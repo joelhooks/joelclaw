@@ -21,6 +21,7 @@ Implement Project Threads as the standard operator-facing workroom for bounded j
 - A real `#brain-joel` Project Thread exists for this work and is referenced here.
 - Project Thread root messages mention Joel directly (`<@U030BJ3CK>`).
 - Milestone updates for this work are posted in that Project Thread.
+- Project Thread updates use Slack `mrkdwn` and an ELI5 Joel-style format: short, plain, concrete, receipt-backed.
 
 ## Non-goals
 
@@ -45,8 +46,10 @@ Recommend a Project Thread when a grill or plan crosses any of these:
 3. If approved, agent creates or reuses a `#brain-joel` thread.
 4. When creating a thread, the root message mentions Joel directly (`<@U030BJ3CK>`) and states the bounded objective.
 5. Agent stores the Slack thread URL in the PRD or working artifact.
-6. Agent posts milestone updates, blockers, approval requests, and canary evidence in that thread.
-7. Agent keeps Reply Grants separate for public/external channel replies.
+6. Agent posts milestone updates, blockers, approval requests, and canary evidence in that thread using Slack `mrkdwn`, not GitHub Markdown.
+7. Agent keeps updates ELI5 and Joel-style: `*Milestone:*`, `• Changed:`, `• Evidence:`, `• Next:`. Avoid headings, tables, escaped newline text, and raw logs.
+8. Agent keeps Reply Grants separate for public/external channel replies.
+
 ## Artifact fields
 
 When a PRD exists, include:
@@ -65,6 +68,7 @@ When no PRD exists, include the Project Thread URL in the handoff/final audit.
 - Verify this PRD includes a valid `project_thread_url`.
 - Verify the Project Thread root message mentions Joel directly.
 - Verify a milestone update was posted in the Project Thread.
+- Verify Project Thread updates use Slack `mrkdwn` and concise ELI5 language.
 
 ## Current Project Thread
 

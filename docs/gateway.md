@@ -10,6 +10,17 @@ A Project Thread does **not** authorize public replies. It is coordination space
 
 When `grill-with-docs` crosses the Project Thread threshold, ask for operator approval, create or reuse a `#brain-joel` thread, and store the Slack URL in the PRD (`project_thread_url`) or handoff artifact. New Project Thread root messages must mention Joel directly (`<@U030BJ3CK>`) and state the bounded objective. Route milestones, blockers, approvals, and canary evidence to that thread.
 
+Project Thread messages must use Slack `mrkdwn`, not GitHub Markdown. Keep them ELI5 and Joel-style: short, plain, concrete, and receipt-backed. Prefer this shape:
+
+```text
+*Milestone: <plain-language thing>*
+• Changed: <what changed>
+• Evidence: <command/file/link>
+• Next: <one next action or approval needed>
+```
+
+Avoid Markdown headings (`#`), giant paragraphs, escaped `\n` text, tables, and raw logs. Link docs/files only when they help.
+
 See `docs/decisions/0245-project-threads-operator-workrooms.md` and `docs/prd-project-threads.md`.
 
 ## Public channel replies: Reply Grants (ADR-0244)
@@ -42,21 +53,6 @@ Daemon startup now enforces this invariant:
 - global gateway extension present → startup fails
 
 This prevents non-gateway pi sessions from loading gateway automation hooks.
-
-## Runtime channel toggles
-
-Use the CLI to enable or disable gateway channels. Do not hand-edit `~/.joelclaw/scripts/gateway-start.sh` unless the CLI is broken.
-
-```bash
-joelclaw gateway channel list
-joelclaw gateway channel status discord
-joelclaw gateway channel disable discord --restart
-joelclaw gateway channel enable discord --restart
-```
-
-The command rewrites the channel env assignments in `~/.joelclaw/scripts/gateway-start.sh`, saves a `/tmp/joelclaw/gateway-start.sh.*` backup before changes, and restarts the gateway when `--restart` is present. Telegram disable requires `--force` because it is a primary operator channel.
-
-Disabled Discord should report component `disabled`, channel `configured:false`, `started:false`, `ready:false`, `botUserId:null`, and health entry `status:"disabled"`. Do not delete or revoke stored secrets for a temporary disable.
 
 ## Manual CLI checks
 
@@ -533,7 +529,7 @@ Three guards prevent context bloat and overnight fallback thrash:
 After every `turn_end`, if >4 hours since last compaction, force `session.compact()` regardless of token count. Prevents the scenario where context grows unchecked when pi's auto-compaction misses (e.g. model_change entries disrupting threshold calculation).
 
 ### Session age limit (8h max)
-After every `turn_end`, if session is >8 hours old, queue a fresh-session marker and let launchd restart the daemon into a new `SessionManager` with the compression summary injected as hidden context. Pi removed `AgentSession.newSession()`, so gateway rotation is now restart-backed instead of in-process session replacement. Session recycle is no longer an operator-facing Telegram notice by default; it stays in logs/OTEL/status unless a higher-signal failure path escalates it.
+After every `turn_end`, if session is >8 hours old, create a fresh session with compression summary. Prevents multi-day JSONL growth before fallback thrash starts. Session recycle is no longer an operator-facing Telegram notice by default; it stays in logs/OTEL/status unless a higher-signal failure path escalates it.
 
 ### Quiet hours auto-batching (11 PM – 7 AM PST)
 During quiet hours, all non-interactive events are batched (not immediate). Batch digest flush is deferred until wake hours. Human messages (telegram, imessage, etc.) and error events always process immediately.

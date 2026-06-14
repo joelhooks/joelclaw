@@ -51,6 +51,7 @@ yarn-error.log*
 .tmp/
 .adal/
 .agent/
+.agent_sources/
 .augment/
 .cline/
 .codebuddy/
