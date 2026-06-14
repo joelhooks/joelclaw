@@ -1,0 +1,189 @@
+---
+- name: Manage Flagg Central shadow runtime host state
+  hosts: flagg
+  gather_facts: true
+  become: true
+
+  vars:
+    # Safe default: validate drift and ensure boring directories only.
+    # Set central_install_launchdaemons=true to install/refresh launchd plists.
+    central_install_launchdaemons: false
+    central_bootstrap: false
+    central_verify: "{{ central_bootstrap | bool }}"
+    central_recover_now: false
+    central_recover_passes: 3
+    central_use_launchd_module: false
+
+    service_user: joelclaw
+    service_group: staff
+    service_root: /Users/Shared/joelclaw
+    service_home: "/Users/{{ service_user }}"
+    repo_root: "{{ service_root }}/src/joelclaw"
+    central_dir: "{{ repo_root }}/infra/central"
+    central_log_dir: "{{ service_root }}/logs/central"
+    central_backup_dir: "{{ service_root }}/backups/central"
+    central_docker_socket: "{{ service_home }}/.colima/joelclaw-central/docker.sock"
+    central_launchd_arg: "{{ '--bootstrap' if central_bootstrap | bool else '--no-bootstrap' }}"
+    central_path: "/opt/homebrew/bin:{{ service_home }}/.docker/bin:{{ service_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    central_labels:
+      - com.joelclaw.central.colima
+      - com.joelclaw.central.compose
+      - com.joelclaw.central.health
+    central_service_dirs:
+      - "{{ service_root }}/logs"
+      - "{{ central_log_dir }}"
+      - "{{ central_backup_dir }}"
+      - "{{ service_root }}/services/redis"
+      - "{{ service_root }}/services/typesense"
+      - "{{ service_root }}/services/inngest"
+      - "{{ service_root }}/services/minio"
+
+  pre_tasks:
+    - name: Refuse non-macOS targets
+      ansible.builtin.assert:
+        that:
+          - ansible_system == "Darwin"
+        fail_msg: "Flagg Central launchd/Colima management only supports macOS/Darwin."
+
+    - name: Check service user home exists
+      ansible.builtin.stat:
+        path: "{{ service_home }}"
+      register: central_service_home_stat
+
+    - name: Require service user home
+      ansible.builtin.fail:
+        msg: "Missing service user home: {{ service_home }}"
+      when: not central_service_home_stat.stat.exists
+
+    - name: Check service checkout exists
+      ansible.builtin.stat:
+        path: "{{ repo_root }}"
+      register: central_repo_stat
+
+    - name: Require service checkout
+      ansible.builtin.fail:
+        msg: "Missing service checkout: {{ repo_root }}"
+      when: not central_repo_stat.stat.isdir | default(false)
+
+    - name: Check Central environment file exists
+      ansible.builtin.stat:
+        path: "{{ central_dir }}/.env"
+      register: central_env_stat
+
+    - name: Require Central environment file
+      ansible.builtin.fail:
+        msg: "Missing {{ central_dir }}/.env. Generate it with the repo-managed secret/env flow; Ansible must not own secrets."
+      when: not central_env_stat.stat.exists
+
+  tasks:
+    - name: Ensure Central service directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ service_user }}"
+        group: "{{ service_group }}"
+        mode: "0750"
+      loop: "{{ central_service_dirs }}"
+
+    - name: Validate launchd plist templates
+      ansible.builtin.command:
+        argv:
+          - plutil
+          - -lint
+          - "{{ central_dir }}/launchd/{{ item }}.plist.template"
+      loop: "{{ central_labels }}"
+      changed_when: false
+
+    - name: Validate Central recovery helper syntax
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -n
+          - "{{ central_dir }}/scripts/recover.sh"
+      changed_when: false
+
+    - name: Install or refresh launchd plists through repo-managed script
+      ansible.builtin.command:
+        argv:
+          - "{{ central_dir }}/scripts/install-launchdaemons.sh"
+          - "{{ central_launchd_arg }}"
+      register: central_launchd_install
+      changed_when: >-
+        'installed /Library/LaunchDaemons' in central_launchd_install.stdout
+        or 'bootstrapped system/' in central_launchd_install.stdout
+        or 'disabled system/' in central_launchd_install.stdout
+      when:
+        - central_install_launchdaemons | bool
+        - not ansible_check_mode
+
+    - name: Explain launchd install skipped in check mode
+      ansible.builtin.debug:
+        msg: "check mode: skipped install-launchdaemons.sh {{ central_launchd_arg }}"
+      when:
+        - central_install_launchdaemons | bool
+        - ansible_check_mode
+
+    - name: Optionally mirror desired launchd enabled state through community.general.launchd
+      community.general.launchd:
+        name: "{{ item }}"
+        enabled: "{{ central_bootstrap | bool }}"
+      loop: "{{ central_labels }}"
+      when:
+        - central_install_launchdaemons | bool
+        - central_use_launchd_module | bool
+        - not ansible_check_mode
+
+    - name: Capture launchd state for receipts
+      ansible.builtin.command:
+        argv:
+          - launchctl
+          - print
+          - "system/{{ item }}"
+      loop: "{{ central_labels }}"
+      register: central_launchd_state
+      changed_when: false
+      failed_when: false
+
+    - name: Report launchd state summary
+      ansible.builtin.debug:
+        msg: "{{ item.item }} launchctl rc={{ item.rc }}"
+      loop: "{{ central_launchd_state.results }}"
+
+    - name: Run bounded Central recovery when explicitly requested
+      ansible.builtin.command:
+        argv:
+          - "{{ central_dir }}/scripts/recover.sh"
+          - --all
+          - --passes
+          - "{{ central_recover_passes | string }}"
+      become_user: "{{ service_user }}"
+      environment:
+        HOME: "{{ service_home }}"
+        PATH: "{{ central_path }}"
+        ENV_FILE: "{{ central_dir }}/.env"
+        DOCKER_HOST: "unix://{{ central_docker_socket }}"
+      when:
+        - central_recover_now | bool
+        - not ansible_check_mode
+
+    - name: Verify Central health when requested
+      ansible.builtin.command:
+        argv:
+          - "{{ central_dir }}/scripts/health.sh"
+      become_user: "{{ service_user }}"
+      environment:
+        HOME: "{{ service_home }}"
+        PATH: "{{ central_path }}"
+        ENV_FILE: "{{ central_dir }}/.env"
+        DOCKER_HOST: "unix://{{ central_docker_socket }}"
+      changed_when: false
+      when:
+        - central_verify | bool
+        - not ansible_check_mode
+
+    - name: Explain health verification skipped in check mode
+      ansible.builtin.debug:
+        msg: "check mode: skipped health verification"
+      when:
+        - central_verify | bool
+        - ansible_check_mode

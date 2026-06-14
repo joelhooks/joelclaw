@@ -228,6 +228,16 @@ Gate 4 diagnostics are one command; do not paste ad-hoc heredocs when the shell 
 sudo ./infra/central/scripts/diagnose.sh
 ```
 
+If TCP ports are open but Redis/HTTP probes blackhole, use the bounded recovery helper instead of poking individual tunnels by hand:
+
+```bash
+sudo ./infra/central/scripts/recover.sh --all --passes 3
+```
+
+It restarts the shadow Compose services as `joelclaw`, writes a timestamped receipt under `/Users/Shared/joelclaw/logs/central/`, and only exits 0 after consecutive green health passes.
+
+`health.sh` is also a tiny recovery state machine now: `healthy -> degraded -> recovering -> healthy|failed`. By default it runs bounded probes, tracks consecutive failures in `/Users/Shared/joelclaw/logs/central/health-consecutive-failures`, and invokes `recover.sh --all` after 3 degraded passes with a cooldown. Set `CENTRAL_AUTO_RECOVER=0` to make it check-only again.
+
 After Gate 3 installs Colima/Docker and mirrors the repo into `/Users/Shared/joelclaw/src/joelclaw`, the service-user commands are:
 
 ```bash
