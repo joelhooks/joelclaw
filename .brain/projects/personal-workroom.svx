@@ -1,0 +1,74 @@
+---
+title: "Personal Workroom"
+type: "project"
+status: "active"
+created_at: "2026-06-02"
+tags:
+  - gateway
+  - memory
+  - discord
+  - workroom
+---
+
+# Personal Workroom
+
+**Personal Workroom** is the canonical term for the long-running direct User↔joelclaw workroom: a DM-backed ongoing thread for quick capture, notes, links, loose thoughts, and coordination over time.
+
+It is a joelclaw domain feature, not a `pi-discord-threads` bridge feature. Discord DM is the first backing surface to focus on, but the domain object should not be named after Discord, threads, or Pi session files. Telegram, Slack DM, iMessage, and future direct channels should all be able to resume the same Personal Workroom for that User.
+
+## Current invariants
+
+- Each User has exactly one Personal Workroom.
+- A Personal Workroom belongs to exactly one User.
+- The same Personal Workroom resumes across direct channel surfaces.
+- Discord DM is the first implementation focus.
+- For the prototype, it behaves like the existing Discord thread sessions, except the backing channel is the User↔bot DM.
+- It is not necessarily project-focused; quick capture is a primary use case.
+- It is separate from guild/server threads, Slack Project Threads, Reply Grants, Runs, Conversations, and Pi session files.
+- It keeps compacted working state and pointers to durable artifacts.
+- It does not become the canonical memory store.
+- `.brain` and pi-notes remain durable authored memory surfaces.
+- Typesense remains derived retrieval/search over source-of-truth records.
+
+## Prototype boundary
+
+Keep the first slice intentionally small:
+
+- Focus on Discord DM as the first direct channel surface.
+- Treat the Discord DM like a special long-running thread mapping for now.
+- Use the Pi session on this computer as the initial runtime backing.
+- Use `/Users/joel/Code/joelhooks/dark-wizard` as the prototype CWD and local Brain/prompt home.
+- Keep the first implementation as an ongoing Pi session inside the DM; do not introduce a separate session-agent unless the simple path fails.
+- Prove good compaction / carry-forward behavior before designing the full Central persistence model.
+- Defer specialized link-capture workflows, capture inboxes, or wizard-page surfaces until the simple DM loop works.
+- Avoid turning the prototype into a broad cross-channel architecture project.
+- Do not require a Project Thread, ADR, or full memory package schema before the first usable DM loop exists.
+
+The prototype can still use the Personal Workroom language so it does not conflict with future domain architecture.
+
+## Working memory shape
+
+A Personal Workroom should preserve:
+
+- current focus when one exists
+- open loops
+- loose capture items: notes, links, ideas, reminders, questions, and "stuff Joel dropped in"
+- active project pointers when relevant, but it should not require every turn to attach to a project
+- links as ordinary context for now; a dedicated link inbox or wizard page is a deferred enhancement
+- recent useful conversational tail
+- links to related Runs / Project Threads / Brain notes / pi-notes entries
+- decisions that still need promotion into durable docs
+
+It should discard or avoid canonicalizing:
+
+- raw transcript bulk
+- chit-chat
+- superseded plans
+- search result sludge
+- low-value command output
+
+## Open grill questions
+
+- Which store owns the compacted workroom state after the prototype graduates beyond local Pi session state?
+- What is the exact promotion policy from workroom state into `.brain`, pi-notes, a wizard page, or task systems?
+- How should retrieval compose Personal Workroom state, Typesense hits, `.brain`, pi-notes, and thread/project pointers?

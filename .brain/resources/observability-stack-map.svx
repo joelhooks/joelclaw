@@ -1,0 +1,62 @@
+---
+title: "Observability Stack Map"
+type: "resource"
+status: "draft"
+created_at: "2026-06-06"
+tags:
+  - observability
+  - telemetry
+  - grafana
+  - otel
+---
+
+# Observability Stack Map
+
+Source spark: Marc Köhlbrugge's 2026-06-06 X post mapping the common observability stack:
+
+> Grafana → dashboards  
+> Prometheus → metrics  
+> Loki → logs  
+> Tempo → traces  
+> Alloy → collector/forwarder  
+> OpenTelemetry → app traces  
+> node-exporter → host metrics  
+> cAdvisor → container metrics
+
+Source URL: https://x.com/marckohlbrugge/status/2063292480594891057
+
+## Fit for joelclaw
+
+JoelClaw already has structured telemetry, but it is mostly agent-readable and domain-specific:
+
+- `@joelclaw/telemetry` emits OTEL-shaped events.
+- `system-bus-worker` accepts `/observability/emit`.
+- Typesense `otel_events` is the current searchable event sink.
+- `docs/architecture.md` names ClickHouse as the intended canonical observability store.
+- Langfuse handles LLM call traces and cost attribution.
+
+The Grafana stack is useful as an operator lens, not a replacement for JoelClaw's event memory.
+
+## Recommended split
+
+- **Keep Typesense / ClickHouse** for agent-readable event history, search, and correlation.
+- **Use Prometheus** for numeric health: queue depths, request latency, error counters, worker restarts, k8s/container metrics.
+- **Use Loki** for raw log streams when CLI `joelclaw logs` is not enough.
+- **Use Tempo** only after services emit real distributed traces; otherwise it is ceremony.
+- **Use Alloy** as the boring collector/forwarder that wires node, container, OTEL, logs, and metrics into the right sinks.
+- **Use Grafana** as the human glanceable surface over Prometheus/Loki/Tempo/ClickHouse.
+
+## Small first slice
+
+Do not deploy the whole stack in one heroic blob. First slice:
+
+1. Add Prometheus scrape targets for k8s, Dkron's existing Prometheus endpoint, and app-level `/metrics` where present.
+2. Add Grafana with one dashboard: Central health, queue depth, recent failures, worker/runtime status.
+3. Add Alloy once there are at least two sources to forward and normalize.
+4. Defer Loki/Tempo until logs/traces are actually needed to answer questions the CLI cannot answer quickly.
+
+## Open questions
+
+- Should ClickHouse be queried directly from Grafana as the canonical OTEL event store once ADR-0224 lands?
+- Which services should expose `/metrics` first: `system-bus-worker`, `restate-worker`, gateway daemon, or queue drainer?
+- What is the alert boundary: Grafana alerting, existing gateway/operator alerting, or both with clear ownership?
