@@ -1,7 +1,7 @@
 ---
 name: joelclaw-system-check
 displayName: Joelclaw System Check
-description: "Run a comprehensive health check of the joelclaw system — k8s cluster, worker, Inngest, Redis, Typesense/OTEL, tests, TypeScript, repo sync, memory pipeline, pi-tools, git config, active loops, disk, stale tests. Outputs a 1-10 score with per-component breakdown. Use when: 'system health', 'health check', 'is everything working', 'system status', 'how's the system', 'check everything', or at session start to orient."
+description: "Run comprehensive joelclaw health checks, including postboot/daily checks for NAS, MinIO, Convex, Postgres, Typesense, Inngest, Panda/Flagg authority split, k8s, worker, Redis, OTEL, tests, repo sync, memory pipeline, and disk. Use when: 'system health', 'postboot check', 'daily system check', 'health check', 'is everything working', 'system status', 'how's the system', 'check everything', or at session start to orient."
 version: 1.1.0
 author: Joel Hooks
 tags: [joelclaw, health, diagnostics, checks, operations]
@@ -9,13 +9,111 @@ tags: [joelclaw, health, diagnostics, checks, operations]
 
 # joelclaw System Health Check
 
-Run `scripts/health.sh` for a full system health report with 1-10 score.
+Run `scripts/postboot.sh` for the read-only postboot/daily topology sweep. It checks the Flagg/Panda authority split, NAS mounts, NFS tuning, custom NAS MinIO, Central Postgres, local Convex, Typesense, Inngest, and shadow Central health without printing secrets. The daily automation also reviews recent Codex infra transcripts so completed work does not stay trapped in chat.
 
 ```bash
-~/Code/joelhooks/joelclaw/skills/joelclaw-system-check/scripts/health.sh
+~/Code/joelhooks/joelclaw-runtime/skills/joelclaw-system-check/scripts/postboot.sh
 ```
 
-## What It Checks (16 components)
+Run `scripts/health.sh` for the older full system health report with 1-10 score. This is heavier because it includes tests and TypeScript.
+
+```bash
+~/Code/joelhooks/joelclaw-runtime/skills/joelclaw-system-check/scripts/health.sh
+```
+
+## Postboot/Daily Check
+
+Use this after a reboot, after storage/network work, and for the daily automation.
+
+Default command:
+
+```bash
+POSTBOOT_NAS_BENCHMARK_MIB=1 \
+  ~/Code/joelhooks/joelclaw-runtime/skills/joelclaw-system-check/scripts/postboot.sh
+```
+
+Default posture:
+
+- Read-only except for the tiny NAS verifier write probe under the already-designated `s3` proof paths.
+- Does not run the Convex write/read/delete smoke unless `POSTBOOT_HEAVY=1`.
+- Does not run the legacy full `health.sh` unless `POSTBOOT_RUN_FULL_HEALTH=1`.
+- Never prints raw `.env`, MinIO keys, Convex admin keys, or Postgres URLs with passwords.
+- Treats custom NAS MinIO on `100.67.156.41:39000` as canonical.
+- Treats ASUSTOR MinIO CE on `29990` as a warning/reference surface only.
+- On Flagg, expects `JOELCLAW_CENTRAL_URL` and direct Typesense helpers to still point at Panda until explicit Central cutover.
+
+Critical checks:
+
+| Check | What Green Means |
+| --- | --- |
+| authority split env | Flagg still points Central capture/search at Panda while Flagg is shadow |
+| Inngest direct health | the authoritative Inngest endpoint responds on `/health`; on Flagg this falls back to `http://panda:8288` if `INNGEST_URL` is unset |
+| Run capture health | Panda `/api/runs/health` returns `ok=true` with local Machine auth |
+| Typesense configured health | configured Typesense endpoint responds on `/health` |
+| NAS launchd label | `system/com.joelclaw.central.nas-mounts` is loaded with no failing last exit |
+| NAS route 10GbE/MTU | route to `192.168.1.163` uses `en0` and MTU `8192` |
+| NAS mounts status | `/Volumes/nas-nvme` and `/Volumes/three-body` are mounted from LAN IP exports |
+| NAS verifier write probe | service checkout `verify-nas.sh` passes |
+| NFS tuned options | live mounts show `rsize=524288,wsize=524288,readahead=128` |
+| custom MinIO ready/live | custom NAS MinIO responds on `39000` |
+| Central Postgres | socket, TCP, and readiness checks pass |
+| local Convex | backend `/version` and dashboard respond |
+
+Warning/reference checks:
+
+- custom MinIO console TCP on `39001`
+- ASUSTOR MinIO CE readiness on `29990`
+- aggregate `joelclaw status` and `joelclaw inngest status` CLI wrappers, because those can reveal local env drift even when the authoritative endpoint is healthy
+- Convex LAN and tailnet forwards
+- local Convex LAN forwarder LaunchAgent
+- Flagg shadow Central health
+- gated heavy checks
+
+If `postboot.sh` fails, fix critical failures first. Do not chase warning/reference failures before the required path is green.
+
+## Recent Codex Transcript Review
+
+The daily automation should review recent Codex infra sessions after the health script runs.
+
+Preferred indexed search:
+
+```bash
+joelclaw sessions search \
+  "NAS three-body MTU MinIO Convex Postgres Typesense Inngest Panda Flagg Central postboot" \
+  --source typesense \
+  --machine all \
+  --runtime codex \
+  --limit 10 \
+  --extract
+```
+
+If indexed Codex results are stale, irrelevant, or missing today's work, use a bounded local raw fallback:
+
+```bash
+tail -n 80 ~/.codex/session_index.jsonl
+find ~/.codex -type f -name "rollout-*.jsonl" -mtime -2
+```
+
+Review only bounded snippets, final answers, commands, and receipts. Do not dump full transcripts or secrets.
+
+Promote durable facts into the right surface:
+
+- system topology and Panda/Flagg authority -> `skills/system-architecture/SKILL.md`
+- NAS access, LAN/MTU/NFS behavior -> `skills/three-body/SKILL.md`
+- custom NAS MinIO behavior -> `skills/minio/SKILL.md`
+- local Convex exposure and daily-use shape -> `skills/local-convex/SKILL.md`
+- dated receipts and decisions -> `.brain/resources/*.svx`
+
+Treat in-progress subagent threads and sessions without a final answer as leads, not architecture truth.
+
+Active Codex automation:
+
+- ID: `daily-joelclaw-postboot-system-check`
+- Schedule: daily at 08:15 local time
+- Workspace: `/Users/joel/Code/joelhooks/joelclaw-runtime`
+- Command intent: run `POSTBOOT_NAS_BENCHMARK_MIB=1 skills/joelclaw-system-check/scripts/postboot.sh`, summarize failures/warnings, review recent Codex infra transcripts, report uncaptured durable facts, and avoid secret output.
+
+## Full Health Check (16 components)
 
 | Check | What | Green (10) | Yellow (5-7) | Red (1-3) |
 |-------|------|-----------|-------------|----------|

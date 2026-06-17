@@ -1,0 +1,85 @@
+---
+title: "Postboot System Check Contract"
+type: "resource"
+status: "active"
+created_at: "2026-06-17"
+tags:
+  - operations
+  - health-check
+  - postboot
+  - central-migration
+---
+
+# Postboot System Check Contract
+
+Joelclaw needs one boring postboot/daily check that asks: after the machine comes back, is the actual architecture alive?
+
+## Decision
+
+The canonical agent-facing entrypoint is:
+
+```sh
+~/Code/joelhooks/joelclaw-runtime/skills/joelclaw-system-check/scripts/postboot.sh
+```
+
+This lives inside the existing `joelclaw-system-check` skill instead of creating a second overlapping health skill.
+
+## Scope
+
+The postboot profile checks:
+
+- Panda/Flagg authority split from local env.
+- direct Inngest health. On Flagg, if `INNGEST_URL` is unset, the check uses `http://panda:8288` because Panda remains live Central.
+- aggregate `joelclaw status` and `joelclaw inngest status` as warning surfaces so local CLI env drift does not hide real endpoint health.
+- Panda Run capture health through `/api/runs/health`.
+- configured Typesense health.
+- Flagg NAS launchd label, 10GbE/MTU route, live LAN-IP NFS mounts, small write probe, and NFS mount options.
+- custom NAS MinIO on `100.67.156.41:39000`.
+- Central Postgres socket/TCP/readiness.
+- local self-hosted Convex backend and dashboard.
+- Convex LAN/tailnet forwarders as warning surfaces.
+- Flagg shadow Central health as a warning surface until cutover.
+
+After the live health sweep, the daily automation also reviews recent Codex infra transcripts for completed work, blockers, and receipts touching NAS, MinIO, Convex, Postgres, Typesense, Inngest, Panda/Flagg Central migration, `system-architecture`, and `three-body`.
+
+## Safety
+
+Default mode is read-only except for the existing NAS verifier write probe under the designated proof paths.
+
+The script does not print raw env files, MinIO credentials, Convex admin keys, or Postgres URLs with passwords.
+
+The Convex write/read/delete smoke is gated behind:
+
+```sh
+POSTBOOT_HEAVY=1
+```
+
+The legacy full health script with tests and TypeScript is gated behind:
+
+```sh
+POSTBOOT_RUN_FULL_HEALTH=1
+```
+
+## Automation Shape
+
+Daily automation should run the postboot script from `/Users/joel/Code/joelhooks/joelclaw-runtime` on the local machine. It should summarize failures and warnings, then review recent Codex infra transcripts. It should not dump full secret-bearing command context or raw transcripts.
+
+Active Codex automation:
+
+- ID: `daily-joelclaw-postboot-system-check`
+- Schedule: daily at 08:15 local time.
+- Workspace: `/Users/joel/Code/joelhooks/joelclaw-runtime`.
+- Prompt: run `POSTBOOT_NAS_BENCHMARK_MIB=1 skills/joelclaw-system-check/scripts/postboot.sh`, report PASS/FAIL, critical failures, warnings, concrete next repair steps, and any uncaptured durable facts from recent Codex infra sessions.
+
+Transcript review should start with bounded Typesense search over Codex runs. If same-day Codex infra work is missing or stale, fall back to bounded local raw review of `~/.codex/session_index.jsonl` plus recent `~/.codex/**/rollout-*.jsonl` files. Report consulted session ids/filenames. Treat in-progress sessions without final receipts as leads, not system truth.
+
+If a daily check fails, the next step is to fix critical failures first:
+
+1. authority split / Central URL;
+2. Inngest, Run capture, and Typesense;
+3. NAS route/mounts/NFS options;
+4. custom MinIO;
+5. Central Postgres;
+6. local Convex.
+
+Warning/reference surfaces, such as ASUSTOR MinIO CE or Convex tailnet forwarding, should not distract from the required path.

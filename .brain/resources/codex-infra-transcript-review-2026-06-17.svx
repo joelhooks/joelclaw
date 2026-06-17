@@ -1,0 +1,70 @@
+---
+title: "Codex Infra Transcript Review"
+type: "resource"
+status: "active"
+created_at: "2026-06-17"
+tags:
+  - codex
+  - transcripts
+  - infrastructure
+  - central-migration
+  - postboot
+---
+
+# Codex Infra Transcript Review
+
+Joel did a large infra pass on 2026-06-17. The daily postboot check should review recent Codex transcripts so completed infra work is not stranded in chat.
+
+## Method
+
+First attempt:
+
+```sh
+joelclaw sessions search "NAS three-body Flagg MTU MinIO Convex Postgres postboot" --source typesense --machine all --runtime codex --limit 10 --extract
+joelclaw sessions search "infra central migration Flagg Panda NAS MinIO Convex" --source typesense --machine all --runtime codex --limit 10 --extract
+```
+
+Result: Typesense Codex search returned stale or irrelevant hits for today's infra work. The useful review came from bounded local raw Codex metadata and recent `rollout-*.jsonl` files under `~/.codex`.
+
+Do not dump raw transcripts. Use session ids, filenames, final answers, commands, receipts, and bounded snippets.
+
+## Completed Sessions Reviewed
+
+- `019ed6e1-a0f6-7003-9018-2c62cad40689` / `rollout-2026-06-17T11-39-31-019ed6e1-a0f6-7003-9018-2c62cad40689.jsonl`: NAS diagnosis, LAN/NFS repair, MTU/NFS tuning, postboot skill/automation.
+- `019ed708-0186-7040-92ad-cbebc0979312` / `rollout-2026-06-17T12-21-26-019ed708-0186-7040-92ad-cbebc0979312.jsonl`: Panda-to-Flagg migration status and Typesense blocker.
+- `019ed70a-35d6-7743-b36e-7771db51631c` / `rollout-2026-06-17T12-23-51-019ed70a-35d6-7743-b36e-7771db51631c.jsonl`: migration chronology and blocker review.
+- `019ed70a-4cb1-71d1-8021-2f5284abdc89` / `rollout-2026-06-17T12-23-56-019ed70a-4cb1-71d1-8021-2f5284abdc89.jsonl`: read-only Flagg/Panda live status check.
+- `019ed71b-7843-7943-b64f-15caa3c93c0e` / `rollout-2026-06-17T12-42-42-019ed71b-7843-7943-b64f-15caa3c93c0e.jsonl`: MinIO runtime skill creation.
+- `019ed71b-cb27-74b1-9b71-ed63a15333e6` / `rollout-2026-06-17T12-43-03-019ed71b-cb27-74b1-9b71-ed63a15333e6.jsonl`: system-architecture refresh.
+- `019ed742-db9c-77d1-858b-fb1d4f97ef13` / `rollout-2026-06-17T13-25-43-019ed742-db9c-77d1-858b-fb1d4f97ef13.jsonl`: self-hosted Convex exposure and local-convex skill update.
+- `019ed73d-44d6-7dc0-88bb-aab613c284f5` / `rollout-2026-06-17T13-19-37-019ed73d-44d6-7dc0-88bb-aab613c284f5.jsonl`: Executor host placement decision.
+
+## Derived Truth
+
+- `three-body` is not the main culprit. The bad shape was hostname/data-plane split: `three-body` can resolve to Tailscale while the persistent NFS contract needs the LAN IP `192.168.1.163`.
+- Flagg NFS mounts now use LAN exports:
+  - `/Volumes/nas-nvme` -> `192.168.1.163:/volume2/data`
+  - `/Volumes/three-body` -> `192.168.1.163:/volume1/joelclaw`
+- `system/com.joelclaw.central.nas-mounts` is loaded, runs every 60s, and had last exit `0` in the receipt.
+- NFS is tuned to `rsize=524288,wsize=524288,dsize=65536,readahead=128`.
+- Flagg's current practical NAS MTU is `8192`, not full `9000`. Full 9000 needs switch-path proof.
+- Custom NAS MinIO on `100.67.156.41:39000` is the canonical self-hosted object store. ASUSTOR MinIO CE on `29990` remains a warning/reference surface.
+- Local Convex is exposed selectively:
+  - local: `127.0.0.1:3210`, `127.0.0.1:3211`, `127.0.0.1:6791`
+  - LAN: `192.168.1.10:3210`, `192.168.1.10:3211`, `192.168.1.10:6791`
+  - tailnet: `100.99.76.47:3210`, `100.99.76.47:3211`, `100.99.76.47:6791`
+- Panda remains live Central. Flagg is shadow/next Central. `system-architecture` is a network-wide map, not a description of whichever machine the agent is currently on.
+- Flagg Typesense is not ready for cutover. The completed review identified a file-descriptor/launchd limit problem and broken local raft state, not a RAM/disk shortage. The repair path is ready in source but still needs the root-bound `/Users/joel/central-next-sudo.sh` apply/restore/verify step.
+- Executor belongs on Flagg first, not `three-body`. The NAS should stay storage/backup unless explicitly promoted to runtime later.
+
+## Open Proofs
+
+- Hard-reboot Flagg and prove the NAS LaunchDaemon restores both mounts before GUI login.
+- Inspect the actual switch path and prove or abandon full MTU `9000`.
+- Apply and verify the Flagg Typesense root repair path before any Central cutover.
+- Fix the stale Codex transcript indexing path so Typesense search finds same-day Codex infra sessions.
+- Fix `slog`/`joelclaw log write` PATH availability.
+
+## Daily Check Rule
+
+The daily postboot automation now reviews recent Codex infra transcripts after running the health script. A stale transcript index is a warning, not an excuse to skip review: use local raw Codex session metadata and recent rollout files as the fallback.
