@@ -161,6 +161,90 @@ Important files:
 - `compose.yaml` starts `ghcr.io/get-convex/convex-backend` and `ghcr.io/get-convex/convex-dashboard`.
 - `generate-admin-env.sh` stores the generated self-hosted admin key in `app-admin.env` without printing it.
 - `run.sh` performs the bootstrap, starts the backend/dashboard, and writes the admin env.
+- `smoke-self-hosted-convex.sh` deploys `apps/web/convex`, writes/reads/removes a temporary row, exports a snapshot, and verifies the export ZIP.
+
+## Selective Exposure
+
+Convex is intentionally exposed by named interfaces and ports only. Do not change this to a wildcard `0.0.0.0` bind.
+
+Current verified URLs:
+
+```sh
+# Local
+http://127.0.0.1:3210
+http://127.0.0.1:3211
+http://127.0.0.1:6791
+
+# LAN on Flagg
+http://192.168.1.10:3210
+http://192.168.1.10:3211
+http://192.168.1.10:6791
+
+# Tailnet on Flagg
+http://100.99.76.47:3210
+http://100.99.76.47:3211
+http://100.99.76.47:6791
+```
+
+Implementation:
+
+- Docker Compose keeps the Convex backend and dashboards bound to `127.0.0.1` only.
+- LAN exposure is a user launchd TCP forwarder:
+  - plist: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/local-convex/com.joelclaw.local-convex.lan-forwarder.plist`
+  - forwarder: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/local-convex/lan-forwarder.mjs`
+  - binds `192.168.1.10:{3210,3211,6791}` and forwards to `127.0.0.1:{3210,3211,6791}`
+- Tailnet exposure is Tailscale Serve TCP forwarding:
+  - `100.99.76.47:3210 -> 127.0.0.1:3210`
+  - `100.99.76.47:3211 -> 127.0.0.1:3211`
+  - `100.99.76.47:6791 -> 127.0.0.1:6792`
+- The tailnet dashboard uses a second local dashboard container on `127.0.0.1:6792` so its `NEXT_PUBLIC_DEPLOYMENT_URL` points at `http://100.99.76.47:3210`.
+- The LAN/local dashboard on `127.0.0.1:6791` is configured with `NEXT_PUBLIC_DEPLOYMENT_URL=http://192.168.1.10:3210`.
+
+Known Docker Desktop gotcha:
+
+- Docker could not bind directly to `192.168.1.10` or `100.99.76.47` on this Mac; attempts failed with `cannot assign requested address`.
+- Keep Docker localhost-only and expose selected services through host-level forwarders.
+
+Manage LAN forwarder:
+
+```sh
+cd /Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/local-convex
+./start-lan-forwarder.sh
+./stop-lan-forwarder.sh
+launchctl print gui/$(id -u)/com.joelclaw.local-convex.lan-forwarder
+```
+
+Manage tailnet forwards without disturbing unrelated Tailscale Serve config:
+
+```sh
+tailscale serve --bg --yes --tcp 3210 127.0.0.1:3210
+tailscale serve --bg --yes --tcp 3211 127.0.0.1:3211
+tailscale serve --bg --yes --tcp 6791 127.0.0.1:6792
+tailscale serve status --json
+
+# Disable only the Convex forwards if needed.
+tailscale serve --tcp=3210 off
+tailscale serve --tcp=3211 off
+tailscale serve --tcp=6791 off
+```
+
+Do not run `tailscale serve reset` casually; there may be unrelated Serve routes on this node.
+
+Exposure checks:
+
+```sh
+curl -fsS -m 5 http://127.0.0.1:3210/version
+curl -fsS -m 5 http://192.168.1.10:3210/version
+curl -fsS -m 5 http://100.99.76.47:3210/version
+
+curl -fsSI -m 5 http://127.0.0.1:6791
+curl -fsSI -m 5 http://192.168.1.10:6791
+curl -fsSI -m 5 http://100.99.76.47:6791
+
+lsof -nP -iTCP:3210 -iTCP:3211 -iTCP:6791 -iTCP:6792 -sTCP:LISTEN
+```
+
+The healthy self-hosted backend `/version` response is currently `unknown`.
 
 ## Secret Handling
 
@@ -179,12 +263,16 @@ When asked to wire or debug local Convex:
 3. Verify whether Convex env is pointing at custom MinIO by IP, not CE and not the tailnet alias.
 4. Confirm Central Postgres is the DB target; do not move Postgres state to NAS.
 5. Run a Convex-level export/import or file upload smoke test.
-6. Capture any durable change back into the brain project note.
-7. Leave MinIO CE alone until the real Convex path is proven; then uninstall CE.
+6. If exposing Convex beyond localhost, keep Docker bound to localhost and use the selective LAN/Tailscale forwarding model above.
+7. Capture any durable change back into the brain project note.
+8. Leave MinIO CE alone until the real Convex path is proven; then uninstall CE.
 
 ## Gotchas
 
 - The old CE smoke-test buckets do not prove the durable path. Only custom MinIO on `39000` counts.
+- Do not expose Convex with `0.0.0.0` just because Docker port binding is convenient. Use selected LAN/tailnet forwards.
+- Tailscale Serve has unrelated routes on this node; do not reset the whole Serve config when only changing Convex ports.
+- The dashboard bakes in one public deployment URL. Keep separate LAN and tailnet dashboard instances if both access paths need to work cleanly.
 - The NAS SSH service is sensitive to rapid probes. Parallel SSH commands can cause resets.
 - MinIO image availability changed over time; if changing image tags, verify current registry availability and pin a digest.
 - Newer MinIO images may require CPU compatibility attention on NAS-class Intel Atom hardware; prefer known-good pinned digests unless intentionally upgrading.
