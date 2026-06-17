@@ -1,7 +1,7 @@
 ---
 name: minio
 displayName: MinIO
-description: "Operate Joel's durable MinIO and S3-compatible object storage. Use for MinIO, S3-compatible storage, Convex buckets, three-body MinIO, custom Docker/Compose MinIO, and ASUSTOR MinIO CE vs custom MinIO questions."
+description: "Operate Joel's MinIO legacy/rollback services and S3-compatible object storage checks. Use for MinIO, ASUSTOR MinIO CE, custom Docker/Compose MinIO, Convex MinIO rollback, and MinIO-vs-Garage questions. For canonical local Convex object storage, use Garage/local-convex."
 version: 0.1.0
 author: joel
 tags:
@@ -17,7 +17,7 @@ tags:
 
 # MinIO
 
-Operate Joel's durable S3-compatible object storage. This is not generic MinIO advice. The canonical path is the custom Docker/Compose MinIO running on the ASUSTOR NAS `three-body`; ASUSTOR MinIO CE is only a smoke-test/reference instance unless Joel explicitly says otherwise.
+Operate Joel's MinIO legacy/rollback services. This is not generic MinIO advice. The canonical local Convex object store is now Garage on `three-body` at `http://100.67.156.41:39100`. The custom Docker/Compose MinIO service remains a working rollback/reference path; ASUSTOR MinIO CE is only a smoke-test/reference instance unless Joel explicitly says otherwise.
 
 ## When To Use
 
@@ -30,9 +30,11 @@ Use this skill when Joel mentions:
 - `three-body` MinIO
 - custom MinIO on the NAS
 - ASUSTOR MinIO CE
+- MinIO rollback
+- MinIO vs Garage
 - bucket creation, bucket health, object upload/read/delete checks, or S3 env wiring
 
-If the task is about the full local Convex runtime, also read the `local-convex` skill. If the task is about general ASUSTOR storage, NFS, SMB, RAID, or NAS health, also read the `three-body` skill.
+If the task is about the full local Convex runtime or canonical Convex object storage, also read the `local-convex` skill and prefer Garage unless Joel explicitly asks for MinIO rollback. If the task is about general ASUSTOR storage, NFS, SMB, RAID, or NAS health, also read the `three-body` skill.
 
 ## Current Topology
 
@@ -44,7 +46,16 @@ Host:
 - NAS model: ASUSTOR AS6508T
 - ADM: `5.1.3.RI81`
 
-Canonical custom MinIO:
+Canonical Garage for local Convex:
+
+- S3 API: `http://100.67.156.41:39100`
+- Data: `/volume1/joelclaw/s3/garage/data`
+- Metadata: `/volume1/joelclaw/s3/garage/meta`
+- Compose file: `/volume1/joelclaw/s3/garage-compose/compose.yaml`
+- Convex S3 env: `/volume1/joelclaw/s3/garage-compose/convex-s3.env`
+- Redacted env: `/volume1/joelclaw/s3/garage-compose/convex-s3.redacted.env`
+
+Custom MinIO rollback/reference:
 
 - API: `http://100.67.156.41:39000`
 - Console: `http://100.67.156.41:39001`
@@ -61,7 +72,7 @@ ASUSTOR MinIO CE reference instance:
 - CE data: `/share/MinIOCE/data`
 - CE is smoke-test/reference only. It is not the canonical durable object store for joelclaw or Convex.
 
-Do not expose MinIO publicly. Keep API and console access LAN/tailnet only.
+Do not expose MinIO or Garage publicly. Keep API and console access LAN/tailnet only.
 
 ## Canonical Sources
 
@@ -125,7 +136,16 @@ Operational rules:
 
 ## Health Checks
 
-Prefer network and HTTP checks that do not require credentials:
+For canonical local Convex storage, check Garage first:
+
+```sh
+nc -vz -w 5 100.67.156.41 39100
+curl -sS -m 5 -o /tmp/garage-root.out -w '%{http_code}\n' http://100.67.156.41:39100/
+```
+
+Garage returns `403 AccessDenied` for unsigned root requests; that still proves the S3 API is reachable.
+
+For custom MinIO rollback/reference, prefer network and HTTP checks that do not require credentials:
 
 ```sh
 tailscale ping --timeout=5s --c 2 three-body
@@ -194,9 +214,9 @@ ssh joel@three-body 'cd /volume1/joelclaw/s3/minio-compose && set -eu; . ./.env;
 
 If `mc` output includes only bucket names, it is safe to report. If a command prints env values, stop and redact.
 
-## Convex Env Shape
+## MinIO Rollback Env Shape
 
-Convex should point at the custom MinIO IP endpoint:
+The current canonical Convex endpoint is Garage at `http://100.67.156.41:39100`. Only use this MinIO env shape when explicitly rolling Convex back to custom MinIO:
 
 ```sh
 AWS_REGION=usw2
@@ -213,7 +233,8 @@ S3_STORAGE_SEARCH_BUCKET=joelclaw-local-usw2-convex-search
 
 Validation rules:
 
-- `S3_ENDPOINT_URL` must be `http://100.67.156.41:39000`.
+- For MinIO rollback, `S3_ENDPOINT_URL` must be `http://100.67.156.41:39000`.
+- For current canonical Convex, `S3_ENDPOINT_URL` must be `http://100.67.156.41:39100`.
 - `AWS_S3_FORCE_PATH_STYLE` must be true.
 - Bucket names must match the custom Convex buckets above.
 - Do not use the tailnet alias in durable machine config.
@@ -262,14 +283,16 @@ ASUSTOR MinIO CE is not the canonical path. Treat it as temporary scaffolding.
 
 Before removing or disabling CE:
 
-- Prove custom MinIO readiness on `39000`.
-- Prove custom Convex credential upload/read/delete smoke test.
-- Confirm Convex or the dependent workload is configured for `http://100.67.156.41:39000`.
+- Prove Garage-backed Convex is healthy on `39100`.
+- Prove the Convex-level smoke test passes against Garage.
+- Optionally prove custom MinIO readiness on `39000` if keeping it as the rollback path.
+- Confirm no current workload still depends on CE.
+- Do not disable custom MinIO until Garage has remained healthy and Joel explicitly accepts losing the immediate MinIO rollback path.
 - Confirm Joel wants CE removed or disabled.
 
 Do not delete `/share/MinIOCE/data` unless Joel explicitly asks for data deletion. Prefer ADM/package-level disable or uninstall first, then summarize remaining data paths.
 
-CE checks should stay clearly labeled as reference checks. Do not use CE success to claim the custom MinIO path is healthy.
+CE checks should stay clearly labeled as reference checks. Do not use CE success to claim the canonical Garage path is healthy.
 
 ## Operating Sequence
 
@@ -293,4 +316,4 @@ For MinIO debugging:
 - Docker socket access on ADM may require `sudo` even when `joel` is an administrator.
 - `mc` may only be available as the pinned Docker image, not as an ADM host binary.
 - NAS SSH can react badly to rapid probes. Slow down before assuming the service is broken.
-- Do not move Convex object storage to a local SSD fallback just to get a smoke test green. The durable target is NAS-backed custom MinIO.
+- Do not move Convex object storage to a local SSD fallback just to get a smoke test green. The current durable target is NAS-backed Garage.

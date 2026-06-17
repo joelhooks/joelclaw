@@ -1,12 +1,13 @@
 ---
 name: local-convex
 displayName: Local Convex
-description: "Operate Joel's local self-hosted Convex setup with Central Postgres and NAS-backed MinIO. Use when: 'local convex', 'self-hosted convex', 'Convex S3', 'Convex MinIO', 'three-body MinIO', 'Convex buckets', 'run Convex locally', or any task wiring/debugging the local Convex runtime."
+description: "Operate Joel's local self-hosted Convex setup with Central Postgres and NAS-backed Garage/S3-compatible object storage. Use when: 'local convex', 'self-hosted convex', 'Convex S3', 'Convex Garage', 'Garage', 'Convex MinIO', 'Convex buckets', 'run Convex locally', or any task wiring/debugging the local Convex runtime."
 version: 0.1.0
 author: joel
 tags:
   - joelclaw
   - convex
+  - garage
   - minio
   - postgres
   - asustor
@@ -15,15 +16,16 @@ tags:
 
 # Local Convex
 
-Operate Joel's local self-hosted Convex setup. This is not generic Convex advice. It is the local joelclaw path: Central Postgres for database state, custom MinIO on `three-body` for S3-compatible object storage, and ASUSTOR MinIO CE only as a temporary smoke-test reference.
+Operate Joel's local self-hosted Convex setup. This is not generic Convex advice. It is the local joelclaw path: Central Postgres for database state and Garage on `three-body` for S3-compatible object storage. The custom MinIO install is now a rollback/reference path. ASUSTOR MinIO CE is only a temporary smoke-test reference.
 
 ## Canonical Sources
 
 Read these before mutating the setup:
 
 - Project note: `/Users/joel/.brain/projects/convex-self-hosting-local.svx`
-- Runbook: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/outputs/three-body-convex-minio-runbook.md`
-- Installer: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/outputs/install-three-body-convex-minio.sh`
+- Garage installer: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/outputs/install-three-body-convex-garage.sh`
+- Legacy MinIO runbook: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/outputs/three-body-convex-minio-runbook.md`
+- Legacy MinIO installer: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/outputs/install-three-body-convex-minio.sh`
 
 If those disagree, prefer the brain project note for current truth, then verify live state with non-secret health checks.
 
@@ -42,13 +44,22 @@ If those disagree, prefer the brain project note for current truth, then verify 
   - TCP: `127.0.0.1:5432`
   - socket: `/Users/Shared/joelclaw/run/.s.PGSQL.5432`
   - auth: local socket uses peer auth; TCP uses SCRAM password auth.
-- Canonical object storage: custom Docker/Compose MinIO on `three-body`.
+- Canonical object storage: Garage on `three-body`.
+- Garage S3 API: `http://100.67.156.41:39100`
+- Garage data: `/volume1/joelclaw/s3/garage/data`
+- Garage metadata: `/volume1/joelclaw/s3/garage/meta`
+- Garage snapshots: `/volume1/joelclaw/s3/garage/snapshots`
+- Garage Compose path on NAS: `/volume1/joelclaw/s3/garage-compose/compose.yaml`
+- Garage Convex S3 env on NAS: `/volume1/joelclaw/s3/garage-compose/convex-s3.env`
+- Garage redacted Convex S3 env on NAS: `/volume1/joelclaw/s3/garage-compose/convex-s3.redacted.env`
+
+Custom MinIO is a rollback/reference path, not canonical:
+
 - Custom MinIO API: `http://100.67.156.41:39000`
 - Custom MinIO console: `http://100.67.156.41:39001`
 - Custom MinIO data: `/volume1/joelclaw/s3/minio/data`
-- Compose path on NAS: `/volume1/joelclaw/s3/minio-compose/compose.yaml`
-- Convex S3 env on NAS: `/volume1/joelclaw/s3/minio-compose/convex-s3.env`
-- Redacted Convex S3 env on NAS: `/volume1/joelclaw/s3/minio-compose/convex-s3.redacted.env`
+- Custom MinIO Compose path on NAS: `/volume1/joelclaw/s3/minio-compose/compose.yaml`
+- Custom MinIO Convex S3 env on NAS: `/volume1/joelclaw/s3/minio-compose/convex-s3.env`
 
 ASUSTOR MinIO CE is not canonical:
 
@@ -60,7 +71,7 @@ ASUSTOR MinIO CE is not canonical:
 
 ## Convex Buckets
 
-The custom MinIO instance should have these buckets:
+Garage should have these Convex buckets:
 
 - `joelclaw-local-usw2-convex-exports`
 - `joelclaw-local-usw2-convex-snapshot-imports`
@@ -74,10 +85,10 @@ Use the generated secret values from the NAS env file. Do not print them in chat
 
 ```sh
 AWS_REGION=usw2
-S3_ENDPOINT_URL=http://100.67.156.41:39000
+S3_ENDPOINT_URL=http://100.67.156.41:39100
 AWS_S3_FORCE_PATH_STYLE=true
-AWS_ACCESS_KEY_ID=<from /volume1/joelclaw/s3/minio-compose/convex-s3.env>
-AWS_SECRET_ACCESS_KEY=<from /volume1/joelclaw/s3/minio-compose/convex-s3.env>
+AWS_ACCESS_KEY_ID=<from /volume1/joelclaw/s3/garage-compose/convex-s3.env>
+AWS_SECRET_ACCESS_KEY=<from /volume1/joelclaw/s3/garage-compose/convex-s3.env>
 S3_STORAGE_EXPORTS_BUCKET=joelclaw-local-usw2-convex-exports
 S3_STORAGE_SNAPSHOT_IMPORTS_BUCKET=joelclaw-local-usw2-convex-snapshot-imports
 S3_STORAGE_MODULES_BUCKET=joelclaw-local-usw2-convex-modules
@@ -91,6 +102,15 @@ Prefer checks that do not reveal secrets:
 
 ```sh
 tailscale ping --timeout=5s --c 2 three-body
+nc -vz -w 5 100.67.156.41 39100
+curl -sS -m 5 -o /tmp/garage-root.out -w '%{http_code}\n' http://100.67.156.41:39100/
+```
+
+Garage does not allow anonymous S3 access; a `403 AccessDenied` response from `/` proves the API is reachable.
+
+For MinIO rollback/reference only:
+
+```sh
 curl -fsS -m 5 http://100.67.156.41:39000/minio/health/ready
 nc -vz -w 5 100.67.156.41 39000
 nc -vz -w 5 100.67.156.41 39001
@@ -125,26 +145,29 @@ sudo -u joelclaw psql -h /Users/Shared/joelclaw/run -p 5432 -d postgres
 - Convex's `POSTGRES_URL` should omit the database name. Convex derives the database name from `INSTANCE_NAME`; `INSTANCE_NAME=joelclaw-convex` maps to database `joelclaw_convex`.
 - For local Central Postgres, set `DO_NOT_REQUIRE_SSL=1`.
 
-## MinIO Operations
+## Garage Operations
 
-The installer has already completed successfully. Re-run it only to reconcile the service after intentional edits:
+The Garage installer has already completed successfully. Re-run it only to reconcile the service after intentional edits:
 
 ```sh
-ssh -t joel@three-body 'sudo sh /volume1/joelclaw/s3/install-three-body-convex-minio.sh'
+ssh -t joel@three-body 'sudo sh /volume1/joelclaw/s3/install-three-body-convex-garage.sh'
 ```
 
 The installer:
 
-- runs `joelclaw-minio` separately from ASUSTOR MinIO CE,
-- uses API port `39000` and console port `39001`,
-- writes data under `/volume1/joelclaw/s3/minio/data`,
-- uses pinned amd64 image digests,
-- generates root and Convex-specific credentials on the NAS,
+- runs `joelclaw-garage` separately from custom MinIO and ASUSTOR MinIO CE,
+- uses S3 API port `39100`,
+- writes data under `/volume1/joelclaw/s3/garage/data`,
+- writes metadata under `/volume1/joelclaw/s3/garage/meta`,
+- writes metadata snapshots under `/volume1/joelclaw/s3/garage/snapshots`,
+- uses a pinned amd64 Garage image digest,
+- generates Garage admin/RPC tokens and Convex-specific S3 credentials on the NAS,
 - creates the five Convex buckets,
-- writes `/volume1/joelclaw/s3/minio-compose/convex-s3.env`,
+- writes `/volume1/joelclaw/s3/garage-compose/convex-s3.env`,
+- mirrors existing objects from custom MinIO into Garage,
 - runs an upload/read/delete smoke test through the Convex-specific credentials.
 
-Do not expose MinIO to the public internet. LAN/tailnet only.
+Do not expose Garage to the public internet. LAN/tailnet only.
 
 ## Local Convex Runner
 
@@ -156,7 +179,8 @@ The current projectless setup staged a local runner at:
 
 Important files:
 
-- `prepare-env.sh` imports `/volume1/joelclaw/s3/minio-compose/convex-s3.env` from the NAS and writes a local `.env` without printing secrets.
+- `prepare-env.sh` imports `/volume1/joelclaw/s3/garage-compose/convex-s3.env` from the NAS and writes a local `.env` without printing secrets.
+- `prepare-env.sh` preserves the existing `CONVEX_POSTGRES_PASSWORD` and `INSTANCE_SECRET` when switching S3 endpoints; do not rotate database credentials just to change object storage.
 - `bootstrap-postgres.sh` creates/updates the `convex` Postgres role and `joelclaw_convex` database via `sudo -u joelclaw`.
 - `compose.yaml` starts `ghcr.io/get-convex/convex-backend` and `ghcr.io/get-convex/convex-dashboard`.
 - `generate-admin-env.sh` stores the generated self-hosted admin key in `app-admin.env` without printing it.
@@ -248,8 +272,8 @@ The healthy self-hosted backend `/version` response is currently `unknown`.
 
 ## Secret Handling
 
-- Never paste root or Convex MinIO credentials into chat.
-- Never commit `.env`, `convex-s3.env`, root credentials, access keys, or secret keys.
+- Never paste Garage admin/RPC tokens, Convex Garage credentials, root MinIO credentials, or Convex MinIO credentials into chat.
+- Never commit `.env`, `convex-s3.env`, admin tokens, root credentials, access keys, or secret keys.
 - It is okay to read and report the redacted env file.
 - If a command must use secrets, prefer running it on `three-body` where the env file already lives.
 - If copying env values to another host, use the existing secret-management path for that project, not ad hoc notes.
@@ -259,21 +283,20 @@ The healthy self-hosted backend `/version` response is currently `unknown`.
 When asked to wire or debug local Convex:
 
 1. Read the brain project note.
-2. Verify custom MinIO health on `39000`.
-3. Verify whether Convex env is pointing at custom MinIO by IP, not CE and not the tailnet alias.
+2. Verify Garage S3 API reachability on `39100`.
+3. Verify whether Convex env is pointing at Garage by IP, not MinIO CE and not the tailnet alias.
 4. Confirm Central Postgres is the DB target; do not move Postgres state to NAS.
 5. Run a Convex-level export/import or file upload smoke test.
 6. If exposing Convex beyond localhost, keep Docker bound to localhost and use the selective LAN/Tailscale forwarding model above.
 7. Capture any durable change back into the brain project note.
-8. Leave MinIO CE alone until the real Convex path is proven; then uninstall CE.
+8. Leave custom MinIO and MinIO CE alone until the Garage-backed Convex path is proven and Joel explicitly wants cleanup.
 
 ## Gotchas
 
-- The old CE smoke-test buckets do not prove the durable path. Only custom MinIO on `39000` counts.
+- The old CE smoke-test buckets do not prove the durable path. Only Garage on `39100` counts for the current canonical path.
 - Do not expose Convex with `0.0.0.0` just because Docker port binding is convenient. Use selected LAN/tailnet forwards.
 - Tailscale Serve has unrelated routes on this node; do not reset the whole Serve config when only changing Convex ports.
 - The dashboard bakes in one public deployment URL. Keep separate LAN and tailnet dashboard instances if both access paths need to work cleanly.
 - The NAS SSH service is sensitive to rapid probes. Parallel SSH commands can cause resets.
-- MinIO image availability changed over time; if changing image tags, verify current registry availability and pin a digest.
-- Newer MinIO images may require CPU compatibility attention on NAS-class Intel Atom hardware; prefer known-good pinned digests unless intentionally upgrading.
-- Do not silently switch to local Flagg SSD object storage for Convex durability. The object storage target is NAS-backed MinIO.
+- Garage image availability can change; if changing image tags, verify current registry availability and pin a digest.
+- Do not silently switch to local Flagg SSD object storage for Convex durability. The object storage target is NAS-backed Garage.
