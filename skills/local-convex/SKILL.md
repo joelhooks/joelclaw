@@ -35,6 +35,13 @@ If those disagree, prefer the brain project note for current truth, then verify 
 - NAS model: `AS6508T`
 - ADM: `5.1.3.RI81`
 - Database state: Central Postgres, not NAS storage.
+- Central Postgres runs as the `joelclaw` service user:
+  - binary: `/opt/homebrew/opt/postgresql@17/bin/postgres`
+  - data: `/Users/Shared/joelclaw/data/postgres`
+  - config: `/Users/Shared/joelclaw/etc/postgres/postgresql.conf`
+  - TCP: `127.0.0.1:5432`
+  - socket: `/Users/Shared/joelclaw/run/.s.PGSQL.5432`
+  - auth: local socket uses peer auth; TCP uses SCRAM password auth.
 - Canonical object storage: custom Docker/Compose MinIO on `three-body`.
 - Custom MinIO API: `http://100.67.156.41:39000`
 - Custom MinIO console: `http://100.67.156.41:39001`
@@ -104,6 +111,20 @@ curl -fsS -m 5 http://100.67.156.41:29990/minio/health/ready
 - Docker operations require `sudo` or an ADM/admin path.
 - Do not probe `admin@three-body` or `root@three-body` repeatedly; earlier bad auth contributed to lockout symptoms.
 
+## Central Postgres Rules
+
+- Do not start a separate Postgres container for Convex. The target is Central Postgres.
+- Do not move Postgres data to NAS.
+- Bootstrap/admin work goes through the `joelclaw` service user over the local socket:
+
+```sh
+sudo -u joelclaw psql -h /Users/Shared/joelclaw/run -p 5432 -d postgres
+```
+
+- Dockerized Convex reaches Central Postgres over TCP at `host.docker.internal:5432`.
+- Convex's `POSTGRES_URL` should omit the database name. Convex derives the database name from `INSTANCE_NAME`; `INSTANCE_NAME=joelclaw-convex` maps to database `joelclaw_convex`.
+- For local Central Postgres, set `DO_NOT_REQUIRE_SSL=1`.
+
 ## MinIO Operations
 
 The installer has already completed successfully. Re-run it only to reconcile the service after intentional edits:
@@ -124,6 +145,22 @@ The installer:
 - runs an upload/read/delete smoke test through the Convex-specific credentials.
 
 Do not expose MinIO to the public internet. LAN/tailnet only.
+
+## Local Convex Runner
+
+The current projectless setup staged a local runner at:
+
+```sh
+/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/local-convex
+```
+
+Important files:
+
+- `prepare-env.sh` imports `/volume1/joelclaw/s3/minio-compose/convex-s3.env` from the NAS and writes a local `.env` without printing secrets.
+- `bootstrap-postgres.sh` creates/updates the `convex` Postgres role and `joelclaw_convex` database via `sudo -u joelclaw`.
+- `compose.yaml` starts `ghcr.io/get-convex/convex-backend` and `ghcr.io/get-convex/convex-dashboard`.
+- `generate-admin-env.sh` stores the generated self-hosted admin key in `app-admin.env` without printing it.
+- `run.sh` performs the bootstrap, starts the backend/dashboard, and writes the admin env.
 
 ## Secret Handling
 
