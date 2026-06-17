@@ -29,6 +29,20 @@ bootout_if_loaded() {
     || true
 }
 
+prepare_mount_point() {
+  local path="$1"
+
+  mkdir -p "$path"
+
+  if mount | grep -F " on ${path} (" >/dev/null 2>&1; then
+    log "mount point already mounted; leaving ownership unchanged: ${path}"
+    return 0
+  fi
+
+  chown root:wheel "$path"
+  chmod 755 "$path"
+}
+
 require_root
 require_command plutil
 require_command launchctl
@@ -40,9 +54,9 @@ chown root:wheel "$DST"
 plutil -lint "$DST" >/dev/null
 log "installed ${DST}"
 
-mkdir -p "$CENTRAL_NAS_NVME_MOUNT" "$CENTRAL_NAS_HDD_MOUNT" "$CENTRAL_LOG_DIR"
-chown root:wheel "$CENTRAL_NAS_NVME_MOUNT" "$CENTRAL_NAS_HDD_MOUNT"
-chmod 755 "$CENTRAL_NAS_NVME_MOUNT" "$CENTRAL_NAS_HDD_MOUNT"
+prepare_mount_point "$CENTRAL_NAS_NVME_MOUNT"
+prepare_mount_point "$CENTRAL_NAS_HDD_MOUNT"
+mkdir -p "$CENTRAL_LOG_DIR"
 chown "${SERVICE_USER}:${SERVICE_GROUP}" "$CENTRAL_LOG_DIR"
 chmod 750 "$CENTRAL_LOG_DIR"
 log "prepared mount points: ${CENTRAL_NAS_NVME_MOUNT}, ${CENTRAL_NAS_HDD_MOUNT}"
