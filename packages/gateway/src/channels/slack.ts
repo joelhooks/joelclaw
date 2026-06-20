@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import { createReplyGrantFromEvent, recordGrantPublicReply, routeSlackMention, type ChannelPermissionPolicy, type ChannelRole, type ReplyGrant, type SlackMentionEvent } from "@joelclaw/channel-routing";
+import { type ChannelPermissionPolicy, type ChannelRole, createReplyGrantFromEvent, type ReplyGrant, recordGrantPublicReply, routeSlackMention, type SlackMentionEvent } from "@joelclaw/channel-routing";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { type EnqueueFn, getRedisClient, pushGatewayEvent } from "./redis";
 import type {
@@ -15,6 +15,147 @@ import type {
 // ADR-0236: Emit channel/message.received to Inngest for realtime Typesense indexing.
 const INNGEST_URL = process.env.INNGEST_URL ?? "http://127.0.0.1:8288";
 const INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15";
+const BRAIN_JOEL_CHANNEL_ID = "C09LKT871PE";
+
+function normalizeSlackLinkToken(token: string): string | undefined {
+  const trimmed = token.trim();
+  if (!trimmed) return undefined;
+  const withoutBrackets = trimmed.startsWith("<") && trimmed.endsWith(">")
+    ? trimmed.slice(1, -1)
+    : trimmed;
+  const [candidate] = withoutBrackets.split("|", 2);
+  const url = candidate?.trim();
+  if (!url) return undefined;
+  if (!/^https?:\/\//iu.test(url)) return undefined;
+  return url;
+}
+
+function extractUrlsFromSlackText(text: string): string[] {
+  const urls = new Set<string>();
+
+  for (const match of text.matchAll(/<https?:\/\/[^>]+>/giu)) {
+    const normalized = normalizeSlackLinkToken(match[0]);
+    if (normalized) urls.add(normalized);
+  }
+
+  const scrubbed = text.replace(/<https?:\/\/[^>]+>/giu, " ");
+  for (const match of scrubbed.matchAll(/https?:\/\/[^\s<>()]+/giu)) {
+    const normalized = normalizeSlackLinkToken(match[0].replace(/[),.;!?]+$/u, ""));
+    if (normalized) urls.add(normalized);
+  }
+
+  return [...urls];
+}
+
+function buildBrainJoelDiscoveryContext(msg: {
+  channelId: string;
+  channelName?: string;
+  userName: string;
+  text: string;
+  ts: string;
+}): string {
+  const channelLabel = msg.channelName ? `#${msg.channelName}` : "#brain-joel";
+  return [
+    `Slack ${channelLabel} link from ${msg.userName}`,
+    `channel_id: ${msg.channelId}`,
+    `ts: ${msg.ts}`,
+    `text: ${msg.text}`,
+  ].join("\n");
+}
+
+function emitBrainJoelDiscoveryEvents(msg: {
+  channelId: string;
+  channelName?: string;
+  userId: string;
+  userName: string;
+  text: string;
+  ts: string;
+}): void {
+  const urls = extractUrlsFromSlackText(msg.text);
+  if (urls.length === 0) return;
+
+  const context = buildBrainJoelDiscoveryContext(msg);
+
+  for (const [index, url] of urls.entries()) {
+    void emitGatewayOtel({
+      level: "info",
+      component: "slack-channel",
+      action: "slack.discovery.capture_attempted",
+      success: true,
+      metadata: {
+        channelId: msg.channelId,
+        userId: msg.userId,
+        slackTs: msg.ts,
+        url,
+        index,
+      },
+    });
+
+    void fetch(`${INNGEST_URL}/e/${INNGEST_EVENT_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "discovery/noted",
+        id: `slack-brain-joel-${msg.channelId}-${msg.ts.replace(/\./g, "-")}-${index}`,
+        data: {
+          url,
+          context,
+          site: "joelclaw",
+          visibility: "public",
+        },
+      }),
+    })
+      .then((response) => {
+        if (!response.ok) {
+          void emitGatewayOtel({
+            level: "error",
+            component: "slack-channel",
+            action: "slack.discovery.capture_failed",
+            success: false,
+            error: `http_${response.status}`,
+            metadata: {
+              channelId: msg.channelId,
+              userId: msg.userId,
+              slackTs: msg.ts,
+              url,
+              index,
+            },
+          });
+          return;
+        }
+
+        void emitGatewayOtel({
+          level: "info",
+          component: "slack-channel",
+          action: "slack.discovery.capture_sent",
+          success: true,
+          metadata: {
+            channelId: msg.channelId,
+            userId: msg.userId,
+            slackTs: msg.ts,
+            url,
+            index,
+          },
+        });
+      })
+      .catch((error) => {
+        void emitGatewayOtel({
+          level: "error",
+          component: "slack-channel",
+          action: "slack.discovery.capture_failed",
+          success: false,
+          error: String(error),
+          metadata: {
+            channelId: msg.channelId,
+            userId: msg.userId,
+            slackTs: msg.ts,
+            url,
+            index,
+          },
+        });
+      });
+  }
+}
 
 function emitChannelMessageEvent(msg: {
   channelId: string;
@@ -672,6 +813,16 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
   }
 
   const userLabel = await resolveUserLabel(message.user);
+  if (isAllowedUser && message.channel === BRAIN_JOEL_CHANNEL_ID) {
+    emitBrainJoelDiscoveryEvents({
+      channelId: message.channel,
+      channelName,
+      userId: message.user,
+      userName: userLabel,
+      text,
+      ts: message.ts,
+    });
+  }
 
   const activeGrant = !isDm && effectiveThreadTs ? await readReplyGrant(message.channel, effectiveThreadTs) : undefined;
 

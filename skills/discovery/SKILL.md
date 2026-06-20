@@ -11,6 +11,21 @@ tags: [joelclaw, discovery, vault, inngest, capture]
 
 When Joel flags something as interesting, fire it into the pipeline and keep moving.
 
+## Gateway auto-capture rule
+
+Gateway already auto-captures Joel-authored Slack links from `#brain-joel` (`C09LKT871PE`).
+
+Contract:
+- only Joel-authored Slack messages in that one channel
+- extract all URLs from message text
+- normalize Slack angle links like `<https://x|label>`
+- send one `discovery/noted` event per unique URL in the message
+- defaults: `site=joelclaw`, `visibility=public`
+- include Slack channel/message context in the event
+- fire-and-forget; Slack handling must not block on discovery pipeline failures
+
+So if a future task mentions missing `#brain-joel` capture, debug the gateway rule first before adding another manual discovery path.
+
 ## Trigger Detection
 
 Signal words/patterns (case-insensitive):

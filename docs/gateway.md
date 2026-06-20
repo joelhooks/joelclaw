@@ -426,6 +426,21 @@ For messages in important channels:
 
 This gives the gateway working memory of important channels without turning Slack into an operator notification sewer pipe.
 
+### `#brain-joel` auto-discovery capture
+
+Joel-authored messages in Slack channel `C09LKT871PE` (`#brain-joel`) have one extra narrow rule:
+
+- extract every URL from the Slack message text
+- normalize Slack angle-link syntax like `<https://example.com|label>` to the real URL
+- dedupe URLs within that message
+- fire one `discovery/noted` event per URL with:
+  - `site: "joelclaw"`
+  - `visibility: "public"`
+  - context including Slack channel, message text, channel ID, and `ts`
+- do not block Slack handling on discovery failures; emit OTEL for attempted/sent/failed capture
+
+This is passive capture only. It does not widen public reply permissions and it does not apply outside Joel-authored messages in `#brain-joel`.
+
 If either derivation fails, startup logs explicit warnings in `/tmp/joelclaw/gateway.log` so degraded Slack behavior is visible immediately.
 
 Gateway now exposes `GET /health/slack` on port `3018` (same Bun server as the WS bridge). It returns:
