@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { __skillsTestUtils } from "./skills"
@@ -96,5 +96,26 @@ describe("skills command helpers", () => {
 
     expect(updated.status).toBe("updated")
     expect(resolve(dirname(updated.target), readlinkSync(updated.target))).toBe(replacementSource)
+  })
+
+  test("ensureSkillLink rejects whole-root consumer symlinks", () => {
+    const repoRoot = rememberTempDir(mkdtempSync(join(tmpdir(), "skills-ensure-")))
+    const homeDir = rememberTempDir(mkdtempSync(join(tmpdir(), "skills-home-")))
+    const sourceDir = join(repoRoot, "skills", "agent-workloads")
+    const symlinkTarget = join(homeDir, "some-pack")
+    mkdirSync(sourceDir, { recursive: true })
+    mkdirSync(symlinkTarget, { recursive: true })
+    mkdirSync(join(homeDir, ".pi", "agent"), { recursive: true })
+    writeFileSync(join(sourceDir, "SKILL.md"), "---\nname: agent-workloads\n---\n", "utf8")
+    symlinkSync(symlinkTarget, join(homeDir, ".pi", "agent", "skills"))
+
+    expect(() =>
+      __skillsTestUtils.ensureSkillLink({
+        sourceDir,
+        name: "agent-workloads",
+        consumer: "pi",
+        homeDir,
+      }),
+    ).toThrow(/consumer root .* is a symlink/)
   })
 })

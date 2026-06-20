@@ -1,0 +1,15 @@
+# Architecture
+
+System shape and runtime boundaries for Joelclaw Runtime.
+
+## Shape
+
+Capture the project architecture here as it becomes clear.
+
+## Runtime boundaries
+
+List durable process, data, UI, and agent boundaries here.
+
+## pi-notes boundary
+
+pi-notes renders `.brain/**/*.svx`, auto-imports standard and project-local Brain components, and can route browser Review Batches back to the spawning Pi session when opened through Pi.

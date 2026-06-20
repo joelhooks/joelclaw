@@ -100,7 +100,7 @@ nas_mount_launchdaemon_installed() {
 }
 
 nas_nfs_reachable() {
-  nc -z -G 3 "$NAS_HOST" 2049 >/dev/null 2>&1 || nc -z -w 3 "$NAS_HOST" 2049 >/dev/null 2>&1
+  nc -z -G 3 "$NAS_IP" 2049 >/dev/null 2>&1 || nc -z -w 3 "$NAS_IP" 2049 >/dev/null 2>&1
 }
 
 nas_route_expected() {

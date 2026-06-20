@@ -21,7 +21,7 @@ That's it. The event chain handles the rest.
 Alternative (raw curl):
 
 ```bash
-curl -s -X POST "http://localhost:8288/e/37aa349b89692d657d276a40e0e47a15" \
+curl -s -X POST "http://localhost:8288/e/$INNGEST_EVENT_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"pipeline/video.requested","data":{"url":"URL_HERE"}}'
 ```

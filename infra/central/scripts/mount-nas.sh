@@ -42,15 +42,15 @@ wait_for_network() {
   for ((i = 1; i <= attempts; i++)); do
     local iface
     iface="$(route_field interface || true)"
-    if [[ "$iface" == "$NAS_EXPECTED_INTERFACE" ]] && nc_ok "$NAS_HOST" 2049; then
+    if [[ "$iface" == "$NAS_EXPECTED_INTERFACE" ]] && nc_ok "$NAS_IP" 2049; then
       log "nas route ready: host=${NAS_HOST} ip=${NAS_IP} interface=${iface}"
       return 0
     fi
-    log "waiting for nas route/nfs (${i}/${attempts}) interface=${iface:-unknown} host=${NAS_HOST}"
+    log "waiting for nas route/nfs (${i}/${attempts}) interface=${iface:-unknown} host=${NAS_HOST} ip=${NAS_IP}"
     sleep "$sleep_seconds"
   done
 
-  fail "NAS route/NFS did not become ready for ${NAS_HOST} (${NAS_IP}) on ${NAS_EXPECTED_INTERFACE}"
+  fail "NAS route/NFS did not become ready for ${NAS_IP} (${NAS_HOST}) on ${NAS_EXPECTED_INTERFACE}"
 }
 
 assert_10gbe_route() {

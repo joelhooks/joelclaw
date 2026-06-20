@@ -1,7 +1,7 @@
 ---
 name: system-architecture
 displayName: System Architecture
-description: Canonical joelclaw topology and wiring map. Use when reasoning about architecture, tracing event flow, debugging why something ran/didn't run, identifying which worker executes a function, checking what listens on a port, or following an event end-to-end.
+description: Canonical joelclaw topology, Central/Relay vocabulary, and wiring map. Use when reasoning about architecture, Panda/Flagg Central migration, satellites, run capture, tracing event flow, debugging why something ran/didn't run, identifying which worker executes a function, checking what listens on a port, or following an event end-to-end.
 version: 0.1.0
 author: joel
 tags:
@@ -15,12 +15,22 @@ tags:
 
 # System Architecture (Canonical Topology)
 
-This skill is the **single source of truth** for joelclaw system wiring.
+This skill is the **network-wide wiring map** for joelclaw. It is not "the shape of the machine you are currently sitting on."
+
+Read it with these freshness rules:
+- The authority model is live unless explicitly marked stale: **Panda is live Central; Flagg is shadow / next Central target**.
+- Host-specific process inventories are receipts. Treat PIDs, launchd states, listener snapshots, and benchmark numbers as dated evidence until re-verified on that host.
+- Flagg sections describe the Mac Studio as the migration/cutover target. They do not make Flagg authoritative Central.
+- Panda sections describe the current live Central shape unless a later dated receipt says otherwise.
+- If you need current runtime truth, run the verification command near the relevant section before acting.
+
 Use it for:
 - "why did this run / not run"
 - "which worker handles this function"
 - "what is listening on port X"
 - "how does event Y flow"
+- "where does this Run/capture/memory record go"
+- "is this Central, Relay, satellite, or shadow runtime work"
 - full-stack routing/debug across CLI → Inngest → workers → gateway → telemetry
 
 ## Ground-Truth Scope + Evidence Snapshot
@@ -50,6 +60,16 @@ This document is grounded in direct reads of:
 - `packages/telemetry/src/emitter.ts`
 - `packages/system-bus/src/lib/langfuse.ts`
 - `packages/inference-router/src/tracing.ts`
+- `CONTEXT.md`
+- `docs/gateway.md`
+- `docs/inngest-functions.md`
+- `docs/runbooks/satellite-rig-setup.md`
+- `docs/runbooks/flagg-gate5-staged-migration.md`
+- `infra/central/README.md`
+- `docs/prd-rhizomatic-network-canary.md`
+- `infra/central/launchd/*.plist.template`
+- `scripts/joelclaw-capture-session.ts`
+- `scripts/joelclaw-capture-codex-session.js`
 - ADRs in `~/Vault/docs/decisions/` (required + topology-adjacent)
 - last 50 lines of `~/Vault/system/system-log.jsonl`
 
@@ -59,9 +79,58 @@ This document is grounded in direct reads of:
 - `docs/cli.md` — workload command tree + runtime bridge
 - `docs/observability.md` — **not inspected in this update**
 
+### Refresh receipt: 2026-06-15
+
+This refresh folds in work from:
+- Central vocabulary + Project Thread docs (`6b3a1b05`, `CONTEXT.md`, `docs/gateway.md`)
+- Flagg Central scaffold and Gate 5 migration runbooks (`6e02a6cd`, `d36b52f2`, `infra/central/*`)
+- worker-hosted Run capture (`f06501a8`, `docs/inngest-functions.md`, `packages/system-bus/src/serve.ts`)
+- Inngest SDK hardening + connect-mode recovery (`d7dd7788`, `6c5d2a8e`)
+- Talon paging/debounce hardening (`c03edc5c`, `1f086cfb`, `d26351cf`)
+- satellite rig setup for Blaine/Flagg (`bc5738f3`, `9cc02f6e`)
+- Rhizomatic/Chorus network canary (`6bebf5b1`, `docs/prd-rhizomatic-network-canary.md`)
+
+### Live-shape receipt: 2026-06-17
+
+Verified from Flagg (`hostname -s` -> `flagg`, ComputerName `Joel's Mac Studio`) plus local session-search receipts:
+- `JOELCLAW_CENTRAL_URL=https://panda.tail7af24.ts.net`, so capture still points at Panda.
+- local session-search evidence shows Panda `/api/runs/health` returning healthy for Run capture.
+- `TYPESENSE_URL=http://panda:8108` appeared in recent Flagg session receipts, confirming direct Typesense helpers still target Panda.
+- `system/com.joelclaw.central.nas-mounts` exists on Flagg and last exited `0`; this proves Flagg storage plumbing, not Central authority.
+- Gate 5 storage/NAS receipts are Flagg migration evidence only. They do not change the authority split.
+
+---
+
+## 0) Current Operator Map
+
+The old mental model was "Panda is joelclaw." That is no longer precise enough.
+
+Use these terms:
+
+| Term | Meaning | Current truth |
+|---|---|---|
+| Network | Users + Machines coordinated by one Central | Logical boundary, not the tailnet/k8s cluster |
+| Central | single authoritative joelclaw service for the Network | Panda is still live Central for current runtime paths |
+| Central host target | Machine being prepared to host Central | Flagg / Mac Studio, `machine_id=mac-studio-central` |
+| Relay Machine | machine that hosts account-bound/local-hardware-bound relays while delegating state to Central | Panda becomes this after cutover; satellites stay thin |
+| Satellite Machine | thin local Pi/Codex/Claude runner with capture/search/repair hooks | Blaine and Flagg bootstrap through `scripts/setup-satellite-rig.sh` |
+| Run | one captured agent invocation | raw JSONL + metadata first, Typesense is derived |
+| Conversation | sibling Run label for an interactive context | not the source of truth |
+| Project Thread | private `#brain-joel` operator workroom for a bounded objective | coordination only; does not authorize public replies |
+
+Current authority split:
+- **Panda remains live Central** for Redis, gateway, Inngest, OTEL, secrets, durable worker runtime, and Run capture ingress.
+- **Flagg is the shadow / next Central target**. It has Central scaffold assets, service-user launchd templates, shadow Compose services, NAS proof scripts, and Chorus/Rhizomatic canary work. It is not authoritative until an explicit whole-Central cutover freezes Panda and flips endpoints.
+- **Satellites stay thin**. They run Pi/Codex/Claude and local session search, then post Runs to Central. Do not install k8s/Inngest/Redis/gateway Central roles on a satellite without a specific reason.
+- **Typesense is derived for Runs**. NAS/local Run blobs are the source of truth; `runs_dev` and `run_chunks_dev` can be rebuilt.
+
+Cutover rule: avoid split-brain. Panda and Flagg must not both accept authoritative writes for the same Central service family. Gate 5 permits shadow smoke tests and migration rehearsal, but authority flips only inside an approved freeze/cutover window.
+
 ---
 
 ## 1) Physical Topology
+
+### Live Central host: Panda
 
 ```text
 Mac Mini "Panda" (host macOS)
@@ -89,6 +158,41 @@ Mac Mini "Panda" (host macOS)
 └─ NAS "three-body" (NFS tiers per ADR-0088)
 ```
 
+### Flagg shadow / next Central target
+
+```text
+Mac Studio "Flagg" (host macOS; target Central host)
+├─ system tailscaled path required for cutover
+├─ Central Service Account: joelclaw:staff
+├─ service root: /Users/Shared/joelclaw/
+│  ├─ services/{redis,typesense,inngest,minio}/
+│  ├─ backups/central/
+│  ├─ logs/central/
+│  └─ src/joelclaw/ (service-owned checkout)
+├─ shadow Compose stack (not authoritative)
+│  ├─ Redis 7-alpine
+│  ├─ Typesense 30.1
+│  ├─ Inngest self-hosted
+│  ├─ Restate 1.6.2 (Docker named volume for data)
+│  └─ MinIO smoke surface
+├─ system LaunchDaemon templates
+│  ├─ com.joelclaw.central.colima
+│  ├─ com.joelclaw.central.compose
+│  ├─ com.joelclaw.central.health
+│  └─ com.joelclaw.central.nas-mounts
+├─ Chorus/Rhizomatic canary
+│  ├─ com.joelclaw.chorus-rhizomatic
+│  ├─ endpoint: 127.0.0.1:4821/mcp on Flagg
+│  └─ Blaine/Panda clients tunnel local 127.0.0.1:7331 -> Flagg 127.0.0.1:4821
+└─ NAS "three-body" proof path
+   ├─ /Volumes/nas-nvme -> 192.168.1.163:/volume2/data
+   └─ /Volumes/three-body -> 192.168.1.163:/volume1/joelclaw
+```
+
+Flagg Gate 4 is complete: shadow Central recovered after hard reboot with no GUI login. Gate 5 is not complete until Flagg owns Central state, workers, endpoints, and verification while Panda is frozen as rollback-only.
+
+NAS mount rule: shelf-local Central storage mounts use the `three-body` LAN IP over Flagg `en0`, not MagicDNS. On 2026-06-17, `three-body` resolved to the tailnet IP on Flagg, while ASUSTOR NFS exports expected LAN clients; using the hostname for NFS mounts produced permission-denied launchd loops. Tailscale remains admin/remote/fallback, not the default data plane.
+
 ### Known runtime endpoints
 - Colima VM IP: `192.168.64.2` (`colima status --json`)
 - Kubernetes API (stable operator tunnel): `https://127.0.0.1:16443`
@@ -96,6 +200,12 @@ Mac Mini "Panda" (host macOS)
 - Tailnet hostnames seen in config:
   - `panda.tail7af24.ts.net` (Caddy routes)
   - `pds.panda.tail7af24.ts.net` (PDS values)
+  - `flagg.tail7af24.ts.net` (Mac Studio shadow / target Central host)
+  - `blaine.tail7af24.ts.net` (satellite)
+- Current live Run capture URL for satellites:
+  - `https://panda.tail7af24.ts.net/api/runs`
+  - served by Panda host system-bus worker on `localhost:3111`
+  - do **not** use `http://panda:3000` or `http://panda.tail7af24.ts.net:3000`; Panda has no durable Central web listener there.
 
 ### Tailscale mesh state
 - `tailscale status --json` failed in this environment: **UNKNOWN — needs manual verification**
@@ -104,7 +214,7 @@ Mac Mini "Panda" (host macOS)
 
 ## 2) Process Inventory (Long-Running)
 
-## Host launchd inventory (snapshot)
+## Host launchd inventory (Panda live Central snapshot)
 
 > Snapshot source: `launchctl print gui/$(id -u)/<label>` and plist inspection.
 
@@ -127,6 +237,22 @@ Mac Mini "Panda" (host macOS)
 | `com.joel.gateway-tripwire` | not running | — | gateway tripwire script | n/a |
 | `com.joel.content-sync-watcher` | not running | — | fs watch -> content/updated event | n/a |
 | `com.joel.vault-log-sync` | not running | — | Vault log sync watcher | n/a |
+
+## Flagg Central launchd scaffold
+
+> Source: `infra/central/README.md`, `infra/central/launchd/*.plist.template`, and `docs/prd-rhizomatic-network-canary.md`.
+
+These labels are part of the Flagg Central shadow/cutover scaffold. They are not proof that Flagg is authoritative.
+
+| Launchd label | Domain | Role | Ports / endpoints |
+|---|---|---|---|
+| `com.joelclaw.central.colima` | system LaunchDaemon | starts the dedicated `joelclaw-central` Colima/Docker substrate as service infrastructure | Docker socket under `/Users/joelclaw/.colima/joelclaw-central/docker.sock` |
+| `com.joelclaw.central.compose` | system LaunchDaemon | starts the shadow Central Compose stack | Redis, Typesense, Inngest, Restate, MinIO bound to `127.0.0.1` by default |
+| `com.joelclaw.central.health` | system LaunchDaemon | bounded health + recovery state machine | `health.sh` can invoke `recover.sh --all` after repeated degraded passes |
+| `com.joelclaw.central.nas-mounts` | system LaunchDaemon | mounts/verifies Flagg NAS tiers | `/Volumes/nas-nvme`, `/Volumes/three-body` |
+| `com.joelclaw.chorus-rhizomatic` | system LaunchDaemon | Flagg-hosted upstream Chorus HTTP MCP server for Rhizomatic canary | `127.0.0.1:4821/mcp`; remote clients tunnel local `127.0.0.1:7331` |
+
+Flagg reboot acceptance rule: Central is not eligible for cutover until `infra/central/scripts/reboot-proof.sh` passes from another machine after hard reboot with no GUI login.
 
 ### Process supervision behavior: `worker-supervisor`
 
@@ -212,8 +338,8 @@ Source files:
   - cluster uses `clusterFunctionDefinitions`
 
 ## Ground-truth counts
-- Host function set: **101**
-- Cluster function set: **12**
+- Host function set: **125**
+- Cluster function set: **18**
 - Cluster subset functions:
   - `approvalRequest`, `approvalResolve`
   - `todoistCommentAdded`, `todoistTaskCompleted`, `todoistTaskCreated`
@@ -221,6 +347,9 @@ Source files:
   - `todoistMemoryReviewBridge`
   - `githubWorkflowRunCompleted`, `githubPackagePublished`
   - `webhookSubscriptionDispatchGithubWorkflowRunCompleted`
+  - `observeSessionFunction`, `checkMemoryReview`
+  - `queueObserver`, `queueObserverRequested`
+  - `swarmOrchestrator`, `swarmAgentExec`
 
 ## App registration isolation
 From `inngest/client.ts`:
@@ -236,10 +365,18 @@ From `serve.ts`:
 - host role default `serveHost`: `http://host.docker.internal:3111`
 - cluster role default `serveHost`: unset (connect-mode default)
 - `INNGEST_SERVE_HOST` overrides either role.
+- `INNGEST_CONNECT_MODE=1|true|yes` starts `inngest/connect` with `instanceId=system-bus-<role>-<hostname>` and `maxWorkerConcurrency=8`.
+- `/api/inngest` now explicitly allows only `GET`, `POST`, and `PUT`; `PATCH`, `OPTIONS`, and `DELETE` return `405` with `Allow: GET, POST, PUT`.
+- `/api/inngest` logs bounded request summaries for failed or ambiguous POST/PUT callbacks, including safe query/debug keys and body shape, not raw huge payloads.
+- Bun server `idleTimeout=255` because registration PUTs can exceed the default 10s while the self-hosted runtime is under cron/backlog pressure.
 
 Kubernetes cluster worker manifest sets:
 - `INNGEST_BASE_URL=http://inngest-svc:8288`
 - `INNGEST_SERVE_HOST=http://system-bus-worker:3111`
+- `TYPESENSE_URL=http://typesense:8108`
+- image: `ghcr.io/joelhooks/system-bus-worker:d7dd7788` (recorded after Inngest SDK advisory hardening)
+
+Panda host worker config should advertise an SDK callback URL the Inngest pod can actually reach. Current docs call out `INNGEST_SERVE_HOST=http://100.93.201.72:3111` on Panda. Do not assume `host.lima.internal` or `host.docker.internal` works from inside Talos unless a live pod-to-host probe proves it.
 
 ## Registration mechanics
 - Worker exposes `GET|POST|PUT /api/inngest`.
@@ -261,6 +398,7 @@ From index comments + function lists:
 2. `Inngest.send()` POSTs event JSON to:
    - `${INNGEST_URL}/e/${INNGEST_EVENT_KEY}`
    - default: `http://localhost:8288/e/<key>`
+   - 2026-06-18: Pi `memory-enforcer` observe events must follow this keyed Event API shape too; never POST to bare `/e/`. The extension resolves `INNGEST_EVENT_KEY` from env/local env files and skips observe emission when no key is available.
 3. Inngest server persists the event and resolves matching function triggers.
 4. Inngest dispatches function steps to the worker app graph that owns that function ID:
    - host app (`system-bus-host`) for 101-host set
@@ -268,6 +406,28 @@ From index comments + function lists:
 5. Worker handles callbacks via `/api/inngest` (Hono + `inngest/hono` handler).
 6. Each `step.run` result is memoized by Inngest; next step executes when prior completes.
 7. Completion/failure is queryable via GraphQL (`/v0/gql`) and CLI commands (`runs`, `run`, `event`, `events`).
+
+## Run capture flow: Machine hook → Central `/api/runs` → `memory/run.captured`
+
+1. Runtime-native hook captures only the new Run slice:
+   - Pi extension for Pi
+   - Claude Code Stop hook via `scripts/joelclaw-capture-session.ts`
+   - Codex hook/helper via `scripts/joelclaw-capture-codex-session.js`
+   - server-side runtimes can call capture inline instead of shelling through a hook.
+2. The hook posts JSON to Central:
+   - current live URL for satellites: `POST https://panda.tail7af24.ts.net/api/runs`
+   - Panda serves this through the host system-bus worker on `localhost:3111`
+   - auth: `Authorization: Bearer <~/.joelclaw/auth.json token>`
+3. `packages/system-bus/src/serve.ts` validates the bearer token by hashing it and resolving Machine identity from Typesense `machines_dev` (`MACHINES_COLLECTION`).
+4. Worker writes the raw source of truth through `@joelclaw/memory#writeRunBlob`:
+   - default dev store: `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/<run-id>.jsonl`
+   - companion metadata includes `user_id`, `machine_id`, `agent_runtime`, parent/conversation IDs, tags, byte count, and SHA-256.
+5. Worker emits `memory/run.captured` to Inngest.
+6. `packages/system-bus/src/inngest/functions/memory/run-captured.ts` derives indexes:
+   - `runs_dev`
+   - `run_chunks_dev`
+7. If POST fails from a Machine, the hook writes the POST body into `~/.joelclaw/outbox/`; the Machine does not become Central just because capture is temporarily offline.
+8. If raw blobs exist but Typesense is stale, recover by fixing Inngest/worker registration first, then backfill blobs with `scripts/backfill-run-typesense.ts`. Do not replay thousands of `memory/run.captured` events casually.
 
 ## Queue flow: `joelclaw queue emit` → Restate drainer → durable dispatch
 
@@ -319,7 +479,7 @@ From index comments + function lists:
 
 | Port | Listener / owner | What it is | Exposure path |
 |---:|---|---|---|
-| 3111 | host bun worker | host system-bus worker HTTP (`/`, `/api/inngest`, `/webhooks`, `/observability/emit`) | local host; proxied via Caddy 3443 + webhook path via 8443 |
+| 3111 | host bun worker | host system-bus worker HTTP (`/`, `/api/inngest`, `/api/runs`, `/webhooks`, `/observability/emit`) | local host; proxied via Caddy 3443 + webhook path via 8443; Run capture currently exposed at `https://panda.tail7af24.ts.net/api/runs` |
 | 8080 | ssh forward (Colima) -> restate | Restate ingress / workflow API | NodePort + host forward |
 | 8288 | ssh forward (Colima) -> Inngest svc | Inngest API + dashboard backend | NodePort + host forward; proxied via Caddy 9443 |
 | 8289 | ssh forward (Colima) -> Inngest ws | Inngest connect websocket | NodePort + host forward; proxied via Caddy 8290 |
@@ -347,16 +507,30 @@ From index comments + function lists:
 | 3018 | gateway daemon | gateway websocket stream port | local |
 | 9999 | talon | Talon health endpoint | local `127.0.0.1` |
 | 8765 | agent-mail HTTP service | MCP agent-mail API | local `127.0.0.1` |
+| 4821 | Flagg `com.joelclaw.chorus-rhizomatic` | upstream Chorus HTTP MCP server | Flagg-local `127.0.0.1:4821/mcp` |
+| 7331 | satellite tunnel to Flagg Chorus | local tunnel endpoint for `pi-rhizomatic` clients on Blaine/Panda | local `127.0.0.1:7331/mcp` -> Flagg `127.0.0.1:4821/mcp` |
 | 15000 | `com.joel.kube-operator-access` | Talos API | stable local talosctl endpoint |
 | 16443 | `com.joel.kube-operator-access` | Kubernetes API | stable local kubectl endpoint |
 
 ### Notes
 - Host NodePort exposure appears through an `ssh` listener process (Colima portForwarder=ssh).
 - Exact per-port ssh forward command line is **UNKNOWN — needs manual verification** (process introspection restricted in this environment).
+- Numeric ports such as `6379`, `8108`, `8288`, `8289`, `8080`, `9070`, `9071`, `9000`, and `9001` can refer to Panda live k8s/NodePort surfaces or Flagg shadow Compose loopback surfaces depending on the host. Check `hostname`, `CENTRAL_BIND_ADDR`, `JOELCLAW_CENTRAL_URL`, and the current shell env before diagnosing.
 
 ---
 
 ## 6) Storage Topology
+
+## Run blobs / memory capture
+
+- Current dev source of truth: `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/<run-id>.jsonl` plus `.metadata.json`.
+- Capture identity is resolved from `machines_dev` by bearer-token hash.
+- Derived Typesense collections:
+  - `runs_dev`
+  - `run_chunks_dev`
+  - `machines_dev`
+- Failed Machine POSTs spool to `~/.joelclaw/outbox/`.
+- Future/target contract from `CONTEXT.md`: Run blobs live on NAS and Typesense remains rebuildable from those blobs.
 
 ## Redis
 
@@ -371,6 +545,8 @@ From index comments + function lists:
 From observability code:
 - `otel_events` collection (canonical telemetry event store)
 - `memory_observations` collection (vector-aware memory index; schema validated at startup)
+- `runs_dev` and `run_chunks_dev` for ADR-0243 captured Runs
+- `machines_dev` for Machine/App Password token-hash lookup
 - docs-api also points at `http://typesense:8108` for docs search/index surfaces.
 
 ## Firecracker runtime storage
@@ -433,6 +609,37 @@ Degradation contract (ADR-0187):
 - writes must fallback `local -> remote -> queued`
 - queue spool default: `/tmp/joelclaw/nas-queue`
 
+## Flagg Central shadow storage
+
+- Service root: `/Users/Shared/joelclaw/`
+- Shadow service data:
+  - Redis: `/Users/Shared/joelclaw/services/redis`
+  - Typesense: `/Users/Shared/joelclaw/services/typesense`
+  - Inngest: `/Users/Shared/joelclaw/services/inngest`
+  - MinIO smoke data: `/Users/Shared/joelclaw/services/minio`
+  - Restate: Docker named volume `${CENTRAL_RESTATE_VOLUME:-joelclaw-central-restate-data}` because macOS/Colima bind mounts reject Restate's Unix socket writes under `/restate-data`
+- Flagg NAS object-storage proof paths:
+  - hot: `/Volumes/nas-nvme/s3`
+  - cold: `/Volumes/three-body/s3`
+- Current proved NAS route:
+  - Flagg interface `en0`, IP `192.168.1.10`, `10Gbase-T`
+  - `three-body` IP `192.168.1.163`
+  - NAS IP `192.168.1.163` is static/reserved.
+  - MTU `8192` is the proved safe Gate 5 state. A 2026-06-17 bounded test set Flagg `Ethernet`/`en0` to MTU `9000`, route MTU changed to `9000`, but `ping -D -s 8972 192.168.1.163` had 100% loss. A follow-up set Flagg to MTU `8192`; `ping -D -s 8164 192.168.1.163` passed with 0% loss and `8165` failed as the expected local ceiling.
+  - Current tuned NFS options are `rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128`.
+  - 512K NFS transfer sweep receipt at MTU `1500`: NVMe roughly `624 MiB/s` write / `1017 MiB/s` read; HDD roughly `612 MiB/s` write / `1010 MiB/s` read for 512 MiB probes.
+  - Final 8192-MTU receipt with 1024 MiB probes: NVMe roughly `614 MiB/s` write / `1018 MiB/s` read; HDD roughly `552 MiB/s` write / `925 MiB/s` read. Full `9000` remains switch/NAS path follow-up, not a current mount default.
+  - `/Users/Shared/joelclaw/src/joelclaw` service checkout now carries `NAS_EXPECTED_MTU=8192` and the 512K NFS transfer defaults; its verifier passed with `expected_mtu=8192`.
+- `CENTRAL_REQUIRE_NAS=1` should only be set after mount proof passes.
+
+## Rhizomatic / Chorus canary store
+
+- Flagg service: `com.joelclaw.chorus-rhizomatic`
+- Upstream checkout: `/Users/Shared/joelclaw/upstream/rhizomatic`
+- Store: `/Users/Shared/joelclaw/services/rhizomatic/chorus-memory.jsonl`
+- Endpoint: `127.0.0.1:4821/mcp` on Flagg.
+- Blaine/Panda clients use SSH tunnel `127.0.0.1:7331` -> Flagg `127.0.0.1:4821`.
+
 ## Vault
 - Obsidian vault at `/Users/joel/Vault`
 - system log file: `/Users/joel/Vault/system/system-log.jsonl`
@@ -440,6 +647,13 @@ Degradation contract (ADR-0187):
 ---
 
 ## 7) Networking Topology
+
+## Central / Relay / Satellite routing rule
+
+- Live Central URL for capture hooks today: `https://panda.tail7af24.ts.net`.
+- Satellites post Run capture to `/api/runs` on that URL and may use `JOELCLAW_TYPESENSE_URL=http://panda:8108` for direct search/admin helpers.
+- Flagg shadow services bind to `127.0.0.1` by default and must not be exposed over Tailscale/LAN until cutover planning says so.
+- Rhizomatic/Chorus is the exception: the Flagg-local service stays bound to `127.0.0.1:4821`, and remote clients reach it through explicit SSH tunnels on `127.0.0.1:7331`.
 
 ## Caddy reverse proxy routes (from `~/.local/caddy/Caddyfile`)
 
@@ -466,6 +680,14 @@ Expected path:
 3. Caddy path route `/webhooks/*` -> worker `:3111`
 4. worker `/webhooks/:provider` verifies + emits Inngest event
 
+## Run capture ingress
+
+Expected path:
+1. Machine hook reads `JOELCLAW_CENTRAL_URL` (satellite setup exports `https://panda.tail7af24.ts.net`)
+2. hook sends `POST /api/runs` with bearer token from `~/.joelclaw/auth.json`
+3. Tailscale/Funnel/Caddy path reaches Panda host worker `localhost:3111`
+4. worker writes Run blob and emits `memory/run.captured`
+
 ---
 
 ## 8) CLI Wiring (Command Tree → Endpoint Surface)
@@ -485,8 +707,16 @@ Primary command tree root: `packages/cli/src/cli.ts`.
 | `restate cron *` | Dkron REST API via direct `--base-url` or short-lived `kubectl port-forward` to `svc/dkron-svc` |
 | `otel *` | Typesense `otel_events` via capability adapter |
 | `recall *` | Typesense recall adapter |
+| `sessions *` | Central `run_chunks_dev` / raw Pi session JSONL via local/SSH bridge |
+| `satellite *` | thin-Machine local probes + optional Central gateway repair request over SSH |
 | `mail *` | Agent-mail MCP HTTP (`127.0.0.1:8765`) via CLI adapter wrappers |
 | `inngest *` | worker launchd + Talon + k8s + Typesense diagnostics |
+
+Run capture is currently hook/script-driven, not a normal operator command family:
+- Claude Code: `scripts/joelclaw-capture-session.ts`
+- Codex: `scripts/joelclaw-capture-codex-session.js`
+- Pi: runtime extension hook
+- Central endpoint: `POST /api/runs`
 
 Config source:
 - `~/.config/system-bus.env` (plus env overrides)
@@ -508,6 +738,21 @@ Config source:
   1. Typesense `otel_events` (primary)
   2. optional Convex mirror for high-severity recent window
   3. optional Sentry forward for `warn/error/fatal`
+
+## Run/session search observability
+
+- `joelclaw sessions search` is an operator bridge, not a new source of truth.
+- Typesense path searches captured Run chunks (`run_chunks_dev`) when the derived index is current.
+- Raw fallback searches Pi session JSONL locally or over SSH when Typesense is stale or missing a collection.
+- `--extract` returns bounded task context with decisions, commands, files, receipts, verification, blockers, next actions, and transcript line pointers. Do not dump whole transcripts.
+- If raw blobs/session files are newer than Typesense, fix indexing or backfill from blobs; do not treat the missing search hit as proof the work never happened.
+
+## Talon / health alerting posture
+
+- Talon should page for actionable critical failures, not normal control-plane taints or repeated noise from the same underlying outage.
+- Recent hardening adds critical-probe debounce and SOS throttling.
+- System worker supervision is a Panda system LaunchDaemon path; Talon checks must inspect `system/com.joel.system-bus-worker`, not only the user bootstrap domain.
+- Agent Secrets health should prefer `secrets status`; `secrets health` can time out under load and false-negative while leases still work.
 
 ## Langfuse integration points
 
@@ -539,6 +784,11 @@ Config source:
 | ADR-0182 | node-0 localhost resilience | shipped | endpoint class fallback (`localhost -> vm -> svc_dns`) |
 | ADR-0187 | NAS degradation fallback contract | accepted | mandatory local/remote/queued write fallback |
 | ADR-0212 | AIStor as local S3 runtime | accepted | maintained local S3 runtime in `aistor` namespace; legacy MinIO retained for rollback |
+| ADR-0243 | Runs-based memory capture | active | Machine hooks POST Runs to Central `/api/runs`; raw blobs are source of truth; Typesense is derived |
+| ADR-0244 | Reply Grants | active | public channel replies require explicit per-thread grants; Project Threads do not authorize public posting |
+| ADR-0245 | Project Threads as operator workrooms | active | bounded objectives coordinate through private `#brain-joel` threads with receipts |
+| ADR-0246 | Mac Studio Central migration | active | Flagg shadow bootstrap, no split-brain, whole-Central cutover only after freeze/approval |
+| ADR-0247 | New Central services start on Flagg | active | new Central-oriented services should prefer Flagg/shadow path instead of deepening Panda-only assumptions |
 
 ---
 
@@ -746,6 +996,55 @@ joelclaw run <run-id>
 joelclaw otel search "<component_or_action>" --hours 1
 ```
 
+## Run capture + session search
+
+```bash
+# Central Run capture health from a Machine with ~/.joelclaw/auth.json
+python3 - <<'PY'
+import json, os, urllib.request
+p=os.path.expanduser('~/.joelclaw/auth.json')
+a=json.load(open(p))
+req=urllib.request.Request(
+  'https://panda.tail7af24.ts.net/api/runs/health',
+  headers={'Authorization': 'Bearer '+a['token']},
+)
+print(urllib.request.urlopen(req, timeout=10).status)
+PY
+
+# Recent indexed Runs
+joelclaw runs --count 5 --hours 1 --compact
+
+# Search derived index first, but keep raw fallback ready
+joelclaw sessions search "<query>" --source both --machine dark-wizard --runtime all --limit 8 --extract
+joelclaw sessions search "<query>" --source local --machine "$(hostname -s)" --limit 8 --extract
+```
+
+## Flagg Central shadow
+
+```bash
+cd ~/Code/joelhooks/joelclaw
+./infra/central/scripts/preflight.sh
+./infra/central/scripts/health.sh
+ssh joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
+
+# NAS proof when explicitly working Gate 5 storage
+sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=8192 \
+  ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
+```
+
+## Rhizomatic / Chorus canary
+
+```bash
+# On Flagg
+launchctl print system/com.joelclaw.chorus-rhizomatic | rg "state =|pid =|last exit code"
+RHIZOMATIC_BACKEND=chorus-http RHIZOMATIC_SERVICE_URL=http://127.0.0.1:4821/mcp \
+  pi-rhizomatic health
+
+# On tunneled clients
+RHIZOMATIC_BACKEND=chorus-http RHIZOMATIC_SERVICE_URL=http://127.0.0.1:7331/mcp \
+  pi-rhizomatic health
+```
+
 ## Networking
 
 ```bash
@@ -766,11 +1065,16 @@ tailscale status --json
 - Tailscale daemon state is not readable in this environment.
   - `tailscale status --json` -> failed to connect.
   - **UNKNOWN — needs manual verification**
-- `docs/architecture.md`, `docs/deploy.md`, `docs/observability.md` are absent in-repo.
-  - **UNKNOWN — needs manual verification**
+- Live Flagg Central LaunchDaemon state is not implied by repo templates.
+  - Check `/Library/LaunchDaemons`, `launchctl print system/<label>`, and `infra/central/scripts/health.sh`.
+  - **UNKNOWN until verified on Flagg**
+- Typesense session search can be stale or missing expected collections while raw session files / Run blobs exist.
+  - Use `joelclaw sessions search --source local|ssh` and backfill from blobs before declaring memory lost.
 - Exact command-line ownership of all Colima ssh forwarding ports (`64784`, `64785`, `9627`, etc.)
   - **UNKNOWN — needs manual verification**
 - Ingress controller runtime status for `k8s/docs-api-ingress.yaml`
+  - **UNKNOWN — needs manual verification**
+- Whether `docs/observability.md` has fully caught up with Talon/Run-capture hardening.
   - **UNKNOWN — needs manual verification**
 
 ---
@@ -804,6 +1108,16 @@ Update this skill **in the same change** whenever any of these change:
 7. CLI control-plane routing
    - command families moved to different endpoints/services
 8. ADR status changes affecting topology
-   - especially ADR-0048, 0088, 0089, 0144, 0155, 0156, 0159, 0182, 0187
+   - especially ADR-0048, 0088, 0089, 0144, 0155, 0156, 0159, 0182, 0187, 0243, 0244, 0245, 0246, 0247
+9. Central / Relay / Satellite vocabulary or authority changes
+   - `CONTEXT.md`
+   - `docs/runbooks/satellite-rig-setup.md`
+   - Flagg/Panda cutover status, Central host identity, or Relay Machine role changes
+10. Run capture / memory ingestion changes
+   - `/api/runs`, `memory/run.captured`, capture hook scripts, Machine auth, Run blob paths, `runs_dev`, `run_chunks_dev`, `machines_dev`
+11. Flagg Central scaffold changes
+   - `infra/central/*`, Central LaunchDaemon templates, NAS proof scripts, shadow Compose services, reboot proof, Gate 5 status
+12. Rhizomatic / Chorus canary topology
+   - `com.joelclaw.chorus-rhizomatic`, tunnel ports, store path, package adapter backend, network canary receipts
 
 If any item above changed and this skill was not updated, this skill is stale and non-canonical.

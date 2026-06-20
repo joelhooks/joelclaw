@@ -1,0 +1,18 @@
+# Review
+
+Current findings, risks, and next decisions for Joelclaw Runtime.
+
+## Current assessment
+
+This graph is newly bootstrapped. Replace this section with grounded findings from the repo.
+
+## Risks
+
+- Missing receipts for important decisions.
+- Brain pages drifting away from actual code behavior.
+- Large source dumps pasted into `.svx` instead of `.brain/data/**`.
+
+## Next decisions
+
+- What project concepts deserve first-class Brain entries?
+- Which repeated note shapes should become `.brain/components`?

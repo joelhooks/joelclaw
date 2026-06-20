@@ -143,6 +143,28 @@ function targetPathForConsumer(name: string, consumer: SkillConsumer, homeDir = 
   return join(skillConsumerDirs(homeDir)[consumer], name)
 }
 
+function ensureConsumerRoot(consumer: SkillConsumer, homeDir = homedir()): string {
+  const root = skillConsumerDirs(homeDir)[consumer]
+
+  if (pathExistsOrSymlink(root)) {
+    const stat = lstatSync(root)
+    if (stat.isSymbolicLink()) {
+      throw new Error(
+        `Cannot ensure ${consumer} skill: consumer root ${root} is a symlink. Consumer roots must be real directories; link skill packs inside them instead.`,
+      )
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(
+        `Cannot ensure ${consumer} skill: consumer root ${root} exists and is not a directory`,
+      )
+    }
+    return root
+  }
+
+  mkdirSync(root, { recursive: true })
+  return root
+}
+
 function ensureSkillLink(options: {
   sourceDir: string
   name: string
@@ -150,8 +172,8 @@ function ensureSkillLink(options: {
   homeDir?: string
 }): SkillEnsureLinkResult {
   const homeDir = options.homeDir ?? homedir()
-  const target = targetPathForConsumer(options.name, options.consumer, homeDir)
-  mkdirSync(dirname(target), { recursive: true })
+  const consumerRoot = ensureConsumerRoot(options.consumer, homeDir)
+  const target = join(consumerRoot, options.name)
 
   if (pathExistsOrSymlink(target)) {
     const stat = lstatSync(target)
@@ -315,7 +337,7 @@ const skillsEnsureCmd = Command.make(
             "skills ensure",
             ensureEither.left.message,
             "SKILL_ENSURE_FAILED",
-            "Remove the conflicting target or convert it back to a symlink, then retry.",
+            "Keep consumer roots as real directories. Remove conflicting flat targets or convert whole-root symlinks into real roots, then retry.",
             [
               {
                 command: "joelclaw skills ensure <skill> [--source-root <repo>] [--consumer <consumer>]",

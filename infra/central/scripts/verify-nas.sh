@@ -61,7 +61,7 @@ warn_probe() {
 }
 
 nc_ok() {
-  nc -z -G 3 "$NAS_HOST" 2049 >/dev/null 2>&1 || nc -z -w 3 "$NAS_HOST" 2049 >/dev/null 2>&1
+  nc -z -G 3 "$NAS_IP" 2049 >/dev/null 2>&1 || nc -z -w 3 "$NAS_IP" 2049 >/dev/null 2>&1
 }
 
 route_field() {

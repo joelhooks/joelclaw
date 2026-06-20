@@ -45,7 +45,7 @@ NAS "three-body" (ASUSTOR, 10GbE NFS, 64TB RAID5 + NVMe cache)
 Vault ~/Vault (Obsidian, PARA method — ADRs, system log, contacts)
 ```
 
-**Inngest event key**: `37aa349b89692d657d276a40e0e47a15`
+**Inngest event key**: read from `INNGEST_EVENT_KEY`; do not hardcode old dev keys.
 **k8s manifests**: `~/Code/joelhooks/joelclaw/k8s/`
 
 ## CLI Command Reference

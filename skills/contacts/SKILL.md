@@ -66,7 +66,7 @@ Send an Inngest event. The `contact-enrich` function fans out across 7 sources (
 
 ```bash
 # Via curl (CLI has OTEL import bug under Bun v1.3.9)
-curl -s -X POST http://localhost:8288/e/37aa349b89692d657d276a40e0e47a15 \
+curl -s -X POST "http://localhost:8288/e/$INNGEST_EVENT_KEY" \
   -H "Content-Type: application/json" \
   -d '[{
     "name": "contact/enrich.requested",

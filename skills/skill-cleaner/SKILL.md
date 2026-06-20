@@ -15,11 +15,13 @@ This is adapted for Joel's system from Peter Steinberger's `agent-scripts` `skil
 
 ## Joel System Contract
 
-- Canonical joelclaw skills live in `~/Code/joelhooks/joelclaw/skills/`.
-- Consumer skill dirs should usually symlink into canonical skills:
-  - `~/.pi/agent/skills/<name>`
-  - `~/.agents/skills/<name>`
-  - `~/.claude/skills/<name>`
+- Canonical joelclaw skills live in the owning repo's `skills/` directory, usually `~/Code/joelhooks/joelclaw/skills/` or a runtime checkout's `skills/`.
+- Consumer skill roots should be real directories:
+  - `~/.pi/agent/skills/`
+  - `~/.agents/skills/`
+  - `~/.claude/skills/`
+- Skill packs should be namespaced symlinks inside those roots, for example `~/.agents/skills/joelclaw-runtime -> ~/Code/joelhooks/joelclaw-runtime/skills`.
+- Flat per-skill symlinks are compatibility shims only, for consumers that still require `~/.pi/agent/skills/<name>/SKILL.md`.
 - External skill packs may live under `~/.pi/agent/git/`, `~/.pi/agent/npm/node_modules/`, or extension directories. Do **not** copy those into joelclaw unless Joel explicitly wants a curated fork.
 - Preserve project-local skills and repo policy even when they look redundant. They often encode operational truth.
 

@@ -1,0 +1,17 @@
+# Build Process
+
+Durable build/setup knowledge and validation receipts for Joelclaw Runtime.
+
+## Rig bootstrap
+
+Installed the pi-notes Brain rig.
+
+Validation:
+
+```bash
+pi-notes brain check
+```
+
+## Receipts
+
+Add durable setup commands, surprising constraints, failed paths, and validation results here.

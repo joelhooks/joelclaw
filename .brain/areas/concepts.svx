@@ -1,0 +1,23 @@
+# Concepts
+
+Canonical vocabulary for Joelclaw Runtime.
+
+## Project
+
+Joelclaw Runtime is the current project context for this repository.
+
+## Brain
+
+The project-local knowledge graph under `.brain/`. Brain pages are authored as `.svx` and rendered by pi-notes.
+
+## Brain Data
+
+Large or structured source material under `.brain/data/**`. Keep raw dumps out of `.svx` pages.
+
+## Brain Component
+
+A reusable Svelte renderer under `.brain/components/**/*.svelte` for MDSvX notes and review surfaces.
+
+## Review Batch
+
+A structured browser feedback payload that should be handled with a receipt.

@@ -162,9 +162,10 @@ Current proved state:
 - Flagg's real 10GbE interface is `en0`, not the stale `en10` assumption. `en0` has `192.168.1.10` and reports `10Gbase-T`.
 - `three-body` is `192.168.1.163`.
 - NFS `2049/tcp` is reachable over `en0` after Wi-Fi/route drift is corrected.
-- `/Volumes/nas-nvme` mounts from `three-body:/volume2/data`.
-- `/Volumes/three-body` mounts from `three-body:/volume1/joelclaw`.
-- route MTU is currently proved at `1500`. An attempted jumbo-frame `9000` setting produced an NFS blackhole: Flagg route showed MTU `9000`, but `ping -D -s 8972 192.168.1.163` failed while 1500-byte traffic worked. Treat jumbo frames as a separate ADR-0088 follow-up, not a Gate 5 NAS write blocker.
+- `/Volumes/nas-nvme` mounts from `192.168.1.163:/volume2/data`.
+- `/Volumes/three-body` mounts from `192.168.1.163:/volume1/joelclaw`.
+- route MTU is currently proved at `8192`. Bounded jumbo-frame tests showed full MTU `9000` fails (`ping -D -s 8972 192.168.1.163`), but practical jumbo MTU `8192` passes (`ping -D -s 8164 192.168.1.163`) with 0% loss. Treat full `9000` as a switch/NAS path follow-up, not a Gate 5 NAS write blocker.
+- tuned NFS defaults at MTU `8192`: `rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128`.
 - NAS object roots exist and show `uid=502`, `gid=20`, mode `2777`:
   - `/Volumes/nas-nvme/s3`
   - `/Volumes/three-body/s3`
@@ -190,23 +191,23 @@ Runtime `/etc/exports` / `exportfs -v` shape for Flagg after that GUI setting:
 
 The initially recommended `root Mapping: root (0)` generated `no_root_squash,anonuid=0,anongid=0,insecure`, but Flagg writes still failed with `Operation not permitted`. Mapping root to ASUSTOR `admin (999)` is the setting that made Flagg NFS writes pass. The broader `192.168.1.0/24` rules already existed for other machines; leave them in place unless deliberately reworking NAS access.
 
-Proof receipts on 2026-05-30:
+Proof receipts from the original 2026-05-30 write test and the tuned 2026-06-17 remount:
 
 ```bash
-# mounted after Flagg reboot with conservative proof options
+# mounted after Flagg reboot with tuned 8192-MTU proof options
 sudo env \
   NAS_EXPECTED_INTERFACE=en0 \
-  NAS_EXPECTED_MTU=1500 \
-  NAS_NFS_OPTIONS='rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=8192,wsize=8192,dsize=8192' \
+  NAS_EXPECTED_MTU=8192 \
+  NAS_NFS_OPTIONS='rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128' \
   ./infra/central/scripts/mount-nas.sh mount
 
 sudo -u joelclaw -H mkdir /Volumes/nas-nvme/s3/.svc-proof && sudo -u joelclaw -H rmdir /Volumes/nas-nvme/s3/.svc-proof
 sudo -u joelclaw -H mkdir /Volumes/three-body/s3/.svc-proof && sudo -u joelclaw -H rmdir /Volumes/three-body/s3/.svc-proof
 
-sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \
+sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=8192 \
   ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 1
 
-sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \
+sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=8192 \
   ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
 ```
 
@@ -227,6 +228,30 @@ ok   nas-hdd cold object path writable/benchmarked
 
 Still not complete: hard-reboot/no-GUI NAS verification remains the next proof before Gate 5 can use NAS-backed object storage.
 
+### 2026-06-17 LAN mount contract correction
+
+Flagg and `three-body` sit on the same shelf/LAN, so persistent storage mounts are a LAN-IP contract. Tailscale/MagicDNS remains useful for SSH/admin/remote access, but it is not the default data plane for NFS.
+
+Audit receipt:
+
+- On Flagg, `three-body` resolved to `three-body.tail7af24.ts.net` / `100.67.156.41` and routed over `utun1`.
+- The NAS LAN IP `192.168.1.163` routed over `en0`.
+- The ASUSTOR NFS exports are LAN-scoped around `192.168.1.0/24` and selected LAN hosts.
+- Old launchd logs showed repeated `mount_nfs: can't mount /volume2/data from three-body onto /Volumes/nas-nvme: Permission denied`.
+
+The root bug: `infra/central/scripts/common.sh` built NFS export strings from `NAS_HOST=three-body`, while the route checks used `NAS_IP=192.168.1.163`. That let a check prove the LAN route while the actual mount used MagicDNS/Tailscale. The scripts now default `CENTRAL_NAS_NVME_EXPORT` and `CENTRAL_NAS_HDD_EXPORT` to `NAS_IP`, and preflight/verify/mount NFS reachability checks probe `NAS_IP`.
+
+Resolution receipt: the direct LAN failure was macOS Local Network privacy for the invoking app. After allowing local-network access from the GUI prompt, `nc -vz -G 3 192.168.1.163 2049` and `showmount -e 192.168.1.163` succeeded. A Terminal runner then synced the fixed NAS scripts into `/Users/Shared/joelclaw/src/joelclaw`, installed and bootstrapped `com.joelclaw.central.nas-mounts`, mounted both NFS tiers, and passed `verify-nas.sh --write-probe --benchmark-mib 64`.
+
+Live proof on 2026-06-17:
+
+```text
+/Volumes/nas-nvme -> 192.168.1.163:/volume2/data
+/Volumes/three-body -> 192.168.1.163:/volume1/joelclaw
+launchd label: system/com.joelclaw.central.nas-mounts
+last exit code: 0
+```
+
 ### Gate 5 NAS/object-storage target
 
 MinIO should be an interface to `three-body`, not a pile of object data hidden on Flagg's local SSD. Local MinIO storage under `/Users/Shared/joelclaw/services/minio` is shadow-smoke-only.
@@ -236,8 +261,8 @@ Target tiering:
 | Tier | Path | Backing storage | Use |
 | --- | --- | --- | --- |
 | Local SSD | `/Users/Shared/joelclaw/services/*` | Flagg internal SSD | Redis, Inngest, Restate, active Typesense, caches/scratch |
-| NAS NVMe | `/Volumes/nas-nvme` | `three-body:/volume2/data` | fast shared artifacts, snapshots, models, docs artifacts, sessions, transcripts, hot object data |
-| NAS HDD | `/Volumes/three-body` | `three-body:/volume1/joelclaw` | archives, books, bulk object data, cold retention |
+| NAS NVMe | `/Volumes/nas-nvme` | `192.168.1.163:/volume2/data` | fast shared artifacts, snapshots, models, docs artifacts, sessions, transcripts, hot object data |
+| NAS HDD | `/Volumes/three-body` | `192.168.1.163:/volume1/joelclaw` | archives, books, bulk object data, cold retention |
 
 Do not mix NAS NVMe and NAS HDD into one opaque MinIO erasure set. Preferred shape is either:
 
@@ -246,7 +271,7 @@ Do not mix NAS NVMe and NAS HDD into one opaque MinIO erasure set. Preferred sha
 
 Before cutover, prove the selected shape with:
 
-- persistent no-login mounts for `/Volumes/nas-nvme` and `/Volumes/three-body`, or an explicitly scoped fallback for non-MinIO backup/export paths;
+- persistent no-login mounts for `/Volumes/nas-nvme` and `/Volumes/three-body` over the NAS LAN IP, or an explicitly scoped fallback for non-MinIO backup/export paths;
 - route/MTU proof showing Flagg uses 10GbE to `three-body`, not Tailscale/Wi-Fi;
 - read/write latency and throughput receipts against both NAS tiers;
 - MinIO bucket/object smoke tests that prove writes land on NAS-backed storage.
@@ -334,7 +359,7 @@ Cutover sequence:
 5. Does gateway move in Gate 5 or remain on Panda as Relay while pointing at Flagg Central?
 6. What is the rollback window cutoff after Flagg accepts writes?
 7. Should we create a `#brain-joel` Project Thread for Gate 5 evidence?
-8. Should Flagg use LaunchDaemon-mounted NFS or autofs for `/Volumes/nas-nvme` and `/Volumes/three-body`?
+8. Closed for Central: use root LaunchDaemon-mounted NFS for `/Volumes/nas-nvme` and `/Volumes/three-body`. Autofs can be considered later for Joel's interactive/user mounts, not Central service mounts.
 9. Should MinIO wave 1 use two explicit hot/cold S3 surfaces, or one hot S3 surface plus lifecycle/copy jobs to HDD?
 
 ## Phase A smoke harness
@@ -359,28 +384,21 @@ This performs isolated shadow writes only. It does not freeze Panda, flip endpoi
 
 ## Recommended next work
 
-NAS writes are now proved from Flagg after mapping the Flagg NFS client to ASUSTOR `admin (999)` and using conservative 1500-MTU proof mounts. Continue with the remaining NAS hardening/proof steps; do not cut over Central yet.
+NAS writes are now proved from Flagg after mapping the Flagg NFS client to ASUSTOR `admin (999)` and using tuned 8192-MTU proof mounts. The service checkout has been synced to the LAN-IP export contract and `NAS_EXPECTED_MTU=8192`, and its verifier passed with `expected_mtu=8192`. Continue with the remaining NAS hardening/proof steps; do not cut over Central yet.
 
-1. Sync the latest NAS script defaults from the dev checkout into the service checkout so launchd/proof commands stop inheriting stale `en10` assumptions:
+1. Hard-reboot Flagg, then before any GUI login repeat the NAS proof over the 10GbE path:
    ```bash
-   cd /Users/joel/Code/joelhooks/joelclaw
-   sudo rsync -aR infra/central/scripts/common.sh infra/central/scripts/mount-nas.sh infra/central/scripts/verify-nas.sh /Users/Shared/joelclaw/src/joelclaw/
-   sudo chown joelclaw:staff /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/common.sh /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/mount-nas.sh /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh
-   sudo chmod 755 /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/common.sh /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/mount-nas.sh /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh
-   ```
-2. Hard-reboot Flagg, then before any GUI login repeat the NAS proof over the 10GbE path:
-   ```bash
-   sudo ifconfig en0 mtu 1500
+   sudo ifconfig en0 mtu 8192
    cd /Users/Shared/joelclaw/src/joelclaw
-   sudo env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \
-     NAS_NFS_OPTIONS='rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=8192,wsize=8192,dsize=8192' \
+   sudo env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=8192 \
+     NAS_NFS_OPTIONS='rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128' \
      ./infra/central/scripts/mount-nas.sh mount
-   sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \
+   sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=8192 \
      ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
    ```
-3. Decide whether the conservative proof NFS options should become the launchd default or only a diagnostic override. `soft` avoids wedged proof sessions, but final MinIO-on-NFS durability semantics need an explicit decision.
-4. Fix or explicitly document MTU `1500` vs ADR-0088 target `9000`. Jumbo `9000` currently blackholes large packets to `three-body` from Flagg.
-5. Decide MinIO wave-1 shape: two hot/cold S3 surfaces, or one hot surface plus lifecycle/copy jobs to HDD.
-6. Write the freeze/rollback command sheet before any final sync.
-7. Decide the open questions above before scheduling Gate 5.
-8. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.
+2. Keep the 512K NFS transfer defaults unless a larger sweep beats them on both NAS tiers. The 2026-06-17 sweep picked 512K because 1M regressed HDD writes.
+3. Fix or explicitly document MTU `8192` vs ADR-0088 target `9000`. Full `9000` still blackholes large packets to `three-body` from Flagg; inspect the switch path before trying to make `9000` the persistent default.
+4. Decide MinIO wave-1 shape: two hot/cold S3 surfaces, or one hot surface plus lifecycle/copy jobs to HDD.
+5. Write the freeze/rollback command sheet before any final sync.
+6. Decide the open questions above before scheduling Gate 5.
+7. Turn the ad hoc Panda inventory probes into a repo-managed read-only inventory script if we need repeatability before the cutover window.

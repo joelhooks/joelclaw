@@ -92,9 +92,10 @@ unset KEY
 - writes `~/.config/system-bus.env` with `JOELCLAW_CENTRAL_URL`, `TYPESENSE_URL`, and `TYPESENSE_API_KEY` when that key is provided in the bootstrap environment
 - builds `~/.bun/bin/joelclaw`
 - writes `~/.local/bin/joelclaw` as a wrapper that sources `~/.config/system-bus.env` before execing the compiled binary
-- symlinks canonical repo skills into:
-  - `~/.pi/agent/skills`
-  - `~/.agents/skills`
+- creates real skill consumer roots and links joelclaw runtime as a namespaced pack:
+  - `~/.pi/agent/skills/joelclaw-runtime -> <repo>/skills`
+  - `~/.agents/skills/joelclaw-runtime -> <repo>/skills`
+- converts old whole-root `~/.pi/agent/skills` or `~/.agents/skills` symlinks into real directories before adding the pack link
 - ensures `~/.pi/agent/sessions` exists
 - runs `joelclaw satellite health`
 - tries `joelclaw satellite repair-request --central-ssh joel@panda`

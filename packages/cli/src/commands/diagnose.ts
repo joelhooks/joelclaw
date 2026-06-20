@@ -1,5 +1,6 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
+import { loadConfig, requireInngestEventKey } from "../config"
 import { Inngest } from "../inngest"
 import { respond } from "../response"
 
@@ -381,7 +382,7 @@ export const loopDiagnoseCmd = Command.make(
         return
       }
 
-      const eventKey = process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15"
+      const eventKey = requireInngestEventKey(loadConfig())
 
       for (const id of loopIds) {
         const result = yield* Effect.tryPromise({

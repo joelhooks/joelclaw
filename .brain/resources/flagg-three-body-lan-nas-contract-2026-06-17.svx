@@ -1,0 +1,115 @@
+---
+title: "Flagg Three Body LAN NAS Contract"
+type: "resource"
+status: "active"
+created_at: "2026-06-17"
+tags:
+  - nas
+  - three-body
+  - flagg
+  - central-migration
+  - gate-5
+---
+
+# Flagg Three Body LAN NAS Contract
+
+Flagg and `three-body` are shelf-local. Central storage mounts should use the LAN data plane by default.
+
+## Decision
+
+Persistent Flagg Central NFS mounts use the NAS LAN IP:
+
+- `/Volumes/nas-nvme` -> `192.168.1.163:/volume2/data`
+- `/Volumes/three-body` -> `192.168.1.163:/volume1/joelclaw`
+
+`three-body` as a hostname remains useful for SSH/admin/remote access, but is unsafe as a persistent NFS export host on Flagg because MagicDNS can resolve it to the tailnet address.
+
+## Receipts
+
+Observed on 2026-06-17:
+
+- Flagg `en0`: `192.168.1.10`, `10Gbase-T`, MTU `1500`.
+- NAS `eth2`: `192.168.1.163`, 10000Mb/s full duplex, MTU `9000`.
+- `three-body` resolved on Flagg to `three-body.tail7af24.ts.net` / `100.67.156.41`.
+- Route to `100.67.156.41` used `utun1`; route to `192.168.1.163` used `en0`.
+- ASUSTOR NFS exports are LAN-scoped around `192.168.1.0/24` and selected LAN clients.
+- Old launchd logs repeatedly showed `mount_nfs: can't mount /volume2/data from three-body onto /Volumes/nas-nvme: Permission denied`.
+- Joel confirmed `192.168.1.163` is static/reserved for the NAS.
+
+The script bug was split proof vs mount behavior: route checks used `NAS_IP=192.168.1.163`, but default NFS export strings used `NAS_HOST=three-body`.
+
+## Repair Receipt
+
+Direct LAN probes from Flagg to `192.168.1.163` initially returned `No route to host` for SSH, SMB, NFS, and ADM ports, even though ARP resolved both directions. The missing piece was macOS Local Network privacy for the invoking app.
+
+The durable allow-list is the GUI Local Network privacy toggle for the app running the probe:
+
+```sh
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
+```
+
+`tccutil` can reset privacy decisions, but it does not grant Local Network permission from the CLI.
+
+After the GUI Local Network permission was accepted:
+
+- `nc -vz -G 3 192.168.1.163 2049` succeeded.
+- `showmount -e 192.168.1.163` returned exports.
+- Fixed NAS scripts were synced into `/Users/Shared/joelclaw/src/joelclaw`.
+- `com.joelclaw.central.nas-mounts` was installed and bootstrapped.
+- `/Volumes/nas-nvme` mounted from `192.168.1.163:/volume2/data`.
+- `/Volumes/three-body` mounted from `192.168.1.163:/volume1/joelclaw`.
+- `verify-nas.sh --write-probe --benchmark-mib 64` passed against both `/Volumes/nas-nvme/s3` and `/Volumes/three-body/s3`.
+
+## MTU And NFS Tuning
+
+Full MTU `9000` is not clean yet, but practical MTU `8192` is. A bounded 2026-06-17 test set Flagg `Ethernet`/`en0` to MTU `9000`; Flagg accepted it and the route MTU changed to `9000`, but `ping -D -c 5 -s 8972 192.168.1.163` had `100%` packet loss with `Message too long` send errors. A follow-up set Flagg to MTU `8192`; `ping -D -c 3 -s 8164 192.168.1.163` passed with `0%` loss, and `8165` failed as the expected local ceiling.
+
+The current default is therefore fast NFS over the proved `8192` MTU path:
+
+```txt
+rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128
+```
+
+512 MiB benchmark receipts:
+
+| NFS request size | NVMe write | NVMe read | HDD write | HDD read |
+|---:|---:|---:|---:|---:|
+| 8K baseline | 144 MiB/s | 165 MiB/s | 123 MiB/s | 166 MiB/s |
+| 64K | 485 MiB/s | 930 MiB/s | 453 MiB/s | 915 MiB/s |
+| 128K | 561 MiB/s | 973 MiB/s | 550 MiB/s | 963 MiB/s |
+| 256K | 598 MiB/s | 1014 MiB/s | 579 MiB/s | 1009 MiB/s |
+| 512K | 624 MiB/s | 1017 MiB/s | 612 MiB/s | 1010 MiB/s |
+| 1M | 627 MiB/s | 967 MiB/s | 431 MiB/s | 990 MiB/s |
+
+Decision: use 512K `rsize`/`wsize`, 64K `dsize`, `readahead=128`, and no macOS-client `async`. Inspect the switch path before trying to make MTU `9000` persistent.
+
+Final live 512K remount proof with 1024 MiB probes at MTU `1500`:
+
+- NVMe: 573 MiB/s write, 992 MiB/s read.
+- HDD: 474 MiB/s write, 975 MiB/s read.
+- Both the dev checkout and `/Users/Shared/joelclaw/src/joelclaw` service checkout had the 512K defaults.
+- `nfsstat -m` showed both live mounts using `rsize=524288,wsize=524288,readahead=128`.
+
+Final live 8192-MTU proof with 1024 MiB probes:
+
+- NVMe: 614 MiB/s write, 1018 MiB/s read.
+- HDD: 552 MiB/s write, 925 MiB/s read.
+- Flagg `Ethernet` remained at MTU `8192`.
+- Both the dev checkout and `/Users/Shared/joelclaw/src/joelclaw` service checkout now carry `NAS_EXPECTED_MTU=8192` plus the 512K NFS transfer defaults.
+- The service checkout passed `verify-nas.sh --write-probe --benchmark-mib 64` with `expected_mtu=8192`.
+
+Remaining proof before Gate 5 cutover:
+
+- hard-reboot Flagg;
+- before any GUI login, prove `com.joelclaw.central.nas-mounts` restores both mounts;
+- rerun `verify-nas.sh --write-probe --benchmark-mib 1024`.
+
+## Related Source
+
+- `infra/central/scripts/common.sh`
+- `infra/central/scripts/mount-nas.sh`
+- `infra/central/scripts/preflight.sh`
+- `infra/central/scripts/verify-nas.sh`
+- `docs/runbooks/flagg-gate5-staged-migration.md`
+- `infra/central/README.md`
+- `skills/three-body/SKILL.md`

@@ -24,11 +24,14 @@ NAS_HOST="${NAS_HOST:-three-body}"
 NAS_IP="${NAS_IP:-192.168.1.163}"
 NAS_EXPECTED_INTERFACE="${NAS_EXPECTED_INTERFACE:-en0}"
 NAS_EXPECTED_MEDIA="${NAS_EXPECTED_MEDIA:-10Gbase-T}"
-NAS_EXPECTED_MTU="${NAS_EXPECTED_MTU:-1500}"
-NAS_NFS_OPTIONS="${NAS_NFS_OPTIONS:-rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=8192,wsize=8192,dsize=8192}"
-CENTRAL_NAS_NVME_EXPORT="${CENTRAL_NAS_NVME_EXPORT:-${NAS_HOST}:/volume2/data}"
+NAS_EXPECTED_MTU="${NAS_EXPECTED_MTU:-8192}"
+NAS_NFS_OPTIONS="${NAS_NFS_OPTIONS:-rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128}"
+# Use the LAN IP for persistent NFS mounts. On Flagg, `three-body` resolves
+# through Tailscale/MagicDNS, which is useful for SSH/admin but wrong for
+# shelf-local NAS data mounts scoped to 192.168.1.0/24 exports.
+CENTRAL_NAS_NVME_EXPORT="${CENTRAL_NAS_NVME_EXPORT:-${NAS_IP}:/volume2/data}"
 CENTRAL_NAS_NVME_MOUNT="${CENTRAL_NAS_NVME_MOUNT:-/Volumes/nas-nvme}"
-CENTRAL_NAS_HDD_EXPORT="${CENTRAL_NAS_HDD_EXPORT:-${NAS_HOST}:/volume1/joelclaw}"
+CENTRAL_NAS_HDD_EXPORT="${CENTRAL_NAS_HDD_EXPORT:-${NAS_IP}:/volume1/joelclaw}"
 CENTRAL_NAS_HDD_MOUNT="${CENTRAL_NAS_HDD_MOUNT:-/Volumes/three-body}"
 CENTRAL_MINIO_HOT_DATA="${CENTRAL_MINIO_HOT_DATA:-${CENTRAL_NAS_NVME_MOUNT}/s3}"
 CENTRAL_MINIO_COLD_DATA="${CENTRAL_MINIO_COLD_DATA:-${CENTRAL_NAS_HDD_MOUNT}/s3}"

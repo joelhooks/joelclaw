@@ -21,7 +21,7 @@ A satellite should be boring:
 
 - repo checkout
 - `joelclaw` CLI
-- skills symlinked from the repo
+- joelclaw skills linked as a namespaced pack inside real consumer roots
 - local raw session search
 - Central Typesense search
 - Central `/api/runs` capture auth
@@ -89,10 +89,14 @@ On the satellite:
 ~/.local/bin/joelclaw        # wrapper that sources ~/.config/system-bus.env, then execs binary
 ~/.config/system-bus.env     # 0600, contains JOELCLAW_CENTRAL_URL, TYPESENSE_URL, TYPESENSE_API_KEY
 ~/.joelclaw/auth.json        # machine run-capture token, created separately by machine registration
-~/.pi/agent/skills           # symlink to repo skills
-~/.agents/skills             # symlink to repo skills
+~/.pi/agent/skills           # real consumer root
+~/.pi/agent/skills/joelclaw-runtime  # symlink to repo skills pack
+~/.agents/skills             # real consumer root
+~/.agents/skills/joelclaw-runtime    # symlink to repo skills pack
 ~/.pi/agent/sessions         # local raw Pi sessions
 ```
+
+`~/.pi/agent/skills` and `~/.agents/skills` must stay real directories. The runtime is a skill pack inside those roots, not the root itself. Use `joelclaw-runtime` for the pack namespace so the flat `joelclaw` CLI skill can remain a compatibility shim. Per-skill flat symlinks are compatibility shims only when a harness cannot discover nested packs.
 
 The wrapper matters because non-interactive SSH shells do not reliably load dotfiles, and satellites should not need Panda's `agent-secrets` daemon.
 

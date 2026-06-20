@@ -1,0 +1,25 @@
+# Component Library
+
+Local MDSvX component guidance for Joelclaw Runtime.
+
+pi-notes ships standard components and auto-imports project-local Svelte components from `.brain/components/**/*.svelte` when they are used in `.svx` pages.
+
+## Rules
+
+- Keep `.svx` as the narrative shell.
+- Put large structured data in `.brain/data/**`.
+- Put reusable renderers in `.brain/components/**`.
+- Prefer focused components over boolean prop soup.
+- Show provenance, freshness, privacy, and action side effects when a component reads data or triggers work.
+
+## Useful standard components
+
+- `<NoteCallout tone="info" title="Note">...</NoteCallout>`
+- `<StatusPill label="active" tone="success" />`
+- `<SourceReference path="src/file.ts" label="Source" />`
+- `<ReviewReceipt batchId="..." status="handled" />`
+- `<DiagramFrame src="/diagrams/example.svg" source="docs/diagrams/example" renderer="mermaid" />`
+
+## Project components
+
+Create project-specific components in `.brain/components/` only when a shape repeats or depends on structured data.

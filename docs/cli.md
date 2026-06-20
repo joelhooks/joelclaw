@@ -205,9 +205,10 @@ joelclaw skills
 
 `joelclaw skills ensure` semantics:
 
-- canonical local-repo install/maintenance surface for skills that already live in a repo `skills/` directory
+- compatibility-shim maintenance surface for skills that already live in a repo `skills/` directory
 - resolves `skills/<name>/SKILL.md` from `--source-root`, cwd/ancestor repos, or the joelclaw repo fallback
-- creates missing consumer symlinks and repairs wrong symlinks in `~/.agents/skills/`, `~/.pi/agent/skills/`, and `~/.claude/skills/`
+- creates missing flat per-skill symlinks and repairs wrong symlinks in `~/.agents/skills/`, `~/.pi/agent/skills/`, and `~/.claude/skills/`
+- expects those consumer roots to be real directories; whole-root symlinks are a layering error
 - fails loudly if a consumer target exists as a real file/dir instead of a symlink
 - returns the installed skill path so agents can `read` it immediately
 - for external third-party skill packages, the CLI points at the upstream installer: `npx skills add -y -g <source>`

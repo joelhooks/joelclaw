@@ -48,6 +48,52 @@ path.write_text("".join(out))
 PY
 }
 
+ensure_skill_consumer_root() {
+  local root="$1"
+  local parent
+  parent="$(dirname "$root")"
+  mkdir -p "$parent"
+
+  if [[ -L "$root" ]]; then
+    local current_target
+    current_target="$(readlink "$root")"
+    echo "Converting $root from whole-root symlink to composed skill root: $current_target"
+    unlink "$root"
+  elif [[ -e "$root" && ! -d "$root" ]]; then
+    echo "Cannot create skill consumer root: $root exists and is not a directory" >&2
+    exit 1
+  fi
+
+  mkdir -p "$root"
+}
+
+ensure_skill_pack_link() {
+  local root="$1"
+  local pack_name="$2"
+  local source_dir="$3"
+  local target="$root/$pack_name"
+
+  ensure_skill_consumer_root "$root"
+
+  if [[ -L "$target" ]]; then
+    local current_target
+    local resolved_source
+    local resolved_target
+    current_target="$(readlink "$target")"
+    resolved_source="$(cd "$source_dir" && pwd -P)"
+    if resolved_target="$(cd "$(dirname "$target")" && cd "$(dirname "$current_target")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$current_target")")" &&
+      [[ "$resolved_target" == "$resolved_source" ]]; then
+      return 0
+    fi
+    unlink "$target"
+  elif [[ -e "$target" ]]; then
+    echo "Cannot link skill pack: $target exists and is not a symlink" >&2
+    exit 1
+  fi
+
+  ln -s "$source_dir" "$target"
+}
+
 say "satellite identity"
 hostname
 sw_vers -productVersion 2>/dev/null || true
@@ -123,6 +169,7 @@ else
 fi
 
 cd "$REPO_DIR"
+REPO_DIR="$(pwd -P)"
 
 say "installing workspace deps"
 pnpm install
@@ -154,11 +201,10 @@ SH
 chmod 755 "$HOME/.local/bin/joelclaw"
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 
-say "linking canonical skills"
+say "linking joelclaw runtime skill pack"
 mkdir -p "$HOME/.pi/agent" "$HOME/.agents" "$HOME/.joelclaw"
-rm -rf "$HOME/.pi/agent/skills" "$HOME/.agents/skills"
-ln -s "$REPO_DIR/skills" "$HOME/.pi/agent/skills"
-ln -s "$REPO_DIR/skills" "$HOME/.agents/skills"
+ensure_skill_pack_link "$HOME/.pi/agent/skills" "joelclaw-runtime" "$REPO_DIR/skills"
+ensure_skill_pack_link "$HOME/.agents/skills" "joelclaw-runtime" "$REPO_DIR/skills"
 
 say "ensuring Pi session directory exists"
 mkdir -p "$HOME/.pi/agent/sessions"

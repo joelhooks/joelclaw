@@ -11,11 +11,14 @@ ADR anchors:
 
 ## Canonical Contract
 
-- Source of truth: `~/Code/joelhooks/joelclaw/skills/`
-- Consumer dirs are symlinks into the repo:
-  - `~/.agents/skills/<name>`
-  - `~/.pi/agent/skills/<name>`
-  - optionally `~/.claude/skills/<name>` when that harness is in use
+- Source of truth: the owning repo's `skills/` directory, for example `~/Code/joelhooks/joelclaw/skills/` or a runtime checkout's `skills/`.
+- Consumer roots are real directories:
+  - `~/.agents/skills/`
+  - `~/.pi/agent/skills/`
+  - optionally `~/.claude/skills/` and `~/.codex/skills/` when those harnesses are in use
+- Skill packs are namespaced symlinks inside those roots, for example `~/.agents/skills/joelclaw-runtime -> ~/Code/joelhooks/joelclaw-runtime/skills`.
+- Flat per-skill symlinks such as `~/.pi/agent/skills/session-search -> <repo>/skills/session-search` are compatibility shims only.
+- Never make a whole consumer root a symlink to one repo's `skills/` directory. That turns one pack into the whole system layer.
 - Never author skill content in dot directories. Those are consumers, not sources.
 - Directory name must match the `name:` field in `SKILL.md`.
 - Skills are git-tracked. If the skill matters, commit it.
@@ -68,7 +71,7 @@ After frontmatter, write instructions for another agent, not for Joel. Include:
 
 1. Create the canonical repo directory.
 2. Write `SKILL.md`.
-3. Install/repair the consumer symlinks with `joelclaw skills ensure <name>`.
+3. Install/repair flat compatibility shims with `joelclaw skills ensure <name>` only when a consumer still needs `<name>/SKILL.md` at the root.
 4. If the skill changes system reality or closes a doc gap, update `docs/` in the same session.
 5. Slog the change.
 6. Commit it.
@@ -80,7 +83,7 @@ mkdir -p ~/Code/joelhooks/joelclaw/skills/<name>
 joelclaw skills ensure <name>
 ```
 
-`joelclaw skills ensure` is the canonical local-repo install/maintenance surface for skills that already live in a repo `skills/` directory. It creates missing consumer symlinks and repairs wrong symlinks in:
+`joelclaw skills ensure` is the compatibility-shim maintenance surface for skills that already live in a repo `skills/` directory. It creates missing flat symlinks and repairs wrong symlinks in:
 
 - `~/.agents/skills/`
 - `~/.pi/agent/skills/`
@@ -132,7 +135,7 @@ A bad skill is:
 
 Use the existing tooling:
 
-- `joelclaw skills ensure <name> [--source-root <repo>]` — install or repair local repo skills in consumer dirs
+- `joelclaw skills ensure <name> [--source-root <repo>]` — install or repair flat local-repo compatibility shims in consumer dirs
 - `joelclaw skills audit` — run the skill garden checks on demand
 - `skills/skill-review/SKILL.md` — maintenance workflow
 - `skills/add-skill/SKILL.md` — canonical add-skill process

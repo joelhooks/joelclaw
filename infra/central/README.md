@@ -55,8 +55,10 @@ For cutover, MinIO should be an S3-compatible facade over `three-body` NAS tiers
 | Tier | Flagg mount | NAS path | Role |
 | --- | --- | --- | --- |
 | Tier 1 local SSD | `/Users/Shared/joelclaw/services/*` | Flagg internal SSD | Redis, Inngest, Restate, active Typesense, scratch/cache |
-| NAS NVMe warm/hot | `/Volumes/nas-nvme` | `three-body:/volume2/data` | fast shared artifacts, snapshots, models, docs artifacts, sessions, transcripts, hot object data |
-| NAS HDD cold | `/Volumes/three-body` | `three-body:/volume1/joelclaw` | archives, books, video/media refs, bulk/cold object data |
+| NAS NVMe warm/hot | `/Volumes/nas-nvme` | `192.168.1.163:/volume2/data` | fast shared artifacts, snapshots, models, docs artifacts, sessions, transcripts, hot object data |
+| NAS HDD cold | `/Volumes/three-body` | `192.168.1.163:/volume1/joelclaw` | archives, books, video/media refs, bulk/cold object data |
+
+`three-body` as a hostname is for SSH/admin convenience. Persistent NFS data mounts use the NAS LAN IP. On Flagg, `three-body` can resolve through Tailscale/MagicDNS, which makes the client source a tailnet address while the ASUSTOR NFS exports expect LAN clients such as `192.168.1.10`.
 
 Do not blend NAS NVMe and NAS HDD into one opaque MinIO erasure set. Keep tier boundaries visible. Preferred Gate 5 shape is either:
 
@@ -66,6 +68,7 @@ Do not blend NAS NVMe and NAS HDD into one opaque MinIO erasure set. Keep tier b
 Before cutover, prove:
 
 - Flagg routes `three-body` traffic over the 10GbE interface, not Tailscale/Wi-Fi;
+- NFS export strings and reachability checks use the NAS LAN IP, not MagicDNS;
 - MTU/NFS tuning matches ADR-0088 or the reason for divergence is documented;
 - `/Volumes/nas-nvme` and `/Volumes/three-body` survive hard reboot/no-login;
 - read/write latency and throughput are good enough for the selected tier;
@@ -111,21 +114,33 @@ For NFSv3, numeric ownership matters. Flagg's service identity is `uid=502`, `gi
 
 ASUSTOR ADM NFS privileges also matter beyond POSIX mode. For Flagg's client rule on both shared folders `data` and `joelclaw`, the working proof setting is `Privilege: Read & Write`, `root Mapping: admin (999)`, `Asynchronous: Yes`, and `Allow connections from non-reserved ports` enabled. This generates `root_squash,anonuid=999,anongid=999,insecure` for `192.168.1.10` and allowed Flagg `joelclaw` writes. The earlier `root (0)` / `no_root_squash` export looked correct but still returned `Operation not permitted` from macOS NFS.
 
-Flagg also hit an NFS blackhole when `en0`/route MTU was set to `9000`: jumbo ping failed while 1500-byte traffic worked, and hard NFS mounts wedged. The successful 2026-05-30 proof used MTU `1500` plus conservative diagnostic mount options: `rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=8192,wsize=8192,dsize=8192`. Decide separately whether those options are acceptable for final MinIO-on-NFS; do not silently treat `soft` as a production durability default.
+Flagg also hit an NFS blackhole when `en0`/route MTU was set to `9000`: full 9000-byte jumbo ping failed while smaller traffic worked, and hard NFS mounts wedged. A bounded 2026-06-17 retest proved a practical jumbo ceiling: Flagg can set route MTU `9000`, but `ping -D -s 8972 192.168.1.163` still fails; setting Flagg `Ethernet` to MTU `8192` makes `ping -D -s 8164 192.168.1.163` pass with 0% loss and `8165` fail as expected. The safe route MTU is now `8192`; full `9000` remains a switch/NAS path follow-up.
+
+The current NFS performance default is tuned for the safe `8192` MTU path: `rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128`. A 512 MiB sweep picked 512K request sizes over 1M because 1M regressed the HDD tier. The final 8192-MTU 1024 MiB proof was roughly `614 MiB/s` write / `1018 MiB/s` read on NVMe and `552 MiB/s` write / `925 MiB/s` read on HDD. Do not enable `async` on the macOS client side as a casual performance knob; it is a data-loss tradeoff.
+
+2026-06-17 correction: the mount scripts previously defaulted `CENTRAL_NAS_*_EXPORT` to `three-body:/...` and checked NFS reachability through `NAS_HOST`. On Flagg that hostname resolved to `three-body.tail7af24.ts.net` / `100.67.156.41`, so launchd could pass a route check while mounting over the wrong data plane and hitting NFS permission errors. The defaults now use `NAS_IP` (`192.168.1.163`) for export strings and NFS reachability checks.
+
+2026-06-17 live repair: macOS Local Network privacy was also blocking the first direct LAN probes from the invoking app. After allowing local-network access, the root `com.joelclaw.central.nas-mounts` LaunchDaemon was installed/bootstrapped, both NFS tiers mounted over `192.168.1.163`, and `verify-nas.sh --write-probe --benchmark-mib 64` passed. The service checkout at `/Users/Shared/joelclaw/src/joelclaw` now carries `NAS_EXPECTED_MTU=8192` plus the 512K NFS transfer defaults, and its verifier passed with `expected_mtu=8192`.
 
 If permissions were changed on `three-body` while Flagg had the NFS exports mounted, first sync the latest helper scripts into the service checkout, then remount before rerunning the proof so macOS drops any stale NFS access-cache verdict:
 
 ```bash
 cd /Users/joel/Code/joelhooks/joelclaw
 sudo rsync -aR \
+  infra/central/scripts/common.sh \
   infra/central/scripts/mount-nas.sh \
+  infra/central/scripts/preflight.sh \
   infra/central/scripts/verify-nas.sh \
   /Users/Shared/joelclaw/src/joelclaw/
 sudo chown joelclaw:staff \
+  /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/common.sh \
   /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/mount-nas.sh \
+  /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/preflight.sh \
   /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh
 sudo chmod 755 \
+  /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/common.sh \
   /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/mount-nas.sh \
+  /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/preflight.sh \
   /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh
 cd /Users/Shared/joelclaw/src/joelclaw
 sudo ./infra/central/scripts/mount-nas.sh unmount
