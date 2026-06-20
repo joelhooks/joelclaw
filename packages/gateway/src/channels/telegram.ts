@@ -16,6 +16,7 @@ import {
   markCallbackTraceDispatched,
   startCallbackTrace,
 } from "../callback-trace";
+import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
 import type { OutboundEnvelope } from "../outbound/envelope";
 import type { EnqueueFn } from "./redis";
 import type {
@@ -51,10 +52,6 @@ const TELEGRAM_POLL_LEASE_RENEW_MS = 10_000;
 const TELEGRAM_POLL_LEASE_RETRY_BASE_MS = 5_000;
 const TELEGRAM_POLL_LEASE_RETRY_MAX_MS = 60_000;
 const TELEGRAM_POLL_STATUS_TTL_MS = 2 * 60_000;
-
-// Inngest event API — same config as joelclaw CLI
-const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
-const INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "";
 
 let _botToken: string | undefined;
 
@@ -361,7 +358,8 @@ async function emitMediaReceived(data: {
   fileName?: string;
   metadata?: Record<string, unknown>;
 }): Promise<boolean> {
-  if (!INNGEST_EVENT_KEY) {
+  const config = loadGatewayInngestEventConfig();
+  if (!config) {
     console.warn("[gateway:telegram] no INNGEST_EVENT_KEY — can't emit media/received");
     void emitGatewayOtel({
       level: "warn",
@@ -378,7 +376,7 @@ async function emitMediaReceived(data: {
     const chatId = (data.metadata as any)?.telegramChatId ?? "";
     const eventId = `media-${data.source}-${chatId}-${msgId}`;
 
-    const res = await fetch(`${INNGEST_URL}/e/${INNGEST_EVENT_KEY}`, {
+    const res = await fetch(config.eventApi, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "media/received", data, id: eventId }),
@@ -1567,8 +1565,11 @@ async function startTelegramChannel(
     }
 
     try {
-      const eventKey = INNGEST_EVENT_KEY || "37aa349b89692d657d276a40e0e47a15";
-      const res = await fetch(`${INNGEST_URL}/e/${eventKey}`, {
+      const config = loadGatewayInngestEventConfig();
+      if (!config) {
+        throw new Error("missing INNGEST_EVENT_KEY");
+      }
+      const res = await fetch(config.eventApi, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

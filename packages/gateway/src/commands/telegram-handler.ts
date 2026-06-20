@@ -10,6 +10,7 @@ import {
   startOperatorTrace,
 } from "../callback-trace";
 import { injectChannelContext } from "../formatting";
+import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
 import { BUILTIN_COMMANDS } from "./builtins";
 import {
   ALLOWED_MODELS,
@@ -651,8 +652,10 @@ async function sendPitchDecisionEvent(
     });
   } catch {
     // Fallback: direct HTTP
-    const eventKey = process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15";
-    await fetch(`http://localhost:8288/e/${eventKey}`, {
+    const config = loadGatewayInngestEventConfig();
+    if (!config) return;
+
+    await fetch(config.eventApi, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: eventName, data: { adr_number: adrNumber, telegram_message_id: messageId } }),

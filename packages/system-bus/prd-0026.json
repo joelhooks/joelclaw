@@ -6,7 +6,7 @@
     "piece1_done": "agent-dispatch Inngest function already deployed (19 functions). Spawns codex/claude/pi, writes result to inbox/{requestId}.json, emits system/agent.completed event.",
     "inbox_dir": "~/.joelclaw/workspace/inbox/",
     "inbox_ack_dir": "~/.joelclaw/workspace/inbox/ack/",
-    "inngest_event_key": "37aa349b89692d657d276a40e0e47a15",
+    "inngest_event_key": "<INNGEST_EVENT_KEY>",
     "inngest_url": "http://localhost:8288",
     "pi_tools_dir": "~/.pi/agent/git/github.com/joelhooks/pi-tools/",
     "existing_extensions": ["session-lifecycle", "mcq", "agent-secrets", "mcp-bridge", "web-search", "repo-autopsy", "codex-exec", "session-reader", "ralph-loop", "ts-check"],

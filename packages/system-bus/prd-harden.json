@@ -9,7 +9,7 @@
       "Loop artifacts (.out files, prd.json, progress.txt) get committed to repos — should be cleaned before merge"
     ],
     "onFailure_rationale": "Currently all Inngest functions fail silently. ADR-0028 added NonRetriableError for validation but no onFailure handlers. When a function exhausts retries, nothing is logged — you only find out by checking the dashboard or Docker logs.",
-    "inngest_event_key": "37aa349b89692d657d276a40e0e47a15",
+    "inngest_event_key": "<INNGEST_EVENT_KEY>",
     "test_command": "bun test",
     "typecheck_command": "bunx tsc --noEmit"
   },

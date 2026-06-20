@@ -16,8 +16,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateMemoryRequest } from "@/lib/memory-auth";
 
 const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
-const INNGEST_EVENT_KEY =
-  process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15";
+const INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "";
 
 const VALID_RUNTIMES: AgentRuntime[] = [
   "pi",
@@ -93,6 +92,19 @@ export async function POST(request: NextRequest) {
 
   const runId = body.run_id ?? newRunId();
   const startedAt = body.started_at ?? Date.now();
+
+  if (!INNGEST_EVENT_KEY) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "inngest_event_key_missing",
+          message: "INNGEST_EVENT_KEY is required to capture runs",
+        },
+      },
+      { status: 503 }
+    );
+  }
 
   // Persist to authoritative storage (Rule 10). Dev: local dir; prod: NAS.
   const { jsonl_path, jsonl_bytes, jsonl_sha256 } = writeRunBlob(

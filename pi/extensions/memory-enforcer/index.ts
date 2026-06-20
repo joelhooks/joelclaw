@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 type OtelLevel = "info" | "warn" | "error";
@@ -7,11 +10,69 @@ type OtelLevel = "info" | "warn" | "error";
 const SOURCE = process.env.GATEWAY_ROLE || "interactive";
 const CHANNEL = process.env.GATEWAY_ROLE || process.env.JOELCLAW_CHANNEL || "interactive";
 const JOELCLAW_BIN = process.env.JOELCLAW_BIN || "joelclaw";
+const HOME = os.homedir();
+const JOELCLAW_REPO = path.join(HOME, "Code", "joelhooks", "joelclaw");
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? "", 10);
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
   return fallback;
+}
+
+function readSafe(p: string): string | null {
+  try {
+    return fs.readFileSync(p, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readEnvVarFromFiles(name: string, filePaths: string[]): string {
+  const pattern = new RegExp(`^(?:export\\s+)?${escapeRegExp(name)}=(.+)$`, "m");
+
+  for (const filePath of filePaths) {
+    const content = readSafe(filePath);
+    if (!content) continue;
+
+    const match = content.match(pattern);
+    if (!match) continue;
+
+    const raw = match[1]?.trim() ?? "";
+    if (!raw) continue;
+
+    const unquoted = raw.replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+    if (unquoted.length > 0) return unquoted;
+  }
+
+  return "";
+}
+
+function resolveInngestEventUrl(): string | null {
+  const envPaths = [
+    path.join(HOME, ".config", "inngest", "env"),
+    path.join(HOME, ".config", "system-bus.env"),
+    path.join(JOELCLAW_REPO, "packages", "system-bus", ".env"),
+    "/Users/Shared/joelclaw/etc/inngest/inngest.env",
+  ];
+
+  const eventKey =
+    process.env.INNGEST_EVENT_KEY?.trim() ||
+    readEnvVarFromFiles("INNGEST_EVENT_KEY", envPaths);
+
+  if (!eventKey) return null;
+
+  const baseUrl =
+    process.env.INNGEST_BASE_URL?.trim() ||
+    process.env.INNGEST_URL?.trim() ||
+    readEnvVarFromFiles("INNGEST_BASE_URL", envPaths) ||
+    readEnvVarFromFiles("INNGEST_URL", envPaths) ||
+    "http://localhost:8288";
+
+  return `${baseUrl.replace(/\/$/u, "")}/e/${eventKey}`;
 }
 
 const RECALL_TIMEOUT_MS = parsePositiveInt(process.env.JOELCLAW_MEMORY_RECALL_TIMEOUT_MS, 15_000);
@@ -406,7 +467,13 @@ function requestObserve(sessionId: string | null): void {
 
   void (async () => {
     try {
-      const response = await fetch("http://localhost:8288/e/", {
+      const eventUrl = resolveInngestEventUrl();
+      if (!eventUrl) {
+        console.warn("[memory-enforcer] observe request skipped: missing INNGEST_EVENT_KEY");
+        return;
+      }
+
+      const response = await fetch(eventUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

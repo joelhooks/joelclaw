@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { createReplyGrantFromEvent, recordGrantPublicReply, routeSlackMention, type ChannelPermissionPolicy, type ChannelRole, type ReplyGrant, type SlackMentionEvent } from "@joelclaw/channel-routing";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
+import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
 import { type EnqueueFn, getRedisClient, pushGatewayEvent } from "./redis";
 import type {
   Channel,
@@ -13,9 +14,6 @@ import type {
 } from "./types";
 
 // ADR-0236: Emit channel/message.received to Inngest for realtime Typesense indexing.
-const INNGEST_URL = process.env.INNGEST_URL ?? "http://127.0.0.1:8288";
-const INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15";
-
 function emitChannelMessageEvent(msg: {
   channelId: string;
   channelName: string;
@@ -25,8 +23,11 @@ function emitChannelMessageEvent(msg: {
   timestamp: number;
   threadId?: string;
 }): void {
+  const config = loadGatewayInngestEventConfig();
+  if (!config) return;
+
   // Fire and forget — don't block the message handling path
-  fetch(`${INNGEST_URL}/e/${INNGEST_EVENT_KEY}`, {
+  fetch(config.eventApi, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
