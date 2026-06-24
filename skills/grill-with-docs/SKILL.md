@@ -1,6 +1,6 @@
 ---
 name: grill-with-docs
-description: Grilling session that challenges your plan against the existing domain model, sharpens terminology, and updates documentation (CONTEXT.md, ADRs) inline as decisions crystallise. Use when user wants to stress-test a plan against their project's language and documented decisions.
+description: Grilling session that challenges your plan against the existing domain model, sharpens terminology, captures long-form rationale, and updates documentation (CONTEXT.md, ADRs, skills, TA notes) inline as decisions crystallise. Use when user wants to stress-test a plan, explain why a tool/guardrail was chosen, build teacher-assistant material, or align work with their project's language and documented decisions.
 ---
 
 <what-to-do>
@@ -10,6 +10,8 @@ Interview me relentlessly about every aspect of this plan until we reach a share
 Ask the questions one at a time, waiting for feedback on each question before continuing.
 
 If a question can be answered by exploring the codebase, explore the codebase instead.
+
+When the user is choosing tools, guardrails, skills, or teaching material, explicitly prompt for long-form rationale before compressing the answer. Ask why this choice, why now, what trade-off is accepted, what a learner/operator should understand, and what future agents should remember. Capture the result in the appropriate durable surface: `CONTEXT.md` for terms, ADRs for hard-to-reverse decisions, project Brain/docs for source-backed rationale, or skills/TA notes for reusable guidance.
 
 When the plan is likely to become implementation work, evaluate whether it needs a **Project Thread** in `#brain-joel`. Recommend creating one when the work crosses any of these thresholds:
 
@@ -23,6 +25,21 @@ Ask for operator approval before creating or using a Project Thread. Do not trea
 </what-to-do>
 
 <supporting-info>
+
+## Long-form rationale capture
+
+Do not accept a bare preference like "use this library" when the session is meant to teach or bank reusable agent behavior. Grill for:
+
+- the practical reason for the choice
+- the alternatives being rejected
+- the trade-offs and risks
+- the kind of loop, gate, or workflow the choice supports
+- whether the rationale is for humans, agents, or both
+- where the rationale should live so future agents can use it
+
+Keep the user's full explanation long enough to preserve nuance, then write a compact version only after the durable source exists.
+
+For post-hoc questions like "why did we add all this?", do not lead with a file inventory or "because you asked." Lead with the captured rationale, then map that rationale to files, commands, or guardrails as evidence.
 
 ## Domain awareness
 
