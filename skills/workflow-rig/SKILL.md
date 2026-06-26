@@ -36,6 +36,7 @@ If the user says the magic words —
 - `joelclaw workload plan` / `dispatch` / `run`
 - explicit stage DAGs via `--stages-from`
 - honest runtime truth: what the restate-worker can do today, and what it still cannot do
+- verification contracts before runtime fan-out
 - canary/dogfood posture for real workload proofs
 
 ## Core rule
@@ -44,6 +45,8 @@ If the user says the magic words —
 
 The caller describes the work.
 The workflow rig chooses the narrowest honest execution path.
+
+**Verification first, loops second.** Before planning durable or parallel runtime work, ask: can an agent prove this worked without Joel staring at it? If not, shape a verification/tooling stage first. Do not turn unverified vibes into high-throughput slop.
 
 Do not push Redis vs Restate vs sandbox trivia back onto the caller unless that tradeoff is the actual decision.
 
@@ -69,14 +72,16 @@ Do not push Redis vs Restate vs sandbox trivia back onto the caller unless that 
 
 ## Canonical operator flow
 
-1. Shape the work with `joelclaw workload plan`
-2. Present the shaped workload and ask **approved?**
+1. Shape the work with `joelclaw workload plan`, including the verification contract for every stage.
+2. Present the shaped workload, the verification proof path, and ask **approved?**
 3. After approval:
    - execute inline if it is bounded, local, and reversible
    - use `joelclaw workload run` for real durable execution
    - use `joelclaw workload dispatch` only for a real baton pass
 4. If you enqueue runtime work, poll for progress with `joelclaw runs`, `joelclaw run <run-id>`, or OTEL. There is no automatic completion ping yet.
 5. Report outcome tersely: changed, verified, remaining, next move
+
+If the proof path is missing, stop before runtime admission and author the reusable verifier skill/tool/check first. That is the leverage move.
 
 ## Magic words → canonical commands
 
@@ -170,9 +175,9 @@ This is an honest four-stage shape the rig can run today:
     "id": "verify",
     "name": "Verify and summarize",
     "dependsOn": ["implement"],
-    "acceptance": ["Verification captured", "Closeout ready"],
+    "acceptance": ["Exact proof command/artifact captured", "Quality bar checked", "Closeout ready"],
     "executionMode": "manual",
-    "notes": "Use {{implement}} for verification context."
+    "notes": "Use {{implement}} for verification context. If this cannot be proven by an agent, split out a verifier skill/tool stage before implementation."
   }
 ]
 ```

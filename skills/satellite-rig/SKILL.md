@@ -54,28 +54,34 @@ cd ~/Code/joelhooks/joelclaw
 ssh -o BatchMode=yes -o ConnectTimeout=8 joel@100.72.79.112 'hostname && whoami'
 
 KEY="$(secrets lease typesense_api_key --ttl 1h)"
+DOCS_KEY="$(secrets lease pdf_brain_api_token --ttl 1h)"
 {
   printf 'export TYPESENSE_API_KEY=%q\n' "$KEY"
-  printf 'export JOELCLAW_CENTRAL_URL=%q\n' 'https://panda.tail7af24.ts.net'
-  printf 'export JOELCLAW_TYPESENSE_URL=%q\n' 'http://panda:8108'
+  printf 'export PDF_BRAIN_API_TOKEN=%q\n' "$DOCS_KEY"
+  printf 'export JOELCLAW_CENTRAL_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:3111'
+  printf 'export JOELCLAW_TYPESENSE_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:8108'
+  printf 'export JOELCLAW_DOCS_API_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:3838'
   cat scripts/setup-satellite-rig.sh
 } | ssh joel@100.72.79.112 'bash -s'
-unset KEY
+unset KEY DOCS_KEY
 ```
 
 If the target already has a dirty `~/Code/joelhooks/joelclaw` checkout, keep it intact and bootstrap a runtime checkout instead:
 
 ```bash
 KEY="$(secrets lease typesense_api_key --ttl 1h)"
+DOCS_KEY="$(secrets lease pdf_brain_api_token --ttl 1h)"
 TARGET=joel@flagg
 {
   printf 'export TYPESENSE_API_KEY=%q\n' "$KEY"
-  printf 'export JOELCLAW_CENTRAL_URL=%q\n' 'https://panda.tail7af24.ts.net'
-  printf 'export JOELCLAW_TYPESENSE_URL=%q\n' 'http://panda:8108'
+  printf 'export PDF_BRAIN_API_TOKEN=%q\n' "$DOCS_KEY"
+  printf 'export JOELCLAW_CENTRAL_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:3111'
+  printf 'export JOELCLAW_TYPESENSE_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:8108'
+  printf 'export JOELCLAW_DOCS_API_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:3838'
   printf 'export JOELCLAW_REPO_DIR="$HOME/Code/joelhooks/joelclaw-runtime"\n'
   cat scripts/setup-satellite-rig.sh
 } | ssh "$TARGET" 'bash -s'
-unset KEY TARGET
+unset KEY DOCS_KEY TARGET
 ```
 
 This avoids the brittle two-step "manually write remote env, then bootstrap" dance. The key goes through the SSH pipe and is written only to the satellite's `~/.config/system-bus.env` with `0600` permissions. Do not print it.
@@ -87,7 +93,7 @@ On the satellite:
 ```bash
 ~/.bun/bin/joelclaw          # compiled binary
 ~/.local/bin/joelclaw        # wrapper that sources ~/.config/system-bus.env, then execs binary
-~/.config/system-bus.env     # 0600, contains JOELCLAW_CENTRAL_URL, TYPESENSE_URL, TYPESENSE_API_KEY
+~/.config/system-bus.env     # 0600, contains JOELCLAW_CENTRAL_URL, TYPESENSE_URL, TYPESENSE_API_KEY, DOCS_API_URL, PDF_BRAIN_API_TOKEN
 ~/.joelclaw/auth.json        # machine run-capture token, created separately by machine registration
 ~/.pi/agent/skills           # real consumer root
 ~/.pi/agent/skills/joelclaw-runtime  # symlink to repo skills pack
@@ -99,6 +105,31 @@ On the satellite:
 `~/.pi/agent/skills` and `~/.agents/skills` must stay real directories. The runtime is a skill pack inside those roots, not the root itself. Use `joelclaw-runtime` for the pack namespace so the flat `joelclaw` CLI skill can remain a compatibility shim. Per-skill flat symlinks are compatibility shims only when a harness cannot discover nested packs.
 
 The wrapper matters because non-interactive SSH shells do not reliably load dotfiles, and satellites should not need Panda's `agent-secrets` daemon.
+
+## Durable NAS mounts on Blaine
+
+Blaine should mount `three-body` over LAN IP for normal artifact work, with docs-api as a fallback rather than the primary filesystem path.
+
+Observed Blaine NAS path:
+
+- NAS: `192.168.1.163`
+- Blaine LAN IP: `192.168.1.136`
+- Interface: `en9` / `Thunderbolt Ethernet Slot 0`
+- Media: `10Gbase-T`
+- Mounts: `/Volumes/nas-nvme` and `/Volumes/three-body`
+- NFS exports: `192.168.1.163:/volume2/data`, `192.168.1.163:/volume1/joelclaw`
+- Tuned options: `rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128`
+- MTU target: `8192`, but only if `ping -D -s 8164 192.168.1.163` passes after setting MTU. The installer resets to 1500 and stops if the proof fails.
+
+Run on Blaine, because it needs interactive sudo:
+
+```bash
+cd ~/Code/joelhooks/joelclaw
+sudo ./scripts/install-satellite-nas-mounts.sh --bootstrap
+./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
+```
+
+This installs `/Library/LaunchDaemons/com.joelclaw.satellite.nas-mounts.plist` and a minimal `/Users/Shared/joelclaw/src/joelclaw/infra/central/.env` that uses the NAS IP, not `three-body`.
 
 ## Verification
 
@@ -113,6 +144,7 @@ printf "compiled="; file "$HOME/.bun/bin/joelclaw"
 printf "wrapper="; file "$HOME/.local/bin/joelclaw"
 printf "env_perms="; stat -f "%Sp %Su:%Sg" "$HOME/.config/system-bus.env"
 printf "typesense_health="; curl --max-time 5 -fsS "$TYPESENSE_URL/health"; printf "\n"
+printf "docs_api_health="; curl --max-time 5 -fsS "$DOCS_API_URL/health"; printf "\n"
 
 joelclaw sessions search "joel-writing-style" --source typesense --machine blaine --runtime all --limit 1 \
   | python3 -c "import sys,json; d=json.load(sys.stdin); r=d.get(\"result\",{}); print(\"typesense_search_ok=%s hits=%s\"%(d.get(\"ok\"), len(r.get(\"hits\",[]))))"
@@ -122,6 +154,9 @@ joelclaw sessions search "joel-writing-style" --source local --machine "$(hostna
 
 joelclaw knowledge search "typesense session indexing recovery runbook" \
   | python3 -c "import sys,json; d=json.load(sys.stdin); r=d.get(\"result\",{}); print(\"knowledge_ok=%s found=%s\"%(d.get(\"ok\"), r.get(\"found\")))"
+
+joelclaw docs summary erlang-and-otp-in-action-916d401a7019 \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); r=d.get(\"result\",{}); print(\"docs_summary_ok=%s source=%s title=%s\"%(d.get(\"ok\"), r.get(\"source\"), r.get(\"title\")))"
 
 joelclaw satellite health \
   | python3 -c "import sys,json; d=json.load(sys.stdin); r=d.get(\"result\",{}); print(\"satellite_ok=%s failed=%s machine=%s\"%(r.get(\"ok\"), r.get(\"failedCount\"), r.get(\"machine\")))"

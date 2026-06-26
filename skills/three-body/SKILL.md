@@ -225,6 +225,15 @@ MTU/NFS tuning receipt from 2026-06-17:
 - `/Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64` passed from the service checkout with `expected_mtu=8192`.
 - `nfsstat -m` showed both mounted filesystems using `rsize=524288,wsize=524288,readahead=128`.
 
+Blaine NAS mount receipt from 2026-06-22 pre-install:
+
+- Blaine host reports `Dark-Tower.localdomain`; Tailscale advertises `blaine` / `100.72.79.112`.
+- Route to NAS LAN IP `192.168.1.163` uses `en9`.
+- `en9` is `Thunderbolt Ethernet Slot 0`, LAN IP `192.168.1.136`, media `10Gbase-T`, MTU initially `1500`.
+- NFS port `2049` on `192.168.1.163` is reachable and exports include `/volume2/data` + `/volume1/joelclaw` for `192.168.1.0/24`.
+- Blaine requires interactive sudo, so privileged durable mount installation must run locally on Blaine: `sudo ./scripts/install-satellite-nas-mounts.sh --bootstrap`.
+- The satellite installer uses IP exports, installs `system/com.joelclaw.satellite.nas-mounts`, sets/proves MTU `8192`, and resets to `1500` + stops if jumbo proof fails.
+
 Next MTU steps:
 
 1. Keep Flagg `Ethernet` at MTU `8192` unless new errors appear; this is the proved practical jumbo ceiling for the current path.

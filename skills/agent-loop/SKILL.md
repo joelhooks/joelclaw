@@ -7,7 +7,23 @@ description: Start, monitor, and cancel durable multi-agent coding loops via Inn
 
 Run durable PLANNER→IMPLEMENTOR→REVIEWER→JUDGE coding loops via Inngest. Each story in a PRD gets independently implemented, tested, and judged. Survives crashes. Every step is a traceable Inngest run.
 
+**Hard gate:** verification comes before loop throughput. If agents cannot prove the work is correct without Joel manually babysitting, do not start an autonomous loop yet. First add the missing reproducible check, browser/control tool, quality rubric, or reusable skill that lets future agents verify their own output.
+
+> Source receipt: lauren / @poteto's X article "Loops You Can Trust" (2026-06-24) frames verification as the limiting step: loops without trusted verification compound slop, while reusable skills/tools turn human experience into agent leverage.
+
 > **After starting a loop**, use the [loop-nanny](../loop-nanny/SKILL.md) skill for monitoring, triage, post-loop cleanup, and knowing when to intervene.
+
+## Verification Preflight
+
+Before `joelclaw loop start`, confirm every story has:
+
+- **Proof path:** exact command, test, browser flow, API readback, screenshot/video, log query, or source inspection the agent can run.
+- **Quality bar:** what "good" means, what failures look like, and which shortcuts are unacceptable.
+- **Before/after evidence:** how the agent captures the broken/old state and proves the fixed/new state.
+- **Isolation plan:** worktree, ports, browser state, app instance, database, or fixture isolation when parallel agents could collide.
+- **Reusable verifier:** if the proof currently lives in a human's head, author a skill/tool first so future agents inherit it.
+
+If this preflight fails, the next task is not "run the loop". The next task is "teach agents to verify this class of work".
 
 ## Quick Start
 
@@ -50,6 +66,8 @@ Create a `prd.json` in the project root:
 
 **Story writing tips:**
 - Acceptance criteria must be machine-verifiable (tests, typecheck, lint)
+- Include the verification method or artifact in the criterion, not just the desired behavior
+- If a criterion needs manual taste, first turn that taste into a reusable review checklist, skill, fixture, or tool
 - Lower priority number = runs first
 - Keep stories small and atomic — one concern per story
 - Include file paths in descriptions when possible

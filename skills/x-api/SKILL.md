@@ -64,7 +64,30 @@ Use this for:
 - fetching public user metadata
 - recent search
 - full-archive search when the app has access
+- reply/context passes for source ingestion
 - other public read-only X v2 endpoints
+
+### Reply/context pass for ingestion
+
+When ingesting an X post/article as a source, do a reply pass before writing the final note. The replies often contain the correction, missing caveat, source link, or better framing. Do not blindly archive the whole reply swamp; extract the high-signal replies and keep receipts.
+
+Minimum pass:
+
+1. Fetch the root post with `conversation_id`, `author_id`, `created_at`, `entities`, `public_metrics`, `referenced_tweets`, `note_tweet`, and `article` when available.
+2. Search replies with `conversation_id:ROOT_ID is:reply -is:retweet`.
+3. Capture high-signal replies: author clarification, author thread continuation, cited source/link, strong objection, correction, implementation detail, or unusually crisp language.
+4. Store reply receipts with `tweet_id`, author handle/name, created time, URL, text basis, metrics, and why it matters.
+5. In the Brain/source note, separate the root quote from **Reply signals** so public claims do not blur root-author text with commenter interpretation.
+
+For posts inside the recent-search window:
+
+```bash
+# After deriving bearer as above:
+curl "https://api.x.com/2/tweets/search/recent?query=conversation_id%3AROOT_ID%20is%3Areply%20-is%3Aretweet&max_results=100&tweet.fields=author_id,conversation_id,created_at,entities,id,in_reply_to_user_id,note_tweet,public_metrics,referenced_tweets,text&expansions=author_id,referenced_tweets.id,referenced_tweets.id.author_id&user.fields=username,name,verified,verified_type" \
+  -H "Authorization: Bearer $bearer"
+```
+
+For older posts, use Full-Archive Search when access allows it; otherwise fall back to browser inspection and mark the limitation in the verification note.
 
 ### Full-Archive Search
 
@@ -176,7 +199,9 @@ r = client.delete("https://api.twitter.com/2/tweets/TWEET_ID")
 
 ## X Articles (Long-form Posts)
 
-X Articles are NOT accessible via the v2 tweets API — the tweet body is just a `t.co` link and the article endpoint returns 500. **Use agent-browser to read them:**
+First try the v2 tweet lookup with `tweet.fields=article`. Some X Articles return `article.title` and `article.plain_text` directly in the tweet payload. Store that API payload as the source receipt when available.
+
+If `article.plain_text` is missing, the tweet body is only a `t.co` link, or the article endpoint/browser auth blocks extraction, use agent-browser as the fallback:
 
 ```bash
 agent-browser open "https://x.com/USERNAME/status/TWEET_ID"
@@ -184,9 +209,9 @@ agent-browser snapshot
 agent-browser close
 ```
 
-The snapshot returns the full article text in the DOM. Use this for any tweet where `article.title` is present in the API response or the `expanded_url` points to `x.com/i/article/...`.
+Use this for any tweet where `article.title` is present in the API response or the `expanded_url` points to `x.com/i/article/...` but the API does not include usable article text.
 
-For capturing X posts/articles as discoveries, use `joelclaw discover URL -c "context"` — the discovery pipeline will handle enrichment. If the pipeline can't extract content (auth-gated), fall back to agent-browser + manual vault note.
+For capturing X posts/articles as discoveries, use `joelclaw discover URL -c "context"` — the discovery pipeline will handle enrichment. If the pipeline can't extract content (auth-gated), fall back to X API + reply/context pass + manual Brain/source note.
 
 ## Rate Limits
 
