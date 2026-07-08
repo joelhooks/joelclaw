@@ -26,7 +26,8 @@ const SERVICE = "web-docs-proxy";
 const VERSION = "0.1.0";
 
 const UPSTREAM_BASE =
-  process.env.DOCS_API_UPSTREAM_URL || "https://panda.tail7af24.ts.net/api/docs";
+  process.env.DOCS_API_UPSTREAM_URL ||
+  "https://joels-mac-studio.tail7af24.ts.net:10000/api/docs";
 const API_TOKEN =
   process.env.PDF_BRAIN_API_TOKEN || process.env.pdf_brain_api_token || "";
 
