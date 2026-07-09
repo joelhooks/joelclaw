@@ -138,6 +138,22 @@ launchd_service_loaded() {
   }
 }
 
+# The daemon fires every 60s and its stdout log is world-readable, so log
+# freshness proves the service is loaded and running without sudo.
+launchd_recent_activity() {
+  local log="${CENTRAL_LOG_DIR}/nas-mounts.out.log"
+  [[ -f "$log" ]] || {
+    printf 'missing log: %s\n' "$log"
+    return 1
+  }
+  local age
+  age=$(( $(date +%s) - $(stat -f %m "$log") ))
+  [[ "$age" -le 180 ]] || {
+    printf 'log stale: %s age=%ss (daemon should fire every 60s)\n' "$log" "$age"
+    return 1
+  }
+}
+
 path_details() {
   local path="$1"
   printf 'path_details=%s\n' "$path"
@@ -217,6 +233,7 @@ probe 'nas-nvme mount is nfs' mount_is_nfs "$CENTRAL_NAS_NVME_MOUNT"
 probe 'nas-hdd mounted' mounted_at "$CENTRAL_NAS_HDD_MOUNT"
 probe 'nas-hdd mount is nfs' mount_is_nfs "$CENTRAL_NAS_HDD_MOUNT"
 probe 'nas-mounts LaunchDaemon plist installed' launchd_plist_installed
+warn_probe 'nas-mounts LaunchDaemon recently active (log freshness)' launchd_recent_activity
 if [[ "$(id -u)" == "0" ]]; then
   probe 'nas-mounts LaunchDaemon loaded (system domain)' launchd_service_loaded
 fi
