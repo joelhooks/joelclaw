@@ -13,6 +13,13 @@ const DOCS_CHUNKS_V1_COLLECTION = "docs_chunks"
 const DOCS_CHUNKS_V2_COLLECTION = "docs_chunks_v2"
 const DOCS_CHUNKS_COLLECTION = process.env.DOCS_CHUNKS_COLLECTION || DOCS_CHUNKS_V2_COLLECTION
 const DOCS_ARTIFACTS_DIR = process.env.DOCS_ARTIFACTS_DIR || "/Volumes/three-body/docs-artifacts"
+const DOCS_API_URL = (
+  process.env.DOCS_API_URL
+  || process.env.JOELCLAW_DOCS_API_URL
+  || process.env.PDF_BRAIN_API_URL
+  || ""
+).replace(/\/+$/u, "")
+const DOCS_API_TOKEN = process.env.PDF_BRAIN_API_TOKEN || process.env.pdf_brain_api_token || process.env.DOCS_API_TOKEN || ""
 const DEFAULT_LIMIT = 10
 const DEFAULT_LIST_LIMIT = 20
 const DEFAULT_RECONCILE_SAMPLE = 20
@@ -263,6 +270,39 @@ async function readArtifactJson(path: string): Promise<unknown | null> {
     return null
   }
   return JSON.parse(raw) as unknown
+}
+
+type DocsApiEnvelope = {
+  ok?: boolean
+  result?: unknown
+  error?: { message?: string; code?: string }
+}
+
+async function fetchDocsApiResult(path: string): Promise<unknown | null> {
+  if (!DOCS_API_URL || !DOCS_API_TOKEN) return null
+  const response = await fetch(`${DOCS_API_URL}${path}`, {
+    headers: { Authorization: `Bearer ${DOCS_API_TOKEN}` },
+    signal: AbortSignal.timeout(60_000),
+  })
+  if (response.status === 404) return null
+  if (!response.ok) {
+    const body = await response.text().catch(() => "")
+    throw new Error(`docs-api ${path} failed (${response.status}): ${body.slice(0, 500)}`)
+  }
+  const payload = (await response.json()) as DocsApiEnvelope
+  if (payload.ok === false) return null
+  return payload.result ?? null
+}
+
+async function readRemoteMarkdownArtifact(docId: string): Promise<string | null> {
+  const result = await fetchDocsApiResult(`/docs/${encodeURIComponent(docId)}/markdown`)
+  if (!result || typeof result !== "object") return null
+  const content = (result as { content?: unknown }).content
+  return typeof content === "string" ? content : null
+}
+
+async function readRemoteSummaryArtifact(docId: string): Promise<unknown | null> {
+  return fetchDocsApiResult(`/docs/${encodeURIComponent(docId)}/summary`)
 }
 
 function contentEquivalentKey(path: string): string {
@@ -1146,13 +1186,18 @@ const markdownCmd = Command.make(
           return
         }
 
-        const content = yield* Effect.promise(() => readArtifactText(artifactPaths.markdown))
+        let content = yield* Effect.promise(() => readArtifactText(artifactPaths.markdown))
+        let source: "local-artifact" | "docs-api" = "local-artifact"
+        if (content === null) {
+          content = yield* Effect.promise(() => readRemoteMarkdownArtifact(docId))
+          source = "docs-api"
+        }
         if (content === null) {
           yield* Console.log(respondError(
             "docs markdown",
             `Markdown artifact not found for ${docId}`,
             "NOT_FOUND",
-            "Reindex the source PDF with `joelclaw docs reindex-v2 <path>` if the markdown artifact is missing",
+            "Mount DOCS_ARTIFACTS_DIR or set DOCS_API_URL and PDF_BRAIN_API_TOKEN for central artifact fallback",
             [
               {
                 command: "joelclaw docs show <doc-id>",
@@ -1174,6 +1219,7 @@ const markdownCmd = Command.make(
 
         yield* Console.log(respond("docs markdown", {
           docId,
+          source,
           bytes: Buffer.byteLength(content, "utf8"),
           content,
         }, [
@@ -1240,13 +1286,18 @@ const summaryCmd = Command.make(
           return
         }
 
-        const metadata = yield* Effect.promise(() => readArtifactJson(artifactPaths.meta))
+        let metadata = yield* Effect.promise(() => readArtifactJson(artifactPaths.meta))
+        let source: "local-artifact" | "docs-api" = "local-artifact"
+        if (metadata === null) {
+          metadata = yield* Effect.promise(() => readRemoteSummaryArtifact(docId))
+          source = "docs-api"
+        }
         if (metadata === null) {
           yield* Console.log(respondError(
             "docs summary",
             `Metadata artifact not found for ${docId}`,
             "NOT_FOUND",
-            "Reindex the source PDF with `joelclaw docs reindex-v2 <path>` if the summary artifact is missing",
+            "Mount DOCS_ARTIFACTS_DIR or set DOCS_API_URL and PDF_BRAIN_API_TOKEN for central artifact fallback",
             [
               {
                 command: "joelclaw docs markdown <doc-id>",
@@ -1271,7 +1322,10 @@ const summaryCmd = Command.make(
           return
         }
 
-        yield* Console.log(respond("docs summary", metadata, [
+        yield* Console.log(respond("docs summary", {
+          source,
+          ...(metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata as Record<string, unknown> : { metadata }),
+        }, [
           {
             command: "joelclaw docs markdown <doc-id>",
             description: "Read the full markdown artifact",

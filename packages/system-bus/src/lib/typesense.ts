@@ -105,6 +105,7 @@ export interface TypesenseSearchParams {
   vector_query?: string;
   facet_by?: string;
   max_facet_values?: number;
+  search_cutoff_ms?: number;
 }
 
 export interface TypesenseHit {
@@ -546,9 +547,23 @@ export async function search(params: TypesenseSearchParams): Promise<TypesenseSe
     searchParams.set("max_facet_values", String(params.max_facet_values));
   }
 
+  const configuredCutoffMs = Number.parseInt(process.env.TYPESENSE_SEARCH_CUTOFF_MS ?? "1500", 10);
+  const defaultCutoffMs = Number.isFinite(configuredCutoffMs) && configuredCutoffMs > 0
+    ? configuredCutoffMs
+    : 1500;
+  const searchCutoffMs = params.search_cutoff_ms ?? defaultCutoffMs;
+  if (Number.isFinite(searchCutoffMs) && searchCutoffMs > 0) {
+    searchParams.set("search_cutoff_ms", String(searchCutoffMs));
+  }
+
+  const configuredTimeoutMs = Number.parseInt(process.env.TYPESENSE_SEARCH_TIMEOUT_MS ?? "5000", 10);
+  const timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs >= 100
+    ? configuredTimeoutMs
+    : 5000;
+
   const resp = await fetch(
     `${TYPESENSE_URL}/collections/${params.collection}/documents/search?${searchParams}`,
-    { headers: headers() }
+    { headers: headers(), signal: AbortSignal.timeout(timeoutMs) }
   );
   if (!resp.ok) {
     const text = await resp.text();

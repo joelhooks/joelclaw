@@ -1,5 +1,6 @@
+import { spawn } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 // Prevent unhandled rejections from crashing the server
 process.on("unhandledRejection", (error) => {
@@ -155,6 +156,10 @@ const DOCS_CHUNKS_COLLECTION = (process.env.DOCS_CHUNKS_COLLECTION || "docs_chun
   | "docs_chunks"
   | "docs_chunks_v2";
 const DOCS_ARTIFACTS_DIR = process.env.DOCS_ARTIFACTS_DIR || "/Volumes/three-body/docs-artifacts";
+const DOCS_ARTIFACTS_SSH_HOST = process.env.DOCS_ARTIFACTS_SSH_HOST || "";
+const DOCS_ARTIFACTS_SSH_ROOT = process.env.DOCS_ARTIFACTS_SSH_ROOT || "/volume1/joelclaw/docs-artifacts";
+const DOCS_ARTIFACTS_PREFER_SSH = ["1", "true", "yes", "on"].includes((process.env.DOCS_ARTIFACTS_PREFER_SSH || "").toLowerCase());
+const ARTIFACT_READ_TIMEOUT_MS = Number.parseInt(process.env.DOCS_ARTIFACT_READ_TIMEOUT_MS || "5000", 10);
 const EMBEDDING_MODEL = "nomic-embed-text-v1.5 (768-dim)";
 const OPTIONAL_PATH_PREFIX = "/api/docs";
 const DOCS_INCLUDE_FIELDS =
@@ -615,15 +620,78 @@ function buildDocArtifactPaths(docId: string): {
   };
 }
 
-async function readArtifactText(path: string): Promise<string | null> {
+function timeoutMs(): number {
+  return Number.isFinite(ARTIFACT_READ_TIMEOUT_MS) && ARTIFACT_READ_TIMEOUT_MS > 0 ? ARTIFACT_READ_TIMEOUT_MS : 5000;
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await readFile(path, "utf8");
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}_timeout`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function toRemoteArtifactPath(path: string): string | null {
+  const rel = relative(DOCS_ARTIFACTS_DIR, path);
+  if (rel.startsWith("..") || rel.includes("..") || rel.startsWith("/") || rel.startsWith("\\")) return null;
+  return `${DOCS_ARTIFACTS_SSH_ROOT.replace(/\/+$/u, "")}/${rel.replace(/\\/gu, "/")}`;
+}
+
+async function readSshArtifactText(path: string): Promise<string | null> {
+  if (!DOCS_ARTIFACTS_SSH_HOST) return null;
+  const remotePath = toRemoteArtifactPath(path);
+  if (!remotePath) return null;
+
+  return withTimeout(new Promise<string | null>((resolve, reject) => {
+    const child = spawn("ssh", [
+      "-o", "BatchMode=yes",
+      "-o", "ConnectTimeout=8",
+      DOCS_ARTIFACTS_SSH_HOST,
+      "cat",
+      remotePath,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout).toString("utf8"));
+      } else if (code === 1) {
+        resolve(null);
+      } else {
+        reject(new Error(`ssh artifact read failed (${code}): ${Buffer.concat(stderr).toString("utf8").slice(0, 500)}`));
+      }
+    });
+  }), timeoutMs() * 4, "ssh_artifact_read");
+}
+
+async function readLocalArtifactText(path: string): Promise<string | null> {
+  try {
+    return await withTimeout(readFile(path, "utf8"), timeoutMs(), "local_artifact_read");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return null;
-    }
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+    if (error instanceof Error && error.message === "local_artifact_read_timeout") return null;
     throw error;
   }
+}
+
+async function readArtifactText(path: string): Promise<string | null> {
+  if (DOCS_ARTIFACTS_PREFER_SSH) {
+    const remote = await readSshArtifactText(path);
+    if (remote !== null) return remote;
+  }
+  const local = await readLocalArtifactText(path);
+  if (local !== null) return local;
+  return readSshArtifactText(path);
 }
 
 async function readArtifactJson(path: string): Promise<Record<string, unknown> | null> {
@@ -2086,6 +2154,7 @@ function misconfigured(path: string, code: string, message: string): Response {
 const server = Bun.serve({
   hostname: HOST,
   port: Number.isFinite(PORT) ? PORT : 3838,
+  idleTimeout: 120,
   fetch: async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const path = parsePath(request.url);
