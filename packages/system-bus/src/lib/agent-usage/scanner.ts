@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import { mkdir, open, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { emitOtelEvent } from "../../observability/emit";
@@ -68,7 +69,7 @@ async function writeState(statePath: string, state: AgentUsageScanState): Promis
 
 async function collectJsonlFiles(root: string): Promise<string[]> {
   const files: string[] = [];
-  let entries: Awaited<ReturnType<typeof readdir>>;
+  let entries: Dirent[];
   try {
     entries = await readdir(root, { withFileTypes: true });
   } catch {
