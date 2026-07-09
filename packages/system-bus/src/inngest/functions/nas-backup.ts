@@ -57,6 +57,8 @@ const NAS_SSH_FLAGS = BACKUP_ROUTER_CONFIG.transport.nasSshFlags;
 const BACKUP_FAILURE_EVENT = "system/backup.failure.detected";
 const SELF_HEALING_REQUEST_EVENT = "system/self.healing.requested";
 const BACKUP_RETRY_REQUEST_EVENT = "system/backup.retry.requested";
+const GATEWAY_SEND_MESSAGE_EVENT = "gateway/send.message";
+const BACKUP_FAILURE_MODEL_ROUTER_ENABLED = process.env.JOELCLAW_BACKUP_FAILURE_MODEL_ROUTER === "1";
 
 const SESSIONS_BACKUP_ROOT = `${NAS_HDD_ROOT}/sessions`;
 const CLAUDE_PROJECTS_ROOT = `${HOME_DIR}/.claude/projects`;
@@ -71,6 +73,10 @@ const MEMORY_LOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/logs`;
 const SLOG_PATH = `${HOME_DIR}/Vault/system/system-log.jsonl`;
 const SLOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/slog`;
 const NAS_BACKUP_QUEUE_ROOT = process.env.NAS_BACKUP_QUEUE_ROOT?.trim() || "/tmp/joelclaw/nas-queue";
+const JOELCLAW_REPO_ROOT = process.env.JOELCLAW_REPO_ROOT?.trim() || "/Users/joel/Code/joelhooks/joelclaw";
+const AGENT_SESSION_BACKUP_SCRIPT = `${JOELCLAW_REPO_ROOT}/scripts/agent-session-audit-backup.ts`;
+const AGENT_SESSION_BACKUP_ROOT = `${NAS_HDD_ROOT}/sessions`;
+const AGENT_SESSION_CENTRAL_URL = process.env.JOELCLAW_SESSION_CAPTURE_URL?.trim() || "http://joels-mac-studio.tail7af24.ts.net:3111";
 
 type BackupTarget = "typesense" | "redis";
 type BackupFailureAction = "retry" | "pause" | "escalate";
@@ -352,11 +358,46 @@ function normalizeFailureDecision(
   };
 }
 
+function isKnownNonRetryableBackupErrorMessage(error: string): boolean {
+  const message = error.toLowerCase();
+  return /copy failed|no typesense snapshot files staged|snapshot failed \(500\)|permission denied|no space left on device/i.test(message);
+}
+
+function deterministicBackupFailureDecision(
+  payload: BackupFailureEventData,
+  attempt: number,
+  reasonPrefix = "Deterministic backup guardrail"
+): BackupFailureDecision {
+  if (attempt >= BACKUP_ROUTER_MAX_RETRIES || isKnownNonRetryableBackupErrorMessage(payload.error)) {
+    return {
+      action: "escalate",
+      delayMs: 0,
+      reason: `${reasonPrefix}: ${payload.targetFunctionId} failed with a non-retryable or exhausted error (${payload.error.slice(0, 240)}).`,
+      confidence: 0.95,
+      model: "deterministic-guardrail",
+      routeTo: payload.targetFunctionId,
+    };
+  }
+
+  const action: BackupFailureAction = isRetryableBackupError(new Error(payload.error)) ? "retry" : "pause";
+  return {
+    action,
+    delayMs: estimateRouterDelayMs(attempt),
+    reason: `${reasonPrefix}: bounded ${action} for ${payload.targetFunctionId} after attempt ${attempt}.`,
+    confidence: 0.82,
+    model: "deterministic-guardrail",
+    routeTo: payload.targetFunctionId,
+  };
+}
+
 async function analyzeBackupFailureWithPi(
   payload: BackupFailureEventData,
   attempt: number,
   isRetry: boolean
 ): Promise<BackupFailureDecision> {
+  if (!BACKUP_FAILURE_MODEL_ROUTER_ENABLED) {
+    return deterministicBackupFailureDecision(payload, attempt);
+  }
   const systemPrompt = [
     "You are a senior SRE coding agent operating in the joelclaw system.",
     "Use Codex-style structured prompting: return only the requested JSON object, no prose, no markdown, no hidden reasoning.",
@@ -428,14 +469,7 @@ async function analyzeBackupFailureWithPi(
     } catch {
       // fall through to local fallback
     }
-    return {
-      action: "retry",
-      delayMs: estimateRouterDelayMs(attempt),
-      reason: "Model analysis unavailable; using fallback backoff.",
-      confidence: 0.35,
-      model: BACKUP_FAILURE_ROUTER_FALLBACK_MODEL,
-      routeTo: payload.targetFunctionId,
-    };
+    return deterministicBackupFailureDecision(payload, attempt, "Model analysis unavailable; backup guardrail fallback");
   }
 }
 
@@ -522,9 +556,33 @@ type BackupRouterContext = {
             name: string;
             data: BackupRetryEventData;
           }>
+        | {
+            name: typeof GATEWAY_SEND_MESSAGE_EVENT;
+            data: { channel?: string; text: string };
+          }
     ) => Promise<{ ids: string[] }>;
   };
 };
+
+function backupFailureAlertText(input: {
+  payload: BackupFailureEventData;
+  decision: BackupFailureDecision;
+  attempt: number;
+  status: "escalated" | "exhausted";
+  eventId?: string;
+}): string {
+  const title = input.status === "exhausted" ? "Backup retry budget exhausted" : "Backup failure escalated";
+  return [
+    `🚨 ${title}`,
+    `target: ${input.payload.targetFunctionId}`,
+    `attempt: ${input.attempt}/${BACKUP_ROUTER_MAX_RETRIES}`,
+    `action: ${input.decision.action}`,
+    `reason: ${input.decision.reason}`,
+    `error: ${input.payload.error.slice(0, 500)}`,
+    input.eventId ? `event: ${input.eventId}` : undefined,
+    "next: fix the storage/snapshot failure before re-enabling retries",
+  ].filter(Boolean).join("\n");
+}
 
 function createBackupOnFailureHandler(
   targetFunctionId: BackupFunctionId,
@@ -634,9 +692,23 @@ function createBackupOnFailureHandler(
         name: BACKUP_FAILURE_EVENT,
         data: payload,
       });
-      await step.sendEvent("emit-self-healing-request", {
-        name: SELF_HEALING_REQUEST_EVENT,
-        data: selfHealingPayload,
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "nas-backup",
+        action: "system.backup.self-healing.request.suppressed",
+        success: true,
+        metadata: {
+          runContext: flowContext,
+          reason: "backup failures are owned by deterministic backup failure router to avoid duplicate retry loops",
+          suppressedEventName: SELF_HEALING_REQUEST_EVENT,
+          suppressedPayloadSummary: {
+            sourceFunction: selfHealingPayload.sourceFunction,
+            targetComponent: selfHealingPayload.targetComponent,
+            domain: selfHealingPayload.domain,
+            attempt: selfHealingPayload.attempt,
+          },
+        },
       });
     } catch (error) {
       const details = stringifyFailureError(error);
@@ -1656,6 +1728,19 @@ export const backupFailureRouter = inngest.createFunction(
             decision,
           },
         });
+        await step.sendEvent("alert-backup-retry-budget-exceeded", {
+          name: GATEWAY_SEND_MESSAGE_EVENT,
+          data: {
+            channel: "telegram",
+            text: backupFailureAlertText({
+              payload,
+              decision,
+              attempt: retryAttempt,
+              status: "exhausted",
+              eventId: event.id,
+            }),
+          },
+        });
         return {
           status: "escalated",
           reason: `Retry budget exceeded (${retryAttempt} attempts)`,
@@ -1706,12 +1791,118 @@ export const backupFailureRouter = inngest.createFunction(
       },
     });
 
+    await step.sendEvent("alert-backup-failure-escalated", {
+      name: GATEWAY_SEND_MESSAGE_EVENT,
+      data: {
+        channel: "telegram",
+        text: backupFailureAlertText({
+          payload,
+          decision,
+          attempt,
+          status: "escalated",
+          eventId: event.id,
+        }),
+      },
+    });
+
     return {
       status: "escalated",
       reason: decision.reason,
       targetFunctionId: payload.targetFunctionId,
       attempt,
     };
+  }
+);
+
+export const verifyAgentSessionCaptureBackups = inngest.createFunction(
+  {
+    id: "system/agent-session.capture-backup.verify",
+    name: "Verify and Back Up Agent Session Capture",
+    concurrency: { limit: 1 },
+    retries: 2,
+  },
+  [
+    { cron: "TZ=America/Los_Angeles 15 5 * * *" },
+    { event: "system/agent-session.capture-backup.requested" },
+  ],
+  async ({ event, step }) => {
+    const eventData = (event.data ?? {}) as Record<string, unknown>;
+    const hosts = typeof eventData.hosts === "string" && eventData.hosts.trim().length > 0
+      ? eventData.hosts.trim()
+      : "flagg,blaine,panda";
+    const replayLimit = typeof eventData.replayLimit === "number"
+      ? Math.max(0, Math.floor(eventData.replayLimit))
+      : 250;
+    const repairEnv = eventData.repairEnv !== false;
+    const replayMaxBytes = typeof eventData.replayMaxBytes === "number"
+      ? Math.max(0, Math.floor(eventData.replayMaxBytes))
+      : 10 * 1024 * 1024;
+    const centralUrl = typeof eventData.centralUrl === "string" && eventData.centralUrl.trim().length > 0
+      ? eventData.centralUrl.trim()
+      : AGENT_SESSION_CENTRAL_URL;
+
+    const metadata: Record<string, unknown> = {
+      schedule: event.name === "inngest/scheduled.timer" ? "daily_515am_pt" : "manual",
+      hosts,
+      replayLimit,
+      repairEnv,
+      replayMaxBytes,
+      centralUrl,
+      backupRoot: AGENT_SESSION_BACKUP_ROOT,
+    };
+
+    return emitMeasuredOtelEvent(
+      {
+        level: "info",
+        source: "worker",
+        component: "agent-session-capture-backup",
+        action: "system.agent_session.capture_backup.verify",
+        metadata,
+      },
+      async () => {
+        await step.run("check-nas-mount", ensureNasMounted);
+
+        const receiptPath = await step.run("run-agent-session-audit-backup", async () => {
+          const stamp = new Date().toISOString().replace(/[:.]/g, "");
+          const receipt = `${AGENT_SESSION_BACKUP_ROOT}/receipts/agent-session-audit-${stamp}.json`;
+          const proc = Bun.spawnSync([
+            "bun",
+            AGENT_SESSION_BACKUP_SCRIPT,
+            "--hosts",
+            hosts,
+            "--backup-root",
+            AGENT_SESSION_BACKUP_ROOT,
+            "--central-url",
+            centralUrl,
+            "--sync=true",
+            "--replay-outbox",
+            "--replay-limit",
+            String(replayLimit),
+            "--replay-max-bytes",
+            String(replayMaxBytes),
+            "--receipt",
+            receipt,
+            ...(repairEnv ? ["--repair-env"] : []),
+          ], {
+            cwd: JOELCLAW_REPO_ROOT,
+            env: process.env,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          if (proc.exitCode !== 0) {
+            throw new Error(
+              `agent session audit backup failed (${proc.exitCode}): ${toText(proc.stderr) || toText(proc.stdout)}`
+            );
+          }
+
+          return receipt;
+        });
+
+        metadata.receiptPath = receiptPath;
+        return { receiptPath, hosts, replayLimit, replayMaxBytes, repairEnv, centralUrl };
+      }
+    );
   }
 );
 

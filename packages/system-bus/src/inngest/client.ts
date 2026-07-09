@@ -999,6 +999,15 @@ export type Events = {
       dryRun?: boolean;
     };
   };
+  "system/agent-session.capture-backup.requested": {
+    data: {
+      hosts?: string;
+      centralUrl?: string;
+      replayLimit?: number;
+      replayMaxBytes?: number;
+      repairEnv?: boolean;
+    };
+  };
   "system/backup.failure.detected": {
     data: {
       sourceFunction?: string;
@@ -1039,6 +1048,12 @@ export type Events = {
         routeTo: "system/backup.typesense" | "system/backup.redis";
       };
     };
+  };
+  "system/token-usage.report.requested": {
+    data: Record<string, never>;
+  };
+  "system/agent-usage.scan.requested": {
+    data: Record<string, never>;
   };
   "system/adr.sync.requested": {
     data: {
@@ -1157,6 +1172,16 @@ export type Events = {
       text: string;
       url?: string;
       category?: "post" | "adr" | "discovery" | "digest";
+    };
+  };
+  "x/account_activity.received": {
+    data: {
+      source: "x-webhook";
+      forUserId?: string;
+      eventTypes: string[];
+      webhookId?: string;
+      payloadHash: string;
+      payload: Record<string, unknown>;
     };
   };
   "typesense/vault-sync.requested": {
