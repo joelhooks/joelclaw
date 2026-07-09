@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 
 export const OTEL_LEVELS = ["debug", "info", "warn", "error", "fatal"] as const;
 
@@ -84,6 +85,10 @@ function resolveSystemId(input?: string): string {
   if (input && input.trim().length > 0) return input.trim();
   const env = process.env.SLOG_SYSTEM_ID?.trim();
   if (env && env.length > 0) return env;
+  // Same fallback chain as @joelclaw/sdk otel-ingest: machine identity must
+  // never silently degrade to "unknown" on a host that knows its own name.
+  const host = hostname().trim().toLowerCase().replace(/\.localdomain$|\.local$/u, "");
+  if (host.length > 0) return host;
   return "unknown";
 }
 

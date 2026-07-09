@@ -27,7 +27,8 @@ export async function emitOtelEvent(input: OtelEventInput): Promise<EmitOtelResu
       eventId: input.id ?? "disabled",
       dropped: true,
       dropReason: "otel_events_disabled",
-      typesense: { written: false },
+      clickhouse: { written: false, queued: false },
+      typesense: { written: false, skipped: true },
       convex: { written: false, pruned: 0, skipped: true },
       sentry: { written: false, skipped: true },
     };
@@ -42,7 +43,8 @@ export async function emitOtelEvent(input: OtelEventInput): Promise<EmitOtelResu
       stored: false,
       eventId: input.id ?? "invalid",
       error: String(error),
-      typesense: { written: false, error: String(error) },
+      clickhouse: { written: false, queued: false, error: String(error) },
+      typesense: { written: false, skipped: true, error: String(error) },
       convex: { written: false, pruned: 0, skipped: true },
       sentry: { written: false, skipped: true },
     };
@@ -59,7 +61,8 @@ export async function emitValidatedOtelEvent(payload: unknown): Promise<EmitOtel
       stored: false,
       eventId: "invalid",
       error: String(error),
-      typesense: { written: false, error: String(error) },
+      clickhouse: { written: false, queued: false, error: String(error) },
+      typesense: { written: false, skipped: true, error: String(error) },
       convex: { written: false, pruned: 0, skipped: true },
       sentry: { written: false, skipped: true },
     };

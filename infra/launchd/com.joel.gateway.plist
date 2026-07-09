@@ -34,6 +34,8 @@
         <string>gateway</string>
         <key>SLOG_SYSTEM_ID</key>
         <string>panda</string>
+        <key>OTEL_EMIT_URL</key>
+        <string>http://flagg:3111/observability/emit</string>
     </dict>
 
     <key>RunAtLoad</key>

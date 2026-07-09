@@ -58,7 +58,7 @@ const o11ySessionCmd = Command.make(
             "o11y session",
             error.message,
             codeOrFallback(error, "O11Y_QUERY_FAILED"),
-            fixOrFallback(error, "Check Typesense health and API key"),
+            fixOrFallback(error, "Check ClickHouse health or retry OTEL commands with --adapter typesense-otel during rollback"),
             [
               { command: "joelclaw status", description: "Check worker/server health" },
               { command: `joelclaw otel list --session ${sessionId} --hours ${hours}`, description: "Retry OTEL-only view" },
@@ -79,7 +79,7 @@ const o11ySessionCmd = Command.make(
         ),
       )
     }),
-).pipe(Command.withDescription("Correlate one session across otel_events and system_log"))
+).pipe(Command.withDescription("Correlate one session across canonical OTEL events"))
 
 const o11ySystemCmd = Command.make(
   "system",
@@ -107,7 +107,7 @@ const o11ySystemCmd = Command.make(
             "o11y system",
             error.message,
             codeOrFallback(error, "O11Y_QUERY_FAILED"),
-            fixOrFallback(error, "Check Typesense health and API key"),
+            fixOrFallback(error, "Check ClickHouse health or retry OTEL commands with --adapter typesense-otel during rollback"),
             [
               { command: "joelclaw status", description: "Check worker/server health" },
               { command: `joelclaw otel list --system ${systemId} --hours ${hours}`, description: "Retry OTEL-only view" },
@@ -128,14 +128,14 @@ const o11ySystemCmd = Command.make(
         ),
       )
     }),
-).pipe(Command.withDescription("Correlate one system across otel_events and system_log"))
+).pipe(Command.withDescription("Correlate one system across canonical OTEL events"))
 
 export const o11yCmd = Command.make("o11y", {}, () =>
   Console.log(
     respond(
       "o11y",
       {
-        description: "Unified observability correlation across otel_events and system_log (ADR-0233 phase 4)",
+        description: "Unified observability correlation across canonical OTEL events (ClickHouse-first)",
         subcommands: {
           session: "joelclaw o11y session <sessionId> [--hours 24] [--limit 50]",
           system: "joelclaw o11y system <systemId> [--hours 24] [--limit 50]",

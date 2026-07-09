@@ -1,11 +1,14 @@
 import { anyApi, type FunctionReference } from "convex/server";
 import { getConvexClient, pushContentResource } from "../lib/convex";
 import * as typesense from "../lib/typesense";
+import { writeClickHouseOtelEvents, type ClickHouseWriteResult } from "./clickhouse-store";
+import { drainOtelOutbox, enqueueOtelOutboxEvent, type OutboxDrainResult, type OutboxEnqueueResult } from "./otel-outbox";
 import { isHighSeverity, type OtelEvent } from "./otel-event";
 
 const OTEL_COLLECTION = "otel_events";
 const OTEL_EVENTS_ENABLED_DEFAULT = true;
 const OTEL_CONVEX_WINDOW_HOURS_DEFAULT = 0.5; // 30 minutes for live dashboard watch window
+const OTEL_STORE_MODE_DEFAULT = "clickhouse";
 const DEBUG_WINDOW_MS = 60_000;
 const DEBUG_MAX_EVENTS_PER_KEY = 12;
 const CONVEX_PRUNE_INTERVAL_MS = 15 * 60 * 1000;
@@ -23,13 +26,32 @@ type ConvexResourceDoc = {
   updatedAt?: number;
 };
 
+export type OtelStoreMode = "clickhouse" | "typesense" | "dual" | "forward";
+
+export type OtelForwardResult = {
+  attempted: boolean;
+  accepted: boolean;
+  endpoint?: string;
+  status?: number;
+  error?: string;
+};
+
 export type OtelStoreResult = {
   stored: boolean;
   eventId: string;
   dropped?: boolean;
   dropReason?: string;
+  forward?: OtelForwardResult;
+  clickhouse: {
+    written: boolean;
+    queued: boolean;
+    drained?: number;
+    error?: string;
+    queueError?: string;
+  };
   typesense: {
     written: boolean;
+    skipped?: boolean;
     error?: string;
   };
   convex: {
@@ -56,7 +78,12 @@ type OtelStoreDeps = {
   ) => Promise<void>;
   listContentResourcesByType: (type: string, limit: number) => Promise<ConvexResourceDoc[]>;
   removeContentResource: (resourceId: string) => Promise<void>;
+  patchOtelProvenanceFields?: () => Promise<void>;
   postSentry: (event: OtelEvent) => Promise<{ written: boolean; skipped: boolean; error?: string }>;
+  writeClickHouse?: (events: readonly OtelEvent[]) => Promise<ClickHouseWriteResult>;
+  enqueueOutbox?: (event: OtelEvent) => Promise<OutboxEnqueueResult>;
+  drainOutbox?: () => Promise<OutboxDrainResult>;
+  forwardEvent?: (event: OtelEvent) => Promise<OtelForwardResult>;
 };
 
 const defaultDeps: OtelStoreDeps = {
@@ -77,7 +104,12 @@ const defaultDeps: OtelStoreDeps = {
     const ref = (anyApi as any).contentResources.remove as FunctionReference<"mutation">;
     await client.mutation(ref, { resourceId });
   },
+  patchOtelProvenanceFields: () => patchOtelProvenanceFields(),
   postSentry: (event) => postSentryStoreEvent(event),
+  writeClickHouse: (events) => writeClickHouseOtelEvents(events),
+  enqueueOutbox: (event) => enqueueOtelOutboxEvent(event),
+  drainOutbox: () => drainOtelOutbox(),
+  forwardEvent: (event) => forwardOtelEvent(event),
 };
 
 type DebugBudgetState = { windowStartMs: number; count: number; dropped: number };
@@ -123,6 +155,65 @@ function getOtelEventsEnabled(): boolean {
 
 function getConvexWindowHours(): number {
   return parsePositiveNumber(process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS, OTEL_CONVEX_WINDOW_HOURS_DEFAULT);
+}
+
+function getOtelStoreMode(): OtelStoreMode {
+  const raw = (process.env.OTEL_STORE ?? process.env.OTEL_STORE_MODE ?? OTEL_STORE_MODE_DEFAULT).trim().toLowerCase();
+  if (raw === "typesense" || raw === "dual" || raw === "clickhouse" || raw === "forward") return raw;
+  return OTEL_STORE_MODE_DEFAULT;
+}
+
+function getOtelForwardUrl(): string | undefined {
+  return asTrimmedString(process.env.OTEL_FORWARD_URL) ?? asTrimmedString(process.env.JOELCLAW_OTEL_FORWARD_URL);
+}
+
+function getOtelForwardTimeoutMs(): number {
+  return Math.floor(parsePositiveNumber(process.env.OTEL_FORWARD_TIMEOUT_MS, 2_500));
+}
+
+async function forwardOtelEvent(event: OtelEvent): Promise<OtelForwardResult> {
+  const endpoint = getOtelForwardUrl();
+  if (!endpoint) {
+    return { attempted: false, accepted: false, error: "otel_forward_url_missing" };
+  }
+
+  const token = asTrimmedString(process.env.OTEL_FORWARD_TOKEN) ?? asTrimmedString(process.env.OTEL_EMIT_TOKEN);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["x-otel-emit-token"] = token;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(event),
+      signal: AbortSignal.timeout(getOtelForwardTimeoutMs()),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      return {
+        attempted: true,
+        accepted: false,
+        endpoint,
+        status: response.status,
+        error: `otel_forward_http_${response.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
+      };
+    }
+    return { attempted: true, accepted: true, endpoint, status: response.status };
+  } catch (error) {
+    return { attempted: true, accepted: false, endpoint, error: String(error) };
+  }
+}
+
+function getTypesenseProjectionEnabled(): boolean {
+  return parseBooleanFlag(process.env.OTEL_TYPESENSE_PROJECTION, false);
+}
+
+function shouldWriteClickHouse(mode: OtelStoreMode): boolean {
+  return mode === "clickhouse" || mode === "dual";
+}
+
+function shouldWriteTypesense(mode: OtelStoreMode): boolean {
+  return mode === "typesense" || mode === "dual" || getTypesenseProjectionEnabled();
 }
 
 function asTrimmedString(value: unknown): string | undefined {
@@ -292,7 +383,7 @@ function buildOtelCollectionSchema(): Record<string, unknown> {
       { name: "level", type: "string", facet: true },
       { name: "source", type: "string", facet: true },
       { name: "component", type: "string", facet: true },
-      { name: "action", type: "string" },
+      { name: "action", type: "string", facet: true },
       { name: "success", type: "bool", facet: true },
       { name: "duration_ms", type: "int32", optional: true },
       { name: "error", type: "string", optional: true },
@@ -327,7 +418,7 @@ async function ensureOtelCollection(deps: OtelStoreDeps): Promise<void> {
 
   collectionReadyPromise = deps
     .ensureCollection(OTEL_COLLECTION, buildOtelCollectionSchema())
-    .then(() => patchOtelProvenanceFields())
+    .then(() => deps.patchOtelProvenanceFields?.())
     .then(() => {
       collectionReady = true;
     })
@@ -488,13 +579,15 @@ export async function storeOtelEvent(
   event: OtelEvent,
   deps: OtelStoreDeps = defaultDeps
 ): Promise<OtelStoreResult> {
+  const emptyClickHouse = { written: false, queued: false };
   if (!getOtelEventsEnabled()) {
     return {
       stored: false,
       eventId: event.id,
       dropped: true,
       dropReason: "otel_events_disabled",
-      typesense: { written: false },
+      clickhouse: emptyClickHouse,
+      typesense: { written: false, skipped: true },
       convex: { written: false, pruned: 0, skipped: true },
       sentry: { written: false, skipped: true },
     };
@@ -507,20 +600,70 @@ export async function storeOtelEvent(
       eventId: event.id,
       dropped: true,
       dropReason: dropState.reason,
-      typesense: { written: false },
+      clickhouse: emptyClickHouse,
+      typesense: { written: false, skipped: true },
       convex: { written: false, pruned: 0, skipped: true },
       sentry: { written: false, skipped: true },
     };
   }
 
-  await ensureMemoryObservationSchemaChecked();
+  const mode = getOtelStoreMode();
+  if (mode === "forward") {
+    const forward = deps.forwardEvent
+      ? await deps.forwardEvent(event)
+      : { attempted: false, accepted: false, error: "forward_dependency_missing" };
+    return {
+      stored: forward.accepted,
+      eventId: event.id,
+      forward,
+      clickhouse: emptyClickHouse,
+      typesense: { written: false, skipped: true },
+      convex: { written: false, pruned: 0, skipped: true },
+      sentry: { written: false, skipped: true },
+    };
+  }
+
+  const writeClickHouse = shouldWriteClickHouse(mode);
+  const writeTypesense = shouldWriteTypesense(mode);
+
+  let clickHouseError: string | undefined;
+  let clickHouseWritten = false;
+  let clickHouseQueued = false;
+  let clickHouseQueueError: string | undefined;
+  let drained: number | undefined;
+
+  if (writeClickHouse) {
+    const writeResult = deps.writeClickHouse
+      ? await deps.writeClickHouse([event])
+      : { written: false, error: "clickhouse_dependency_missing" };
+    clickHouseWritten = writeResult.written;
+    clickHouseError = writeResult.error;
+
+    if (!writeResult.written) {
+      const queueResult = deps.enqueueOutbox
+        ? await deps.enqueueOutbox(event)
+        : { queued: false, error: "outbox_dependency_missing" };
+      clickHouseQueued = queueResult.queued;
+      clickHouseQueueError = queueResult.error;
+    } else if (deps.drainOutbox) {
+      void deps.drainOutbox()
+        .then((result) => {
+          drained = result.drained;
+        })
+        .catch((error) => {
+          console.warn("[otel] clickhouse outbox drain failed", { error: String(error) });
+        });
+    }
+  }
 
   let typesenseError: string | undefined;
-  try {
-    await ensureOtelCollection(deps);
-    await deps.upsert(OTEL_COLLECTION, toTypesenseDoc(event));
-  } catch (error) {
-    typesenseError = String(error);
+  if (writeTypesense) {
+    try {
+      await ensureOtelCollection(deps);
+      await deps.upsert(OTEL_COLLECTION, toTypesenseDoc(event));
+    } catch (error) {
+      typesenseError = String(error);
+    }
   }
 
   const convexWindowHours = getConvexWindowHours();
@@ -547,12 +690,23 @@ export async function storeOtelEvent(
   }
 
   const sentryResult = await deps.postSentry(event);
+  const clickHouseAccepted = !writeClickHouse || clickHouseWritten || clickHouseQueued;
+  const typesenseAccepted = !writeTypesense || !typesenseError;
+  const stored = mode === "typesense" ? typesenseAccepted : clickHouseAccepted;
 
   return {
-    stored: !typesenseError,
+    stored,
     eventId: event.id,
+    clickhouse: {
+      written: clickHouseWritten,
+      queued: clickHouseQueued,
+      ...(typeof drained === "number" ? { drained } : {}),
+      ...(clickHouseError ? { error: clickHouseError } : {}),
+      ...(clickHouseQueueError ? { queueError: clickHouseQueueError } : {}),
+    },
     typesense: {
-      written: !typesenseError,
+      written: writeTypesense ? !typesenseError : false,
+      ...(writeTypesense ? {} : { skipped: true }),
       ...(typesenseError ? { error: typesenseError } : {}),
     },
     convex: {

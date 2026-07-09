@@ -1,5 +1,10 @@
+import { hostname } from "node:os"
 import { afterEach, describe, expect, test } from "bun:test"
 import { createOtelEventPayload } from "./otel-ingest"
+
+function expectedSystemIdFromHost(): string {
+  return hostname().trim().toLowerCase().replace(/\.localdomain$|\.local$/u, "") || "unknown"
+}
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -39,7 +44,7 @@ describe("createOtelEventPayload", () => {
     })
 
     expect(payload.sessionId).toBe("system")
-    expect(payload.systemId).toBe("panda")
+    expect(payload.systemId).toBe(expectedSystemIdFromHost())
   })
 
   test("prefers explicit slog provenance when present", () => {

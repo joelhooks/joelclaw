@@ -113,6 +113,11 @@ const pageOpt = Options.integer("page").pipe(
   Options.withDescription("Page number"),
 )
 
+const adapterOpt = Options.text("adapter").pipe(
+  Options.withDescription("OTEL adapter override (clickhouse-otel or typesense-otel)"),
+  Options.optional,
+)
+
 const emitLevelOpt = Options.choice("level", ["debug", "info", "warn", "error", "fatal"] as const).pipe(
   Options.withDescription("Event severity level"),
   Options.optional,
@@ -170,8 +175,9 @@ const otelListCmd = Command.make(
       hours: hoursOpt,
       limit: limitOpt,
       page: pageOpt,
+      adapter: adapterOpt,
     },
-  ({ level, source, component, session, system, success, hours, limit, page }) =>
+  ({ level, source, component, session, system, success, hours, limit, page, adapter }) =>
     Effect.gen(function* () {
       const sessionValue = parseOptionText(session)
       const systemValue = parseOptionText(system)
@@ -189,6 +195,9 @@ const otelListCmd = Command.make(
           limit,
           page,
         },
+        flags: {
+          adapter: parseOptionText(adapter),
+        },
       }).pipe(Effect.either)
 
       if (result._tag === "Left") {
@@ -198,7 +207,7 @@ const otelListCmd = Command.make(
             "otel list",
             error.message,
             codeOrFallback(error, "OTEL_QUERY_FAILED"),
-            fixOrFallback(error, "Check Typesense health and API key"),
+            fixOrFallback(error, "Check ClickHouse health or retry with --adapter typesense-otel"),
             [{ command: "joelclaw status", description: "Check worker/server health" }],
           ),
         )
@@ -239,8 +248,9 @@ const otelSearchCmd = Command.make(
       hours: hoursOpt,
       limit: limitOpt,
       page: pageOpt,
+      adapter: adapterOpt,
     },
-  ({ query, level, source, component, session, system, success, hours, limit, page }) =>
+  ({ query, level, source, component, session, system, success, hours, limit, page, adapter }) =>
     Effect.gen(function* () {
       const sessionValue = parseOptionText(session)
       const systemValue = parseOptionText(system)
@@ -259,6 +269,9 @@ const otelSearchCmd = Command.make(
           limit,
           page,
         },
+        flags: {
+          adapter: parseOptionText(adapter),
+        },
       }).pipe(Effect.either)
 
       if (result._tag === "Left") {
@@ -268,7 +281,7 @@ const otelSearchCmd = Command.make(
             "otel search",
             error.message,
             codeOrFallback(error, "OTEL_QUERY_FAILED"),
-            fixOrFallback(error, "Check Typesense health and API key"),
+            fixOrFallback(error, "Check ClickHouse health or retry with --adapter typesense-otel"),
             [{ command: "joelclaw status", description: "Check worker/server health" }],
           ),
         )
@@ -303,8 +316,9 @@ const otelStatsCmd = Command.make(
     source: sourceOpt,
     component: componentOpt,
     hours: hoursOpt,
+    adapter: adapterOpt,
   },
-  ({ source, component, hours }) =>
+  ({ source, component, hours, adapter }) =>
     Effect.gen(function* () {
       const result = yield* executeCapabilityCommand<Record<string, unknown>>({
         capability: "otel",
@@ -313,6 +327,9 @@ const otelStatsCmd = Command.make(
           source: parseOptionText(source),
           component: parseOptionText(component),
           hours,
+        },
+        flags: {
+          adapter: parseOptionText(adapter),
         },
       }).pipe(Effect.either)
 
@@ -323,7 +340,7 @@ const otelStatsCmd = Command.make(
             "otel stats",
             error.message,
             codeOrFallback(error, "OTEL_STATS_FAILED"),
-            fixOrFallback(error, "Check Typesense health and API key"),
+            fixOrFallback(error, "Check ClickHouse health or retry with --adapter typesense-otel"),
             [{ command: "joelclaw status", description: "Check worker/server health" }],
           ),
         )

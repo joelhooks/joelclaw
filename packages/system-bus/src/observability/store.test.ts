@@ -5,6 +5,8 @@ import { storeOtelEvent } from "./store";
 const originalEnabled = process.env.OTEL_EVENTS_ENABLED;
 const originalWindow = process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS;
 const originalSentryDsn = process.env.SENTRY_DSN;
+const originalStore = process.env.OTEL_STORE;
+const originalProjection = process.env.OTEL_TYPESENSE_PROJECTION;
 
 function restoreEnv(): void {
   if (originalEnabled === undefined) delete process.env.OTEL_EVENTS_ENABLED;
@@ -15,6 +17,12 @@ function restoreEnv(): void {
 
   if (originalSentryDsn === undefined) delete process.env.SENTRY_DSN;
   else process.env.SENTRY_DSN = originalSentryDsn;
+
+  if (originalStore === undefined) delete process.env.OTEL_STORE;
+  else process.env.OTEL_STORE = originalStore;
+
+  if (originalProjection === undefined) delete process.env.OTEL_TYPESENSE_PROJECTION;
+  else process.env.OTEL_TYPESENSE_PROJECTION = originalProjection;
 }
 
 describe("otel store adapter", () => {
@@ -46,6 +54,7 @@ describe("otel store adapter", () => {
 
   test("writes to Typesense and mirrors high severity to Convex", async () => {
     process.env.OTEL_EVENTS_ENABLED = "true";
+    process.env.OTEL_STORE = "typesense";
     process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS = "0.5";
     delete process.env.SENTRY_DSN;
 
@@ -104,6 +113,7 @@ describe("otel store adapter", () => {
 
   test("skips Convex mirror for high-severity events outside convex window", async () => {
     process.env.OTEL_EVENTS_ENABLED = "true";
+    process.env.OTEL_STORE = "typesense";
     process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS = "0.5";
     delete process.env.SENTRY_DSN;
 
@@ -139,6 +149,7 @@ describe("otel store adapter", () => {
 
   test("drops debug floods by backpressure guard", async () => {
     process.env.OTEL_EVENTS_ENABLED = "true";
+    process.env.OTEL_STORE = "typesense";
     delete process.env.SENTRY_DSN;
 
     const suffix = `${Date.now()}`;
@@ -165,6 +176,88 @@ describe("otel store adapter", () => {
     }
 
     expect(dropped).toBeGreaterThan(0);
+    restoreEnv();
+  });
+
+  test("queues to durable outbox when ClickHouse primary write fails", async () => {
+    process.env.OTEL_EVENTS_ENABLED = "true";
+    process.env.OTEL_STORE = "clickhouse";
+    delete process.env.SENTRY_DSN;
+
+    let queued = 0;
+    const result = await storeOtelEvent(
+      createOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "observe",
+        action: "observe.store.queued",
+        success: true,
+      }),
+      {
+        ensureCollection: async () => {},
+        upsert: async () => {
+          throw new Error("typesense should be skipped");
+        },
+        pushContentResource: async () => {},
+        listContentResourcesByType: async () => [],
+        removeContentResource: async () => {},
+        postSentry: async () => ({ written: false, skipped: true }),
+        writeClickHouse: async () => ({ written: false, error: "clickhouse_down" }),
+        enqueueOutbox: async () => {
+          queued += 1;
+          return { queued: true, path: "/tmp/otel/event.json" };
+        },
+      }
+    );
+
+    expect(result.stored).toBe(true);
+    expect(result.clickhouse.written).toBe(false);
+    expect(result.clickhouse.queued).toBe(true);
+    expect(result.typesense.skipped).toBe(true);
+    expect(queued).toBe(1);
+    restoreEnv();
+  });
+
+  test("forwards events without touching Typesense or ClickHouse in forward mode", async () => {
+    process.env.OTEL_EVENTS_ENABLED = "true";
+    process.env.OTEL_STORE = "forward";
+    delete process.env.SENTRY_DSN;
+
+    let forwarded = 0;
+    const result = await storeOtelEvent(
+      createOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "serve",
+        action: "worker.started",
+        success: true,
+      }),
+      {
+        ensureCollection: async () => {
+          throw new Error("typesense should be skipped");
+        },
+        upsert: async () => {
+          throw new Error("typesense should be skipped");
+        },
+        pushContentResource: async () => {},
+        listContentResourcesByType: async () => [],
+        removeContentResource: async () => {},
+        postSentry: async () => ({ written: false, skipped: true }),
+        writeClickHouse: async () => {
+          throw new Error("clickhouse should be skipped");
+        },
+        forwardEvent: async () => {
+          forwarded += 1;
+          return { attempted: true, accepted: true, endpoint: "http://flagg:3111/observability/emit", status: 200 };
+        },
+      }
+    );
+
+    expect(result.stored).toBe(true);
+    expect(result.forward?.accepted).toBe(true);
+    expect(result.typesense.skipped).toBe(true);
+    expect(result.clickhouse.written).toBe(false);
+    expect(forwarded).toBe(1);
     restoreEnv();
   });
 });

@@ -1,7 +1,51 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { GatewayOtelInput, TelemetryEmitter } from "./types";
 
-const OTEL_EMIT_URL = process.env.OTEL_EMIT_URL ?? "http://localhost:3111/observability/emit";
+const SYSTEM_BUS_ENV_PATH = join(homedir(), ".config", "system-bus.env");
+
+function readSystemBusEnv(): Record<string, string> {
+  if (!existsSync(SYSTEM_BUS_ENV_PATH)) return {};
+  const env: Record<string, string> = {};
+  for (const line of readFileSync(SYSTEM_BUS_ENV_PATH, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const separator = trimmed.indexOf("=");
+    if (separator <= 0) continue;
+    env[trimmed.slice(0, separator)] = trimmed.slice(separator + 1).replace(/^["']|["']$/g, "");
+  }
+  return env;
+}
+
+function readConfigValue(config: Record<string, string>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = process.env[key]?.trim() || config[key]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function appendObservabilityEmit(baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/u, "")}/observability/emit`;
+}
+
+function resolveOtelEmitUrl(): string {
+  const config = readSystemBusEnv();
+  const explicit = readConfigValue(config, "OTEL_EMIT_URL", "JOELCLAW_OTEL_INGEST_URL");
+  if (explicit) return explicit;
+
+  const centralUrl = readConfigValue(config, "JOELCLAW_CENTRAL_URL");
+  if (centralUrl) return appendObservabilityEmit(centralUrl);
+
+  const workerUrl = readConfigValue(config, "INNGEST_WORKER_URL");
+  if (workerUrl) return appendObservabilityEmit(workerUrl);
+
+  return "http://localhost:3111/observability/emit";
+}
+
+const OTEL_EMIT_URL = resolveOtelEmitUrl();
 const OTEL_EMIT_TOKEN = process.env.OTEL_EMIT_TOKEN;
 const DEBUG_WINDOW_MS = 60_000;
 const DEBUG_MAX_PER_KEY = 10;

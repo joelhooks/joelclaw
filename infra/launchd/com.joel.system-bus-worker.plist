@@ -33,6 +33,18 @@
         <string>/Users/joel/Vault</string>
         <key>NODE_EXTRA_CA_CERTS</key>
         <string>/etc/ssl/cert.pem</string>
+        <key>OTEL_STORE</key>
+        <string>forward</string>
+        <key>OTEL_FORWARD_URL</key>
+        <string>http://flagg:3111/observability/emit</string>
+        <key>OTEL_FORWARD_TIMEOUT_MS</key>
+        <string>2500</string>
+        <key>OTEL_TYPESENSE_PROJECTION</key>
+        <string>0</string>
+        <key>GATEWAY_CHANNEL_OTEL_PROBES_ENABLED</key>
+        <string>0</string>
+        <key>SYSTEM_HEALTH_OTEL_TYPESENSE_SIGNAL_CHECKS_ENABLED</key>
+        <string>0</string>
     </dict>
 
     <key>RunAtLoad</key>

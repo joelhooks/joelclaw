@@ -44,6 +44,10 @@ spec:
               value: "0"
             - name: WORKER_ROLE
               value: "cluster"
+            # Machine identity for OTEL provenance; without it cluster events
+            # land as systemId=unknown (pod hostname is a per-rollout name).
+            - name: SLOG_SYSTEM_ID
+              value: "system-bus-cluster"
             - name: INNGEST_APP_ID
               value: "system-bus-cluster"
             # Cluster worker must register against the in-cluster Inngest API.
@@ -57,9 +61,21 @@ spec:
               value: "redis"
             - name: REDIS_PORT
               value: "6379"
-            # Cluster-owned functions must use in-cluster Typesense, not host localhost.
+            # Cluster-owned non-OTEL search still uses in-cluster Typesense, but raw OTEL must not write there.
             - name: TYPESENSE_URL
               value: "http://typesense:8108"
+            - name: OTEL_STORE
+              value: "forward"
+            - name: OTEL_FORWARD_URL
+              value: "http://flagg:3111/observability/emit"
+            - name: OTEL_FORWARD_TIMEOUT_MS
+              value: "2500"
+            - name: OTEL_TYPESENSE_PROJECTION
+              value: "0"
+            - name: GATEWAY_CHANNEL_OTEL_PROBES_ENABLED
+              value: "0"
+            - name: SYSTEM_HEALTH_OTEL_TYPESENSE_SIGNAL_CHECKS_ENABLED
+              value: "0"
           ports:
             - containerPort: 3111
               name: http

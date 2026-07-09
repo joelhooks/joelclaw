@@ -31,15 +31,17 @@ JoelClaw already has structured telemetry, but it is mostly agent-readable and d
 
 - `@joelclaw/telemetry` emits OTEL-shaped events.
 - `system-bus-worker` accepts `/observability/emit`.
-- Typesense `otel_events` is the current searchable event sink.
-- `docs/architecture.md` names ClickHouse as the intended canonical observability store.
-- Langfuse handles LLM call traces and cost attribution.
+- ClickHouse is the canonical raw OTEL event sink.
+- Typesense must not be used as an unbounded raw OTEL/log warehouse; only bounded/searchable projections are acceptable after retention and query cutoffs are proven.
+- Panda/old Central OTEL endpoints are relay-only and forward to Flagg's `/observability/emit` path.
+- Langfuse is dead: never migrated to Flagg, and its legacy `traces` API 429s/422s under any real query load (hit during the 2026-07 backup/self-healing token-drain incident post-mortem — couldn't even pull a token count for the incident window). Do not build new tooling against it. Decommission it and route `infer()` usage/cost accounting through ClickHouse (`traceLlmGeneration`/`usage` metadata already lands there via `emitOtelEvent`) instead.
 
 The Grafana stack is useful as an operator lens, not a replacement for JoelClaw's event memory.
 
 ## Recommended split
 
-- **Keep Typesense / ClickHouse** for agent-readable event history, search, and correlation.
+- **Keep ClickHouse** for raw agent-readable event history, search, and correlation.
+- **Use Typesense only for derived/bounded projections** that need search UX; do not write raw OTEL there.
 - **Use Prometheus** for numeric health: queue depths, request latency, error counters, worker restarts, k8s/container metrics.
 - **Use Loki** for raw log streams when CLI `joelclaw logs` is not enough.
 - **Use Tempo** only after services emit real distributed traces; otherwise it is ceremony.
