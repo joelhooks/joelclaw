@@ -17,7 +17,6 @@ import {
   type InferenceRouteAttempt,
   type InferenceTask,
 } from "./schema";
-import { traceRouteDecision } from "./tracing";
 
 const DEFAULT_POLICY: InferencePolicy = {
   version: INFERENCE_POLICY_VERSION,
@@ -26,8 +25,6 @@ const DEFAULT_POLICY: InferencePolicy = {
   maxFallbackAttempts: 3,
   defaults: DEFAULT_TASK_TO_MODELS,
 };
-
-type RouteDecisionSource = "catalog" | "fallback" | "env";
 
 function normalizeTask(task: string | undefined, strict = false): InferenceTask {
   const normalized = (task ?? "default").trim().toLowerCase();
@@ -59,15 +56,6 @@ function uniqueAttempts(attempts: InferenceRouteAttempt[]): InferenceRouteAttemp
     normalized.push({ ...attempt, attempt: normalized.length });
   }
   return normalized;
-}
-
-function resolveRouteDecisionSource(
-  attempt: InferenceRouteAttempt,
-  requestedModelProvided: boolean,
-): RouteDecisionSource {
-  if (attempt.reason === "fallback") return "fallback";
-  if (requestedModelProvided && attempt.reason === "requested") return "env";
-  return "catalog";
 }
 
 export function buildPolicy(overrides?: Partial<InferencePolicy>): InferencePolicy {
@@ -175,15 +163,6 @@ export function routeInference(input: InferencePlanInput, policy = DEFAULT_POLIC
 
   if (deduped.length === 0) {
     throw new Error("inference-router: no model candidates available");
-  }
-
-  for (const attempt of deduped) {
-    traceRouteDecision({
-      modelId: input.model ?? attempt.model,
-      resolvedModel: attempt.model,
-      provider: attempt.provider,
-      source: resolveRouteDecisionSource(attempt, input.model !== undefined),
-    });
   }
 
   return {

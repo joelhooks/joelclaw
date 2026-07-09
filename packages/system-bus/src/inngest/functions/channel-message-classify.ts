@@ -1,6 +1,5 @@
 import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
-import { traceLlmGeneration } from "../../lib/langfuse";
 import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
@@ -645,30 +644,6 @@ export const channelMessageClassify = inngest.createFunction(
       });
       threadEventId = dispatched.ids[0] ?? null;
     }
-
-    await step.run("trace-langfuse", async () => {
-      await traceLlmGeneration({
-        traceName: "joelclaw.channel-classify",
-        generationName: "channel.message.classify",
-        component: "channel-classify",
-        action: "channel.classify.llm",
-        input: {
-          text: classified.message.text,
-          channelName: classified.message.channelName,
-          channelType: classified.message.channelType,
-        },
-        output: {
-          classification: classified.classification,
-        },
-        model: CHANNEL_CLASSIFIER_MODEL,
-        durationMs: classified.durationMs,
-        metadata: {
-          channelId: classified.message.channelId,
-          messageId: classified.message.id,
-        },
-      });
-      return { traced: true };
-    });
 
     return {
       messageId: classified.message.id,

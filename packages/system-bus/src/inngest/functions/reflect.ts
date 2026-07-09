@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Redis from "ioredis";
 import { infer } from "../../lib/inference";
-import { type LlmUsage } from "../../lib/langfuse";
+import { type LlmUsage } from "../../lib/pi-output";
 import { isInstructionText } from "../../memory/triage";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";

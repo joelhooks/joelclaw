@@ -4,7 +4,6 @@
 
 import { embed } from "@joelclaw/inference-router"
 import { Effect, ParseResult, Schema } from "effect"
-import { traceRecallRewrite } from "../../lib/langfuse"
 import { createOtelEventPayload, ingestOtelPayload } from "../../lib/otel-ingest"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../lib/typesense-auth"
 import { type CapabilityPort, capabilityError } from "../contract"
@@ -1139,23 +1138,6 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
     const categoryFilterBy = resolvedCategory ? `category_id:=${resolvedCategory}` : undefined
     const rewrite = yield* Effect.promise(() => runRewriteQueryWith(args.query, {
       rewriteEnabled: budgetPlan.rewriteEnabled,
-    }))
-
-    yield* Effect.promise(() => traceRecallRewrite({
-      query: args.query,
-      rewritePrompt: rewrite.rewritePrompt,
-      rewrittenQuery: rewrite.rewrittenQuery,
-      rewritten: rewrite.rewritten,
-      strategy: rewrite.strategy,
-      rewriteReason: rewrite.rewriteReason,
-      provider: rewrite.provider,
-      model: rewrite.model,
-      usage: rewrite.usage,
-      durationMs: rewrite.durationMs,
-      error: rewrite.error,
-      budgetRequested: budgetPlan.requested,
-      budgetApplied: budgetPlan.applied,
-      budgetReason: budgetPlan.reason,
     }))
 
     try {

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
-import { initTracing, getCatalogModel as resolveModelFromCatalog } from "@joelclaw/inference-router";
+import { getCatalogModel as resolveModelFromCatalog } from "@joelclaw/inference-router";
 import { init as initMessageStore, trimOld } from "@joelclaw/message-store";
 import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-fallback";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
@@ -85,11 +85,6 @@ import {
   getFallbackWatchdogGraceRemainingMs,
   shouldTreatSessionAsDead,
 } from "./watchdog";
-
-// Initialize Langfuse tracing for inference routing (reads from env vars):
-// LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_HOST or LANGFUSE_BASE_URL.
-// Optional: JOELCLAW_LLM_OBS_ENABLED, JOELCLAW_ENV, JOELCLAW_RELEASE, GIT_SHA.
-initTracing({});
 
 /**
  * Register the gateway's agent identity with agent-mail (non-fatal).

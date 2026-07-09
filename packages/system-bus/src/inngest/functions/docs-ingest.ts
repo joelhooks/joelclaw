@@ -6,7 +6,7 @@ import { basename, extname, join } from "node:path";
 import { NonRetriableError } from "inngest";
 import { type BookChunkingResult, chunkBookText, renderChunkForEmbedding } from "../../lib/book-chunk";
 import { infer } from "../../lib/inference";
-import { type LlmUsage } from "../../lib/langfuse";
+import { type LlmUsage } from "../../lib/pi-output";
 import * as typesense from "../../lib/typesense";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import {

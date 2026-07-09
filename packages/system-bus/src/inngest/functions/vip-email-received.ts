@@ -6,7 +6,7 @@
 
 import { spawnSync } from "node:child_process";
 import { infer } from "../../lib/inference";
-import { type LlmUsage } from "../../lib/langfuse";
+import { type LlmUsage } from "../../lib/pi-output";
 import {
   sendTelegramDirect,
   stripOperatorRelayRules,
