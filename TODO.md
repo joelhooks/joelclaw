@@ -1,1 +1,2 @@
 - [ ] Make TOOLS.md dynamic per agent type (same pattern as ROLE.md via identity-inject)
+- [ ] Gate 5 hard-reboot proof: reboot flagg with no GUI login, confirm `com.joelclaw.central.nas-mounts` restores `/Volumes/nas-nvme` + `/Volumes/three-body` (60s ticks in `/Users/Shared/joelclaw/logs/central/nas-mounts.out.log`), then run `verify-nas.sh --write-probe --benchmark-mib 1024`. Receipts: `.brain/resources/flagg-three-body-lan-nas-contract-2026-06-17.svx`
