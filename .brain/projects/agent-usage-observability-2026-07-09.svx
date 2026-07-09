@@ -1,7 +1,7 @@
 ---
 title: "Agent Usage Observability"
 type: "project"
-status: "draft"
+status: "shipped"
 created_at: "2026-07-09"
 privacy: "private"
 tags:
@@ -130,11 +130,46 @@ Joel asked this PRD's own execution to be designed around subagent swarm fan-out
 - **No agent in this swarm calls `infer()` or spawns further sub-agents recursively without an explicit, bounded budget** (`Workflow`'s `budget.total`/`budget.remaining()` primitives, or a hard iteration cap) — mirroring the exact guardrail (bounded retry budget, single owner, deterministic default, circuit breaker) just built for the backup/self-healing path. Same policy, different subsystem.
 - **Verification lanes are read-only subagents, not implementers** — same 2-3-lane pattern used to verify the hotfix in this session (correctness / loop-safety-equivalent-here-called-"data-correctness" / validation-gap), run once after the parallel slices land, not per-slice.
 
-## Open questions
+## Execution receipts (2026-07-09, shipped)
 
-- Does OpenRouter's public pricing endpoint require an API key even for read-only model listing? Needs a quick check before Slice E is scoped as "no auth required."
-- Do Pi/Claude Code/Codex/Cursor session logs reliably include token usage today, or only some of them? `session-search` skill already indexes these paths per-tool — read that first instead of re-discovering log locations.
-- Is the `pi` CLI itself capable of emitting usage today, or does the fix require a `pi`/`pi-mono` change upstream of this repo? Needs a read-only investigation pass before committing to "single-file fix" scope.
-- Should cost (not just token count) be derived client-side from a static per-model price table, or is there a provider-returned cost field worth trusting? Affects whether `costInput`/`costOutput`/`costTotal` (already in the `LlmUsage` type per `inference.ts`) are populated by the provider or computed.
-- Retention: `OTEL_CLICKHOUSE_TTL_DAYS` defaults to 180 — is that enough for meaningful month-over-month usage trend queries, or does a rollup table need to outlive raw event TTL?
-- Where does this project's CLI/report land relative to the already-built (Langfuse-backed, needs swap) `daily-token-usage-report.ts` — same file, or should Langfuse removal and ClickHouse addition be two separate small PRs?
+**Root cause found and fixed.** `runPiAttempt` in `packages/system-bus/src/lib/inference.ts` never passed `--mode json` to `pi`, so stdout was plain text and `parsePiJsonAssistant` always returned null — usage missing on 100% of calls, exactly matching the `model_router.result` = `model_router.usage_missing` counts above. Fix: `--mode json` in `buildPiAttemptArgs` (extracted, unit-tested), plus the actual `usage` object now written into `model_router.result` metadata (previously only a `usageCaptured` boolean; the numbers went to dead Langfuse). Verified live: event at `2026-07-09 16:02:17` carries `{"inputTokens":4249,"outputTokens":5,...,"costTotal":0.021395}`.
+
+**What shipped:**
+
+- `packages/system-bus/src/lib/clickhouse-usage-query.ts` — read-only rollup/totals over `otel_events`, `source: router|agents|all`, injection-safe, + `joelclaw usage` CLI (`--hours/--component/--model/--machine/--source/--json`).
+- `daily-token-usage-report.ts` — Langfuse path deleted; reads ClickHouse directly (in-process, no subprocess); report now shows real tokens, provider+benchmark cost split, per-machine breakdown, and an agent-sessions line. Fail-open when ClickHouse is down.
+- `packages/system-bus/src/lib/model-pricing.ts` — OpenRouter public pricing (verified: no auth, 340 models), 24h disk cache at `~/.joelclaw/cache/openrouter-pricing.json`, provider cost always wins, benchmark fallback otherwise. Validation receipt: benchmark estimate for a live gpt-5.5 call computed $0.150805 — byte-identical to pi's provider-reported cost.
+- `packages/system-bus/src/lib/agent-usage/` — passive tailers for Pi/Claude Code/Codex (Cursor = explicit stub, no stable transcript location), byte-offset resume state in `~/.joelclaw/agent-usage-state.json`, deterministic sha256 event ids (ReplacingMergeTree dedupe), bounded per-scan caps with non-silent drop counts, `system/agent-usage.scan` Inngest cron (host worker, */15). Live receipt: 50 `agent_usage.turn` events in ClickHouse from this machine's real Pi transcripts.
+- Langfuse decommissioned: `grep -ri langfuse packages/ apps/` = zero; `parsePiJsonAssistant`/`LlmUsage` live in `lib/pi-output.ts`; `@langfuse/*` deps removed across cli/sdk/system-bus/inference-router; gateway `initTracing` gone.
+- systemId audit: flagg host worker stamps `flagg` (supervisor-injected env — NOT in the launchd plist, checked live process env); panda gateway stamps `panda`; k8s cluster worker stamped nothing → added `SLOG_SYSTEM_ID=system-bus-cluster` to `k8s/system-bus-worker.yaml`; `resolveSystemId` in `otel-event.ts` now falls back to normalized `os.hostname()` (matching the sdk resolver) instead of `"unknown"`.
+
+**Dogfood receipt (the acceptance test from the execution plan):** `joelclaw usage --hours 6` shows this project's own build session as `agent-usage.pi` — 257,700 in / 12,212 out tokens, $4.11 provider cost — alongside router calls. The tooling metered its own construction.
+
+**Swarm shape as executed:** single-owner root-cause fix first (no swarm), then bounded parallel slices (max 3 concurrent agents), read-only verification lanes after. Deviation: codex quota was exhausted mid-execution (both dispatches failed instantly), so implementation re-routed to Claude subagents per the arbitrage escape hatch — observed failure, not predicted.
+
+**Verification lanes (2 read-only agents, post-slices):**
+
+- Data lane: tailer dedupe exact (50/50 distinct ids), usage JSON arithmetically self-consistent (sums reconcile to the token), `usage_missing` declining hourly after the fix (100% → 44% → 0% in patched components), systemId `unknown` at zero.
+- Code lane found 2 real bugs, both fixed same-day: (1) Claude Code writes one JSONL line per content block repeating the same `message.usage` — the tailer double-counted ~2x; now dedupes by `message.id` (verified empirically: 128 usage lines / 57 unique message ids in a real transcript). The ~3,254 inflated `agent-usage.claude` events from the interim cron runs were deleted from ClickHouse and offsets reset for a clean rescan. (2) `infer()` with `json: true` treated a non-zero pi exit with empty output as success — closing the ADR-0191 circuit and emitting a success event for a failed call; now throws for every caller. Also fixed: `--mode json` event-stream soup no longer leaks into `result.text` on parse failure; caller metadata can't clobber usage-accounting fields; coverage % is router-only (agent turns always carry usage); daily-report rollup widened to 5000 groups so the cost line doesn't silently drop tail groups.
+
+**Deploy state:** flagg host worker restarted on new code (129 functions, `system/agent-usage.scan` live); `joelclaw` CLI rebuilt. Cluster worker image `ghcr.io/joelhooks/system-bus-worker:20260709-094619` pushed and manifest (with `SLOG_SYSTEM_ID=system-bus-cluster`) applied — **but the pod cannot schedule: flannel CNI on `joelclaw-controlplane-1` has been broken for 17 days** (`/run/flannel/subnet.env` missing, 118k sandbox failures; previous worker pod in `Unknown` for 32d). Pre-existing failure, feeds the Panda-decommission decision rather than blocking this project (the host worker carries all 129 functions).
+
+**Follow-ups (non-blocking, in rough priority order):**
+
+1. k8s cluster: flannel broken 17d on `joelclaw-controlplane-1` — decide repair vs fold into Panda decommission.
+2. Multi-turn pi runs: only the last assistant message's usage lands in `model_router.result` (undercount for tool-enabled roster agents); needs careful summing in `pi-output.ts` without double-counting the `turn_end` repeat.
+3. Scanner state persists once per scan — a crash/retry re-emits since last state write; deterministic ids dedupe eventually (ReplacingMergeTree) but `count()`/`sum()` queries don't use FINAL, so duplicates are visible until merge. Consider per-file state writes + `GROUP BY id` subselect.
+4. Budget-exceeded scans re-parse prefixes O(L²) — replace with incremental single pass before pointing the tailer at very large first-run transcripts with small budgets.
+5. Codex model attribution degrades on incremental scans (turn_context consumed in a prior scan) — persist last-seen model per file in scanner state.
+6. `pi/extensions/langfuse-cost` degrades to disabled telemetry (fails soft) now that the root `langfuse` dep is gone — remove the extension, superseded by tailers.
+7. `LANGFUSE_*` secrets in the secrets store can be revoked.
+8. Benchmark pricing ignores cache-read/write token rates and can cross-match same-named models across OpenRouter providers when no provider prefix is given.
+
+## Open questions — resolved 2026-07-09 except retention
+
+- ~~OpenRouter pricing auth?~~ **No auth.** `GET https://openrouter.ai/api/v1/models` returns 200 anonymously with per-token pricing for 340 models.
+- ~~Do session logs include usage?~~ **Pi: yes** (`type:"message"` lines with full usage incl. provider cost — note: session files use `type:"message"`, not the `turn_end`/`message_end` shape pi's `--mode json` stdout uses). **Claude Code: yes** (`input_tokens`/`output_tokens`/cache counts, no cost field). **Codex: yes** (`event_msg`/`token_count` with `last_token_usage` per-turn deltas; `info` often null). **Cursor: no** stable transcript location — stubbed.
+- ~~Can pi emit usage?~~ **Yes** — `--mode json` existed all along; single-file fix in this repo, no pi-mono change.
+- ~~Provider cost vs computed?~~ **Both, provider wins.** pi returns real cost per message; OpenRouter benchmark fills gaps (`estimateCost` source field says which). Benchmark validated exact against a live provider cost.
+- **Retention (still open):** `OTEL_CLICKHOUSE_TTL_DAYS=180` — decide before ~2027-01 whether month-over-month trends need a rollup table that outlives raw TTL. Follow-on, not blocking.
+- ~~Same file or two PRs?~~ Same-file swap (report), decommission as a separate slice — which is how it landed.

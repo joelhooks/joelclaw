@@ -291,7 +291,7 @@ joelclaw email [scan|triage]               # Email operations
 joelclaw x [post|mentions]                 # X/Twitter operations
 joelclaw nas [status|health]               # NAS operations
 joelclaw diagnose <topic>                  # System diagnosis
-joelclaw langfuse [traces|costs]           # Langfuse analytics
+joelclaw usage [--source router|agents|all] # Token usage + cost from ClickHouse
 joelclaw deploy worker [--restart] [--execute]
 joelclaw heal [list|run]
 joelclaw inngest sync-worker [--restart]   # Worker lifecycle

@@ -189,6 +189,19 @@ describe("claude parser", () => {
     });
   });
 
+  test("counts a multi-content-block message once (dedupe by message.id)", () => {
+    // Claude Code writes one line per content block, repeating message.usage.
+    const base = JSON.parse(claudeAssistantLine()) as { message: { content: unknown } };
+    const blockA = JSON.stringify({ ...base, message: { ...base.message, content: [{ type: "text", text: "a" }] } });
+    const blockB = JSON.stringify({ ...base, message: { ...base.message, content: [{ type: "tool_use", id: "t1" }] } });
+    const events = claude.parseTranscriptLines([blockA, blockB], ctx);
+    expect(events).toHaveLength(1);
+
+    const other = JSON.parse(claudeAssistantLine()) as { message: { id: string } };
+    const otherLine = JSON.stringify({ ...other, message: { ...other.message, id: "fake-api-msg-2" } });
+    expect(claude.parseTranscriptLines([blockA, blockB, otherLine], ctx)).toHaveLength(2);
+  });
+
   test("skips malformed lines silently", () => {
     expect(claude.parseTranscriptLines(MALFORMED_LINES, ctx)).toHaveLength(0);
   });

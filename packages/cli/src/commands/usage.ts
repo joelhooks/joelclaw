@@ -4,8 +4,10 @@ import {
   queryUsageTotals,
   type UsageQueryOptions,
   type UsageRollupRow,
+  type UsageSource,
   type UsageTotals,
 } from "@joelclaw/system-bus/src/lib/clickhouse-usage-query.ts"
+import { type RollupCostSummary, summarizeRollupCost } from "@joelclaw/system-bus/src/lib/model-pricing.ts"
 import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
 
@@ -47,6 +49,11 @@ const jsonOpt = Options.boolean("json").pipe(
   Options.withDescription("Emit HATEOAS JSON envelope instead of the human table"),
 )
 
+const sourceOpt = Options.choice("source", ["router", "agents", "all"]).pipe(
+  Options.withDefault("all" as const),
+  Options.withDescription("router = infer() calls, agents = pi/claude/codex session tailers, all = both"),
+)
+
 const MAX_TABLE_ROWS = 20
 
 function formatCost(value: number): string {
@@ -76,15 +83,23 @@ function renderTable(rows: readonly UsageRollupRow[]): string {
     .join("\n")
 }
 
-function renderHuman(hours: number, totals: UsageTotals, rows: readonly UsageRollupRow[]): string {
+function renderHuman(
+  hours: number,
+  totals: UsageTotals,
+  rows: readonly UsageRollupRow[],
+  cost: RollupCostSummary | null,
+): string {
+  const costPart = cost && cost.benchmarkCost > 0
+    ? `| est cost ${formatCost(cost.totalCost)} (provider ${formatCost(cost.providerCost)} + benchmark ${formatCost(cost.benchmarkCost)})`
+    : `| est cost ${formatCost(totals.costTotal)}`
   const totalsLine = [
     `usage (${hours}h):`,
     `calls ${formatTokens(totals.calls)}`,
     `| tokens in/out/total ${formatTokens(totals.inputTokens)}/${formatTokens(totals.outputTokens)}/${formatTokens(totals.totalTokens)}`,
-    `| est cost ${formatCost(totals.costTotal)}`,
+    costPart,
     `| usage coverage ${totals.usageCoveragePct}%`,
   ].join(" ")
-  if (rows.length === 0) return `${totalsLine}\n(no model_router.result rows in window)`
+  if (rows.length === 0) return `${totalsLine}\n(no usage rows in window for this source)`
   return `${totalsLine}\n\n${renderTable(rows)}`
 }
 
@@ -97,8 +112,9 @@ export const usageCmd = Command.make(
     machine: machineOpt,
     limit: limitOpt,
     json: jsonOpt,
+    source: sourceOpt,
   },
-  ({ hours, component, model, machine, limit, json }) =>
+  ({ hours, component, model, machine, limit, json, source }) =>
     Effect.gen(function* () {
       const opts: UsageQueryOptions = {
         hours,
@@ -106,6 +122,7 @@ export const usageCmd = Command.make(
         model: parseOptionText(model),
         systemId: parseOptionText(machine),
         limit,
+        source: source as UsageSource,
       }
 
       // cli.ts strips --json from argv for backward compatibility, so read process.argv too.
@@ -134,11 +151,17 @@ export const usageCmd = Command.make(
 
       const [totals, rows] = result.right
 
+      // Benchmark-estimate cost for rows the provider didn't price (fail-open: null on any pricing issue).
+      const cost = yield* Effect.tryPromise({
+        try: () => summarizeRollupCost(rows),
+        catch: () => null,
+      }).pipe(Effect.orElseSucceed(() => null))
+
       if (asJson) {
         yield* Console.log(
           respond(
             "usage",
-            { totals, rows },
+            { totals, rows, cost },
             [
               { command: `joelclaw usage --hours ${hours} --model <model> --json`, description: "Narrow to one model" },
               { command: `joelclaw usage --hours ${hours} --machine <systemId> --json`, description: "Narrow to one machine" },
@@ -149,6 +172,6 @@ export const usageCmd = Command.make(
         return
       }
 
-      yield* Console.log(renderHuman(hours, totals, rows))
+      yield* Console.log(renderHuman(hours, totals, rows, cost))
     }),
 ).pipe(Command.withDescription("Token usage and cost rollup from ClickHouse model_router.result events"))

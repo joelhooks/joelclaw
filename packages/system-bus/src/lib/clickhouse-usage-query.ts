@@ -7,6 +7,7 @@ const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 5_000;
 const QUERY_TIMEOUT_MS = 15_000;
 const ROUTER_RESULT_ACTION = "model_router.result";
+const AGENT_USAGE_ACTION = "agent_usage.turn";
 
 export type UsageRollupRow = {
   day: string;
@@ -27,6 +28,8 @@ export type UsageRollupRow = {
 
 export type UsageTotals = {
   calls: number;
+  /** model_router.result rows only — the denominator for usageCoveragePct */
+  routerCalls: number;
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
@@ -35,12 +38,16 @@ export type UsageTotals = {
   usageCoveragePct: number;
 };
 
+export type UsageSource = "router" | "agents" | "all";
+
 export type UsageQueryOptions = {
   hours?: number;
   component?: string;
   model?: string;
   systemId?: string;
   limit?: number;
+  /** router = infer() model_router.result; agents = passive agent_usage.turn tailers; default router */
+  source?: UsageSource;
 };
 
 export function resolveUsageQueryConfig(env: NodeJS.ProcessEnv = process.env): ClickHouseConfig {
@@ -82,10 +89,18 @@ function tableName(config: ClickHouseConfig): string {
   return `${sqlIdent(config.database)}.${sqlIdent(config.table)}`;
 }
 
+function actionCondition(source: UsageSource | undefined): string {
+  if (source === "agents") return `action = ${sqlString(AGENT_USAGE_ACTION)}`;
+  if (source === "all") {
+    return `action IN (${sqlString(ROUTER_RESULT_ACTION)}, ${sqlString(AGENT_USAGE_ACTION)})`;
+  }
+  return `action = ${sqlString(ROUTER_RESULT_ACTION)}`;
+}
+
 function buildWhereClause(opts: UsageQueryOptions): string {
   const hours = boundedInt(opts.hours, DEFAULT_HOURS, 1, MAX_HOURS);
   const conditions = [
-    `action = ${sqlString(ROUTER_RESULT_ACTION)}`,
+    actionCondition(opts.source),
     `timestamp > now() - INTERVAL ${hours} HOUR`,
   ];
   if (opts.component) conditions.push(`component = ${sqlString(opts.component)}`);
@@ -101,7 +116,7 @@ const USAGE_SUMS = `
   sum(JSONExtractFloat(metadata_json, 'usage', 'cacheReadTokens')) AS cacheReadTokens,
   sum(JSONExtractFloat(metadata_json, 'usage', 'cacheWriteTokens')) AS cacheWriteTokens,
   sum(JSONExtractFloat(metadata_json, 'usage', 'costTotal')) AS costTotal,
-  countIf(JSONExtractBool(metadata_json, 'usageCaptured') != 1) AS usageMissing`;
+  countIf(action = ${sqlString(ROUTER_RESULT_ACTION)} AND JSONExtractBool(metadata_json, 'usageCaptured') != 1) AS usageMissing`;
 
 function buildRollupSql(opts: UsageQueryOptions = {}, config = resolveUsageQueryConfig()): string {
   const limit = boundedInt(opts.limit, DEFAULT_LIMIT, 1, MAX_LIMIT);
@@ -123,7 +138,8 @@ FORMAT JSONEachRow`;
 
 function buildTotalsSql(opts: UsageQueryOptions = {}, config = resolveUsageQueryConfig()): string {
   return `SELECT
-  count() AS calls,${USAGE_SUMS}
+  count() AS calls,
+  countIf(action = ${sqlString(ROUTER_RESULT_ACTION)}) AS routerCalls,${USAGE_SUMS}
 FROM ${tableName(config)}
 WHERE ${buildWhereClause(opts)}
 FORMAT JSONEachRow`;
@@ -198,15 +214,18 @@ export async function queryUsageTotals(
   const rows = await runSelect(buildTotalsSql(opts, config), config);
   const raw = rows[0] ?? {};
   const calls = coerceNumber(raw.calls);
+  const routerCalls = coerceNumber(raw.routerCalls);
   const usageMissing = coerceNumber(raw.usageMissing);
   return {
     calls,
+    routerCalls,
     inputTokens: coerceNumber(raw.inputTokens),
     outputTokens: coerceNumber(raw.outputTokens),
     totalTokens: coerceNumber(raw.totalTokens),
     costTotal: coerceNumber(raw.costTotal),
     usageMissing,
-    usageCoveragePct: calls > 0 ? Math.round(((calls - usageMissing) / calls) * 1000) / 10 : 0,
+    // Coverage is a router-only metric: agent_usage.turn rows always carry usage.
+    usageCoveragePct: routerCalls > 0 ? Math.round(((routerCalls - usageMissing) / routerCalls) * 1000) / 10 : 0,
   };
 }
 

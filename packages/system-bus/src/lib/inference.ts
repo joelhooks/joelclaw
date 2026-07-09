@@ -238,7 +238,10 @@ async function runPiAttempt(
 
     const parsed = parsePiJsonAssistant(stdoutRaw);
     const parsedText = normalizeText(parsed?.text);
-    const rawText = parsed ? parsedText : stdoutRaw.trim();
+    // With --mode json, unparseable stdout that still looks like an event
+    // stream is a truncated/failed run — don't hand raw JSONL to callers.
+    const looksLikeEventStream = !parsed && /^\s*\{"type"/u.test(stdoutRaw);
+    const rawText = parsed ? parsedText : looksLikeEventStream ? "" : stdoutRaw.trim();
 
     return {
       rawText,
@@ -491,7 +494,10 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
             );
           }
 
-          if (!piResult.rawText && !resolvedOpts.json) {
+          // Non-zero exit with no salvageable output is a failure for every
+          // caller — json mode must not convert it into an empty "success"
+          // that closes the circuit and pollutes usage stats.
+          if (!piResult.rawText) {
             throw wrapError(
               new Error(`pi exited ${piResult.exitCode}: ${stderr || "empty output"}`),
               attempt.attempt,
@@ -521,6 +527,9 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         }
 
         const metadata = withAgentMetadata({
+          // Caller metadata first: usage-accounting fields below must win
+          // over any colliding caller keys or the rollup corrupts.
+          ...(resolvedOpts.metadata ?? {}),
           requestId,
           policyVersion: route.policyVersion,
           task: route.normalizedTask,
@@ -536,7 +545,6 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
           jsonRequested: Boolean(resolvedOpts.json),
           jsonParsed: resolvedOpts.json ? parsedData !== null : undefined,
           circuitState: circuitCheck.state, // ADR-0191
-          ...(resolvedOpts.metadata ?? {}),
           ...(profile
             ? {
                 agentProfile: profile.name,

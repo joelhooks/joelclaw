@@ -115,9 +115,21 @@ describe("clickhouse-usage-query", () => {
 
       expect(sql).toContain("count() AS calls");
       expect(sql).toContain("INTERVAL 6 HOUR");
-      expect(sql).toContain("countIf(JSONExtractBool(metadata_json, 'usageCaptured') != 1) AS usageMissing");
+      expect(sql).toContain(
+        "countIf(action = 'model_router.result' AND JSONExtractBool(metadata_json, 'usageCaptured') != 1) AS usageMissing",
+      );
       expect(sql).not.toContain("GROUP BY");
       expect(sql).not.toContain("LIMIT");
+    });
+
+    test("source option controls the action filter", () => {
+      expect(buildTotalsSql({ source: "router" }, testConfig)).toContain("action = 'model_router.result'");
+      expect(buildTotalsSql({ source: "agents" }, testConfig)).toContain("action = 'agent_usage.turn'");
+      expect(buildTotalsSql({ source: "all" }, testConfig)).toContain(
+        "action IN ('model_router.result', 'agent_usage.turn')",
+      );
+      // default stays router for backward compatibility
+      expect(buildTotalsSql({}, testConfig)).toContain("action = 'model_router.result'");
     });
   });
 

@@ -29,12 +29,16 @@ type ClaudeUsage = {
 };
 
 type ClaudeMessage = {
+  id?: unknown;
   model?: unknown;
   usage?: ClaudeUsage;
 };
 
 export function parseTranscriptLines(lines: string[], ctx: ParseContext): AgentUsageEvent[] {
   const events: AgentUsageEvent[] = [];
+  // Claude Code writes one JSONL line per content block, each repeating the
+  // same message.usage — count each message.id once or tokens inflate ~2x.
+  const seenMessageIds = new Set<string>();
 
   for (const line of lines) {
     const parsed = parseJsonLine(line);
@@ -65,8 +69,14 @@ export function parseTranscriptLines(lines: string[], ctx: ParseContext): AgentU
     const timestampMs = parseTimestampMs(parsed.timestamp);
     if (timestampMs == null) continue;
 
+    const messageId = typeof message.id === "string" && message.id.length > 0 ? message.id : null;
+    if (messageId) {
+      if (seenMessageIds.has(messageId)) continue;
+      seenMessageIds.add(messageId);
+    }
+
     events.push({
-      id: usageEventId("claude", ctx.path, line.trim()),
+      id: usageEventId("claude", ctx.path, messageId ?? line.trim()),
       timestampMs,
       runtime: "claude",
       sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : undefined,

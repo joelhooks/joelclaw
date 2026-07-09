@@ -34,7 +34,7 @@ packages/system-bus/
 │   │   ├── redis.ts                      # Redis client helper
 │   │   ├── typesense.ts                  # Typesense client
 │   │   ├── convex-content-sync.ts        # Convex upsert for content pipeline
-│   │   ├── langfuse.ts                   # Langfuse tracing
+│   │   ├── pi-output.ts                  # pi JSON output / usage parsing
 │   │   └── ...
 │   ├── observability/
 │   │   └── emit.ts                       # OTEL event emission

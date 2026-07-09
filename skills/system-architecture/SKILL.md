@@ -59,7 +59,7 @@ This document is grounded in direct reads of:
 - `packages/cli/src/cli.ts`, `packages/cli/src/config.ts`, `packages/cli/src/inngest.ts`
 - `packages/system-bus/src/observability/*` (key files: `emit.ts`, `otel-event.ts`, `store.ts`)
 - `packages/telemetry/src/emitter.ts`
-- `packages/system-bus/src/lib/langfuse.ts`
+- `packages/system-bus/src/lib/pi-output.ts`
 - `packages/inference-router/src/tracing.ts`
 - `CONTEXT.md`
 - `docs/gateway.md`
@@ -746,7 +746,7 @@ Config source:
   - `packages/inference-router/src/tracing.ts`
   - used from `packages/inference-router/src/router.ts`
 - System-bus LLM traces:
-  - `packages/system-bus/src/lib/langfuse.ts` (`traceLlmGeneration`)
+  - `packages/system-bus/src/lib/pi-output.ts` (`traceLlmGeneration`)
   - called by `packages/system-bus/src/lib/inference.ts` and `channel-message-classify.ts`
 
 ---

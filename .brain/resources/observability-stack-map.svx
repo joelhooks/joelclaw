@@ -34,7 +34,7 @@ JoelClaw already has structured telemetry, but it is mostly agent-readable and d
 - ClickHouse is the canonical raw OTEL event sink.
 - Typesense must not be used as an unbounded raw OTEL/log warehouse; only bounded/searchable projections are acceptable after retention and query cutoffs are proven.
 - Panda/old Central OTEL endpoints are relay-only and forward to Flagg's `/observability/emit` path.
-- Langfuse is dead: never migrated to Flagg, and its legacy `traces` API 429s/422s under any real query load (hit during the 2026-07 backup/self-healing token-drain incident post-mortem — couldn't even pull a token count for the incident window). Do not build new tooling against it. Decommission it and route `infer()` usage/cost accounting through ClickHouse (`traceLlmGeneration`/`usage` metadata already lands there via `emitOtelEvent`) instead.
+- Langfuse is decommissioned (2026-07-09): all code paths removed — `traceLlmGeneration`, the `joelclaw langfuse` CLI command, sdk/inference-router/gateway tracing shims, and `@langfuse/*` deps are gone (`grep -ri langfuse packages/ apps/` returns zero). The live pi-output parsing it hosted moved to `packages/system-bus/src/lib/pi-output.ts`. Usage/cost accounting now reads straight from ClickHouse `model_router.result` + `agent_usage.turn` events via `packages/system-bus/src/lib/clickhouse-usage-query.ts` and `joelclaw usage`. Background: never migrated to Flagg, its legacy `traces` API 429s/422s under any real query load (hit during the 2026-07 backup/self-healing token-drain incident post-mortem). See `.brain/projects/agent-usage-observability-2026-07-09.svx`.
 
 The Grafana stack is useful as an operator lens, not a replacement for JoelClaw's event memory.
 

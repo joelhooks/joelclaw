@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { queryUsageRollup, queryUsageTotals, type UsageRollupRow, type UsageTotals } from "../../lib/clickhouse-usage-query";
+import { type RollupCostSummary, summarizeRollupCost } from "../../lib/model-pricing";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
@@ -107,11 +108,14 @@ type UsageSummary = {
   topModels: string[];
   topComponents: string[];
   perMachine: Array<{ machine: string; totalTokens: number }>;
+  cost?: RollupCostSummary;
+  agentTotals?: UsageTotals;
   warning?: string;
 };
 
 const EMPTY_USAGE_TOTALS: UsageTotals = {
   calls: 0,
+  routerCalls: 0,
   inputTokens: 0,
   outputTokens: 0,
   totalTokens: 0,
@@ -133,10 +137,17 @@ function formatTokens(value: number): string {
   return String(Math.round(value));
 }
 
-function summarizeUsage(totals: UsageTotals, rows: readonly UsageRollupRow[]): UsageSummary {
+function summarizeUsage(
+  totals: UsageTotals,
+  rows: readonly UsageRollupRow[],
+  cost?: RollupCostSummary,
+  agentTotals?: UsageTotals,
+): UsageSummary {
   return {
     ok: true,
     totals,
+    cost,
+    agentTotals,
     topModels: sumTokensBy(rows, (row) => row.model)
       .slice(0, 5)
       .map(([model, tokens]) => `${model} (${formatTokens(tokens)}tok)`),
@@ -277,11 +288,14 @@ function buildReportText(input: {
 
   return [
     `📊 joelclaw daily token report (${input.hours}h)`,
-    `LLM calls: ${totals.calls} | tokens in/out/total: ${formatTokens(totals.inputTokens)}/${formatTokens(totals.outputTokens)}/${formatTokens(totals.totalTokens)} | est cost: ${formatCurrency(totals.costTotal)} | usage coverage: ${totals.usageCoveragePct}%`,
+    `LLM calls: ${totals.calls} | tokens in/out/total: ${formatTokens(totals.inputTokens)}/${formatTokens(totals.outputTokens)}/${formatTokens(totals.totalTokens)} | est cost: ${formatCurrency(input.usage.cost?.totalCost ?? totals.costTotal)}${input.usage.cost && input.usage.cost.benchmarkCost > 0 ? ` (provider ${formatCurrency(input.usage.cost.providerCost)} + benchmark ${formatCurrency(input.usage.cost.benchmarkCost)})` : ""} | usage coverage: ${totals.usageCoveragePct}%`,
     input.usage.warning ? `ClickHouse warning: ${input.usage.warning}` : undefined,
     `Top models: ${input.usage.topModels.join(", ") || "unknown"}`,
     `Top components: ${input.usage.topComponents.join(", ") || "unknown"}`,
     `Per machine: ${perMachine}`,
+    input.usage.agentTotals && input.usage.agentTotals.calls > 0
+      ? `Agent sessions (pi/claude/codex tailers): ${formatTokens(input.usage.agentTotals.calls)} turns | ${formatTokens(input.usage.agentTotals.totalTokens)} tokens | est cost: ${formatCurrency(input.usage.agentTotals.costTotal)}`
+      : undefined,
     `Inngest runs: ${formatCounts(input.runs.counts)}`,
     input.runs.warning ? `Inngest warning: ${input.runs.warning}` : undefined,
     `Codex Desktop automation sessions: ${input.automations.sessions} (${automationSummary})`,
@@ -304,9 +318,11 @@ export const dailyTokenUsageReport = inngest.createFunction(
       try {
         const [totals, rows] = await Promise.all([
           queryUsageTotals({ hours }),
-          queryUsageRollup({ hours }),
+          queryUsageRollup({ hours, limit: 5000 }),
         ]);
-        return summarizeUsage(totals, rows);
+        const cost = await summarizeRollupCost(rows).catch(() => undefined);
+        const agentTotals = await queryUsageTotals({ hours, source: "agents" }).catch(() => undefined);
+        return summarizeUsage(totals, rows, cost, agentTotals);
       } catch (error) {
         return unavailableUsage(error);
       }

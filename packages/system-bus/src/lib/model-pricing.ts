@@ -244,6 +244,54 @@ export function estimateCost(
   return { costTotal, source: "openrouter-benchmark", rate };
 }
 
+export type RollupCostSummary = {
+  providerCost: number;
+  benchmarkCost: number;
+  totalCost: number;
+  benchmarkedRows: number;
+  unpricedRows: number;
+};
+
+export async function summarizeRollupCost(
+  rows: ReadonlyArray<{ model?: string; inputTokens: number; outputTokens: number; costTotal: number }>,
+  options?: ModelPricingOptions,
+): Promise<RollupCostSummary> {
+  const summary: RollupCostSummary = {
+    providerCost: 0,
+    benchmarkCost: 0,
+    totalCost: 0,
+    benchmarkedRows: 0,
+    unpricedRows: 0,
+  };
+
+  const rateCache = new Map<string, ModelRate | null>();
+  for (const row of rows) {
+    if (Number.isFinite(row.costTotal) && row.costTotal > 0) {
+      summary.providerCost += row.costTotal;
+      continue;
+    }
+    if ((row.inputTokens ?? 0) <= 0 && (row.outputTokens ?? 0) <= 0) continue;
+
+    const model = row.model?.trim() ?? "";
+    if (!rateCache.has(model)) {
+      rateCache.set(model, model ? await getModelRate(model, options) : null);
+    }
+    const estimate = estimateCost(
+      { inputTokens: row.inputTokens, outputTokens: row.outputTokens },
+      rateCache.get(model) ?? null,
+    );
+    if (estimate) {
+      summary.benchmarkCost += estimate.costTotal;
+      summary.benchmarkedRows += 1;
+    } else {
+      summary.unpricedRows += 1;
+    }
+  }
+
+  summary.totalCost = summary.providerCost + summary.benchmarkCost;
+  return summary;
+}
+
 export const __testables = {
   resetPricingMemo: (): void => {
     snapshotMemo.clear();
