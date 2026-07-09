@@ -195,6 +195,8 @@ sudo /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/install-nas-mount
 
 `verify-nas.sh` hard-fails on a missing plist; `preflight.sh` warns.
 
+No sudo is needed to verify any of this. `verify-nas.sh` runs fully green unprivileged: the plist is world-readable, and daemon liveness is proved by log freshness — the daemon fires every 60s and `/Users/Shared/joelclaw/logs/central/nas-mounts.out.log` is world-readable, so a recent mtime means loaded-and-running without `launchctl print` on the root-only system domain. Reserve sudo for install/reinstall, manual `mount-nas.sh mount|unmount` (`resvport` needs root), and `sync-service-checkout.sh`; see `infra/central/README.md` "Sudo discipline" for the full split and the optional read-only sudoers line.
+
 If the LAN IP path says `No route to host`, do not fall back to Tailscale silently. Fix LAN reachability or the ASUSTOR/network rule first.
 
 On macOS, `No route to host` for a same-subnet LAN service can be Local Network privacy for the invoking app, even when ARP and routing look correct. On 2026-06-17, accepting the GUI Local Network prompt let `nc -vz -G 3 192.168.1.163 2049` and `showmount -e 192.168.1.163` succeed. If an agent shell is blocked but Terminal works, use Terminal for the privileged repair or grant Local Network permission to the app hosting the agent.

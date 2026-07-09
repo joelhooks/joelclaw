@@ -322,3 +322,41 @@ Most scripts here are non-privileged. Privileged work should be batched:
 4. repeat only when needed.
 
 No cursed glitter sudo sprinkles.
+
+### What never needs sudo
+
+The whole NAS verification story runs unprivileged. `verify-nas.sh` (including
+`--write-probe`) proves route/media/MTU, both mounts, the installed
+`com.joelclaw.central.nas-mounts` plist, and daemon liveness — the daemon fires
+every 60s and `${CENTRAL_LOG_DIR}/nas-mounts.out.log` is world-readable, so log
+freshness proves the service is loaded and running without touching the system
+launchd domain. Same for reading daemon logs and `mount-nas.sh status`.
+
+### What genuinely needs sudo (and why)
+
+- `install-nas-mounts.sh`, `install-launchdaemons.sh` — write `/Library/LaunchDaemons` and drive the system launchd domain.
+- `mount-nas.sh mount|unmount` — NFS `resvport` mounts require root; this is why the daemon exists, so nobody mounts by hand.
+- `sync-service-checkout.sh` — writes the root-daemon-executed service tree. The password here is a security boundary, not friction: passwordless sync would let anything running as `joel` (including agents) replace scripts that root executes.
+- `launchctl print system/<label>` — system-domain reads are root-only. Usually unnecessary given the log-freshness probe; if wanted passwordless, scope a sudoers line to exactly that read-only command:
+
+```
+# sudo visudo -f /etc/sudoers.d/joelclaw-central-readonly
+joel ALL=(root) NOPASSWD: /bin/launchctl print system/com.joelclaw.central.nas-mounts
+```
+
+Do not add NOPASSWD lines for the installers or the sync script.
+
+### Sync prerequisite
+
+`sync-service-checkout.sh` rsyncs with `--delete`, so the source checkout must
+carry `infra/central/.env` (shadow env, gitignored) or the sync would strip the
+service checkout's env. The script now refuses to run before the destructive
+step if the source `.env` is missing — receipt: on 2026-07-09 the old
+post-rsync ordering deleted the service `.env`, restored from the sibling
+dev checkout's copy.
+
+Live daemon credentials do not live in that `.env`. Central daemons run via
+`/Users/Shared/joelclaw/bin/central-*` wrappers with per-service configs under
+`/Users/Shared/joelclaw/etc/<service>/`, both outside the synced `src/joelclaw`
+tree, so a sync can never touch running-service credentials. The synced `.env`
+only feeds legacy compose/script paths.

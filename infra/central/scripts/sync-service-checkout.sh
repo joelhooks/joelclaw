@@ -17,6 +17,10 @@ require_command rsync
 
 [[ -d "$SOURCE_REPO" ]] || fail "source repo missing: ${SOURCE_REPO}"
 [[ -f "${SOURCE_REPO}/infra/central/compose.yaml" ]] || fail "source repo does not look like joelclaw: ${SOURCE_REPO}"
+# rsync --delete below removes anything absent from the source, including the
+# service checkout's shadow .env. Refuse before the destructive step, not after:
+# on 2026-07-09 the post-rsync check fired only after the live .env was deleted.
+[[ -f "${SOURCE_REPO}/infra/central/.env" ]] || fail "source checkout missing infra/central/.env; run write-shadow-env.sh (or copy the existing shadow env into the source checkout) before syncing, or --delete will remove the service checkout's .env"
 
 log "syncing service-owned checkout"
 log "source=${SOURCE_REPO}"
