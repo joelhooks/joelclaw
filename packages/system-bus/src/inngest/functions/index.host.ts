@@ -13,6 +13,7 @@ import {
   agentLoopTestWriter,
 } from "./agent-loop";
 import { agentTaskRun } from "./agent-task-run";
+import { agentUsageScan } from "./agent-usage-scan";
 import { backfillObserve } from "./backfill-observe";
 import { bookDownload } from "./book-download";
 import { channelMessageClassify } from "./channel-message-classify";
@@ -39,6 +40,7 @@ import { conversationThreadAggregate } from "./conversation-thread-aggregate";
 import { conversationThreadEnrich } from "./conversation-thread-enrich";
 import { conversationThreadStaleSweep } from "./conversation-thread-stale-sweep";
 import { dailyDigest } from "./daily-digest";
+import { dailyTokenUsageReport } from "./daily-token-usage-report";
 import { discoveryCapture } from "./discovery-capture";
 import { docsIngest } from "./docs-ingest";
 import {
@@ -79,6 +81,7 @@ import {
   rotateLogs,
   rotateOtel,
   rotateSessions,
+  verifyAgentSessionCaptureBackups,
 } from "./nas-backup";
 import { nasSoakReview, nasSoakSample } from "./nas-soak";
 import { networkStatusUpdate } from "./network-status-update";
@@ -119,6 +122,7 @@ import { vipEmailThreadsBackfill } from "./vip-email-backfill";
 import { vipEmailReceived } from "./vip-email-received";
 import { vipEmailBrief } from "./vip-morning-brief";
 import { voiceCallCompleted } from "./voice-call-completed";
+import { xAccountActivityReceived } from "./x-account-activity-notify";
 import { xContentHook } from "./x-content-hook";
 import { xDiscoveryHook } from "./x-discovery-hook";
 import { xPost } from "./x-post";
@@ -158,6 +162,7 @@ export const hostFunctionDefinitions = [
   xPost,
   xContentHook,
   xDiscoveryHook,
+  xAccountActivityReceived,
   promote,
   embedText,
   backfillObserve,
@@ -165,6 +170,7 @@ export const hostFunctionDefinitions = [
   heartbeatWake,
   agentDispatch,
   agentTaskRun,
+  agentUsageScan,
   agentChainRun,
   storyPipeline,
   agentLoopPlan,
@@ -221,6 +227,7 @@ export const hostFunctionDefinitions = [
   selfHealingGatewayBridge,
   selfHealingInngestRuntime,
   dailyDigest,
+  dailyTokenUsageReport,
   sleepModeRequested,
   wakeModeRequested,
   typesenseVaultSyncQueue,
@@ -234,6 +241,7 @@ export const hostFunctionDefinitions = [
   backupTypesense,
   backupRedis,
   backupFailureRouter,
+  verifyAgentSessionCaptureBackups,
   rotateSessions,
   rotateOtel,
   rotateLogs,

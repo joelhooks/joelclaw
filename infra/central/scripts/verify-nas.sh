@@ -168,7 +168,7 @@ path_details() {
 write_probe_one() {
   local label="$1"
   local data_path="$2"
-  local probe_dir="${data_path}/.joelclaw-flagg-nas-proof"
+  local probe_dir="${data_path}/.joelclaw-nas-proof"
   [[ -d "$data_path" ]] || {
     printf 'missing data path: %s\n' "$data_path"
     return 1
@@ -217,7 +217,7 @@ require_command ifconfig
 require_command mount
 require_command nc
 
-printf 'Flagg NAS verification\n'
+printf 'NAS verification\n'
 printf 'host=%s user=%s nas_host=%s nas_ip=%s expected_interface=%s expected_media=%s expected_mtu=%s\n' \
   "$(hostname)" "$(id -un)" "$NAS_HOST" "$NAS_IP" "$NAS_EXPECTED_INTERFACE" "$NAS_EXPECTED_MEDIA" "$NAS_EXPECTED_MTU"
 printf 'nvme_export=%s nvme_mount=%s\n' "$CENTRAL_NAS_NVME_EXPORT" "$CENTRAL_NAS_NVME_MOUNT"

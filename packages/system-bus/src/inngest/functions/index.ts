@@ -84,6 +84,15 @@ export { nightlyMaintenance } from "./memory/nightly-maintenance";
 export { proposalTriage } from "./memory/proposal-triage";
 export { memoryRunCaptured } from "./memory/run-captured";
 export { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
+export {
+  backupFailureRouter,
+  backupRedis,
+  backupTypesense,
+  rotateLogs,
+  rotateOtel,
+  rotateSessions,
+  verifyAgentSessionCaptureBackups,
+} from "./nas-backup";
 export { nasSoakReview, nasSoakSample } from "./nas-soak";
 export { networkStatusUpdate } from "./network-status-update";
 export { o11yTriage } from "./o11y-triage";
@@ -129,6 +138,7 @@ export { vipEmailReceived } from "./vip-email-received";
 export { vipEmailBrief } from "./vip-morning-brief";
 export { voiceCallCompleted } from "./voice-call-completed";
 export { webhookSubscriptionDispatchGithubWorkflowRunCompleted } from "./webhook-subscription-dispatch";
+export { xAccountActivityReceived } from "./x-account-activity-notify";
 export { xContentHook } from "./x-content-hook";
 export { xDiscoveryHook } from "./x-discovery-hook";
 export { xPost } from "./x-post";

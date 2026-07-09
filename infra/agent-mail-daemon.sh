@@ -30,6 +30,20 @@ fi
 ulimit -n "${AGENT_MAIL_NOFILE_LIMIT:-8192}" 2>/dev/null || \
   echo "warning: could not raise agent-mail file descriptor limit" >&2
 
-exec /Users/joel/.local/bin/uv run --directory "$CHECKOUT" \
+UV_BIN="${UV_BIN:-}"
+if [ -z "$UV_BIN" ]; then
+  if [ -x "${TARGET_HOME}/.local/bin/uv" ]; then
+    UV_BIN="${TARGET_HOME}/.local/bin/uv"
+  elif command -v uv >/dev/null 2>&1; then
+    UV_BIN="$(command -v uv)"
+  elif [ -x "/opt/homebrew/bin/uv" ]; then
+    UV_BIN="/opt/homebrew/bin/uv"
+  else
+    echo "uv not found; install uv or set UV_BIN" >&2
+    exit 1
+  fi
+fi
+
+exec "$UV_BIN" run --directory "$CHECKOUT" \
   python -c 'from mcp_agent_mail.cli import app; app()' -- \
   serve-http --port "$PORT"

@@ -15,14 +15,15 @@ tags:
 
 # System Architecture (Canonical Topology)
 
-This skill is the **network-wide wiring map** for joelclaw. It is not "the shape of the machine you are currently sitting on."
+This skill is the **single source of truth** for joelclaw system wiring.
 
-Read it with these freshness rules:
-- The authority model is live unless explicitly marked stale: **Panda is live Central; Flagg is shadow / next Central target**.
-- Host-specific process inventories are receipts. Treat PIDs, launchd states, listener snapshots, and benchmark numbers as dated evidence until re-verified on that host.
-- Flagg sections describe the Mac Studio as the migration/cutover target. They do not make Flagg authoritative Central.
-- Panda sections describe the current live Central shape unless a later dated receipt says otherwise.
-- If you need current runtime truth, run the verification command near the relevant section before acting.
+Freshness note — 2026-07-09: the old Panda-centric mental model is now migration debt. Some current runtime paths already live on Flagg/Mac Studio, and health must report by responsibility lane:
+
+- **Central**: Flagg/Mac Studio authoritative/native services and reboot-survivable launchd state.
+- **Relay**: Panda account-bound leftovers and explicit decommission blockers.
+- **Satellite**: Blaine/other capture clients, outboxes, and transcript backup freshness.
+
+Treat older “Panda is the whole system” wording as stale unless re-verified against live receipts.
 
 Use it for:
 - "why did this run / not run"
@@ -89,15 +90,6 @@ This refresh folds in work from:
 - Talon paging/debounce hardening (`c03edc5c`, `1f086cfb`, `d26351cf`)
 - satellite rig setup for Blaine/Flagg (`bc5738f3`, `9cc02f6e`)
 - Rhizomatic/Chorus network canary (`6bebf5b1`, `docs/prd-rhizomatic-network-canary.md`)
-
-### Live-shape receipt: 2026-06-17
-
-Verified from Flagg (`hostname -s` -> `flagg`, ComputerName `Joel's Mac Studio`) plus local session-search receipts:
-- `JOELCLAW_CENTRAL_URL=https://panda.tail7af24.ts.net`, so capture still points at Panda.
-- local session-search evidence shows Panda `/api/runs/health` returning healthy for Run capture.
-- `TYPESENSE_URL=http://panda:8108` appeared in recent Flagg session receipts, confirming direct Typesense helpers still target Panda.
-- `system/com.joelclaw.central.nas-mounts` exists on Flagg and last exited `0`; this proves Flagg storage plumbing, not Central authority.
-- Gate 5 storage/NAS receipts are Flagg migration evidence only. They do not change the authority split.
 
 ---
 
@@ -185,13 +177,11 @@ Mac Studio "Flagg" (host macOS; target Central host)
 │  ├─ endpoint: 127.0.0.1:4821/mcp on Flagg
 │  └─ Blaine/Panda clients tunnel local 127.0.0.1:7331 -> Flagg 127.0.0.1:4821
 └─ NAS "three-body" proof path
-   ├─ /Volumes/nas-nvme -> 192.168.1.163:/volume2/data
-   └─ /Volumes/three-body -> 192.168.1.163:/volume1/joelclaw
+   ├─ /Volumes/nas-nvme -> three-body:/volume2/data
+   └─ /Volumes/three-body -> three-body:/volume1/joelclaw
 ```
 
 Flagg Gate 4 is complete: shadow Central recovered after hard reboot with no GUI login. Gate 5 is not complete until Flagg owns Central state, workers, endpoints, and verification while Panda is frozen as rollback-only.
-
-NAS mount rule: shelf-local Central storage mounts use the `three-body` LAN IP over Flagg `en0`, not MagicDNS. On 2026-06-17, `three-body` resolved to the tailnet IP on Flagg, while ASUSTOR NFS exports expected LAN clients; using the hostname for NFS mounts produced permission-denied launchd loops. Tailscale remains admin/remote/fallback, not the default data plane.
 
 ### Known runtime endpoints
 - Colima VM IP: `192.168.64.2` (`colima status --json`)
@@ -624,12 +614,7 @@ Degradation contract (ADR-0187):
 - Current proved NAS route:
   - Flagg interface `en0`, IP `192.168.1.10`, `10Gbase-T`
   - `three-body` IP `192.168.1.163`
-  - NAS IP `192.168.1.163` is static/reserved.
-  - MTU `8192` is the proved safe Gate 5 state. A 2026-06-17 bounded test set Flagg `Ethernet`/`en0` to MTU `9000`, route MTU changed to `9000`, but `ping -D -s 8972 192.168.1.163` had 100% loss. A follow-up set Flagg to MTU `8192`; `ping -D -s 8164 192.168.1.163` passed with 0% loss and `8165` failed as the expected local ceiling.
-  - Current tuned NFS options are `rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128`.
-  - 512K NFS transfer sweep receipt at MTU `1500`: NVMe roughly `624 MiB/s` write / `1017 MiB/s` read; HDD roughly `612 MiB/s` write / `1010 MiB/s` read for 512 MiB probes.
-  - Final 8192-MTU receipt with 1024 MiB probes: NVMe roughly `614 MiB/s` write / `1018 MiB/s` read; HDD roughly `552 MiB/s` write / `925 MiB/s` read. Full `9000` remains switch/NAS path follow-up, not a current mount default.
-  - `/Users/Shared/joelclaw/src/joelclaw` service checkout now carries `NAS_EXPECTED_MTU=8192` and the 512K NFS transfer defaults; its verifier passed with `expected_mtu=8192`.
+  - MTU `1500` is the proved safe Gate 5 state; jumbo `9000` caused an NFS blackhole and is follow-up work.
 - `CENTRAL_REQUIRE_NAS=1` should only be set after mount proof passes.
 
 ## Rhizomatic / Chorus canary store
@@ -1028,7 +1013,7 @@ cd ~/Code/joelhooks/joelclaw
 ssh joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
 
 # NAS proof when explicitly working Gate 5 storage
-sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=8192 \
+sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \
   ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
 ```
 

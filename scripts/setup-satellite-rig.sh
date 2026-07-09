@@ -8,8 +8,9 @@ set -euo pipefail
 REPO_URL="${JOELCLAW_REPO_URL:-git@github.com:joelhooks/joelclaw.git}"
 REPO_DIR="${JOELCLAW_REPO_DIR:-$HOME/Code/joelhooks/joelclaw}"
 CENTRAL_SSH="${JOELCLAW_CENTRAL_SSH:-joel@panda}"
-CENTRAL_URL="${JOELCLAW_CENTRAL_URL:-https://panda.tail7af24.ts.net}"
-SATELLITE_TYPESENSE_URL="${TYPESENSE_URL:-${JOELCLAW_TYPESENSE_URL:-http://panda:8108}}"
+CENTRAL_URL="${JOELCLAW_CENTRAL_URL:-http://joels-mac-studio.tail7af24.ts.net:3111}"
+SATELLITE_TYPESENSE_URL="${TYPESENSE_URL:-${JOELCLAW_TYPESENSE_URL:-http://joels-mac-studio.tail7af24.ts.net:8108}}"
+SATELLITE_DOCS_API_URL="${DOCS_API_URL:-${JOELCLAW_DOCS_API_URL:-http://joels-mac-studio.tail7af24.ts.net:3838}}"
 SKIP_GIT_SYNC="${JOELCLAW_SKIP_GIT_SYNC:-false}"
 
 say() { printf '\n==> %s\n' "$*"; }
@@ -178,8 +179,12 @@ say "writing satellite environment"
 ENV_FILE="$HOME/.config/system-bus.env"
 upsert_env_var "$ENV_FILE" "JOELCLAW_CENTRAL_URL" "$CENTRAL_URL"
 upsert_env_var "$ENV_FILE" "TYPESENSE_URL" "$SATELLITE_TYPESENSE_URL"
+upsert_env_var "$ENV_FILE" "DOCS_API_URL" "$SATELLITE_DOCS_API_URL"
 if [[ -n "${TYPESENSE_API_KEY:-}" ]]; then
   upsert_env_var "$ENV_FILE" "TYPESENSE_API_KEY" "$TYPESENSE_API_KEY"
+fi
+if [[ -n "${PDF_BRAIN_API_TOKEN:-}" ]]; then
+  upsert_env_var "$ENV_FILE" "PDF_BRAIN_API_TOKEN" "$PDF_BRAIN_API_TOKEN"
 fi
 
 say "building joelclaw CLI"
