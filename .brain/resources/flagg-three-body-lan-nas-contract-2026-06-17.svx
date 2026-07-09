@@ -104,6 +104,19 @@ Remaining proof before Gate 5 cutover:
 - before any GUI login, prove `com.joelclaw.central.nas-mounts` restores both mounts;
 - rerun `verify-nas.sh --write-probe --benchmark-mib 1024`.
 
+## 2026-07-09 Durability Regression
+
+Live state on Flagg was healthy — both mounts on `192.168.1.163`, route via `en0` at MTU `8192`, `nfsstat -m` matching the tuned 512K contract — but `/Library/LaunchDaemons/com.joelclaw.central.nas-mounts.plist` was missing and `launchctl print system/com.joelclaw.central.nas-mounts` returned "Could not find service". Every other `com.joelclaw.central.*` daemon plist was still installed. Cause unconfirmed: the daemon was installed on 2026-06-17 and launchd bootout/cleanup work happened around 2026-06-22.
+
+Consequences and fixes:
+
+- A reboot would silently drop both mounts; nothing reinstalls the daemon automatically.
+- `verify-nas.sh` now hard-fails when the plist is missing and, when run as root, also checks the loaded system-domain service. `preflight.sh` already warned via `nas_mount_launchdaemon_installed`.
+- `packages/system-bus/src/inngest/functions/nas-soak.ts` sample metadata now reports the NVMe source as `192.168.1.163:/volume2/data` (was `three-body:/volume2/data`, inconsistent with the live mount and with `THREE_BODY_SRC`).
+- Reinstall is idempotent: `sudo /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/install-nas-mounts.sh --bootstrap`, then `sudo infra/central/scripts/sync-service-checkout.sh` from the dev checkout so the service checkout carries the new launchd check.
+
+Checkout hygiene receipt: the LAN-IP/MTU doc and script fixes are committed on `main`. `~/Code/joelhooks/joelclaw` is a second checkout of the same repo stuck at 2026-06-14 with ~73 dirty files carrying an older intermediate variant of the fix (`NAS_HOST=192.168.1.163`, NFS probes against `NAS_HOST`); its README/gate-5 runbook still show `three-body:/volume...` only because it is behind. Prefer `~/Code/joelhooks/joelclaw-runtime` for current truth, and fast-forward or reconcile the old checkout deliberately rather than hand-patching it.
+
 ## Related Source
 
 - `infra/central/scripts/common.sh`

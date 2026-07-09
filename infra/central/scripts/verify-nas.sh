@@ -119,6 +119,25 @@ path_writable() {
   [[ -d "$path" && -w "$path" ]]
 }
 
+NAS_LAUNCHD_LABEL="com.joelclaw.central.nas-mounts"
+NAS_LAUNCHD_PLIST="/Library/LaunchDaemons/${NAS_LAUNCHD_LABEL}.plist"
+
+launchd_plist_installed() {
+  [[ -f "$NAS_LAUNCHD_PLIST" ]] || {
+    printf 'missing %s\n' "$NAS_LAUNCHD_PLIST"
+    printf 'live mounts will not restore after reboot\n'
+    printf 'reinstall: sudo %s/install-nas-mounts.sh --bootstrap\n' "$SCRIPT_DIR"
+    return 1
+  }
+}
+
+launchd_service_loaded() {
+  launchctl print "system/${NAS_LAUNCHD_LABEL}" >/dev/null 2>&1 || {
+    printf 'launchctl print system/%s failed\n' "$NAS_LAUNCHD_LABEL"
+    return 1
+  }
+}
+
 path_details() {
   local path="$1"
   printf 'path_details=%s\n' "$path"
@@ -197,6 +216,10 @@ probe 'nas-nvme mounted' mounted_at "$CENTRAL_NAS_NVME_MOUNT"
 probe 'nas-nvme mount is nfs' mount_is_nfs "$CENTRAL_NAS_NVME_MOUNT"
 probe 'nas-hdd mounted' mounted_at "$CENTRAL_NAS_HDD_MOUNT"
 probe 'nas-hdd mount is nfs' mount_is_nfs "$CENTRAL_NAS_HDD_MOUNT"
+probe 'nas-mounts LaunchDaemon plist installed' launchd_plist_installed
+if [[ "$(id -u)" == "0" ]]; then
+  probe 'nas-mounts LaunchDaemon loaded (system domain)' launchd_service_loaded
+fi
 
 if [[ "$WRITE_PROBE" == "1" ]]; then
   require_command python3

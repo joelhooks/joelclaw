@@ -18,7 +18,7 @@ const REVIEW_TASK_LABEL = "nas-soak";
 const REVIEW_TASK_PROJECT = "Agent Work";
 
 const NAS_NVME_MOUNT = "/Volumes/nas-nvme";
-const NAS_NVME_SRC = "three-body:/volume2/data";
+const NAS_NVME_SRC = "192.168.1.163:/volume2/data";
 const THREE_BODY_MOUNT = "/Volumes/three-body";
 const THREE_BODY_SRC = "192.168.1.163:/volume1/joelclaw";
 

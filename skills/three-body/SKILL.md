@@ -180,6 +180,21 @@ sudo ./infra/central/scripts/mount-nas.sh mount
 ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
 ```
 
+A healthy live mount does not prove boot durability. Regression receipt 2026-07-09: both mounts were live and tuned on Flagg while `/Library/LaunchDaemons/com.joelclaw.central.nas-mounts.plist` was missing and `launchctl print system/com.joelclaw.central.nas-mounts` returned "Could not find service" — a reboot would have silently dropped both mounts. Check durability explicitly:
+
+```sh
+ls -l /Library/LaunchDaemons/com.joelclaw.central.nas-mounts.plist
+sudo launchctl print system/com.joelclaw.central.nas-mounts | head -5
+```
+
+If the plist is missing, reinstall idempotently from the service checkout:
+
+```sh
+sudo /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/install-nas-mounts.sh --bootstrap
+```
+
+`verify-nas.sh` hard-fails on a missing plist; `preflight.sh` warns.
+
 If the LAN IP path says `No route to host`, do not fall back to Tailscale silently. Fix LAN reachability or the ASUSTOR/network rule first.
 
 On macOS, `No route to host` for a same-subnet LAN service can be Local Network privacy for the invoking app, even when ARP and routing look correct. On 2026-06-17, accepting the GUI Local Network prompt let `nc -vz -G 3 192.168.1.163 2049` and `showmount -e 192.168.1.163` succeed. If an agent shell is blocked but Terminal works, use Terminal for the privileged repair or grant Local Network permission to the app hosting the agent.
