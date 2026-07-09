@@ -29,7 +29,7 @@ export interface CapabilityConfigResolveOptions {
 }
 
 export const DEFAULT_CAPABILITY_CONFIG: Record<string, Omit<ResolvedCapabilityConfig, "source">> = {
-  otel: { enabled: true, adapter: "typesense-otel", adapters: {} },
+  otel: { enabled: true, adapter: "clickhouse-otel", adapters: {} },
   recall: { enabled: true, adapter: "typesense-recall", adapters: {} },
   secrets: { enabled: true, adapter: "agent-secrets-cli", adapters: {} },
   mail: { enabled: true, adapter: "mcp-agent-mail", adapters: {} },

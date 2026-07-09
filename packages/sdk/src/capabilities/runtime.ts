@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import { clickhouseOtelAdapter } from "./adapters/clickhouse-otel"
 import { scriptedDeployAdapter } from "./adapters/deploy-scripted"
 import { gatewayRedisNotifyAdapter } from "./adapters/gateway-redis"
 import { runbookHealAdapter } from "./adapters/heal-runbook"
@@ -10,13 +11,19 @@ import { typesenseOtelAdapter } from "./adapters/typesense-otel"
 import { typesenseRecallAdapter } from "./adapters/typesense-recall"
 import { type CapabilityContext, type CapabilityError, capabilityError } from "./contract"
 
+function resolveOtelAdapter() {
+  return (process.env.JOELCLAW_CAPABILITY_OTEL_ADAPTER ?? "clickhouse-otel") === "typesense-otel"
+    ? typesenseOtelAdapter
+    : clickhouseOtelAdapter
+}
+
 const capabilityRegistry = {
   deploy: scriptedDeployAdapter,
   heal: runbookHealAdapter,
   log: slogCliAdapter,
   mail: mcpAgentMailAdapter,
   notify: gatewayRedisNotifyAdapter,
-  otel: typesenseOtelAdapter,
+  otel: resolveOtelAdapter(),
   recall: typesenseRecallAdapter,
   secrets: secretsCliAdapter,
   subscribe: redisSubscriptionsAdapter,

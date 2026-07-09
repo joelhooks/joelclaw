@@ -15,7 +15,7 @@ describe("capability config resolution", () => {
     })
     expect(DEFAULT_CAPABILITY_CONFIG.otel).toMatchObject({
       enabled: true,
-      adapter: "typesense-otel",
+      adapter: "clickhouse-otel",
     })
     expect(DEFAULT_CAPABILITY_CONFIG.recall).toMatchObject({
       enabled: true,
@@ -126,6 +126,7 @@ describe("capability registry", () => {
   test("runtime registry includes phase-4 adapters", () => {
     const entries = capabilityRegistry.list()
     expect(entries.some((entry) => entry.capability === "mail" && entry.adapter === "mcp-agent-mail")).toBe(true)
+    expect(entries.some((entry) => entry.capability === "otel" && entry.adapter === "clickhouse-otel")).toBe(true)
     expect(entries.some((entry) => entry.capability === "otel" && entry.adapter === "typesense-otel")).toBe(true)
     expect(entries.some((entry) => entry.capability === "recall" && entry.adapter === "typesense-recall")).toBe(true)
     expect(entries.some((entry) => entry.capability === "subscribe" && entry.adapter === "redis-subscriptions")).toBe(true)

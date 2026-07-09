@@ -5,6 +5,7 @@ export { __mailAdapterTestUtils, mcpAgentMailAdapter } from "./adapters/mcp-agen
 export { __subscribeAdapterTestUtils, redisSubscriptionsAdapter } from "./adapters/redis-subscriptions"
 export { secretsCliAdapter } from "./adapters/secrets-cli"
 export { slogCliAdapter } from "./adapters/slog-cli"
+export { __clickhouseOtelAdapterTestUtils, clickhouseOtelAdapter } from "./adapters/clickhouse-otel"
 export { __otelAdapterTestUtils, typesenseOtelAdapter } from "./adapters/typesense-otel"
 export { __recallTestUtils, typesenseRecallAdapter } from "./adapters/typesense-recall"
 export * from "./contract"
