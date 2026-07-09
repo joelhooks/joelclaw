@@ -15,6 +15,7 @@ import { forwardJoelclawEvent, joelclawProvider } from "./providers/joelclaw";
 import { muxProvider } from "./providers/mux";
 import { todoistProvider } from "./providers/todoist";
 import { vercelProvider } from "./providers/vercel";
+import { xProvider } from "./providers/x";
 import type { NormalizedEvent, WebhookProvider } from "./types";
 
 // ── Provider registry ────────────────────────────────────
@@ -25,6 +26,7 @@ providers.set(vercelProvider.id, vercelProvider);
 providers.set(githubProvider.id, githubProvider);
 providers.set(muxProvider.id, muxProvider);
 providers.set(joelclawProvider.id, joelclawProvider);
+providers.set(xProvider.id, xProvider);
 
 // ── Rate limiting (auth failures per IP) ─────────────────
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -162,6 +164,34 @@ webhookApp.get("/", (c) =>
     endpoint: "POST /webhooks/:provider",
   })
 );
+
+webhookApp.get("/:provider", (c) => {
+  const providerId = c.req.param("provider");
+  const provider = providers.get(providerId);
+
+  if (!provider) {
+    return c.json({ ok: false, error: `Unknown provider: ${providerId}` }, 404);
+  }
+
+  if (!provider.buildChallengeResponse) {
+    return c.json({ ok: false, error: `Provider ${providerId} does not accept GET challenges` }, 405);
+  }
+
+  const query = c.req.query();
+  const headers: Record<string, string> = {};
+  c.req.raw.headers.forEach((value, key) => {
+    headers[key.toLowerCase()] = value;
+  });
+
+  const challenge = provider.buildChallengeResponse(query, headers);
+  const status = challenge.status ?? 200;
+  if (typeof challenge.body === "string") {
+    return c.text(challenge.body, status as any, {
+      "Content-Type": challenge.contentType ?? "text/plain",
+    });
+  }
+  return c.json(challenge.body, status as any);
+});
 
 webhookApp.post("/:provider", async (c) => {
   const providerId = c.req.param("provider");

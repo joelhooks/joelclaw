@@ -32,6 +32,7 @@ const WEBHOOK_SECRETS = [
   { env: "TODOIST_CLIENT_SECRET", secret: "todoist_client_secret" },
   { env: "GITHUB_WEBHOOK_SECRET", secret: "github_webhook_secret" },
   { env: "MUX_WEBHOOK_SECRET", secret: "mux_signing_secret" },
+  { env: "X_CONSUMER_SECRET", secret: "x_consumer_secret" },
   { env: "TYPESENSE_API_KEY", secret: "typesense_api_key" },
 ] as const;
 
@@ -425,7 +426,7 @@ app.get("/", (c) =>
     },
     webhooks: {
       endpoint: "/webhooks/:provider",
-      providers: ["todoist", "front", "vercel", "github"],
+      providers: ["todoist", "front", "vercel", "github", "mux", "joelclaw", "x"],
     },
     events: {
       "pipeline/video.requested": "Download video + NAS transfer → emits transcript.requested",
@@ -442,6 +443,7 @@ app.get("/", (c) =>
       "vip/email.received": "VIP email deep-dive workflow (Opus + meetings + memory + GitHub + todos)",
       "vercel/*": "Vercel webhook events (deploy.succeeded, deploy.error, deploy.created, deploy.canceled)",
       "github/*": "GitHub webhook events (workflow_run.completed, package.published)",
+      "x/account_activity.received": "X webhook account activity events (posts, likes, follows, DMs, etc.)",
       "meeting/noted": "Analyze meeting → extract action items, decisions, people (ADR-0055)",
       "granola/backfill.requested": "Backfill all historical Granola meetings (ADR-0055)",
       "memory/digest.created": "Structured daily digest generated from raw daily memory log",
@@ -470,7 +472,7 @@ app.post("/observability/emit", async (c) => {
   const result = await emitValidatedOtelEvent(payload);
   if (!result.stored && !result.dropped) {
     return c.json(
-      { ok: false, error: result.error ?? result.typesense.error ?? "store_failed", result },
+      { ok: false, error: result.error ?? result.forward?.error ?? result.clickhouse.error ?? result.clickhouse.queueError ?? result.typesense.error ?? "store_failed", result },
       500
     );
   }

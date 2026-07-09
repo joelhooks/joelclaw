@@ -1,0 +1,283 @@
+---
+title: "Flagg X Webhook Receiver"
+type: "project"
+status: "active"
+created_at: "2026-06-28"
+privacy: "private"
+tags:
+  - x-api
+  - webhooks
+  - flagg
+  - panda-migration
+  - system-bus
+  - central
+---
+
+# Flagg X Webhook Receiver
+
+## Decision
+
+Add X webhook receiver support to `system-bus` first, but do **not** register or repoint X externally until the Flagg public HTTPS URL and service runtime are verified.
+
+This keeps the slice narrow:
+
+- Panda can remain live Central for current webhook providers.
+- Flagg can receive X webhook CRC/POST traffic as a migration canary.
+- The receiver forwards normalized events into the existing Inngest/gateway path.
+- We avoid a whole-Central cutover or split-brain move.
+
+## Source receipts
+
+X webhook docs say the receiver must:
+
+- expose a publicly accessible HTTPS URL
+- handle `GET` CRC validation with `crc_token`
+- compute `response_token = sha256=<base64 HMAC-SHA256(crc_token, consumer_secret)>`
+- respond to CRC within a low latency window
+- handle `POST` JSON webhook events
+- verify `x-twitter-webhooks-signature` as `sha256=<base64 HMAC-SHA256(raw_body, consumer_secret)>`
+- return `200` to acknowledge delivery
+
+Docs also distinguish products:
+
+- Account Activity API webhooks cover posts, mentions/replies, DMs, follows, likes, blocks, mutes, deletes, etc.
+- Filtered Stream Webhooks deliver matching posts.
+- Bookmarks are exposed through `GET /2/users/{id}/bookmarks`; no bookmark webhook event was found in the docs. Bookmark capture should stay as OAuth2 polling unless X exposes a bookmark activity event.
+
+## Code receipts
+
+Added provider support in `packages/system-bus`:
+
+- `src/webhooks/providers/x.ts`
+  - CRC response builder
+  - POST signature verification
+  - generic `x/account_activity.received` normalization
+- `src/webhooks/providers/x.test.ts`
+  - CRC, signature, and normalization coverage
+- `src/webhooks/types.ts`
+  - optional provider GET challenge hook
+- `src/webhooks/server.ts`
+  - registers provider `x`
+  - serves `GET /webhooks/x?crc_token=...`
+  - keeps existing `POST /webhooks/x` dispatch path
+- `src/inngest/client.ts`
+  - typed `x/account_activity.received`
+- `src/inngest/functions/x-account-activity-notify.ts`
+  - gateway notification without dumping raw payloads
+- `src/inngest/functions/index.ts`
+  - exports the notify function
+- `src/inngest/functions/index.host.ts`
+  - host worker registers the notify function
+- `src/serve.ts`
+  - leases `X_CONSUMER_SECRET` from `x_consumer_secret` when worker-managed secret leasing runs in-process
+  - includes X in webhook/service metadata
+- `start.sh`
+  - leases `x_consumer_secret` into `X_CONSUMER_SECRET` for the actual launchd worker path
+
+## Verification receipts
+
+```bash
+bun test packages/system-bus/src/webhooks/providers/x.test.ts \
+  packages/system-bus/src/webhooks/providers/vercel.test.ts \
+  packages/system-bus/src/webhooks/server.test.ts
+# 15 pass, 0 fail
+
+pnpm exec tsc -p packages/system-bus/tsconfig.json --noEmit --pretty false
+# passed
+```
+
+## Live Flagg receipts
+
+Checked from Flagg on 2026-06-28:
+
+- `hostname -s` returned `flagg`.
+- `com.joel.system-bus-worker` is already running as a user LaunchAgent.
+- Local worker health is reachable at `http://127.0.0.1:3111/`.
+- Local webhook root is reachable at `http://127.0.0.1:3111/webhooks`.
+- The running worker is pre-change: `/webhooks` listed `todoist`, `front`, `vercel`, `github`, `mux`, `joelclaw`, but not `x`.
+- Tailscale Serve currently exposes `joels-mac-studio.tail7af24.ts.net` as tailnet-only with paths for web/Brain, but no `/webhooks` route.
+- Tailscale Funnel status is also tailnet-only; no public Funnel route for `/webhooks` was enabled.
+
+## Durable all-webhook migration runbook
+
+Goal: move external webhook ingress from Panda to Flagg without exposing Flagg's existing web/Brain root.
+
+### Target URLs
+
+Use a dedicated public Funnel port for webhooks:
+
+```txt
+https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/todoist
+https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/front
+https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/vercel
+https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/github
+https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/mux
+https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/joelclaw
+https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/x
+```
+
+Do **not** enable Funnel on `joels-mac-studio.tail7af24.ts.net:443`; that host already serves web/Brain paths. Funnel is public per host:port, not safely private per path.
+
+### Phase 1 — prepare Flagg worker
+
+```bash
+cd /Users/joel/Code/joelhooks/joelclaw
+
+# Verify X code and existing webhook tests
+bun test packages/system-bus/src/webhooks/providers/x.test.ts \
+  packages/system-bus/src/webhooks/providers/vercel.test.ts \
+  packages/system-bus/src/webhooks/server.test.ts
+
+pnpm exec tsc -p packages/system-bus/tsconfig.json --noEmit --pretty false
+bash -n packages/system-bus/start.sh
+pnpm -s brain:check
+
+# Restart Flagg worker and re-register functions
+launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker
+sleep 8
+curl -fsS http://127.0.0.1:3111/webhooks | python3 -m json.tool
+curl -fsS -X PUT http://127.0.0.1:3111/api/inngest >/dev/null
+```
+
+Expected `/webhooks` providers after restart:
+
+```txt
+todoist, front, vercel, github, mux, joelclaw, x
+```
+
+### Phase 2 — add Flagg public webhook Funnel safely
+
+Generate a full Serve config from the current Flagg config and add only the webhook port:
+
+```bash
+tailscale serve status --json > /tmp/flagg-serve.before.json
+python3 <<'PY'
+import json
+from pathlib import Path
+p = Path('/tmp/flagg-serve.before.json')
+config = json.loads(p.read_text() or '{}')
+host = 'joels-mac-studio.tail7af24.ts.net:10000'
+config.setdefault('TCP', {})['10000'] = {'HTTPS': True}
+config.setdefault('Web', {})[host] = {
+    'Handlers': {
+        '/webhooks': {'Proxy': 'http://127.0.0.1:3111/webhooks'},
+    },
+}
+config.setdefault('AllowFunnel', {})[host] = True
+Path('/tmp/flagg-serve.webhooks.json').write_text(json.dumps(config, indent=2, sort_keys=True) + '\n')
+PY
+
+# Review before applying. This overwrites Serve config, so keep the before-file.
+python3 -m json.tool /tmp/flagg-serve.webhooks.json
+
+tailscale serve set-config /tmp/flagg-serve.webhooks.json
+sleep 3
+tailscale funnel status
+```
+
+Smoke tests:
+
+```bash
+curl -fsS https://joels-mac-studio.tail7af24.ts.net:10000/webhooks | python3 -m json.tool
+curl -k -sS -i https://joels-mac-studio.tail7af24.ts.net:10000/ | sed -n '1,12p'
+```
+
+Expected:
+
+- `/webhooks` returns the webhook gateway JSON.
+- `/` returns Tailscale/handler 404 or equivalent, not the web app and not Brain.
+
+Rollback for this phase:
+
+```bash
+tailscale serve set-config /tmp/flagg-serve.before.json
+```
+
+### Phase 3 — repoint external providers
+
+Change provider callback URLs from Panda to Flagg:
+
+| Provider | Old URL | New URL | Human action likely? |
+|---|---|---|---|
+| Todoist | `https://panda.tail7af24.ts.net/webhooks/todoist` | `https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/todoist` | Maybe, Todoist App Console |
+| Front | `https://panda.tail7af24.ts.net/webhooks/front` | `https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/front` | Yes if rules UI is required |
+| Vercel | `https://panda.tail7af24.ts.net/webhooks/vercel` | `https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/vercel` | Maybe API/dashboard; if recreated, update `vercel_webhook_secret` |
+| GitHub | `https://panda.tail7af24.ts.net/webhooks/github` | `https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/github` | API or dashboard |
+| Mux | `https://panda.tail7af24.ts.net/webhooks/mux` | `https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/mux` | API/dashboard |
+| Joelclaw internal | `https://panda.tail7af24.ts.net/webhooks/joelclaw` | `https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/joelclaw` | Repo/env config if used externally |
+| X | none yet | `https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/x` | Yes: account plan + @joelhooks user auth likely |
+
+After each provider is changed, trigger a provider test delivery and watch:
+
+```bash
+joelclaw logs worker --follow --grep webhook
+curl -fsS http://127.0.0.1:3111/webhooks | python3 -m json.tool
+joelclaw runs --count 10
+```
+
+### Phase 4 — X @joelhooks registration
+
+Receiver is generic; account choice happens during X subscription.
+
+Concrete target:
+
+```txt
+@joelhooks user ID: 12087242
+callback URL: https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/x
+```
+
+Current stored OAuth1 user token is @joelclaw, so @joelhooks subscription needs new user-context credentials. Prefer new secret names:
+
+```txt
+x_joelhooks_access_token
+x_joelhooks_access_token_secret
+```
+
+Do not overwrite `x_access_token` / `x_access_token_secret` unless posting should move away from @joelclaw too.
+
+X registration must wait until:
+
+1. public callback URL reaches Flagg,
+2. CRC validation passes,
+3. X plan/tier allows Account Activity API,
+4. @joelhooks has authorized the app with the required account-activity permissions.
+
+### Phase 5 — decommission Panda ingress
+
+Only after every provider has delivered at least one successful Flagg event:
+
+1. Disable provider dashboard URLs pointing to Panda.
+2. Keep Panda worker running for non-webhook Central duties until whole-Central cutover is approved.
+3. Remove/disable Panda Funnel `/webhooks` path only after a quiet period.
+4. Update `skills/webhooks/SKILL.md` provider table from Panda URLs to Flagg URLs.
+5. Add final receipt to this Brain note.
+
+## Cutover checklist
+
+Before registering X with an external URL:
+
+1. Use final Flagg URL: `https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/x` unless vendor rejects portful callbacks.
+2. Verify `system-bus` host worker is running on Flagg and serving `/webhooks` with provider `x` listed.
+3. Verify Flagg Tailscale Funnel `:10000` routes public HTTPS to `/webhooks` only.
+4. Verify service user can lease `x_consumer_secret` into `X_CONSUMER_SECRET` through `start.sh`.
+5. Run CRC smoke with a known secret and expected HMAC.
+6. Register webhook with X only after the public HTTPS URL passes CRC from outside.
+7. Subscribe **@joelhooks** account activity only after webhook registration returns a valid `webhook_id`.
+8. Keep Panda webhook providers unchanged until X events prove stable on Flagg.
+
+## X account target
+
+Joel corrected the target account: X Account Activity should subscribe **@joelhooks**, not @joelclaw.
+
+Verification receipts:
+
+- Existing stored OAuth1 user tokens (`x_access_token` / `x_access_token_secret`) resolve to `@joelclaw`, user ID `2022779096049311744`.
+- Public lookup for `@joelhooks` returned user ID `12087242`.
+
+Implication: registration/subscription needs a separate @joelhooks user authorization. Do not replace the existing @joelclaw posting tokens unless the posting account should change too. Prefer new secret names like `x_joelhooks_access_token` and `x_joelhooks_access_token_secret` for Account Activity subscription work.
+
+## Open questions
+
+- Does the current X plan/tier expose Account Activity API for @joelhooks? Docs say Account Activity is Enterprise/Pay Per Use.
+- Should X account activity events go only to gateway, or also to link ingest/discovery when event types contain liked posts or mentions with URLs?
+- Should Flagg use `system-bus` directly, or should `joelclaw-central` own a tiny dedicated webhook receiver that forwards to Panda until Central cutover?

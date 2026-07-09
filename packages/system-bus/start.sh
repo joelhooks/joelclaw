@@ -108,6 +108,13 @@ else
   echo "ERROR: Failed to lease vercel_webhook_secret (Vercel webhook verification disabled)" >&2
 fi
 
+X_CONSUMER_SECRET_VALUE=$(secrets lease x_consumer_secret --ttl 24h 2>/dev/null)
+if [ -n "$X_CONSUMER_SECRET_VALUE" ]; then
+  export X_CONSUMER_SECRET="$X_CONSUMER_SECRET_VALUE"
+else
+  echo "ERROR: Failed to lease x_consumer_secret (X webhook verification disabled)" >&2
+fi
+
 # ── Pre-start cleanup: kill any orphaned bun on port 3111 ──
 # This prevents EADDRINUSE when launchd restarts after a crash.
 STALE_PID=$(/usr/sbin/lsof -ti :3111 2>/dev/null | head -1)

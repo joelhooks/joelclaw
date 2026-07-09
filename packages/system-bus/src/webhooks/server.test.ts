@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { __webhookServerTestUtils } from "./server";
+import { createHmac } from "node:crypto";
+import { __webhookServerTestUtils, webhookApp } from "./server";
 import type { NormalizedEvent, WebhookProvider } from "./types";
 
 const { buildWebhookEventName, shouldQueueWebhookEvent } = __webhookServerTestUtils;
@@ -24,6 +25,7 @@ const packagePublished: NormalizedEvent = {
 };
 
 const priorQueuePilots = process.env.QUEUE_PILOTS;
+const priorXConsumerSecret = process.env.X_CONSUMER_SECRET;
 
 afterEach(() => {
   if (priorQueuePilots === undefined) {
@@ -32,6 +34,12 @@ afterEach(() => {
   }
 
   process.env.QUEUE_PILOTS = priorQueuePilots;
+
+  if (priorXConsumerSecret === undefined) {
+    delete process.env.X_CONSUMER_SECRET;
+  } else {
+    process.env.X_CONSUMER_SECRET = priorXConsumerSecret;
+  }
 });
 
 describe("webhook server queue pilot helpers", () => {
@@ -63,5 +71,22 @@ describe("webhook server queue pilot helpers", () => {
     process.env.QUEUE_PILOTS = "github";
 
     expect(shouldQueueWebhookEvent("vercel", workflowCompleted)).toBe(false);
+  });
+});
+
+describe("webhook server provider challenges", () => {
+  test("handles X CRC validation over GET /:provider", async () => {
+    process.env.X_CONSUMER_SECRET = "test-secret";
+    const response = await webhookApp.request("/x?crc_token=foo");
+    const body = await response.json();
+    const expected = `sha256=${createHmac("sha256", "test-secret").update("foo").digest("base64")}`;
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ response_token: expected });
+  });
+
+  test("rejects GET challenges for providers that do not support them", async () => {
+    const response = await webhookApp.request("/github?crc_token=foo");
+    expect(response.status).toBe(405);
   });
 });

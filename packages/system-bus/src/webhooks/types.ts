@@ -13,6 +13,12 @@ export type NormalizedEvent = {
   idempotencyKey: string;
 };
 
+export type WebhookChallengeResponse = {
+  status?: number;
+  body: Record<string, unknown> | string;
+  contentType?: string;
+};
+
 export interface WebhookProvider {
   /** Provider identifier, e.g. "todoist", "github" */
   id: string;
@@ -35,4 +41,12 @@ export interface WebhookProvider {
     body: Record<string, unknown>,
     headers: Record<string, string>,
   ): NormalizedEvent[];
+  /**
+   * Optional provider-specific GET challenge handler.
+   * X/Twitter uses this for CRC validation before accepting a webhook URL.
+   */
+  buildChallengeResponse?(
+    query: Record<string, string>,
+    headers: Record<string, string>,
+  ): WebhookChallengeResponse;
 }
