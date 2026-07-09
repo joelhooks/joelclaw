@@ -11,6 +11,18 @@ tags: [joelclaw, health, diagnostics, checks, operations]
 
 Run `scripts/postboot.sh` for the read-only postboot/daily topology sweep. It checks the Flagg/Panda authority split, NAS mounts, NFS tuning, custom NAS MinIO, Central Postgres, local Convex, Typesense, Inngest, and shadow Central health without printing secrets. The daily automation also reviews recent Codex infra transcripts so completed work does not stay trapped in chat.
 
+## Migration caveat — 2026-07-09
+
+The current health script is still too Panda-centric: it treats Panda-era k8s/PDS/NodePort surfaces as if they were the whole joelclaw system. That is no longer aligned with the Central migration vision.
+
+Health needs to become lane-based:
+
+- **Central lane**: Flagg/Mac Studio native launchd services, Redis, Typesense, Inngest, system-bus worker, agent-mail, run capture, session NAS backup receipts, reboot-survivable state.
+- **Relay lane**: Panda-only leftovers such as iMessage/account-bound relays, legacy webhook/callback surfaces, and explicit decommission blockers.
+- **Satellite lane**: Blaine/other Machines' `JOELCLAW_CENTRAL_URL`, outbox backlog, fresh capture timestamps, and transcript backup freshness.
+
+Until that rewrite lands, read red Panda/k8s/PDS checks as migration TODOs, not proof that Flagg Central is dead.
+
 ```bash
 ~/Code/joelhooks/joelclaw-runtime/skills/joelclaw-system-check/scripts/postboot.sh
 ```
@@ -121,6 +133,7 @@ Active Codex automation:
 | pds | AT Proto PDS on :9627 | version + collections | pod running, host publish degraded | pod not running |
 | worker | system-bus on :3111 | 16+ functions | responding, low count | down |
 | inngest server | :8288 reachable | responding | — | down |
+| agent-mail | Flagg-local MCP mail on :8765 | alive + mailbox visible | degraded counts/search | unavailable |
 | redis/gateway | Redis + gateway session queues | connected, low pending queue | connected, backlog rising | unavailable |
 | typesense/otel | Typesense health + OTEL query path | healthy + queryable | healthy, query degraded | unavailable |
 | tests | isolated per-file `bun test` in system-bus | 0 fail | — | failures |
@@ -133,6 +146,33 @@ Active Codex automation:
 | gogcli | Google Workspace auth | account authed, token valid | token stored, no password | not configured |
 | disk | free space + loop tmp | <80% used | — | >80% |
 | stale tests | `__tests__/` + acceptance tests | clean | — | present |
+
+## Agent Session Capture + NAS Backup Check
+
+Use the `agent-session-capture-backup` skill when the check needs proof that Pi/Claude/Codex transcript activity is captured and backed up across Flagg, Blaine, and Panda.
+
+Fast audit/repair command from `~/Code/joelhooks/joelclaw`:
+
+```bash
+bun scripts/agent-session-audit-backup.ts \
+  --hosts flagg,blaine,panda \
+  --central-url http://joels-mac-studio.tail7af24.ts.net:3111 \
+  --backup-root /Volumes/three-body/sessions \
+  --repair-env \
+  --sync=true \
+  --replay-outbox \
+  --replay-limit 250 \
+  --replay-max-bytes 10485760
+```
+
+Daily durable workflow:
+
+- function: `system/agent-session.capture-backup.verify`
+- event: `system/agent-session.capture-backup.requested`
+- cron: `TZ=America/Los_Angeles 15 5 * * *`
+- receipts: `/Volumes/three-body/sessions/receipts/*.json`
+
+Treat stale or empty `/Volumes/three-body/sessions` as a critical backup failure even when `runs_dev` Typesense indexes are fresh. Typesense is derived; raw transcripts and run blobs are the source of truth.
 
 ## When to Run
 

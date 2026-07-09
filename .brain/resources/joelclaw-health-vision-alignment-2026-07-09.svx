@@ -1,0 +1,87 @@
+---
+title: "Joelclaw Health Vision Alignment"
+type: "resource"
+status: "active"
+created_at: "2026-07-09"
+tags:
+  - joelclaw
+  - health
+  - central-migration
+  - agent-mail
+---
+
+# Joelclaw Health Vision Alignment
+
+## Why this exists
+
+The current `joelclaw` health check is still too Panda-centric. It treats Panda-era k8s/PDS/NodePort surfaces as if they were the whole joelclaw system.
+
+That no longer matches the Central migration vision in `CONTEXT.md`: Central can move hosts, Panda should become a Relay Machine, and health should distinguish current authority from legacy/decommission surfaces.
+
+## Desired health model
+
+Health should report by responsibility lane:
+
+1. **Central lane — Flagg/Mac Studio**
+   - launchd state for Central-owned daemons
+   - Redis/Typesense/Inngest/system-bus worker
+   - agent-mail on local `127.0.0.1:8765`
+   - run capture endpoint and outbox replay
+   - NAS session backup receipts
+   - reboot-survivable service state
+
+2. **Relay lane — Panda**
+   - account-bound leftovers such as iMessage relay or legacy webhooks
+   - explicit decommission blockers
+   - no claim that Panda health equals joelclaw health
+
+3. **Satellite lane — Blaine and other Machines**
+   - `JOELCLAW_CENTRAL_URL` points at the current Central
+   - outbox backlog and stale files
+   - recent run-capture timestamps by runtime
+   - transcript backup freshness
+
+## 2026-07-09 agent-mail migration receipt
+
+- Flagg had no local agent-mail service or checkout.
+- Cloned `joelhooks/mcp_agent_mail` to `/Users/joel/Code/joelhooks/mcp_agent_mail`.
+- Added Flagg user LaunchAgent at `/Users/joel/Library/LaunchAgents/com.joelclaw.agent-mail.plist` because sudo was unavailable for installing the system LaunchDaemon.
+- Fixed `infra/agent-mail-daemon.sh` to resolve `uv` from `PATH`/Homebrew instead of hardcoding `/Users/joel/.local/bin/uv`.
+- Migrated Panda mailbox state to Flagg:
+  - `~/.mcp_agent_mail_git_mailbox_repo/`
+  - `storage.sqlite3` from Panda legacy checkout
+- Verified `joelclaw mail status` on Flagg:
+  - liveness: `alive`
+  - messages: `1000`
+  - unread: `1000`
+  - projects: `7`
+
+## Decommission receipt
+
+Panda agent-mail is decommissioned as of 2026-07-09 after Joel ran the sudo bootout/removal on Panda.
+
+Verified from Flagg over SSH:
+
+```txt
+panda=panda
+agent-mail-system-not-loaded
+plist-removed
+port-8765-closed
+```
+
+Flagg remains the active agent-mail host:
+
+```txt
+flagg=flagg
+gui agent-mail state = running
+127.0.0.1:8765 LISTEN
+joelclaw mail status => ok, alive, messages=1000, projects=7
+```
+
+## Immediate todos
+
+- Rewrite `skills/joelclaw-system-check/scripts/health.sh` into lane-based health instead of one Panda-shaped score.
+- Add a Central health section that treats Flagg/Mac Studio as the current active service surface where verified.
+- Add a Relay decommission section for Panda with explicit blockers and owners.
+- Add a Satellite capture section for Blaine/other Machines.
+- Make the health score less misleading: migration TODOs should not masquerade as “joelclaw is down.”

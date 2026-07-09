@@ -410,6 +410,15 @@ function getNumericEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function getBooleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw == null) return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
 function asFiniteNumber(value: unknown, fallback = 0): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -1086,7 +1095,7 @@ export const checkSystemHealth = inngest.createFunction(
       evidenceCount: 0,
     });
     const runCoreChecks = mode !== "signals";
-    const runSignalChecks = mode !== "core";
+    const runSignalChecks = mode !== "core" && getBooleanEnv("SYSTEM_HEALTH_OTEL_TYPESENSE_SIGNAL_CHECKS_ENABLED", false);
     const runStartedAt = Date.now();
     const stepDurationsMs: Record<string, number> = {};
 

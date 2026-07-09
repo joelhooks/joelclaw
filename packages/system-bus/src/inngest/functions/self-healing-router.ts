@@ -1,10 +1,12 @@
 import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
 import { infer } from "../../lib/inference";
+import { isInfraRecoveryModelRouterEnabled } from "../../lib/infra-recovery-guardrail";
 import { assertAllowedModel } from "../../lib/models";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
 const BACKUP_RETRY_EVENT_NAME = "system/backup.retry.requested";
+const GATEWAY_SEND_MESSAGE_EVENT = "gateway/send.message";
 const BACKUP_RETRY_DECISION_MODEL = loadBackupFailureRouterConfig().failureRouter.model;
 const BACKUP_RETRY_FALLBACK_MODEL = loadBackupFailureRouterConfig().failureRouter.fallbackModel;
 
@@ -423,6 +425,32 @@ function targetFromFunction(value: string | undefined): "typesense" | "redis" | 
 
 const SELF_HEALING_CONFIG = loadBackupFailureRouterConfig();
 
+// Deterministic default: no model call, bounded backoff or escalate once the
+// retry budget is exhausted. See infra-recovery-guardrail.ts for the policy.
+function deterministicSelfHealingDecision(
+  attempt: number,
+  policy: RetryPolicy,
+  reasonPrefix = "Deterministic self-healing guardrail",
+): Decision {
+  const maxRetries = toSafeInt(policy.maxRetries, SELF_HEALING_CONFIG.failureRouter.maxRetries);
+  if (attempt >= maxRetries) {
+    return {
+      action: "escalate",
+      delayMs: 0,
+      reason: `${reasonPrefix}: retry budget exhausted at attempt ${attempt}/${maxRetries}.`,
+      confidence: 1,
+      model: "deterministic-guardrail",
+    };
+  }
+  return {
+    action: "pause",
+    delayMs: estimateRetryDelayMs(attempt, policy),
+    reason: `${reasonPrefix}: bounded pause after attempt ${attempt}.`,
+    confidence: 1,
+    model: "deterministic-guardrail",
+  };
+}
+
 async function analyzeSelfHealingWithPi(
   payload: SelfHealingContext,
   attempt: number,
@@ -431,6 +459,10 @@ async function analyzeSelfHealingWithPi(
 ): Promise<Decision> {
   const policy = pickRetryPolicy(payload.retryPolicy ?? {});
   const normalizedAttempt = toSafeInt(attempt, 0);
+
+  if (!isInfraRecoveryModelRouterEnabled("self-healing")) {
+    return deterministicSelfHealingDecision(normalizedAttempt, policy);
+  }
 
   const systemPrompt = [
     "You are a senior SRE coding agent operating in the joelclaw system.",
@@ -503,13 +535,11 @@ async function analyzeSelfHealingWithPi(
         flowTrace: [...flowContext.flowTrace, "pi-fallback"],
       });
     } catch {
-      return {
-        action: "retry",
-        delayMs: estimateRetryDelayMs(normalizedAttempt, policy),
-        reason: "Model analysis unavailable; using fallback backoff.",
-        confidence: 0.35,
-        model: BACKUP_RETRY_FALLBACK_MODEL,
-      };
+      return deterministicSelfHealingDecision(
+        normalizedAttempt,
+        policy,
+        "Model analysis unavailable; self-healing guardrail fallback",
+      );
     }
   }
 }
@@ -599,6 +629,28 @@ function buildRetryPayload(
   return base;
 }
 
+function selfHealingAlertText(input: {
+  title: string;
+  sourceFunction?: string;
+  targetComponent?: string;
+  domain: string;
+  attempt: number;
+  maxAttempts?: number;
+  reason: string;
+  eventId?: string;
+}): string {
+  return [
+    `🚨 ${input.title}`,
+    `source: ${input.sourceFunction ?? "unknown"}`,
+    `target: ${input.targetComponent ?? "unknown"}`,
+    `domain: ${input.domain}`,
+    input.maxAttempts ? `attempt: ${input.attempt}/${input.maxAttempts}` : `attempt: ${input.attempt}`,
+    `reason: ${input.reason}`,
+    input.eventId ? `event: ${input.eventId}` : undefined,
+    "next: investigate before autonomous recovery resumes for this domain",
+  ].filter(Boolean).join("\n");
+}
+
 export const selfHealingRouter = inngest.createFunction(
   {
     id: "system/self-healing.router",
@@ -617,12 +669,6 @@ export const selfHealingRouter = inngest.createFunction(
       event.id,
       data,
       nextAttempt,
-    );
-    const decision = await analyzeSelfHealingWithPi(
-      data,
-      attempt,
-      attempt > 0,
-      flowContext,
     );
 
     if (missing.length > 0) {
@@ -670,6 +716,78 @@ export const selfHealingRouter = inngest.createFunction(
       };
     }
 
+    if (domain === "backup" || data.targetEventName === BACKUP_RETRY_EVENT_NAME) {
+      const reason = "backup self-healing request blocked: backup retries are owned by system/backup.failure.router guardrails";
+      await emitOtelEvent({
+        level: "warn",
+        source: "worker",
+        component: "self-healing",
+        action: "system.self-healing.backup-request.blocked",
+        success: false,
+        error: reason,
+        metadata: {
+          eventId: event.id,
+          runContext: {
+            runContextKey: flowContext.runContextKey,
+            flowTrace: flowContext.flowTrace,
+            sourceEventName: flowContext.sourceEventName,
+            sourceEventId: flowContext.sourceEventId,
+            attempt: flowContext.attempt,
+            nextAttempt,
+          },
+          evidenceSummary: summarizeEvidenceForRouterPayload(data.evidence),
+          sourceFunction: data.sourceFunction,
+          targetComponent: data.targetComponent,
+          attempt,
+          targetEventName: data.targetEventName,
+          routeToFunction: data.routeToFunction,
+        },
+      });
+      await emitSelfHealingCompleted(step, event.id, {
+        domain,
+        sourceFunction: data.sourceFunction,
+        targetComponent: data.targetComponent,
+        status: "blocked",
+        action: "escalate",
+        attempt,
+        reason,
+        routeToEventName: data.targetEventName,
+        routeToFunction: data.routeToFunction,
+        evidence: data.evidence,
+        playbook: data.playbook,
+        flowContext,
+        owner: data.owner,
+        model: "deterministic-guardrail",
+        confidence: 1,
+      });
+      await step.sendEvent("alert-self-healing-backup-blocked", {
+        name: GATEWAY_SEND_MESSAGE_EVENT,
+        data: {
+          channel: "telegram",
+          text: selfHealingAlertText({
+            title: "Self-healing request blocked (backup domain)",
+            sourceFunction: data.sourceFunction,
+            targetComponent: data.targetComponent,
+            domain,
+            attempt,
+            reason,
+            eventId: event.id,
+          }),
+        },
+      });
+      return {
+        status: "blocked",
+        action: "escalate",
+        reason,
+      };
+    }
+
+    const decision = await analyzeSelfHealingWithPi(
+      data,
+      attempt,
+      attempt > 0,
+      flowContext,
+    );
     const isRetryLike = decision.action === "retry" || decision.action === "pause";
     const routeToEventName = decision.routeToEventName || toSafeText(data.targetEventName, "");
     const maxAttempts = toSafeInt(retryPolicy.maxRetries, SELF_HEALING_CONFIG.failureRouter.maxRetries);
@@ -724,6 +842,24 @@ export const selfHealingRouter = inngest.createFunction(
           playbook: data.playbook,
           flowContext,
           owner: data.owner,
+        });
+        await step.sendEvent("alert-self-healing-exhausted", {
+          name: GATEWAY_SEND_MESSAGE_EVENT,
+          data: {
+            channel: "telegram",
+            text: selfHealingAlertText({
+              title: routeToEventName ? "Self-healing retry budget exhausted" : "Self-healing route target missing",
+              sourceFunction: data.sourceFunction,
+              targetComponent: data.targetComponent,
+              domain,
+              attempt: nextAttempt,
+              maxAttempts,
+              reason: routeToEventName
+                ? `Retry budget exceeded (${nextAttempt}/${maxAttempts})`
+                : "Route target missing",
+              eventId: event.id,
+            }),
+          },
         });
         return {
           status: routeToEventName ? "exhausted" : "blocked",
@@ -837,6 +973,21 @@ export const selfHealingRouter = inngest.createFunction(
         owner: data.owner,
         confidence: decision.confidence,
         model: decision.model,
+      });
+      await step.sendEvent("alert-self-healing-escalated", {
+        name: GATEWAY_SEND_MESSAGE_EVENT,
+        data: {
+          channel: "telegram",
+          text: selfHealingAlertText({
+            title: "Self-healing request escalated",
+            sourceFunction: data.sourceFunction,
+            targetComponent: data.targetComponent,
+            domain,
+            attempt,
+            reason: decision.reason,
+            eventId: event.id,
+          }),
+        },
       });
       return {
         status: "escalated",

@@ -38,6 +38,16 @@ function asPositiveInt(raw: string | undefined, fallback: number, min = 1): numb
   return parsed;
 }
 
+function asBoolean(raw: string | undefined, fallback: boolean): boolean {
+  if (raw == null) return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+const CHANNEL_OTEL_PROBES_ENABLED = asBoolean(process.env.GATEWAY_CHANNEL_OTEL_PROBES_ENABLED, false);
+const TYPESENSE_PROBE_SEARCH_CUTOFF_MS = asPositiveInt(process.env.GATEWAY_CHANNEL_OTEL_SEARCH_CUTOFF_MS, 750, 100);
 const CHANNEL_WINDOW_MINUTES = asPositiveInt(process.env.GATEWAY_CHANNEL_HEALTH_WINDOW_MINUTES, 30, 5);
 const CHANNEL_DEGRADED_ERROR_THRESHOLD = asPositiveInt(process.env.GATEWAY_CHANNEL_DEGRADED_THRESHOLD, 3, 1);
 const CHANNEL_FAILED_ERROR_THRESHOLD = asPositiveInt(process.env.GATEWAY_CHANNEL_FAILED_THRESHOLD, 6, 2);
@@ -342,6 +352,7 @@ async function countActionEvents(filterBy: string): Promise<number> {
     query_by: TYPESENSE_QUERY_BY,
     per_page: 1,
     filter_by: filterBy,
+    search_cutoff_ms: TYPESENSE_PROBE_SEARCH_CUTOFF_MS,
   });
 
   return result.found ?? 0;
@@ -356,6 +367,7 @@ async function fetchLatestError(baseFilter: string): Promise<{ action?: string; 
     sort_by: "timestamp:desc",
     include_fields: "action,error,timestamp",
     filter_by: `${baseFilter} && success:=false`,
+    search_cutoff_ms: TYPESENSE_PROBE_SEARCH_CUTOFF_MS,
   });
 
   const hit = Array.isArray(result.hits) ? result.hits[0] : undefined;
@@ -639,6 +651,19 @@ export const checkGatewayHealth = inngest.createFunction(
     }
 
     const channelHealth = await step.run("probe-channel-health", async () => {
+      if (!CHANNEL_OTEL_PROBES_ENABLED) {
+        return CHANNEL_PROBES.map((config) => ({
+          channel: config.id,
+          component: config.component,
+          status: "unknown" as const,
+          severeCount: 0,
+          successCount: 0,
+          latestErrorAction: "monitor.probe.skipped",
+          latestError: "Typesense OTEL channel probes disabled by default; set GATEWAY_CHANNEL_OTEL_PROBES_ENABLED=1 after otel_events recovery.",
+          streak: 0,
+        }));
+      }
+
       const cutoffMs = Date.now() - CHANNEL_WINDOW_MINUTES * 60 * 1000;
       const summaries: ChannelHealthSummary[] = [];
 

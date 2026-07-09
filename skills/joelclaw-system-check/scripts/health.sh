@@ -59,7 +59,11 @@ if [[ "$STATUS_OK" == "true" ]]; then
     check "k8s cluster" 4 "$K8S_DETAIL"
   fi
 else
-  check "k8s cluster" 1 "joelclaw status unavailable"
+  if [[ "$(hostname -s 2>/dev/null)" == "flagg" ]]; then
+    check "k8s cluster" 5 "legacy Panda/k8s status unavailable on Flagg; track as Relay/decommission TODO, not Central-down proof"
+  else
+    check "k8s cluster" 1 "joelclaw status unavailable"
+  fi
 fi
 
 # -- pds health --------------------------------------------------------
@@ -94,7 +98,13 @@ if [[ "$INNGEST_OK" == "true" ]]; then
     check "worker" 1 "worker not reachable"
   fi
 else
-  check "worker" 1 "joelclaw inngest status unavailable"
+  WORKER_ROOT_JSON=$(curl -sf http://127.0.0.1:3111/ 2>/dev/null || true)
+  WORKER_ROOT_COUNT=$(json_get "$WORKER_ROOT_JSON" '.count // 0')
+  if [[ "$WORKER_ROOT_COUNT" -ge 55 ]]; then
+    check "worker" 10 "${WORKER_ROOT_COUNT} functions via direct Flagg worker probe"
+  else
+    check "worker" 1 "joelclaw inngest status unavailable"
+  fi
 fi
 
 # -- inngest server ----------------------------------------------------
@@ -107,7 +117,23 @@ if [[ "$STATUS_OK" == "true" ]]; then
     check "inngest server" 1 "$SERVER_DETAIL"
   fi
 else
-  check "inngest server" 1 "status check unavailable"
+  INNGEST_HEALTH=$(curl -sf http://127.0.0.1:8288/health 2>/dev/null || true)
+  if echo "$INNGEST_HEALTH" | jq -e '.status == 200 or .message == "OK"' >/dev/null 2>&1; then
+    check "inngest server" 10 "responding on :8288 via direct probe"
+  else
+    check "inngest server" 1 "status check unavailable"
+  fi
+fi
+
+# -- agent-mail --------------------------------------------------------
+MAIL_JSON=$(joelclaw mail status 2>/dev/null || true)
+MAIL_OK=$(json_get "$MAIL_JSON" '.ok // false')
+if [[ "$MAIL_OK" == "true" ]]; then
+  MAIL_COUNT=$(json_get "$MAIL_JSON" '.result.unified_inbox.message_count // 0')
+  MAIL_PROJECTS=$(json_get "$MAIL_JSON" '.result.unified_inbox.project_count // 0')
+  check "agent-mail" 10 "alive on Flagg :8765, messages=${MAIL_COUNT}, projects=${MAIL_PROJECTS}"
+else
+  check "agent-mail" 1 "unavailable on Flagg :8765"
 fi
 
 # -- redis / gateway ---------------------------------------------------
@@ -327,6 +353,15 @@ else
 fi
 printf "  OVERALL: %s/10  (%d checks)\n" "$PRECISE" "$COUNT"
 echo "===================================================="
+
+echo ""
+echo "Vision alignment / migration TODOs:"
+echo "  - This health script is still Panda-era and k8s/PDS-centric; on Flagg/Mac Studio it over-weights legacy Panda surfaces."
+echo "  - Split health into Central / Relay / Satellite lanes: Central=Flagg native launchd services; Relay=Panda account-bound services; Satellite=Blaine/other capture clients."
+echo "  - Central health should lead with Redis, Typesense, Inngest, system-bus worker, agent-mail, run capture, NAS backup receipts, and reboot-survivable launchd state."
+echo "  - Relay health should track Panda-only leftovers and explicit decommission blockers, not pretend Panda is the whole joelclaw system."
+echo "  - Satellite health should track JOELCLAW_CENTRAL_URL, outbox backlog, recent capture timestamps, and transcript backup freshness."
+echo "  - Agent-mail target: Flagg/Mac Studio local service on :8765; Panda service should be disabled after sudo launchd decommission."
 
 if [[ ${#ISSUES[@]} -gt 0 ]]; then
   echo ""
