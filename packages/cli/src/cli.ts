@@ -20,7 +20,6 @@ import { healCmd } from "./commands/heal";
 import { inngestCmd } from "./commands/inngest";
 import { jobsCmd } from "./commands/jobs";
 import { knowledgeCmd } from "./commands/knowledge";
-import { langfuseCmd } from "./commands/langfuse";
 import { logCmd } from "./commands/log";
 import { logsCmd } from "./commands/logs";
 import { loopCmd } from "./commands/loop";
@@ -51,6 +50,7 @@ import { functionsCmd, statusCmd } from "./commands/status";
 import { subscribeCmd } from "./commands/subscribe";
 import { summaryCmd } from "./commands/summary";
 import { tuiCmd } from "./commands/tui";
+import { usageCmd } from "./commands/usage";
 import { vaultCmd } from "./commands/vault";
 import { watchCmd } from "./commands/watch";
 import { webhookCmd } from "./commands/webhook";
@@ -208,7 +208,7 @@ const root = Command.make("joelclaw", {}, () =>
             pds: "joelclaw pds {health|describe|collections|records|write|delete|session}",
             otel: "joelclaw otel {list|search|stats|emit}",
             o11y: "joelclaw o11y {session|system}",
-            langfuse: "joelclaw langfuse {aggregate}",
+            usage: "joelclaw usage [--hours 24] [--component <c>] [--model <m>] [--machine <id>] [--limit 500] [--json]",
             subscribe: "joelclaw subscribe {list|add|remove|check|summary}",
             webhook: "joelclaw webhook {subscribe|unsubscribe|list|stream}",
             knowledge: "joelclaw knowledge {sync|search|note|clear-failed}",
@@ -268,10 +268,6 @@ const root = Command.make("joelclaw", {}, () =>
             command:
               'joelclaw notify send "System check complete" --priority normal',
             description: "Send canonical gateway notification",
-          },
-          {
-            command: "joelclaw langfuse aggregate --hours 24",
-            description: "Aggregate cloud LLM trace trends",
           },
           {
             command: "joelclaw schema",
@@ -339,7 +335,7 @@ const root = Command.make("joelclaw", {}, () =>
     pdsCmd,
     otelCmd,
     o11yCmd,
-    langfuseCmd,
+    usageCmd,
     inngestCmd,
     subscribeCmd,
     webhookCmd,

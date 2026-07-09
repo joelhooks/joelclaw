@@ -53,6 +53,32 @@ export function isNoOpFailure(error: string | Error): boolean {
   return NOOP_ERROR_PATTERNS.some((pattern) => lower.includes(pattern));
 }
 
+// ── Exhaustion failure detection ────────────────────────────────
+// 2026-07: Codex token drain incident — a backup/self-healing retry loop
+// fanned infer() out to thousands of calls, almost all timing out or hitting
+// usage_limit_reached. Those never tripped the circuit because they aren't
+// no-op failures. Treat exhaustion signatures as circuit-trippable too, so
+// any repeated-failure callsite (not just backup/self-healing) gets bounded.
+const EXHAUSTION_ERROR_PATTERNS = [
+  "timed out",
+  "timeout",
+  "usage_limit_reached",
+  "rate_limit",
+  "rate limit",
+  "429",
+  "quota",
+];
+
+export function isExhaustionFailure(error: string | Error): boolean {
+  const message = typeof error === "string" ? error : error.message;
+  const lower = message.toLowerCase();
+  return EXHAUSTION_ERROR_PATTERNS.some((pattern) => lower.includes(pattern));
+}
+
+export function isCircuitTrippingFailure(error: string | Error): boolean {
+  return isNoOpFailure(error) || isExhaustionFailure(error);
+}
+
 // ── State store ─────────────────────────────────────────────────
 const circuits = new Map<string, CircuitData>();
 

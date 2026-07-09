@@ -1,0 +1,140 @@
+---
+title: "Agent Usage Observability"
+type: "project"
+status: "draft"
+created_at: "2026-07-09"
+privacy: "private"
+tags:
+  - observability
+  - telemetry
+  - clickhouse
+  - inference
+  - subagent-swarm
+  - system-bus
+  - flagg
+  - panda-migration
+---
+
+# Agent Usage Observability
+
+## Problem
+
+Joelclaw has no durable, queryable record of LLM token usage across its agent/`infer()` call sites. This surfaced hard during the 2026-07-09 backup/self-healing token-drain incident (guardrail fix landed in `packages/system-bus/src/inngest/functions/nas-backup.ts` and `self-healing-router.ts`): Pi's original incident scan could only report *call counts* (7,446 `openai-codex` attempts, 4,927 tied to `system/backup.typesense`, 9,719 generation observations) from Langfuse, never actual token counts, and post-incident we couldn't get a real number either.
+
+Separately, joelclaw's own `infer()` call sites are only one slice of actual agent usage. Real spend/usage also happens in Pi, Claude Code, Codex, and Cursor sessions across machines — none of which currently report into a shared store. A usage picture that only covers `system-bus`'s own model router misses most of the actual cost surface.
+
+Root cause, confirmed this session by direct ClickHouse query, not guesswork:
+
+- `model_router.result` (successful `infer()` completions) = 1,419 events in the last 48h.
+- `model_router.usage_missing` = 1,419 events in the same window.
+- **100% of successful inference calls have no captured token usage.** This is not a Langfuse problem — it's upstream, in `packages/system-bus/src/lib/inference.ts`'s `runPiAttempt`/`piResult.usage` parsing. Langfuse being dead just meant nobody noticed sooner.
+
+Langfuse itself is confirmed dead (see `.brain/resources/observability-stack-map.svx`): never migrated to Flagg, its legacy `/api/public/traces` endpoint 429s/422s under any real query, and it should be decommissioned rather than fixed. ClickHouse is already the documented canonical OTEL sink (`joelclaw.otel_events`, confirmed live and actively written to at `192.168.1.163:8123` — ~3,900 events/10min) and is the right place to route usage/cost accounting instead.
+
+Separately: agent execution now spans multiple machines (Flagg native launchd worker, Panda's older Central runtime pending decommission, `joelclaw-central`'s wave-1 native services) with no unified, high-cardinality view of *which agent, on which machine, did what, for how many tokens*. That gap needs closing before the Panda decommission plan can be evaluated with real usage data instead of guesses.
+
+## Source receipts (this session, 2026-07-09)
+
+```sql
+-- otel_events is live and current
+SELECT max(timestamp), count() FROM joelclaw.otel_events WHERE timestamp > now() - INTERVAL 10 MINUTE
+-- 2026-07-09 15:50:03.560   3924
+
+-- usage capture is broken for 100% of successful calls
+SELECT action, count() FROM joelclaw.otel_events
+WHERE timestamp > now() - INTERVAL 48 HOUR AND action LIKE 'model_router%'
+GROUP BY action ORDER BY count() DESC
+-- model_router.fallback  5535
+-- model_router.request   4184
+-- model_router.route     4184
+-- model_router.fail      2761
+-- model_router.result    1419
+-- model_router.usage_missing  1419   <- exactly matches .result, i.e. always missing
+
+-- decision provenance is queryable per-call via metadata_json (used to verify the
+-- backup/self-healing hotfix was live in production with zero leakage post-restart)
+SELECT JSONExtractString(metadata_json, 'decision', 'model') AS m, count()
+FROM joelclaw.otel_events
+WHERE action='system.backup.failure.router' AND timestamp > now() - INTERVAL 25 MINUTE
+GROUP BY m
+-- openai-codex/gpt-5.4     54   (all pre-restart, verified by timestamp)
+-- deterministic-guardrail  1942
+```
+
+`otel_events` schema (already fits high-cardinality structured logging — no new table needed for the core work):
+
+```
+timestamp DateTime64(3,'UTC'), level LowCardinality(String), source LowCardinality(String),
+component LowCardinality(String), action LowCardinality(String), success UInt8,
+duration_ms Nullable(UInt32), error String, metadata_json String, id String, date Date,
+sessionId Nullable(String), systemId Nullable(String), metadata_keys Array(String),
+search_text String, received_at DateTime64(3,'UTC')
+```
+
+`inference-circuit.ts` (ADR-0191, extended this session to trip on timeout/`usage_limit_reached` in addition to no-op output) is the existing prior art for *bounded* LLM call behavior — per-(component,action) circuit breaker, in-memory, no external dependency. The usage-capture fix and any new instrumentation should follow the same shape: cheap, in-process, no new service to babysit.
+
+## Goals
+
+1. Every successful `infer()` call records real `usage` (input/output/cache tokens, and cost if the provider returns it) into `metadata_json` on the existing `model_router.result` OTEL event — no new event type needed.
+2. A queryable rollup (CLI command + scheduled Inngest function, mirroring the already-built but currently Langfuse-backed `daily-token-usage-report.ts`) reads token usage straight from ClickHouse, grouped by component/action/model/day, with per-machine (`systemId`) breakdown.
+3. Langfuse call sites removed from `daily-token-usage-report.ts` and the `joelclaw langfuse aggregate` CLI command deprecated/removed.
+4. Cross-machine agent identity is unambiguous in every event: `systemId` (already in schema) reliably distinguishes Flagg / Panda / `joelclaw-central` so the Panda decommission plan can be built on real usage data, not memory.
+5. **Passive usage capture across all agent runtimes, not just `system-bus`'s `infer()`**: Pi, Claude Code, Codex, and Cursor sessions each report token usage into the same `otel_events` shape, per machine, without requiring a human to remember to instrument each new session manually.
+6. **Cost is derived from a shared rate table benchmarked against OpenRouter**, not per-provider guesswork — OpenRouter publishes per-model $/token pricing for most of the same underlying models (Anthropic, OpenAI, etc.) even for calls that don't route through OpenRouter itself, so it's usable as a reference rate table without requiring OpenRouter as an actual gateway. (Note: joelclaw's own house rule is "no OpenRouter, no paid API keys — use `pi` for inference" per `.claude/CLAUDE.md`; this project only uses OpenRouter's *published pricing data* as a benchmark, never as a runtime dependency or inference path.)
+7. Capture is **configurable per machine with sensible joelclaw defaults** — a new machine should get working passive capture with zero config, but each machine can override which agent runtimes to watch, sampling/flush cadence, and whether to forward to Flagg's ClickHouse directly or queue locally first.
+8. The build process for this project itself does not repeat the incident's failure mode — see Execution plan below.
+
+## Non-goals
+
+- Rebuilding Langfuse-equivalent UI/tracing. ClickHouse + `joelclaw` CLI queries are the interface; Grafana (per `.brain/resources/observability-stack-map.svx`) is deferred until there are ≥2 real sources to justify it.
+- Real-time cost alerting/budgets — that's a follow-on once the data is trustworthy, not part of this slice.
+- Full Panda decommission — this project produces the usage data that decommission planning needs; it does not do the decommission itself.
+
+## Design
+
+**Usage capture fix (root cause, do first):** trace `piResult.usage` back through the `pi` CLI integration in `inference.ts` to find why it's never populated. Likely candidates: the underlying `pi` process isn't asked to emit usage in its output format, or the parser looks for the wrong field/shape. This is a single-file, single-owner fix — no swarm needed, just correct diagnosis.
+
+**Sink:** write real usage into the metadata of the event that already exists (`model_router.result`), not a new table. Add a thin ClickHouse query layer (`packages/system-bus/src/lib/clickhouse-usage-query.ts` or similar) that the daily report and CLI both call, replacing the current Langfuse-backed `runJsonCommand(["joelclaw", "langfuse", "aggregate", ...])` path in `daily-token-usage-report.ts`.
+
+**Cross-machine identity:** confirm `systemId` is set consistently on every machine's worker (`com.joel.system-bus-worker` on Flagg, whatever Panda/`joelclaw-central` currently set). If not consistent, that's a small fix in each launchd/env config, not new code.
+
+**Multi-agent passive capture:** Pi, Claude Code, Codex, and Cursor each already write their own session logs/transcripts locally (see `session-search` skill's existing indexing of Pi/Claude/Codex history for prior art on where these live per-machine). Rather than instrumenting each tool's runtime internals, the pragmatic first cut is a passive **tailer/parser per agent runtime** that reads each tool's existing local session log format, extracts usage where the tool already reports it (most CLIs print or log token counts somewhere), and forwards a normalized `agent_usage`-shaped event into the same `otel_events` sink. This avoids depending on each vendor to add hooks; it depends on log formats already proven stable enough for `session-search` to index today.
+
+Config shape (per-machine, joelclaw defaults baked in, overridable):
+
+```
+JOELCLAW_USAGE_CAPTURE_AGENTS=pi,claude,codex,cursor   # default: all four
+JOELCLAW_USAGE_CAPTURE_FLUSH_MS=60000                   # default cadence
+JOELCLAW_USAGE_CAPTURE_FORWARD_URL=http://flagg:3111/observability/emit  # matches existing OTEL_FORWARD_URL pattern
+```
+
+**Rate benchmarking against OpenRouter:** fetch OpenRouter's public model pricing endpoint on a slow cadence (daily, cached), build a `{model → $/1M input, $/1M output}` table, and use it purely as a reference rate to compute `costInput`/`costOutput`/`costTotal` on captured usage — never as an actual inference path (joelclaw's standing rule is no OpenRouter/paid API keys for inference itself; this is pricing-data-only, read-only, no auth required for the public pricing listing). Where a provider *does* return real cost (some already do per `LlmUsage.costInput`/`costOutput`/`costTotal` in `inference.ts`), prefer the provider's real number and only fall back to the OpenRouter-benchmarked estimate when cost is absent — same missing-data pattern as the `usage_missing` label already in use.
+
+**Langfuse decommission:** remove `joelclaw langfuse aggregate`/`joelclaw runs` Langfuse-backed code paths, remove Langfuse env/secrets, note removal in `.brain/resources/observability-stack-map.svx` (already flags it dead; this closes the loop).
+
+## Execution plan: subagent swarm shape
+
+Joel asked this PRD's own execution to be designed around subagent swarm fan-out with efficient token usage — deliberately, because the motivating incident *was* uncontrolled agent/model fan-out. The plan below is shaped to avoid that irony:
+
+- **Single-owner root cause fix first, no swarm.** The usage-capture bug (§Design) is a single-file diagnosis-and-fix in `inference.ts`. Fan-out here would just be multiple agents fighting over one file. One agent, sequential, verified with the existing `inference-circuit.test.ts`-style focused test, not a giant suite.
+- **Parallelize only the genuinely independent slices**, once the root cause fix lands and is proven with one real captured-usage event:
+  - Slice A: ClickHouse usage-query layer + CLI command
+  - Slice B: `daily-token-usage-report.ts` Langfuse→ClickHouse swap
+  - Slice C: per-machine `systemId` consistency audit (Flagg/Panda/`joelclaw-central` config, read-only survey, no code)
+  - Slice D: Langfuse decommission (remove code paths, secrets, docs)
+  - Slice E: OpenRouter pricing-table fetch + cache (read-only pricing data, no runtime inference dependency)
+  - Slice F: one passive tailer/parser per agent runtime (Pi, Claude Code, Codex, Cursor) — four genuinely independent sub-slices since each parses a different log format; still bounded to 2-3 concurrent agents at a time, not all four at once
+
+  These have no file overlap — safe for concurrent agents, **bounded concurrency** (2-3 agents max, matching the review-lane pattern already used successfully in this session's hotfix), not open-ended fan-out.
+- **Every agent call in this project must be metered against this project's own dashboard once Slice A lands** — eating your own dogfood is the acceptance test. If building this observability tooling doesn't show up cleanly in its own usage report, the tooling isn't done.
+- **No agent in this swarm calls `infer()` or spawns further sub-agents recursively without an explicit, bounded budget** (`Workflow`'s `budget.total`/`budget.remaining()` primitives, or a hard iteration cap) — mirroring the exact guardrail (bounded retry budget, single owner, deterministic default, circuit breaker) just built for the backup/self-healing path. Same policy, different subsystem.
+- **Verification lanes are read-only subagents, not implementers** — same 2-3-lane pattern used to verify the hotfix in this session (correctness / loop-safety-equivalent-here-called-"data-correctness" / validation-gap), run once after the parallel slices land, not per-slice.
+
+## Open questions
+
+- Does OpenRouter's public pricing endpoint require an API key even for read-only model listing? Needs a quick check before Slice E is scoped as "no auth required."
+- Do Pi/Claude Code/Codex/Cursor session logs reliably include token usage today, or only some of them? `session-search` skill already indexes these paths per-tool — read that first instead of re-discovering log locations.
+- Is the `pi` CLI itself capable of emitting usage today, or does the fix require a `pi`/`pi-mono` change upstream of this repo? Needs a read-only investigation pass before committing to "single-file fix" scope.
+- Should cost (not just token count) be derived client-side from a static per-model price table, or is there a provider-returned cost field worth trusting? Affects whether `costInput`/`costOutput`/`costTotal` (already in the `LlmUsage` type per `inference.ts`) are populated by the provider or computed.
+- Retention: `OTEL_CLICKHOUSE_TTL_DAYS` defaults to 180 — is that enough for meaningful month-over-month usage trend queries, or does a rollup table need to outlive raw event TTL?
+- Where does this project's CLI/report land relative to the already-built (Langfuse-backed, needs swap) `daily-token-usage-report.ts` — same file, or should Langfuse removal and ClickHouse addition be two separate small PRs?

@@ -20,8 +20,8 @@ import {
 } from "@joelclaw/inference-router";
 import { emitOtelEvent } from "../observability/emit";
 import { loadAgentDefinition } from "./agent-roster";
-import { checkCircuit, isNoOpFailure, recordFailure, recordSuccess } from "./inference-circuit";
-import { type LlmUsage, parsePiJsonAssistant, traceLlmGeneration } from "./langfuse";
+import { checkCircuit, isCircuitTrippingFailure, recordFailure, recordSuccess } from "./inference-circuit";
+import { type LlmUsage, parsePiJsonAssistant } from "./pi-output";
 
 type InferenceMetadata = Record<string, unknown>;
 
@@ -96,6 +96,7 @@ function remainingAttemptBudgetMs(deadlineMs: number, nowMs = Date.now()): numbe
 export const __testables = {
   normalizeTimeout,
   remainingAttemptBudgetMs,
+  buildPiAttemptArgs: (model: string, opts: PiAttemptOpts) => buildPiAttemptArgs(model, opts),
 };
 
 function normalizeText(value: unknown): string {
@@ -151,16 +152,16 @@ function usageCoverageLabel(usage?: LlmUsage): "present" | "missing" {
   return hasUsageSignal(usage) ? "present" : "missing";
 }
 
-async function runPiAttempt(
-  promptPath: string,
-  model: string,
-  timeoutMs: number,
-  opts: Pick<
-    InferOptions,
-    "appendSystemPrompt" | "cwd" | "env" | "noExtensions" | "noTools" | "print" | "system" | "thinking" | "tools"
-  >,
-): Promise<PiAttemptResult> {
-  const args: string[] = ["pi", "-p", "--no-session"];
+type PiAttemptOpts = Pick<
+  InferOptions,
+  "appendSystemPrompt" | "cwd" | "env" | "noExtensions" | "noTools" | "print" | "system" | "thinking" | "tools"
+>;
+
+function buildPiAttemptArgs(model: string, opts: PiAttemptOpts): string[] {
+  // --mode json makes pi emit message_end/turn_end events carrying usage
+  // (tokens + provider cost); without it parsePiJsonAssistant sees plain
+  // text and usage is missing on every call.
+  const args: string[] = ["pi", "-p", "--no-session", "--mode", "json"];
   if (opts.noExtensions ?? true) {
     args.push("--no-extensions");
   }
@@ -183,6 +184,17 @@ async function runPiAttempt(
   if (opts.appendSystemPrompt) {
     args.push("--append-system-prompt", opts.appendSystemPrompt);
   }
+
+  return args;
+}
+
+async function runPiAttempt(
+  promptPath: string,
+  model: string,
+  timeoutMs: number,
+  opts: PiAttemptOpts,
+): Promise<PiAttemptResult> {
+  const args = buildPiAttemptArgs(model, opts);
 
   const captureDir = await mkdtemp(join(tmpdir(), "joelclaw-pi-attempt-"));
   const stdoutPath = join(captureDir, "stdout.txt");
@@ -416,7 +428,6 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
 
     for (const attempt of attempts) {
       attemptsLeft -= 1;
-      const attemptStartedAt = Date.now();
 
       // ADR-0191: Check circuit before expensive pi spawn
       const circuitCheck = checkCircuit(component, action);
@@ -520,6 +531,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
           durationMs: piResult.durationMs,
           usageCoverage,
           usageCaptured: usageCoverage === "present",
+          ...(usageCoverage === "present" ? { usage: piResult.usage } : {}),
           outputChars: outputText.length,
           jsonRequested: Boolean(resolvedOpts.json),
           jsonParsed: resolvedOpts.json ? parsedData !== null : undefined,
@@ -563,48 +575,6 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
           });
         }
 
-        await traceLlmGeneration({
-          traceName: "joelclaw.inference",
-          generationName: "system-bus.infer",
-          tags: profile?.tags ?? [],
-          component,
-          action,
-          input: {
-            prompt: trimForMetadata(inputPrompt),
-            task: route.normalizedTask,
-            requestId,
-            policyVersion: route.policyVersion,
-            attemptIndex: attempt.attempt,
-          },
-          output: {
-            text: trimForMetadata(outputText, OTL_OUTPUT_PREVIEW_CHARS),
-            hasJson: resolvedOpts.json ? parsedData !== null : false,
-          },
-          provider,
-          model,
-          usage: piResult.usage,
-          durationMs: piResult.durationMs,
-          metadata: {
-            task: route.normalizedTask,
-            requestId,
-            policyVersion: route.policyVersion,
-            attemptIndex: attempt.attempt,
-            usageCoverage,
-            usageCaptured: usageCoverage === "present",
-            outputChars: outputText.length,
-            ...baseAgentMetadata,
-            ...(model ? { resolvedModel: model } : {}),
-            ...(resolvedOpts.metadata ?? {}),
-            ...(profile
-              ? {
-                  agentProfile: profile.name,
-                  agentTags: profile.tags,
-                  agentToolset: profile.builtinTools,
-                }
-              : {}),
-          },
-        });
-
         // ADR-0191: Record success → close circuit
         recordSuccess(component, action);
 
@@ -620,48 +590,12 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         lastError = error instanceof Error ? error : new Error(String(error));
         const hasFallback = attemptsLeft > 0;
 
-        // ADR-0191: Record no-op failures to circuit
-        if (isNoOpFailure(lastError)) {
+        // ADR-0191 + 2026-07 exhaustion-loop incident: record no-op AND
+        // timeout/quota failures to circuit so repeated-failure callsites
+        // (e.g. an infra retry loop) trip the breaker instead of fanning out.
+        if (isCircuitTrippingFailure(lastError)) {
           recordFailure(component, action);
         }
-        const failureDurationMs = Date.now() - attemptStartedAt;
-
-        await traceLlmGeneration({
-          traceName: "joelclaw.inference",
-          generationName: "system-bus.infer",
-          tags: profile?.tags ?? [],
-          component,
-          action,
-          input: {
-            prompt: trimForMetadata(inputPrompt),
-            task: route.normalizedTask,
-            requestId,
-            policyVersion: route.policyVersion,
-            attemptIndex: attempt.attempt,
-          },
-          output: { failed: true },
-          provider: attempt.provider,
-          model: attempt.model,
-          durationMs: failureDurationMs,
-          error: lastError.message,
-          metadata: {
-            task: route.normalizedTask,
-            requestId,
-            policyVersion: route.policyVersion,
-            attemptIndex: attempt.attempt,
-            fallbackRemaining: attemptsLeft,
-            ...baseAgentMetadata,
-            resolvedModel: attempt.model,
-            ...(resolvedOpts.metadata ?? {}),
-            ...(profile
-              ? {
-                  agentProfile: profile.name,
-                  agentTags: profile.tags,
-                  agentToolset: profile.builtinTools,
-                }
-              : {}),
-          },
-        });
 
         await emitOtelEvent({
           level: hasFallback ? "warn" : "error",
@@ -687,38 +621,6 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         if (hasFallback) continue;
       }
     }
-
-    await traceLlmGeneration({
-      traceName: "joelclaw.inference",
-      generationName: "system-bus.infer",
-      tags: profile?.tags ?? [],
-      component,
-      action,
-      input: {
-        prompt: trimForMetadata(inputPrompt),
-        task: route.normalizedTask,
-        requestId,
-        policyVersion: route.policyVersion,
-      },
-      output: { failed: true },
-      durationMs: Date.now() - startedAt,
-      error: lastError ? lastError.message : "inference exhausted all attempts",
-      metadata: {
-        task: route.normalizedTask,
-        requestId,
-        policyVersion: route.policyVersion,
-        ...baseAgentMetadata,
-        ...(attempts[attempts.length - 1]?.model ? { resolvedModel: attempts[attempts.length - 1]?.model } : {}),
-        ...(resolvedOpts.metadata ?? {}),
-        ...(profile
-          ? {
-              agentProfile: profile.name,
-              agentTags: profile.tags,
-              agentToolset: profile.builtinTools,
-            }
-          : {}),
-      },
-    });
 
     if (lastError) {
       throw lastError;

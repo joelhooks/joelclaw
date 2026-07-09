@@ -4,6 +4,8 @@ import {
   checkCircuit,
   getAllCircuits,
   getCircuitState,
+  isCircuitTrippingFailure,
+  isExhaustionFailure,
   isNoOpFailure,
   recordFailure,
   recordSuccess,
@@ -148,5 +150,31 @@ describe("inference-circuit", () => {
     expect(isNoOpFailure("inference_json_parse_empty")).toBe(true);
     expect(isNoOpFailure("output_empty")).toBe(true);
     expect(isNoOpFailure("random error")).toBe(false);
+  });
+
+  test("isExhaustionFailure detects timeout and quota patterns", () => {
+    expect(isExhaustionFailure("pi timed out after 120000ms")).toBe(true);
+    expect(isExhaustionFailure("usage_limit_reached")).toBe(true);
+    expect(isExhaustionFailure("429 Too Many Requests")).toBe(true);
+    expect(isExhaustionFailure("random error")).toBe(false);
+  });
+
+  test("isCircuitTrippingFailure covers both no-op and exhaustion failures", () => {
+    expect(isCircuitTrippingFailure("inference_text_output_empty")).toBe(true);
+    expect(isCircuitTrippingFailure("pi timed out after 120000ms")).toBe(true);
+    expect(isCircuitTrippingFailure("usage_limit_reached")).toBe(true);
+    expect(isCircuitTrippingFailure("random error")).toBe(false);
+  });
+
+  test("repeated timeout failures open the circuit", () => {
+    for (let i = 0; i < 3; i++) {
+      if (isCircuitTrippingFailure("pi timed out after 120000ms")) {
+        recordFailure("comp-timeout", "action-timeout");
+      }
+    }
+
+    const result = checkCircuit("comp-timeout", "action-timeout");
+    expect(result.skip).toBe(true);
+    expect(result.state).toBe("open");
   });
 });

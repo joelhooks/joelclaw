@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parsePiJsonAssistant } from "./langfuse";
+import { parsePiJsonAssistant } from "./pi-output";
 
 describe("parsePiJsonAssistant", () => {
   test("retains usage/model/provider when assistant text is empty", () => {

@@ -17,3 +17,19 @@ describe("inference timeout budgeting", () => {
     expect(__testables.remainingAttemptBudgetMs(deadlineMs, 99_500)).toBeNull();
   });
 });
+
+describe("pi attempt args", () => {
+  test("always requests JSON output mode so usage is parseable", () => {
+    const args = __testables.buildPiAttemptArgs("anthropic/claude-haiku-4-5", {});
+
+    expect(args.slice(0, 5)).toEqual(["pi", "-p", "--no-session", "--mode", "json"]);
+    expect(args).toContain("--models");
+    expect(args[args.indexOf("--models") + 1]).toBe("anthropic/claude-haiku-4-5");
+  });
+
+  test("appends thinking level to the model pattern", () => {
+    const args = __testables.buildPiAttemptArgs("openai-codex/gpt-5.5", { thinking: "high" });
+
+    expect(args[args.indexOf("--models") + 1]).toBe("openai-codex/gpt-5.5:high");
+  });
+});
