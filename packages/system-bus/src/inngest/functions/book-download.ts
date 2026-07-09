@@ -1,6 +1,6 @@
 import type { Dirent } from "node:fs";
 import { constants as fsConstants } from "node:fs";
-import { access, chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
@@ -28,6 +28,37 @@ const BOOK_DOWNLOAD_TIMEOUT_MS = Math.max(
 const NAS_HOST = process.env.JOELCLAW_NAS_HOST?.trim() || "joel@three-body";
 const NAS_BOOKS_DIR = process.env.JOELCLAW_NAS_BOOKS_DIR?.trim() || "/volume1/home/joel/books";
 const NAS_BACKUP_TIMEOUT_MS = 30_000;
+
+// aa-book's own Calibre auto-convert (bin/aa-book download_book) only handles
+// epub/mobi. Anna's Archive also serves azw3 and fb2 for many ebook-only
+// titles; docs-ingest only accepts pdf/md/txt, so anything else needs a
+// conversion pass here before we hand the file to docs/ingest.requested.
+// epub/mobi are included as a safety net in case aa-book's own conversion
+// step failed and left the original file in place.
+const CONVERTIBLE_EBOOK_EXTENSIONS = new Set(["azw3", "fb2", "epub", "mobi"]);
+const EBOOK_CONVERT_TIMEOUT_MS = Math.max(
+  30_000,
+  Number.parseInt(process.env.JOELCLAW_EBOOK_CONVERT_TIMEOUT_MS ?? "180000", 10)
+);
+
+const AA_CONFIG_DIR = `${HOME_DIR}/.config/annas-archive`;
+const AA_MIRRORS_CACHE_PATH = `${AA_CONFIG_DIR}/mirrors.txt`;
+const AA_COOKIE_FILE_PATH = `${AA_CONFIG_DIR}/cookies.txt`;
+const AA_DEFAULT_MIRRORS = ["https://annas-archive.gl", "https://annas-archive.li", "https://welib.org"];
+const MD5_VERIFY_TIMEOUT_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.JOELCLAW_MD5_VERIFY_TIMEOUT_MS ?? "15000", 10)
+);
+const MAX_MD5_VERIFICATION_ATTEMPTS = Math.max(
+  1,
+  Number.parseInt(process.env.JOELCLAW_MD5_VERIFY_MAX_ATTEMPTS ?? "6", 10)
+);
+// Anna's Archive labels a `format` per md5 in search results, but the file
+// behind the fast-download link can differ from that label, and some md5s
+// have no fast-download tier at all (libgen-only slow links), which makes
+// `aa-book download` exit 1 bare. Verify a Fast Partner Server link actually
+// exists on the /md5/<hash> page before committing to a candidate.
+const FAST_PARTNER_MARKERS: RegExp[] = [/fast_download\//iu, /Fast Partner Server/iu];
 const BOOK_SELECTION_SYSTEM_PROMPT = `You select the best Anna's Archive MD5 candidate for a requested book.
 
 Rules:
@@ -289,6 +320,226 @@ async function resolveAABookBinary(): Promise<string> {
   throw new NonRetriableError(
     "aa-book binary not found. Set JOELCLAW_AA_BOOK_BIN or install aa-book in PATH."
   );
+}
+
+async function resolveEbookConvertBinary(): Promise<string | null> {
+  const envPath = process.env.JOELCLAW_EBOOK_CONVERT_BIN?.trim();
+  const candidates = [
+    envPath,
+    "ebook-convert",
+    // Homebrew cask install location (see joelclaw-runtime setup notes).
+    "/opt/homebrew/bin/ebook-convert",
+    "/usr/local/bin/ebook-convert",
+  ].filter((value): value is string => Boolean(value && value.length > 0));
+
+  for (const candidate of candidates) {
+    if (candidate === "ebook-convert") {
+      const probe = await runProcess(["sh", "-lc", "command -v ebook-convert"], 3_000);
+      if (probe.exitCode === 0) {
+        const resolved = probe.stdout.trim().split(/\r?\n/gu)[0]?.trim();
+        if (resolved) return resolved;
+      }
+      continue;
+    }
+
+    if (await isExecutable(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+export function isConvertibleEbookExtension(extension: string): boolean {
+  return CONVERTIBLE_EBOOK_EXTENSIONS.has(extension.toLowerCase());
+}
+
+type ConversionResult = {
+  filePath: string;
+  format: string;
+  sizeBytes: number;
+  attempted: boolean;
+  converted: boolean;
+  reason?: string;
+};
+
+async function convertToPdfIfNeeded(
+  filePath: string,
+  sizeBytes: number
+): Promise<ConversionResult> {
+  const extension = extname(filePath).replace(/^\./u, "").toLowerCase();
+  if (!isConvertibleEbookExtension(extension) || extension === "pdf") {
+    return { filePath, format: extension || "unknown", sizeBytes, attempted: false, converted: false };
+  }
+
+  const ebookConvertBin = await resolveEbookConvertBinary();
+  if (!ebookConvertBin) {
+    return {
+      filePath,
+      format: extension,
+      sizeBytes,
+      attempted: true,
+      converted: false,
+      reason: "ebook-convert binary not found (expected Calibre cask at /opt/homebrew/bin/ebook-convert)",
+    };
+  }
+
+  const pdfPath = `${filePath.slice(0, -(extension.length + 1))}.pdf`;
+  const result = await runProcess(
+    [ebookConvertBin, filePath, pdfPath, "--pdf-page-numbers"],
+    EBOOK_CONVERT_TIMEOUT_MS
+  );
+
+  if (result.exitCode !== 0) {
+    return {
+      filePath,
+      format: extension,
+      sizeBytes,
+      attempted: true,
+      converted: false,
+      reason: `ebook-convert failed (exit ${result.exitCode}): ${result.stderr.trim().slice(0, 500)}`,
+    };
+  }
+
+  let pdfSizeBytes: number;
+  try {
+    const pdfStat = await stat(pdfPath);
+    if (!pdfStat.isFile() || pdfStat.size <= 0) {
+      return {
+        filePath,
+        format: extension,
+        sizeBytes,
+        attempted: true,
+        converted: false,
+        reason: "ebook-convert reported success but produced no usable output file",
+      };
+    }
+    pdfSizeBytes = pdfStat.size;
+  } catch {
+    return {
+      filePath,
+      format: extension,
+      sizeBytes,
+      attempted: true,
+      converted: false,
+      reason: "ebook-convert reported success but the output file is missing",
+    };
+  }
+
+  // docs-ingest owns the file lifecycle from here; keep only the pdf artifact
+  // (matches aa-book's own epub/mobi conversion behavior of dropping the source).
+  await rm(filePath, { force: true }).catch(() => {});
+
+  return {
+    filePath: pdfPath,
+    format: "pdf",
+    sizeBytes: pdfSizeBytes,
+    attempted: true,
+    converted: true,
+  };
+}
+
+export function hasFastPartnerAvailability(html: string): boolean {
+  if (!html || !html.trim()) return false;
+  return FAST_PARTNER_MARKERS.some((pattern) => pattern.test(html));
+}
+
+async function resolveAnnasArchiveBaseUrl(): Promise<string | null> {
+  let mirrors: string[] = [];
+  try {
+    const raw = await readFile(AA_MIRRORS_CACHE_PATH, "utf8");
+    mirrors = raw
+      .split(/\r?\n/gu)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    // fall through to defaults
+  }
+  if (mirrors.length === 0) mirrors = AA_DEFAULT_MIRRORS;
+
+  for (const mirror of mirrors) {
+    const probe = await runProcess(["curl", "-sI", "--connect-timeout", "4", mirror], 6_000);
+    const statusLine = probe.stdout.split(/\r?\n/gu)[0] ?? "";
+    if (/\s(200|403|302)\b/u.test(statusLine)) return mirror;
+  }
+  return null;
+}
+
+async function verifyFastPartnerAvailable(md5: string): Promise<{ available: boolean; reason: string }> {
+  const baseUrl = await resolveAnnasArchiveBaseUrl();
+  if (!baseUrl) {
+    return { available: false, reason: "no reachable Anna's Archive mirror to verify md5 page" };
+  }
+
+  const hasCookieFile = await access(AA_COOKIE_FILE_PATH, fsConstants.F_OK)
+    .then(() => true)
+    .catch(() => false);
+  const cookieArgs = hasCookieFile ? ["-b", AA_COOKIE_FILE_PATH] : [];
+
+  const result = await runProcess(
+    ["curl", "-s", "--connect-timeout", "6", "--max-time", "12", ...cookieArgs, `${baseUrl}/md5/${md5}`],
+    MD5_VERIFY_TIMEOUT_MS
+  );
+
+  if (result.exitCode !== 0 || !result.stdout.trim()) {
+    return { available: false, reason: `unable to fetch /md5/${md5} page (exit ${result.exitCode})` };
+  }
+
+  return hasFastPartnerAvailability(result.stdout)
+    ? { available: true, reason: "fast partner server link present on md5 page" }
+    : { available: false, reason: "no fast partner server link found on md5 page (likely libgen-only slow links)" };
+}
+
+export type Md5VerificationAttempt = {
+  md5: string;
+  available: boolean;
+  reason: string;
+};
+
+export type VerifiedCandidateSelection = {
+  picked: { candidate: SearchCandidate; origin: "inference" | "fallback" } | null;
+  attempts: Md5VerificationAttempt[];
+};
+
+/**
+ * Orders candidates (inferred pick first, then remaining search results) and
+ * walks them until one passes the `verify` check, falling through instead of
+ * failing the whole run on the first bad candidate. `verify` is injected so
+ * this stays unit-testable without shelling out to curl/agent-browser.
+ */
+export async function selectVerifiedCandidate(input: {
+  candidates: SearchCandidate[];
+  inferredMd5: string | null;
+  maxAttempts: number;
+  verify: (md5: string) => Promise<{ available: boolean; reason: string }>;
+}): Promise<VerifiedCandidateSelection> {
+  const ordered: Array<{ candidate: SearchCandidate; origin: "inference" | "fallback" }> = [];
+  const seenMd5 = new Set<string>();
+
+  if (input.inferredMd5) {
+    const inferredCandidate = input.candidates.find((candidate) => candidate.md5 === input.inferredMd5);
+    if (inferredCandidate) {
+      ordered.push({ candidate: inferredCandidate, origin: "inference" });
+      seenMd5.add(inferredCandidate.md5);
+    }
+  }
+  for (const candidate of input.candidates) {
+    if (seenMd5.has(candidate.md5)) continue;
+    ordered.push({ candidate, origin: "fallback" });
+    seenMd5.add(candidate.md5);
+  }
+
+  const attempts: Md5VerificationAttempt[] = [];
+  for (const entry of ordered.slice(0, Math.max(1, input.maxAttempts))) {
+    const verification = await input.verify(entry.candidate.md5);
+    attempts.push({ md5: entry.candidate.md5, available: verification.available, reason: verification.reason });
+    if (verification.available) {
+      return { picked: { candidate: entry.candidate, origin: entry.origin }, attempts };
+    }
+  }
+
+  // Every attempted candidate failed verification — nothing left to fall
+  // through to. Let the caller decide how to fail (don't silently pick a
+  // candidate known to have no working download tier).
+  return { picked: null, attempts };
 }
 
 async function ensureAnnasArchiveSecret(secretPath: string): Promise<{
@@ -670,31 +921,79 @@ export const bookDownload = inngest.createFunction(
             });
             const inferredMd5 = normalizeMd5(inferred.md5 ?? undefined);
 
-            if (inferredMd5) {
+            // Don't trust AA's per-md5 `format` label from search results —
+            // a "pdf"-labeled md5 can turn out to be a zip of OCR fragments,
+            // and some md5s have no fast-download tier at all (libgen-only
+            // slow links), which makes `aa-book download` exit 1 bare. Walk
+            // candidates (inferred pick first) until one verifies a Fast
+            // Partner Server link, instead of committing to the first guess.
+            const verification = await selectVerifiedCandidate({
+              candidates,
+              inferredMd5,
+              maxAttempts: MAX_MD5_VERIFICATION_ATTEMPTS,
+              verify: verifyFastPartnerAvailable,
+            });
+
+            for (const attempt of verification.attempts) {
+              await emitOtelEvent({
+                level: attempt.available ? "info" : "warn",
+                source: "worker",
+                component: "book-download",
+                action: "book.md5.verification",
+                success: attempt.available,
+                error: attempt.available ? undefined : attempt.reason,
+                metadata: { query, md5: attempt.md5 },
+              });
+            }
+
+            if (!verification.picked) {
+              throw new NonRetriableError(
+                `No candidate MD5s with a verified Fast Partner download for query "${query}"${
+                  requestedFormat ? ` (${requestedFormat})` : ""
+                }. Attempts: ${verification.attempts
+                  .map((attempt) => `${attempt.md5}: ${attempt.reason}`)
+                  .join("; ")}`
+              );
+            }
+
+            const { candidate: picked, origin } = verification.picked;
+            if (origin === "inference") {
               return {
-                md5: inferredMd5,
-                reason: inferred.reason,
+                md5: picked.md5,
+                reason: `${inferred.reason} Verified fast-partner availability.`,
                 selectedBy: "inference" as const,
-                candidate: candidates.find((candidate) => candidate.md5 === inferredMd5),
+                candidate: picked,
                 confidence: inferred.confidence,
                 model: inferred.model,
               };
             }
 
-            const fallback = candidates[0];
-            if (!fallback) {
-              throw new NonRetriableError(
-                `No candidate MD5s found for query "${query}"${requestedFormat ? ` (${requestedFormat})` : ""}.`
-              );
-            }
             return {
-              md5: fallback.md5,
-              reason: `${inferred.reason} Falling back to first search candidate.`,
+              md5: picked.md5,
+              reason: `${inferred.reason} Falling back to next verified search candidate.`,
               selectedBy: "fallback" as const,
-              candidate: fallback,
+              candidate: picked,
               model: inferred.model,
             };
           });
+
+      if (selected.selectedBy === "provided") {
+        await step.run("verify-provided-md5", async () => {
+          const verification = await verifyFastPartnerAvailable(selected.md5);
+          if (!verification.available) {
+            await emitOtelEvent({
+              level: "warn",
+              source: "worker",
+              component: "book-download",
+              action: "book.md5.verification",
+              success: false,
+              error: verification.reason,
+              metadata: { md5: selected.md5, origin: "provided" },
+            });
+          }
+          return verification;
+        });
+      }
 
       await step.run("otel-selection-completed", async () => {
         await emitOtelEvent({
@@ -753,6 +1052,30 @@ export const bookDownload = inngest.createFunction(
         };
       });
 
+      // aa-book's own Calibre auto-convert only handles epub/mobi; azw3, fb2,
+      // and any leftover epub/mobi (if aa-book's conversion failed) need a
+      // conversion pass here, or docs-ingest rejects the extension outright.
+      const convertedFile = await step.run("convert-to-pdf", async () => {
+        const conversion = await convertToPdfIfNeeded(downloadResult.filePath, downloadResult.sizeBytes);
+        if (conversion.attempted) {
+          await emitOtelEvent({
+            level: conversion.converted ? "info" : "warn",
+            source: "worker",
+            component: "book-download",
+            action: "book.convert.ebook_to_pdf",
+            success: conversion.converted,
+            error: conversion.converted ? undefined : conversion.reason,
+            metadata: {
+              md5: selected.md5,
+              originalPath: downloadResult.filePath,
+              originalFormat: downloadResult.format,
+              resultPath: conversion.filePath,
+            },
+          });
+        }
+        return conversion;
+      });
+
       await step.run("otel-download-completed", async () => {
         await emitOtelEvent({
           level: "info",
@@ -763,10 +1086,11 @@ export const bookDownload = inngest.createFunction(
           metadata: {
             query: query || null,
             md5: selected.md5,
-            outputPath: downloadResult.filePath,
+            outputPath: convertedFile.filePath,
             outputDir: outputPath,
-            sizeBytes: downloadResult.sizeBytes,
-            format: downloadResult.format ?? requestedFormat ?? null,
+            sizeBytes: convertedFile.sizeBytes,
+            format: convertedFile.format ?? requestedFormat ?? null,
+            converted: convertedFile.converted,
           },
         });
       });
@@ -774,7 +1098,7 @@ export const bookDownload = inngest.createFunction(
       const nasBackup: NasBackupResult = await step.run("backup-to-nas", async (): Promise<NasBackupResult> => {
         try {
           const year = new Date().getFullYear().toString();
-          const filename = basename(downloadResult.filePath);
+          const filename = basename(convertedFile.filePath);
           const nasDir = `${NAS_BOOKS_DIR}/${year}`;
           const nasFullPath = `${NAS_HOST}:${nasDir}/${filename}`;
 
@@ -787,7 +1111,7 @@ export const bookDownload = inngest.createFunction(
           }
 
           const scpResult = await runProcess(
-            ["scp", "-o", "ConnectTimeout=10", downloadResult.filePath, nasFullPath],
+            ["scp", "-o", "ConnectTimeout=10", convertedFile.filePath, nasFullPath],
             NAS_BACKUP_TIMEOUT_MS
           );
           if (scpResult.exitCode !== 0) {
@@ -814,7 +1138,7 @@ export const bookDownload = inngest.createFunction(
           error: nasBackup.backedUp ? undefined : nasBackup.reason,
           metadata: {
             md5: selected.md5,
-            localPath: downloadResult.filePath,
+            localPath: convertedFile.filePath,
             nasPath: backupNasPath,
           },
         });
@@ -823,17 +1147,17 @@ export const bookDownload = inngest.createFunction(
       const resolvedTitle =
         event.data.title?.trim()
         || selected.candidate?.title?.trim()
-        || inferTitle(undefined, downloadResult.filePath);
+        || inferTitle(undefined, convertedFile.filePath);
       const idempotencyKey =
         (event.data.idempotencyKey ?? "").trim()
-        || `book:${selected.md5}:${basename(downloadResult.filePath).toLowerCase()}`;
+        || `book:${selected.md5}:${basename(convertedFile.filePath).toLowerCase()}`;
 
       await step.sendEvent("emit-book-events", [
         {
           name: "docs/ingest.requested",
           data: {
             nasPath: backupNasPath,
-            filePath: downloadResult.filePath,
+            filePath: convertedFile.filePath,
             title: resolvedTitle,
             tags: baseTags,
             storageCategory: event.data.storageCategory,
@@ -850,7 +1174,7 @@ export const bookDownload = inngest.createFunction(
             md5: selected.md5,
             reason,
             outputDir: outputPath,
-            format: downloadResult.format ?? requestedFormat ?? selected.candidate?.format,
+            format: convertedFile.format ?? requestedFormat ?? selected.candidate?.format,
             selectedBy: selected.selectedBy,
             tags: baseTags,
           },
@@ -866,7 +1190,7 @@ export const bookDownload = inngest.createFunction(
           success: true,
           metadata: {
             md5: selected.md5,
-            localPath: downloadResult.filePath,
+            localPath: convertedFile.filePath,
             nasPath: backupNasPath,
             idempotencyKey,
             tags: baseTags,
@@ -882,7 +1206,7 @@ export const bookDownload = inngest.createFunction(
             payload: {
               title: resolvedTitle,
               md5: selected.md5,
-              path: downloadResult.filePath,
+              path: convertedFile.filePath,
               selectedBy: selected.selectedBy,
             },
           });
@@ -906,7 +1230,7 @@ export const bookDownload = inngest.createFunction(
             query: query || null,
             md5: selected.md5,
             title: resolvedTitle,
-            outputPath: downloadResult.filePath,
+            outputPath: convertedFile.filePath,
             selectedBy: selected.selectedBy,
           },
         });
@@ -917,7 +1241,7 @@ export const bookDownload = inngest.createFunction(
         query: query || null,
         md5: selected.md5,
         title: resolvedTitle,
-        path: downloadResult.filePath,
+        path: convertedFile.filePath,
         selectedBy: selected.selectedBy,
       };
     } catch (error) {
