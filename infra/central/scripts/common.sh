@@ -33,6 +33,10 @@ CENTRAL_NAS_NVME_EXPORT="${CENTRAL_NAS_NVME_EXPORT:-${NAS_IP}:/volume2/data}"
 CENTRAL_NAS_NVME_MOUNT="${CENTRAL_NAS_NVME_MOUNT:-/Volumes/nas-nvme}"
 CENTRAL_NAS_HDD_EXPORT="${CENTRAL_NAS_HDD_EXPORT:-${NAS_IP}:/volume1/joelclaw}"
 CENTRAL_NAS_HDD_MOUNT="${CENTRAL_NAS_HDD_MOUNT:-/Volumes/three-body}"
+# Direct 10GbE media path for transcription/editing workloads. Do not stage
+# large media through SSH or local copies when this mount is healthy.
+CENTRAL_NAS_MEDIA_EXPORT="${CENTRAL_NAS_MEDIA_EXPORT:-${NAS_IP}:/volume1/badass-media}"
+CENTRAL_NAS_MEDIA_MOUNT="${CENTRAL_NAS_MEDIA_MOUNT:-/Volumes/badass-media}"
 CENTRAL_MINIO_HOT_DATA="${CENTRAL_MINIO_HOT_DATA:-${CENTRAL_NAS_NVME_MOUNT}/s3}"
 CENTRAL_MINIO_COLD_DATA="${CENTRAL_MINIO_COLD_DATA:-${CENTRAL_NAS_HDD_MOUNT}/s3}"
 

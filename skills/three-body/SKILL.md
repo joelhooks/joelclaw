@@ -160,7 +160,10 @@ For Flagg Central, the repo-managed NFS mount contract is:
 - Full jumbo target: `9000`, but only after end-to-end switch/NAS path proof passes above the current 8192-byte ceiling
 - NAS NVMe mount: `/Volumes/nas-nvme` from `192.168.1.163:/volume2/data`
 - NAS HDD mount: `/Volumes/three-body` from `192.168.1.163:/volume1/joelclaw`
+- Media mount: `/Volumes/badass-media` from `192.168.1.163:/volume1/badass-media`
 - Tuned NFS options: `rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128`
+
+**Media locality rule:** Flagg is physically adjacent to `three-body` on proved 10GbE. Media transcription, analysis, and editing jobs should read source audio/video directly from `/Volumes/badass-media` and write derived artifacts there. Do not stage/copy large media through SSH, `/tmp`, or local SSD merely because a tool accepts only local-looking paths. Fix or mount the media export instead. Small claim-check metadata may remain local; raw media stays authoritative on NAS.
 
 Do not use `three-body:/volume...` for persistent NFS mounts on Flagg. On 2026-06-17, `three-body` resolved to the Tailscale IP:
 

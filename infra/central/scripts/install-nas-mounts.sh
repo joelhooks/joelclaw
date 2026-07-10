@@ -56,10 +56,11 @@ log "installed ${DST}"
 
 prepare_mount_point "$CENTRAL_NAS_NVME_MOUNT"
 prepare_mount_point "$CENTRAL_NAS_HDD_MOUNT"
+prepare_mount_point "$CENTRAL_NAS_MEDIA_MOUNT"
 mkdir -p "$CENTRAL_LOG_DIR"
 chown "${SERVICE_USER}:${SERVICE_GROUP}" "$CENTRAL_LOG_DIR"
 chmod 750 "$CENTRAL_LOG_DIR"
-log "prepared mount points: ${CENTRAL_NAS_NVME_MOUNT}, ${CENTRAL_NAS_HDD_MOUNT}"
+log "prepared mount points: ${CENTRAL_NAS_NVME_MOUNT}, ${CENTRAL_NAS_HDD_MOUNT}, ${CENTRAL_NAS_MEDIA_MOUNT}"
 
 if [[ "$BOOTSTRAP" == "1" ]]; then
   launchctl enable "system/${LABEL}" || true

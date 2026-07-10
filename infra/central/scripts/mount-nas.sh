@@ -131,6 +131,7 @@ case "$ACTION" in
     assert_10gbe_route
     mount_one nas-nvme "$CENTRAL_NAS_NVME_EXPORT" "$CENTRAL_NAS_NVME_MOUNT"
     mount_one nas-hdd "$CENTRAL_NAS_HDD_EXPORT" "$CENTRAL_NAS_HDD_MOUNT"
+    mount_one badass-media "$CENTRAL_NAS_MEDIA_EXPORT" "$CENTRAL_NAS_MEDIA_MOUNT"
     log "NAS mounts ready"
     ;;
   status)
@@ -138,11 +139,13 @@ case "$ACTION" in
     status=0
     status_one nas-nvme "$CENTRAL_NAS_NVME_MOUNT" || status=1
     status_one nas-hdd "$CENTRAL_NAS_HDD_MOUNT" || status=1
+    status_one badass-media "$CENTRAL_NAS_MEDIA_MOUNT" || status=1
     exit "$status"
     ;;
   unmount)
     require_root
     require_command umount
+    unmount_one badass-media "$CENTRAL_NAS_MEDIA_MOUNT"
     unmount_one nas-hdd "$CENTRAL_NAS_HDD_MOUNT"
     unmount_one nas-nvme "$CENTRAL_NAS_NVME_MOUNT"
     ;;

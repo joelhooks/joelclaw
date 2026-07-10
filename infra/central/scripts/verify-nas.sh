@@ -222,6 +222,7 @@ printf 'host=%s user=%s nas_host=%s nas_ip=%s expected_interface=%s expected_med
   "$(hostname)" "$(id -un)" "$NAS_HOST" "$NAS_IP" "$NAS_EXPECTED_INTERFACE" "$NAS_EXPECTED_MEDIA" "$NAS_EXPECTED_MTU"
 printf 'nvme_export=%s nvme_mount=%s\n' "$CENTRAL_NAS_NVME_EXPORT" "$CENTRAL_NAS_NVME_MOUNT"
 printf 'hdd_export=%s hdd_mount=%s\n' "$CENTRAL_NAS_HDD_EXPORT" "$CENTRAL_NAS_HDD_MOUNT"
+printf 'media_export=%s media_mount=%s\n' "$CENTRAL_NAS_MEDIA_EXPORT" "$CENTRAL_NAS_MEDIA_MOUNT"
 printf '\n'
 
 probe 'nfs port reachable' nc_ok
@@ -232,6 +233,9 @@ probe 'nas-nvme mounted' mounted_at "$CENTRAL_NAS_NVME_MOUNT"
 probe 'nas-nvme mount is nfs' mount_is_nfs "$CENTRAL_NAS_NVME_MOUNT"
 probe 'nas-hdd mounted' mounted_at "$CENTRAL_NAS_HDD_MOUNT"
 probe 'nas-hdd mount is nfs' mount_is_nfs "$CENTRAL_NAS_HDD_MOUNT"
+probe 'badass-media mounted' mounted_at "$CENTRAL_NAS_MEDIA_MOUNT"
+probe 'badass-media mount is nfs' mount_is_nfs "$CENTRAL_NAS_MEDIA_MOUNT"
+warn_probe 'badass-media mount writable' path_writable "$CENTRAL_NAS_MEDIA_MOUNT"
 probe 'nas-mounts LaunchDaemon plist installed' launchd_plist_installed
 warn_probe 'nas-mounts LaunchDaemon recently active (log freshness)' launchd_recent_activity
 if [[ "$(id -u)" == "0" ]]; then
