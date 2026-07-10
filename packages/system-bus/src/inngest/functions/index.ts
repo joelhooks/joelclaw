@@ -77,6 +77,7 @@ export { manifestArchive } from "./manifest-archive";
 export { mediaProcess } from "./media-process";
 export { meetingAnalyze } from "./meeting-analyze";
 export { meetingTranscriptIndex } from "./meeting-transcript-index";
+export { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
 export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 export { batchReview } from "./memory/batch-review";
 export { memoryEmbed } from "./memory/embed";

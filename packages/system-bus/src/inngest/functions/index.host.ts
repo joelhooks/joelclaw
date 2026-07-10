@@ -65,6 +65,7 @@ import { knowledgeTurnWrite } from "./knowledge-turn-write";
 import { knowledgeWatchdog } from "./knowledge-watchdog";
 import { manifestArchive } from "./manifest-archive";
 import { mediaProcess } from "./media-process";
+import { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
 import { meetingAnalyze } from "./meeting-analyze";
 import { meetingTranscriptIndex } from "./meeting-transcript-index";
 import { adrEvidenceCapture } from "./memory/adr-evidence-capture";
@@ -181,6 +182,7 @@ export const hostFunctionDefinitions = [
   agentLoopComplete,
   agentLoopRetro,
   mediaProcess,
+  mediaTranscriptionPipeline,
   telegramCallbackReceived,
   voiceCallCompleted,
   observeSessionNoted,

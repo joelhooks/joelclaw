@@ -33,6 +33,15 @@ type TranscriptRequestedData = {
   screenshots?: { vaultDir: string; files: string[] };
 };
 
+type MediaTranscriptionRequestedData = {
+  /** Stable caller-generated idempotency/cancellation key. */
+  requestId: string;
+  /** Flagg-local path under the mounted /Volumes/badass-media share. */
+  sourcePath: string;
+  publish?: boolean;
+  index?: boolean;
+};
+
 type ContentSummarizeRequestedData = {
   vaultPath: string;
   prompt?: string;
@@ -90,6 +99,33 @@ export type Events = {
       channel?: string;
       sourceUrl?: string;
       type: "video" | "meeting";
+    };
+  };
+  "media/transcription.requested": {
+    data: MediaTranscriptionRequestedData;
+  };
+  "media/transcription.cancelled": {
+    data: { requestId: string };
+  };
+  "media/transcription.blocked": {
+    data: {
+      requestId: string;
+      sourcePath: string;
+      blocker: {
+        code: "mount_unavailable";
+        message: string;
+        retryable: true;
+      };
+    };
+  };
+  "media/transcription.completed": {
+    data: {
+      requestId: string;
+      sourcePath: string;
+      artifactId: string;
+      outputRoot?: string;
+      published: boolean;
+      indexed: boolean;
     };
   };
 
