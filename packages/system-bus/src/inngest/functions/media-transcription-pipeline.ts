@@ -88,7 +88,7 @@ async function verifyMediaMount(sourcePath: string): Promise<{
   const pathExists = await stat(sourcePath)
     .then((value) => value.isDirectory())
     .catch(() => false);
-  const proc = Bun.spawn(["mount"], { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn(["/sbin/mount"], { stdout: "pipe", stderr: "pipe" });
   const [mounts, code] = await Promise.all([
     new Response(proc.stdout).text(),
     proc.exited,

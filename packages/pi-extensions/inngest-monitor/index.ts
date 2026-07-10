@@ -332,7 +332,12 @@ export default function jobMonitor(pi: ExtensionAPI) {
       if (r.status === "cancelled") {
         return `${theme.fg("warning", "◌")} ${theme.fg("text", r.functionName)} ${theme.fg("dim", elapsed)} ${theme.fg("warning", "cancelled")}`;
       }
-      const step = r.currentStep ? `step: ${r.currentStep}` : "starting…";
+      const stageMatch = r.currentStep?.match(/^(\d{2})-(.+)$/);
+      const step = stageMatch
+        ? `stage ${Number(stageMatch[1]) + 1} · ${stageMatch[2]?.replaceAll("-", " ")}`
+        : r.currentStep
+          ? `${r.stepCount} done · ${r.currentStep}`
+          : "starting…";
       return `${theme.fg("warning", "◆")} ${theme.fg("text", r.functionName)} ${theme.fg("dim", elapsed)} ${theme.fg("muted", step)}`;
     });
   };
@@ -359,11 +364,9 @@ export default function jobMonitor(pi: ExtensionAPI) {
       return;
     }
 
-    const { stdout, code } = await runCli(["run", run.runId]);
-    if (code !== 0) {
-      refreshWidget();
-      return;
-    }
+    const { stdout } = await runCli(["run", run.runId]);
+    // `joelclaw run` exits non-zero for failed runs while still returning the
+    // complete structured run payload. Parse it before deciding there is no update.
     const data = parseJson(stdout);
     if (!data?.run) {
       refreshWidget();
@@ -606,7 +609,8 @@ export default function jobMonitor(pi: ExtensionAPI) {
     if (!span) return [];
     const out: any[] = [];
     const visit = (s: any) => {
-      if (!s.isRoot && s.name) out.push(s);
+      const isInternal = /^Attempt \d+$/.test(s.name ?? "") || s.name === "Finalization";
+      if (!s.isRoot && s.name && !isInternal) out.push(s);
       for (const c of s.childrenSpans ?? []) visit(c);
     };
     if (span.isRoot) {
