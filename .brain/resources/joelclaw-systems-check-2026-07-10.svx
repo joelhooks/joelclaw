@@ -1,0 +1,173 @@
+---
+title: "Joelclaw Systems Check 2026-07-10"
+type: "resource"
+status: "active"
+created_at: "2026-07-10"
+tags:
+  - joelclaw
+  - system-health
+  - central-migration
+  - agent-capture
+  - agent-mail
+---
+
+# Joelclaw Systems Check 2026-07-10
+
+## Summary
+
+Flagg/Mac Studio is the working Central surface for current agent-mail, system-bus worker, Inngest, gateway Redis, and run capture health. Panda agent-mail is decommissioned. Agent session indexing into Flagg Typesense is fresh, but raw outbox backlogs are still large and NAS backup receipts are not clean.
+
+## Health receipt
+
+Command:
+
+```bash
+cd /Users/joel/Code/joelhooks/joelclaw
+skills/joelclaw-system-check/scripts/health.sh
+```
+
+Result highlights:
+
+- overall: `8.2/10`
+- worker: `10/10`, `129` functions via direct Flagg probe
+- Inngest server: `10/10`, responding on `:8288`
+- agent-mail: `10/10`, alive on Flagg `:8765`, `1000` messages, `7` projects
+- Redis/gateway: `10/10`
+- Typesense/OTEL: `6/10`, Typesense OK but OTEL query degraded
+- PDS: `1/10`, Panda-era pod not running
+- tests: `486 pass / 5 fail`
+- memory pipeline degraded: active memory runs remain
+
+## Typesense run capture receipt
+
+Typesense collections on Flagg:
+
+- `runs_dev`: `37053` docs
+- `run_chunks_dev`: `247260` docs
+- `machines_dev`: `4` docs
+
+Run counts by machine:
+
+- `blaine`: `18533`
+- `dark-wizard`: `9876`
+- `flagg`: `7442`
+- `panda`: `1202`
+
+Run counts by runtime:
+
+- `pi`: `36258`
+- `claude-code`: `666`
+- `codex`: `129`
+
+Last 24h:
+
+- total: `1143`
+- machines: `blaine=802`, `flagg=341`
+- runtimes: `pi=1102`, `claude-code=41`
+
+Last 7d:
+
+- total: `2123`
+- machines: `blaine=1181`, `flagg=942`
+- runtimes: `pi=2018`, `claude-code=105`
+
+Interpretation: indexing is fresh for Flagg and Blaine. Panda has no recent capture, which matches the migration direction.
+
+## Outbox / backup receipt
+
+Dry audit command:
+
+```bash
+bun scripts/agent-session-audit-backup.ts \
+  --hosts flagg,blaine,panda \
+  --central-url http://joels-mac-studio.tail7af24.ts.net:3111 \
+  --sync=false \
+  --replay-limit 0
+```
+
+Dry result:
+
+- Flagg: central health OK, outbox `15624`
+- Blaine: central health OK, outbox `7612`
+- Panda: central health failed, outbox `4268`
+
+Latest NAS backup receipt:
+
+- `/Volumes/three-body/sessions/receipts/agent-session-audit-live-20260709T1544.json`
+- `ok=false`
+- Flagg replayed `200`, but rsync for `joelclaw-runs-dev` and `joelclaw-outbox` hit signal/timeout errors.
+- Blaine replayed `200`, no errors in that receipt.
+- Panda central health failed and rsync hit timeout/signal errors.
+
+Interpretation: Typesense capture is fresh enough for current search, but the raw source-of-truth backup/replay path is not yet healthy. The large outboxes mean capture retry/backfill still needs work.
+
+## Agent-mail migration receipt
+
+Flagg:
+
+- `gui/$(id -u)/com.joelclaw.agent-mail` running
+- `127.0.0.1:8765` listening
+- `joelclaw mail status` OK, `1000` messages, `7` projects
+
+Blaine:
+
+- independent local daemon disabled and its plist retained as `com.joelclaw.agent-mail.local-daemon.disabled-20260710.plist`
+- `gui/$(id -u)/com.joelclaw.agent-mail-tunnel` running
+- local `127.0.0.1:8765` forwards over SSH to Flagg loopback
+- status matches the Flagg mailbox: `1000` messages and `7` projects before canary writes
+
+Panda:
+
+- independent system daemon remains decommissioned
+- `gui/$(id -u)/com.joelclaw.agent-mail-tunnel` running
+- local `127.0.0.1:8765` forwards over SSH to Flagg loopback
+- status matches the Flagg mailbox
+
+Cross-machine write/read canaries:
+
+- Blaine sent message `1448`; Flagg search found it.
+- Panda sent message `1449`; Flagg search found it.
+
+Interpretation: agent-mail is centralized on Flagg. Blaine and Panda have thin, reboot-survivable SSH connectors rather than independent mailbox state. The service remains bound to loopback instead of exposing an unauthenticated API on the tailnet.
+
+## Next Panda decommission target
+
+Recommended next target: **Panda's legacy system-bus/run-capture ingress on port `3111`**, not gateway/iMessage yet.
+
+Why:
+
+- Flagg worker is healthy and now owns current capture path.
+- Flagg/Blaine `JOELCLAW_CENTRAL_URL` point at `http://joels-mac-studio.tail7af24.ts.net:3111`.
+- Panda still has `com.joel.system-bus-worker` running and `*:3111` listening.
+- Panda's `/api/runs` path was previously observed failing POSTs because local Typesense auth lookup hit `ECONNRESET`.
+- Leaving Panda `3111` alive invites split-brain or stale fallback writes.
+
+Preconditions before decommission:
+
+1. Verify no external provider/webhook still targets Panda worker routes.
+2. Verify Tailscale Serve/Funnel routes for `/api/runs`, `/webhooks`, and `/observability/emit` do not depend on Panda.
+3. Replay or quarantine Panda outbox.
+4. Update docs that still say Panda is live Central for run capture.
+5. Boot out Panda `com.joel.system-bus-worker` only after gateway/relay services no longer depend on it locally.
+
+Do not decommission Panda gateway/iMessage first: those are Relay-lane services and likely still account-bound. Do not decommission PDS casually until the current identity/auth path is explicitly replaced or declared dead.
+
+## Panda worker and Talon decommission progress
+
+Authorized 2026-07-10.
+
+Talon is fully stopped:
+
+- `gui/$(id -u)/com.joel.talon` booted out
+- Talon process gone
+- health listener `:9999` closed
+- plist preserved as `~/Library/LaunchAgents/com.joel.talon.decommissioned-20260710.plist`
+
+Panda's legacy ingress is now safely bridged before the worker is removed:
+
+- `com.joelclaw.system-bus-central-tunnel` is running as a user LaunchAgent
+- Panda `127.0.0.1:3111` forwards to Flagg `127.0.0.1:3111`
+- `https://panda.tail7af24.ts.net/api/runs/health` remains `200`
+- unsigned POST to `https://panda.tail7af24.ts.net/webhooks/github` reaches Flagg and returns the expected `401 Invalid signature`
+
+The old Panda worker is not yet fully decommissioned because `system/com.joel.system-bus-worker` requires sudo to boot out. Until that command runs, Panda has two non-conflicting listeners: the Flagg connector on IPv4 loopback and the old worker on IPv6 wildcard.
