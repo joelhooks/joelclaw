@@ -117,6 +117,22 @@ Tokens do not expire — no refresh dance needed.
 - `x_access_token` — Access Token (OAuth 1.0a, format: `numeric-alphanumeric`)
 - `x_access_token_secret` — Access Token Secret (OAuth 1.0a)
 
+#### @joelhooks / `shitrat-joel` app
+
+Use these scoped secret names for Joel's personal X account so they don't collide with the @joelclaw bot app:
+
+- `x_joelhooks_consumer_key`
+- `x_joelhooks_consumer_secret`
+- `x_joelhooks_bearer_token`
+- `x_joelhooks_access_token`
+- `x_joelhooks_access_token_secret`
+
+PIN OAuth note, 2026-06-28: `https://api.x.com/oauth/authorize?...` showed “There is no request token.” Regenerating with `https://api.twitter.com/oauth/request_token` and opening `https://twitter.com/oauth/authorize?force_login=true&oauth_token=...` worked for `shitrat-joel` → @joelhooks.
+
+Auth verification, 2026-06-28: `x_joelhooks_access_token` + `x_joelhooks_access_token_secret` verified with `GET https://api.twitter.com/2/users/me` as `@joelhooks` / user id `12087242`.
+
+Bookmark caveat: `GET /2/users/12087242/bookmarks` returned `403 Unsupported Authentication` with OAuth 1.0a. X requires OAuth 2.0 User Context / PKCE with `bookmark.read`, `tweet.read`, and `users.read` for bookmarks. Do not assume the saved OAuth 1.0a token can read bookmarks.
+
 ### Signing requests
 
 OAuth 1.0a requires cryptographic signing. Use `requests-oauthlib` (Python) or equivalent:
@@ -154,6 +170,14 @@ secrets revoke --all
 - **Account**: @joelclaw
 - **User ID**: 2022779096049311744
 - **Scopes**: Read and write (OAuth 1.0a app permissions)
+
+### @joelhooks Account Info
+
+- **Account**: @joelhooks
+- **User ID**: 12087242
+- **App**: `shitrat-joel`
+- **OAuth 1.0a status**: saved and verified for user-context actions that allow OAuth 1.0a
+- **Bookmarks**: not available through OAuth 1.0a; needs OAuth 2.0 PKCE user token with `bookmark.read`
 
 ## Common Operations
 
