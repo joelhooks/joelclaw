@@ -138,8 +138,8 @@ launchd_service_loaded() {
   }
 }
 
-# The daemon fires every 60s and its stdout log is world-readable, so log
-# freshness proves the service is loaded and running without sudo.
+# The daemon fires every 300s and emits one healthy-run receipt. Its stdout log
+# is world-readable, so freshness proves the service is loaded without sudo.
 launchd_recent_activity() {
   local log="${CENTRAL_LOG_DIR}/nas-mounts.out.log"
   [[ -f "$log" ]] || {
@@ -148,8 +148,8 @@ launchd_recent_activity() {
   }
   local age
   age=$(( $(date +%s) - $(stat -f %m "$log") ))
-  [[ "$age" -le 180 ]] || {
-    printf 'log stale: %s age=%ss (daemon should fire every 60s)\n' "$log" "$age"
+  [[ "$age" -le 900 ]] || {
+    printf 'log stale: %s age=%ss (daemon should fire every 300s)\n' "$log" "$age"
     return 1
   }
 }

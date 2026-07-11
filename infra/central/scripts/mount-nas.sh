@@ -43,7 +43,6 @@ wait_for_network() {
     local iface
     iface="$(route_field interface || true)"
     if [[ "$iface" == "$NAS_EXPECTED_INTERFACE" ]] && nc_ok "$NAS_IP" 2049; then
-      log "nas route ready: host=${NAS_HOST} ip=${NAS_IP} interface=${iface}"
       return 0
     fi
     log "waiting for nas route/nfs (${i}/${attempts}) interface=${iface:-unknown} host=${NAS_HOST} ip=${NAS_IP}"
@@ -74,7 +73,6 @@ mount_one() {
 
   mkdir -p "$mount_point"
   if mounted_at "$mount_point"; then
-    log "${label} already mounted at ${mount_point}"
     return 0
   fi
 
@@ -132,7 +130,7 @@ case "$ACTION" in
     mount_one nas-nvme "$CENTRAL_NAS_NVME_EXPORT" "$CENTRAL_NAS_NVME_MOUNT"
     mount_one nas-hdd "$CENTRAL_NAS_HDD_EXPORT" "$CENTRAL_NAS_HDD_MOUNT"
     mount_one badass-media "$CENTRAL_NAS_MEDIA_EXPORT" "$CENTRAL_NAS_MEDIA_MOUNT"
-    log "NAS mounts ready"
+    log "NAS mounts ready: nas-nvme, nas-hdd, badass-media"
     ;;
   status)
     require_command mount

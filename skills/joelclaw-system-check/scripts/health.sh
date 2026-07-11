@@ -131,9 +131,22 @@ MAIL_OK=$(json_get "$MAIL_JSON" '.ok // false')
 if [[ "$MAIL_OK" == "true" ]]; then
   MAIL_COUNT=$(json_get "$MAIL_JSON" '.result.unified_inbox.message_count // 0')
   MAIL_PROJECTS=$(json_get "$MAIL_JSON" '.result.unified_inbox.project_count // 0')
-  check "agent-mail" 10 "alive on Flagg :8765, messages=${MAIL_COUNT}, projects=${MAIL_PROJECTS}"
+  check "agent-mail central" 10 "alive on Flagg :8765, messages=${MAIL_COUNT}, projects=${MAIL_PROJECTS}"
+
+  for MAIL_CLIENT in blaine panda; do
+    CLIENT_JSON=$(ssh -o BatchMode=yes -o ConnectTimeout=4 "joel@${MAIL_CLIENT}" \
+      '$HOME/.bun/bin/joelclaw mail status' 2>/dev/null || true)
+    CLIENT_OK=$(json_get "$CLIENT_JSON" '.ok // false')
+    CLIENT_COUNT=$(json_get "$CLIENT_JSON" '.result.unified_inbox.message_count // -1')
+    CLIENT_PROJECTS=$(json_get "$CLIENT_JSON" '.result.unified_inbox.project_count // -1')
+    if [[ "$CLIENT_OK" == "true" && "$CLIENT_COUNT" == "$MAIL_COUNT" && "$CLIENT_PROJECTS" == "$MAIL_PROJECTS" ]]; then
+      check "agent-mail/${MAIL_CLIENT}" 10 "connector reaches Flagg mailbox, messages=${CLIENT_COUNT}, projects=${CLIENT_PROJECTS}"
+    else
+      check "agent-mail/${MAIL_CLIENT}" 1 "connector unavailable or mailbox counts differ from Flagg"
+    fi
+  done
 else
-  check "agent-mail" 1 "unavailable on Flagg :8765"
+  check "agent-mail central" 1 "unavailable on Flagg :8765"
 fi
 
 # -- redis / gateway ---------------------------------------------------
@@ -361,7 +374,7 @@ echo "  - Split health into Central / Relay / Satellite lanes: Central=Flagg nat
 echo "  - Central health should lead with Redis, Typesense, Inngest, system-bus worker, agent-mail, run capture, NAS backup receipts, and reboot-survivable launchd state."
 echo "  - Relay health should track Panda-only leftovers and explicit decommission blockers, not pretend Panda is the whole joelclaw system."
 echo "  - Satellite health should track JOELCLAW_CENTRAL_URL, outbox backlog, recent capture timestamps, and transcript backup freshness."
-echo "  - Agent-mail target: Flagg/Mac Studio local service on :8765; Panda service should be disabled after sudo launchd decommission."
+echo "  - Agent-mail is centralized on Flagg :8765; Blaine and Panda must reach the same mailbox through their local SSH connector LaunchAgents."
 
 if [[ ${#ISSUES[@]} -gt 0 ]]; then
   echo ""

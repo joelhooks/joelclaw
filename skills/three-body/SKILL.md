@@ -198,7 +198,7 @@ sudo /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/install-nas-mount
 
 `verify-nas.sh` hard-fails on a missing plist; `preflight.sh` warns.
 
-No sudo is needed to verify any of this. `verify-nas.sh` runs fully green unprivileged: the plist is world-readable, and daemon liveness is proved by log freshness — the daemon fires every 60s and `/Users/Shared/joelclaw/logs/central/nas-mounts.out.log` is world-readable, so a recent mtime means loaded-and-running without `launchctl print` on the root-only system domain. Reserve sudo for install/reinstall, manual `mount-nas.sh mount|unmount` (`resvport` needs root), and `sync-service-checkout.sh`; see `infra/central/README.md` "Sudo discipline" for the full split and the optional read-only sudoers line.
+No sudo is needed to verify any of this. `verify-nas.sh` runs fully green unprivileged: the plist is world-readable, and daemon liveness is proved by log freshness — the daemon fires every 300s and emits one healthy-run receipt to `/Users/Shared/joelclaw/logs/central/nas-mounts.out.log`, so a recent mtime means loaded without `launchctl print` on the root-only system domain. Reserve sudo for install/reinstall, manual `mount-nas.sh mount|unmount` (`resvport` needs root), and `sync-service-checkout.sh`; see `infra/central/README.md` "Sudo discipline" for the full split and the optional read-only sudoers line.
 
 If the LAN IP path says `No route to host`, do not fall back to Tailscale silently. Fix LAN reachability or the ASUSTOR/network rule first.
 

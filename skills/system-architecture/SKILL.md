@@ -17,11 +17,11 @@ tags:
 
 This skill is the **single source of truth** for joelclaw system wiring.
 
-Freshness note — 2026-07-09: the old Panda-centric mental model is now migration debt. Some current runtime paths already live on Flagg/Mac Studio, and health must report by responsibility lane:
+Freshness note — 2026-07-10: the old Panda-centric mental model is migration debt. Current responsibility lanes:
 
-- **Central**: Flagg/Mac Studio authoritative/native services and reboot-survivable launchd state.
+- **Central**: Flagg/Mac Studio. It is authoritative for agent-mail and Run capture ingress; verify each remaining service family during migration.
 - **Relay**: Panda account-bound leftovers and explicit decommission blockers.
-- **Satellite**: Blaine/other capture clients, outboxes, and transcript backup freshness.
+- **Satellite**: Blaine/other capture clients, connectors, outboxes, and transcript backup freshness.
 
 Treat older “Panda is the whole system” wording as stale unless re-verified against live receipts.
 
@@ -102,18 +102,18 @@ Use these terms:
 | Term | Meaning | Current truth |
 |---|---|---|
 | Network | Users + Machines coordinated by one Central | Logical boundary, not the tailnet/k8s cluster |
-| Central | single authoritative joelclaw service for the Network | Panda is still live Central for current runtime paths |
-| Central host target | Machine being prepared to host Central | Flagg / Mac Studio, `machine_id=mac-studio-central` |
+| Central | single authoritative joelclaw service for the Network | Flagg is authoritative for agent-mail and Run capture; verify remaining service families individually during migration |
+| Central host target | Machine consolidating Central responsibilities | Flagg / Mac Studio, `machine_id=mac-studio-central` |
 | Relay Machine | machine that hosts account-bound/local-hardware-bound relays while delegating state to Central | Panda becomes this after cutover; satellites stay thin |
 | Satellite Machine | thin local Pi/Codex/Claude runner with capture/search/repair hooks | Blaine and Flagg bootstrap through `scripts/setup-satellite-rig.sh` |
 | Run | one captured agent invocation | raw JSONL + metadata first, Typesense is derived |
 | Conversation | sibling Run label for an interactive context | not the source of truth |
 | Project Thread | private `#brain-joel` operator workroom for a bounded objective | coordination only; does not authorize public replies |
 
-Current authority split:
-- **Panda remains live Central** for Redis, gateway, Inngest, OTEL, secrets, durable worker runtime, and Run capture ingress.
-- **Flagg is the shadow / next Central target**. It has Central scaffold assets, service-user launchd templates, shadow Compose services, NAS proof scripts, and Chorus/Rhizomatic canary work. It is not authoritative until an explicit whole-Central cutover freezes Panda and flips endpoints.
-- **Satellites stay thin**. They run Pi/Codex/Claude and local session search, then post Runs to Central. Do not install k8s/Inngest/Redis/gateway Central roles on a satellite without a specific reason.
+Current authority split (verified 2026-07-10):
+- **Flagg is authoritative for agent-mail and Run capture ingress.** The agent-mail daemon binds Flagg loopback; Blaine and Panda use SSH connector LaunchAgents so every `joelclaw mail` client reaches the same mailbox without exposing the service on the tailnet.
+- **Panda is migration debt plus Relay responsibilities.** Its independent agent-mail daemon and Talon are removed. A reboot-survivable SSH connector now binds Panda IPv4 loopback `127.0.0.1:3111` and forwards legacy `/api/runs` and `/webhooks` ingress to Flagg. The legacy system worker still owns the IPv6 listener until its system LaunchDaemon is booted out with sudo.
+- **Satellites stay thin**. They run Pi/Codex/Claude, local capture hooks, and connectors to Central. Do not install independent stateful Central services on a satellite without a specific reason.
 - **Typesense is derived for Runs**. NAS/local Run blobs are the source of truth; `runs_dev` and `run_chunks_dev` can be rebuilt.
 
 Cutover rule: avoid split-brain. Panda and Flagg must not both accept authoritative writes for the same Central service family. Gate 5 permits shadow smoke tests and migration rehearsal, but authority flips only inside an approved freeze/cutover window.
@@ -122,7 +122,7 @@ Cutover rule: avoid split-brain. Panda and Flagg must not both accept authoritat
 
 ## 1) Physical Topology
 
-### Live Central host: Panda
+### Legacy Central snapshot: Panda
 
 ```text
 Mac Mini "Panda" (host macOS)

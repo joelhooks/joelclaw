@@ -328,9 +328,9 @@ No cursed glitter sudo sprinkles.
 The whole NAS verification story runs unprivileged. `verify-nas.sh` (including
 `--write-probe`) proves route/media/MTU, both mounts, the installed
 `com.joelclaw.central.nas-mounts` plist, and daemon liveness — the daemon fires
-every 60s and `${CENTRAL_LOG_DIR}/nas-mounts.out.log` is world-readable, so log
-freshness proves the service is loaded and running without touching the system
-launchd domain. Same for reading daemon logs and `mount-nas.sh status`.
+every 300s and emits one healthy-run receipt to the world-readable
+`${CENTRAL_LOG_DIR}/nas-mounts.out.log`, so freshness proves the service is loaded
+without touching the system launchd domain. Same for reading daemon logs and `mount-nas.sh status`.
 
 ### What genuinely needs sudo (and why)
 
