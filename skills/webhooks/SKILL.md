@@ -14,16 +14,25 @@ Manage the joelclaw webhook gateway — add providers, debug delivery, register 
 ## Architecture
 
 ```
-External Service → Tailscale Funnel :443 → Worker :3111 → /webhooks/:provider
+External Service → hooks.joelclaw.com → narrow Vercel raw-body proxy
+  → Flagg Tailscale Funnel :10000 → Worker :3111 → /webhooks/:provider
   → verifySignature() → normalizePayload() → (queue pilot or direct Inngest event) → notify function → gateway
 ```
+
+Stable provider URL target:
+
+```txt
+https://hooks.joelclaw.com/webhooks/<provider>
+```
+
+The ingress is intentionally narrow: it preserves raw bodies/signature headers and only proxies `/webhooks/:provider`. Provider registrations still using Panda are migration work; do not declare a provider migrated until a real signed delivery succeeds through the stable URL.
 
 - **ADR-0048**: Webhook Gateway for External Service Integration
 - **Gateway skill**: Use `gateway push`/`gateway test` patterns for delivery checks
 
 ## Current Providers
 
-| Provider | Events | Signature | Funnel URL |
+| Provider | Events | Signature | Legacy/current registration until verified migrated |
 |----------|--------|-----------|------------|
 | todoist | comment.added, task.completed, task.created | HMAC-SHA256 (`x-todoist-hmac-sha256`) | `https://panda.tail7af24.ts.net/webhooks/todoist` |
 | front | message.received, message.sent, assignee.changed | HMAC-SHA1 (`x-front-signature`) | `https://panda.tail7af24.ts.net/webhooks/front` |
@@ -135,20 +144,21 @@ Set up via repo Settings → Webhooks:
 
 ### Todoist
 
-Already configured via Todoist App Console → Webhooks tab.
+Configured at `https://hooks.joelclaw.com/webhooks/todoist` via Todoist App Console → Webhooks tab.
 Uses `client_secret` as HMAC key (not the "Verification token").
 
 ### Front
 
-Already configured via Front Rules → "Trigger a webhook" action.
-Rules webhooks scope to specific inboxes at the rule layer.
+Configured at `https://hooks.joelclaw.com/webhooks/front` as a Front application webhook.
+Initial validation is a signed challenge. Application events use HMAC-SHA256 over `timestamp:rawBody`; legacy Rules events use HMAC-SHA1 over compact JSON. Keep their secrets separate.
 
 ## Signature Algorithms by Provider
 
 | Provider | Algorithm | Encoding | Header | Secret Source |
 |----------|-----------|----------|--------|---------------|
 | Todoist | HMAC-SHA256 | base64 | `x-todoist-hmac-sha256` | App Console → client_secret |
-| Front | HMAC-SHA1 | base64 (over compact JSON) | `x-front-signature` | Rules webhook secret |
+| Front application | HMAC-SHA256 | base64 over `timestamp:rawBody` | `x-front-signature`, `x-front-request-timestamp` | `joelclaw-front-app-secret` |
+| Front rules | HMAC-SHA1 | base64 over compact JSON | `x-front-signature` | `front_rules_webhook_secret` |
 | Vercel | HMAC-SHA1 | hex | `x-vercel-signature` | Webhook creation response |
 | GitHub | HMAC-SHA256 | hex (prefixed `sha256=`) | `x-hub-signature-256` | Webhook config secret |
 | Stripe | HMAC-SHA256 | hex | `stripe-signature` (structured) | Endpoint signing secret |
@@ -158,6 +168,6 @@ Rules webhooks scope to specific inboxes at the rule layer.
 - **Caddy drops Funnel POST bodies** — Point Tailscale Funnel directly at worker `:3111`, not through Caddy
 - **`joelclaw inngest restart-worker --register` after deploy** — ensures restart + registration in one step
 - **Vercel webhooks are Pro/Enterprise only** — free plans cannot create account-level webhooks
-- **Front has TWO webhook types** — App-level (SHA256, challenges) vs Rules-based (SHA1, no challenges). We use Rules-based
+- **Front has TWO webhook types** — application (SHA256, signed challenges) and Rules (SHA1, no challenges). The worker supports both; `hooks.joelclaw.com` is registered as the application webhook.
 - **agent-secrets v0.5.0+** — raw output is default, don't pass `--raw` flag
 - **Idempotency keys** on all events — safe to receive duplicates from retry-happy providers

@@ -7,8 +7,9 @@
  * Event format: { type, id, emitted_at, conversation, source, target, _links }
  * Types: inbound, outbound, move, archive, reopen, assign, unassign, tag, untag, comment, etc.
  *
- * HMAC: SHA1(apiSecret, JSON.stringify(body)) → base64
- * Header: x-front-signature
+ * Rule HMAC: SHA1(apiSecret, JSON.stringify(body)) → base64
+ * Application HMAC: SHA256(applicationSecret, `${timestamp}:${rawBody}`) → base64
+ * Headers: x-front-signature, plus x-front-request-timestamp for application webhooks
  *
  * Docs: https://dev.frontapp.com/docs/rule-webhooks
  *       https://dev.frontapp.com/reference/events
@@ -34,10 +35,29 @@ const EVENT_MAP: Record<string, string> = {
   comment: "comment.added",
 };
 
-function getWebhookSecret(): string {
-  const secret = process.env.FRONT_WEBHOOK_SECRET;
+function signaturesMatch(signature: string, computed: string): boolean {
+  try {
+    return timingSafeEqual(
+      Buffer.from(signature, "base64"),
+      Buffer.from(computed, "base64"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getRulesWebhookSecret(): string {
+  const secret = process.env.FRONT_RULES_WEBHOOK_SECRET ?? process.env.FRONT_WEBHOOK_SECRET;
   if (!secret) {
-    throw new Error("FRONT_WEBHOOK_SECRET env var required for webhook verification");
+    throw new Error("FRONT_RULES_WEBHOOK_SECRET env var required for rule webhook verification");
+  }
+  return secret;
+}
+
+function getApplicationWebhookSecret(): string {
+  const secret = process.env.FRONT_APPLICATION_SECRET;
+  if (!secret) {
+    throw new Error("FRONT_APPLICATION_SECRET env var required for application webhook verification");
   }
   return secret;
 }
@@ -50,7 +70,13 @@ export const frontProvider: WebhookProvider = {
     const signature = headers["x-front-signature"];
     if (!signature) return false;
 
-    const secret = getWebhookSecret();
+    const timestamp = headers["x-front-request-timestamp"];
+    if (timestamp) {
+      const computed = createHmac("sha256", getApplicationWebhookSecret())
+        .update(`${timestamp}:${rawBody}`)
+        .digest("base64");
+      return signaturesMatch(signature, computed);
+    }
 
     // Rules webhook: HMAC-SHA1(secret, JSON.stringify(parsed body)) → base64
     let compactBody: string;
@@ -60,18 +86,11 @@ export const frontProvider: WebhookProvider = {
       return false;
     }
 
-    const computed = createHmac("sha1", secret)
+    const computed = createHmac("sha1", getRulesWebhookSecret())
       .update(compactBody)
       .digest("base64");
 
-    try {
-      return timingSafeEqual(
-        Buffer.from(signature, "base64"),
-        Buffer.from(computed, "base64"),
-      );
-    } catch {
-      return false;
-    }
+    return signaturesMatch(signature, computed);
   },
 
   normalizePayload(

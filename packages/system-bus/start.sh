@@ -87,11 +87,18 @@ else
   echo "WARNING: Failed to lease todoist_api_token" >&2
 fi
 
-FRONT_SECRET=$(secrets lease front_rules_webhook_secret --ttl 24h 2>/dev/null)
-if [ -n "$FRONT_SECRET" ]; then
-  export FRONT_WEBHOOK_SECRET="$FRONT_SECRET"
+FRONT_RULES_SECRET=$(secrets lease front_rules_webhook_secret --ttl 24h 2>/dev/null)
+if [ -n "$FRONT_RULES_SECRET" ]; then
+  export FRONT_RULES_WEBHOOK_SECRET="$FRONT_RULES_SECRET"
 else
   echo "WARNING: Failed to lease front_rules_webhook_secret" >&2
+fi
+
+FRONT_APPLICATION_SECRET=$(secrets lease joelclaw-front-app-secret --ttl 24h 2>/dev/null)
+if [ -n "$FRONT_APPLICATION_SECRET" ]; then
+  export FRONT_APPLICATION_SECRET="$FRONT_APPLICATION_SECRET"
+else
+  echo "WARNING: Failed to lease joelclaw-front-app-secret" >&2
 fi
 
 FRONT_TOKEN=$(secrets lease front_api_token --ttl 24h 2>/dev/null)

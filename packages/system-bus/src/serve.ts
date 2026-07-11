@@ -28,7 +28,8 @@ const SHOULD_LEASE_WEBHOOK_SECRETS = BOOT_WORKER_ROLE !== "cluster";
 
 const WEBHOOK_SECRETS = [
   { env: "VERCEL_WEBHOOK_SECRET", secret: "vercel_webhook_secret" },
-  { env: "FRONT_WEBHOOK_SECRET", secret: "front_webhook_secret" },
+  { env: "FRONT_RULES_WEBHOOK_SECRET", secret: "front_rules_webhook_secret" },
+  { env: "FRONT_APPLICATION_SECRET", secret: "joelclaw-front-app-secret" },
   { env: "TODOIST_CLIENT_SECRET", secret: "todoist_client_secret" },
   { env: "GITHUB_WEBHOOK_SECRET", secret: "github_webhook_secret" },
   { env: "MUX_WEBHOOK_SECRET", secret: "mux_signing_secret" },

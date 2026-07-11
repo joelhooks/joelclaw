@@ -257,6 +257,14 @@ webhookApp.post("/:provider", async (c) => {
         return c.json({ ok: false, error: "Invalid JSON" }, 400);
       }
 
+      const frontChallenge = providerId === "front"
+        ? headers["x-front-challenge"]
+        : undefined;
+      if (frontChallenge) {
+        console.log("[webhooks] challenge response", { provider: providerId });
+        return c.text(frontChallenge, 200, { "Content-Type": "text/plain" });
+      }
+
       let events = provider.normalizePayload(body, headers);
       if (providerId === "todoist" && events.length > 0) {
         events = await filterTodoistTaskCompletedEchoes(events);
@@ -285,14 +293,6 @@ webhookApp.post("/:provider", async (c) => {
           keys: Object.keys(body),
         });
         return c.json({ ok: true, events: 0, note: "No matching events" });
-      }
-
-      // Handle challenge/validation requests (Front sends x-front-challenge)
-      const challengeEvent = events.find((e) => e.name === "_challenge");
-      if (challengeEvent) {
-        const challenge = (challengeEvent.data as any).challenge;
-        console.log("[webhooks] challenge response", { provider: providerId });
-        return c.text(challenge, 200, { "Content-Type": "text/plain" });
       }
 
       if (providerId === joelclawProvider.id) {

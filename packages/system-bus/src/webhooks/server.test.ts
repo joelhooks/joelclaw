@@ -26,20 +26,17 @@ const packagePublished: NormalizedEvent = {
 
 const priorQueuePilots = process.env.QUEUE_PILOTS;
 const priorXConsumerSecret = process.env.X_CONSUMER_SECRET;
+const priorFrontApplicationSecret = process.env.FRONT_APPLICATION_SECRET;
+
+const restoreEnv = (name: string, value: string | undefined) => {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+};
 
 afterEach(() => {
-  if (priorQueuePilots === undefined) {
-    delete process.env.QUEUE_PILOTS;
-    return;
-  }
-
-  process.env.QUEUE_PILOTS = priorQueuePilots;
-
-  if (priorXConsumerSecret === undefined) {
-    delete process.env.X_CONSUMER_SECRET;
-  } else {
-    process.env.X_CONSUMER_SECRET = priorXConsumerSecret;
-  }
+  restoreEnv("QUEUE_PILOTS", priorQueuePilots);
+  restoreEnv("X_CONSUMER_SECRET", priorXConsumerSecret);
+  restoreEnv("FRONT_APPLICATION_SECRET", priorFrontApplicationSecret);
 });
 
 describe("webhook server queue pilot helpers", () => {
@@ -83,6 +80,31 @@ describe("webhook server provider challenges", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ response_token: expected });
+  });
+
+  test("handles signed Front application webhook validation", async () => {
+    process.env.FRONT_APPLICATION_SECRET = "front-application-test-secret";
+    const timestamp = "1783700793";
+    const challenge = "front-validation-challenge";
+    const rawBody = JSON.stringify({ type: "sync", authorization: { id: "cmp_test" } });
+    const signature = createHmac("sha256", process.env.FRONT_APPLICATION_SECRET)
+      .update(`${timestamp}:${rawBody}`)
+      .digest("base64");
+
+    const response = await webhookApp.request("/front", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-front-challenge": challenge,
+        "x-front-request-timestamp": timestamp,
+        "x-front-signature": signature,
+      },
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    expect(await response.text()).toBe(challenge);
   });
 
   test("rejects GET challenges for providers that do not support them", async () => {

@@ -1,0 +1,135 @@
+---
+title: "Central Webhook Migration"
+type: "project"
+status: "active"
+created_at: "2026-07-10"
+tags:
+  - joelclaw
+  - webhooks
+  - central-migration
+  - front
+  - slack
+  - todoist
+---
+
+# Central Webhook Migration
+
+## Outcome
+
+External webhook providers use the host-neutral URL `https://hooks.joelclaw.com/webhooks/:provider`. Flagg owns verification and dispatch. Panda no longer runs webhook business logic and can eventually stop acting as ingress Relay.
+
+Slack is adjacent but different: inbound Slack currently uses Socket Mode over WebSocket inside the monolithic gateway daemon. It is not a `/webhooks/slack` provider.
+
+## Shipped 2026-07-10
+
+### Stable ingress
+
+Created dedicated Vercel project `joelclaw-webhook-ingress` and assigned:
+
+```txt
+https://hooks.joelclaw.com
+```
+
+Source:
+
+```txt
+apps/webhook-ingress/
+```
+
+The ingress:
+
+- permits only `/webhooks/:provider`
+- preserves the raw request body and provider signature headers
+- does not become a general-purpose proxy
+- forwards to Flagg through its public Tailscale Funnel route
+- fails closed when the upstream origin is missing
+
+Flagg Funnel now exposes:
+
+```txt
+https://joels-mac-studio.tail7af24.ts.net:10000/webhooks
+  -> http://127.0.0.1:3111/webhooks
+```
+
+Verification:
+
+- `GET https://hooks.joelclaw.com/health` -> `200`
+- unsigned `POST /webhooks/github` -> expected `401 Invalid signature` from the Flagg worker
+- `POST /api/runs` -> `404`, proving the ingress is not an open proxy
+- local tests: `4 pass / 0 fail`
+
+A pre-existing Vercel project named `webhooks` contained unrelated payment/mail environment variables and no live deployment. It was not reused; the dedicated project avoids crossing those boundaries.
+
+### Todoist access
+
+The account and secret already existed. Current projects:
+
+- Inbox
+- Joel's Tasks
+- Questions for Joel
+- Agent Work
+- Code with Antonio
+
+The canonical `joelhooks/todoist-cli` release installer is broken because release `v0.1.0` has no binary assets. Built `v0.2.0` from source and repaired Inbox detection for Todoist API v1, which no longer marks the Inbox project reliably.
+
+- Flagg runs the real CLI and owns the token.
+- Blaine and Panda use thin SSH wrappers to Flagg, so the token is not copied between machines.
+- All three clients can list the same five projects.
+- The Inbox contained `58` old items; they were moved into an archived, recoverable reset project. Inbox and Today are now both `0`.
+
+Joel chose the first useful Todoist loop: **personal capture plus a daily next-action list**, in the spirit of GTD. Todoist holds actions; Brain PARA holds support material. The `Agent Work` project and its `305` machine items are archived, and system-bus automated Todoist writes now fail closed. `Joel's Tasks` still needs a deliberate commitment cleanup before daily use is trustworthy.
+
+## Provider migration sequence
+
+Current Flagg providers:
+
+1. `front`
+2. `todoist`
+3. `vercel`
+4. `github`
+5. `mux`
+6. `joelclaw`
+7. `x`
+
+Migration rule for each provider:
+
+1. Confirm the provider's current registration and secret source.
+2. Add or switch callback to `https://hooks.joelclaw.com/webhooks/<provider>`.
+3. Send a real provider canary, not only a synthetic curl.
+4. Verify signature acceptance, normalized event, Inngest run, OTEL receipt, and downstream behavior.
+5. Keep Panda forwarding during a bounded observation window.
+6. Remove the old Panda callback only after readback proves the new registration.
+
+Recommended order:
+
+- **Front first — DONE 2026-07-10**: application webhook registered at `https://hooks.joelclaw.com/webhooks/front`; Front's signed validation completed with `200`.
+- **Todoist second**: directly supports the new personal capture loop and current provider already exists.
+- **GitHub and Vercel**: API-driven registration/readback is practical.
+- **Mux**: update endpoint and verify a signed delivery.
+- **X**: preserve CRC challenge and signature behavior during URL change.
+- **joelclaw**: internal callers last, after external ingress is boring.
+
+## Slack migration
+
+Slack inbound uses Socket Mode (`slack_app_token`) inside `packages/gateway`, not a public webhook. Moving Slack alone by starting another gateway on Flagg is unsafe:
+
+- two Socket Mode connections can split event delivery
+- two gateway daemons can race over shared Redis/session work
+- the gateway currently starts Slack as part of one monolithic lifecycle
+
+Recommended slice:
+
+1. Add explicit gateway instance/channel ownership so exactly one machine owns each channel.
+2. Make Flagg the Slack owner.
+3. Keep Panda as the iMessage hardware/account Relay.
+4. Start Flagg gateway in a Slack-owned mode and verify `/health/slack`, Socket Mode connection, passive important-channel indexing, DM/mention routing, and Redis delivery.
+5. Disable Slack ownership on Panda and verify it cannot reconnect.
+6. Only then decide whether Telegram/Discord move with the main gateway or remain separately owned.
+
+Do not run two vaguely configured full gateway daemons and hope Slack sorts it out.
+
+## Current blockers
+
+- Front registration is complete. The worker now supports both Front application webhook signatures (SHA-256 over `timestamp:rawBody`) and legacy rule webhook signatures (SHA-1 over the compact JSON body) with separate secrets.
+- Todoist Inbox and machine backlog are reset, but `Joel's Tasks` (`123`) still needs a human-guided keep/project/someday/archive pass.
+- Slack needs explicit channel ownership in gateway lifecycle before migration.
