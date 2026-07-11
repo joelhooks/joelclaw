@@ -1,5 +1,6 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { parseAsrJson } from "./asr-json";
 import { rigAsrPath } from "./paths";
 import { detectPathologicalRepetition, type RepetitionVerdict } from "./repetition";
 import type { PlanChunk } from "./types";
@@ -33,7 +34,7 @@ export type ReadJsonFn = (path: string) => Promise<unknown | undefined>;
 async function defaultReadJson(path: string): Promise<unknown | undefined> {
   try {
     const text = await Bun.file(path).text();
-    return JSON.parse(text);
+    return parseAsrJson(text);
   } catch {
     return undefined;
   }

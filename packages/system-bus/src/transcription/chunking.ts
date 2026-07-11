@@ -1,5 +1,6 @@
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { parseAsrJson } from "./asr-json";
 import {
   asrChunkResultPath,
   chunkJobId,
@@ -210,7 +211,7 @@ export type BuildPlanDeps = {
 async function defaultReadJson(path: string): Promise<unknown | undefined> {
   try {
     const text = await Bun.file(path).text();
-    return JSON.parse(text);
+    return parseAsrJson(text);
   } catch {
     return undefined;
   }

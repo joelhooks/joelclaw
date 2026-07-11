@@ -13,6 +13,7 @@ import { mkdir, readFile, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Subprocess } from "bun";
 import { inngest } from "../../inngest/client";
+import { parseAsrJson } from "../asr-json";
 import {
   actorLogPath,
   actorStatusPath,
@@ -100,7 +101,7 @@ async function checkAsrResult(resultPath: string): Promise<ResultCheck> {
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = parseAsrJson(text);
   } catch {
     return { valid: false };
   }
@@ -163,6 +164,14 @@ function buildAsrCommand(wavPath: string, outputDir: string): string[] {
     outputDir,
     "--output-name",
     "asr",
+    // Anti-hallucination-loop flags: 16 of 22 recovery chunks of a real
+    // meeting looped ("yeah" ×144, "i dont know" ×275) with the defaults.
+    // Conditioning on previous text is the loop's feedback mechanism, and
+    // silent stretches are where it starts.
+    "--condition-on-previous-text",
+    "False",
+    "--hallucination-silence-threshold",
+    "2",
   ];
 }
 

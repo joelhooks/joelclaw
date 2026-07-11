@@ -8,6 +8,7 @@
 import { readFile } from "node:fs/promises";
 import { killActorGroup } from "../../transcription/actor/kill";
 import { spawnDetachedActor } from "../../transcription/actor/spawn";
+import { parseAsrJson } from "../../transcription/asr-json";
 import { detectPathologicalRepetition } from "../../transcription/repetition";
 import { heartbeatFresh, readActorStatus } from "../../transcription/status";
 import { inngest } from "../client";
@@ -25,7 +26,7 @@ const WAIT_TIMEOUT = "10m";
 async function readJsonSafe(path: string): Promise<unknown | undefined> {
   try {
     const text = await readFile(path, "utf8");
-    return JSON.parse(text);
+    return parseAsrJson(text);
   } catch {
     return undefined;
   }
