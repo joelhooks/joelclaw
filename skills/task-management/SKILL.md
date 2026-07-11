@@ -29,22 +29,18 @@ Three systems, one practice:
 - **Habits are anchored, not scheduled.** "After morning coffee → shoulder warm-up" not "Do exercises at 7am." The anchor is the trigger.
 - **Less is more.** A clean list with 5 clear next actions beats 50 vague intentions. Ruthlessly prune. If you haven't touched it in 2 weeks and it's not scheduled, it doesn't matter.
 
-## Task Surfaces (ADR-0238)
+## Personal action boundary
 
-Todoist is not one undifferentiated bucket.
-
-- **Human surface**: tasks Joel must personally do, review, or decide
-- **Decision surface**: explicit questions for Joel, not generic backlog
-- **Machine surface**: agent bookkeeping, infra follow-ups, memory review, and system chores
+Todoist is Joel's actual GTD-style personal action list. Brain PARA holds project support material, areas, resources, receipts, and archives. Do not reproduce the PARA tree in Todoist.
 
 Rules:
 
-- Default human home is **`Joel's Tasks`**
-- `Questions for Joel` is for actual decisions only, not a dumping ground
-- `Agent Work` is for machine-visible backlog when a task is still useful at all
-- **Do not create machine tasks in Joel-facing projects**
-- **Do not let machine-task creation fall back into Joel-facing projects just because another surface failed**
-- If the agent can do the work now, **do it instead of tasking it**
+- Default action home is **`Joel's Tasks`**.
+- `Questions for Joel` is for actual decisions only, not a dumping ground.
+- The old `Agent Work` project is archived. Machine bookkeeping, infra follow-ups, memory review, and system chores do not belong in Todoist.
+- System-bus Todoist mutations are disabled by default. `TODOIST_AUTOMATION_WRITES_ENABLED=true` is an emergency compatibility override, not normal operation.
+- Agents may mutate Todoist through explicit `todoist-cli` commands when Joel asks to capture, schedule, move, complete, or delete a personal task.
+- If the agent can do the work now, **do it instead of tasking it**.
 
 Good human-facing tasks:
 - "Ask Kristina for post-op follow-up appointment date"
@@ -260,7 +256,7 @@ When an ADR is `accepted` or `proposed`, its remaining work should exist as Todo
 - Things the agent can do right now (< 5 min) — just do them
 - Deferred ADRs — they'll get tasked when un-deferred
 - Vague research — time-box it first ("Spend 30 min on X" not "Research X")
-- Machine-only bookkeeping in Joel-facing projects — route it to `Agent Work` or keep it out of Todoist entirely
+- Machine-only bookkeeping anywhere in Todoist — keep it in Brain receipts, issues, or runtime state instead
 
 ## Anti-Patterns
 

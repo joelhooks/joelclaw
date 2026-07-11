@@ -116,6 +116,14 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function assertAutomationWritesEnabled(): void {
+  if (process.env.TODOIST_AUTOMATION_WRITES_ENABLED !== "true") {
+    throw new Error(
+      "Automated Todoist writes are disabled. Todoist is Joel's personal action list; use explicit todoist-cli commands for user-requested mutations."
+    );
+  }
+}
+
 export class TodoistTaskAdapter implements TaskPort {
   constructor(private readonly cliBin = "todoist-cli") {}
 
@@ -202,6 +210,7 @@ export class TodoistTaskAdapter implements TaskPort {
   }
 
   async createTask(task: CreateTaskInput): Promise<Task> {
+    assertAutomationWritesEnabled();
     const args = ["add", task.content];
     if (task.description) args.push("--description", task.description);
     if (task.priority) args.push("--priority", String(task.priority));
@@ -221,6 +230,7 @@ export class TodoistTaskAdapter implements TaskPort {
   }
 
   async updateTask(id: string, updates: UpdateTaskInput): Promise<Task> {
+    assertAutomationWritesEnabled();
     const args = ["update", id];
     if (updates.content) args.push("--content", updates.content);
     if (updates.description) args.push("--description", updates.description);
@@ -246,6 +256,7 @@ export class TodoistTaskAdapter implements TaskPort {
   }
 
   async completeTask(id: string): Promise<void> {
+    assertAutomationWritesEnabled();
     await markTodoistTaskAgentClosed(id);
     try {
       await this.runCli(["complete", id]);
@@ -256,6 +267,7 @@ export class TodoistTaskAdapter implements TaskPort {
   }
 
   async deleteTask(id: string): Promise<void> {
+    assertAutomationWritesEnabled();
     await this.runCli(["delete", id]);
   }
 
@@ -282,6 +294,7 @@ export class TodoistTaskAdapter implements TaskPort {
   }
 
   async moveToProject(taskId: string, projectId: string): Promise<void> {
+    assertAutomationWritesEnabled();
     await this.runCli(["move", taskId, "--project", projectId]);
   }
 

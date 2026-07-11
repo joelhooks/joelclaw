@@ -1,0 +1,104 @@
+---
+title: "Personal Task System"
+type: "area"
+status: "active"
+created_at: "2026-07-10"
+tags:
+  - todoist
+  - gtd
+  - para
+  - personal-operations
+---
+
+# Personal Task System
+
+## Purpose
+
+Todoist is Joel's **actual personal action list**: concrete commitments he can review, organize, and do. It is not an agent event log, automation sink, observability queue, or graveyard for work the system should execute itself.
+
+The spirit is David Allen / GTD, with PARA supporting the material around the work:
+
+- **Todoist** answers: what is the next action, what am I waiting for, and what is scheduled?
+- **Brain PARA** holds project plans, area standards, resources, receipts, and archives.
+- Do not reproduce the entire PARA folder tree in Todoist. Actions and support material are different things.
+
+## Minimal operating model
+
+### Inbox
+
+Fast capture only. Inbox is temporary and gets processed to zero.
+
+Every item becomes one of:
+
+1. Do now if genuinely tiny.
+2. Turn into a concrete next action.
+3. Schedule only when the date is real.
+4. Move to Someday/Maybe.
+5. Delete it.
+6. Hand executable machine work to the agent instead of creating a personal task.
+
+### Joel's Tasks
+
+Only actions Joel personally intends to do. Titles are verb-first and specific enough to pick up cold.
+
+### Projects
+
+A project is any outcome requiring more than one action. Keep a short project list, not a dumping ground. Each active project must have at least one visible next action.
+
+Project support material belongs in Brain under `projects/`, not inside a giant Todoist description.
+
+### Waiting For
+
+Delegated actions need the person/system and a review date. Do not leave delegation disguised as Joel's next action.
+
+### Someday/Maybe
+
+Ideas without a current commitment. Review periodically; they do not appear in Today.
+
+### Today
+
+A deliberate daily list, normally 3–7 actions. Due dates mean real commitments, not priority decoration.
+
+## Automation boundary
+
+Agents may:
+
+- capture a task Joel states explicitly
+- clarify wording into a concrete next action
+- show proposed cleanup/scheduling batches
+- execute machine-doable work directly
+
+Agents must not:
+
+- spray inferred chores into Joel's personal list
+- create a task merely to record that an automation ran or failed
+- use `Joel's Tasks` as fallback storage when machine surfaces fail
+- auto-schedule vague work
+- create recurring tasks without Joel choosing the cadence
+
+Machine chores belong in system state, Brain receipts, issues, or a bounded agent queue. They enter Todoist only when Joel must personally act or decide.
+
+## Reset receipt — 2026-07-10
+
+The existing Inbox contained `58` old items. Joel chose to archive the pile and start fresh.
+
+- moved all 58 items into `Archive — Inbox reset 2026-07-10`
+- archived that project so the items remain recoverable
+- verified Inbox count is now `0`
+- verified Today count is `0`
+
+Joel then chose to remove machine work from Todoist entirely:
+
+- archived the recoverable `Agent Work` project with `305` items
+- system-bus Todoist mutations now fail closed unless the explicit compatibility override `TODOIST_AUTOMATION_WRITES_ENABLED=true` is set
+- explicit user-requested `todoist-cli` actions remain available
+
+Remaining active lists:
+
+- `Joel's Tasks`: `123` active items
+- `Code with Antonio`: `13` active items
+- `Questions for Joel`: `0`
+- Inbox: `0`
+- Today: `0`
+
+Next pass should review `Joel's Tasks` as real commitments: keep, make concrete, move to an active project, move to Someday/Maybe, or archive. Then choose a short current project list and no more than seven daily next actions.
