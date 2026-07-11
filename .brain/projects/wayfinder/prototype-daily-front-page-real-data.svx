@@ -1,0 +1,22 @@
+---
+title: "Prototype the Daily Front Page with Real Data"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:prototype"
+interaction: "HITL"
+parent: "./joelclaw-personal-wiki-map.svx"
+blockers:
+  - "Define the Open Loop and Editorial Model"
+  - "Decide the Canonical Data and Projection Boundaries"
+  - "Verify the Wiki Toolchain and Runtime Boundaries"
+  - "Define Agent-Native Access and Verification"
+  - "Define Privacy, Access, and Publication Boundaries"
+created_at: "2026-07-10"
+---
+
+# Prototype the Daily Front Page with Real Data
+
+## Question
+
+What newspaper-like front page, built on `tufte-mdsvx` with actual open loops and evidence, gives Joel the clearest eye-flow from headline and daily theme through meaningful changes, blocked or stale loops, new connections, questions, and source-backed detail without becoming a dashboard or an AI-generated wall of summaries?

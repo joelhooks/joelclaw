@@ -1,0 +1,21 @@
+---
+title: "Decide the Repository and Deployment Shape"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:grilling"
+interaction: "HITL"
+parent: "./joelclaw-personal-wiki-map.svx"
+blockers:
+  - "Decide the Canonical Data and Projection Boundaries"
+  - "Verify the Wiki Toolchain and Runtime Boundaries"
+  - "Define Agent-Native Access and Verification"
+  - "Define Privacy, Access, and Publication Boundaries"
+created_at: "2026-07-10"
+---
+
+# Decide the Repository and Deployment Shape
+
+## Question
+
+Should `joelhooks/joelclaw-wiki` own the frontend, CLI, schemas, and source adapters together; where should each runtime execute; how should it deploy and reach Convex or fleet sources; and what boundary keeps the wiki from duplicating joelclaw, pi-notes, or system-bus responsibilities?

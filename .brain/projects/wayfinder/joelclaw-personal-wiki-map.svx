@@ -1,0 +1,94 @@
+---
+title: "Chart the Joelclaw Personal Wiki"
+type: "wayfinder_map"
+status: "active"
+labels:
+  - "wayfinder:map"
+created_at: "2026-07-10"
+tracker: "local-brain"
+privacy: "private"
+---
+
+# Chart the Joelclaw Personal Wiki
+
+## Destination
+
+Produce a decision-complete architecture and operating map for a private work-and-business wiki where Brain owns durable knowledge, real incoming sources retain provenance, agents can investigate the system through a CLI, humans browse readable Tufte-style pages, and dated daily editions reveal the most important open loops and whether the wiki still reflects reality.
+
+The first proof is a real-data, agent-testable Joelclaw wiki prototype and fleet tool catalog—not a fake demo and not full production ingestion of every source.
+
+## Notes
+
+### Product boundary
+
+- This is Joel's work and business operating wiki. It is not a personal-life archive or quantified-self system.
+- The front page is a dated, preserved daily edition: newspaper-like, editorial, readable, and prioritized. It is not a live feed, analytics dashboard, folder index, or task queue.
+- Open loops are the primary subject: projects, research, experiments, goals, commitments, blocked work, waiting work, and questions that require Joel.
+- Agents may detect and surface open loops from sessions and other sources.
+- Todoist remains human-guided. Agents may prepare a next action, but they do not silently create tasks.
+- Normal pages use Joel's writing style: concise, plain, technically exact, readable by a technically adept five-year-old, and free of LLM recap sludge.
+- Raw sessions remain evidence. The wiki preserves their decisions, corrections, receipts, useful ideas, and open loops—not the messy narrative journey.
+- PARA supplies lifecycle and placement. Zettelkasten-style notes supply small, durable, meaningfully linked ideas. Source claims remain traceable.
+
+### Known real sources
+
+- Pi, Claude, and Codex session transcripts and Typesense indexes
+- system Brain and project `.brain/**/*.svx`
+- Slack, Discord, Granola, Front, GitHub, webhooks, Todoist, and Google accounts through `gog`
+- joelclaw runtime events, OTEL, captures, and fleet receipts
+
+### Fixed technical direction
+
+- Repository candidate: `joelhooks/joelclaw-wiki`
+- SvelteKit + MDSvX
+- `joelhooks/tufte-mdsvx` as the visual and authoring base
+- Oxfmt and Oxlint through current Ultracite presets
+- TypeScript 7 with a verified maximally strict configuration informed by Matt Pocock's current rules
+- XState v5 for explicit application and ingestion lifecycles
+- Effect v4 beta from `Effect-TS/effect-smol` for typed services, errors, resources, concurrency, retries, CLI, and AI seams
+- Pi agents for judgment, synthesis, investigation, and editorial work after deterministic collection
+- Fully agent-native and testable surfaces: semantic HTML, stable URLs, structured projections, deterministic seams, provenance, and browser-agent checks
+
+### Architecture guardrail
+
+Do not let XState and Effect become competing workflow engines. XState owns finite lifecycle and actor state. Effect owns typed effects and service boundaries. Pi agents perform bounded judgment through explicit schemas and receipts.
+
+### Sources every session should consult
+
+- `/skill:wayfinder`
+- `/skill:brain-first-workflow`
+- `/skill:para-operator`
+- `/skill:jitpm-project-manager`
+- `/skill:forte-source-research`
+- `/skill:pi-notes`
+- `/skill:brain-component-composition`
+- `/skill:pi-effect` and `/skill:effect-ts`
+- `/skill:agent-discovery`
+- `/skill:joel-writing-style` when available
+
+Current Effect receipt: `Effect-TS/effect-smol`, package `effect@4.0.0-beta.97` at inspection time. The CLI and AI modules are exported under `effect/unstable/cli` and `effect/unstable/ai`; current services use `Context.Service`. Pin and verify rather than copying older v4 examples.
+
+Inspiration receipt: [Matt Pocock's agent-managed personal wiki](https://x.com/mattpocockuk/status/2071607607714890181). Matt's system ingests work streams and uses a daily briefing as both a useful summary and a reality check. Joel's adaptation prioritizes open loops and readable dated editions; audio is optional later.
+
+## Decisions so far
+
+<!-- Closed ticket resolutions are appended here as one-line linked gists. -->
+
+## Not yet specified
+
+- How detected loops are reconciled, merged, corrected, and promoted after the source and editorial models are known.
+- Whether daily editions are assembled on a schedule, on demand, or both after the first prototype exposes the useful rhythm.
+- How existing pi-notes Document Host pages and the new SvelteKit surface coexist, share components, or converge.
+- How Zettelkasten-style links are suggested without manufacturing relationships or creating backlink soup.
+- Which source adapters join the first operational ingestion run after the source catalogue exposes cost, risk, and signal quality.
+- Whether on-demand audio deep dives are produced, and from which reviewed edition or topic artifacts.
+- Which review decisions may write back to Brain, source systems, or task tools beyond the existing fail-closed Todoist boundary.
+
+## Out of scope
+
+- Personal, family, health, financial, or private-life ingestion unless deliberately imported for a specific work decision.
+- Silent automatic Todoist task creation.
+- Podcast generation as a requirement of the first working slice.
+- Replacing raw transcript archives, Brain, or Typesense merely to create a tidier architecture diagram.
+- A public multi-user wiki product or SaaS.
+- Migrating every existing Brain page before a real vertical slice proves the model.

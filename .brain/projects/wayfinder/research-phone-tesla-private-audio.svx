@@ -1,0 +1,17 @@
+---
+title: "Research Phone, Tesla, and Private Audio Delivery"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:research"
+interaction: "AFK"
+parent: "./joelclaw-personal-wiki-map.svx"
+blockers: []
+created_at: "2026-07-10"
+---
+
+# Research Phone, Tesla, and Private Audio Delivery
+
+## Question
+
+What private delivery methods would let Joel consume optional dated-edition or on-demand topic audio naturally on his phone and in a Tesla Model Y, including Bluetooth, private podcast feeds, authenticated streaming, downloads, playback state, and boring fallback behavior?
