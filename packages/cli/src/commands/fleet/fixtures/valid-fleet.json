@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "hosts": [
+    {
+      "alias": "central",
+      "sshTarget": "central-fixture.invalid",
+      "expectedHostname": "central-example",
+      "role": "central",
+      "harness": { "model": "gpt-5.6-sol", "thinking": "high" },
+      "skills": { "fingerprint": "central-fixture" }
+    },
+    {
+      "alias": "shadow",
+      "sshTarget": "shadow-fixture.invalid",
+      "expectedHostname": "shadow-example",
+      "role": "central-shadow",
+      "harness": { "model": "gpt-5.6-terra", "thinking": "medium" }
+    },
+    {
+      "alias": "satellite",
+      "sshTarget": "satellite-fixture.invalid",
+      "expectedHostname": "satellite-example",
+      "role": "satellite",
+      "exemptions": [
+        { "field": "skills.fingerprint", "reason": "thin satellite fixture" }
+      ]
+    }
+  ]
+}

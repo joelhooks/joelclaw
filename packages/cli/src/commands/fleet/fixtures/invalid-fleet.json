@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hosts": [
+    {
+      "alias": "duplicate",
+      "sshTarget": "first-fixture.invalid",
+      "expectedHostname": "first-example",
+      "role": "central"
+    },
+    {
+      "alias": "duplicate",
+      "sshTarget": "second-fixture.invalid",
+      "expectedHostname": "second-example",
+      "role": "not-a-role"
+    }
+  ]
+}

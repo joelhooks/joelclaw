@@ -20,11 +20,12 @@ const SIGKILL: CInt = 9;
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/worker-supervisor.toml";
 const DEFAULT_PATH: &str = "~/.bun/bin:~/.local/bin:~/.local/share/fnm/aliases/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-const SECRET_MAPPINGS: [(&str, &str); 6] = [
+const SECRET_MAPPINGS: [(&str, &str); 7] = [
     ("claude_oauth_token", "CLAUDE_CODE_OAUTH_TOKEN"),
     ("todoist_client_secret", "TODOIST_CLIENT_SECRET"),
     ("todoist_api_token", "TODOIST_API_TOKEN"),
-    ("front_rules_webhook_secret", "FRONT_WEBHOOK_SECRET"),
+    ("front_rules_webhook_secret", "FRONT_RULES_WEBHOOK_SECRET"),
+    ("joelclaw-front-app-secret", "FRONT_APPLICATION_SECRET"),
     ("front_api_token", "FRONT_API_TOKEN"),
     ("vercel_webhook_secret", "VERCEL_WEBHOOK_SECRET"),
 ];

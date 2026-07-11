@@ -145,6 +145,17 @@ Semantics:
 - `joelclaw queue`
 - `joelclaw workload`
 - `joelclaw jobs`
+- `joelclaw fleet`
+
+## Fleet command tree
+
+```bash
+joelclaw fleet
+├── status [--host <alias>] [--config <private-manifest>]
+└── diff [--host <alias>] [--config <private-manifest>]
+```
+
+Both commands are read-only and return the standard JSON envelope. `status` gathers declared-host facts; `diff` classifies declared expectations as `in_sync`, `expected_difference`, `drift`, or `unavailable`. The manifest is local private configuration: never commit or print its contents. Fleet plan/apply commands do not exist yet; use a reviewed, host-scoped change path only after explicit approval.
 
 ## PDS command tree
 

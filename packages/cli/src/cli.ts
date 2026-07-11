@@ -14,6 +14,7 @@ import { discoverCmd } from "./commands/discover";
 import { docsCmd } from "./commands/docs";
 import { emailCmd } from "./commands/email";
 import { eventCmd } from "./commands/event";
+import { fleetCmd } from "./commands/fleet";
 import { eventsCmd } from "./commands/events";
 import { gatewayCmd } from "./commands/gateway";
 import { healCmd } from "./commands/heal";
@@ -324,6 +325,7 @@ const root = Command.make("joelclaw", {}, () =>
     callCmd,
     search,
     satelliteCmd,
+    fleetCmd,
     sessionsCmd,
     sessionCmd,
     modelsCmd,

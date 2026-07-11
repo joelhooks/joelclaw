@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JoelClaw local fleet manifest",
+  "description": "Public-safe schema. Store the real manifest only at ~/.config/joelclaw/fleet.json; do not commit host routing or secrets.",
+  "type": "object",
+  "required": ["version", "hosts"],
+  "properties": {
+    "version": { "const": 1 },
+    "hosts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["alias", "sshTarget", "expectedHostname", "role"],
+        "properties": {
+          "alias": { "type": "string", "minLength": 1 },
+          "sshTarget": { "type": "string", "minLength": 1, "description": "Local-only SSH target; never commit a live value." },
+          "expectedHostname": { "type": "string", "minLength": 1 },
+          "role": { "enum": ["central", "central-shadow", "satellite"] },
+          "harness": { "type": "object" },
+          "skills": { "type": "object" },
+          "exemptions": { "type": "array" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
