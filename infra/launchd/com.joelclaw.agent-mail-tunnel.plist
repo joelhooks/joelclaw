@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.joelclaw.agent-mail-tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/joel/Code/joelhooks/joelclaw/infra/agent-mail-tunnel.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/joel</string>
+        <key>AGENT_MAIL_CENTRAL_HOST</key>
+        <string>flagg</string>
+        <key>AGENT_MAIL_CENTRAL_PORT</key>
+        <string>8765</string>
+        <key>AGENT_MAIL_LOCAL_PORT</key>
+        <string>8765</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>NetworkState</key>
+        <true/>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/joel/.joelclaw/logs/agent-mail-tunnel.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/joel/.joelclaw/logs/agent-mail-tunnel.stderr.log</string>
+</dict>
+</plist>

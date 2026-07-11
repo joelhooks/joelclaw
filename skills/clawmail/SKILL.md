@@ -25,6 +25,20 @@ Canonical agent coordination contract for joelclaw.
 `joelclaw mail` is the **only** supported mail access surface for pi agents.
 Do not call `mcp_agent_mail` HTTP endpoints directly from agent prompts or role instructions.
 
+## Topology
+
+Agent-mail is a **Central service**, not a mailbox per machine:
+
+- **Flagg** hosts the authoritative daemon on `127.0.0.1:8765`.
+- **Blaine and Panda** run `com.joelclaw.agent-mail-tunnel`, forwarding their local `127.0.0.1:8765` to Flagg over SSH.
+- Satellite/Relay clients keep using the default local URL. The tunnel preserves the CLI contract without exposing the unauthenticated service on the tailnet.
+- Do not start an independent agent-mail daemon on a satellite. A healthy client must report the same mailbox/project counts as Flagg.
+
+Tracked connector assets:
+
+- `infra/agent-mail-tunnel.sh`
+- `infra/launchd/com.joelclaw.agent-mail-tunnel.plist`
+
 ## Interfaces
 
 ### Canonical interface

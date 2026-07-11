@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.joelclaw.system-bus-central-tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/joel/Code/joelhooks/joelclaw/infra/system-bus-central-tunnel.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/joel</string>
+        <key>SYSTEM_BUS_CENTRAL_HOST</key>
+        <string>flagg</string>
+        <key>SYSTEM_BUS_CENTRAL_PORT</key>
+        <string>3111</string>
+        <key>SYSTEM_BUS_LOCAL_PORT</key>
+        <string>3111</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>NetworkState</key>
+        <true/>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/joel/.joelclaw/logs/system-bus-central-tunnel.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/joel/.joelclaw/logs/system-bus-central-tunnel.stderr.log</string>
+</dict>
+</plist>
