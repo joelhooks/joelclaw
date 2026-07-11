@@ -20,7 +20,11 @@ import { inngest } from "../client";
  */
 export const asrChunkDeps = { spawnDetachedActor, killActorGroup };
 
-const MAX_WAIT_ITERATIONS = 6;
+// Generous: each iteration ends on EITHER a 10m timeout OR a delivered event,
+// and the dev server leaks other actors' finished events through the match
+// expression (see the foreign-event guard in the wait loop), so bursts of
+// foreign events can consume iterations in seconds.
+const MAX_WAIT_ITERATIONS = 24;
 const WAIT_TIMEOUT = "10m";
 
 async function readJsonSafe(path: string): Promise<unknown | undefined> {
@@ -164,7 +168,12 @@ export const transcriptionAsrChunkRun = inngest.createFunction(
         if: `async.data.actorId == "${spawned.actorId}"`,
       });
 
-      if (finished) {
+      // The dev server has been observed delivering OTHER actors' finished
+      // events despite the `if` match expression — trusting them reaped
+      // healthy actors and burned this chunk's retries on someone else's
+      // repetitive_output. Only act on an exact actorId match; anything else
+      // falls through to the status-file check, same as a timeout.
+      if (finished && finished.data.actorId === spawned.actorId) {
         if (finished.data.status === "succeeded") {
           succeeded = true;
           break;

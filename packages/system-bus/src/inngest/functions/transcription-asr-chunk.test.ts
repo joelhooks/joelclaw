@@ -139,7 +139,7 @@ describe("transcriptionAsrChunkRun", () => {
         {
           id: "03-wait-actor-0-0",
           handler: () => ({
-            data: { status: "failed", error: "mlx_whisper exited 1" },
+            data: { actorId: "asr_fixture#0", status: "failed", error: "mlx_whisper exited 1" },
           }),
         },
       ],

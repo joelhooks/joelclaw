@@ -20,7 +20,7 @@ import { inngest } from "../client";
  */
 export const diarizeDeps = { spawnDetachedActor, killActorGroup, leaseSecret };
 
-const MAX_WAIT_ITERATIONS = 32;
+const MAX_WAIT_ITERATIONS = 64;
 const WAIT_TIMEOUT = "15m";
 
 async function readFirstLine(path: string): Promise<string | undefined> {
@@ -159,7 +159,8 @@ export const transcriptionDiarizeRun = inngest.createFunction(
         if: `async.data.actorId == "${spawned.actorId}"`,
       });
 
-      if (finished) {
+      // Foreign-event guard — see transcription-asr-chunk.ts for rationale.
+      if (finished && finished.data.actorId === spawned.actorId) {
         if (finished.data.status === "succeeded") {
           succeeded = true;
           break;
