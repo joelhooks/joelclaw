@@ -42,6 +42,27 @@ type MediaTranscriptionRequestedData = {
   index?: boolean;
 };
 
+/**
+ * Invoke payload for the per-chunk ASR/diarize functions (slice F / 00-architecture.md).
+ * `index`/`chunkSeconds` are ASR-chunk-only; `expectedSpeakers` is diarize-only.
+ * `wavPath`/`resultPath` mean "chunk wav / chunk asr.json" for asr and
+ * "downmixed track wav / whole-track jsonl" for diarize.
+ */
+type TranscriptionChunkRequestedData = {
+  requestId: string;
+  artifactId: string;
+  sourcePath: string;
+  rigRoot: string;
+  sourceId: string;
+  chunkId: string;
+  total: number;
+  wavPath: string;
+  resultPath: string;
+  index?: number;
+  chunkSeconds?: number;
+  expectedSpeakers?: number;
+};
+
 type ContentSummarizeRequestedData = {
   vaultPath: string;
   prompt?: string;
@@ -105,7 +126,7 @@ export type Events = {
     data: MediaTranscriptionRequestedData;
   };
   "media/transcription.cancelled": {
-    data: { requestId: string };
+    data: { requestId: string; sourcePath?: string; artifactId?: string };
   };
   "media/transcription.blocked": {
     data: {
@@ -126,6 +147,63 @@ export type Events = {
       outputRoot?: string;
       published: boolean;
       indexed: boolean;
+    };
+  };
+  /** Orchestrator onFailure terminal event (v2). */
+  "media/transcription.failed": {
+    data: {
+      requestId: string;
+      sourcePath: string;
+      error: string;
+    };
+  };
+  /** Trigger for the invoke-only ASR-chunk function (also enables manual re-drive via `joelclaw send`). */
+  "media/transcription.asr-chunk.requested": {
+    data: TranscriptionChunkRequestedData;
+  };
+  /** Trigger for the invoke-only diarize function. */
+  "media/transcription.diarize.requested": {
+    data: TranscriptionChunkRequestedData;
+  };
+  /** Detached actor process reported a terminal outcome (best-effort; status file is source of truth). */
+  "media/transcription.actor.finished": {
+    data: {
+      requestId: string;
+      artifactId: string;
+      actorId: string;
+      chunkId: string;
+      kind: "asr" | "diarize";
+      status: "succeeded" | "failed";
+      error?: string;
+      resultPath?: string;
+    };
+  };
+  "media/transcription.chunk.completed": {
+    data: {
+      requestId: string;
+      artifactId: string;
+      chunkId: string;
+      kind: "asr" | "diarize";
+      index: number;
+      total: number;
+      cached: boolean;
+    };
+  };
+  "media/transcription.chunk.failed": {
+    data: {
+      requestId: string;
+      artifactId: string;
+      chunkId: string;
+      kind: "asr" | "diarize";
+      index: number;
+      error: string;
+    };
+  };
+  "media/transcription.cleanup.completed": {
+    data: {
+      requestId: string;
+      artifactId?: string;
+      killedActors: number;
     };
   };
 

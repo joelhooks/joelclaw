@@ -106,6 +106,9 @@ import { telegramCallbackReceived } from "./telegram-callback";
 import { telnyxNotify } from "./telnyx-notify";
 import { transcriptIndexWeb } from "./transcript-index-web";
 import { transcriptProcess, transcriptProcessLegacyAlias } from "./transcript-process";
+import { transcriptionAsrChunkRun } from "./transcription-asr-chunk";
+import { transcriptionCleanup } from "./transcription-cleanup";
+import { transcriptionDiarizeRun } from "./transcription-diarize";
 import {
   typesenseBlogSync,
   typesenseFullSync,
@@ -183,6 +186,9 @@ export const hostFunctionDefinitions = [
   agentLoopRetro,
   mediaProcess,
   mediaTranscriptionPipeline,
+  transcriptionAsrChunkRun,
+  transcriptionDiarizeRun,
+  transcriptionCleanup,
   telegramCallbackReceived,
   voiceCallCompleted,
   observeSessionNoted,

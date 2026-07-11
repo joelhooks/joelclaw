@@ -1,0 +1,24 @@
+# Transcription Pipeline v2 — durable event-driven redesign (2026-07-11)
+
+## Incident
+
+`media-transcription-pipeline-v1` ran whole-file MLX Whisper (2h execa timeout) and whole-file pyannote inside HTTP-bound `step.run` blocks. Receipts: artifact `20236-06-23-kent-theo-joel-winning-on-youtube_3cf3810a7a367c0ea3ce` has an ASR claim check with one hallucinated segment repeated 2,523×; `.transcript-rig-runtime` stderr logs show `Command timed out after 7200000 milliseconds`, exit 143, no group kill → retries overlapped orphaned inference → dead 4h run.
+
+## Decisions
+
+- **Inngest orchestrates, never holds a request open across inference.** Inference runs in detached actor processes (`packages/system-bus/src/transcription/actor/`): own process group, stdio → `actor.log`, heartbeat status files, terminal-status-then-best-effort-event ordering.
+- **ASR chunked** (600s, 16kHz mono ffmpeg segments); every chunk screened by `detectPathologicalRepetition` before aggregation; chunk outputs stitched time-offset into the rig's whole-track `raw/asr/<sourceId>/asr.json`. **Diarization stays whole-file** (cross-chunk speaker re-clustering out of scope) but detached + watched.
+- **Idempotency**: deterministic `chunkJobId`; actor id = `chunkId#attempt`; claim-check short-circuits at every layer (plan, chunk supervisor, actor). Adoption: existing chunk WAV layouts (incl. the manual recovery's) are adopted with offsets from cumulative ffprobe durations; valid whole-track asr.json ⇒ track skipped; repetitive one ⇒ quarantined `asr.json.rejected-<ts>`.
+- **Retry safety**: supervisor step ids parameterized by `attempt` (Inngest memoization would otherwise replay attempt 0 forever); each retry reaps the previous actor's process group first (identity-verified via `ps` contains actorId — PID reuse safe).
+- **Cancellation**: `media/transcription.cancelled` → cancelOn all runs + `transcription-cleanup-v1` kills live actor groups (SIGTERM → 10s → SIGKILL) and writes `orchestration/cancelled.v1.json`, which the spawner refuses to spawn past. Actors additionally treat un-initiated child signal deaths (exit 130/137/143) as `cancelled`, because Bun's in-process signal dispatch can miss a group SIGTERM that the child received (observed ~20% in tests).
+- **Event-loss tolerance**: supervisors `step.waitForEvent` on `media/transcription.actor.finished` matched by actorId, and on timeout poll the actor status file (heartbeat staleness 3m ⇒ kill + retry). ASR budget 6×10m, diarize 32×15m.
+- Pi monitor contract preserved: orchestrator step ids keep the `NN-` prefix parsed by `packages/pi-extensions/inngest-monitor`.
+- transcript-rig gained `--no-inference` on run/resume (fast stages throw `inference_required` instead of launching inference) and per-track ASR claim-check skip in `transcribe()`.
+
+## Functions / events
+
+`media-transcription-pipeline-v2` (orchestrator), `transcription-asr-chunk-v1`, `transcription-diarize-v1` (invoked, GPU/diarize concurrency keys, limit 1), `transcription-cleanup-v1`. New events: `media/transcription.{failed,asr-chunk.requested,diarize.requested,actor.finished,chunk.completed,chunk.failed,cleanup.completed}`. All registered in `index.host.ts` only (needs Flagg NFS mount + rig checkout).
+
+## Verification (2026-07-11)
+
+`bunx tsc --noEmit` clean; biome clean on all touched files; combined suite 62 pass ×2 (plus spawn.test.ts real-process loop 12/12 after the signal-race fix); transcript-rig 18 pass + typecheck clean. Not deployed; no events sent; live recovery processes untouched throughout.

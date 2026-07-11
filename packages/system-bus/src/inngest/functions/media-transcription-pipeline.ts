@@ -1,147 +1,109 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+/**
+ * Media Transcription Pipeline v2 (00-architecture.md).
+ *
+ * Inngest orchestrates; inference runs in detached local actor processes
+ * launched by transcription-asr-chunk-v1 / transcription-diarize-v1. No step
+ * in this function ever holds a request open across inference — ASR is
+ * chunked and diarization runs as a watched detached actor instead of a
+ * request-bound execa call.
+ *
+ * runRig/leaseSecret/verifyMediaMount/recordStage moved to ../../transcription/rig
+ * (slice T). This file only orchestrates.
+ */
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { NonRetriableError } from "inngest";
-import { emitOtelEvent } from "../../observability/emit";
+import { aggregateChunkAsr, writeAggregatedAsr } from "../../transcription/aggregate";
+import { buildPlan } from "../../transcription/chunking";
+import {
+  chunkJobId,
+  planPath,
+  rigDiarizationPath,
+  rigDiarizationWavPath,
+  workRoot,
+} from "../../transcription/paths";
+import {
+  DEFAULT_RIG_ROOT,
+  MEDIA_ROOT,
+  recordStage,
+  runRig,
+  verifyMediaMount,
+} from "../../transcription/rig";
+import { parsePlan, type TranscriptionPlan } from "../../transcription/types";
 import { inngest } from "../client";
 
-const DEFAULT_RIG_ROOT = "/Users/joel/Code/joelhooks/transcript-rig";
-const MEDIA_ROOT = "/Volumes/badass-media/";
+/**
+ * Injectable seam for rig-CLI side-effects. Tests stub these properties
+ * directly instead of mock.module(), which patches the process-wide module
+ * registry and breaks sibling test files in combined runs.
+ */
+export const pipelineDeps = { runRig, verifyMediaMount, recordStage };
 
-type RigResult = {
-  artifactId?: string;
+import { transcriptionAsrChunkRun } from "./transcription-asr-chunk";
+import { transcriptionDiarizeRun } from "./transcription-diarize";
+
+async function readJsonIfExists(path: string): Promise<unknown | undefined> {
+  try {
+    const text = await readFile(path, "utf8");
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(tmpPath, JSON.stringify(value, null, 2));
+  await rename(tmpPath, path);
+}
+
+type ManifestMediaEntry = {
   sourceId?: string;
-  stage?: string;
-  claimChecks?: Record<string, string>;
-  layout?: { root?: string; pointer?: string };
+  path?: string;
+  role?: string;
+  expectedSpeakers?: number;
+  speaker?: string;
 };
 
-async function leaseSecret(name: string, ttl = "4h"): Promise<string> {
-  const proc = Bun.spawn(["secrets", "lease", name, "--ttl", ttl], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (code !== 0) {
-    throw new Error(`failed to lease ${name}: ${stderr.trim() || `exit ${code}`}`);
-  }
-  return stdout.trim();
-}
-
-async function runRig(
-  args: string[],
-  options: { needsHuggingFace?: boolean; needsTypesense?: boolean } = {},
-): Promise<RigResult> {
-  const rigRoot = process.env.TRANSCRIPT_RIG_ROOT ?? DEFAULT_RIG_ROOT;
-  const env: Record<string, string | undefined> = { ...process.env };
-  if (options.needsHuggingFace) {
-    env.HF_TOKEN = await leaseSecret("huggingface_read_token");
-  }
-  if (options.needsTypesense) {
-    env.TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
-    env.TYPESENSE_API_KEY =
-      process.env.TYPESENSE_API_KEY || (await leaseSecret("typesense_api_key"));
-  }
-
-  const logDir = `${rigRoot}/.transcript-rig-runtime`;
-  await mkdir(logDir, { recursive: true });
-  const invocationId = randomUUID();
-  const stdoutPath = `${logDir}/${invocationId}.stdout.log`;
-  const stderrPath = `${logDir}/${invocationId}.stderr.log`;
-  const proc = Bun.spawn(["bun", "src/cli.ts", ...args], {
-    cwd: rigRoot,
-    env,
-    stdout: Bun.file(stdoutPath),
-    stderr: Bun.file(stderrPath),
-  });
-  const code = await proc.exited;
-  const [stdout, stderr] = await Promise.all([
-    Bun.file(stdoutPath).text(),
-    Bun.file(stderrPath).text(),
-  ]);
-  if (code !== 0) {
-    throw new Error(
-      `transcript-rig ${args[0]} failed (${code}): ${(stderr || stdout).trim().slice(-4000)}`,
-    );
-  }
+function stringifyError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
   try {
-    return JSON.parse(stdout) as RigResult;
+    return JSON.stringify(error);
   } catch {
-    throw new Error(
-      `transcript-rig ${args[0]} returned invalid JSON: ${stdout.slice(-1000)}`,
-    );
+    return String(error);
   }
-}
-
-async function verifyMediaMount(sourcePath: string): Promise<{
-  available: boolean;
-  blocker?: {
-    code: "mount_unavailable";
-    message: string;
-    retryable: true;
-  };
-}> {
-  const pathExists = await stat(sourcePath)
-    .then((value) => value.isDirectory())
-    .catch(() => false);
-  const proc = Bun.spawn(["/sbin/mount"], { stdout: "pipe", stderr: "pipe" });
-  const [mounts, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    proc.exited,
-  ]);
-  const mounted =
-    code === 0 && mounts.includes(" on /Volumes/badass-media (nfs");
-  if (mounted && pathExists) return { available: true };
-  return {
-    available: false,
-    blocker: {
-      code: "mount_unavailable",
-      message:
-        "Flagg requires the direct 10GbE NFS mount /Volumes/badass-media; SSH staging and local raw copies are forbidden",
-      retryable: true,
-    },
-  };
-}
-
-async function recordStage(
-  requestId: string,
-  sourcePath: string,
-  stage: string,
-  result: RigResult,
-): Promise<void> {
-  await emitOtelEvent({
-    level: "info",
-    source: "worker",
-    component: "media-transcription-pipeline",
-    action: "media.transcription.stage.completed",
-    success: true,
-    metadata: {
-      requestId,
-      sourcePath,
-      stage,
-      artifactId: result.artifactId ?? null,
-      claimChecks: result.claimChecks ?? {},
-    },
-  });
 }
 
 export const mediaTranscriptionPipeline = inngest.createFunction(
   {
-    id: "media-transcription-pipeline-v1",
-    name: "Media Transcription Pipeline v1",
+    id: "media-transcription-pipeline-v2",
+    name: "Media Transcription Pipeline v2",
     idempotency: "event.data.requestId",
     concurrency: { key: '"media-transcription"', limit: 1 },
-    timeouts: { start: "30m", finish: "4h" },
+    timeouts: { start: "30m", finish: "12h" },
     cancelOn: [
       {
         event: "media/transcription.cancelled",
         if: "event.data.requestId == async.data.requestId",
       },
     ],
+    onFailure: async ({ event, error, step }) => {
+      const failureData = (
+        event as unknown as { data?: { requestId?: string; sourcePath?: string } }
+      ).data;
+      const requestId = failureData?.requestId ?? "unknown";
+      const sourcePath = failureData?.sourcePath ?? "unknown";
+      await step.sendEvent("emit-transcription-failed", {
+        name: "media/transcription.failed",
+        data: {
+          requestId,
+          sourcePath,
+          error: stringifyError(error),
+        },
+      });
+    },
   },
   { event: "media/transcription.requested" },
   async ({ event, step }) => {
@@ -152,9 +114,10 @@ export const mediaTranscriptionPipeline = inngest.createFunction(
         `sourcePath must be under mounted ${MEDIA_ROOT}; got ${sourcePath}`,
       );
     }
+    const rigRoot = process.env.TRANSCRIPT_RIG_ROOT ?? DEFAULT_RIG_ROOT;
 
     const mount = await step.run("00-verify-badass-media-mount", async () =>
-      verifyMediaMount(absoluteSource),
+      pipelineDeps.verifyMediaMount(absoluteSource),
     );
     if (!mount.available && mount.blocker) {
       await step.sendEvent("emit-transcription-blocked", {
@@ -173,72 +136,178 @@ export const mediaTranscriptionPipeline = inngest.createFunction(
       };
     }
 
-    const planned = await step.run("01-plan-mounted-media", async () => {
-      const result = await runRig(["plan", absoluteSource]);
-      await recordStage(requestId, absoluteSource, "planned", result);
-      return {
-        artifactId: result.artifactId,
-        sourceId: result.sourceId,
-        outputRoot: result.layout?.root,
-      };
+    const staged = await step.run("01-stage-manifest", async () => {
+      const result = await pipelineDeps.runRig(["run", absoluteSource, "--until", "staged"]);
+      await pipelineDeps.recordStage(requestId, absoluteSource, "staged", result);
+      const manifestPath = result.claimChecks?.manifest;
+      if (!manifestPath) {
+        throw new Error(
+          `stage_manifest_missing: rig result had no claimChecks.manifest for ${absoluteSource}`,
+        );
+      }
+      const manifestJson = await readJsonIfExists(manifestPath);
+      const rawMedia = (manifestJson as { media?: ManifestMediaEntry[] } | undefined)
+        ?.media;
+      if (!Array.isArray(rawMedia)) {
+        throw new Error(`stage_manifest_invalid: no media[] in ${manifestPath}`);
+      }
+      const media = rawMedia
+        .filter(
+          (entry): entry is Required<Pick<ManifestMediaEntry, "sourceId" | "path" | "role">> &
+            ManifestMediaEntry =>
+            typeof entry.sourceId === "string" &&
+            typeof entry.path === "string" &&
+            typeof entry.role === "string",
+        )
+        .map((entry) => ({
+          sourceId: entry.sourceId,
+          path: entry.path,
+          role: entry.role,
+          expectedSpeakers: entry.expectedSpeakers,
+          speaker: entry.speaker,
+        }));
+      const artifactId =
+        result.artifactId ??
+        (manifestJson as { artifactId?: string } | undefined)?.artifactId;
+      if (!artifactId) {
+        throw new Error(`stage_manifest_missing_artifact_id: ${absoluteSource}`);
+      }
+      return { artifactId, media };
     });
 
-    const transcribed = await step.run("02-transcribe-tracks", async () => {
-      const result = await runRig(
-        ["run", absoluteSource, "--until", "transcribed"],
-        { needsHuggingFace: true },
+    const plan = await step.run("02-plan-chunks", async () => {
+      const existingRaw = await readJsonIfExists(planPath(staged.artifactId));
+      if (existingRaw) {
+        try {
+          const existingPlan = parsePlan(existingRaw);
+          if (existingPlan.requestId === requestId) return existingPlan;
+        } catch {
+          // fall through and rebuild — a corrupt/foreign plan file is not
+          // trustworthy for this requestId.
+        }
+      }
+      const builtPlan = await buildPlan({
+        requestId,
+        artifactId: staged.artifactId,
+        sourcePath: absoluteSource,
+        rigRoot,
+        media: staged.media,
+      });
+      await writeJsonAtomic(planPath(staged.artifactId), builtPlan);
+      return builtPlan;
+    });
+
+    const invokes: Promise<unknown>[] = [];
+    for (const track of plan.tracks) {
+      for (const chunk of track.chunks) {
+        invokes.push(
+          step.invoke(`03-asr-chunk-${chunk.chunkId}`, {
+            function: transcriptionAsrChunkRun,
+            data: {
+              requestId,
+              artifactId: plan.artifactId,
+              sourcePath: absoluteSource,
+              rigRoot,
+              sourceId: track.sourceId,
+              chunkId: chunk.chunkId,
+              index: chunk.index,
+              total: track.chunks.length,
+              wavPath: chunk.wavPath,
+              resultPath: chunk.resultPath,
+              chunkSeconds: track.chunkSeconds,
+            },
+            // Invoke timeouts include queue time: chunks serialize behind the
+            // single-GPU concurrency key, so a long meeting's tail chunks can
+            // sit queued for hours before their own few-minute run.
+            timeout: "6h",
+          }),
+        );
+      }
+    }
+    for (const sourceId of plan.diarizeTracks) {
+      const track = plan.tracks.find((candidate) => candidate.sourceId === sourceId);
+      const diarizeChunkId = chunkJobId({
+        artifactId: plan.artifactId,
+        kind: "diarize",
+        sourceId,
+        index: 0,
+      });
+      invokes.push(
+        step.invoke(`03-diarize-${sourceId}`, {
+          function: transcriptionDiarizeRun,
+          data: {
+            requestId,
+            artifactId: plan.artifactId,
+            sourcePath: absoluteSource,
+            rigRoot,
+            sourceId,
+            chunkId: diarizeChunkId,
+            total: 1,
+            wavPath: rigDiarizationWavPath(plan.artifactId, sourceId),
+            resultPath: rigDiarizationPath(plan.artifactId, sourceId),
+            expectedSpeakers: track?.expectedSpeakers,
+          },
+          timeout: "10h",
+        }),
       );
-      await recordStage(requestId, absoluteSource, "transcribed", result);
-      return result;
-    });
+    }
+    await Promise.all(invokes);
 
-    const diarized = await step.run("03-diarize-speakers", async () => {
-      const result = await runRig(
-        ["resume", absoluteSource, "--until", "diarized"],
-        { needsHuggingFace: true },
-      );
-      await recordStage(requestId, absoluteSource, "diarized", result);
-      return result;
-    });
+    for (const track of plan.tracks) {
+      if (track.asrDone) continue;
+      await step.run(`04-aggregate-asr-${track.sourceId}`, async () => {
+        const { asr } = await aggregateChunkAsr({
+          artifactId: plan.artifactId,
+          sourceId: track.sourceId,
+          chunks: track.chunks,
+        });
+        await writeAggregatedAsr(plan.artifactId, track.sourceId, asr);
+        return { sourceId: track.sourceId, segments: asr.segments.length };
+      });
+    }
 
-    const merged = await step.run("04-merge-timed-words", async () => {
-      const result = await runRig([
+    const merged = await step.run("05-merge-words", async () => {
+      const result = await pipelineDeps.runRig([
         "resume",
         absoluteSource,
         "--until",
         "merged",
+        "--no-inference",
       ]);
-      await recordStage(requestId, absoluteSource, "merged", result);
+      await pipelineDeps.recordStage(requestId, absoluteSource, "merged", result);
       return result;
     });
 
-    const exported = await step.run("05-render-editorial-and-analysis", async () => {
-      const result = await runRig([
+    const exported = await step.run("06-render-editorial", async () => {
+      const result = await pipelineDeps.runRig([
         "resume",
         absoluteSource,
         "--until",
         "exported",
+        "--no-inference",
       ]);
-      await recordStage(requestId, absoluteSource, "exported", result);
+      await pipelineDeps.recordStage(requestId, absoluteSource, "exported", result);
       return result;
     });
 
-    const completed = await step.run("06-index-and-publish", async () => {
-      const args = ["resume", absoluteSource];
+    const completed = await step.run("07-index-and-publish", async () => {
+      const args = ["resume", absoluteSource, "--no-inference"];
       if (index) args.push("--index");
       if (publish) args.push("--publish");
-      const result = await runRig(args, { needsTypesense: index });
-      await recordStage(requestId, absoluteSource, "complete", result);
+      const result = await pipelineDeps.runRig(args, { needsTypesense: index });
+      await pipelineDeps.recordStage(requestId, absoluteSource, "complete", result);
       return result;
     });
 
-    await step.sendEvent("emit-transcription-completed", {
+    const outputRoot = workRoot(plan.artifactId);
+
+    await step.sendEvent("08-emit-completed", {
       name: "media/transcription.completed",
       data: {
         requestId,
         sourcePath: absoluteSource,
-        artifactId: completed.artifactId ?? planned.artifactId ?? "unknown",
-        outputRoot: planned.outputRoot,
+        artifactId: completed.artifactId ?? plan.artifactId,
+        outputRoot,
         published: publish,
         indexed: index,
       },
@@ -247,16 +316,18 @@ export const mediaTranscriptionPipeline = inngest.createFunction(
     return {
       requestId,
       sourcePath: absoluteSource,
-      artifactId: completed.artifactId ?? planned.artifactId,
-      stage: completed.stage ?? "complete",
+      artifactId: completed.artifactId ?? plan.artifactId,
       published: publish,
       indexed: index,
+      tracks: plan.tracks.length,
+      chunksProcessed: plan.tracks.reduce((sum, track) => sum + track.chunks.length, 0),
+      diarizeTracks: plan.diarizeTracks.length,
       checkpoints: {
-        transcribed: transcribed.stage,
-        diarized: diarized.stage,
         merged: merged.stage,
         exported: exported.stage,
       },
     };
   },
 );
+
+export type { TranscriptionPlan };

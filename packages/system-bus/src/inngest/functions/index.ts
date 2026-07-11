@@ -75,9 +75,9 @@ export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
 export { knowledgeTurnWrite } from "./knowledge-turn-write";
 export { manifestArchive } from "./manifest-archive";
 export { mediaProcess } from "./media-process";
+export { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
 export { meetingAnalyze } from "./meeting-analyze";
 export { meetingTranscriptIndex } from "./meeting-transcript-index";
-export { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
 export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 export { batchReview } from "./memory/batch-review";
 export { memoryEmbed } from "./memory/embed";
@@ -122,6 +122,9 @@ export {
 } from "./todoist-notify";
 export { transcriptIndexWeb } from "./transcript-index-web";
 export { transcriptProcess, transcriptProcessLegacyAlias } from "./transcript-process";
+export { transcriptionAsrChunkRun } from "./transcription-asr-chunk";
+export { transcriptionCleanup } from "./transcription-cleanup";
+export { transcriptionDiarizeRun } from "./transcription-diarize";
 export {
   typesenseBlogSync,
   typesenseFullSync,
