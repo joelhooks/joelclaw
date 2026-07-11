@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename } from "node:fs/promises";
+import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseAsrJson } from "./asr-json";
 import {
@@ -8,7 +8,7 @@ import {
   rigDiarizationPath,
   workRoot,
 } from "./paths";
-import { detectPathologicalRepetition } from "./repetition";
+import { screenWithCollapse } from "./repetition";
 import type { PlanChunk, PlanTrack, TranscriptionPlan } from "./types";
 
 export type ChunkBoundary = { index: number; startMs: number; endMs: number };
@@ -197,6 +197,8 @@ export type BuildPlanDeps = {
   /** Reads and JSON.parses a claim-check file; undefined on missing/corrupt. */
   readJson?: (path: string) => Promise<unknown | undefined>;
   renameFile?: (from: string, to: string) => Promise<void>;
+  /** Atomic JSON writer used to persist a collapsed adopted whole-track ASR. */
+  writeJson?: (path: string, value: unknown) => Promise<void>;
   chunkAudio?: (args: {
     mediaPath: string;
     chunksDir: string;
@@ -275,6 +277,13 @@ export async function buildPlan(args: {
   const deps = args.deps ?? {};
   const readJson = deps.readJson ?? defaultReadJson;
   const renameFile = deps.renameFile ?? ((from, to) => rename(from, to));
+  const writeJson =
+    deps.writeJson ??
+    (async (path: string, value: unknown) => {
+      const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+      await writeFile(tmpPath, JSON.stringify(value));
+      await rename(tmpPath, path);
+    });
   const chunkAudio = deps.chunkAudio ?? ((chunkArgs) => chunkTrackAudio(chunkArgs));
   const offsetsFromFiles = deps.offsetsFromFiles ?? ((wavPaths) => chunkOffsetsFromFiles(wavPaths));
   const diarizationValid = deps.diarizationValid ?? defaultDiarizationValid;
@@ -292,9 +301,18 @@ export async function buildPlan(args: {
     const asrPath = rigAsrPath(args.artifactId, item.sourceId);
     const existingAsr = await readJson(asrPath);
     if (isValidAsrJson(existingAsr)) {
-      const verdict = detectPathologicalRepetition(existingAsr.segments);
+      const verdict = screenWithCollapse(existingAsr.segments);
       if (!verdict.repetitive) {
         asrDone = true;
+        // asrDone tracks skip aggregation entirely — the rig merges this file
+        // as-is — so persist the collapsed segments here or decoder-loop
+        // padding rides straight into the transcript.
+        if (verdict.removed > 0) {
+          await writeJson(asrPath, {
+            ...existingAsr,
+            segments: verdict.segments.map((segment, index) => ({ ...segment, id: index })),
+          });
+        }
       } else {
         const rejectedPath = `${asrPath}.rejected-${now().toISOString()}`;
         await renameFile(asrPath, rejectedPath);

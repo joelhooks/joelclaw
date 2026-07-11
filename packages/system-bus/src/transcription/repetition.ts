@@ -17,6 +17,13 @@ export type RepetitionThresholds = {
   minDistinctRatio: number;
   /** Below this many segments the ratios are too noisy to judge. */
   minSegmentsForRatios: number;
+  /**
+   * screenWithCollapse only: share of segments removed by collapsing
+   * consecutive duplicates above which the decode itself is judged garbage —
+   * if most of the output was loop padding, the decoder was hallucinating,
+   * and whatever real speech was in that audio is likely missing.
+   */
+  maxCollapsedFraction: number;
 };
 
 export const defaultRepetitionThresholds: RepetitionThresholds = {
@@ -24,6 +31,7 @@ export const defaultRepetitionThresholds: RepetitionThresholds = {
   maxTopPhraseShare: 0.5,
   minDistinctRatio: 0.25,
   minSegmentsForRatios: 12,
+  maxCollapsedFraction: 0.5,
 };
 
 export type RepetitionMetrics = {
@@ -122,4 +130,73 @@ export function detectPathologicalRepetition(
   }
 
   return { repetitive: false, metrics };
+}
+
+export type CollapseResult<T> = {
+  segments: T[];
+  removed: number;
+  removedFraction: number;
+};
+
+/**
+ * Collapses runs of consecutive segments with identical normalized text down
+ * to their first occurrence. At whisper segment granularity (~2-5s each), a
+ * run of identical segments is decoder looping, not speech — a person saying
+ * "yeah, yeah" does it within one segment. Real content survives: one
+ * "I'm not sure" stays; the 13 hallucinated echoes go.
+ */
+export function collapseConsecutiveSegments<T extends { text?: string }>(
+  segments: T[],
+): CollapseResult<T> {
+  const kept: T[] = [];
+  let previous: string | undefined;
+  for (const segment of segments) {
+    const normalized = normalizeSegmentText(String(segment.text ?? ""));
+    if (normalized.length > 0 && normalized === previous) continue;
+    kept.push(segment);
+    previous = normalized.length > 0 ? normalized : undefined;
+  }
+  const removed = segments.length - kept.length;
+  return {
+    segments: kept,
+    removed,
+    removedFraction: segments.length ? removed / segments.length : 0,
+  };
+}
+
+export type CollapsedScreenVerdict<T> = RepetitionVerdict & {
+  /** Collapsed segments — what downstream should aggregate/persist. */
+  segments: T[];
+  removed: number;
+  removedFraction: number;
+};
+
+/**
+ * Collapse consecutive duplicates, then screen what remains. Deterministic
+ * short loops (a 14× "im not sure" on a quiet mic stretch) collapse away and
+ * the chunk passes; a decode that was MOSTLY loop padding still fails via
+ * maxCollapsedFraction, because the surviving fragments cannot be trusted to
+ * represent the audio (the 2,768× "thank you" whole-file collapses to almost
+ * nothing — that is a failed decode, not a quiet meeting).
+ */
+export function screenWithCollapse<T extends { text?: string }>(
+  segments: T[],
+  thresholds: Partial<RepetitionThresholds> = {},
+): CollapsedScreenVerdict<T> {
+  const limits = { ...defaultRepetitionThresholds, ...thresholds };
+  const collapsed = collapseConsecutiveSegments(segments);
+  if (
+    collapsed.removedFraction > limits.maxCollapsedFraction &&
+    segments.length >= limits.minSegmentsForRatios
+  ) {
+    const verdict = detectPathologicalRepetition(segments, thresholds);
+    return {
+      repetitive: true,
+      reason: `decode is ${(collapsed.removedFraction * 100).toFixed(0)}% consecutive-duplicate padding`,
+      metrics: verdict.metrics,
+      ...collapsed,
+    };
+  }
+  const verdict = detectPathologicalRepetition(collapsed.segments, thresholds);
+  return { ...verdict, ...collapsed };
 }

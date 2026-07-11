@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import { killActorGroup } from "../../transcription/actor/kill";
 import { spawnDetachedActor } from "../../transcription/actor/spawn";
 import { parseAsrJson } from "../../transcription/asr-json";
-import { detectPathologicalRepetition } from "../../transcription/repetition";
+import { screenWithCollapse } from "../../transcription/repetition";
 import { heartbeatFresh, readActorStatus } from "../../transcription/status";
 import { inngest } from "../client";
 
@@ -109,7 +109,7 @@ export const transcriptionAsrChunkRun = inngest.createFunction(
     const claim = await step.run("00-check-claim", async () => {
       const raw = await readJsonSafe(resultPath);
       if (!isValidAsrResult(raw)) return { cached: false };
-      const verdict = detectPathologicalRepetition(raw.segments);
+      const verdict = screenWithCollapse(raw.segments);
       return { cached: !verdict.repetitive };
     });
 
@@ -224,7 +224,7 @@ export const transcriptionAsrChunkRun = inngest.createFunction(
     await step.run("04-validate-result", async () => {
       const raw = await readJsonSafe(resultPath);
       if (!isValidAsrResult(raw)) throw new Error(`chunk_result_missing: ${chunkId}`);
-      const verdict = detectPathologicalRepetition(raw.segments);
+      const verdict = screenWithCollapse(raw.segments);
       if (verdict.repetitive) throw new Error(`repetitive_output: ${verdict.reason}`);
     });
 

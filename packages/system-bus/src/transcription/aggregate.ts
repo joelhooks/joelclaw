@@ -2,7 +2,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { parseAsrJson } from "./asr-json";
 import { rigAsrPath } from "./paths";
-import { detectPathologicalRepetition, type RepetitionVerdict } from "./repetition";
+import { type RepetitionVerdict, screenWithCollapse } from "./repetition";
 import type { PlanChunk } from "./types";
 
 export type WhisperWord = {
@@ -69,14 +69,16 @@ export async function aggregateChunkAsr(args: {
     if (!isWhisperAsr(raw)) {
       throw new Error(`chunk_result_missing: ${chunk.chunkId}`);
     }
-    const verdict = detectPathologicalRepetition(raw.segments);
+    // Collapse consecutive-duplicate (decoder loop) segments before
+    // stitching; a chunk that is MOSTLY loop padding still fails.
+    const verdict = screenWithCollapse(raw.segments);
     if (verdict.repetitive) {
       throw new Error(`chunk_repetitive: ${chunk.chunkId}: ${verdict.reason}`);
     }
     if (language === undefined) language = raw.language;
 
     const offsetSeconds = chunk.startMs / 1000;
-    for (const segment of raw.segments) {
+    for (const segment of verdict.segments) {
       const offsetSegment: WhisperSegment = {
         ...segment,
         start: segment.start + offsetSeconds,
@@ -92,18 +94,20 @@ export async function aggregateChunkAsr(args: {
     }
   }
 
-  const renumbered = allSegments.map((segment, index) => ({ ...segment, id: index }));
-
-  const asr: WhisperAsr = {
-    text: textParts.join(" "),
-    segments: renumbered,
-    language,
-  };
-
-  const screened = detectPathologicalRepetition(asr.segments);
+  // Screening the stitched whole also collapses loops that span a chunk
+  // boundary (last segment of chunk N == first of chunk N+1).
+  const screened = screenWithCollapse(allSegments);
   if (screened.repetitive) {
     throw new Error(`aggregate_repetitive: ${screened.reason}`);
   }
+
+  const renumbered = screened.segments.map((segment, index) => ({ ...segment, id: index }));
+
+  const asr: WhisperAsr = {
+    text: renumbered.map((segment) => segment.text ?? "").filter(Boolean).join(" "),
+    segments: renumbered,
+    language,
+  };
 
   return { asr, screened };
 }

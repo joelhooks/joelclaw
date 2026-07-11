@@ -25,7 +25,7 @@ import {
   rigDiarizationPath,
   rigDiarizationWavPath,
 } from "../paths";
-import { detectPathologicalRepetition } from "../repetition";
+import { screenWithCollapse } from "../repetition";
 import { writeActorStatusAtomic } from "../status";
 import type { ActorKind, ActorState, ActorStatus } from "../types";
 import { parsePlan } from "../types";
@@ -107,7 +107,10 @@ async function checkAsrResult(resultPath: string): Promise<ResultCheck> {
   }
   const segments = (parsed as { segments?: unknown }).segments;
   if (!Array.isArray(segments) || segments.length === 0) return { valid: false };
-  const verdict = detectPathologicalRepetition(segments as Array<{ text?: string }>);
+  // Collapse-then-screen: deterministic short loops on quiet stretches
+  // collapse away (aggregation persists the collapsed form); a mostly-loop
+  // decode still fails.
+  const verdict = screenWithCollapse(segments as Array<{ text?: string }>);
   if (verdict.repetitive) return { valid: false, repetitive: true, reason: verdict.reason };
   return { valid: true };
 }
