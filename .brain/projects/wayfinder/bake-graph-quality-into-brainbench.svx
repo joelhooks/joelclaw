@@ -37,4 +37,4 @@ Built by the wJ:p4 pi worker, verified and committed by the steering session (wi
 - Missing parent/source-observation edge types — builder gaps the next schema rev should close.
 - Typesense half **honestly not run** (not reachable from this repo's bench yet) — hand-picked seeds through graph expansion only; the composed proposes/disposes score awaits Typesense wiring.
 
-The numbers to beat are recorded; "did that change help recall?" is now a lookup. HITL tail open in the map: Joel reads the first scored report and sets rubric weights.
+The numbers to beat are recorded; "did that change help recall?" is now a lookup. HITL tail closed 2026-07-12: Joel reviewed the baseline — "rubric is a fine start." Rubric v1 weights stand until a scored run gives a reason to move them.
