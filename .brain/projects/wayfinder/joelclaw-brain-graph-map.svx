@@ -55,6 +55,8 @@ This map adjoins [Chart the Joelclaw Personal Wiki](./joelclaw-personal-wiki-map
 
 <!-- one line per closed ticket: gist + link -->
 
+- [Research the Graph Store — Entertain the Weird Ideas](./research-graph-store-weird-ideas.svx) — graph.json v2 + typed in-process query layer now; LadybugDB and DataScript as disposable joy spikes; promote a real store only on measured need (full comparison in [brain-graph-store-research](../../resources/brain-graph-store-research.svx)).
+
 ## Not yet specified
 
 - The write loop: active observation processing — which streams get observers, where they run per machine, distillation into durable pages, dedup and promotion policy. Follow-on map once the read side is live.

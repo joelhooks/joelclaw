@@ -1,0 +1,77 @@
+---
+title: "Brain Graph Store Research"
+type: "research"
+created_at: "2026-07-12"
+---
+
+# Brain Graph Store Research
+
+The current proof is **704 nodes and 145 edges**. `graph.json` should remain the deterministic, versioned truth. Any database below is a disposable projection rebuilt from that file. Typesense keeps semantic search and full-text recall; this layer answers neighbors, backlinks, typed traversals, and paths.
+
+## Comparison
+
+| Candidate | Ops on flagg | Agent query ergonomics | `graph.json` ingestion | Typesense pairing | Fun / camera value | Verdict now |
+|---|---|---|---|---|---|---|
+| **Neo4j Community 2026.x** | Highest: JVM, daemon/container, ports, auth, upgrades, backups | Excellent. Cypher is compact, legible, and easy to wrap in a constrained CLI/MCP tool | Easy batch rebuild with `UNWIND`, parameters, or CSV | Clean split if Neo4j owns only topology | **Best demo**: Browser plus Cypher makes the graph feel real | Great deliberate overbuild; too much default machinery for 849 records |
+| **DataScript 1.7.8** | Tiny: in-process JS, no service | Excellent for recursive rules; Datomic-flavored Datalog is less familiar to generic agents than Cypher/SQL | Excellent: transact nodes and edge datoms from JSON | Clean; process-local traversal beside the app | Weird, elegant, very Joel | Best Datalog experiment; persistence is intentionally someone else's job |
+| **Datahike / Datalevin** | Medium: JVM/Clojure runtime or native/server packaging, persistent files | Excellent Datalog once wrapped; weaker TypeScript/Bun locality | Easy EAV/datoms rebuild | Clean | High nerd value, lower visual payoff | Honest options, but runtime impedance exceeds the dataset's needs |
+| **XTDB 2.0** | High: Java 21, log/object-store-shaped architecture, server/container | Good SQL/Postgres-wire access; XTQL is expressive, but **2.x is not the old Datalog product** | Easy, but temporal history is wasted on a rebuildable projection | Clean but duplicative | Fantastic architecture story; wrong problem | Reject for this read model unless repo-at-machine history becomes the product |
+| **LadybugDB (Kuzu fork)** | Low: embedded C++, local database file | Very good Cypher without a server; bindings make a CLI plausible | Excellent bulk/load-and-rebuild fit | Clean | **Best weird demo** if bindings prove solid | Prototype-worthy, but young; do not build on archived Kuzu |
+| **DuckDB 1.4.4 + DuckPGQ** | Low: embedded file, mature host engine | SQL/PGQ is readable; raw recursive SQL is not | Excellent JSON/Parquet/table ingestion | Clean | Strong "graph hiding in an analytics DB" reveal | Experimental: DuckPGQ is a community research extension pinned behind current DuckDB |
+| **SQLite + recursive CTEs** | Lowest persistent option: one ubiquitous file | Fine behind named commands; unpleasant as an agent-facing raw query language | Trivial transaction into `nodes` and `edges` | Clean | Sensible, not sexy | Boring winner if persistence or ad hoc SQL becomes necessary |
+| **`graph.json` v2 + in-process indexes** | Lowest overall: no daemon, no database lifecycle | Best if the CLI exposes domain verbs; worst if agents must invent traversals ad hoc | It *is* the artifact; zero sync failure | Cleanest possible split | Honest baseline; the overbuild can be contrasted against it | **Recommended production starting point** |
+
+## Neo4j Community Edition
+
+Neo4j earns the affection. Cypher expresses backlinks, bounded paths, typed relationships, and “show me everything connecting X to Y” without recursive-SQL sludge. Neo4j's current line is **2026.04**, with **5.26 LTS** still documented; new 2026.02 installs default to Cypher 25. Community includes the property graph, Cypher, Bolt, Browser, official JavaScript/Python/etc. drivers, and APOC Core. Enterprise owns the stuff flagg does not need for this proof: clustering, failover, online backup, and multiple user databases. The catch is proportionality: this adds a Java service, storage volume, auth, health checks, resource tuning, and another thing for launchd/Docker/k8s to restart so we can traverse 145 edges. A `brain graph query --cypher ...` tool could be delightful, but unrestricted Cypher is also a poor agent boundary; named read-only commands should remain the contract. [Neo4j edition matrix](https://neo4j.com/docs/operations-manual/current/introduction/), [2025–2026 changes](https://neo4j.com/docs/operations-manual/current/changes-2025-2026/), [system requirements](https://neo4j.com/docs/operations-manual/current/installation/requirements/).
+
+## Datalog family
+
+**DataScript 1.7.8** is the sharpest fit in this family. It runs in JavaScript with no dependencies, accepts ordinary collections as query inputs, and supports recursive rules. The Brain graph can be loaded from `graph.json` at process start and queried as immutable datoms. At this size, persistence buys little; rebuilding is simpler and preserves the projection boundary. The downside is language shape: EDN query data and Datomic conventions are lovely once learned, but generic agents know Cypher and SQL better. Hide that behind `neighbors`, `backlinks`, `reachable`, and `paths`, while retaining an expert `datalog` escape hatch. [DataScript README and JS examples](https://github.com/tonsky/datascript), [npm 1.7.8](https://www.npmjs.com/package/datascript).
+
+**Datahike** and **Datalevin** make the Datomic/DataScript shape durable. Both were still releasing in 2026; Datahike advertises flexible backends and immutable/time-travel semantics, while Datalevin puts a DataScript-like API over LMDB and can run embedded or as a server. Those are real systems, not toys. They are still Clojure/JVM-shaped dependencies in a Bun/TypeScript wiki, and Datahike's own documentation warns that its on-disk format can change before 1.0. For a rebuildable graph index, durable datoms and historical snapshots duplicate Git. Pick one only if Datalog itself becomes a product constraint, not because “database” sounds more serious. [Datahike README](https://github.com/replikativ/datahike), [Datalevin README](https://github.com/juji-io/datalevin), [2025–2026 artifact activity](https://mvnrepository.com/artifact/persistent-sorted-set/persistent-sorted-set/used-by).
+
+**XTDB 2.0** deserves a correction before a recommendation: XTDB 1.x was the familiar EDN Datalog database; 2.0 is an immutable, bitemporal SQL/XTQL database built on Arrow, exposed over the Postgres wire protocol, and designed around decoupled log/object storage. It requires Java 21 for in-process nodes. That is interesting for future “what did repo X look like on machine Y at time T?” work, but it is wildly larger than a derived current-state graph, and its history would compete with Git's authority. Keep it on the vision shelf, not in this proof. [XTDB 2.0 release](https://github.com/xtdb/xtdb/releases/tag/v2.0.0), [beta 7 Java 21 and query-language notes](https://github.com/orgs/xtdb/discussions/4383).
+
+An **embedded Datalog-over-SQLite** layer is possible: compile rules into SQL/fixpoint evaluation while SQLite stores relations. It gives one file and a fun intellectual bridge, but it means owning a query compiler or adopting a smaller project than the databases above. That is research code, not simplification. The tiny implementation is useful proof that the idea works, not a production recommendation. [MiniLitelog: Easy Breezy SQLite Datalog](https://www.philipzucker.com/tiny-sqlite-datalog/).
+
+## Embedded graph engines
+
+**Kuzu 0.11.3** would have been the obvious “SQLite for Cypher” answer. It was archived in October 2025 after the team was acquired, so adopting it now would knowingly start on a dead upstream. **LadybugDB**, an active MIT-licensed Kuzu fork started in 2025, preserves the embedded columnar property graph and Cypher model and is receiving 2026 work, including DuckDB/Arrow/Parquet interoperability. This is the most entertaining serious challenger: no server, camera-friendly Cypher, and an actual graph engine. It is also young enough that the proof must begin with a throwaway binding spike on flagg's arm64 Bun/Node runtime. If install, bulk ingest, shortest path, and packaging are clean, keep it as the “joy adapter,” never the only way to read the graph. [Kuzu archive notice and 0.11.3](https://github.com/kuzudb/kuzu), [Kuzu-to-Ladybug status, April 2026](https://thedataquarry.com/blog/from-kuzu-to-ladybug/), [Ladybug project activity](https://new.dbdb.io/db/ladybugdb).
+
+**DuckDB plus DuckPGQ** offers SQL:2023 property-graph syntax over ordinary vertex and edge tables. It demos beautifully: load `graph.json`, declare a property graph, then use visual `MATCH` and shortest-path syntax without a graph server. But the current DuckDB docs are blunt: DuckPGQ is an active-development community extension, unavailable in DuckDB 1.5.x, requiring **DuckDB 1.4.4**, with known graph-algorithm failures. That version pin and research status disqualify it as the default store today. Revisit when SQL/PGQ lands cleanly in a current DuckDB release. [DuckDB graph-query guide](https://duckdb.org/docs/current/guides/sql_features/graph_queries), [DuckPGQ extension](https://duckdb.org/community_extensions/extensions/duckpgq), [DuckDB's worked comparison with recursive CTEs](https://duckdb.org/2025/10/22/duckdb-graph-queries-duckpgq).
+
+**SQLite** is the durable baseline. Two indexed tables plus recursive CTEs can handle reachability and bounded traversal at this scale. SQLite's own documentation includes graph walking and explains using `UNION` rather than `UNION ALL` to stop cycles. It is stable, easy to inspect, trivial to rebuild atomically, and available from Bun. The cost is query taste: shortest paths, path materialization, cycle guards, and typed multi-hop patterns turn into verbose SQL. That is acceptable behind a small typed query service and bad as the raw agent API. [SQLite recursive CTE graph examples](https://sqlite.org/lang_with.html#recursive_common_table_expressions).
+
+## No database: `graph.json` v2
+
+For 704 nodes and 145 edges, parse time and memory are noise. Build `Map<nodeId, Node>`, outgoing and incoming adjacency maps, plus indexes by root, kind, and edge type. Breadth-first search gives bounded paths and shortest unweighted paths in a few dozen lines. The important design work is not storage; it is a stable agent contract:
+
+- `brain graph node <id>`
+- `brain graph neighbors <id> --direction in|out|both --type wikilink`
+- `brain graph backlinks <id>`
+- `brain graph path <from> <to> --max-depth 6`
+- `brain graph search <query>`: Typesense candidates first, then graph expansion
+
+Return HATEOAS JSON envelopes with provenance and the exact projection version/commit. Keep arbitrary query languages as optional expert adapters. This avoids synchronization drift entirely: the CLI and UI read the same artifact, while Typesense contributes ranked seed nodes rather than pretending semantic similarity is an edge.
+
+## Recommendation the relationship-decision ticket can grill against
+
+**Ship `graph.json` v2 plus a typed in-process query layer. Do not choose a database yet.** The dataset is tiny, Git plus the deterministic builder already owns durability, and the agent-facing commands must be designed regardless of storage. This is the smallest move that proves cross-root backlinks, paths, provenance, and Typesense-to-graph expansion.
+
+Then run two bounded joy spikes against the same fixture:
+
+1. **LadybugDB**: embedded Cypher, if its arm64 Node/Bun install and binding are clean.
+2. **DataScript**: recursive Datalog in-process, with persistence deliberately omitted.
+
+Keep both adapters disposable. Demo the same three questions through JSON, Cypher, and Datalog. That is a better “overbuilt second brain” camera story than prematurely operating Neo4j: we can show the seductive tools, then pick the boring substrate for evidence-backed reasons.
+
+Promote a store only when a measured requirement appears:
+
+- choose **SQLite** when atomic persistence, ad hoc joins, or graph size makes repeated JSON loading materially annoying;
+- choose **LadybugDB** when Cypher becomes a daily operator/agent interface and the fork proves stable;
+- choose **Neo4j** when Browser/Cypher collaboration or graph tooling is worth a permanent service;
+- choose **DataScript/Datahike/Datalevin** when recursive rules and Datomic-shaped facts become the domain, not merely a beloved syntax;
+- choose **XTDB** only if bitemporal repo-at-machine state becomes a first-class product requirement.
+
+The relationship decision should therefore grill **edge semantics, direction, identity, provenance, and agent command shapes first**. Those survive every store choice. A database selected before those decisions only gives us a fancier place to put ambiguity.
