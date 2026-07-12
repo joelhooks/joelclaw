@@ -1021,17 +1021,30 @@ PUBLIC_MAX_SECONDS = 600  # public docent calls get ten minutes too
 SHITRAT_BRAIN_DIR = Path.home() / "Code" / "joelhooks" / "shitrat-brain"
 
 
+def _brain_show(rel_path: str) -> str | None:
+    """Read a file from shitrat-brain at committed HEAD — NOT the working tree.
+    Workers draft in the working tree; only reviewed-and-committed content may
+    reach a caller. Empty repo / missing file / git failure all return None."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(SHITRAT_BRAIN_DIR), "show", f"HEAD:{rel_path}"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
 def _load_public_context() -> str:
     """Curated project/research overview for the public line — the publication
     boundary made concrete. Prefers the public shitrat-brain wiki's index
     (github.com/joelhooks/shitrat-brain, gardened + human-reviewed); falls back
     to the local public-context.md seed. Read fresh each call; fails soft."""
-    try:
-        index = SHITRAT_BRAIN_DIR / "index.svx"
-        if index.exists():
-            return index.read_text().strip()
-    except Exception:
-        pass
+    index = _brain_show("index.svx")
+    if index:
+        return index
     try:
         path = Path(__file__).parent / "public-context.md"
         return path.read_text().strip()
@@ -1044,10 +1057,9 @@ def _read_wiki_page(slug: str) -> str:
     clean = "".join(c for c in slug.strip().lower() if c.isalnum() or c in "/-_").strip("/")
     if not clean or ".." in clean:
         return "No such page."
-    path = (SHITRAT_BRAIN_DIR / "pages" / f"{clean}.svx").resolve()
-    if not str(path).startswith(str((SHITRAT_BRAIN_DIR / "pages").resolve())) or not path.exists():
+    text = _brain_show(f"pages/{clean}.svx")
+    if not text:
         return f"No page called '{clean}'. Check the index for real page names."
-    text = path.read_text().strip()
     return text[:4000] + ("\n... (page truncated)" if len(text) > 4000 else "")
 
 
