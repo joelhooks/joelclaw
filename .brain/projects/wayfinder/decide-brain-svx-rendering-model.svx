@@ -1,0 +1,115 @@
+---
+title: "Decide the Brain SVX Rendering Model"
+type: "wayfinder_ticket"
+status: "closed"
+assignee: "claude (flagg, session 14d06369, 2026-07-12)"
+labels:
+  - "wayfinder:grilling"
+interaction: "HITL"
+parent: "./joelclaw-bugle-redesign-map.svx"
+blockers: []
+created_at: "2026-07-12"
+closed_at: "2026-07-12"
+---
+
+# Decide the Brain SVX Rendering Model
+
+## Unblocked 2026-07-12
+
+The privacy grilling resolved (see the closed blocker ticket): tailnet is the
+auth, single tier; the rendering model inherits a decided contract —
+**secure mode by default** (PII spans masked), a floating **JoelClaw toolbar**
+(left edge, feature flags) with session-scoped reveal, safe-at-rest data only
+(reveal can never fetch beyond stored redacted excerpts), hard exclusions never
+rendered. Toolbar + flag mechanics are THIS ticket's scope now. Optional:
+general event streams to ClickHouse as system telemetry.
+
+## Resolution (2026-07-12, grilled with Joel — "aligned")
+
+1. **Supersession**: brain.joelclaw.com fully supersedes the joels-mac-studio
+   `/notes/` viewer; retire at parity. One renderer, one URL scheme:
+   `brain.joelclaw.com/<root>/<slug>` (namespace policy). Fleet doctrine:
+   agents reference Brain notes by these URLs once pages 200 (exact-URL
+   check stands); Studio mapping is the fallback until then.
+2. **Components (AMENDED by Joel at close)**: building custom components and
+   leveraging MDSvX/SvelteKit to its absolute fullest is a core project
+   goal, not an edge case. Registered roots are trusted code sources —
+   registration in `brain-roots.json` IS the consent boundary — so the wiki
+   COMPILES repo-local `.brain/components/**` for real. The safety property
+   survives as isolation, not refusal: a component that fails to compile
+   errors loudly on its own page (visible error box, raw source folded
+   under it) while the rest of the build proceeds — page-scoped failure,
+   never whole-build-fatal. The pi-notes standard set ships wiki-side as
+   the shared vocabulary; local components extend it freely; promotion into
+   the standard set remains the path for cross-root reuse.
+3. **Reference model**: build reads the registered local checkouts
+   (`brain-roots.json` in dark-wizard is truth). A Brain page pins nothing —
+   it renders current checkout state; provenance (root, path, commit) is on
+   every page, so staleness is visible, never hidden. Editions remain the
+   immutable layer.
+4. **Sections/privacy**: no hand-maintained include-list. Default-render
+   everything in registered roots EXCEPT the hard-excluded sections
+   (captures, compaction-dumps, people, private-family-health) and any note
+   with sensitive-flagged frontmatter (`privacy: sensitive`). Frontmatter
+   wins over defaults.
+5. **Daily practice**: automatic. The 6am pipeline pulls checkouts and
+   rebuilds; retros/pages appear with zero curation — publishing to the
+   paper IS writing Brain svx. The 2026-07-12 static retro page migrates to
+   a rendered Brain page.
+6. **JoelClaw toolbar v1**: fixed left rail; session-scoped flags
+   (localStorage): secureMode default-ON masking marked spans in
+   edition/source excerpts, reveal (auto-revert), provenance detail, graph
+   panel toggle. Brain-note prose (Joel-authored) isn't masked; masking
+   targets ingested third-party excerpts.
+
+Items 3–6 resolved per recommendation under Joel's blanket "aligned" —
+amendable. Spawns: build-brain-page-renderer (graph map),
+build-joelclaw-toolbar (bugle map), retire-studio-viewer (task, blocked on
+renderer parity).
+
+## Grilling notes (2026-07-12, superseded by resolution)
+
+- **Supersession (decided)**: brain.joelclaw.com fully supersedes the
+  joels-mac-studio `/notes/` System Brain viewer; retire the old approach at
+  parity. One renderer, one memorable URL scheme
+  (`brain.joelclaw.com/<root>/<slug>`, per the namespace policy) usable from
+  any device to explore the brain topology. FLEET DOCTRINE: when agents hand
+  Joel a page/summary/reference to a Brain note, they use the resolved
+  brain.joelclaw.com URL — to be documented fleet-wide (wiki-aware graft
+  block + operator-network-context) at ticket close. Cutover honesty: agents
+  mint these URLs only once pages render there (exact-URL 200-check rule
+  stands); the Studio mapping remains the fallback until parity.
+
+## Question
+
+Joel's charter (2026-07-12, verbatim intent): the wiki should REFERENCE `.svx`
+files across the Brain and render them in the SvelteKit app — not accumulate
+hand-built static HTML pages. What is the rendering model?
+
+Sub-questions to resolve in the grilling:
+
+- **Reference, not copy**: does the wiki read `~/.brain` (and repo-local
+  `.brain`s?) live at build time, or via a synced snapshot with provenance?
+  Editions are immutable; Brain notes mutate — what does a page pin?
+- **Which sections**: retros/resources/projects presumably yes; `sensitive`,
+  captures, people, private-family-health are already excluded by AGENTS.md —
+  is the include-list explicit or frontmatter-driven (`privacy:` key)?
+- **Rendering**: mdsvex over Brain svx with the tufte tokens
+  (`~/Code/joelhooks/tufte-mdsvx` as authoring guide); what happens to
+  project-local components a note references?
+- **Routes + linking**: `/brain/<section>/<slug>`? How do editions and the
+  wikilink graph (`graph.json`, 704 nodes) cite Brain pages — does this
+  supersede the System Brain URL mapping
+  (`joels-mac-studio.tail7af24.ts.net/notes/...`)?
+- **Daily practice**: session retros land as Brain svx (e.g.
+  `resources/retros/three-things-theo-video-retro-2026-07-12.svx`) and the
+  wiki picks them up — is that automatic on the 6am build, or curated?
+
+Context: on 2026-07-12 a session retro was published as a hand-built static
+page (`static/retros/2026-07-12-three-things-theo.html`, live on
+daily.joelclaw.com) as a stopgap; Joel's reaction to that page is what chartered
+this ticket. The static page migrates to the rendering model once decided.
+
+Blocked by the privacy/publication boundaries ticket: rendering Brain notes
+into the wiki is publication of Brain content, and sensitive-flagged pages must
+not cross tiers until those boundaries are defined.

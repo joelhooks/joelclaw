@@ -1,0 +1,25 @@
+---
+title: "Raise the Front Page to Loopcraft's Visual Structure"
+type: "wayfinder_ticket"
+status: "closed"
+labels:
+  - "wayfinder:prototype"
+interaction: "HITL"
+parent: "./joelclaw-bugle-redesign-map.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Raise the Front Page to Loopcraft's Visual Structure
+
+## Question
+
+The wiki and [loopcraft](https://aie-loopcraft-workshop-2026.wzrrd.sh/) run the *same* tufte tokens — same accent, same Source Serif 4, same paper background. Loopcraft feels better because of structure, not palette: tool cards, an SVG flow-chart figure with caption, a lesson-strip nav, quickstart surface blocks, headings that are direct sentences.
+
+Port that component vocabulary onto the paper without violating the quiet-taste rule (one accent, real prose, no chips or metric theater): a date/edition nav strip (prev/next edition, archive), surface treatment for streams and a quickstart-style "questions for you" block, proper figure/caption treatment, section rhythm and folio-line print details, h1 as a sentence-case statement instead of a Title Case headline. Screenshot-iterate on the live paper with Joel, same loop as the v0 design rounds.
+
+Resolved when Joel looks at the front page and calls it beautiful — or at minimum, not dogshit.
+
+## Superseded (2026-07-12)
+
+Joel redirected mid-effort: "the daily pages need to be DESIGNED from an editorial and layout perspective FRESH with each run guided by a design system, not a strict layout." This ticket assumed improving one fixed template — the wrong frame. Replaced by [Build the Bugle Design System](./build-bugle-design-system.svx) (the component palette + taste constraints, absorbing this ticket's loopcraft vocabulary work) and [Lay Out the Paper Fresh Each Run](./editorial-layout-per-run.svx) (the per-build editorial composition pass).

@@ -1,0 +1,32 @@
+---
+title: "Build Wikilink Edges and the graph.json Projection"
+type: "wayfinder_ticket"
+status: "closed"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-bugle-redesign-map.svx"
+blockers: []
+created_at: "2026-07-12"
+assignee: "pi worker bugle-graph (w9:pD, steered by claude w9:pA)"
+claimed_at: "2026-07-12"
+---
+
+# Build Wikilink Edges and the graph.json Projection
+
+## Question
+
+The graph substrate (product-direction steps 2–3, Roam/Logseq lens). Parse `[[wikilinks]]` and explicit references across Brain pages, loops, observations, and editions into a typed edge list, then project `graph.json` as a deterministic, versioned build output the UI reads — same pattern as editions: built by the CLI, read-only at render time.
+
+Nodes: brain pages, loops, observations, projects. Edges: wikilink, evidence (loop → observation), continuity (loop → prior loop), project membership. Stable ids, schema version, provenance on every edge. Tests over real data, including the it-must-not-invent-edges property: an edge exists only if its source text or domain relation actually contains it.
+
+No UI in this ticket — it unblocks the local-graph panel and the system-map figure. Resolved when `graph.json` builds from real data with tests and a documented shape.
+
+## Resolution (2026-07-12)
+
+Shipped by the bugle-graph pi worker, verified and committed by the steering session (wiki repo `4f4c18f`, CLI wiring `81f88ae`).
+
+- `data/graph.json` builds deterministically from live data: **704 nodes** (171 brain pages, 478 observations, 22 open loops, 14 projects, 19 explicit unresolved wikilink targets) and **145 edges** (91 evidence, 22 project, 32 wikilink). Two independent runs produced identical counts.
+- `continuity` edges were not emitted: no prior-loop reference field exists in the domain today (checked, per the ticket's condition). Loop identity across editions is same-loopId; an explicit supersedes field would be a future addition.
+- Shape documented in `joelclaw-wiki/.brain/graph-shape.svx`; schemas in `src/lib/domain/graph.ts` (GRAPH_SCHEMA_VERSION 1); builder + no-invented-edges property tests in `src/lib/services/graph-builder.{ts,test.ts}`; `wiki graph build|stats` wired.
+- Unblocks: **Prototype the Local Graph and Backlinks Panel**, **Prototype the Edition System-Map Figure** — both now frontier.

@@ -73,6 +73,7 @@ Inspiration receipt: [Matt Pocock's agent-managed personal wiki](https://x.com/m
 ## Decisions so far
 
 <!-- Closed ticket resolutions are appended here as one-line linked gists. -->
+- [Define Privacy, Access, and Publication Boundaries](./define-privacy-access-publication-boundaries.svx) — tailnet membership is the auth (Joel-only, no app auth); redaction is presentation: safe-at-rest data, mask-by-default secure mode, JoelClaw-toolbar session reveal; no audit machinery (ClickHouse for general telemetry only); privacy scrub is the chartered exception to edition immutability.
 
 ## Not yet specified
 
