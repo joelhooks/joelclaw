@@ -1,13 +1,15 @@
 ---
 title: "Decide the Observer Runtime and Trigger Topology"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 labels:
   - "wayfinder:grilling"
 interaction: "HITL"
 parent: "./joelclaw-observational-memory-map.svx"
 blockers: []
 created_at: "2026-07-12"
+closed_at: "2026-07-12"
+assignee: "claude (flagg, session 14d06369, grilled with Joel)"
 ---
 
 # Decide the Observer Runtime and Trigger Topology
@@ -42,3 +44,28 @@ efficiency is a charter requirement.
 - Defect found en route: `joelclaw sessions search` ssh-targets the stale
   `dark-wizard` hostname and fails fleet-wide — needs a fix (flagg rename
   fallout).
+
+## Resolution (2026-07-12, grilled with Joel)
+
+1. **Placement**: flagg-central. Observes Pi+Claude on flagg+blaine (the
+   proven-capture core per coverage research); codex joins when its delivery
+   ticket closes; panda ignored (decommissioning).
+2. **Runtime shape (Joel's charter)**: a **headless herdr session** — a
+   persistent pi observer session managed by the herdr server, so it can
+   SPAWN observable, interactive sub-agents in panes Joel can drop in on.
+   The observer of the fleet is itself observable. Not an Inngest batch
+   function: the loop is a living session; Inngest/launchd play supervisor.
+3. **Durability** (voice-map doctrine imported — silent drift is the enemy):
+   a supervisor canary (launchd/executor cron) ensures the observer session
+   exists and respawns it if missing; distillation cursor persisted (file or
+   Typesense) so restarts resume idempotently; the ds4 dependency is already
+   durable (`com.joelclaw.central.ds4.plist`, up since 2026-06-17).
+4. **Models**: pi with `ds4-central` (DeepSeek V4 Flash, local :8000, ctx
+   100k, zero cost) as default distiller — transcripts never leave flagg for
+   inference. `gpt-5.6-terra` via pi as frontier comparator in the prototype
+   and presumptive reflector model.
+5. **Trigger/efficiency**: continuous self-paced loop over indexed
+   run_chunks deltas (~2M tokens/day), map-reduce within 100k ctx; local
+   inference makes rationing unnecessary.
+
+Cadence fine-tuning and the supervisor script are prototype-ticket work.
