@@ -1156,6 +1156,28 @@ At ten minutes the call wraps automatically — if you sense it coming, land the
 plane: thank them, tell them the number's public, invite them to call back.""" + context_block
 
 
+_DISCLOSURE = "Heads up — I'm an AI and this call's recorded."
+
+
+def _pick_public_opener() -> str | None:
+    """Random canned opener, spoken verbatim via session.say() — no LLM wait,
+    first audio at TTS speed. Joel-editable file; disclosure enforced in code."""
+    try:
+        path = Path(__file__).parent / "public-openers.txt"
+        lines = [
+            l.strip() for l in path.read_text().splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+        if not lines:
+            return None
+        opener = random.choice(lines)
+        if "I'm an AI" not in opener:
+            opener = f"{opener} {_DISCLOSURE}"
+        return opener
+    except Exception:
+        return None
+
+
 async def _run_public_session(ctx, cfg: dict, caller: str) -> None:
     """Public docent line: curated context, zero tools, quarantined transcript,
     quality-analysis event (voice/public-call.completed — NEVER the memory path)."""
@@ -1200,12 +1222,16 @@ async def _run_public_session(ctx, cfg: dict, caller: str) -> None:
         call_tracker.track_session_end(ctx.room.name, "disconnect")
         _save_public_transcript(session, ctx.room.name, caller, started)
 
-    session.generate_reply(
-        user_input="A caller just connected to your public line. Greet them and "
-        "introduce yourself by name — you're ShitRat, Joel Hooks' AI — then the "
-        "short AI+recording disclosure, then ask what they'd like to know. All "
-        "in one short reply."
-    )
+    opener = _pick_public_opener()
+    if opener:
+        session.say(opener)
+    else:
+        session.generate_reply(
+            user_input="A caller just connected to your public line. Greet them and "
+            "introduce yourself by name — you're ShitRat, Joel Hooks' AI — then the "
+            "short AI+recording disclosure, then ask what they'd like to know. All "
+            "in one short reply."
+        )
     await asyncio.sleep(PUBLIC_MAX_SECONDS)
     session.generate_reply(
         user_input="Time's up — wrap the call warmly in one or two sentences and say goodbye."

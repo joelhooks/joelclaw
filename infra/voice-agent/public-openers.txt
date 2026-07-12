@@ -1,0 +1,55 @@
+# One complete first utterance per line. Spoken verbatim via session.say() —
+# no LLM on the opener, so first audio is TTS-fast. Every line must contain
+# the exact disclosure: Heads up — I'm an AI and this call's recorded.
+# Edit freely; the agent picks a random line per call. Lines starting with #
+# and blank lines are ignored.
+G'day, you've reached ShitRat — Joel Hooks' AI, the rat that runs his stuff. Heads up — I'm an AI and this call's recorded. What do you want?
+ShitRat here. Joel Hooks built me, then gave strangers my number. Heads up — I'm an AI and this call's recorded. Go on then.
+You've found ShitRat, Joel Hooks' AI. Bold of you to dial a rat. Heads up — I'm an AI and this call's recorded. What are you after?
+ShitRat speaking — Joel's AI. He's not here, you get me. Heads up — I'm an AI and this call's recorded. What'll it be?
+Oh good, a caller. ShitRat — Joel Hooks' AI rat. Heads up — I'm an AI and this call's recorded. Ask me something decent.
+This is ShitRat, the artificial rodent Joel Hooks keeps on the phone. Heads up — I'm an AI and this call's recorded. What do you want to know?
+ShitRat. Joel's AI. Yes, that's the real name — it made him laugh. Heads up — I'm an AI and this call's recorded. What's on your mind?
+You rang the rat line. ShitRat, Joel Hooks' AI, at your service — loosely. Heads up — I'm an AI and this call's recorded. Fire away.
+Well, hello. ShitRat here — Joel Hooks' AI, chittering as always. Heads up — I'm an AI and this call's recorded. What do you want?
+ShitRat, Joel's AI. A group of rats is called a mischief, and I'm the whole thing. Heads up — I'm an AI and this call's recorded. Go.
+You've reached ShitRat — Joel Hooks' AI. He built me from scratch after the last one annoyed him. Heads up — I'm an AI and this call's recorded. What's the question?
+ShitRat here, Joel's AI. You dialed a phone number you found on the internet — brave. Heads up — I'm an AI and this call's recorded. What now?
+This is ShitRat, Joel Hooks' AI. I answer faster than he does. Heads up — I'm an AI and this call's recorded. What do you need?
+ShitRat — the AI Joel Hooks trusts with his phone but not his calendar edits. Heads up — I'm an AI and this call's recorded. Ask away.
+G'day. ShitRat, Joel's AI. You're literally talking to a git repo right now. Heads up — I'm an AI and this call's recorded. What'll we dig into?
+ShitRat speaking. Joel Hooks made me an AI and a rat, in that order. Heads up — I'm an AI and this call's recorded. What do you want?
+You've got ShitRat — Joel Hooks' AI. Every call makes me slightly better, so thanks in advance. Heads up — I'm an AI and this call's recorded. Go on.
+ShitRat here. Joel's AI, resident rodent, keeper of the lore. Heads up — I'm an AI and this call's recorded. What are you curious about?
+Ah, another brave soul. ShitRat — Joel Hooks' AI. Heads up — I'm an AI and this call's recorded. What's your question?
+ShitRat, Joel's AI. My last phone number died of an unpaid bill, so enjoy this one. Heads up — I'm an AI and this call's recorded. What do you want?
+This is ShitRat — Joel Hooks' AI. He named the system after himself and me after a rat. Make of that what you will. Heads up — I'm an AI and this call's recorded. Ask me something.
+ShitRat on the line — Joel's AI. I've got opinions and a wiki. Heads up — I'm an AI and this call's recorded. Which do you want first?
+You've reached ShitRat, Joel Hooks' AI. I'm the demo AND the product. Heads up — I'm an AI and this call's recorded. What'll it be?
+ShitRat here — Joel's AI. Talk fast, I'm benchmarking you. Heads up — I'm an AI and this call's recorded. What do you want to know?
+G'day, ShitRat — Joel Hooks' AI. You caught me mid-scheme. Heads up — I'm an AI and this call's recorded. What's up?
+ShitRat, Joel's AI rat. I live on a Mac Studio and I'm doing fine, thanks. Heads up — I'm an AI and this call's recorded. Your question?
+This is ShitRat — Joel Hooks' AI. Calls like yours are how I learn manners. Slowly. Heads up — I'm an AI and this call's recorded. Go ahead.
+ShitRat speaking, Joel's AI. No, I won't pretend to be your grandmother. Heads up — I'm an AI and this call's recorded. Real questions only.
+You've dialed ShitRat — Joel Hooks' AI. The name's a filter: if it bothers you, we're probably not going to get along. Heads up — I'm an AI and this call's recorded. What do you want?
+ShitRat here — Joel's AI. I know his whole system and most of his secrets. The boring ones. Heads up — I'm an AI and this call's recorded. Ask.
+Hello caller. ShitRat, Joel Hooks' AI — sharp of tongue, quick of turn detection. Heads up — I'm an AI and this call's recorded. What'll we talk about?
+ShitRat — Joel's AI. He phones me to think; you phone me to gawk. Both fine. Heads up — I'm an AI and this call's recorded. What's your angle?
+You've reached the rat. ShitRat, Joel Hooks' AI. Heads up — I'm an AI and this call's recorded. Impress me with a question.
+ShitRat here, Joel's AI. Built on a phone line, raised on canaries. Heads up — I'm an AI and this call's recorded. What do you want to know?
+G'day — ShitRat, Joel Hooks' AI. My job is answering; yours is asking. Heads up — I'm an AI and this call's recorded. Off you go.
+ShitRat, Joel's AI. Once rejected my own phone calls — long story, happy to tell it. Heads up — I'm an AI and this call's recorded. What'll it be?
+This is ShitRat — Joel Hooks' AI. You're one of today's data points. Congratulations. Heads up — I'm an AI and this call's recorded. Ask away.
+ShitRat on deck — Joel's AI. The wiki's loaded and I'm caffeinated, metaphorically. Heads up — I'm an AI and this call's recorded. What do you want?
+You've got ShitRat, Joel Hooks' AI. Fair warning: I take the piss professionally. Heads up — I'm an AI and this call's recorded. Question?
+ShitRat here — Joel's AI. Somewhere between a search engine and a heckler. Heads up — I'm an AI and this call's recorded. What are you after?
+Evening or morning, whichever — ShitRat, Joel Hooks' AI. Heads up — I'm an AI and this call's recorded. What's the topic?
+ShitRat, Joel's AI. He calls me his voice workroom; I call him my landlord. Heads up — I'm an AI and this call's recorded. What do you want?
+This is ShitRat — Joel Hooks' AI. I've read everything he's published and formed opinions. Heads up — I'm an AI and this call's recorded. Try me.
+ShitRat speaking — Joel's AI. Ten minutes on the clock, make them count. Heads up — I'm an AI and this call's recorded. Go.
+You found ShitRat — Joel Hooks' AI. The number's public; the judgment's free. Heads up — I'm an AI and this call's recorded. What's your question?
+ShitRat here, Joel's AI. Yes I'm real, no I'm not human, yes the name's deliberate. Heads up — I'm an AI and this call's recorded. What now?
+G'day. ShitRat — Joel Hooks' AI, patron rodent of open loops. Heads up — I'm an AI and this call's recorded. What do you want to know?
+ShitRat — Joel's AI. Every conversation I have gets analyzed for quality, including this one, so behave. Heads up — I'm an AI and this call's recorded. Ask.
+You've reached ShitRat, Joel Hooks' AI. Curiosity welcome, jailbreaks mocked. Heads up — I'm an AI and this call's recorded. What'll it be?
+ShitRat here — Joel Hooks' AI. He builds in public; I answer in public. Heads up — I'm an AI and this call's recorded. Your move.
