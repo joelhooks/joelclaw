@@ -1,0 +1,81 @@
+---
+title: "Chart the joelclaw Observational Memory Write Loop"
+type: "wayfinder_map"
+status: "active"
+labels:
+  - "wayfinder:map"
+created_at: "2026-07-12"
+tracker: "local-brain"
+privacy: "private"
+---
+
+# Chart the joelclaw Observational Memory Write Loop
+
+## Destination
+
+Joel's charter (2026-07-12, verbatim intent): *agent transcripts continuously
+distilled into observations, efficiently, in a durable process, across the
+joelclaw fleet.*
+
+Reached when: a durable observer loop runs over pi/claude/codex session
+transcripts fleet-wide, continuously (threshold/cadence, not on-demand),
+distilling them into **observation pages** — `.svx` in a Brain section,
+rendered at brain.joelclaw.com, nodes in the graph — each carrying provenance
+(session id, machine, repos touched, commits via the change ledger) and
+surviving a Joel read-through as *worth recalling*, not transcript sludge. A
+reflector pass condenses aging observations without losing citations. The
+distilled layer reaches every agent context (rhizomatic briefing + a recall
+surface) — the ADR's functional bar: "every context we run in has the ability
+to understand all of the work that we're doing."
+
+## Notes
+
+- **Prior art in-house**: the Bugle pipeline IS an observer (gather →
+  normalize → pi extraction behind versioned schemas → open loops) — pointed
+  at external streams. This map points the same discipline at the fleet's own
+  session transcripts. Do not fork the philosophy: deterministic collection
+  first, bounded pi judgment behind versioned schemas with receipts, fail
+  loud.
+- **Vision authority**: [agentic-memory-system-vision ADR](../../resources/decisions/agentic-memory-system-vision.svx)
+  (accepted) — sessions are first-class memory surface; the bar is functional
+  recall, not architecture. The [Mastra OM frame](https://mastra.ai/docs/memory/observational-memory)
+  (Observer/Reflector, token-threshold triggers, async buffering, 5–40×
+  compression, recall tool) is the reference model, adapted not copied.
+- **House patterns**: Inngest durable functions are the joelclaw runtime for
+  "durable process"; pi for all inference (no paid APIs); Typesense indexes
+  sessions already; the session change ledger (Pi runtime v1) provides
+  hash-proven session→commit attribution; graph.json v2 + wikilinks for
+  structure; brainbench for honesty. `.brain` law: observations are `.svx`.
+- **Privacy is inherited, with one new edge**: transcripts contain secrets,
+  tokens, and third-party content. Observation pages are publications (they
+  render on the paper) — the distiller needs a redaction boundary equivalent
+  to the wiki's redact.ts BEFORE anything ships. Decided boundaries from
+  `define-privacy-access-publication-boundaries` apply unchanged.
+- **Efficiency is a stated requirement**: bounded token spend per day,
+  observation only on new material (cursor over capture stream), compression
+  ratios measured. Distillation quality > coverage — noise control is the
+  hard half.
+- **Skills**: `/skill:wayfinder`, `/skill:brain-first-workflow`,
+  `/skill:session-search`, `/skill:effect-ts`, `/skill:joel-writing-style`.
+
+## Decisions so far
+
+<!-- one line per closed ticket: gist + link -->
+
+## Not yet specified
+
+- Reflector condensation policy (cadence, thresholds, citation preservation).
+- Recall surface design: fattened rhizomatic briefing + a `recall` tool over
+  the distilled layer — which agents get it how, on which machines.
+- Brainbench leg for observation quality ("worth recalling" rubric).
+- Historical backfill of pre-loop sessions (months of transcripts exist).
+- Cross-machine dedup when the same work appears in multiple sessions.
+- ClickHouse event mirror of observer runs (telemetry, blessed 2026-07-12).
+- Retention/compaction of raw observations after reflection.
+
+## Out of scope
+
+- External-stream observation (mail/Slack/Front/Discord) — the Bugle owns it.
+- Public or multi-user anything; paid-API inference.
+- Rebuilding session capture itself — capture exists; gaps found by the
+  coverage research ticket get fixed, not redesigned.

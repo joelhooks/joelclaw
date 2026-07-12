@@ -1,0 +1,23 @@
+---
+title: "Define the Transcript Redaction Boundary"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:grilling"
+interaction: "HITL"
+parent: "./joelclaw-observational-memory-map.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Define the Transcript Redaction Boundary
+
+## Question
+
+Transcripts contain secrets, tokens, customer content, and third-party
+text. Observation pages are publications (rendered on the paper). Define the
+redaction pass the distiller MUST apply — reuse the wiki's redact.ts
+patterns or a shared library? — plus enforcement point (before persistence,
+per the privacy resolution: never store what can't be shown) and what the
+secure-mode masking marks in observation pages. Inherits, does not reopen,
+the closed privacy boundaries ticket.
