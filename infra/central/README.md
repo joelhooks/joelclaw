@@ -270,6 +270,31 @@ Stop:
 
 Those are meant to run as `joelclaw` via LaunchDaemon or a batched admin command, not as Joel's dev shell.
 
+## Native session-index watchdog
+
+The current native Central services use `infra/central/native/session-index-health.sh` to catch the failure that ordinary HTTP probes miss: raw Runs advancing while `runs_dev` remains stale.
+
+Its recovery machine is `healthy -> degraded -> recovering -> healthy|cooldown`. It:
+
+- compares the newest raw Run metadata `started_at` with the newest Typesense `runs_dev.started_at`;
+- treats Inngest or worker HTTP failure and index lag over 300 seconds as actionable;
+- waits for three consecutive actionable failures;
+- restarts `com.joelclaw.central.inngest` and `com.joel.system-bus-worker` from a root LaunchDaemon;
+- enforces a 15-minute recovery cooldown;
+- writes `/Users/Shared/joelclaw/state/session-index-health/latest.json` and emits `session.index.health_checked` OTEL events on state changes.
+
+Install or update it with one privileged command. Routine recovery needs no human sudo afterward:
+
+```bash
+sudo infra/central/native/install-session-index-health.sh
+```
+
+Validate its threshold, failed-recovery retry, and cooldown behavior without touching live services:
+
+```bash
+infra/central/native/test-session-index-health.sh
+```
+
 ## Launchd templates
 
 Templates live in `infra/central/launchd/` and assume the service-owned checkout path:

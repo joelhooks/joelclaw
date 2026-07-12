@@ -133,3 +133,7 @@ Do not run two vaguely configured full gateway daemons and hope Slack sorts it o
 - Front registration is complete. The worker now supports both Front application webhook signatures (SHA-256 over `timestamp:rawBody`) and legacy rule webhook signatures (SHA-1 over the compact JSON body) with separate secrets.
 - Todoist Inbox and machine backlog are reset, but `Joel's Tasks` (`123`) still needs a human-guided keep/project/someday/archive pass.
 - Slack needs explicit channel ownership in gateway lifecycle before migration.
+
+## Update 2026-07-12 (from the bugle redesign session)
+
+Joel asked to "expose webhooks.joelclaw.com for our webhooks handler." Added it as an **alias domain on `joelclaw-webhook-ingress`** (`vercel domains add webhooks.joelclaw.com` from the linked app dir — NOT the stale `webhooks` Vercel project). Verified end-to-end: `/health` 200, non-webhook path 404, unsigned POST /webhooks/github 401 (signature check reached the Flagg worker). `hooks.joelclaw.com` remains canonical in all provider configs — whether to flip canonical to `webhooks.` is this effort's call, not decided there.
