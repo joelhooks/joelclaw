@@ -1,7 +1,7 @@
 ---
 title: "Rename daily.joelclaw.com to brain.joelclaw.com"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 labels:
   - "wayfinder:task"
 interaction: "AFK"
@@ -27,3 +27,12 @@ HITL fallback: if DNS for joelclaw.com isn't agent-reachable, hand Joel the exac
 - Vercel DNS `brain.joelclaw.com` A → 100.113.161.65 created ~17:55Z — **by a concurrent flagg-side session, not this one** (this session's ssh to flagg is publickey-denied from blaine; the DNS record and Caddy edits require flagg-local or Vercel-authed hands, and Vercel CLI here confirmed the record exists).
 - 18:15Z observed: `daily.joelclaw.com` → **308** → `brain.joelclaw.com`, but brain returns **404** — redirect landed before the new vhost serves content. Monitoring from blaine until 200.
 - Remaining for this session once brain returns 200: update the dark-wizard wiki-aware graft block (daily → brain URL), `joelclaw-wiki/AGENTS.md` reference is flagg-side, and the `daily-joelclaw-wiki-topology` memory note.
+
+## Resolution (2026-07-12)
+
+Done, split across two flagg sessions (correction: the "concurrent flagg-side session" and "this session" were both ON flagg — this session spent 20 minutes believing it was on blaine because it never ran `hostname -s`; that failure is now a machine-identity rule in flagg's `~/.claude/CLAUDE.md` and a memory note).
+
+- **Infra** (sibling session, wiki repo `bab24f1`): Vercel DNS `brain.joelclaw.com` A → 100.113.161.65; Caddyfile serves `brain.joelclaw.com` (LE DNS-01 via Vercel) and 308-redirects `daily.joelclaw.com`; Caddy restarted (note in Caddyfile: restart, don't exec-reload — the ro bind mount pins the old inode).
+- **Verified** (this session): pinned to the sidecar IP, `https://brain.joelclaw.com/` returns **200**; `daily` returns **308 → brain`; a lingering 404 from flagg's own resolver was stale wildcard DNS (Vercel `DEPLOYMENT_NOT_FOUND`), already resolving correctly on cell networks — propagation, not breakage.
+- **Fleet cleanup** (this session): dark-wizard `wiki-aware.block.md` now names brain.joelclaw.com and the Brain Graph arc, grafts refreshed, pushed (`3be2d72`) — blaine/panda pick it up on next dw-sync. `daily-joelclaw-wiki-topology` memory note updated. `joelclaw-wiki/AGENTS.md` had no daily.joelclaw.com references to fix.
+- Acceptance item 1 of the map is done: brain.joelclaw.com serves the wiki, daily redirects.
