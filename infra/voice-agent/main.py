@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
+import call_tracker
 from livekit.agents import Agent, AgentSession, RoomInputOptions, WorkerOptions, cli, function_tool
 from livekit.plugins import deepgram, elevenlabs, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.english import EnglishModel
@@ -1098,19 +1099,26 @@ async def _run_public_session(ctx, cfg: dict, caller: str) -> None:
         kind = type(m).__name__
         if kind == "LLMMetrics":
             logger.info("METRIC public llm ttft=%.2fs", getattr(m, "ttft", -1.0))
+            call_tracker.track_turn(ctx.room.name, llmTtftMs=int(getattr(m, "ttft", 0) * 1000))
         elif kind == "TTSMetrics":
             logger.info("METRIC public tts ttfb=%.2fs", getattr(m, "ttfb", -1.0))
+            call_tracker.track_turn(ctx.room.name, ttsTtfbMs=int(getattr(m, "ttfb", 0) * 1000))
         elif kind == "EOUMetrics":
             logger.info("METRIC public eou delay=%.2fs", getattr(m, "end_of_utterance_delay", -1.0))
+            call_tracker.track_turn(ctx.room.name, eouDelayMs=int(getattr(m, "end_of_utterance_delay", 0) * 1000))
 
     await session.start(
         agent=Agent(instructions=_public_instructions()),
         room=ctx.room,
         room_input_options=_room_input_options(),
     )
+    call_tracker.track_session_start(ctx.room.name, "public", caller)
+    heartbeat_task = call_tracker.start_heartbeat(ctx.room.name)
 
     @session.on("close")
     def on_close(*args, **kwargs):
+        heartbeat_task.cancel()
+        call_tracker.track_session_end(ctx.room.name, "disconnect")
         _save_public_transcript(session, ctx.room.name, caller, started)
 
     session.generate_reply(
@@ -1207,9 +1215,13 @@ async def _run_guest_session(ctx, cfg: dict, caller: str) -> None:
         room=ctx.room,
         room_input_options=_room_input_options(),
     )
+    call_tracker.track_session_start(ctx.room.name, "guest", caller)
+    heartbeat_task = call_tracker.start_heartbeat(ctx.room.name)
 
     @session.on("close")
     def on_close(*args, **kwargs):
+        heartbeat_task.cancel()
+        call_tracker.track_session_end(ctx.room.name, "disconnect")
         _save_guest_transcript(session, ctx.room.name, caller)
 
     session.generate_reply(
@@ -1300,8 +1312,10 @@ async def entrypoint(ctx) -> None:
             vad=_vad_for(ctx),
         )
         await session.start(agent=Agent(instructions="You are a voice canary."), room=ctx.room)
+        call_tracker.track_session_start(ctx.room.name, "synthetic", caller)
         session.generate_reply(user_input="Say exactly: 'Canary check confirmed. All systems nominal.' Then stop talking.")
         await asyncio.sleep(4)
+        call_tracker.track_session_end(ctx.room.name, "canary-complete")
         return
 
     caller_allowed, caller = _caller_allowed(caller_raw, allowed_callers)
@@ -1363,17 +1377,24 @@ async def entrypoint(ctx) -> None:
         kind = type(m).__name__
         if kind == "LLMMetrics":
             logger.info("METRIC llm ttft=%.2fs", getattr(m, "ttft", -1.0))
+            call_tracker.track_turn(ctx.room.name, llmTtftMs=int(getattr(m, "ttft", 0) * 1000))
         elif kind == "TTSMetrics":
             logger.info("METRIC tts ttfb=%.2fs", getattr(m, "ttfb", -1.0))
+            call_tracker.track_turn(ctx.room.name, ttsTtfbMs=int(getattr(m, "ttfb", 0) * 1000))
         elif kind == "EOUMetrics":
             logger.info("METRIC eou delay=%.2fs", getattr(m, "end_of_utterance_delay", -1.0))
+            call_tracker.track_turn(ctx.room.name, eouDelayMs=int(getattr(m, "end_of_utterance_delay", 0) * 1000))
 
     agent = JoelclawVoiceAgent(tts_instance, original_voice_id)
     await session.start(agent=agent, room=ctx.room, room_input_options=_room_input_options())
+    call_tracker.track_session_start(ctx.room.name, "private", caller)
+    heartbeat_task = call_tracker.start_heartbeat(ctx.room.name)
 
     # Save transcript when session ends
     @session.on("close")
     def on_close(*args, **kwargs):
+        heartbeat_task.cancel()
+        call_tracker.track_session_end(ctx.room.name, "disconnect")
         _save_call_transcript(session, ctx.room.name)
 
     # Greet with pre-loaded context so ShitRat already knows what's going on

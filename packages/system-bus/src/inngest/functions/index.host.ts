@@ -127,6 +127,7 @@ import { vipEmailReceived } from "./vip-email-received";
 import { vipEmailBrief } from "./vip-morning-brief";
 import { voiceCallCompleted } from "./voice-call-completed";
 import { voiceMissedCall } from "./voice-missed-call";
+import { voicePublicCallAnalyze } from "./voice-public-call-analyze";
 import { voiceSyntheticCall } from "./voice-synthetic-call";
 import { voiceTelnyxBalance } from "./voice-telnyx-balance";
 import { voiceWorkerCanary } from "./voice-worker-canary";
@@ -195,6 +196,7 @@ export const hostFunctionDefinitions = [
   transcriptionCleanup,
   telegramCallbackReceived,
   voiceCallCompleted,
+  voicePublicCallAnalyze,
   voiceMissedCall,
   voiceSyntheticCall,
   voiceTelnyxBalance,
