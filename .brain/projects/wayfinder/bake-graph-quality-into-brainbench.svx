@@ -1,7 +1,7 @@
 ---
 title: "Bake Graph Quality into Brainbench"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 labels:
   - "wayfinder:task"
 interaction: "AFK"
@@ -25,3 +25,16 @@ Extend the bugle map's built [Wikibench](./wikibench-capsule-replay-rubric.svx) 
 - **Score log integration**: graph-quality runs keyed by graph schema version + config label in the same append-only log, so "did schema v3 help recall?" becomes a lookup like the edition bench.
 
 HITL tail like the original wikibench: Joel reacts to the first scored graph report and sets rubric weights. Resolved when the graph leg scores a real build, the recall scenarios run against the live projection, and a baseline is recorded for schema v2.
+
+## Resolution (2026-07-12)
+
+Built by the wJ:p4 pi worker, verified and committed by the steering session (wiki `29ad9c7`: 158 tests, check clean). Schema-v2 baseline recorded in `data/bench/graph-runs/` (runtime artifact, gitignored like all bench outputs); scenarios in `data/bench/graph-scenarios-v2.json`; bench code in `src/lib/bench/graph-quality.ts` + `scripts/bench-graph.ts`.
+
+**Baseline (graph-v2, hand seeds):** deterministic checks **4/6**, recall scenarios **3/6**, precision **0.32**, recall **0.50**. The honest failure list is the value:
+
+- **79.49% orphan rate** — most nodes (largely observations) have no edges; the graph is sparser than it looks.
+- One stale/missing wikilink; **unresolved nodes outrank real pages** in expansion (ranking bug, cheap fix, real recall damage).
+- Missing parent/source-observation edge types — builder gaps the next schema rev should close.
+- Typesense half **honestly not run** (not reachable from this repo's bench yet) — hand-picked seeds through graph expansion only; the composed proposes/disposes score awaits Typesense wiring.
+
+The numbers to beat are recorded; "did that change help recall?" is now a lookup. HITL tail open in the map: Joel reads the first scored report and sets rubric weights.
