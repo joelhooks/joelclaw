@@ -21,3 +21,24 @@ token thresholds (Mastra: ~30k message tokens, async buffered) vs cadence
 durable function (house pattern, 110+ exist) vs launchd? Token budget per
 day and which model via pi. Cursor semantics so only new material distills —
 efficiency is a charter requirement.
+
+## Grilling notes (2026-07-12, in progress)
+
+- **Working direction (Joel + evidence)**: flagg-central observer session
+  using pi with the `ds4-central` provider — DeepSeek V4 Flash served
+  LOCALLY by `com.joelclaw.central.ds4.plist`, a Central LaunchDaemon
+  (`/Users/Shared/joelclaw/opt/ds4/current/ds4-server`, :8000, ctx 100k,
+  kv-disk cache, up since 2026-06-17 under the joelclaw service account —
+  already durable infrastructure alongside postgres/redis/typesense/inngest).
+  Zero marginal cost → observer can run continuously; transcripts never
+  leave flagg for inference (input to the redaction ticket: the boundary
+  moves to persistence).
+- 100k ctx < session sizes → observer works map-reduce over indexed
+  run_chunks deltas (~2M tokens/day per coverage research), not whole
+  transcripts.
+- Quality gate: prototype runs the same day through ds4-local AND the
+  frontier pi model; side-by-side pages decide the default. Frontier likely
+  reserved for the reflector regardless.
+- Defect found en route: `joelclaw sessions search` ssh-targets the stale
+  `dark-wizard` hostname and fails fleet-wide — needs a fix (flagg rename
+  fallout).
