@@ -1,0 +1,311 @@
+---
+title: "Session capture coverage across the fleet, July 2026"
+type: resource
+created: 2026-07-12
+privacy: private
+---
+
+# Session capture coverage across the fleet
+
+Read-only reconnaissance performed on 2026-07-12 from `flagg`. Scope is
+Pi, Claude Code, and Codex on `flagg`, `blaine`, and `panda`. The only mutation
+was writing this requested report. No service, index, config, transcript, or
+remote machine was changed.
+
+## Coverage matrix
+
+“Raw/day” is JSONL files modified in the last seven days divided by seven.
+This is the best available session-volume proxy, but a long-lived transcript
+can cross the window boundary. “Tokens/day” is source-reported usage on flagg
+(including cache reads), and JSONL bytes ÷ 4 on blaine/panda. The latter is a
+coarse sizing estimate, not provider billing. “Indexed freshness” is the newest
+matching `runs_dev.started_at`; ✅ means current on 2026-07-12, ⚠ means raw data
+is newer than the index, and ❌ means no indexed run in the last seven days.
+
+| Machine | Surface | Raw transcript path and naming | Capture mechanism observed | Indexed freshness | Raw/day | Rough tokens/day |
+|---|---|---|---|---:|---:|---:|
+| flagg | Pi | `~/.pi/agent/sessions/<cwd>/ISO_<uuid>.jsonl` | Pi `memory-capture` extension → Central `/api/runs` | ✅ 2026-07-12 21:47Z | 55.9 | 313.9M incl. cache |
+| flagg | Claude | `~/.claude/projects/<cwd>/<uuid>.jsonl` | Claude `Stop` hook → `joelclaw-capture-session.ts` | ✅ 2026-07-12 21:46Z | 45.0 | 247.5M incl. cache |
+| flagg | Codex | `~/.codex/sessions/YYYY/MM/DD/rollout-ISO-<uuid>.jsonl` | Codex capture script/log exists; delivery not current | ⚠ 2026-06-21 16:32Z; raw current | 9.7 | 7.8M |
+| blaine | Pi | same Pi layout | Pi `memory-capture`; fresh successful capture log | ✅ 2026-07-12 21:47Z | 12.0 | ~3.24M |
+| blaine | Claude | same Claude layout | Claude hook/capture path; fresh index | ✅ 2026-07-12 20:05Z | 6.4 | ~4.25M |
+| blaine | Codex | same Codex layout | hook runs but reports missing session/path | ⚠ 2026-06-07 21:01Z; raw 2026-07-12 | 0.4 | ~0.25M |
+| panda | Pi | same Pi layout | no current capture extension observed | ❌ 2026-06-22 23:53Z | 0 | 0 |
+| panda | Claude | same Claude layout | Claude remains active locally; Central/index stale | ⚠ 2026-06-23 00:57Z; raw 2026-07-12 | 0.1 | ~0.62M |
+| panda | Codex | same Codex layout | no current delivery observed | ❌ 2026-06-21 16:34Z | 0 | 0 |
+
+## Receipts by cell
+
+<details>
+<summary><strong>flagg · Pi</strong></summary>
+
+```sh
+find ~/.pi/agent/sessions -type f -name '*.jsonl' -mtime -7 # parser-backed aggregation
+```
+
+```text
+files=391 bytes=261710361 input=100573380 output=5956430 cacheRead=2090677248 total=2197207058
+newest indexed: 2026-07-12T21:47:37Z; 7d unique conversations=207; indexed token_total=5823727
+~/.pi/agent/extensions/memory-capture
+~/.joelclaw/capture.log mtime=2026-07-12T14:52:29Z
+```
+
+The indexed seven-day rate is 29.57 unique conversations/day and 831,961
+indexed tokens/day. It is lower than raw-file/source usage because capture runs
+are bounded deltas and `token_total` does not reproduce provider cache usage.
+
+</details>
+
+<details>
+<summary><strong>flagg · Claude Code</strong></summary>
+
+```sh
+find ~/.claude/projects -type f -name '*.jsonl' -mtime -7 # parser dedupes message.id
+rg -n 'Stop|joelclaw-capture-session' ~/.claude/settings.json
+```
+
+```text
+files=315 bytes=133535595 input=1799732 output=4880193 cacheRead=1694823342 cacheWrite=30743011 total=1732246278
+Stop hook command: .../scripts/joelclaw-capture-session.ts
+newest indexed: 2026-07-12T21:46:56Z; 7d unique conversations=20; indexed token_total=1198120
+```
+
+</details>
+
+<details>
+<summary><strong>flagg · Codex</strong></summary>
+
+```sh
+find ~/.codex/sessions -type f -name '*.jsonl' -mtime -7 # parser-backed aggregation
+stat -f '%Sm' -t '%Y-%m-%dT%H:%M:%SZ' ~/.joelclaw/codex-capture.log
+```
+
+```text
+files=68 bytes=20102583 input=54043829 output=382331 cacheRead=50168704 total=54426160
+codex-capture.log mtime=2026-07-12T10:01:05Z
+newest indexed: 2026-06-21T16:32:42Z; 7d indexed runs=0
+```
+
+Raw Codex is active while the derived index is three weeks stale. A current
+capture log proves the hook executes, not that Central accepts/indexes its
+payload.
+
+</details>
+
+<details>
+<summary><strong>blaine · Pi</strong></summary>
+
+```sh
+ssh joel@blaine 'find ~/.pi/agent/sessions -type f -name "*.jsonl" -mtime -7 ...; tail -3 ~/.joelclaw/capture.log'
+```
+
+```text
+host=Dark-Tower
+last7d_files=84 bytes=90703463 rough_tokens_bytes_div4=22675865
+newest raw=2026-07-12T21:47:24Z
+[2026-07-12T21:47:18.121Z] [pi] captured run=cad8... session=019f... delta=65969B turns=1 trigger=turn_end
+newest indexed=2026-07-12T21:47:18Z; 7d unique conversations=69
+```
+
+`machine_id=blaine` is canonical in Typesense even though `hostname -s` returns
+`Dark-Tower`.
+
+</details>
+
+<details>
+<summary><strong>blaine · Claude Code</strong></summary>
+
+```sh
+ssh joel@blaine 'find ~/.claude/projects -type f -name "*.jsonl" -mtime -7 ...'
+```
+
+```text
+last7d_files=45 bytes=119135173 rough_tokens_bytes_div4=29783793
+newest raw=2026-07-12T21:51:15Z
+newest indexed=2026-07-12T20:05:14Z; 7d unique conversations=8
+```
+
+The roughly 1h46m difference is normal enough for a still-open session, but the
+observer should consume a cursor, not assume file close equals capture.
+
+</details>
+
+<details>
+<summary><strong>blaine · Codex</strong></summary>
+
+```sh
+ssh joel@blaine 'find ~/.codex/sessions -type f -name "*.jsonl" -mtime -7 ...; tail -3 ~/.joelclaw/codex-capture.log'
+```
+
+```text
+last7d_files=3 bytes=7088086 rough_tokens_bytes_div4=1772021
+newest raw=2026-07-12T18:40:53Z
+[2026-07-12T19:08:31.597Z] skip: missing session_id/transcript_path
+newest indexed=2026-06-07T21:01:18Z; 7d indexed runs=0
+```
+
+This is a named capture gap: Codex transcripts exist, the hook fires, and the
+hook cannot resolve the session/transcript arguments.
+
+</details>
+
+<details>
+<summary><strong>panda · Pi</strong></summary>
+
+```sh
+ssh joel@panda 'find ~/.pi/agent/sessions -type f -name "*.jsonl" -mtime -7 ...; find ~/.pi/agent/extensions -maxdepth 2 ...'
+```
+
+```text
+last7d_files=0 bytes=0
+newest raw=2026-06-22T23:54:09Z
+extensions observed: agent-mail, subagent (no memory-capture)
+newest indexed=2026-06-22T23:53:57Z; 7d indexed runs=0
+```
+
+Pi is inactive/stale on Panda, not silently losing current Pi work according to
+the seven-day raw filesystem window.
+
+</details>
+
+<details>
+<summary><strong>panda · Claude Code</strong></summary>
+
+```sh
+ssh joel@panda 'find ~/.claude/projects -type f -name "*.jsonl" -mtime -7 -exec stat -f "%m %z %N" {} +'
+```
+
+```text
+last7d_files=1 bytes=17300274 rough_tokens_bytes_div4=4325068
+newest raw=2026-07-12T21:24:21Z
+newest indexed=2026-06-23T00:57:21Z; 7d indexed runs=0
+```
+
+This is the clearest Panda gap: active Claude data exists locally but nothing
+new reaches `runs_dev`.
+
+</details>
+
+<details>
+<summary><strong>panda · Codex</strong></summary>
+
+```sh
+ssh joel@panda 'find ~/.codex/sessions -type f -name "*.jsonl" -mtime -7 ...'
+```
+
+```text
+last7d_files=0 bytes=0
+newest raw=2026-06-17T02:02:48Z
+newest indexed=2026-06-21T16:34:21Z; 7d indexed runs=0
+```
+
+No current raw activity. The index’s one cutover canary is newer than the last
+real raw transcript and does not establish ongoing capture.
+
+</details>
+
+## What reaches Typesense
+
+Read-only collection inspection:
+
+```sh
+KEY=$(secrets lease typesense_api_key)
+curl -fsS http://localhost:8108/collections/{runs_dev,run_chunks_dev} \
+  -H "X-TYPESENSE-API-KEY: $KEY" | jq '{name,num_documents,fields}'
+```
+
+```text
+runs_dev: 40,949 documents
+  runtimes: pi 40,000; claude-code 820; codex 129
+  machines: blaine 18,967; flagg 10,904; dark-wizard 9,876; panda 1,202
+run_chunks_dev: 272,829 documents
+  runtimes: pi 236,451; claude-code 30,989; codex 5,389
+  machines: blaine 194,417; flagg 60,014; dark-wizard 14,843; panda 3,555
+```
+
+`dark-wizard` is a legacy/alias machine identity and was not merged into flagg
+for this matrix. That identity split must be handled explicitly during observer
+deduplication.
+
+`runs_dev` fields: identity/access (`user_id`, `machine_id`, `agent_runtime`,
+`readable_by`), lineage (`parent_run_id`, `root_run_id`, `conversation_id`),
+model/tags, timing, turn/tool counts, `token_total`, touched files/skills/entities,
+status, full text, and raw JSONL path/bytes/SHA-256. `run_chunks_dev` holds
+`run_id`, chunk index/role/text, embedding/model, token count, timing/access,
+lineage/tags, runtime, and machine. Raw run blobs under
+`~/.joelclaw/runs-dev/...` are authoritative; both Typesense collections are
+rebuildable derived indexes (`docs/runbooks/typesense-session-indexing.md`).
+
+Seven-day Typesense volume, counting unique `conversation_id` rather than
+capture-delta runs:
+
+| Machine | Pi | Claude | Codex |
+|---|---:|---:|---:|
+| flagg | 207 sessions / 5.82M tokens | 20 / 1.20M | 0 / 0 |
+| blaine | 69 / 1.10M | 8 / 84K | 0 / 0 |
+| panda | 0 / 0 | 0 / 0 | 0 / 0 |
+
+Command receipt:
+
+```sh
+curl -fsS -G http://localhost:8108/collections/runs_dev/documents/export \
+  -H "X-TYPESENSE-API-KEY: $KEY" \
+  --data-urlencode 'filter_by=machine_id:=<m> && agent_runtime:=<r> && started_at:>=1783288068369' \
+  --data-urlencode 'include_fields=id,conversation_id,root_run_id,token_total' \
+| jq -s '{runs:length,unique_conversations:...,tokens:...}'
+```
+
+## Change ledger status
+
+Pi runtime v1 runs **only on flagg** today.
+
+```sh
+ls -l ~/.pi/agent/extensions/change-ledger
+wc -l ~/.local/state/joelclaw/change-ledger/2026-07-12.jsonl
+ssh joel@blaine 'test -L ~/.pi/agent/extensions/change-ledger || echo MISSING; test -d ~/.local/state/joelclaw/change-ledger || echo MISSING'
+```
+
+```text
+flagg symlink -> /Users/joel/Code/joelhooks/pi-tools/change-ledger
+flagg ledger: 509 records at inspection time
+blaine ledger symlink=MISSING; ledger dir=MISSING
+panda: no change-ledger extension observed
+```
+
+Coverage is successful Pi `write`/`edit` tool results with pre/post blob hashes,
+per-turn `changeSetId`, repo/worktree/HEAD identity, plus deterministic
+commit-attribution by blob equality. Bash mutations get an unattributed marker.
+Claude, Codex, bash worktree diffing, supersession, and rewrite lineage are not
+covered. Source: `.brain/projects/wayfinder/instrument-session-change-ledger.svx`.
+
+## Named gaps
+
+1. **Codex indexing is broken on active machines.** Flagg has 68 and blaine has
+   3 raw Codex transcripts in the seven-day window, but Typesense has zero new
+   Codex runs. Blaine’s hook says `missing session_id/transcript_path`.
+2. **Panda Claude is raw-only.** A 17.3 MB Claude transcript was active on
+   2026-07-12 while Panda’s newest Claude index record is 2026-06-23.
+3. **The change ledger is flagg-only and Pi-only.** Blaine, Panda, Claude, and
+   Codex cannot yet supply deterministic session→commit provenance.
+4. **Machine identity is split.** Typesense contains both `flagg` and legacy
+   `dark-wizard`; observer cursors cannot treat those as separate physical
+   machines without double-counting history.
+5. **Outbox backlogs remain large and stale:** blaine has 6,863 JSON payloads
+   (newest 2026-06-22); panda has 4,268 (newest 2026-06-21). These do not explain
+   fresh Codex loss by themselves, but they are evidence that delivery repair
+   has previously accumulated debt.
+
+## What this means for observer design
+
+Do not trigger observers directly from raw file counts or assume all nine cells
+are equivalent. Use accepted/indexed run deltas with a per-runtime,
+per-machine cursor, normalize `dark-wizard` to the verified flagg identity, and
+emit an explicit capture-health event when raw freshness outruns index freshness.
+
+Budget for the healthy indexed stream first: roughly **43 unique captured
+conversations/day** across flagg and blaine (Pi + Claude), not the 800-ish raw
+JSONL files/week and not the thousands of per-turn capture runs. Preserve raw
+paths/SHA provenance so Codex and Panda can be backfilled after their capture
+edges are repaired. Treat change-ledger provenance as optional enrichment until
+coverage expands beyond flagg Pi; never fabricate commit attribution for the
+other eight cells.
