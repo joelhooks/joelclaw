@@ -1,7 +1,7 @@
 ---
 title: "Decide the Observation Schema and Brain Placement"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 assignee: "claude (flagg, session 14d06369, grilling with Joel)"
 labels:
   - "wayfinder:grilling"
@@ -9,6 +9,7 @@ interaction: "HITL"
 parent: "./joelclaw-observational-memory-map.svx"
 blockers: []
 created_at: "2026-07-12"
+closed_at: "2026-07-12"
 ---
 
 # Decide the Observation Schema and Brain Placement
@@ -22,3 +23,26 @@ they live in (own root? `observations/` in dark-wizard?), wikilink behavior
 (auto-link touched pages?), and the noise bar — what does NOT deserve an
 observation. The Mastra extractor idea (structured values: current task,
 open questions) adapted to versioned pi schemas like the Bugle's.
+
+## Resolution (2026-07-12, grilled with Joel — approved)
+
+**Unit**: per-session observation atoms; the reflector composes cross-session
+thread pages later (Observer→Reflector split). **Placement**:
+`dark-wizard/.brain/observations/YYYY-MM-DD-<machine>-<agent>-<slug>.svx` →
+renders at `/user/observations/…`, auto-wikilinked to touched project/resource
+pages (graph nodes for free).
+
+**Schema v1 frontmatter**: `type: observation`, `schemaVersion: 1`,
+`sessionId`, `machine`, `agent` (pi|claude|codex), `started`, `ended`,
+`tokens`, `repos[]`, `commits[]` (hash-proven where the change ledger runs,
+best-effort elsewhere — coverage research receipt), `derivation {kind:
+pi-agent, model, promptHash}`. Body: one-paragraph gist; `## Observations`
+(dense, transcript-grounded bullets); `## Decisions` (wikilinked); `## Open
+questions / next actions`. Extractors are body sections behind a versioned
+pi prompt (Bugle pattern), not separate machinery.
+
+**Noise bar**: no ledger-proven mutations AND under ~15k tokens → no page,
+one line in that day's observation index (skipped ≠ invisible).
+
+`derivation.promptHash` is load-bearing: it's what makes distilled memory
+auditable months later. Prototype may amend all of this — that's its job.

@@ -62,6 +62,7 @@ to understand all of the work that we're doing."
 
 <!-- one line per closed ticket: gist + link -->
 
+- [Decide the Observation Schema and Brain Placement](./decide-observation-schema.svx) — per-session atoms (reflector composes threads later) as `.svx` in `dark-wizard/.brain/observations/` → `/user/observations/…`; v1 frontmatter w/ provenance + derivation.promptHash; extractors are body sections behind a versioned pi prompt; noise bar: no mutations + <15k tokens → index line, no page.
 - [Decide the Observer Runtime and Trigger Topology](./decide-observer-runtime-topology.svx) — flagg-central HEADLESS HERDR SESSION (pi + local ds4-central, zero cost, transcripts never leave flagg) that can spawn observable sub-agent panes; supervisor canary for durability; gpt-5.6-terra as frontier comparator/reflector; continuous loop over indexed deltas.
 - [Research Session Capture Coverage Across the Fleet](./research-session-capture-coverage.svx) — Pi+Claude on flagg+blaine are healthy (~43 conversations/day, same-day indexing); Codex delivery broken everywhere (→ fix-codex-capture-delivery); panda uncaptured (fine, decommissioning); change ledger is Pi-on-flagg only, so `commits` is best-effort elsewhere.
 
