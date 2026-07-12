@@ -1,0 +1,17 @@
+---
+title: "Define Workroom Binding and the Call Router Gate"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:grilling"
+interaction: "HITL"
+parent: "./joelclaw-voice-workroom-map.svx"
+blockers: []
+created_at: "2026-07-11"
+---
+
+# Define Workroom Binding and the Call Router Gate
+
+## Question
+
+What is the concrete contract binding a call to a workroom (call ↔ pi session ↔ Discord thread ↔ wayfinder map/ticket)? Joel's fixed direction: a basic router gate at call start — offer a few known open threads, or take open-ended yapping as search input to find the right one. Specify: how the gate ranks and phrases its candidates (recency? open frontier tickets? active engine runs?), what "open-ended yapping → find shit" searches against (registry recentThreads, Typesense, wayfinder frontiers), what happens for a genuinely new topic (auto-create thread + session immediately, or park in a lobby session until named), whether one call can switch workrooms mid-conversation, and exactly what lands in the Discord thread at call end (summary format, transcript link, next-actions). This decision gates the registry multi-surface surgery spec.

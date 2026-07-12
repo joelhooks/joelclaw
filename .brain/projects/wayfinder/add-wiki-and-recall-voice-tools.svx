@@ -1,0 +1,18 @@
+---
+title: "Add Wiki and Recall Voice Tools"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-voice-workroom-map.svx"
+blockers:
+  - "Restore Dial Tone via LiveKit Cloud"
+created_at: "2026-07-11"
+---
+
+# Add Wiki and Recall Voice Tools
+
+## Question
+
+Give the worker its phase-1 knowledge tools: `wiki_today()` reading `http://127.0.0.1:8790/latest.json` (fallback: `data/editions/<date>.json` off disk), `loop_detail(id)` for a loop's provenance page, both trimmed for voice; recall is already wired (`joelclaw recall`, Typesense-backed). Housekeeping in the same pass: scrub the stale Qdrant references from `main.py` docstrings and comments (the tool descriptions the LLM reads should not lie about the plumbing — recall is Typesense now), fix the `kubectl port-forward` remediation hint in `packages/cli/src/commands/recall.ts:74` to point at Central-native Typesense on 8108, and hold every new tool to the fail-soft rule: `_run()` timeouts, degrade-don't-die — answering the call depends only on LiveKit + the LLM key. Resolved when a real call can hear today's edition, drill an open loop, and recall prior context, with each tool surviving its backend being down.

@@ -1,0 +1,17 @@
+---
+title: "Research Voice Observation Pipeline Integration"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:research"
+interaction: "AFK"
+parent: "./joelclaw-voice-workroom-map.svx"
+blockers: []
+created_at: "2026-07-11"
+---
+
+# Research Voice Observation Pipeline Integration
+
+## Question
+
+Joel's contract for voice memory: turns feed into observations that get compacted, starred, and ranked, with short- and long-term memory, from direct session context through Typesense to markdown. Map the existing pipeline end to end — what consumes `memory/session.ended` (which `voice-call-completed.ts` already emits), where compaction/starring/ranking happen today, what the short-term vs long-term stores actually are, and how observations become markdown. Then propose the voice integration: per-turn observation extraction vs per-call, how the turn-fidelity split works in practice (compacted turns written to the bound pi session JSONL for text resume; verbatim transcript in `voice_transcripts`, cross-referenced), and what `resolution_session` provenance links from wayfinder decisions back into. Deliverable: a markdown asset with the pipeline map and a concrete integration proposal.
