@@ -1,7 +1,7 @@
 ---
 title: "Write the Agentic Memory System Vision ADR"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 labels:
   - "wayfinder:task"
 interaction: "AFK"
@@ -24,3 +24,12 @@ Joel's condition on the constrained proof: the VISION stays clear and part of th
 - The dual purpose: working memory system and demo content for the overbuilt-second-brain video — demoability as a design constraint.
 
 Draft AFK from this map's grilling record; Joel reviews. Lands where architecture decisions live (`.brain/resources/decisions/` here or joelclaw-wiki's Brain — follow `/skill:brain-first-workflow`). Resolved when the ADR is committed and linked from this map's Notes.
+
+## Resolution (2026-07-12)
+
+Drafted by pi worker Otto (wJ:p3), rendered onto the paper at https://brain.joelclaw.com/decisions/agentic-memory-vision.html, and reviewed by Joel against that page the same day. "Mostly in line," plus two amendments now folded into the accepted ADR ([agentic-memory-system-vision](../../resources/decisions/agentic-memory-system-vision.svx), status `accepted`):
+
+1. **Agent sessions are first-class memory surface**, not just evidence under the system — "basically a guide of what has changed recently and how, with deep intent." `.brain` pages are the neurons (durable state); sessions are the recent activity that explains that state; Typesense already indexes them.
+2. **The destination is sharpened**: master a Mastra-style memory system whose observational layer distills Typesense + Brain docs + session history into recall that works — "every context we run in has the ability to understand all of the work that we're doing." Functional bar, not architectural.
+
+Both amendments flow forward as the stated bar for the graph/Typesense boundary grilling and the follow-on write-loop map.

@@ -1,8 +1,9 @@
 ---
 title: "Agentic Memory System Vision"
 type: "decision"
-status: "draft"
+status: "accepted"
 created_at: "2026-07-12"
+reviewed_at: "2026-07-12"
 ---
 
 # Agentic Memory System Vision
@@ -31,18 +32,24 @@ Replicas may diverge. We will treat that divergence as data. It may mean a sync 
 
 The future graph may answer questions by `repo @ machine`. That query dimension is part of the vision, not the constrained proof. The first proof reads three repositories from flagg's local checkouts.
 
+### Agent sessions are part of the surface, not just evidence
+
+Joel's review (2026-07-12, on the rendered page): agent sessions across the entire surface of the brain are "basically a guide of what has changed recently and how, with deep intent." They are first-class surface area in this memory system, alongside the `.brain` files.
+
+The split: `.brain` pages are the neurons — durable state. Sessions are the recent activity that explains that state — who changed what, in which repo, toward which goal, with the reasoning still attached. Typesense already indexes the sessions; the raw transcripts remain the full record underneath. A memory system that only reads the durable pages loses exactly the layer that says *why the pages look the way they do this week*.
+
 ### Mastra's vocabulary names the memory layers
 
 [Mastra's memory overview](https://mastra.ai/docs/memory/overview) separates message history, working memory, semantic recall, and observational memory. Joelclaw maps onto those terms as follows:
 
 | Memory layer | Joelclaw piece | State |
 | --- | --- | --- |
-| Message history | Pi, Claude, and Codex session transcripts and their indexes | Exists today. Raw sessions remain evidence rather than durable Brain truth. |
+| Message history | Pi, Claude, and Codex session transcripts, indexed in Typesense | Exists today — and per the review above, sessions are first-class surface: the recent-change guide with intent, not just raw evidence. |
 | Working memory | The dark-wizard user Brain plus project `.brain/` pages | Exists today as persistent, structured context. One automatic system that selects and supplies the right pages to every agent is aspirational. |
 | Semantic recall | Typesense full-text and semantic indexes over sessions and other captured material | Exists today. A unified recall API that blends Typesense with graph traversal is aspirational. |
-| Observational memory | Bugle observations distilled into durable Brain pages | Aspirational as an active memory layer. The write loop, observer placement, deduplication, and promotion policy belong to a follow-on map. |
+| Observational memory | Distillation across everything — Typesense session indexes, Brain docs, bugle observations — into recall that actually works | **The destination** (Joel, review): every running context should understand all the work in flight. Bugle observations → durable pages is the embryo; the full loop belongs to a follow-on map. |
 
-This is a mapping, not a decision to adopt Mastra as the implementation. Its vocabulary helps us name responsibilities that joelclaw already splits across several systems.
+This is a mapping, not a decision to adopt Mastra as the implementation — but the review sharpened it from analogy to aim: **master a Mastra-style memory system**. The bar for the observational layer is functional, not architectural: take all of Typesense, all the Brain docs, all the session history, and distill it into something that gives every context the ability to understand all the work we're doing. Recall that works is the test; everything else is plumbing.
 
 ### Build the read surface before the write loop
 
@@ -67,6 +74,7 @@ Producing the video is out of scope.
 ## Consequences
 
 - Git repositories remain the durable substrate. The graph indexes them; it does not erase their ownership or provenance.
+- Agent sessions join the memory surface as the recency-and-intent layer; the graph/Typesense boundary decision and the follow-on write-loop map both inherit "recall that works in every context" as their bar.
 - Dark-wizard remains the one user Brain across the fleet.
 - Project knowledge stays local to each repository's `.brain/` unless a deliberate link connects it elsewhere.
 - Machine divergence becomes visible state worth querying instead of an error the namespace model discards.

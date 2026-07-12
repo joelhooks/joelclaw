@@ -60,10 +60,12 @@ This map adjoins [Chart the Joelclaw Personal Wiki](./joelclaw-personal-wiki-map
 - [Rename daily.joelclaw.com to brain.joelclaw.com](./rename-daily-to-brain-domain.svx) — done: brain serves the wiki (tailnet-only unchanged), daily 308-redirects, fleet graft + memory updated; acceptance item 1 complete.
 - [Decide Brain-Root Discovery and Registration](./decide-brain-root-discovery.svx) — registry in dark-wizard (`brain-roots.json`, fleet-synced) is truth, crawl audits it loudly; root `name` = wikilink prefix = URL segment; onboarding is one line.
 - [Build the Multi-Root Graph Projection](./build-multi-root-graph-projection.svx) — shipped, schema v2: 863 nodes / 161 edges over the three roots, provenance per node, byte-identical rebuilds; cross-root edges honestly 0 (the syntax is a day old); audit surfaced 17 unregistered brains.
+- [Write the Agentic Memory System Vision ADR](./write-agentic-memory-vision-adr.svx) — accepted after live review on the rendered page; amendments: agent sessions are first-class memory surface (the recency-and-intent layer), and the destination is a Mastra-style system where distilled recall works in every context.
 
 ## Not yet specified
 
-- The write loop: active observation processing — which streams get observers, where they run per machine, distillation into durable pages, dedup and promotion policy. Follow-on map once the read side is live.
+- The write loop: active observation processing — which streams get observers, where they run per machine, distillation into durable pages, dedup and promotion policy. Follow-on map once the read side is live. Bar set by the accepted vision ADR: distill Typesense + Brain docs + session history into recall that works in every running context.
+- How agent sessions join the graph itself — session nodes? change/recency edges from sessions to the pages they touched? Sessions are first-class memory surface per the ADR review; their graph representation is unshaped until the Typesense boundary grilling lands.
 - repo@machine distributed querying — inspecting diverged trees across machines through the graph; fleet-drift surfacing as a graph signal.
 - A unified agentic recall API blending graph traversal with Typesense semantic/FTS — shapeable only after the store and relationship decisions land.
 - Store migration mechanics if the research picks a real graph database over graph.json v2.
