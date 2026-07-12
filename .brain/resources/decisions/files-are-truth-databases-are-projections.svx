@@ -1,0 +1,51 @@
+---
+title: "Files are truth, databases are projections"
+type: decision
+status: accepted
+created: 2026-07-12
+decided_with: "Joel, grilling session (claude flagg 14d06369)"
+context: "joelclaw observational memory / Brain storage"
+---
+
+# Files are truth, databases are projections
+
+## Decision
+
+The system of record for Brain content — including observation pages from the
+observational-memory write loop — is **the filesystem: `.svx` files in git
+repositories**, synced fleet-wide through dark-wizard. Databases on flagg
+(Postgres, Redis, Typesense, ClickHouse, graph.json, and whatever arrives
+next) hold only **rebuildable projections** of those files. Every projection
+must be deletable and reconstructible from the repos; no projection may be
+the only home of durable knowledge.
+
+## Why
+
+1. **The substrate insight**: the network of git repositories IS the
+   multi-machine story — replication, history, diffs, conflict semantics,
+   and provenance for free. Database-as-truth reopens sync/backup/offline
+   problems git already solved, to get worse provenance.
+2. **The read side assumes files**: the brain.joelclaw.com renderer reads
+   checkouts; graph.json projects from files; wikilinks resolve between
+   files; the `.svx` law exists because files are pages. A row in Postgres
+   doesn't render, doesn't link, and can't be `Read` by an agent.
+3. **Volume doesn't argue**: ~43 qualifying sessions/day ≈ 15k observation
+   pages/year. Git handles that without noticing, for years.
+
+This extends the graph-store research resolution ("promote a real store only
+on measured need") from the graph to all Brain/memory storage.
+
+## Named exit triggers (decision has an exit, not dogma)
+
+- Multi-writer contention on observation repos (the single flagg observer
+  avoids this by design — revisit if observers multiply).
+- Query patterns the Typesense + graph projections genuinely can't serve
+  (e.g. temporal aggregation across tens of thousands of observations).
+- Sustained volume past ~100 pages/day.
+
+Even then, the presumptive answer is a fatter **projection** (ClickHouse),
+not moving custody.
+
+## One-liner
+
+Flagg's databases all deserve jobs — just not custody.
