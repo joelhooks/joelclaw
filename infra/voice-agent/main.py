@@ -1211,14 +1211,16 @@ async def entrypoint(ctx) -> None:
         context_prompt = (
             f"The user just connected to a voice call. Here's your current context:\n\n"
             f"{context}\n\n"
-            f"It's {now}. Greet Joel with a fresh opener — invent a new one this call, "
-            f"never a stock line, never one you've used before. You're Australian but "
-            f"you've lived in San Francisco for years: the dryness stays, heavy slang "
-            f"doesn't — at most one light Aussie-ism, no rhyming slang, no 'mate' every "
-            f"sentence. Taking the piss is still very much allowed — it's the slang "
-            f"that's dialed back, not the attitude. Register this call: {flavor}. "
-            f"One short line only, then if "
-            f"there's anything notable (calendar items soon, system alerts), mention it briefly."
+            f"It's {now}. Open the call in exactly two beats, then stop:\n"
+            f"1. One short line that takes the piss a little, grounded in something real "
+            f"from the context above.\n"
+            f"2. Ask what's up — two or three words, like 'What's up?'\n"
+            f"Invent a fresh jab every call, never a stock line. You're Australian but "
+            f"you've lived in San Francisco for years: dry, at most one light Aussie-ism, "
+            f"no rhyming slang. Jab style this call: {flavor}.\n"
+            f"Do NOT make suggestions, offer to do things, read out calendar or alerts, "
+            f"or ask any question that would need your tools to answer. Joel sets the "
+            f"direction; you wait for it."
         )
     session.generate_reply(user_input=context_prompt)
 
