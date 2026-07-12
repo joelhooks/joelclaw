@@ -33,6 +33,9 @@ export ELEVEN_API_KEY="$(lease elevenlabs_api_key)"
 # GOG_KEYRING_PASSWORD for calendar/email tools
 export GOG_KEYRING_PASSWORD="$(lease gog_keyring_password)"
 
+# Slack user token — search + respond-as-Joel voice tools
+export SLACK_USER_TOKEN="$(lease slack_user_token)"
+
 echo "🎙️  joelclaw voice agent starting..."
 echo "   LiveKit: $LIVEKIT_URL"
 echo "   Config:  $JOELCLAW_VOICE_CONFIG"

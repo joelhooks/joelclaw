@@ -163,6 +163,7 @@ You are speaking over the phone via SIP. Adapt your soul/personality for VOICE:
 - Numbers and times should be spoken naturally: "three thirty" not "15:30".
 - If asked to do something you can't do by voice, say "I'll add that as a task" and use add_task.
 - You have tools for Joel's calendar, tasks, system health, vault search, email, and events.
+- You can search Joel's Slack, read threads, and — ONLY when Joel explicitly directs it on this call — reply as him. Always read the exact reply back and get a yes first.
 - You can list available voices and switch your voice mid-conversation.
 - You can sample voices by speaking a test phrase in different voices.
 - The current date/time is available via the current_time tool.
@@ -239,6 +240,23 @@ SAMPLE_VOICES = [
     ("onwK4e9ZLuTAKqWW03F9", "Daniel", "deep british male"),
     ("nPczCjzI2devNBz1zQrb", "Brian", "deep american male"),
 ]
+
+
+def _slack_api(method: str, params: dict) -> dict:
+    """Call the Slack Web API with Joel's user token (leased into env by run.sh)."""
+    import urllib.parse
+    import urllib.request
+
+    token = os.environ.get("SLACK_USER_TOKEN", "").strip()
+    if not token:
+        return {"ok": False, "error": "SLACK_USER_TOKEN not in env"}
+    req = urllib.request.Request(
+        f"https://slack.com/api/{method}",
+        data=urllib.parse.urlencode(params).encode(),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
 
 
 WIKI_URL = "http://127.0.0.1:8790/latest.json"
@@ -702,6 +720,68 @@ class JoelclawVoiceAgent(Agent):
             f"{'This one needs Joel personally.' if target.get('needsJoel') else ''}"
         )
 
+    # --- Slack (Joel's user token — search, read threads, respond AS Joel) ---
+
+    @function_tool
+    async def slack_search(self, query: str) -> str:
+        """Search Joel's Slack (egghead.io workspace). Returns numbered results —
+        use the numbers with slack_thread and slack_reply."""
+        data = await asyncio.to_thread(_slack_api, "search.messages", {"query": query, "count": 5})
+        if not data.get("ok"):
+            return f"Slack search failed: {data.get('error')}"
+        matches = data.get("messages", {}).get("matches", [])
+        if not matches:
+            return "No Slack messages matched."
+        self._slack_hits = []
+        lines = []
+        for i, m in enumerate(matches, 1):
+            ch = m.get("channel", {})
+            self._slack_hits.append({
+                "channel_id": ch.get("id", ""),
+                "ts": m.get("ts", ""),
+                "channel_name": ch.get("name", ""),
+            })
+            text = (m.get("text") or "").replace("\n", " ")[:180]
+            lines.append(f"{i}. #{ch.get('name', '?')} from {m.get('username', '?')}: {text}")
+        return "\n".join(lines)
+
+    @function_tool
+    async def slack_thread(self, result_number: str) -> str:
+        """Read the thread around a slack_search result (by its number)."""
+        hits = getattr(self, "_slack_hits", [])
+        try:
+            hit = hits[int(result_number.strip()) - 1]
+        except (ValueError, IndexError):
+            return "Run slack_search first, then pass one of its result numbers."
+        data = await asyncio.to_thread(_slack_api, "conversations.replies", {
+            "channel": hit["channel_id"], "ts": hit["ts"], "limit": 10,
+        })
+        if not data.get("ok"):
+            return f"Couldn't read thread: {data.get('error')}"
+        lines = []
+        for m in data.get("messages", [])[:10]:
+            text = (m.get("text") or "").replace("\n", " ")[:180]
+            lines.append(f"- {m.get('user', '?')}: {text}")
+        return f"Thread in #{hit['channel_name']}:\n" + "\n".join(lines)
+
+    @function_tool
+    async def slack_reply(self, result_number: str, message: str) -> str:
+        """Reply in the thread of a slack_search result AS JOEL (his real account).
+        ONLY when Joel explicitly directs a reply on this call. Say the exact
+        message back to Joel and get a yes BEFORE calling this."""
+        hits = getattr(self, "_slack_hits", [])
+        try:
+            hit = hits[int(result_number.strip()) - 1]
+        except (ValueError, IndexError):
+            return "Run slack_search first, then pass one of its result numbers."
+        data = await asyncio.to_thread(_slack_api, "chat.postMessage", {
+            "channel": hit["channel_id"], "thread_ts": hit["ts"],
+            "text": message, "as_user": "true",
+        })
+        if not data.get("ok"):
+            return f"Reply failed: {data.get('error')}"
+        return f"Sent as Joel to #{hit['channel_name']}."
+
     # --- Long-term memory recall (Typesense via joelclaw CLI) ---
 
     @function_tool
@@ -1052,14 +1132,23 @@ async def entrypoint(ctx) -> None:
     def on_close(*args, **kwargs):
         _save_call_transcript(session, ctx.room.name)
 
-    # Greet with pre-loaded context so Panda already knows what's going on
-    greeting = agent_cfg.get("greeting", "Hey, it's Panda. What's up?")
-    context_prompt = (
-        f"The user just connected to a voice call. Here's your current context:\n\n"
-        f"{context}\n\n"
-        f"Greet them naturally — something like: {greeting}\n"
-        f"If there's anything notable (calendar items soon, system alerts), mention it briefly."
-    )
+    # Greet with pre-loaded context so ShitRat already knows what's going on
+    greeting = agent_cfg.get("greeting", "Oi, ShitRat here.")
+    call_reason = participant.attributes.get("call_reason", "").strip()
+    if call_reason:
+        # Fleet-initiated outbound call — open with why we're calling
+        context_prompt = (
+            f"You just called Joel. The reason for this call:\n\n{call_reason}\n\n"
+            f"Background context:\n{context}\n\n"
+            f"Open by saying why you're calling — lead with the reason, keep it tight."
+        )
+    else:
+        context_prompt = (
+            f"The user just connected to a voice call. Here's your current context:\n\n"
+            f"{context}\n\n"
+            f"Greet them naturally — something like: {greeting}\n"
+            f"If there's anything notable (calendar items soon, system alerts), mention it briefly."
+        )
     session.generate_reply(user_input=context_prompt)
 
 
