@@ -1,7 +1,7 @@
 ---
 title: "Build Session→Page Change-Edges"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 labels:
   - "wayfinder:task"
 interaction: "AFK"
@@ -23,3 +23,12 @@ Phase 1 — **feasibility on real data**: can "this session edited these files/p
 Phase 2 — if feasible: graph schema v3 with `session-change` edges (provenance: session id, machine, commit, timestamps), sessions as lightweight nodes only insofar as edges need endpoints. The no-invented-edges property extends: a change-edge exists only if the deterministic join proves it. Deterministic rebuilds hold.
 
 The recall contract consumes these as a recency signal first (re-ranking), primary structural path later. Resolved when real change-edges build from a real day's sessions with tests, or the feasibility memo names precisely what the session indexes must start capturing.
+
+## Resolution (2026-07-12)
+
+**Phase 1 failed, honestly — no edges built, by design.** Full memo: [session-edge-feasibility](../../../../joelclaw-wiki/.brain/session-edge-feasibility.svx) (wiki repo, commit recorded there).
+
+- Inspected real sources: 621 Pi + 460 Claude + 3,792 Codex session JSONL files on flagg, plus git history of all three brain repos. Transcript tool calls prove *intent* to write paths; git proves what entered commits; **nothing links a session to a commit**. `joelclaw sessions search --extract`'s `filesTouched` demonstrated why extraction isn't a ledger: it contained `/dev/null`, `/slug`, `/edge`.
+- Timestamp windows + path overlap yield candidates, not authorship — eleven enumerated failure cases (concurrent sessions, squashes, worktrees, shell/generator bulk writes, multi-machine). Forbidden for edges under no-invented-edges.
+- **Capture contract defined** for Phase 2: an append-only change ledger per mutation — sessionId/machine/repo/worktree identity, canonical paths, pre/post blob hashes, worktree diffing for shell mutations, an immutable `changeSetId` shared with commit-attribution events. The deterministic join is `changeSetId` equality + blob-hash verification; timestamps rank, never establish.
+- Graduated: [Instrument Session Capture with a Change Ledger](./instrument-session-change-ledger.svx) — the prerequisite that makes "as soon as deterministically derivable" arrive. Until then, sessions remain Typesense recall evidence, exactly as the recall contract already treats them.
