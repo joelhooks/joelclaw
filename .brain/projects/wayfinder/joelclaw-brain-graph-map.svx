@@ -37,7 +37,7 @@ This map adjoins [Chart the Joelclaw Personal Wiki](./joelclaw-personal-wiki-map
 
 ### The substrate insight (Joel, 2026-07-12)
 
-**The substrate is the network of Git repositories.** The user brain is the dark-wizard repo — a union of Joel's user across machines, persisted in GitHub; it is not a per-machine or network-level brain. Project brains are `.brain/` folders in repos. Machine checkouts are *replicas* that can diverge; divergence is data (sync failure or in-flight work), not a namespace collision. The logical namespace is per-repo; "repo @ machine" is a query dimension — vision now, built later. Ultimately: query all these repositories and their current state on any machine in the joelclaw network.
+**The substrate is the network of Git repositories.** The user brain is the dark-wizard repo — a union of Joel's user across machines, persisted in GitHub; it is not a per-machine or network-level brain. Project brains are `.brain/` folders in repos. Machine checkouts are *replicas* that can diverge; divergence is data (sync failure or in-flight work), not a namespace collision. The logical namespace is per-repo; "repo @ machine" is a query dimension — vision now, built later. Ultimately: query all these repositories and their current state on any machine in the joelclaw network. How the replicas reconcile is the fleet-sync doctrine: [[user/resources/fleet-sync-doctrine]]. The projection's documented shape lives at [[wiki/graph-shape]].
 
 ### Standing preferences for this effort
 
