@@ -10,6 +10,8 @@ blockers:
   - "./build-multi-root-graph-projection.svx"
   - "./decide-brain-svx-rendering-model.svx"
 created_at: "2026-07-12"
+assignee: "claude steering session (wJ:p1) — walk + gap catalog; renderer routes by sibling session, backlinks panel by bugle w9:pD"
+claimed_at: "2026-07-12"
 ---
 
 # Prototype Cross-Root Navigation: Wikilinks, Backlinks, Provenance
@@ -23,3 +25,18 @@ Builds on the bugle map's [local graph/backlinks panel](./prototype-local-graph-
 Blocked by the Brain SVX rendering model ticket, which is itself blocked by the wiki map's privacy boundaries — that chain is deliberate: rendering the dark-wizard user brain at brain.joelclaw.com is publication of Brain content and must not front-run those decisions.
 
 Joel navigates it for a few days. Resolved when the map's acceptance items 2–5 are demonstrably true by clicking, or the prototype dies and the answer records why.
+
+## Walk receipts (2026-07-12, steering session — stood up, not yet resolved)
+
+All six acceptance items demonstrated on the dev server (`http://127.0.0.1:5199` on flagg — left running for Joel), riding the renderer session's in-flight `[root]/[...slug]` routes:
+
+1. brain.joelclaw.com live, daily 308s ✓ (shipped earlier today).
+2. Three roots render from flagg checkouts ✓ — 235 pages cataloged; `/user/resources/fleet-sync-doctrine/`, `/joelclaw/projects/wayfinder/joelclaw-brain-graph-map/`, `/wiki/graph-shape/` all 200.
+3. Cross-root wikilinks resolve per the namespace policy ✓ — the renderer implements local-first/global-unique/root-qualified exactly; the map now carries the **first two cross-root wikilinks ever written** (`[[user/resources/fleet-sync-doctrine]]`, `[[wiki/graph-shape]]`), rendered as anchors, both targets 200. Broken links render as loud `.wikilink-error` spans (verified on the video-pipeline task page, 2 spans). crossRootEdges 45 → 47.
+4. Provenance footer on every page ✓ — root repo, path, commit.
+5. Backlinks across roots ✓ — wired `Backlinks` + `LocalGraph` into brain pages this session (graph-read `2847d83` + route integration); `/wiki/graph-shape/` lists clickable backlinks from the joelclaw root.
+6. Editions are graph nodes ✓ — edition nodes + edition-loop edges in schema v3.
+
+Fixed en route: trailing-slash key mismatch in the renderer's loader (`params.slug` arrives with trailing slash under `trailingSlash: "always"`) — one-line normalization, sibling session kept it.
+
+**Still open before resolution:** the renderer session ships its routes to the live paper (their commit + build — my `[root]` integration rides with it), and Joel navigates by graph for a few days. This ticket closes on his verdict, not mine.
