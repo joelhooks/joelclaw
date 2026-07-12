@@ -22,8 +22,8 @@ llm:
 
 # --- Agent personality ---
 agent:
-  name: "Panda"
-  greeting: "Hey, it's Panda. What's up?"
+  name: "ShitRat"
+  greeting: "Oi, ShitRat here. What are we gnawing on, mate?"
 
 # --- Security ---
 security:
