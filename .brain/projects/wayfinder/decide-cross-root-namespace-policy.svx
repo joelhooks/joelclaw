@@ -1,0 +1,26 @@
+---
+title: "Decide the Cross-Root Namespace and Wikilink Resolution Policy"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:grilling"
+interaction: "HITL"
+parent: "./joelclaw-brain-graph-map.svx"
+blockers: []
+created_at: "2026-07-12"
+assignee: "claude steering session (wJ:p1, grilling Joel live)"
+claimed_at: "2026-07-12"
+---
+
+# Decide the Cross-Root Namespace and Wikilink Resolution Policy
+
+## Question
+
+When `[[some-note]]` appears in the dark-wizard user brain and both `joelclaw` and `joelclaw-wiki` have a `some-note.svx`, what happens? The logical namespace is per-repo (map's substrate insight — replicas diverging is data, not collision), but the *authoring* namespace across repos needs a policy:
+
+- Is a bare `[[slug]]` local-root-first, then global-unique, then ambiguous-error? Or always root-qualified (`[[joelclaw/some-note]]`) when crossing roots?
+- What does an ambiguous link render as — a disambiguation affordance, or a visible error like broken links?
+- Do URLs encode the root (`/brain/<root>/<section>/<slug>`), and are they stable if a note moves between roots?
+- Does the policy stay writable-by-hand in a terminal (agents and Joel author these in plain Markdown — no Obsidian-style autocomplete crutch)?
+
+Resolved when the resolution order, ambiguity rendering, and URL shape are written down and the multi-root build ticket can implement them without judgment calls.

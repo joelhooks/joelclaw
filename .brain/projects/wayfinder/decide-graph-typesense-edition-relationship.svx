@@ -1,0 +1,25 @@
+---
+title: "Decide How the Graph Relates to Typesense Recall and the Edition Build"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:grilling"
+interaction: "HITL"
+parent: "./joelclaw-brain-graph-map.svx"
+blockers:
+  - "./research-graph-store-weird-ideas.svx"
+created_at: "2026-07-12"
+---
+
+# Decide How the Graph Relates to Typesense Recall and the Edition Build
+
+## Question
+
+Three query-ish systems now coexist: the graph (traversal, backlinks, structure), Typesense (semantic + FTS recall over sessions and content), and the edition build (curated daily distillation). Draw the boundaries:
+
+- Which questions go to which system, and where do they compose (e.g. "find related notes" = Typesense recall filtered/ranked by graph proximity)?
+- Does brain/graph content get indexed *into* Typesense, and from which projection — the store, graph.json, or the source `.svx`?
+- The edition build currently reads its own inputs; post-proof, does it read the graph (editions cite nodes, edges back) so acceptance item 6 — editions as graph citizens — is structural rather than cosmetic?
+- Mastra-frame check: if Typesense is semantic recall and the graph is the durable memory structure, name that mapping explicitly so the follow-on write-loop map inherits clean vocabulary.
+
+Blocked by the graph-store research: the boundaries depend on what the store can actually answer cheaply.

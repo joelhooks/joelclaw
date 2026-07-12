@@ -1,0 +1,26 @@
+---
+title: "Write the Agentic Memory System Vision ADR"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-brain-graph-map.svx"
+blockers: []
+created_at: "2026-07-12"
+assignee: "pi worker vision-adr (wJ:p3, steered by claude wJ:p1)"
+claimed_at: "2026-07-12"
+---
+
+# Write the Agentic Memory System Vision ADR
+
+## Question
+
+Joel's condition on the constrained proof: the VISION stays clear and part of the design process. Write it down as a durable decision record — the distributed, multi-agent, multi-machine, agentic-first second brain:
+
+- The substrate insight verbatim: the network of Git repositories; dark-wizard as the user brain (union of Joel's user across machines); project brains per repo; machine checkouts as divergeable replicas; repo@machine as a query dimension; divergence as data.
+- The Mastra memory mapping ([mastra.ai/docs/memory/overview](https://mastra.ai/docs/memory/overview)): what in joelclaw plays message history (sessions/transcripts), working memory, semantic recall (Typesense), and observational memory (bugle observations → durable Brain pages) — and which layers exist today versus are aspiration.
+- The read/write split this map committed to: graph surface first, active observation processing as a follow-on charted map.
+- The dual purpose: working memory system and demo content for the overbuilt-second-brain video — demoability as a design constraint.
+
+Draft AFK from this map's grilling record; Joel reviews. Lands where architecture decisions live (`.brain/resources/decisions/` here or joelclaw-wiki's Brain — follow `/skill:brain-first-workflow`). Resolved when the ADR is committed and linked from this map's Notes.
