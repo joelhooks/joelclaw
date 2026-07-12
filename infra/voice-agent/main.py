@@ -841,82 +841,86 @@ class JoelclawVoiceAgent(Agent):
 
 
 def _gather_context() -> str:
-    """Pre-load context at call start — MEMORY.md + recent Qdrant hits + calendar."""
+    """Pre-load context at call start — MEMORY.md, wiki loops, Typesense recall, calendar.
+    Slow probes run in parallel with hard timeouts: a laggard costs its own timeout,
+    not the sum (the sequential version blocked the greeting for 11+ seconds)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from zoneinfo import ZoneInfo
+
     sections = []
 
-    # 0. Current time in Joel's timezone
-    from zoneinfo import ZoneInfo
+    # Fast, local: time + curated memory
     now = datetime.now(ZoneInfo("America/Los_Angeles"))
     sections.append(f"## Current Time\n{now.strftime('%A, %B %d, %Y at %I:%M %p %Z')}")
 
-    # 1. MEMORY.md — curated long-term memory (already compact)
     memory_path = Path.home() / ".joelclaw" / "workspace" / "MEMORY.md"
     if memory_path.exists():
         content = memory_path.read_text().strip()
-        # Trim to first 3000 chars to keep prompt reasonable
         if len(content) > 3000:
             content = content[:3000] + "\n... (truncated)"
         sections.append(f"## Current Memory\n{content}")
 
-    # 1.5 Today's open loops from the wiki — what the call is probably about
-    try:
+    def probe_loops():
         edition = _load_edition()
-        if edition:
-            loops = edition.get("loops", [])
-            needs_joel = [l for l in loops if l.get("needsJoel")]
-            ordered = (needs_joel + [l for l in loops if not l.get("needsJoel")])[:6]
-            lead = edition.get("lead", {})
-            lines = [f"Lead: {lead.get('headline', '')}"] if lead.get("headline") else []
-            lines += [f"- {_loop_brief(l)}" for l in ordered]
-            sections.append("## Today's Open Loops\n" + "\n".join(lines))
-    except Exception:
-        pass
+        if not edition:
+            return None
+        loops = edition.get("loops", [])
+        needs_joel = [l for l in loops if l.get("needsJoel")]
+        ordered = (needs_joel + [l for l in loops if not l.get("needsJoel")])[:6]
+        lead = edition.get("lead", {})
+        lines = [f"Lead: {lead.get('headline', '')}"] if lead.get("headline") else []
+        lines += [f"- {_loop_brief(l)}" for l in ordered]
+        return "## Today's Open Loops\n" + "\n".join(lines)
 
-    # 2. Recent memory observations — what's top of mind
-    try:
-        raw = _run(["joelclaw", "recall", "recent activity and conversations"], timeout=10)
+    def probe_recall():
+        raw = _run(["joelclaw", "recall", "recent activity and conversations"], timeout=4)
         data = json.loads(raw)
         hits = data.get("result", {}).get("hits", [])
-        if hits:
-            obs = "\n".join(f"- {h.get('observation', '')[:200]}" for h in hits[:5])
-            sections.append(f"## Recent Context\n{obs}")
-    except Exception:
-        pass
+        if not hits:
+            return None
+        obs = "\n".join(f"- {h.get('observation', '')[:200]}" for h in hits[:5])
+        return f"## Recent Context\n{obs}"
 
-    # 3. Today + tomorrow calendar
-    try:
-        today_cal = _run(
-            ["gog", "cal", "events", "joelhooks@gmail.com", "-a", "joelhooks@gmail.com", "--plain", "--today"],
-            timeout=10,
+    def probe_cal(flag, label):
+        out = _run(
+            ["gog", "cal", "events", "joelhooks@gmail.com", "-a", "joelhooks@gmail.com", "--plain", flag],
+            timeout=4,
         )
-        tomorrow_cal = _run(
-            ["gog", "cal", "events", "joelhooks@gmail.com", "-a", "joelhooks@gmail.com", "--plain", "--tomorrow"],
-            timeout=10,
-        )
-        cal_parts = []
-        if today_cal and "Command failed" not in today_cal:
-            cal_parts.append(f"### Today\n{today_cal}")
-        if tomorrow_cal and "Command failed" not in tomorrow_cal:
-            cal_parts.append(f"### Tomorrow\n{tomorrow_cal}")
-        if cal_parts:
-            sections.append(f"## Calendar\n" + "\n".join(cal_parts))
-    except Exception:
-        pass
+        if out and "Command failed" not in out:
+            return f"### {label}\n{out}"
+        return None
 
-    # 4. System health (one-liner)
-    try:
-        raw = _run(["joelclaw", "status"], timeout=10)
+    def probe_alerts():
+        raw = _run(["joelclaw", "status"], timeout=4)
         data = json.loads(raw)
         r = data.get("result", {})
-        parts = []
-        for key in ["server", "worker", "k8s"]:
-            s = r.get(key, {})
-            if not s.get("ok"):
-                parts.append(f"⚠️ {key} is DOWN")
-        if parts:
-            sections.append(f"## System Alerts\n" + "\n".join(parts))
-    except Exception:
-        pass
+        parts = [f"⚠️ {key} is DOWN" for key in ("server", "worker") if not r.get(key, {}).get("ok")]
+        if not parts:
+            return None
+        return "## System Alerts\n" + "\n".join(parts)
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        f_loops = pool.submit(probe_loops)
+        f_recall = pool.submit(probe_recall)
+        f_today = pool.submit(probe_cal, "--today", "Today")
+        f_tomorrow = pool.submit(probe_cal, "--tomorrow", "Tomorrow")
+        f_alerts = pool.submit(probe_alerts)
+
+        def grab(future):
+            try:
+                return future.result(timeout=6)
+            except Exception:
+                return None
+
+        if section := grab(f_loops):
+            sections.append(section)
+        if section := grab(f_recall):
+            sections.append(section)
+        cal_parts = [p for p in (grab(f_today), grab(f_tomorrow)) if p]
+        if cal_parts:
+            sections.append("## Calendar\n" + "\n".join(cal_parts))
+        if section := grab(f_alerts):
+            sections.append(section)
 
     return "\n\n".join(sections)
 
@@ -965,6 +969,35 @@ def _caller_allowed(caller_raw: str, allowed_callers: set[str]) -> tuple[bool, s
     return caller in allowed_callers, caller
 
 
+def prewarm(proc) -> None:
+    """Load the Silero VAD once per process instead of per call (~1s off the greeting)."""
+    proc.userdata["vad"] = silero.VAD.load(
+        activation_threshold=0.85,   # high — ignore room chatter, only trigger on direct speech (default 0.5)
+        min_speech_duration=0.3,      # require 300ms of speech to trigger (default 50ms)
+        min_silence_duration=0.7,     # wait 700ms of silence before end-of-turn (default 550ms)
+    )
+
+
+def _vad_for(ctx):
+    """Prewarmed VAD from process userdata, loading fresh only as a fallback."""
+    vad = getattr(ctx.proc, "userdata", {}).get("vad") if ctx else None
+    return vad or silero.VAD.load()
+
+
+def _history_lines(session: AgentSession, user_label: str) -> list[str]:
+    """Flatten session.history (a ChatContext) into speaker-labelled transcript lines."""
+    items = getattr(getattr(session, "history", None), "items", None) or []
+    lines = []
+    for item in items:
+        if getattr(item, "type", "") != "message" or item.role not in ("user", "assistant"):
+            continue
+        text = (getattr(item, "text_content", None) or "").strip()
+        if text:
+            speaker = user_label if item.role == "user" else "ShitRat"
+            lines.append(f"**{speaker}**: {text}")
+    return lines
+
+
 GUEST_MAX_SECONDS = 600  # guests get ten minutes, then ShitRat wraps it up
 
 # Aussie registers for the improvised per-call greeting — the flavor is a seed,
@@ -1009,7 +1042,7 @@ async def _run_guest_session(ctx, cfg: dict, caller: str) -> None:
     tts_instance = build_tts(cfg)
     session = AgentSession(
         stt=deepgram.STT(), llm=build_llm(cfg), tts=tts_instance,
-        vad=silero.VAD.load(),
+        vad=_vad_for(ctx),
         **_interruption_kwargs(cfg),
     )
     await session.start(
@@ -1041,19 +1074,8 @@ def _save_guest_transcript(session: AgentSession, room_name: str, caller: str) -
     """Save guest transcript to a quarantined dir. Deliberately NO Inngest event —
     untrusted caller words must never flow into the observation/memory pipeline."""
     try:
-        history = session.history
-        if not history or len(history) < 2:
-            return
-        lines = []
-        for msg in history:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
-            if content:
-                speaker = "Caller" if role == "user" else "ShitRat"
-                lines.append(f"**{speaker}**: {content}")
-        if not lines:
+        lines = _history_lines(session, "Caller")
+        if len(lines) < 2:
             return
         timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
         guest_dir = Path.home() / ".joelclaw" / "workspace" / "memory" / "voice" / "guests"
@@ -1084,10 +1106,19 @@ async def entrypoint(ctx) -> None:
     # and judge their number attribute; judging the room name early rejects
     # every call whose name doesn't embed a caller (all outbound rooms).
     await ctx.connect()
+    # Start context gathering NOW — it overlaps the wait for the phone leg to join.
+    # (It used to run after the caller was live, blocking the greeting.)
+    context_task = asyncio.create_task(asyncio.to_thread(_gather_context))
     try:
         participant = await asyncio.wait_for(ctx.wait_for_participant(), timeout=90)
     except asyncio.TimeoutError:
         logger.warning("No participant joined room %s within 90s; leaving", ctx.room.name)
+        context_task.cancel()
+        return
+    except RuntimeError as e:
+        # Canary probes create-and-delete rooms; the delete lands here. Not an error.
+        logger.info("Room %s closed while waiting for participant (%s)", ctx.room.name, e)
+        context_task.cancel()
         return
     caller_raw = (
         participant.attributes.get("sip.phoneNumber", "").strip()
@@ -1097,10 +1128,11 @@ async def entrypoint(ctx) -> None:
     own_did = _normalize_caller(os.environ.get("TELNYX_PHONE_NUMBER", ""))
     if own_did and caller == own_did:
         logger.info("SYNTHETIC CANARY ANSWERED room=%s", ctx.room.name)
+        context_task.cancel()
         tts_instance = build_tts(cfg)
         session = AgentSession(
             stt=deepgram.STT(), llm=build_llm(cfg), tts=tts_instance,
-            vad=silero.VAD.load(),
+            vad=_vad_for(ctx),
         )
         await session.start(agent=Agent(instructions="You are a voice canary."), room=ctx.room)
         session.generate_reply(user_input="Say exactly: 'Canary check confirmed. All systems nominal.' Then stop talking.")
@@ -1109,6 +1141,7 @@ async def entrypoint(ctx) -> None:
 
     caller_allowed, caller = _caller_allowed(caller_raw, allowed_callers)
     if not caller_allowed:
+        context_task.cancel()
         if not caller:
             # No parseable caller ID — fail closed, say nothing, hang up
             logger.warning(
@@ -1119,7 +1152,7 @@ async def entrypoint(ctx) -> None:
             tts_instance = build_tts(cfg)
             session = AgentSession(
                 stt=deepgram.STT(), llm=build_llm(cfg), tts=tts_instance,
-                vad=silero.VAD.load(),
+                vad=_vad_for(ctx),
             )
             await session.start(agent=Agent(instructions="You are a voicemail system."), room=ctx.room)
             session.generate_reply(user_input="Say exactly: 'This number is not accepting calls at this time. Goodbye.' Then stop talking.")
@@ -1138,8 +1171,12 @@ async def entrypoint(ctx) -> None:
         agent_cfg.get("name", "Panda"),
     )
 
-    # Pre-load context BEFORE session starts (runs in parallel with SIP setup)
-    context = await asyncio.to_thread(_gather_context)
+    # Context gathering started at connect; by now it has had the SIP setup time to run
+    try:
+        context = await asyncio.wait_for(context_task, timeout=8)
+    except Exception as e:
+        logger.warning("Context gather failed or timed out (%s); greeting without it", e)
+        context = ""
     logger.info("Context loaded: %d chars", len(context))
 
     tts_instance = build_tts(cfg)
@@ -1148,11 +1185,7 @@ async def entrypoint(ctx) -> None:
         stt=deepgram.STT(),
         llm=build_llm(cfg),
         tts=tts_instance,
-        vad=silero.VAD.load(
-            activation_threshold=0.85,   # high — ignore room chatter, only trigger on direct speech (default 0.5)
-            min_speech_duration=0.3,      # require 300ms of speech to trigger (default 50ms)
-            min_silence_duration=0.7,     # wait 700ms of silence before end-of-turn (default 550ms)
-        ),
+        vad=_vad_for(ctx),
         **_interruption_kwargs(cfg),
     )
 
@@ -1190,22 +1223,8 @@ async def entrypoint(ctx) -> None:
 def _save_call_transcript(session: AgentSession, room_name: str) -> None:
     """Save call transcript and fire debrief event."""
     try:
-        history = session.history
-        if not history or len(history) < 2:
-            return
-
-        # Build transcript
-        lines = []
-        for msg in history:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
-            if content:
-                speaker = "Joel" if role == "user" else "ShitRat"
-                lines.append(f"**{speaker}**: {content}")
-
-        if not lines:
+        lines = _history_lines(session, "Joel")
+        if len(lines) < 2:
             return
 
         transcript = "\n\n".join(lines)
@@ -1238,5 +1257,6 @@ def _save_call_transcript(session: AgentSession, room_name: str) -> None:
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(
         entrypoint_fnc=entrypoint,
+        prewarm_fnc=prewarm,   # VAD loads at process spawn, not on the caller's clock
         num_idle_processes=1,  # keep a warm process ready for instant pickup
     ))
