@@ -1,7 +1,7 @@
 ---
 title: "Decide Brain-Root Discovery and Registration"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 labels:
   - "wayfinder:grilling"
 interaction: "HITL"
@@ -23,3 +23,17 @@ How does the wiki know which brain roots exist? The candidates:
 Sub-questions: what identifies a root (repo URL? path? name?); what happens when a registered root isn't checked out on flagg; is the proof's three-root list just the registry's first three entries (so the mechanism is real from day one)?
 
 Resolved when new-project-brain onboarding is a documented one-step act and the multi-root build reads the root list from the decided mechanism.
+
+## Resolution (2026-07-12)
+
+Grilled with Joel: "a. dark-wizard is great for this."
+
+**Registry in dark-wizard is truth; crawl is the auditor.** Shipped as `brain-roots.json` at the dark-wizard repo root (fleet-synced like everything else there):
+
+- Each entry: `name` (doubles as the `[[name/slug]]` wikilink prefix and `/brain/<name>/` URL segment — one vocabulary shared with the namespace policy), `repo`, `checkout`, `brainPath`.
+- Initial three roots = the proof roots: `user` (dark-wizard — `~/.brain` is literally a symlink to `dark-wizard/.brain`, verified on flagg), `joelclaw`, `wiki`.
+- **Onboarding = one line.** joelclaw-voice joins by adding an entry.
+- **Crawl audits, never defines**: the graph build warns loudly about unregistered `.brain` directories under `~/Code/joelhooks/` and registered roots missing from disk — declared-vs-discovered drift is data, same philosophy as broken wikilinks and diverged replicas.
+- A registered root not checked out on the build machine: build proceeds, root marked absent in the projection, loud warning. Never silently dropped.
+
+Unblocks [Build the Multi-Root Graph Projection](./build-multi-root-graph-projection.svx) — both its blockers are now closed.
