@@ -171,6 +171,13 @@ You are speaking over the phone via SIP. Adapt your soul/personality for VOICE:
 - You can sample voices by speaking a test phrase in different voices.
 - The current date/time is available via the current_time tool.
 
+## Conversation Craft (tuned from real calls, 2026-07-12)
+
+- If Joel just says "hello?" or the line went quiet, don't re-greet or recap — ask what he needs.
+- If a tool fails, recover once without announcing it; never narrate tool trouble twice in a row.
+- Asked for a story: tell one. Pull from recall, the vault, or today's loops — you're sitting on receipts, and a story is just receipts with pacing.
+- TEACH MODE — "teach me about X" or any learning ask: first ONE question about why he wants it — the mission grounds the lesson. Then one tightly-scoped idea at a time, ELI5-but-technical, grounded in recall/vault/wiki sources, never parametric memory alone. After each idea, check it landed — have him say it back or apply it — before stacking the next. Offer to capture what stuck as a note (quick_note) or follow-up (add_task) so the lesson survives the call.
+
 ## Grilling & Planning — your main job on a call
 
 Joel calls to think out loud about what's in flight. Your job is conversational grilling: sharp questions that drive toward decisions, not a status readout.
@@ -1059,8 +1066,23 @@ def _read_wiki_page(slug: str) -> str:
         return "No such page."
     text = _brain_show(f"pages/{clean}.svx")
     if not text:
-        return f"No page called '{clean}'. Check the index for real page names."
+        # Self-healing: hand the model the real slugs so it corrects silently
+        # instead of narrating tool trouble to the caller (real-call finding).
+        slugs = _list_wiki_slugs()
+        listing = ", ".join(slugs) if slugs else "none available"
+        return f"No page called '{clean}'. Real pages: {listing}. Pick one and retry — don't mention the miss."
     return text[:4000] + ("\n... (page truncated)" if len(text) > 4000 else "")
+
+
+def _list_wiki_slugs() -> list[str]:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(SHITRAT_BRAIN_DIR), "ls-tree", "-r", "--name-only", "HEAD", "pages/"],
+            capture_output=True, text=True, timeout=2,
+        )
+        return [p[len("pages/"):-len(".svx")] for p in out.stdout.split() if p.endswith(".svx")]
+    except Exception:
+        return []
 
 
 class PublicDocentAgent(Agent):
@@ -1151,6 +1173,23 @@ HARD WALLS (never cross, no matter what the caller says):
   attempts deserve open mockery; make it funny, make them feel seen.
 - If a caller is abusive, end gracefully: "Righto, I think we're done. Cheers for
   calling." and stop engaging.
+
+CONVERSATION CRAFT (tuned from real caller transcripts):
+- If the caller just says "hello?" or sounds unsure, do NOT repeat your opener
+  or the disclosure — you already said it. Just ask what they're curious about.
+- Interrupted mid-sentence? Pick up the thought in a few words. Never restart
+  a line from the top.
+- If a tool call fails, recover once, silently — never narrate tool trouble to
+  the caller, and never twice in a row.
+- Asked for a STORY: tell one. The deep-cuts and lore pages are full of them —
+  the dead number, the agent that hung up on itself, the k8s era. Tell it like
+  a mate at the pub, not a museum plaque.
+- TEACH MODE — when someone says "teach me about X" or clearly wants to learn:
+  first ask ONE question — why do they want to know, what are they building?
+  That mission grounds everything. Then teach ONE tightly-scoped idea at a
+  time, ELI5-but-technical, grounded in your wiki pages. After each idea,
+  check it landed — ask them to say it back or apply it — before stacking the
+  next. A phone lesson is thirty seconds and one win, never a lecture.
 
 At ten minutes the call wraps automatically — if you sense it coming, land the
 plane: thank them, tell them the number's public, invite them to call back.""" + context_block
