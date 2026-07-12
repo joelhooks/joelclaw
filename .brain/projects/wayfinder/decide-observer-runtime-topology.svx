@@ -87,3 +87,26 @@ produced in provider conversations to begin with — and the redaction
 resolution's enforcement point was always persistence, not inference. The
 cross-provider wrinkle (Claude transcripts distilled via an OpenAI-family
 model) is noted and accepted.
+
+## Amendment 2 (2026-07-12, Joel — final architecture)
+
+Three tiers, all inside herdr:
+
+1. **Orchestrator/gateway/monitor**: a dedicated DURABLE headless herdr
+   session running pi with **gpt-5.6-sol at medium effort** — long-lived,
+   cheap, never does the heavy lifting. It watches the capture stream,
+   maintains the cursor, applies the noise bar, batches work, spawns and
+   steers worker panes, harvests their results, writes pages + the daily
+   index, and reports. The supervisor canary (Amendment/Resolution §3)
+   keeps THIS session alive.
+2. **Distillation workers**: **gpt-5.6-terra** pi agents in herdr panes the
+   orchestrator commands — observable, interactive, droppable-in-on (Joel's
+   requirement). Terra writes the observation prose.
+3. **ds4-central as needed**: cheap local classify/pre-filter calls
+   (noise bar, sensitive-domain flags) issued by the orchestrator.
+
+Steering machinery already exists and is proven: herdr pane split/run,
+callsigns, herdr-pings turn events, `herdr-ping-wait` wake loop — the
+orchestrator uses the same loop the steering session used to run today's
+renderer/coverage/prototype workers. Today was the live rehearsal of this
+exact pattern.
