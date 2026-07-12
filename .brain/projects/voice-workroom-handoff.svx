@@ -1,0 +1,63 @@
+---
+title: "Voice Workroom — Session Handoff 2026-07-12"
+type: "project"
+status: "active"
+created_at: "2026-07-12"
+tags:
+  - handoff
+  - voice
+  - wayfinder
+---
+
+# Voice Workroom — Session Handoff 2026-07-12
+
+Continuation surface for the **JoelClaw Voice Workroom** effort. The map is truth: [`.brain/projects/wayfinder/joelclaw-voice-workroom-map.svx`](./wayfinder/joelclaw-voice-workroom-map.svx) — read it (and the wayfinder skill at `/Users/joel/.agents/skills/wayfinder/SKILL.md`) before doing anything.
+
+## Current objective
+
+Work the map's frontier, one ticket per session. The destination: phone-in ShitRat bound to pi-discord-threads sessions and wayfinder tracker state — resumable as voice or text, recallable, discoverable across products.
+
+## Live state (all verified working 2026-07-11 night)
+
+- **Dial tone both directions** on `+1 360 389 4321`. Inbound: Telnyx FQDN connection → `3u3nhn7qkku.sip.livekit.cloud` (TCP) → trunk `ST_sp5bRD9369Di` → dispatch `SDR_NqfyvnCWAA7j` → worker. Outbound: trunk `ST_KAQ9ZS6xW6Fo` → `sip.telnyx.com` (credential auth).
+- **Worker**: `com.joel.voice-agent` user LaunchAgent on flagg, `~/Code/joelhooks/joelclaw/infra/voice-agent/main.py`, logs `~/.local/log/voice-agent.{log,err}`. Restart: `launchctl kickstart -k gui/501/com.joel.voice-agent` — **drops live calls** (no graceful drain; known gap).
+- **Persona**: ShitRat (from shitrat-cli defaults — sharp, loyal, skeptical, receipt-first), Tom Australian voice (`DYkrAHD8iwork3YSUBbs`), 1.2x speed, terse Joel-style (one sentence default — kid-QA'd). Local config: `~/.config/joelclaw/voice-agent.yaml` (PII, not in git; allowlist = Joel's cell only).
+- **Tools live**: open_loops + loop_detail (wiki edition via `127.0.0.1:8790/latest.json`), recall (Typesense), slack_search/slack_thread/slack_reply (Joel's user token, replies post AS Joel, verbal confirm required), calendar/tasks/health/voice-switching (pre-existing).
+- **Guest mode**: unknown callers get a bare agent — zero tools, zero private context, 10-min cap, transcripts quarantined to `voice/guests/` and NEVER sent to the memory pipeline (injection containment). No caller ID → fail-closed hangup.
+- **Fleet calling**: `call-joel "reason"` (flagg, `~/.local/bin`) rings Joel; ShitRat opens with the reason (via `call_reason` participant attribute). Fleet skill pushed: dark-wizard `skills/call-joel/SKILL.md`.
+- **Noise**: Krisp BVCTelephony on every session; barge-in needs 0.8s + 2 words; knobs in local config `audio:` section.
+
+## Commits (joelclaw main, unpushed as of handoff)
+
+`3a6fb857` dial tone + persona + tools + guest mode · `74a4141d` noise/barge-in · `692ff0cf` terse mode · `d3db3b67` Slack + call-joel · `a9c4ae6c` the map. Dark-wizard `4b62ecf` pushed to origin.
+
+## Invariants — do not regress
+
+- **Media plane is LiveKit Cloud. k8s never returns for voice.** LiveKit SIP URIs come from the dashboard only — wildcard DNS makes guessed hostnames resolve then 404 (this burned an hour).
+- **Answering depends only on LiveKit + LLM key.** Every tool fails soft. New tools follow the `_run()` timeout pattern.
+- **Caller judged by SIP participant attribute after `ctx.connect()` + `wait_for_participant`** — never by room name alone (outbound rooms embed no caller; the agent used to reject its own calls).
+- **Untrusted words never enter the memory pipeline.** Guest transcripts fire no Inngest event. Preserve this when touching transcript code.
+- **Leases are validated** (`run.sh` `lease()` guard) — a failed `secrets lease` prints a JSON error envelope to stdout, and exporting that as a credential was a real bug. OpenRouter is explicitly approved for the voice loop (Joel, 2026-07-11).
+- Worker runs as Joel's user (needs gog keyring, `~/.joelclaw`); Central migration is deliberately deferred.
+
+## Frontier (open, unblocked — pick ONE per session, claim it first)
+
+1. **Build Fail-Loud Canaries and Boot Verification** — now unblocked; sharpest edge. The session minted its receipts: Telnyx balance lapse silently killed both call directions (add balance monitor), missing bare `openrouter_api_key` (namespaced-vs-bare secret check), restart drops calls (graceful drain).
+2. **Decide the Grill-Master Balance** (grilling, HITL) and **Define Workroom Binding / Router Gate** (grilling, HITL) — gate the phase-2 registry surgery.
+3. **Inventory k8s Cluster Dependencies** (research, AFK) — gates cluster shutdown.
+4. **Recover the Panda Vault ADR Corpus** (task, AFK) — before panda dies; blocks the role/durability ADR.
+5. **Build the Wayfinder CLI** (task, AFK) — contract in the ticket.
+6. **Research Voice Observation Pipeline** (research, AFK).
+
+**Add Wiki and Recall Voice Tools** is ~90% done in code but open: close after a real call proves open_loops/loop_detail, plus fix the `kubectl port-forward` hint in `packages/cli/src/commands/recall.ts:74` and the stale Qdrant docstring in `_gather_context`.
+
+## Risks / gotchas
+
+- `joelclaw-runtime` checkout is on branch `debris/session-backup-recovery`; the deployed tree is `~/Code/joelhooks/joelclaw` on `main`. launchd serves from it — tree changes are live.
+- Uncommitted non-voice work exists in the repo from another session (`index.host.ts`, `wiki-edition-build.ts`, `.pi-subagents/`, `pipe`) — not ours, leave alone.
+- Telnyx CDRs lagged ~forever during debugging; don't trust their absence as evidence.
+- Dark-wizard pushes should use `shitrat push --branch main joelhooks/dark-wizard`, not raw git (missed once this session).
+
+## Skills to use
+
+`/skill:wayfinder` (the loop), `/skill:grill-me` + `/skill:grill-with-docs` (HITL tickets), `/skill:panda-host` (ADR recovery), `/skill:session-search` (this session's transcript is the provenance for most decisions).
