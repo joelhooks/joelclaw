@@ -18,8 +18,8 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
-from livekit.agents import Agent, AgentSession, WorkerOptions, cli, function_tool
-from livekit.plugins import deepgram, elevenlabs, openai, silero
+from livekit.agents import Agent, AgentSession, RoomInputOptions, WorkerOptions, cli, function_tool
+from livekit.plugins import deepgram, elevenlabs, noise_cancellation, openai, silero
 
 logger = logging.getLogger("joelclaw-voice")
 logger.setLevel(logging.INFO)
@@ -110,6 +110,25 @@ def build_tts(cfg: dict) -> elevenlabs.TTS:
         model=tts_cfg.get("model", "eleven_turbo_v2_5"),
         voice_settings=voice_settings,
     )
+
+
+def _room_input_options() -> RoomInputOptions:
+    """Krisp background-voice cancellation, telephony-tuned — strips other
+    voices/noise from the caller's audio before VAD/STT ever hear it."""
+    return RoomInputOptions(noise_cancellation=noise_cancellation.BVCTelephony())
+
+
+def _interruption_kwargs(cfg: dict) -> dict:
+    """Barge-in tuning, overridable via the local config's `audio:` section.
+    Defaults biased against background noise: interrupting ShitRat requires
+    sustained speech with actual words, and false barge-ins resume the reply."""
+    audio = cfg.get("audio", {}) if isinstance(cfg, dict) else {}
+    return {
+        "min_interruption_duration": float(audio.get("min_interruption_duration", 0.8)),
+        "min_interruption_words": int(audio.get("min_interruption_words", 2)),
+        "false_interruption_timeout": float(audio.get("false_interruption_timeout", 2.0)),
+        "resume_false_interruption": bool(audio.get("resume_false_interruption", True)),
+    }
 
 
 def build_llm(cfg: dict) -> openai.LLM:
@@ -891,8 +910,13 @@ async def _run_guest_session(ctx, cfg: dict, caller: str) -> None:
     session = AgentSession(
         stt=deepgram.STT(), llm=build_llm(cfg), tts=tts_instance,
         vad=silero.VAD.load(),
+        **_interruption_kwargs(cfg),
     )
-    await session.start(agent=Agent(instructions=_guest_instructions()), room=ctx.room)
+    await session.start(
+        agent=Agent(instructions=_guest_instructions()),
+        room=ctx.room,
+        room_input_options=_room_input_options(),
+    )
 
     @session.on("close")
     def on_close(*args, **kwargs):
@@ -1012,13 +1036,14 @@ async def entrypoint(ctx) -> None:
         tts=tts_instance,
         vad=silero.VAD.load(
             activation_threshold=0.85,   # high — ignore room chatter, only trigger on direct speech (default 0.5)
-            min_speech_duration=0.2,      # require 200ms of speech to trigger (default 50ms)
+            min_speech_duration=0.3,      # require 300ms of speech to trigger (default 50ms)
             min_silence_duration=0.7,     # wait 700ms of silence before end-of-turn (default 550ms)
         ),
+        **_interruption_kwargs(cfg),
     )
 
     agent = JoelclawVoiceAgent(tts_instance, original_voice_id)
-    await session.start(agent=agent, room=ctx.room)
+    await session.start(agent=agent, room=ctx.room, room_input_options=_room_input_options())
 
     # Save transcript when session ends
     @session.on("close")

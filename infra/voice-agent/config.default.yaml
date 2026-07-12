@@ -25,6 +25,15 @@ agent:
   name: "ShitRat"
   greeting: "Oi, ShitRat here. What are we gnawing on, mate?"
 
+# --- Audio / barge-in tuning ---
+# Krisp BVC telephony noise cancellation is always on (strips background voices).
+# These knobs control how hard it is to interrupt the agent mid-reply:
+audio:
+  min_interruption_duration: 0.8   # seconds of sustained speech to count as a barge-in
+  min_interruption_words: 2        # transcribed words required to interrupt
+  false_interruption_timeout: 2.0  # ghost interruption detected after this
+  resume_false_interruption: true  # agent resumes its reply after a ghost barge-in
+
 # --- Security ---
 security:
   # Caller allowlist is fail-closed. Keep real numbers in local config, not in git.
