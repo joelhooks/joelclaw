@@ -37,6 +37,9 @@ export GOG_KEYRING_PASSWORD="$(lease gog_keyring_password)"
 # Slack user token — search + respond-as-Joel voice tools
 export SLACK_USER_TOKEN="$(lease slack_user_token)"
 
+# Convex call tracker (live dashboard) — fail-soft observability, localhost backend
+export CONVEX_URL="${CONVEX_URL:-http://127.0.0.1:3210}"
+
 echo "🎙️  joelclaw voice agent starting..."
 echo "   LiveKit: $LIVEKIT_URL"
 echo "   Config:  $JOELCLAW_VOICE_CONFIG"

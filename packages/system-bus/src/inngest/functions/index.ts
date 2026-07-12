@@ -142,6 +142,7 @@ export { vipEmailReceived } from "./vip-email-received";
 export { vipEmailBrief } from "./vip-morning-brief";
 export { voiceCallCompleted } from "./voice-call-completed";
 export { voiceMissedCall } from "./voice-missed-call";
+export { voicePublicCallAnalyze } from "./voice-public-call-analyze";
 export { voiceSyntheticCall } from "./voice-synthetic-call";
 export { voiceTelnyxBalance } from "./voice-telnyx-balance";
 export { voiceWorkerCanary } from "./voice-worker-canary";

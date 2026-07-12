@@ -1,0 +1,1 @@
+{"root":["./src/main.tsx","./src/vite-env.d.ts","./convex/calls.ts","./convex/crons.ts","./convex/maintenance.ts","./convex/schema.ts","./convex/_generated/api.d.ts","./convex/_generated/datamodel.d.ts","./convex/_generated/server.d.ts","./vite.config.ts"],"version":"5.9.2"}

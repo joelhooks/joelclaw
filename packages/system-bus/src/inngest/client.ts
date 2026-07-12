@@ -1586,6 +1586,16 @@ export type Events = {
       sessionId?: string;
     };
   };
+  "voice/public-call.completed": {
+    data: {
+      transcript: string;
+      room: string;
+      caller?: string;
+      duration_s?: number;
+      turns?: number;
+      timestamp?: string;
+    };
+  };
   "notification/call.requested": {
     data: {
       message: string;
