@@ -131,6 +131,7 @@ import { voicePublicCallAnalyze } from "./voice-public-call-analyze";
 import { voiceSyntheticCall } from "./voice-synthetic-call";
 import { voiceTelnyxBalance } from "./voice-telnyx-balance";
 import { voiceWorkerCanary } from "./voice-worker-canary";
+import { wikiEditionBuild } from "./wiki-edition-build";
 import { xAccountActivityReceived } from "./x-account-activity-notify";
 import { xContentHook } from "./x-content-hook";
 import { xDiscoveryHook } from "./x-discovery-hook";
@@ -246,6 +247,7 @@ export const hostFunctionDefinitions = [
   selfHealingInngestRuntime,
   dailyDigest,
   dailyTokenUsageReport,
+  wikiEditionBuild,
   sleepModeRequested,
   wakeModeRequested,
   typesenseVaultSyncQueue,
