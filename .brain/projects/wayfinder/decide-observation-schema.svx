@@ -1,0 +1,23 @@
+---
+title: "Decide the Observation Schema and Brain Placement"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:grilling"
+interaction: "HITL"
+parent: "./joelclaw-observational-memory-map.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Decide the Observation Schema and Brain Placement
+
+## Question
+
+What IS an observation? Shape (frontmatter fields, provenance: sessionId,
+machine, repos, commits-via-ledger, time range), granularity (per session?
+per work-thread across sessions? per repo per day?), which Brain root/section
+they live in (own root? `observations/` in dark-wizard?), wikilink behavior
+(auto-link touched pages?), and the noise bar — what does NOT deserve an
+observation. The Mastra extractor idea (structured values: current task,
+open questions) adapted to versioned pi schemas like the Bugle's.

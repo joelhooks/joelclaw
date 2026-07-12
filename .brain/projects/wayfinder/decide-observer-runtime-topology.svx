@@ -1,0 +1,23 @@
+---
+title: "Decide the Observer Runtime and Trigger Topology"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:grilling"
+interaction: "HITL"
+parent: "./joelclaw-observational-memory-map.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Decide the Observer Runtime and Trigger Topology
+
+## Question
+
+Per-machine observers over local captures vs one central observer on flagg
+over synced/indexed sessions (Typesense already sees them)? Trigger policy:
+token thresholds (Mastra: ~30k message tokens, async buffered) vs cadence
+(hourly? per-session-close via herdr-pings/session hooks)? Runtime: Inngest
+durable function (house pattern, 110+ exist) vs launchd? Token budget per
+day and which model via pi. Cursor semantics so only new material distills —
+efficiency is a charter requirement.
