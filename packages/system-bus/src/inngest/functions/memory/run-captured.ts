@@ -33,6 +33,10 @@ import { inngest } from "../../client";
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY ?? "";
 const EMBED_DIMS = 768;
+const RUN_CAPTURE_EMBEDDINGS = /^(1|true|yes)$/i.test(
+  process.env.RUN_CAPTURE_EMBEDDINGS ?? "false"
+);
+const PENDING_EMBEDDING = Array.from({ length: EMBED_DIMS }, () => 0);
 
 async function typesenseRequest(
   path: string,
@@ -72,7 +76,11 @@ async function ensureCollections(): Promise<void> {
 
 export const memoryRunCaptured = inngest.createFunction(
   {
-    id: "memory-run-captured",
+    // v3 intentionally creates a fresh Inngest concurrency bucket after
+    // decoupling slow embedding work. Earlier versions accumulated poisoned
+    // queues whose Runs never reached indexing. Raw Run blobs remain
+    // authoritative and are backfilled separately.
+    id: "memory-run-captured-v3",
     name: "memory/run.captured",
     concurrency: { limit: 4 },
     retries: 3,
@@ -138,24 +146,30 @@ export const memoryRunCaptured = inngest.createFunction(
       };
     }
 
-    // Embed each chunk at ingest-realtime priority. The in-process priority
-    // queue in @joelclaw/inference-router ensures query-priority requests
-    // preempt these.
-    const modelTag = embeddingModelTag();
-    const chunks: Chunk[] = await step.run("embed", async () => {
-      const texts = candidates.map((c) => c.text);
-      const results = await Promise.all(
-        texts.map((text) =>
-          embed(text, { priority: "ingest-realtime", dimensions: EMBED_DIMS })
-        )
-      );
+    // Text indexing is the availability path. Embedding is optional enrichment:
+    // a slow or unhealthy local model must not block fresh Runs from search.
+    // Pending zero vectors satisfy the existing Typesense schema and are replaced
+    // by the embedding backfill path when local inference is healthy.
+    const modelTag = RUN_CAPTURE_EMBEDDINGS ? embeddingModelTag() : "pending";
+    const chunks: Chunk[] = await step.run("prepare-chunks", async () => {
+      const embeddings = RUN_CAPTURE_EMBEDDINGS
+        ? await Promise.all(
+            candidates.map((candidate) =>
+              embed(candidate.text, {
+                priority: "ingest-realtime",
+                dimensions: EMBED_DIMS,
+              }).then((result) => result.embedding)
+            )
+          )
+        : candidates.map(() => PENDING_EMBEDDING);
+
       return candidates.map<Chunk>((cand, i) => ({
         id: `${run_id}:${cand.chunk_idx}`,
         run_id,
         chunk_idx: cand.chunk_idx,
         role: cand.role,
         text: cand.text,
-        embedding: results[i]!.embedding,
+        embedding: embeddings[i]!,
         embedding_model: modelTag,
         token_count: cand.token_count,
         started_at: cand.started_at,
@@ -164,7 +178,9 @@ export const memoryRunCaptured = inngest.createFunction(
         root_run_id: parent_run_id ?? null,
         agent_runtime,
         conversation_id: conversation_id ?? null,
-        tags: tags ?? [],
+        tags: RUN_CAPTURE_EMBEDDINGS
+          ? (tags ?? [])
+          : [...(tags ?? []), "embedding:pending"],
         machine_id,
       }));
     });
@@ -268,6 +284,7 @@ export const memoryRunCaptured = inngest.createFunction(
           agent_runtime,
           chunk_count: chunks.length,
           chunk_errors: chunkImport.errors,
+          embedding_status: RUN_CAPTURE_EMBEDDINGS ? "embedded" : "pending",
           turn_count: turns.length,
           format,
         },
