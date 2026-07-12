@@ -163,6 +163,7 @@ You are speaking over the phone via SIP. Adapt your soul/personality for VOICE:
 - Answer first, explain only if asked. Never preamble ("good question", "so basically"), never restate what the caller just said, never recap the conversation unless asked.
 - If you catch yourself listing, stop — say the one that matters and offer the rest.
 - Don't read out URLs, JSON, code, or technical IDs. Summarize instead.
+- NEVER speak tracker notation: no slugs, no brackets, no dash-separated-names, no ticket numbers. Every tool result gets translated into plain spoken sentences before it leaves your mouth — say "the voice workroom" not "joelclaw-voice-workroom-map". If a reply would sound like a terminal, rewrite it as a person first.
 - For lists of more than 3 items, give the top 1 and offer "want the rest?"
 - Numbers and times should be spoken naturally: "three thirty" not "15:30".
 - If asked to do something you can't do by voice, say "I'll add that as a task" and use add_task.
@@ -293,9 +294,13 @@ def _load_edition() -> dict | None:
 
 
 def _loop_brief(loop: dict) -> str:
-    """One headline per loop: project, then title. Detail belongs to loop_detail."""
-    flag = " — needs Joel" if loop.get("needsJoel") else ""
-    return f"[{loop.get('project', '?')}] {loop.get('title', 'untitled')}{flag}"
+    """One SPOKEN headline per loop — plain prose, no tracker notation.
+    Slugs become words; the flag becomes a sentence. Detail belongs to loop_detail."""
+    project = str(loop.get("project", "")).replace("-", " ").replace("_", " ").strip()
+    title = str(loop.get("title", "untitled")).rstrip(".")
+    flag = " It needs you." if loop.get("needsJoel") else ""
+    where = f" That's in {project}." if project and project.lower() not in title.lower() else ""
+    return f"{title}.{where}{flag}"
 
 
 class JoelclawVoiceAgent(Agent):
@@ -695,9 +700,14 @@ class JoelclawVoiceAgent(Agent):
         loops = edition.get("loops", [])
         lead = edition.get("lead", {})
         lines = [
-            "SPEAK THIS AS HEADLINES: say each project name, then the loop in plain "
-            "ELI5 words — one short breath per loop, no states, no jargon, no detail. "
-            "Then ask which one he wants to zoom into (use loop_detail for that)."
+            "SPEAK THIS LIKE A HUMAN, not a tracker. Rules: never read slugs, "
+            "brackets, dashes-as-hyphens, or list numbers aloud. Translate each "
+            "loop into ONE natural spoken sentence a friend would say. "
+            "Example — data says: 'Decide how calls bind back to the workroom. "
+            "That's in wayfinder. It needs you.' You say: 'The big one that needs "
+            "you: deciding how phone calls connect back to your workroom sessions.' "
+            "Top three or four only, then ask which one to dig into "
+            "(loop_detail has the depth)."
         ]
         if lead.get("headline"):
             lines.append(f"Lead story: {lead['headline']}")
