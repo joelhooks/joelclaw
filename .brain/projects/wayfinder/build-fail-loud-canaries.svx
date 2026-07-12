@@ -1,7 +1,7 @@
 ---
 title: "Build Fail-Loud Canaries and Boot Verification"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 labels:
   - "wayfinder:task"
 interaction: "AFK"
@@ -9,6 +9,8 @@ parent: "./joelclaw-voice-workroom-map.svx"
 blockers:
   - "Restore Dial Tone via LiveKit Cloud"
 created_at: "2026-07-11"
+assignee: "claude (flagg session 2026-07-12)"
+claimed_at: "2026-07-12"
 ---
 
 # Build Fail-Loud Canaries and Boot Verification
@@ -16,3 +18,50 @@ created_at: "2026-07-11"
 ## Question
 
 Ship the fail-loud layer the same week as dial tone — shipping voice without it is how ADR-0178 happens again. Four pieces: (1) missed-call paging — Telnyx webhook on unanswered inbound fires an Inngest function that alerts via `joelclaw notify`/SMS within seconds; (2) worker-registration canary — Inngest cron asserts the worker is registered with LiveKit Cloud (process-up is not the check) and alerts with a cause on miss, including the secrets-lease crash-loop case; (3) daily synthetic call — scheduled end-to-end test call through Telnyx → LiveKit SIP → worker answers, speaks a token, hangs up, asserting answer within N seconds; (4) `verify-voice.sh` per the NAS boot-durability doctrine — hard-fails on missing plist, unregistered worker, unleasable secrets, unhealthy Typesense, and asserts the logged-in-session assumption the user-LaunchAgent choice depends on; runs at boot and on cron. Resolved when killing the worker pages Joel within minutes and a fresh boot verifies clean.
+
+## Resolution
+
+Resolved 2026-07-12 (PT). Built by a pi worker in a herdr pane from a spec at
+`.brain/data/tasks/build-fail-loud-canaries-task.md`; reviewed, verified live, and committed by
+the steering Claude session. **The resolved-when criterion passed live: `launchctl bootout`
+of the voice agent at 09:06:33 → `voice-worker-canary` detected `worker_not_dispatched` on
+its next cron tick → page fired at 09:10:38 (4m05s), Telnyx call + SMS fallback + gateway
+urgent; the agent was restored and re-registered.** A fresh `verify-voice.sh` run passes
+21/21 probes.
+
+What shipped (all registered host-role, live on flagg):
+
+1. **`voice-worker-canary`** (Inngest cron `*/5`): the registration probe is a bare LiveKit
+   room-create — automatic dispatch means the worker joins any new room in ~2s (validated
+   live before building), so no phone call is needed. Cause-tagged failures
+   (`lease_failed` / `livekit_unreachable` / `worker_not_dispatched`) enriched with
+   launchd state; pages via `notification/call.requested` **and** gateway urgent (a dead
+   Telnyx account can't silence its own alarm); 30-min per-cause cooldown; recovery notice
+   on fail→ok. State: `~/.joelclaw/state/voice-canary.json`.
+2. **`voice-synthetic-call`** (cron daily 12:05 PT): `lk sip participant create` on the
+   outbound trunk dialing our own DID — loops out through Telnyx and back in;
+   `wait_until_answered` is the assertion. `main.py` recognizes its own DID as caller
+   (env `TELNYX_PHONE_NUMBER`, leased in `run.sh`), logs `SYNTHETIC CANARY ANSWERED`,
+   speaks a token, hangs up — never touches guest mode or the memory pipeline. Live test:
+   answered in 3s. On failure it fetches the Telnyx balance and names
+   `telnyx_balance_lapsed` when credit < $10 — the exact failure that killed the old number.
+3. **`voice-telnyx-balance`** (cron 6h): warn < $25, page < $10.
+4. **`voice-missed-call`** + `telnyx` webhook provider: FQDN connection
+   `webhook_event_url` now points at `https://hooks.joelclaw.com/webhooks/telnyx`
+   (set via API — no dashboard needed). **Verified live: Telnyx delivers call events for
+   FQDN/SIP-trunking connections** (real `telnyx-webhooks` POSTs observed during the
+   synthetic call), currently 401-rejected pending the Ed25519 key. Detector:
+   `call.initiated` (incoming, to our DID, not from our DID) → `waitForEvent call.answered`
+   45s → page. Provider tests 5/5.
+5. **`verify-voice.sh`** (doctrine per `verify-nas.sh`) — plist running, GUI session,
+   secrets daemon, 11 bare-name leases clean (the namespaced-vs-bare regression check),
+   live dispatch probe, crash-loop scan, Typesense health, wiki endpoint (warn-only),
+   balance, allowlist non-empty; pages on hard failure. Installed as
+   `com.joel.verify-voice` LaunchAgent: RunAtLoad + every 30 min.
+
+Facts later tickets depend on:
+
+- Registration probe pattern: `lk room create canary-*` → poll for `agent-*` participant → delete. Shared lib: `packages/system-bus/src/lib/voice-canary.ts` (also exports `OUTBOUND_TRUNK_ID`).
+- `TELNYX_PUBLIC_KEY` is leased at worker boot from secret `telnyx_public_key` (wired in `serve.ts` `WEBHOOK_SECRETS`; missing = warn + reject, never crash).
+- **HITL follow-up (small):** paste the Telnyx portal public key (Account → Keys & Credentials → Public Key) into agent-secrets as `telnyx_public_key`, restart `com.joel.system-bus-worker` — missed-call paging goes fully live.
+- Known gap, now ticketed: restarts still drop live calls — see [Add Graceful Drain to Voice Worker Restarts](./add-graceful-drain-voice-worker.svx).

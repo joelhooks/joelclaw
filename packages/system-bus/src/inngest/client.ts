@@ -1592,6 +1592,36 @@ export type Events = {
       to?: string;
     };
   };
+  "telnyx/call.initiated": {
+    data: {
+      call_session_id?: string;
+      call_control_id?: string;
+      direction?: string;
+      from?: string;
+      to?: string;
+      [key: string]: unknown;
+    };
+  };
+  "telnyx/call.answered": {
+    data: {
+      call_session_id?: string;
+      call_control_id?: string;
+      direction?: string;
+      from?: string;
+      to?: string;
+      [key: string]: unknown;
+    };
+  };
+  "telnyx/call.hangup": {
+    data: {
+      call_session_id?: string;
+      call_control_id?: string;
+      direction?: string;
+      from?: string;
+      to?: string;
+      [key: string]: unknown;
+    };
+  };
 
   // --- Telegram callbacks (inline keyboard actions) ---
   "telegram/callback.received": {

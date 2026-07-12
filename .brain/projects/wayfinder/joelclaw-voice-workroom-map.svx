@@ -63,6 +63,7 @@ Provenance: this map was charted from the 2026-07-11 flagg design session (Claud
 <!-- Closed ticket resolutions are appended here as one-line linked gists. -->
 
 - [Restore Dial Tone via LiveKit Cloud](./restore-dial-tone-via-livekit-cloud.svx) — live both directions on new DID +1 360 389 4321; old number was lost to a lapsed Telnyx balance, LiveKit SIP URIs must come from the dashboard (wildcard DNS makes guesses resolve-then-404), and the worker now judges callers by SIP participant attribute after waiting for the phone leg to join.
+- [Build Fail-Loud Canaries and Boot Verification](./build-fail-loud-canaries.svx) — killing the worker paged Joel in 4m05s (proven live): a 5-min registration canary (bare room-create probe — automatic dispatch makes the worker join in ~2s, no phone needed), daily synthetic self-call (answered in 3s; worker speaks a token to its own DID), 6-hourly balance monitor, missed-call detector behind a new `telnyx` webhook provider (Telnyx confirmed delivering FQDN call events; dark until the portal public key lands in agent-secrets as `telnyx_public_key`), and `verify-voice.sh` (21 probes) at boot + every 30 min. Pages go out via Telnyx call+SMS *and* gateway urgent so a dead Telnyx account can't silence its own alarm. Surfaced [Add Graceful Drain to Voice Worker Restarts](./add-graceful-drain-voice-worker.svx).
 
 ## Not yet specified
 

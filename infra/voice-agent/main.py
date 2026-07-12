@@ -1075,6 +1075,20 @@ async def entrypoint(ctx) -> None:
         participant.attributes.get("sip.phoneNumber", "").strip()
         or _extract_caller(ctx.room.name)
     )
+    caller = _normalize_caller(caller_raw)
+    own_did = _normalize_caller(os.environ.get("TELNYX_PHONE_NUMBER", ""))
+    if own_did and caller == own_did:
+        logger.info("SYNTHETIC CANARY ANSWERED room=%s", ctx.room.name)
+        tts_instance = build_tts(cfg)
+        session = AgentSession(
+            stt=deepgram.STT(), llm=build_llm(cfg), tts=tts_instance,
+            vad=silero.VAD.load(),
+        )
+        await session.start(agent=Agent(instructions="You are a voice canary."), room=ctx.room)
+        session.generate_reply(user_input="Say exactly: 'Canary check confirmed. All systems nominal.' Then stop talking.")
+        await asyncio.sleep(4)
+        return
+
     caller_allowed, caller = _caller_allowed(caller_raw, allowed_callers)
     if not caller_allowed:
         if not caller:

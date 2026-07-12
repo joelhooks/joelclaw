@@ -42,7 +42,7 @@ Work the map's frontier, one ticket per session. The destination: phone-in ShitR
 
 ## Frontier (open, unblocked — pick ONE per session, claim it first)
 
-1. **Build Fail-Loud Canaries and Boot Verification** — now unblocked; sharpest edge. The session minted its receipts: Telnyx balance lapse silently killed both call directions (add balance monitor), missing bare `openrouter_api_key` (namespaced-vs-bare secret check), restart drops calls (graceful drain).
+1. ~~**Build Fail-Loud Canaries and Boot Verification**~~ — **CLOSED 2026-07-12** (killing the worker paged Joel in 4m05s, proven live; resolution on the ticket). Small HITL leftover: paste the Telnyx portal public key into agent-secrets as `telnyx_public_key` + restart the host worker to arm missed-call paging. Graceful drain spun out as its own frontier ticket.
 2. **Decide the Grill-Master Balance** (grilling, HITL) and **Define Workroom Binding / Router Gate** (grilling, HITL) — gate the phase-2 registry surgery.
 3. **Inventory k8s Cluster Dependencies** (research, AFK) — gates cluster shutdown.
 4. **Recover the Panda Vault ADR Corpus** (task, AFK) — before panda dies; blocks the role/durability ADR.

@@ -13,6 +13,7 @@ import { frontProvider } from "./providers/front";
 import { githubProvider } from "./providers/github";
 import { forwardJoelclawEvent, joelclawProvider } from "./providers/joelclaw";
 import { muxProvider } from "./providers/mux";
+import { telnyxProvider } from "./providers/telnyx";
 import { todoistProvider } from "./providers/todoist";
 import { vercelProvider } from "./providers/vercel";
 import { xProvider } from "./providers/x";
@@ -25,6 +26,7 @@ providers.set(frontProvider.id, frontProvider);
 providers.set(vercelProvider.id, vercelProvider);
 providers.set(githubProvider.id, githubProvider);
 providers.set(muxProvider.id, muxProvider);
+providers.set(telnyxProvider.id, telnyxProvider);
 providers.set(joelclawProvider.id, joelclawProvider);
 providers.set(xProvider.id, xProvider);
 

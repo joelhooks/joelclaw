@@ -33,6 +33,7 @@ const WEBHOOK_SECRETS = [
   { env: "TODOIST_CLIENT_SECRET", secret: "todoist_client_secret" },
   { env: "GITHUB_WEBHOOK_SECRET", secret: "github_webhook_secret" },
   { env: "MUX_WEBHOOK_SECRET", secret: "mux_signing_secret" },
+  { env: "TELNYX_PUBLIC_KEY", secret: "telnyx_public_key" },
   { env: "X_CONSUMER_SECRET", secret: "x_consumer_secret" },
   { env: "TYPESENSE_API_KEY", secret: "typesense_api_key" },
 ] as const;

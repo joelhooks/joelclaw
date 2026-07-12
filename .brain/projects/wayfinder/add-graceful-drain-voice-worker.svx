@@ -1,0 +1,26 @@
+---
+title: "Add Graceful Drain to Voice Worker Restarts"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-voice-workroom-map.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Add Graceful Drain to Voice Worker Restarts
+
+## Question
+
+`launchctl kickstart -k gui/501/com.joel.voice-agent` drops live calls — every deploy of
+`main.py`/`run.sh` is a mid-call hangup risk. LiveKit Agents workers support draining
+(stop accepting new jobs on SIGTERM/SIGINT, finish active sessions up to a shutdown
+timeout) — determine whether the framework's built-in drain works under launchd's
+termination sequence (what signal `kickstart -k` sends, whether the KeepAlive relaunch
+races the draining process's LiveKit registration), configure or implement whatever is
+missing, and add a `restart-voice.sh` that refuses to restart while a `call-*` room has
+participants unless forced. Resolved when a restart during a live test call lets the call
+finish (or hands it a spoken warning) instead of dropping it, and the runbook string in
+the canary page message points at the safe restart path.

@@ -29,6 +29,7 @@ export LIVEKIT_API_SECRET="$(lease livekit_api_secret)"
 export OPENROUTER_API_KEY="$(lease openrouter_api_key)"
 export DEEPGRAM_API_KEY="$(lease deepgram_api_key)"
 export ELEVEN_API_KEY="$(lease elevenlabs_api_key)"
+export TELNYX_PHONE_NUMBER="$(lease telnyx_phone_number)"
 
 # GOG_KEYRING_PASSWORD for calendar/email tools
 export GOG_KEYRING_PASSWORD="$(lease gog_keyring_password)"

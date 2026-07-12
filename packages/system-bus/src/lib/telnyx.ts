@@ -13,6 +13,13 @@ type CallResponse = {
   [key: string]: unknown;
 };
 
+type BalanceResponse = {
+  data?: {
+    available_credit?: string;
+    currency?: string;
+  };
+};
+
 type MessageResponse = {
   data?: {
     id?: string;
@@ -163,6 +170,21 @@ export const getTelnyxConfig = () => {
     fromNumber,
     ovpId,
     joelPhoneNumber,
+  };
+};
+
+export const getTelnyxBalance = async (): Promise<{
+  availableCredit: number;
+  currency: string;
+}> => {
+  const payload = await telnyxRequest<BalanceResponse>("/balance", { method: "GET" });
+  const availableCredit = Number(payload.data?.available_credit);
+  if (!Number.isFinite(availableCredit)) {
+    throw new Error("Telnyx balance response missing data.available_credit");
+  }
+  return {
+    availableCredit,
+    currency: payload.data?.currency ?? "USD",
   };
 };
 

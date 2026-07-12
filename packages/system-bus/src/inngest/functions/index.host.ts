@@ -126,6 +126,10 @@ import { vipEmailThreadsBackfill } from "./vip-email-backfill";
 import { vipEmailReceived } from "./vip-email-received";
 import { vipEmailBrief } from "./vip-morning-brief";
 import { voiceCallCompleted } from "./voice-call-completed";
+import { voiceMissedCall } from "./voice-missed-call";
+import { voiceSyntheticCall } from "./voice-synthetic-call";
+import { voiceTelnyxBalance } from "./voice-telnyx-balance";
+import { voiceWorkerCanary } from "./voice-worker-canary";
 import { xAccountActivityReceived } from "./x-account-activity-notify";
 import { xContentHook } from "./x-content-hook";
 import { xDiscoveryHook } from "./x-discovery-hook";
@@ -191,6 +195,10 @@ export const hostFunctionDefinitions = [
   transcriptionCleanup,
   telegramCallbackReceived,
   voiceCallCompleted,
+  voiceMissedCall,
+  voiceSyntheticCall,
+  voiceTelnyxBalance,
+  voiceWorkerCanary,
   observeSessionNoted,
   vercelDeploySucceeded,
   vercelDeployError,
