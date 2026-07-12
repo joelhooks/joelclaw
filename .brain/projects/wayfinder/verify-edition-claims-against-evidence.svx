@@ -1,0 +1,25 @@
+---
+title: "Verify Every Edition Claim Against Its Evidence"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:prototype"
+interaction: "HITL"
+parent: "./joelclaw-bugle-redesign-map.svx"
+blockers: []
+created_at: "2026-07-12"
+assignee: "pi worker bugle-verify (w9:pF, steered by claude w9:pA)"
+claimed_at: "2026-07-12"
+---
+
+# Verify Every Edition Claim Against Its Evidence
+
+## Question
+
+"SUPER important to get the information correct." Build a verification pass that runs after extraction, before the edition is preserved: an independent pi verifier checks each prose claim — headline, framing, whyItMatters, digests, and every marked take — against the observations it cites. A claim its evidence doesn't support gets flagged (v1: a visible unverified mark in the rendered paper, not silently killed), and takes must carry their synthesized mark plus evidence refs or they don't print.
+
+Prototype on real editions: run the verifier over the last few days' output, show Joel what it catches (false claims, overreach, orphaned takes), and let him calibrate the dial — flag, kill, or eventually gate the build. Whether it becomes a hard publish gate stays in the map's fog until calibration data exists.
+
+Resolved when a live edition renders verifier verdicts and Joel has set the strictness dial against real catches.
+
+**Status 2026-07-12**: both halves live — sidecar verdicts (wiki `7fcba10`) AND rendered flags (wiki `3d8ba61`): overreach/unsupported/unverifiable get quiet small-caps marks on the exact sentences, verifier note on hover, tally line in the folio; supported renders nothing. Today's paper shows its own audit (16 overreach, 3 unverifiable rendered). Remaining: Joel sets the flag/kill/gate dial; verifier-as-chief's-instrument moves to the newsroom ticket.

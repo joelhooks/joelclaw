@@ -1,0 +1,42 @@
+---
+title: "Close Loops When Reality Closes Them"
+type: "wayfinder_ticket"
+status: "closed"
+labels:
+  - "wayfinder:grilling"
+interaction: "HITL"
+parent: "./joelclaw-bugle-redesign-map.svx"
+blockers: []
+created_at: "2026-07-12"
+assignee: "claude (flagg steering session w9:pA)"
+claimed_at: "2026-07-12"
+---
+
+# Close Loops When Reality Closes Them
+
+## Question
+
+Today's lead (2026-07-12) says wiki v0 "needs a real vertical slice, not another plan" — two days after v0 shipped, automated, and got its own domain. Loops never learn they're done, so the paper leads with stale reality. That is the single worst "information correct" failure the bugle has.
+
+Grill the closure policy: What evidence closes a loop — ship receipts, commits, "live at URL" observations, explicit "done/shipped" statements in sessions or Brain pages? Does closure auto-apply, or does the paper *propose* closure for Joel to confirm (fail-closed, like the Todoist boundary)? Do closed loops get celebrated as a "shipped" beat in the paper, or retire silently? How does staleness decay work — a loop untouched for N editions becomes stale, then archived, instead of riding the front page forever?
+
+Resolved when the closure policy is decided and the loop reconciler (`loop-continuity.ts`) implements it, with the stale-v0-lead case as the pinned regression test.
+
+## Policy (grilled with Joel, 2026-07-12 — locked)
+
+- **The paper is reporting, not an interactive surface.** No click-to-close, no confirm queue, nothing interactive — Joel's words: "no clicks/closes/whatever."
+- **Closure is automatic and evidence-cited.** A loop closes when its observations carry explicit completion receipts (shipped/live/done statements, ship commits, "live at URL"). The printed closure names its receipt — under the fabrication rule an uncited closure cannot print.
+- **Wrong closures are corrected by reporting.** New evidence reopens the loop and the paper says it reopened — corrections are a newspaper's native error channel, not a confirm dialog.
+- **What shipped is newsworthy.** Closures get a Shipped beat: what closed, the receipt, one line of why it mattered. A big ship can lead the paper.
+- **Ordering and decay:** fresh loops (new evidence) up front. No new evidence for 5 editions → stale (demoted, still printed). 14 → archived off the front page (the loop page persists). Archived loops resurface on new evidence, and the editor may resurface an interesting quiet loop as a clearly-marked editorial pick.
+- **Implementation:** loop-continuity reconciler + edition-builder ordering/sections; pinned regression = the stale-v0-lead case (edition 2026-07-12 leading with "v0 needs a real vertical slice" after v0 shipped). Implementation lands after the current worker lanes integrate, to avoid churning their type gates mid-flight.
+
+## Resolution (2026-07-12)
+
+Policy grilled with Joel (above), implemented by the bugle-closure pi worker, verified and committed by the steering session (wiki repo `c9d352e`, Shipped section render `f353fe3`).
+
+- Extraction contract v4: `shipped` state requires cited completion receipts; uncited shipped loops are dropped deterministically.
+- Reconciler carries quiet prior loops with `quietEditions` (5 → forced stale, 14 → archived off the page), resets on fresh evidence, flags reopens (`reopened: true`) — corrections by reporting, per policy.
+- Builder routes shipped loops to `sections.shipped`; fresh loops order before carried-quiet ones; the paper renders a Shipped beat (title, why, receipt) as news after the lead.
+- **Pinned regression by name**: "stale-v0-lead regression: receipt-cited ship closes the carried wiki v0 loop" (loop-continuity/edition-builder tests). Full suite 114/114.
+- Live note: today's rebuilt edition has an empty Shipped section — correct, since no explicit ship receipt sits in today's observation window (v0 shipped two days before). The mechanism is armed and fixture-proven; the first in-window ship exercises it live.

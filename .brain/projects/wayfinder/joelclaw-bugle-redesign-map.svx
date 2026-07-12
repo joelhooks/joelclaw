@@ -1,0 +1,57 @@
+---
+title: "Redesign the Daily Bugle: Correct, Beautiful, Written Like Joel"
+type: "wayfinder_map"
+status: "active"
+labels:
+  - "wayfinder:map"
+created_at: "2026-07-12"
+tracker: "local-brain"
+privacy: "private"
+---
+
+# Redesign the Daily Bugle: Correct, Beautiful, Written Like Joel
+
+## Destination
+
+One morning's paper at daily.joelclaw.com that Joel reads end to end and trusts: briefing voice that talks to him, ELI5-but-technical explanations, every claim locked to cited evidence, loops that close when reality closes them, visual structure at the level of the loopcraft workshop site on the same tufte tokens, plus graphs — backlinks/local knowledge graph, a drawn system-map figure, and trend sparklines. Reached when a live edition demonstrates all of it and survives a full Joel read-through without a "this is wrong / stale / ugly" strike.
+
+## Notes
+
+- **This map carries execution** (charter decision, overrides wayfinder plan-default): each ticket lands visible change on the live paper; Joel reacts to the live URL / screenshots, like the v0 design rounds.
+- **Charter decisions grilled 2026-07-12**: briefing voice — the paper talks to *you* in chief-of-staff register with Joel-style mechanics (sentence-case headlines, short sentences, contractions), never fabricated first person. Takes are allowed when grounded in cited evidence and clearly marked synthesized. Graphs means all three: knowledge graph, diagram figures, trend charts.
+- **Editorial mandate (Joel, mid-effort)**: "ELI5 but technical, no slop" governs EVERY prose surface this effort produces — edition prose, Brain notes, worker briefs, and status reports back to Joel. Also standing: when referring to the paper, always give its URL (https://brain.joelclaw.com). Encoded in `joelclaw-wiki/AGENTS.md` § Editorial mandate.
+- **Fresh editorial layout per run (Joel, mid-effort)**: daily pages are DESIGNED fresh each run from an editorial and layout perspective, guided by a design system — not a strict fixed template. The design system (component vocabulary + emphasis scale + taste constraints) is the palette; the day's news decides the composition. Layout specs are schema-validated, reference only real content ids (fabrication rule applies to composition too), and are preserved with their edition. Media (real screenshots, figures, sparklines) are components in that vocabulary.
+- **Newsroom + wikibench (Joel, mid-effort)**: the build becomes custom pi agents with focused prompts and focused tooling per desk — context builder → editor → layout → editor-in-chief review — with a deterministic **pressman** (code, not a model) assembling the approved pieces. Goal: ultra-efficient in tokens and time, excellent output. Quality is measured, not vibed: **wikibench** replays frozen day-capsules through the pipeline and scores a rubric, so prompts/models/harness configs tune parametrically over time. Sequencing law: bench baseline on the current pipeline FIRST, then the newsroom refactor proves itself against it.
+- **Docker for testing + recording (Joel, mid-effort)**: media capture AND the E2E suite run in the official Playwright container — native webm recording (no host Chrome/ffmpeg deps) and a durable end-to-end gate (console-error tripwire, composition renders, media renders) against the built site. Image digest recorded in provenance; pinned images double as wikibench harness configs — a parametric dimension the bench can sweep across fleet machines.
+- **Mux is the video path (Joel, mid-effort)**: "we need to use mux for video imo, get that dialed in." mux-player playback is primary (public-unlisted ids — Joel's call with the privacy tradeoff on the table; signed playback remains a future option); local webm is the upload source + fallback only, and stops shipping in the build. Mux `asset.ready` webhooks become interesting once webhooks.joelclaw.com exists (separate joelclaw-repo effort, scouted 2026-07-12).
+- **Intelligence-driven, not a deterministic stamp (Joel, mid-effort)**: "checklists KILL thinking." Determinism guards the floor — schemas, id validation, receipts make fabrication impossible; XState may own lifecycle. But the desks are thinking roles, and the chief's approval is an editorial READ of the whole paper (true? interesting? buried lede?) with instruments as evidence on the desk, never a box-ticking gate. Wikibench likewise: deterministic checks are tripwires; the judged read is the score, and the judge writes its review before it scores.
+- **Voice contract** is the `joel-writing-style` skill — its Fabrication Rule is also the correctness bar (never invent claims/metrics/opinions; cite or drop; `[TODO]` over guessing). Its anti-patterns table applies to generated prose. ELI5-but-technical is part of the voice ticket, not a separate one.
+- **Visual receipts**: [the loopcraft site](https://aie-loopcraft-workshop-2026.wzrrd.sh/) shares the wiki's exact tufte-mdsvx tokens (`--accent:#2f5f6f`, Source Serif 4, `#fbfaf5`). What it adds is component vocabulary — tool cards, SVG flow-chart figure, lesson strip, quickstart surfaces. Keep the app.css quiet-taste rule: one accent, real prose, no chips or metric theater.
+- **Repo**: `~/Code/joelhooks/joelclaw-wiki`. Its AGENTS.md boundaries hold: XState owns lifecycle, Effect v4 owns services, pi (`openai-codex/gpt-5.5`) does bounded judgment behind versioned schemas with promptHash; adapters stay read-only; privacy rules and stop rules unchanged. Editions are immutable — new voice/design applies forward, history stays as printed.
+- **Skills every session should consult**: `/skill:joel-writing-style`, `/skill:wayfinder`, `/skill:herdr-orchestration` for pane agents; `~/Code/joelhooks/tufte-mdsvx` AGENTS.md as the visual authoring guide.
+- **Lineage**: continues [Chart the Joelclaw Personal Wiki](./joelclaw-personal-wiki-map.svx) — that map's first proof is reached (8 live channels, 6am cron, daily.joelclaw.com, morning receipt). Product lenses live in `joelclaw-wiki/.brain/product-direction.svx` (Roam/Logseq graph + PARA/Second Brain).
+
+## Decisions so far
+
+<!-- Closed ticket resolutions are appended here as one-line linked gists. -->
+
+- [Decide the Brain SVX Rendering Model](./decide-brain-svx-rendering-model.svx) — Brain pages render from registered checkouts at `/<root>/<slug>` with provenance (root/path/commit); custom components are first-class (registered roots compile their own `.brain/components/`, page-scoped failures); default-render minus hard exclusions + `privacy: sensitive`; 6am auto-pickup (publishing = writing Brain svx); supersedes the Studio `/notes/` viewer at parity; JoelClaw toolbar v1 flags defined.
+- [Build Wikilink Edges and the graph.json Projection](./build-wikilink-edges-graph-json.svx) — graph.json ships deterministically from live data (704 nodes / 145 edges: evidence, project, wikilink; unresolved targets explicit); `wiki graph build|stats` wired; local-graph panel and system-map figure unblocked.
+- [Close Loops When Reality Closes Them](./close-loops-when-reality-closes-them.svx) — the paper is reporting, nothing interactive: shipped state auto-closes on cited receipts (uncited shipped dropped), quiet loops decay 5→stale/14→archived and resurface on evidence, reopens print as corrections, Shipped renders as news after the lead; stale-v0-lead is the pinned regression.
+- [Raise the Front Page to Loopcraft's Visual Structure](./raise-front-page-visual-structure.svx) — superseded by Joel's redirect to fresh-per-run editorial composition: replaced by [Build the Bugle Design System](./build-bugle-design-system.svx) and [Lay Out the Paper Fresh Each Run](./editorial-layout-per-run.svx).
+
+## Not yet specified
+
+- Parametric sweep harness (same capsule × models/prompts/harness-config grid, scored by wikibench) and the paper reporting its own bench trend — graduates once wikibench scores exist.
+- Whether the claim verifier graduates from flag-only to a hard publish gate once calibrated.
+- How closed/shipped loops are celebrated — a "shipped" beat in the paper? a weekly retrospective? (hangs on the loop-closure grilling)
+- A full-graph page beyond per-page local panels (product-direction step; wait until the local panel proves navigation value).
+- Whether the paper's marked takes get a persistent editorial persona/byline.
+- Whether pre-redesign editions get any visual-only reflow (immutability says content stays; rendering is a projection).
+
+## Out of scope
+
+- PARA facets, weekly review, note promotion, SQLite index — product-direction steps 4–6, a separate effort once the paper itself is right.
+- New channels (YouTube subscription list, X bookmarks OAuth2) — standing options tracked in `joelclaw-wiki/.brain/daily-automation-plan.svx`, not redesign work.
+- Audio editions, public or multi-user anything — old map exclusions hold.
+- Old codex Daily SHITRAT retirement — dedicated session per the succession note in `daily-automation-plan.svx`.

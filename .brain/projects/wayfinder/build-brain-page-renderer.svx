@@ -1,0 +1,28 @@
+---
+title: "Build the Brain Page Renderer"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-brain-graph-map.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Build the Brain Page Renderer
+
+## Question
+
+Implement Brain page rendering per the closed `decide-brain-svx-rendering-model`
+resolution: routes `/<root>/<slug…>` over the registered roots
+(`brain-roots.json` in dark-wizard is truth), MDSvX compilation with the
+pi-notes standard set wiki-side AND per-root `.brain/components/**` compiled
+for real (registration = consent; component failure is page-scoped and loud,
+never build-fatal). Hard exclusions (captures/compaction-dumps/people/
+private-family-health, `privacy: sensitive`) never render. Provenance
+(root, path, commit) on every page. Wikilinks resolve per the namespace
+policy; broken links render visibly. Prerendered static — no request-time
+pipeline. Acceptance: the 2026-07-12 theo retro renders at its
+brain.joelclaw.com URL from the dark-wizard root, replacing the static
+stopgap page; `bun run check` and `bun run build` green.
