@@ -21,6 +21,7 @@ from pathlib import Path
 import yaml
 from livekit.agents import Agent, AgentSession, RoomInputOptions, WorkerOptions, cli, function_tool
 from livekit.plugins import deepgram, elevenlabs, noise_cancellation, openai, silero
+from livekit.plugins.turn_detector.english import EnglishModel
 
 logger = logging.getLogger("joelclaw-voice")
 logger.setLevel(logging.INFO)
@@ -840,16 +841,13 @@ class JoelclawVoiceAgent(Agent):
         )
 
 
-def _gather_context() -> str:
-    """Pre-load context at call start — MEMORY.md, wiki loops, Typesense recall, calendar.
-    Slow probes run in parallel with hard timeouts: a laggard costs its own timeout,
-    not the sum (the sequential version blocked the greeting for 11+ seconds)."""
-    from concurrent.futures import ThreadPoolExecutor
+def _gather_context_fast() -> str:
+    """Instant, local-only context — this is all the greeting waits for.
+    Time + curated memory + today's open loops (localhost edition fetch)."""
     from zoneinfo import ZoneInfo
 
     sections = []
 
-    # Fast, local: time + curated memory
     now = datetime.now(ZoneInfo("America/Los_Angeles"))
     sections.append(f"## Current Time\n{now.strftime('%A, %B %d, %Y at %I:%M %p %Z')}")
 
@@ -860,17 +858,29 @@ def _gather_context() -> str:
             content = content[:3000] + "\n... (truncated)"
         sections.append(f"## Current Memory\n{content}")
 
-    def probe_loops():
+    try:
         edition = _load_edition()
-        if not edition:
-            return None
-        loops = edition.get("loops", [])
-        needs_joel = [l for l in loops if l.get("needsJoel")]
-        ordered = (needs_joel + [l for l in loops if not l.get("needsJoel")])[:6]
-        lead = edition.get("lead", {})
-        lines = [f"Lead: {lead.get('headline', '')}"] if lead.get("headline") else []
-        lines += [f"- {_loop_brief(l)}" for l in ordered]
-        return "## Today's Open Loops\n" + "\n".join(lines)
+        if edition:
+            loops = edition.get("loops", [])
+            needs_joel = [l for l in loops if l.get("needsJoel")]
+            ordered = (needs_joel + [l for l in loops if not l.get("needsJoel")])[:6]
+            lead = edition.get("lead", {})
+            lines = [f"Lead: {lead.get('headline', '')}"] if lead.get("headline") else []
+            lines += [f"- {_loop_brief(l)}" for l in ordered]
+            sections.append("## Today's Open Loops\n" + "\n".join(lines))
+    except Exception:
+        pass
+
+    return "\n\n".join(sections)
+
+
+def _gather_context_slow() -> str:
+    """Network/subprocess probes — recall, calendar, system alerts. Runs in the
+    background and is injected into the chat context after the greeting; the
+    greeting never waits for these."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    sections = []
 
     def probe_recall():
         raw = _run(["joelclaw", "recall", "recent activity and conversations"], timeout=4)
@@ -899,8 +909,7 @@ def _gather_context() -> str:
             return None
         return "## System Alerts\n" + "\n".join(parts)
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        f_loops = pool.submit(probe_loops)
+    with ThreadPoolExecutor(max_workers=4) as pool:
         f_recall = pool.submit(probe_recall)
         f_today = pool.submit(probe_cal, "--today", "Today")
         f_tomorrow = pool.submit(probe_cal, "--tomorrow", "Tomorrow")
@@ -912,8 +921,6 @@ def _gather_context() -> str:
             except Exception:
                 return None
 
-        if section := grab(f_loops):
-            sections.append(section)
         if section := grab(f_recall):
             sections.append(section)
         cal_parts = [p for p in (grab(f_today), grab(f_tomorrow)) if p]
@@ -974,7 +981,7 @@ def prewarm(proc) -> None:
     proc.userdata["vad"] = silero.VAD.load(
         activation_threshold=0.85,   # high — ignore room chatter, only trigger on direct speech (default 0.5)
         min_speech_duration=0.3,      # require 300ms of speech to trigger (default 50ms)
-        min_silence_duration=0.7,     # wait 700ms of silence before end-of-turn (default 550ms)
+        min_silence_duration=0.4,     # semantic turn detector guards mid-thought pauses now; VAD floor can drop
     )
 
 
@@ -1105,19 +1112,19 @@ async def entrypoint(ctx) -> None:
     # and judge their number attribute; judging the room name early rejects
     # every call whose name doesn't embed a caller (all outbound rooms).
     await ctx.connect()
-    # Start context gathering NOW — it overlaps the wait for the phone leg to join.
-    # (It used to run after the caller was live, blocking the greeting.)
-    context_task = asyncio.create_task(asyncio.to_thread(_gather_context))
+    # Slow probes (recall, calendar, status) start now and finish in the background;
+    # the greeting NEVER waits for them — they're injected into the chat after it.
+    slow_context_task = asyncio.create_task(asyncio.to_thread(_gather_context_slow))
     try:
         participant = await asyncio.wait_for(ctx.wait_for_participant(), timeout=90)
     except asyncio.TimeoutError:
         logger.warning("No participant joined room %s within 90s; leaving", ctx.room.name)
-        context_task.cancel()
+        slow_context_task.cancel()
         return
     except RuntimeError as e:
         # Canary probes create-and-delete rooms; the delete lands here. Not an error.
         logger.info("Room %s closed while waiting for participant (%s)", ctx.room.name, e)
-        context_task.cancel()
+        slow_context_task.cancel()
         return
     caller_raw = (
         participant.attributes.get("sip.phoneNumber", "").strip()
@@ -1127,7 +1134,7 @@ async def entrypoint(ctx) -> None:
     own_did = _normalize_caller(os.environ.get("TELNYX_PHONE_NUMBER", ""))
     if own_did and caller == own_did:
         logger.info("SYNTHETIC CANARY ANSWERED room=%s", ctx.room.name)
-        context_task.cancel()
+        slow_context_task.cancel()
         tts_instance = build_tts(cfg)
         session = AgentSession(
             stt=deepgram.STT(), llm=build_llm(cfg), tts=tts_instance,
@@ -1140,7 +1147,7 @@ async def entrypoint(ctx) -> None:
 
     caller_allowed, caller = _caller_allowed(caller_raw, allowed_callers)
     if not caller_allowed:
-        context_task.cancel()
+        slow_context_task.cancel()
         if not caller:
             # No parseable caller ID — fail closed, say nothing, hang up
             logger.warning(
@@ -1170,13 +1177,9 @@ async def entrypoint(ctx) -> None:
         agent_cfg.get("name", "Panda"),
     )
 
-    # Context gathering started at connect; by now it has had the SIP setup time to run
-    try:
-        context = await asyncio.wait_for(context_task, timeout=8)
-    except Exception as e:
-        logger.warning("Context gather failed or timed out (%s); greeting without it", e)
-        context = ""
-    logger.info("Context loaded: %d chars", len(context))
+    # Greeting grounds on instant local context only; slow probes inject later
+    context = await asyncio.to_thread(_gather_context_fast)
+    logger.info("Fast context loaded: %d chars", len(context))
 
     tts_instance = build_tts(cfg)
 
@@ -1185,8 +1188,26 @@ async def entrypoint(ctx) -> None:
         llm=build_llm(cfg),
         tts=tts_instance,
         vad=_vad_for(ctx),
+        # Semantic end-of-turn detection: judges "done vs thinking" from content,
+        # so the endpointing floor can drop without cutting Joel off mid-thought.
+        turn_detection=EnglishModel(),
+        min_endpointing_delay=0.35,
+        max_endpointing_delay=4.0,
+        # LLM starts on the partial transcript before end-of-turn is confirmed.
+        preemptive_generation=True,
         **_interruption_kwargs(cfg),
     )
+
+    @session.on("metrics_collected")
+    def on_metrics(ev):
+        m = ev.metrics
+        kind = type(m).__name__
+        if kind == "LLMMetrics":
+            logger.info("METRIC llm ttft=%.2fs", getattr(m, "ttft", -1.0))
+        elif kind == "TTSMetrics":
+            logger.info("METRIC tts ttfb=%.2fs", getattr(m, "ttfb", -1.0))
+        elif kind == "EOUMetrics":
+            logger.info("METRIC eou delay=%.2fs", getattr(m, "end_of_utterance_delay", -1.0))
 
     agent = JoelclawVoiceAgent(tts_instance, original_voice_id)
     await session.start(agent=agent, room=ctx.room, room_input_options=_room_input_options())
@@ -1223,6 +1244,24 @@ async def entrypoint(ctx) -> None:
             f"direction; you wait for it."
         )
     session.generate_reply(user_input=context_prompt)
+
+    # Inject the slow probes (recall, calendar, alerts) once they land — the
+    # conversation gets them from turn two onward without the greeting paying.
+    async def _inject_slow_context():
+        try:
+            slow = await asyncio.wait_for(asyncio.shield(slow_context_task), timeout=15)
+            if slow:
+                chat_ctx = agent.chat_ctx.copy()
+                chat_ctx.add_message(
+                    role="system",
+                    content=f"Background context (loaded just after the greeting):\n\n{slow}",
+                )
+                await agent.update_chat_ctx(chat_ctx)
+                logger.info("Slow context injected: %d chars", len(slow))
+        except Exception as e:
+            logger.warning("Slow context injection skipped: %s", e)
+
+    session._joelclaw_inject_task = asyncio.create_task(_inject_slow_context())
 
 
 def _save_call_transcript(session: AgentSession, room_name: str) -> None:
