@@ -12,6 +12,7 @@ SIP path: Telnyx (+13606051697) → clanker-001:5060 → LiveKit SIP → this ag
 import asyncio
 import json
 import logging
+import math
 import os
 import random
 import subprocess
@@ -1684,4 +1685,10 @@ if __name__ == "__main__":
         num_idle_processes=1,  # keep a warm process ready for instant pickup
         port=0,                # ephemeral health port — an orphaned worker squatting a
                                # fixed port crash-looped every launchd respawn (2026-07-12)
+        # NEVER shed load: the prod default (0.7 CPU) marked the worker
+        # unavailable whenever flagg was busy with unrelated work, and calls
+        # in those windows rang with no answer (real caller report,
+        # 2026-07-12). Concurrency is already bounded at the carrier
+        # (channel_limit) — this worker's job is to always pick up.
+        load_threshold=math.inf,
     ))

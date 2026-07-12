@@ -37,7 +37,7 @@ efficiency is a charter requirement.
   run_chunks deltas (~2M tokens/day per coverage research), not whole
   transcripts.
 - Quality gate: prototype runs the same day through ds4-local AND the
-  frontier pi model; side-by-side pages decide the default. Frontier likely
+  frontier model — pi with gpt-5.6-terra (Joel-named); side-by-side pages decide the default. Frontier likely
   reserved for the reflector regardless.
 - Defect found en route: `joelclaw sessions search` ssh-targets the stale
   `dark-wizard` hostname and fails fleet-wide — needs a fix (flagg rename
