@@ -2,6 +2,7 @@ import { access, readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, extname, join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
+import { embed } from "@joelclaw/inference-router"
 import { Console, Effect } from "effect"
 import { Inngest } from "../inngest"
 import { respond, respondError } from "../response"
@@ -23,6 +24,8 @@ const DOCS_API_TOKEN = process.env.PDF_BRAIN_API_TOKEN || process.env.pdf_brain_
 const DEFAULT_LIMIT = 10
 const DEFAULT_LIST_LIMIT = 20
 const DEFAULT_RECONCILE_SAMPLE = 20
+const DOCS_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text"
+const DOCS_EMBED_DIMENSIONS = 768
 const THREE_BODY_ROOT = "/Volumes/three-body"
 const BOOKS_ROOT = `${THREE_BODY_ROOT}/books`
 const MANIFEST_FILE_NAME = "manifest.clean.jsonl"
@@ -438,14 +441,30 @@ async function typesenseSearch(
   collection: string,
   params: URLSearchParams
 ): Promise<TypesenseSearchResponse> {
-  const response = await typesenseRequest(
-    apiKey,
-    `/collections/${collection}/documents/search?${params.toString()}`,
-    { method: "GET" }
-  )
+  // A 768-dim vector exceeds Typesense's GET query-string limit. Send vector
+  // searches through multi_search so the vector lives in the request body.
+  const vectorQuery = params.get("vector_query")
+  const response = vectorQuery
+    ? await typesenseRequest(apiKey, "/multi_search", {
+        method: "POST",
+        body: JSON.stringify({
+          searches: [{ collection, ...Object.fromEntries(params.entries()) }],
+        }),
+      })
+    : await typesenseRequest(
+        apiKey,
+        `/collections/${collection}/documents/search?${params.toString()}`,
+        { method: "GET" }
+      )
   if (!response.ok) {
     const errorText = await response.text()
     throw new Error(`Typesense search failed (${response.status}): ${errorText}`)
+  }
+  if (vectorQuery) {
+    const payload = (await response.json()) as { results?: TypesenseSearchResponse[] }
+    const result = payload.results?.[0]
+    if (!result) throw new Error("Typesense multi_search returned no result")
+    return result
   }
   return (await response.json()) as TypesenseSearchResponse
 }
@@ -638,6 +657,43 @@ async function fetchSnippetsForSections(
     .filter((chunk): chunk is DocsChunk => chunk != null)
 }
 
+function formatDocsVectorQuery(embedding: number[], fetchLimit: number): string {
+  const vector = embedding.map((value) => Number.isFinite(value) ? Number(value.toFixed(8)) : 0)
+  return `embedding:([${vector.join(",")}], k:${fetchLimit}, alpha:0.75)`
+}
+
+function buildDocsSearchParams(query: string, limit: number, semanticEmbedding?: number[]): URLSearchParams {
+  const params = new URLSearchParams({
+    q: query,
+    query_by: "retrieval_text,content",
+    per_page: String(limit),
+    include_fields: "id,doc_id,title,chunk_type,chunk_index,heading_path,context_prefix,parent_chunk_id,prev_chunk_id,next_chunk_id,primary_concept_id,concept_ids,taxonomy_version,evidence_tier,parent_evidence_id,source_entity_id,content",
+    exclude_fields: "embedding,retrieval_text",
+    highlight_full_fields: "content,retrieval_text",
+  })
+
+  if (semanticEmbedding) {
+    params.set("vector_query", formatDocsVectorQuery(semanticEmbedding, Math.max(limit * 3, 20)))
+  }
+
+  return params
+}
+
+async function embedDocsQuery(query: string): Promise<number[] | undefined> {
+  try {
+    const result = await embed(query, {
+      priority: "query",
+      model: DOCS_EMBED_MODEL,
+      dimensions: DOCS_EMBED_DIMENSIONS,
+      host: process.env.OLLAMA_URL,
+    })
+    return result.embedding
+  } catch {
+    // Keep docs search usable when the local embedding lane is unavailable.
+    return undefined
+  }
+}
+
 const searchCmd = Command.make(
   "search",
   {
@@ -697,20 +753,12 @@ const searchCmd = Command.make(
           filters.push(`doc_id:[${filterValues}]`)
         }
 
-        const params = new URLSearchParams({
-          q: query,
-          query_by: semantic ? "retrieval_text,content,embedding" : "retrieval_text,content",
-          per_page: String(limit),
-          include_fields: "id,doc_id,title,chunk_type,chunk_index,heading_path,context_prefix,parent_chunk_id,prev_chunk_id,next_chunk_id,primary_concept_id,concept_ids,taxonomy_version,evidence_tier,parent_evidence_id,source_entity_id,content",
-          exclude_fields: "embedding,retrieval_text",
-          highlight_full_fields: "content,retrieval_text",
-        })
-        // ADR-0234: v2 uses pre-computed ollama embeddings (raw float[]).
-        // vector_query with empty [] only works with Typesense auto-embed (v1).
-        // TODO: embed query via ollama and pass actual vector for v2.
-        if (semantic && DOCS_CHUNKS_COLLECTION !== DOCS_CHUNKS_V2_COLLECTION) {
-          params.set("vector_query", `embedding:([], k:${Math.max(limit * 3, 20)}, alpha:0.75)`)
-        }
+        // docs_chunks_v2 stores pre-computed vectors. Typesense only accepts text or
+        // auto-embed fields in query_by, so semantic search must send the query vector.
+        const semanticEmbedding = semantic
+          ? yield* Effect.promise(() => embedDocsQuery(query))
+          : undefined
+        const params = buildDocsSearchParams(query, limit, semanticEmbedding)
         if (filters.length > 0) {
           params.set("filter_by", filters.join(" && "))
         }
@@ -1766,6 +1814,11 @@ const batchReindexCmd = Command.make(
       ]))
     })
 )
+
+export const __docsTestUtils = {
+  buildDocsSearchParams,
+  formatDocsVectorQuery,
+}
 
 export const docsCmd = Command.make(
   "docs",
