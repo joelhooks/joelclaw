@@ -1,0 +1,26 @@
+---
+title: "Build the Multi-Root Graph Projection"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-brain-graph-map.svx"
+blockers:
+  - "./decide-cross-root-namespace-policy.svx"
+  - "./decide-brain-root-discovery.svx"
+created_at: "2026-07-12"
+---
+
+# Build the Multi-Root Graph Projection
+
+## Question
+
+Extend the single-root `graph.json` (704 nodes, 145 edges — see [the closed bugle ticket](./build-wikilink-edges-graph-json.svx)) to the proof's three roots: dark-wizard user brain, `joelclaw` `.brain`, `joelclaw-wiki` `.brain`, read from flagg's local checkouts via the decided discovery mechanism.
+
+- Every node carries root provenance: repo, path, commit at build time (acceptance item 4's data).
+- Cross-root wikilink edges resolve under the decided namespace policy; unresolved and ambiguous links are first-class nodes/flags, not dropped.
+- Schema version bumps; the no-invented-edges property tests extend to cross-root edges; two independent runs stay deterministic.
+- Store-agnostic: graph.json remains the deterministic build artifact regardless of what the store research picks — a store ingests this projection, it doesn't replace it.
+
+Data only — no UI. Executes in `joelhooks/joelclaw-wiki`. Resolved when the three-root graph.json builds from real data with tests, documented shape, and honest cross-root edge counts in the resolution.
