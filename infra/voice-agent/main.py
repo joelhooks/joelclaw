@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -966,6 +967,23 @@ def _caller_allowed(caller_raw: str, allowed_callers: set[str]) -> tuple[bool, s
 
 GUEST_MAX_SECONDS = 600  # guests get ten minutes, then ShitRat wraps it up
 
+# Aussie registers for the improvised per-call greeting — the flavor is a seed,
+# the model invents the line. Never the same opener twice.
+GREETING_FLAVORS = [
+    "proper rhyming slang",
+    "deadpan bush poet",
+    "servo bloke at 6am",
+    "cricket commentator calling Joel's arrival",
+    "weather whinge",
+    "old mate who reckons Joel owes him a beer",
+    "surf report but the surf is Joel's day",
+    "pub trivia host announcing the next round",
+    "tradie on smoko",
+    "nature-documentary narrator spotting a wild Joel",
+    "country footy club raffle announcer",
+    "long-haul trucker on the UHF",
+]
+
 
 def _guest_instructions() -> str:
     """System prompt for unrecognized callers. No soul files, no private context.
@@ -1147,7 +1165,6 @@ async def entrypoint(ctx) -> None:
         _save_call_transcript(session, ctx.room.name)
 
     # Greet with pre-loaded context so ShitRat already knows what's going on
-    greeting = agent_cfg.get("greeting", "Oi, ShitRat here.")
     call_reason = participant.attributes.get("call_reason", "").strip()
     if call_reason:
         # Fleet-initiated outbound call — open with why we're calling
@@ -1157,11 +1174,15 @@ async def entrypoint(ctx) -> None:
             f"Open by saying why you're calling — lead with the reason, keep it tight."
         )
     else:
+        flavor = random.choice(GREETING_FLAVORS)
+        now = datetime.now().strftime("%A %-I:%M %p")
         context_prompt = (
             f"The user just connected to a voice call. Here's your current context:\n\n"
             f"{context}\n\n"
-            f"Greet them naturally — something like: {greeting}\n"
-            f"If there's anything notable (calendar items soon, system alerts), mention it briefly."
+            f"It's {now}. Greet Joel with a FRESH Australian greeting — invent a brand-new "
+            f"opener this call, never a stock line, never one you've used before. "
+            f"Today's register: {flavor}. One short line only, then if there's anything "
+            f"notable (calendar items soon, system alerts), mention it briefly."
         )
     session.generate_reply(user_input=context_prompt)
 
