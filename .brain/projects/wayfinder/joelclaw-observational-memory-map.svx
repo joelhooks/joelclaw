@@ -55,6 +55,7 @@ to understand all of the work that we're doing."
   observation only on new material (cursor over capture stream), compression
   ratios measured. Distillation quality > coverage — noise control is the
   hard half.
+- **Storage decision (accepted 2026-07-12)**: files are truth, databases are projections — [decision record](../../resources/decisions/files-are-truth-databases-are-projections.svx). Observation pages live as `.svx` in git; Typesense/graph/ClickHouse only ever hold rebuildable views. Named exit triggers in the record; do not relitigate when a new database looks fun.
 - **Skills**: `/skill:wayfinder`, `/skill:brain-first-workflow`,
   `/skill:session-search`, `/skill:effect-ts`, `/skill:joel-writing-style`.
 
