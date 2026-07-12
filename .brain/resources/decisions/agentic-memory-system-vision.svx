@@ -1,0 +1,78 @@
+---
+title: "Agentic Memory System Vision"
+type: "decision"
+status: "draft"
+created_at: "2026-07-12"
+---
+
+# Agentic Memory System Vision
+
+## Context
+
+Joelclaw already has durable Brain pages, raw agent sessions, and Typesense search. These parts do not yet form one memory system that agents can read and improve across repositories and machines.
+
+The [Brain graph map](../../projects/wayfinder/joelclaw-brain-graph-map.svx) defines the substrate:
+
+> **The substrate is the network of Git repositories.** The user brain is the dark-wizard repo — a union of Joel's user across machines, persisted in GitHub; it is not a per-machine or network-level brain. Project brains are `.brain/` folders in repos. Machine checkouts are *replicas* that can diverge; divergence is data (sync failure or in-flight work), not a namespace collision. The logical namespace is per-repo; "repo @ machine" is a query dimension — vision now, built later. Ultimately: query all these repositories and their current state on any machine in the joelclaw network.
+
+This matches the fleet sync contract. `origin/main` of `joelhooks/dark-wizard` is the declared source of truth for durable user context. Each checkout is a replica. A durable local edit is real state, even before it is reconciled with `origin/main`.
+
+The adjoining [personal wiki map](../../projects/wayfinder/joelclaw-personal-wiki-map.svx) fixes the product boundary. This is a private work-and-business system. Brain owns durable knowledge. Raw sources keep provenance. The wiki is a readable and agent-testable surface over that knowledge. This decision does not replace that direction.
+
+## Decision
+
+### The memory system is a graph over Git repositories
+
+Dark-wizard is **the** user brain. It represents the union of Joel's durable user context across machines. There is no separate brain for each machine and no abstract network-level user brain above it.
+
+Each project repository may own a project Brain in `.brain/`. The repository is the logical namespace. A checkout on a machine is a replica of that repository, not a new namespace.
+
+Replicas may diverge. We will treat that divergence as data. It may mean a sync failure, an uncommitted edit, or work still in flight. We will not hide it as a naming collision.
+
+The future graph may answer questions by `repo @ machine`. That query dimension is part of the vision, not the constrained proof. The first proof reads three repositories from flagg's local checkouts.
+
+### Mastra's vocabulary names the memory layers
+
+[Mastra's memory overview](https://mastra.ai/docs/memory/overview) separates message history, working memory, semantic recall, and observational memory. Joelclaw maps onto those terms as follows:
+
+| Memory layer | Joelclaw piece | State |
+| --- | --- | --- |
+| Message history | Pi, Claude, and Codex session transcripts and their indexes | Exists today. Raw sessions remain evidence rather than durable Brain truth. |
+| Working memory | The dark-wizard user Brain plus project `.brain/` pages | Exists today as persistent, structured context. One automatic system that selects and supplies the right pages to every agent is aspirational. |
+| Semantic recall | Typesense full-text and semantic indexes over sessions and other captured material | Exists today. A unified recall API that blends Typesense with graph traversal is aspirational. |
+| Observational memory | Bugle observations distilled into durable Brain pages | Aspirational as an active memory layer. The write loop, observer placement, deduplication, and promotion policy belong to a follow-on map. |
+
+This is a mapping, not a decision to adopt Mastra as the implementation. Its vocabulary helps us name responsibilities that joelclaw already splits across several systems.
+
+### Build the read surface before the write loop
+
+The graph surface comes first. It must resolve links across Brain roots, show backlinks, and preserve root, path, and commit provenance. The existing single-root `graph.json` projection is proof that this read model can work.
+
+Active observation processing comes next. Background observers that distill streams into durable pages are not part of this map. Their inputs, execution location, deduplication rules, and promotion policy need their own charted map.
+
+This split prevents the write loop from growing around a graph model we have not yet proven. It also gives agents and Joel a surface where generated memory can later be inspected and corrected.
+
+### Demoability is a design constraint
+
+This system has two jobs.
+
+First, it is working memory infrastructure for Joel and his agents.
+
+Second, it is the system shown in the deliberately overbuilt “fuck Obsidian” second-brain demo.
+
+The graph, provenance, divergent replicas, and memory layers must therefore be legible enough to explain on screen. Demoability does not permit fake data or a parallel demo architecture. The working system is the demo.
+
+Producing the video is out of scope.
+
+## Consequences
+
+- Git repositories remain the durable substrate. The graph indexes them; it does not erase their ownership or provenance.
+- Dark-wizard remains the one user Brain across the fleet.
+- Project knowledge stays local to each repository's `.brain/` unless a deliberate link connects it elsewhere.
+- Machine divergence becomes visible state worth querying instead of an error the namespace model discards.
+- The first implementation is read-heavy: multi-root links, backlinks, provenance, and graph navigation.
+- Typesense and raw transcript archives remain in place. This decision does not replace them.
+- The observation-to-Brain write loop requires a follow-on map before implementation.
+- The wiki's fixed SvelteKit, MDSvX, Effect v4, and XState v5 direction remains unchanged.
+- Privacy and publication boundaries remain owned by the adjoining wiki map and its privacy ticket.
+- The constrained proof does not build distributed `repo @ machine` queries, observation processing, or the video.
