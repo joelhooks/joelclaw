@@ -1,13 +1,15 @@
 ---
 title: "Research Session Capture Coverage Across the Fleet"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
+assignee: "pi worker (steered by claude session 14d06369)"
 labels:
   - "wayfinder:research"
 interaction: "AFK"
 parent: "./joelclaw-observational-memory-map.svx"
 blockers: []
 created_at: "2026-07-12"
+closed_at: "2026-07-12"
 ---
 
 # Research Session Capture Coverage Across the Fleet
@@ -19,3 +21,25 @@ today (pi/claude/codex × blaine/flagg/panda), where they land, how fresh,
 what Typesense indexes, where the change ledger runs, and daily volumes in
 sessions and tokens. Output: a markdown-in-svx summary with per-surface
 receipts and the gaps named. This sizes triggers, budgets, and backfill.
+
+## Resolution (2026-07-12, pi worker Mardy Anoia)
+
+Full matrix with per-cell receipts:
+[session-capture-coverage-2026-07](../../resources/session-capture-coverage-2026-07.svx).
+Headlines:
+
+1. **Healthy core**: Pi + Claude on flagg and blaine capture and index
+   currently (~43 unique conversations/day, newest docs same-day).
+   Typesense: runs_dev 40,949 docs / run_chunks_dev 272,829.
+2. **Codex capture is broken everywhere**: raw transcripts current, index
+   stale since 2026-06-21 (flagg), 06-07 (blaine); a 17.3MB transcript sits
+   unindexed. Graduated to ticket: fix-codex-capture-delivery.
+3. **Panda is effectively uncaptured** (❌/⚠ across surfaces) — consistent
+   with the decommission goal; observer design ignores panda.
+4. **Change ledger covers only Pi on flagg** — commit attribution for
+   claude/codex/blaine is aspiration, not data. Observation schema's
+   `commits` field is best-effort until the ledger spreads.
+
+Observer design implication: v1 observes Pi+Claude on flagg+blaine, where
+capture is proven. Token sizing: indexed deltas (not raw cache-inflated
+usage) are the distillation input — ~2M indexed tokens/day fleet-wide.

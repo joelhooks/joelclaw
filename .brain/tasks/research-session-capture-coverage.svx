@@ -1,0 +1,39 @@
+---
+title: "Task: research session-capture coverage across the fleet"
+type: task-brief
+created: 2026-07-12
+parent: ".brain/projects/wayfinder/research-session-capture-coverage.svx"
+---
+
+# Research session-capture coverage across the fleet
+
+READ-ONLY reconnaissance for the observational-memory write loop
+(`.brain/projects/wayfinder/joelclaw-observational-memory-map.svx`). You are
+on flagg in `~/Code/joelhooks/joelclaw`. Ground truth only — receipts for
+every claim (the exact command + trimmed output). No mutations anywhere: no
+writes to Typesense, no config changes, no commits.
+
+## Questions to answer, per agent surface (pi / claude / codex) × machine (flagg / blaine / panda)
+
+1. **Where do session transcripts land?** Exact paths, formats (jsonl?),
+   naming. Use the `joelclaw` CLI (`joelclaw sessions --help`), the
+   session-search machinery, and direct filesystem inspection. For blaine and
+   panda use read-only ssh (`ssh joel@blaine '<cmd>'`, panda by tailnet IP if
+   MagicDNS fails — see `~/.brain/resources/operator-network-context.svx`).
+2. **What reaches Typesense?** Collections, document counts, freshness
+   (newest doc timestamp per source×machine), what fields are indexed.
+3. **Change ledger status**: where the Pi runtime v1 ledger
+   (session→commit attribution) actually runs today, and what it covers.
+4. **Volumes**: sessions/day and rough tokens/day per surface×machine over
+   the last 7 days — this sizes observer triggers and budgets.
+5. **Gaps, named**: any surface×machine combination that is NOT captured,
+   stale, or unindexed. A gap is a finding, not a failure.
+
+## Output
+
+Write `.brain/resources/session-capture-coverage-2026-07.svx` in THIS repo
+(svx with small frontmatter — never .md, that is the law): a coverage matrix
+(surface × machine → path, capture mechanism, indexed?, freshness, volume),
+receipts folded per cell, and a short "what this means for observer design"
+closing section. Print a DONE summary with the matrix in compact text form
+and your top 3 findings. Do not commit.

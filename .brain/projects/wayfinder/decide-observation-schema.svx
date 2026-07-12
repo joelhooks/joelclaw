@@ -2,6 +2,7 @@
 title: "Decide the Observation Schema and Brain Placement"
 type: "wayfinder_ticket"
 status: "open"
+assignee: "claude (flagg, session 14d06369, grilling with Joel)"
 labels:
   - "wayfinder:grilling"
 interaction: "HITL"

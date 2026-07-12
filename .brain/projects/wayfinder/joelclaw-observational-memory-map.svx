@@ -62,6 +62,8 @@ to understand all of the work that we're doing."
 
 <!-- one line per closed ticket: gist + link -->
 
+- [Research Session Capture Coverage Across the Fleet](./research-session-capture-coverage.svx) — Pi+Claude on flagg+blaine are healthy (~43 conversations/day, same-day indexing); Codex delivery broken everywhere (→ fix-codex-capture-delivery); panda uncaptured (fine, decommissioning); change ledger is Pi-on-flagg only, so `commits` is best-effort elsewhere.
+
 ## Not yet specified
 
 - Reflector condensation policy (cadence, thresholds, citation preservation).
