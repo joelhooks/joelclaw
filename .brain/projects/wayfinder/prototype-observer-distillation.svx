@@ -2,11 +2,12 @@
 title: "Prototype: Distill One Real Day of Sessions"
 type: "wayfinder_ticket"
 status: "open"
+assignee: "pi worker (steered by claude session 14d06369)"
 labels:
   - "wayfinder:prototype"
 interaction: "HITL"
 parent: "./joelclaw-observational-memory-map.svx"
-blockers: ["./decide-observation-schema.svx", "./define-transcript-redaction-boundary.svx"]
+blockers: []
 created_at: "2026-07-12"
 ---
 
