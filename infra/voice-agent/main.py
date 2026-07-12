@@ -1462,4 +1462,6 @@ if __name__ == "__main__":
         entrypoint_fnc=entrypoint,
         prewarm_fnc=prewarm,   # VAD loads at process spawn, not on the caller's clock
         num_idle_processes=1,  # keep a warm process ready for instant pickup
+        port=0,                # ephemeral health port — an orphaned worker squatting a
+                               # fixed port crash-looped every launchd respawn (2026-07-12)
     ))
