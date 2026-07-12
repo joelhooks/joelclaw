@@ -1,0 +1,25 @@
+---
+title: "Bake Graph Quality into Brainbench"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-brain-graph-map.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Bake Graph Quality into Brainbench
+
+## Question
+
+Joel: "bake the QUALITY of the graph into our brainbench (aka wikibench) and have a clear agentic use and testing story for this project."
+
+Extend the bugle map's built [Wikibench](./wikibench-capsule-replay-rubric.svx) (capsules, replay runner, rubric, append-only score log — do NOT rebuild any of it) with a graph leg:
+
+- **Deterministic graph checks**: wikilink resolution correctness against the namespace policy (local-first, global-unique, ambiguous-flagged), provenance completeness per node, orphan rate, unresolved/ambiguity honesty (flagged loudly, never guessed), cross-root edge validity, rebuild determinism.
+- **Agentic recall scenarios**: the testing story for the proposes/disposes contract — a fixture set of real questions ("what's blocking X", "what touched this page recently", "what connects A to B") with expected node sets; score whether Typesense-seeds + graph-expansion surfaces them, with provenance intact. This is the bench expression of the ADR's bar: recall that works in every context.
+- **Score log integration**: graph-quality runs keyed by graph schema version + config label in the same append-only log, so "did schema v3 help recall?" becomes a lookup like the edition bench.
+
+HITL tail like the original wikibench: Joel reacts to the first scored graph report and sets rubric weights. Resolved when the graph leg scores a real build, the recall scenarios run against the live projection, and a baseline is recorded for schema v2.
