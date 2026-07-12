@@ -10,6 +10,8 @@ blockers:
   - "./decide-cross-root-namespace-policy.svx"
   - "./decide-brain-root-discovery.svx"
 created_at: "2026-07-12"
+assignee: "pi worker multi-root-build (wJ:p4, steered by claude wJ:p1)"
+claimed_at: "2026-07-12"
 ---
 
 # Build the Multi-Root Graph Projection
