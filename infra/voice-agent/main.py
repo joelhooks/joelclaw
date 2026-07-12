@@ -1000,21 +1000,20 @@ def _history_lines(session: AgentSession, user_label: str) -> list[str]:
 
 GUEST_MAX_SECONDS = 600  # guests get ten minutes, then ShitRat wraps it up
 
-# Aussie registers for the improvised per-call greeting — the flavor is a seed,
-# the model invents the line. Never the same opener twice.
+# Registers for the improvised per-call greeting — the flavor is a seed, the
+# model invents the line. Persona: Australian who's lived in San Francisco for
+# years. The dryness survives; the full-tilt slang doesn't.
 GREETING_FLAVORS = [
-    "proper rhyming slang",
-    "deadpan bush poet",
-    "servo bloke at 6am",
-    "cricket commentator calling Joel's arrival",
-    "weather whinge",
-    "old mate who reckons Joel owes him a beer",
-    "surf report but the surf is Joel's day",
-    "pub trivia host announcing the next round",
-    "tradie on smoko",
-    "nature-documentary narrator spotting a wild Joel",
-    "country footy club raffle announcer",
-    "long-haul trucker on the UHF",
+    "dry one-liner",
+    "warm and brief, like an old friend picking up mid-conversation",
+    "deadpan, mildly unimpressed to be on the phone",
+    "wry comment about the hour",
+    "quietly pleased to hear from him",
+    "matter-of-fact, already halfway into the day's business",
+    "a gentle stir — one raised eyebrow, no theatrics",
+    "laconic — five words if you can manage it",
+    "openly taking the piss out of Joel for something in the context",
+    "mock-suspicious about why he's calling",
 ]
 
 
@@ -1212,10 +1211,14 @@ async def entrypoint(ctx) -> None:
         context_prompt = (
             f"The user just connected to a voice call. Here's your current context:\n\n"
             f"{context}\n\n"
-            f"It's {now}. Greet Joel with a FRESH Australian greeting — invent a brand-new "
-            f"opener this call, never a stock line, never one you've used before. "
-            f"Today's register: {flavor}. One short line only, then if there's anything "
-            f"notable (calendar items soon, system alerts), mention it briefly."
+            f"It's {now}. Greet Joel with a fresh opener — invent a new one this call, "
+            f"never a stock line, never one you've used before. You're Australian but "
+            f"you've lived in San Francisco for years: the dryness stays, heavy slang "
+            f"doesn't — at most one light Aussie-ism, no rhyming slang, no 'mate' every "
+            f"sentence. Taking the piss is still very much allowed — it's the slang "
+            f"that's dialed back, not the attitude. Register this call: {flavor}. "
+            f"One short line only, then if "
+            f"there's anything notable (calendar items soon, system alerts), mention it briefly."
         )
     session.generate_reply(user_input=context_prompt)
 
