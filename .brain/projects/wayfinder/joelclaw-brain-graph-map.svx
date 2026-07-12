@@ -24,7 +24,7 @@ The map carries execution to a constrained proof. Acceptance:
 5. Backlinks work across roots.
 6. The daily edition keeps publishing — as a node in the graph, not a parallel product.
 
-The proof is the read side of a larger vision this map must keep explicit: a distributed, multi-agent, multi-machine, **agentic-first second brain** — a memory system with active observation processing (Mastra memory frame: message history / working memory / semantic recall / observational memory). The write loop (background observers distilling streams into durable memory) is designed at vision level here and executed by a follow-on map.
+The proof is the read side of a larger vision this map must keep explicit: a distributed, multi-agent, multi-machine, **agentic-first second brain** — a memory system with active observation processing (Mastra memory frame: message history / working memory / semantic recall / observational memory). The write loop (background observers distilling streams into durable memory) is designed at vision level here and executed by a follow-on map — now charted: [Chart the joelclaw Observational Memory Write Loop](./joelclaw-observational-memory-map.svx).
 
 ## Notes
 
