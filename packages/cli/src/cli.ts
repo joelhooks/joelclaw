@@ -191,7 +191,7 @@ const root = Command.make("joelclaw", {}, () =>
             satellite:
               "joelclaw satellite {health|repair-request} [--notify] [--central-ssh joel@panda]",
             sessions:
-              "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--extract] [--machine dark-wizard] [--ssh-target joel@dark-wizard]",
+              "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--extract] [--machine flagg] [--ssh-target joel@flagg]",
             session:
               "joelclaw session search <query> (alias for sessions)",
             docs: "joelclaw docs {add|search|context|list|show|status|enrich|reindex}",

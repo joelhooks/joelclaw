@@ -70,7 +70,7 @@ to understand all of the work that we're doing."
 
 ## Not yet specified
 
-- Reflector condensation policy (cadence, thresholds, citation preservation).
+- Reflector condensation policy — **Joel's frame (2026-07-12): observational memory is a node cluster getting intelligently compressed over time.** The reflector is EDGE-PRESERVING GRAPH COMPACTION, not summarization: replace a dense cluster of session atoms with a supernode carrying the union of the cluster's edges, citations intact; redundancy dies, topology survives. Yields a temporal gradient: recent = full atoms, middle = reflected threads, deep past = promoted durable pages. Benchable as edge preservation in brainbench. This is also the fuck-Obsidian demo: a graph that grows nodes you didn't write and compresses itself visibly.
 - Recall surface design: fattened rhizomatic briefing + a `recall` tool over
   the distilled layer — which agents get it how, on which machines.
 - Brainbench leg for observation quality ("worth recalling" rubric).

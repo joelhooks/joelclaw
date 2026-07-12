@@ -412,7 +412,7 @@ function searchRemote(input: {
   return parseRawSessionSearch({
     parsed: JSON.parse(proc.stdout) as RemoteSearchResponse,
     source: "ssh",
-    machineId: input.sshTarget.includes("dark-wizard") ? "dark-wizard" : input.sshTarget,
+    machineId: input.sshTarget.replace(/^.*@/, "").split(".")[0] || input.sshTarget,
   })
 }
 
@@ -426,7 +426,7 @@ function isLocalMachine(machine: string): boolean {
   const hostname = localHostname()
   if (!hostname) return false
   const normalized = machine.toLowerCase()
-  return hostname === normalized || hostname === `${normalized}.local`
+  return hostname === normalized || hostname.split(".")[0] === normalized.split(".")[0]
 }
 
 function hasLocalTypesenseCredential(): boolean {
@@ -1081,7 +1081,7 @@ const sourceOpt = Options.choice("source", SESSION_SEARCH_SOURCES).pipe(
 )
 
 const machineOpt = Options.text("machine").pipe(
-  Options.withDefault("dark-wizard"),
+  Options.withDefault("flagg"),
   Options.withDescription("Machine filter for Typesense results; use 'all' for every machine")
 )
 
@@ -1091,7 +1091,7 @@ const runtimeOpt = Options.choice("runtime", SESSION_SEARCH_RUNTIMES).pipe(
 )
 
 const sshTargetOpt = Options.text("ssh-target").pipe(
-  Options.withDefault("joel@dark-wizard"),
+  Options.withDefault("joel@flagg"),
   Options.withDescription("SSH target for raw remote Pi session search")
 )
 
@@ -1292,7 +1292,7 @@ const searchCmd = Command.make(
           message,
           code,
           code === "SESSION_SEARCH_SSH_FAILED"
-            ? "Verify SSH access: ssh joel@dark-wizard 'hostname && python3 --version'"
+            ? "Verify SSH access: ssh joel@flagg 'hostname && python3 --version'"
             : message.includes("local session search")
               ? "Verify local Pi/Claude/Codex sessions and Python: python3 --version && find ~/.pi/agent/sessions ~/.claude/projects ~/.codex/sessions -type f -name '*.jsonl' | head"
               : "Check Typesense health and the session indexing runbook",
@@ -1459,17 +1459,17 @@ function sessionsRoot(name: "sessions" | "session") {
     yield* writeEnvelope(respond("sessions", {
       description: "Search captured agent Runs in Typesense and raw local/remote Pi session files",
       commands: {
-        search: "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--runtime pi|codex|claude-code|all] [--extract] [--machine dark-wizard] [--ssh-target joel@dark-wizard] [--limit 8]",
+        search: "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--runtime pi|codex|claude-code|all] [--extract] [--machine flagg] [--ssh-target joel@flagg] [--limit 8]",
         extract: "joelclaw sessions extract <session-id-or-path> --query <topic> [--format json|markdown]",
         chunks: "joelclaw sessions chunks <query> [--source typesense|local|both] [--context-before 2] [--context-after 4]",
         inspect: "joelclaw sessions inspect <session-id-or-path> --around <regex> [--before 20] [--after 80]",
-        signals: "joelclaw sessions signals [--kind friction|preference|decision|praise|any] [--source local|ssh|both] [--machine dark-wizard] [--since 14d] [--limit 20]",
-        friction: "joelclaw sessions friction [--source local|ssh|both] [--machine dark-wizard] [--since 14d] [--limit 20]",
+        signals: "joelclaw sessions signals [--kind friction|preference|decision|praise|any] [--source local|ssh|both] [--machine flagg] [--since 14d] [--limit 20]",
+        friction: "joelclaw sessions friction [--source local|ssh|both] [--machine flagg] [--since 14d] [--limit 20]",
       },
     }, [
       {
-        command: "sessions search <query> --source both --machine dark-wizard --extract",
-        description: "Search dark-wizard sessions and extract bounded task context",
+        command: "sessions search <query> --source both --machine flagg --extract",
+        description: "Search flagg sessions and extract bounded task context",
         params: { query: { required: true, description: "Search terms" } },
       },
       {
