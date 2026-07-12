@@ -69,3 +69,21 @@ efficiency is a charter requirement.
    inference makes rationing unnecessary.
 
 Cadence fine-tuning and the supervisor script are prototype-ticket work.
+
+## Amendment (2026-07-12, Joel, mid-prototype)
+
+**Default distiller is pi with `gpt-5.6-terra`, not the local model.**
+Prototype measurement decided it: ds4-central ran ~546s per batch (~9 min) —
+fine in theory for a background loop, unacceptable as the fleet's memory
+latency in practice ("we need to use pi with gpt-5.6-terra, we can['t] use
+local model for this lol"). ds4-central keeps the cheap high-volume side
+jobs where latency doesn't matter and judgment is shallow: noise-bar
+classification, sensitive-domain flagging, batch pre-filters. Terra writes
+the observation prose.
+
+Privacy note, honestly: with terra, session content transits the provider at
+distillation time. This adds no new exposure class — the transcripts were
+produced in provider conversations to begin with — and the redaction
+resolution's enforcement point was always persistence, not inference. The
+cross-provider wrinkle (Claude transcripts distilled via an OpenAI-family
+model) is noted and accepted.
