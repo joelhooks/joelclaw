@@ -59,6 +59,7 @@ This map adjoins [Chart the Joelclaw Personal Wiki](./joelclaw-personal-wiki-map
 - [Decide the Cross-Root Namespace and Wikilink Resolution Policy](./decide-cross-root-namespace-policy.svx) — lexical scope: bare `[[slug]]` resolves local-root-first, then global-if-unique; ambiguity renders as a visible error; `[[root/slug]]` is the explicit cross-root syntax.
 - [Rename daily.joelclaw.com to brain.joelclaw.com](./rename-daily-to-brain-domain.svx) — done: brain serves the wiki (tailnet-only unchanged), daily 308-redirects, fleet graft + memory updated; acceptance item 1 complete.
 - [Decide Brain-Root Discovery and Registration](./decide-brain-root-discovery.svx) — registry in dark-wizard (`brain-roots.json`, fleet-synced) is truth, crawl audits it loudly; root `name` = wikilink prefix = URL segment; onboarding is one line.
+- [Build the Multi-Root Graph Projection](./build-multi-root-graph-projection.svx) — shipped, schema v2: 863 nodes / 161 edges over the three roots, provenance per node, byte-identical rebuilds; cross-root edges honestly 0 (the syntax is a day old); audit surfaced 17 unregistered brains.
 
 ## Not yet specified
 
