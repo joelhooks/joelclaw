@@ -284,10 +284,9 @@ def _load_edition() -> dict | None:
 
 
 def _loop_brief(loop: dict) -> str:
-    """One spoken-friendly line per loop."""
-    flag = " NEEDS JOEL." if loop.get("needsJoel") else ""
-    why = loop.get("whyItMatters", "").strip()
-    return f"{loop.get('title', 'untitled')} ({loop.get('project', '?')}, {loop.get('state', '?')}).{flag} {why}"
+    """One headline per loop: project, then title. Detail belongs to loop_detail."""
+    flag = " — needs Joel" if loop.get("needsJoel") else ""
+    return f"[{loop.get('project', '?')}] {loop.get('title', 'untitled')}{flag}"
 
 
 class JoelclawVoiceAgent(Agent):
@@ -678,21 +677,26 @@ class JoelclawVoiceAgent(Agent):
     @function_tool
     async def open_loops(self) -> str:
         """Today's open loops from the joelclaw wiki — the prioritized things in flight.
-        Use at the start of planning/grilling conversations or when Joel asks what's open,
-        what matters, or what he should work on."""
+        Use when Joel asks what's open, what matters, or what he should work on.
+        Returns HEADLINES ONLY — give Joel the scannable overview, then zoom with
+        loop_detail on whichever he picks."""
         edition = await asyncio.to_thread(_load_edition)
         if not edition:
             return "The wiki isn't reachable right now — no edition loaded."
         loops = edition.get("loops", [])
         lead = edition.get("lead", {})
-        lines = []
+        lines = [
+            "SPEAK THIS AS HEADLINES: say each project name, then the loop in plain "
+            "ELI5 words — one short breath per loop, no states, no jargon, no detail. "
+            "Then ask which one he wants to zoom into (use loop_detail for that)."
+        ]
         if lead.get("headline"):
-            lines.append(f"Lead story: {lead['headline']} — {lead.get('framing', '')}")
+            lines.append(f"Lead story: {lead['headline']}")
         needs_joel = [l for l in loops if l.get("needsJoel")]
         rest = [l for l in loops if not l.get("needsJoel")]
         for i, loop in enumerate((needs_joel + rest)[:8], 1):
             lines.append(f"{i}. {_loop_brief(loop)}")
-        return "\n".join(lines) if lines else "Edition loaded but no loops in it."
+        return "\n".join(lines) if len(lines) > 1 else "Edition loaded but no loops in it."
 
     @function_tool
     async def loop_detail(self, title_or_number: str) -> str:
@@ -715,8 +719,12 @@ class JoelclawVoiceAgent(Agent):
         if not target:
             return f"No loop matching '{title_or_number}'."
         return (
-            f"{target.get('title')}. Project: {target.get('project')}. State: {target.get('state')}, "
-            f"freshness: {target.get('freshness')}, confidence {target.get('confidence')}. "
+            "EXPLAIN THIS ELI5 — plain words, three short sentences max: what it is, "
+            "why it matters, what happens next. Name the project. No jargon, no "
+            "states/confidence numbers unless Joel asks.\n"
+            f"Title: {target.get('title')}. Project: {target.get('project')}. "
+            f"State: {target.get('state')}, freshness: {target.get('freshness')}, "
+            f"confidence {target.get('confidence')}. "
             f"Why it matters: {target.get('whyItMatters', 'n/a')} "
             f"Next action: {target.get('nextAction', 'n/a')} "
             f"{'This one needs Joel personally.' if target.get('needsJoel') else ''}"
