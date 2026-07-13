@@ -2,7 +2,8 @@
 title: "Decide the Session-Start Briefing Contract for the Distilled Layer"
 type: "question"
 kind: "grilling"
-status: "open"
+status: "closed"
+assignee: "claude steering (flagg, session 14d06369, 2026-07-13)"
 interaction: "HITL"
 parent: "./recall-consumption-brief.svx"
 blockers: []
@@ -45,3 +46,42 @@ bullshit i don't care about." Principles for the grilling:
 4. Vision docs sit at the TOP of the temporal gradient (canon); the
    reflector's monthly promotion feeds them; they outrank everything in
    recall conflicts.
+
+## Answer (2026-07-13, grilled with Joel)
+
+**Memories are skill-shaped, and memory loads in layers.**
+
+Joel's model (verbatim shape): a memory has a very concise title + concise
+description that UNFOLDS into a longer-form (still concise) document with
+graph tendrils into previous memories — exactly the skill
+progressive-disclosure pattern. The layers:
+
+1. **Core memories (fused)**: principles, vision, standing law — loaded
+   directly into the system prompt across the board, for everything. The
+   mechanism ALREADY EXISTS: dark-wizard fleet grafts (CLAUDE.md blocks,
+   .codex/AGENTS.md, .pi/APPEND_SYSTEM.md). What is missing is a curated
+   CANON source: a small set of core-memory svx pages that compile into
+   graft blocks (reflector monthly promotion feeds this layer; it stays
+   deliberately tiny).
+2. **Runtime memory index (ambient, skill-shaped)**: contextual/semantic
+   memories relevant to the current work surface as title+description
+   entries — scoped by repo/work-type, cheap in tokens — possibly literally
+   via each runtime's skill mechanism (claude skills; pi skill-interpolation
+   extension exists; codex equivalent TBD by prototype). The agent unfolds
+   a memory only when work makes it relevant: collision-triggering by
+   shape, not by watcher. This SUPERSEDES the heading-only briefing rec:
+   the briefing = heading (arc/frontier/delta line) + the scoped memory
+   index.
+3. **Unfold (pull, cached)**: opening an index entry loads the page —
+   served fast from cache (file read + qmd/Typesense as the lookup), the
+   graph tendrils (wikilinks/backlinks) visible so the agent can walk to
+   neighboring memories.
+4. **Balance rule**: index entries are budgeted (small N, repo-scoped,
+   interest-decayed via consumption telemetry); bodies never auto-load;
+   core canon stays small enough to read in one breath. Continuity without
+   pollution.
+
+One content brain, three thin injectors: a single `joelclaw briefing`
+computation feeding claude SessionStart, pi extension, codex AGENTS wiring.
+
+Graduates: curate-core-memory-canon; build-memory-skill-index.

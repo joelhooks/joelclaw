@@ -1,0 +1,28 @@
+---
+title: "Build the Memory Skill-Index (runtime memories as unfoldable entries)"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./recall-consumption-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Build the Memory Skill-Index
+
+## Question
+
+Layer 2+3 of the briefing answer: `joelclaw briefing --repo <cwd>` computes
+heading (active arc, frontier, since-last-session delta) + a budgeted,
+repo-scoped memory index (title + one-line description + page pointer per
+entry, skill-shaped), served to three thin injectors: claude SessionStart
+hook, pi extension (evaluate the existing skill-interpolation extension and
+pi-rhizomatic as the vehicle), codex AGENTS wiring. Unfold = cached page
+read (file first, qmd/Typesense lookup) with graph tendrils
+(wikilinks/backlinks) shown. Prototype decides whether the literal skill
+mechanism or plain prompt-index works better per runtime. Budget: small N,
+interest decay hooks reserved for consumption telemetry. Receipt: fresh
+sessions in two different repos wake with DIFFERENT, correctly-scoped
+indexes; opening an entry unfolds the page in one tool call.
