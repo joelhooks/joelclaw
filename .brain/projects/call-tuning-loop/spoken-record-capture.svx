@@ -1,0 +1,142 @@
+---
+title: "Spoken record capture"
+type: "asset"
+parent: "./call-tuning-loop-brief.svx"
+created_at: "2026-07-13"
+privacy: "private"
+source_version: "livekit-agents 1.4.2"
+---
+
+# Spoken record capture
+
+## Decision
+
+Capture the judge transcript from `AgentSession`'s
+`conversation_item_added` event as each user or assistant message is committed.
+For assistant messages, persist `item.text_content` plus `item.interrupted`.
+In livekit-agents 1.4.2 this is the public hook downstream of synchronized audio
+playout: interrupted assistant text is replaced with the synchronizer's
+forwarded text before the message enters history.
+
+Do **not** reconstruct the judge input from `session.history` only when the call
+closes. The history currently receives the same committed messages, but live
+capture gives us an immutable per-message receipt, stable ordering, interruption
+metadata, and partial-call durability.
+
+```python
+from livekit.agents import ConversationItemAddedEvent
+from livekit.agents.llm import ChatMessage
+
+spoken_seq = 0
+
+@session.on("conversation_item_added")
+def on_spoken_item(event: ConversationItemAddedEvent) -> None:
+    global spoken_seq
+    item = event.item
+    if not isinstance(item, ChatMessage) or item.role not in ("user", "assistant"):
+        return
+    text = (item.text_content or "").strip()
+    if not text or _is_synthetic_prompt(text):
+        return
+    call_tracker.track_spoken_item(
+        room=ctx.room.name,
+        seq=spoken_seq,
+        message_id=item.id,
+        speaker=item.role,
+        text=text,
+        interrupted=bool(item.interrupted),
+        committed_at_ms=int(event.created_at * 1000),
+    )
+    spoken_seq += 1
+```
+
+Use one handler shared by private, guest, public, and synthetic session setup so
+the recording contract cannot drift between tiers.
+
+## Why this is the honest record
+
+- The package exposes `user_input_transcribed` for interim/final caller STT and
+  `conversation_item_added` for committed user and assistant messages
+  (`infra/voice-agent/.venv/lib/python3.14/site-packages/livekit/agents/voice/events.py:84-95,115-121,152-155`). The former is useful for live captions; the latter is the judge record.
+- On assistant interruption, the pipeline cancels generation, clears buffered
+  audio, waits for playout, and replaces generated text with
+  `playback_ev.synchronized_transcript`
+  (`.../voice/agent_activity.py:2117-2135`). It then creates the assistant
+  `ChatMessage` from that `forwarded_text`, sets `interrupted`, and emits
+  `conversation_item_added` (`.../voice/agent_activity.py:2142-2153`). If the
+  interruption lands before the first audio frame, `forwarded_text` becomes
+  empty and no assistant message is committed. Thus interrupted speech is
+  truncated after playout starts, but a pre-playout turn is correctly dropped.
+- The synchronizer returns the full pushed text only after uninterrupted
+  playback; otherwise it returns only text forwarded at speaking pace
+  (`.../voice/transcription/synchronizer.py:268-291`). Its audio wrapper passes
+  that value into the playout-finished event
+  (`.../voice/transcription/synchronizer.py:574-596`).
+- `AgentSession` inserts the message into global history and emits the event in
+  the same method (`.../voice/agent_session.py:1334-1336`). So history is not a
+  separate source of truth; the event is the durable capture seam for the same
+  post-playout item.
+- `speech_created` fires when `say()`/`generate_reply()` creates a handle, before
+  playout. `SpeechHandle.wait_for_playout()` and its done callback indicate that
+  a multi-step speech is done but do not supply the spoken text
+  (`.../voice/events.py:191-201`; `.../voice/speech_handle.py:156-177`). Neither
+  is the transcript hook.
+- Official docs agree: synchronized transcription stops and is truncated when
+  interrupted, and `conversation_item_added` reports text committed to chat
+  history: [Text and transcriptions](https://docs.livekit.io/agents/multimodality/text/),
+  [Events and error handling](https://docs.livekit.io/reference/agents/events/).
+
+## Convex carrier
+
+The existing `addTurn.transcriptLine` is **not** the right durable carrier as
+implemented:
+
+1. Python accepts `transcriptLine` in the outgoing payload
+   (`infra/voice-agent/call_tracker.py:87-92`), but no session handler currently
+   sends it.
+2. Convex uses it only to update the session's last-12-line `transcriptTail`
+   (`apps/live-dashboard/convex/calls.ts:36-50`).
+3. It is omitted from the inserted `turns` row
+   (`apps/live-dashboard/convex/calls.ts:51-54`), and `turns` has no transcript
+   field in `apps/live-dashboard/convex/schema.ts:16-24`.
+4. Latency metrics call `addTurn` independently, so those rows are metric
+   observations, not a reliable one-row-per-spoken-message lifecycle.
+
+Add an append-only `spokenItems` table (preferred) or a dedicated
+`calls:addSpokenItem` mutation. Required judge fields:
+
+```text
+sessionRoom, seq, messageId?, speaker(user|assistant), text,
+interrupted, committedAt
+```
+
+Index by `(sessionRoom, seq)`. Keep `transcriptTail` as dashboard convenience,
+not judge evidence. If schema churn must be minimized, `transcriptLine` can
+remain the request field name, but the mutation must persist it with speaker,
+sequence, and interruption metadata; a bare string on a metric turn is
+insufficient.
+
+## Receipt check
+
+The claimed reproduction does **not** reproduce from the file currently on
+disk. `/Users/joel/.joelclaw/workspace/memory/voice/2026-07-12-151052.md:33-42`
+contains “The six that need you:”, all six numbered items, and the closing
+question. The file mtime is the call timestamp (`2026-07-12 15:10:52 -0700`).
+Therefore this research does not assert that `session.history` dropped that
+list. The durable finding is narrower: close-time history is a weak receipt
+shape, while live `conversation_item_added` capture exposes the package's
+post-playout/truncated message and preserves interruption metadata.
+
+## Judge-build contract
+
+- Read `spokenItems` ordered by `seq`.
+- Exclude synthetic user prompts at capture using the existing
+  `_SYNTHETIC_PROMPTS` rule.
+- Render user and assistant messages exactly as stored; do not re-expand an
+  interrupted assistant turn from LLM output.
+- Include `interrupted` in judge evidence and failure taxonomy.
+- Treat a missing/empty spoken record as `unscorable`, not as a clean call.
+- Canary before rollout: force an assistant interruption mid-list, assert the
+  persisted assistant text ends near the audible cutoff, and compare it with
+  the recording. Keep the custom `TextOutput` adapter as a fallback only if
+  that canary proves `conversation_item_added` diverges from audio.

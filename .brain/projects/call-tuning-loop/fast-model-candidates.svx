@@ -52,6 +52,27 @@ OpenRouter values below are live one-week figures observed 2026-07-13. They move
 - Current provider data shows low tool-call error, including 0% on the small Azure EU sample, 0.14% on Azure, and 1.08% on OpenAI.
 - Practitioner evidence conflicts on latency. [WildRun AI](https://wildrunai.com/blog/llm-comparison-voice-agents-2026) reports the full GPT-4.1 around 450ms and calls it the safest production default for tool-heavy voice. A [small independent streaming test](https://www.kunalganglani.com/blog/llm-api-latency-benchmarks-2026) measured GPT-4.1 Mini near 2.4s. That disagreement is exactly why this candidate belongs in a real-call A/B rather than being selected from a chart.
 
+## Joel's added cells
+
+Joel added three LOW-reasoning cells after the first ranking. All three exact slugs exist in OpenRouter's live model catalog, advertise tool support, and accept `reasoning.effort: "low"`:
+
+| Trial cell | OpenRouter p50 TTFT, best provider | Observed tool-call error | Price / 1M input → output | Normalized call cost* | Read |
+|---|---:|---:|---:|---:|---|
+| **`x-ai/grok-4.5`**, LOW | **0.91s** | 0.66–0.82% | $2 → $6 | **$0.0830** | Credible tool cell, but not faster on the current headline than the first three |
+| **`openai/gpt-5.6-luna`**, LOW | **1.64s** | 0.11–2.76% | $1 → $6 | **$0.0430** | Cheap 5.6 cell; current aggregate TTFT is slower than our real-call baseline median |
+| **`openai/gpt-5.6-terra`**, LOW | **1.53s** | 0.78–4.34% on providers with reported latency | $2.50 → $15 | **$0.1075** | Higher-capability cell, not a published-speed winner |
+
+Receipts observed 2026-07-13:
+
+- [Grok 4.5 on OpenRouter](https://openrouter.ai/x-ai/grok-4.5): exact slug `x-ai/grok-4.5`; 0.91s best-provider p50; xAI provider tool-call error 0.82% and xAI ZDR 0.66%; $2/$6 per million tokens.
+- [GPT-5.6 Luna on OpenRouter](https://openrouter.ai/openai/gpt-5.6-luna): exact slug `openai/gpt-5.6-luna`; 1.64s best-provider p50; tool-call error 0.11% on Azure EU, 0.54% on Azure, and 2.76% on OpenAI; $1/$6 per million tokens.
+- [GPT-5.6 Terra on OpenRouter](https://openrouter.ai/openai/gpt-5.6-terra): exact slug `openai/gpt-5.6-terra`; 1.53s best-provider p50; tool-call error 0.78% on Azure and 4.34% on OpenAI; $2.50/$15 per million tokens. OpenRouter also displays 0% for Azure EU, but that endpoint currently has no reported latency or throughput, so it is excluded from the comparison range.
+- OpenRouter's [reasoning configuration](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) uses `{"reasoning":{"effort":"low"}}`. The live catalog reports LOW support for all three. Grok requires reasoning and defaults to HIGH; Luna and Terra default to MEDIUM, so the trial must set LOW explicitly.
+
+**Updated ranking:** the published data does **not** displace the original top three. Keep Haiku 4.5 first, GPT-5.4 Mini second, and GPT-4.1 Mini third. Put Grok 4.5 next as the strongest added cell. Luna and Terra remain useful Joel-requested behavior/quality probes, but their current aggregate OpenRouter p50 TTFT is above the existing shortlist and above our 1.28s real-call median. OpenRouter does not break its public latency chart down by reasoning effort, so LOW may perform better than these mixed-traffic figures; the real-call A/B decides it.
+
+\*Same normalized ten-turn call used above: 40,000 input + 500 output tokens. Reasoning tokens are billed as output, so LOW trials may cost more than this text-only estimate.
+
 ## Trial gates
 
 Use the same recorded call set and tool schemas for every model. A model advances only if it:

@@ -34,3 +34,11 @@ spoken-sync truncation of interrupted messages in session.history. The
 observation pipeline should not treat session.history as the complete spoken
 record — per-turn capture (the Convex turn rows / transcription events) is
 the honest source for what was actually said aloud.
+
+### Correction (2026-07-13)
+
+The "interrupted turns lose content" claim above was a steering-session grep
+artifact (`grep '^\*\*'` dropped list lines under speaker lines) — the content
+was present. Verified by the call-tuning-loop spoken-record research, which
+still recommends `conversation_item_added` append-only capture as the honest
+judge source (receipts: `.brain/projects/call-tuning-loop/spoken-record-capture.svx`).

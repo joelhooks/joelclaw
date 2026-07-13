@@ -39,7 +39,8 @@ driving it.
 
 ## Decision ledger
 
-- **2026-07-13 — Fast-model A/B ranking:** trial `anthropic/claude-haiku-4.5` first, `openai/gpt-5.4-mini` with reasoning minimized/disabled second, and `openai/gpt-4.1-mini` third; hold Gemini 3.1 Flash Lite until tool-call reliability improves or Exacto routing proves otherwise. Receipt: [fast-model-candidates](./fast-model-candidates.svx).
+- **2026-07-13 — Fast-model A/B ranking:** trial `anthropic/claude-haiku-4.5` first, `openai/gpt-5.4-mini` with reasoning minimized/disabled second, and `openai/gpt-4.1-mini` third; hold Gemini 3.1 Flash Lite until tool-call reliability improves or Exacto routing proves otherwise. Receipt: [fast-model-candidates](./fast-model-candidates.svx). Amended (Joel): grok-4.5 and gpt-5.6-luna|terra:low join the trial cells.
+- **2026-07-13 — Honest spoken record:** judge from append-only `conversation_item_added` spoken items, not close-time `session.history` or the rolling `transcriptTail`; interrupted assistant text is LiveKit's synchronized playout transcript. Receipt: [spoken-record-capture](./spoken-record-capture.svx).
 
 ## Not yet specified
 
