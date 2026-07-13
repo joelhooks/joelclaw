@@ -88,11 +88,20 @@ async function indexObservations(rebuild: boolean) {
     })
     if (!cleared.ok) throw new Error(`Clear observations projection failed (${cleared.status}): ${await cleared.text()}`)
   }
-  const docs = readdirSync(OBSERVATIONS_DIR, { withFileTypes: true })
+  const paths = readdirSync(OBSERVATIONS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".svx"))
     .map((entry) => join(OBSERVATIONS_DIR, entry.name))
     .filter((path) => /^type:\s*observation\s*$/m.test(readFileSync(path, "utf8")))
-    .map(parseObservation)
+  // One invalid page must not strand the batch: index the valid, report the broken loudly.
+  const skipped: Array<{ file: string; error: string }> = []
+  const docs = paths.flatMap((path) => {
+    try {
+      return [parseObservation(path)]
+    } catch (error) {
+      skipped.push({ file: path, error: error instanceof Error ? error.message : String(error) })
+      return []
+    }
+  })
     .sort((a, b) => a.slug.localeCompare(b.slug))
   if (docs.length > 0) {
     const response = await fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents/import?action=upsert`, {
@@ -103,7 +112,7 @@ async function indexObservations(rebuild: boolean) {
     const failures = results.filter((result) => !result.success)
     if (failures.length) throw new Error(`Index observations failed for ${failures.length} documents: ${failures[0].error ?? "unknown error"}`)
   }
-  return { collection: COLLECTION, directory: OBSERVATIONS_DIR, rebuilt: rebuild, indexed: docs.length }
+  return { collection: COLLECTION, directory: OBSERVATIONS_DIR, rebuilt: rebuild, indexed: docs.length, skipped }
 }
 
 export async function searchObservations(query: string, limit: number, machine: string, runtime: string) {
