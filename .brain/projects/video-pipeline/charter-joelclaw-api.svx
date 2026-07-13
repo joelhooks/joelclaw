@@ -1,0 +1,16 @@
+---
+title: "Charter joelclaw-api"
+type: "question"
+kind: "grilling"
+status: "open"
+interaction: "HITL"
+parent: "./video-pipeline-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Charter joelclaw-api
+
+## Question
+
+Joel named a new component while answering the Convex-model question (2026-07-13): **joelclaw-api**, the application layer that owns Convex mutations for the video pipeline and is "GENERALLY USEFUL for joelclaw." His stack spec, verbatim intent: Hono (probably), pocock-quality TypeScript 7, effect-smol (Effect v4), XState v5, oxfmt/oxlint/ultracite — with MCP and CLI coverage eventually. Decide enough to unblock the pipeline: where it lives (new repo like joelclaw-video, or a package/app in the monorepo), what phase-1 surface the video pipeline needs from it (create/update video resource, flip lifecycle/visibility, tombstone), how it talks to Convex (client of `apps/web/convex` mutations vs owning its own), how Inngest functions call it (HTTP on flagg? direct import?), and auth for agent callers. This is bigger than the video effort — if the grill reveals a full charter's worth of scope, spin it into its own brief and leave this question holding only what the pipeline needs.
