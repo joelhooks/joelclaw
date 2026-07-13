@@ -3,7 +3,8 @@ title: "Draft the Judge Rubric and Failure Taxonomy"
 type: "question"
 kind: "prototype"
 interaction: "HITL"
-status: "open"
+status: "closed"
+closed_at: "2026-07-13"
 assignee: "pi worker (wE:p6, herdr, 2026-07-13)"
 parent: "./call-tuning-loop-brief.svx"
 blockers: []
@@ -25,3 +26,13 @@ scored by hand) Joel can argue with. Resolved when Joel signs the rubric.
 ## Prototype ready (2026-07-13)
 
 [Review the scored rubric, failure taxonomy, and NEEDS-JOEL decisions](./judge-rubric-prototype.svx).
+
+## Answer (2026-07-13)
+
+Rubric signed by Joel: 8 dimensions (coherent/grounded, warm/alive,
+brief/listenable, plain speech, honest tool+silence handling, repair, line/mode
+fit, public piss-taking), 13-tag failure taxonomy, N/O-excluded means, four
+hard-fails, bland-caps-at-2 on the public line. All eight open rulings resolved
+per the Signed rulings section of
+[judge-rubric-prototype](./judge-rubric-prototype.svx). Three hand-scored calls
+stand as the judge's calibration examples.

@@ -1,0 +1,37 @@
+---
+title: "Worker task: build the judge — Inngest + pi dispatch"
+type: "asset"
+parent: "../projects/call-tuning-loop/build-judge-function.svx"
+created_at: "2026-07-13"
+privacy: "private"
+---
+
+Work the claimed question `.brain/projects/call-tuning-loop/build-judge-function.svx`.
+Governing law: `infra/voice-agent/VISION.md` (the judge is autonomous-tier:
+scoring and tagging only; it changes nothing).
+
+The SIGNED rubric + calibration examples:
+`.brain/projects/call-tuning-loop/judge-rubric-prototype.svx` (including the
+Signed rulings section — N/O-excluded means, four hard-fails, timing-receipt
+requirement for silent-tool-chain, clean-call eligibility, bland-caps-at-2).
+
+Build:
+1. `voice-call-judge` Inngest function (host role): triggered by
+   voice/public-call.completed AND a new voice/private-call.completed-style
+   path if one exists (inspect voice-call-completed.ts — do NOT disturb its
+   memory-pipeline emit). Dispatches the judging through the repo's pi
+   agent-dispatch pattern (inspect system/agent-dispatch + agentTaskRun);
+   default cheap tier; escalation per VISION.md logged in the result.
+2. Judge prompt: rubric verbatim + the three calibration scores as few-shot;
+   inputs = transcript + Convex turn rows (timing receipts). Output schema:
+   per-dimension scores w/ justification quotes, taxonomy tags, hard-fail
+   flags, clean/clean-so-far label.
+3. Write scores to the Convex analyses row (mutation addAnalysis /
+   judgeStatus done) and surface on the dashboard call cards.
+4. A backlog runner (one-shot script or fn) to judge the existing corpus.
+Constraints: append-only in index.ts/index.host.ts (HEAVY unrelated dirty
+state in the repo — touch ONLY your files, never main.py, no commits, no
+launchctl, no restarts — steering deploys). Acceptance: bunx tsc --noEmit,
+biome on touched packages, bun test on anything you add.
+Then: `## Answer` + status closed on the question, ledger line on the brief.
+Work autonomously, do not commit, print a DONE summary.

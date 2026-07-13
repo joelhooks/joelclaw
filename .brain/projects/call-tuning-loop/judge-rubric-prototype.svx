@@ -273,6 +273,18 @@ metric rows: EOU 502ms (one sample), LLM TTFT 1,549ms (one), TTS TTFB 186–196m
 8. **Character floor:** is a technically correct but bland public call a `3` or
    a failure because the public line exists partly to feel alive?
 
+## Signed rulings (Joel, 2026-07-13)
+
+All eight NEEDS-JOEL items resolved, steering recommendations approved wholesale:
+1. N/O excluded from the mean. 2. Equal weights (revisit with judge data).
+3. Hard-fail set confirmed as the four; unsupported diagnosis blocks "clean"
+only. 4. Public piss-taking stays its own dimension; private wit folds into
+warmth. 5. Boundary shorthand acceptable in speech — tag, never penalize.
+6. silent-tool-chain needs timing receipts to score; transcript-only → review.
+7. "Clean call" requires observed tool/repair behavior; short pokes get
+"clean-so-far". 8. Bland public calls cap at 2 — the public line exists
+partly to feel alive. **Rubric signed.**
+
 ## Provenance and limits
 
 - The “46-turn” call has 46 Convex metric rows but 28 transcript messages. This
