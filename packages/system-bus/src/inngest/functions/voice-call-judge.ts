@@ -152,7 +152,7 @@ const sessionDetail = makeFunctionReference<
     turns: TurnRow[];
     analysis: unknown;
   } | null
->("calls:sessionDetail");
+>("callTelemetry:sessionDetail");
 
 const addAnalysis = makeFunctionReference<
   "mutation",
@@ -187,7 +187,7 @@ const addAnalysis = makeFunctionReference<
     createdAt: number;
   },
   unknown
->("calls:addAnalysis");
+>("callTelemetry:addAnalysis");
 
 function asTrimmedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";

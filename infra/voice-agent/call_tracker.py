@@ -79,7 +79,7 @@ def _caller_hash(caller: str) -> str:
 
 
 def track_session_start(room: str, tier: str, caller: str) -> None:
-    _fire("calls:upsertSessionStart", {
+    _fire("callTelemetry:upsertSessionStart", {
         "room": room, "tier": tier, "callerHash": _caller_hash(caller), "startedAt": int(time.time() * 1000)
     })
 
@@ -89,15 +89,15 @@ def track_turn(room: str, **metrics: Any) -> None:
     payload = {key: value for key, value in metrics.items() if key in allowed and value is not None}
     payload["room"] = room
     payload.setdefault("ts", int(time.time() * 1000))
-    _fire("calls:addTurn", payload)
+    _fire("callTelemetry:addTurn", payload)
 
 
 def track_session_end(room: str, reason: str) -> None:
-    _fire("calls:endSession", {"room": room, "reason": reason, "endedAt": int(time.time() * 1000)})
+    _fire("callTelemetry:endSession", {"room": room, "reason": reason, "endedAt": int(time.time() * 1000)})
 
 
 def _heartbeat(room: str) -> None:
-    _fire("calls:heartbeat", {"room": room, "ts": int(time.time() * 1000)})
+    _fire("callTelemetry:heartbeat", {"room": room, "ts": int(time.time() * 1000)})
 
 
 async def _heartbeat_loop(room: str) -> None:

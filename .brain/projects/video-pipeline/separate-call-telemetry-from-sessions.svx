@@ -36,3 +36,36 @@ deploy: repoint system-bus (voice-call-judge, voice-public-call-analyze) and
 infra/voice-agent/call_tracker.py mutation names; live-dashboard read-client
 conversion deferred to the HTTP surface. Deploying only from joelclaw-api per
 the DO-NOT.
+
+## Worker completion — new custody surface deployed (2026-07-13)
+
+The partitioned worker slice is complete. `joelclaw-api` now owns and has
+deployed `callTelemetry:upsertSessionStart`, `heartbeat`, `addTurn`,
+`endSession`, `addAnalysis`, `activeSessions`, `recentSessions`,
+`sessionDetail`, `purgeOlderThan`, and internal `purgeExpired`. The deployed
+schema adds only `callSessions`, `callTurns`, and `callAnalyses`; the pre-edit
+schema hash remained unchanged until the append, so there was **no schema.ts
+coordination conflict**. `convex/crons.ts` runs the internal seven-day purge
+daily at 09:15 UTC.
+
+Voice source writers now name the new module: `infra/voice-agent/call_tracker.py`,
+`voice-call-judge.ts`, `voice-public-call-analyze.ts`, and the judge backlog
+script all use `callTelemetry:*`. `main.py` was not touched. A synthetic
+`callSessions` mutation deployed from `joelclaw-api` only, read back through
+`callTelemetry:sessionDetail`, then cleaned up through `purgeOlderThan`.
+`joelclaw-api` tsgo + tsc and Bun tests pass; focused ultracite/oxfmt passes;
+`joelclaw` root TypeScript and the call-tracker unit tests pass. Full-repo
+`joelclaw-api` lint/format still reports the custody scaffold's pre-existing
+failures outside this slice.
+
+**Question deliberately remains open for the custody session.** Live read-only
+inventory found 23 legacy telemetry documents in `sessions`, 343 in `turns`,
+and 24 in `analyses`; none were migrated or deleted by this worker. Custody
+still owns that data transfer, restoration of `sessions` to Better Auth-only,
+and removal/retirement of the legacy live-dashboard Convex deployer. No voice
+agent or system-bus process was restarted here, so runtime source rollout also
+remains a steering operation. The reactive queries intentionally retain the
+legacy dashboard's full `callerHash` / `transcriptTail` projection; they are
+acceptable only on the current private Convex exposure and need an auth or
+privacy projection before any broader API exposure. Manual `purgeOlderThan` is
+internal-only; clients cannot choose an arbitrary destructive cutoff.
