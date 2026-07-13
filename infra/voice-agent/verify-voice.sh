@@ -89,6 +89,22 @@ typesense_healthy() {
 
 wiki_healthy() { curl -fsS --max-time 5 http://127.0.0.1:8790/latest.json >/dev/null; }
 
+recall_tool_healthy() {
+  local root output
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  command -v joelclaw >/dev/null || return 1
+  grep -q 'async def recall_work' "$root/main.py" || return 1
+  output="$(cd "$root" && uv run python - <<'PY'
+from voice_recall import MEMORY_DOWN, NOTHING_DISTILLED, run_recall_work
+result = run_recall_work("*", days=7, caller_verified=False)
+if result in {MEMORY_DOWN, NOTHING_DISTILLED}:
+    raise SystemExit(1)
+print(result)
+PY
+)" || return 1
+  [[ -n "$output" ]]
+}
+
 balance_check() {
   local key body credit
   key="$(lease telnyx_api_key)" || return 1
@@ -140,6 +156,7 @@ done
 probe 'LiveKit worker dispatch registered' live_dispatch
 probe 'no recent voice-agent FATAL crash loop' no_recent_fatal
 probe 'Typesense healthy' typesense_healthy
+probe 'voice recall tool registered with non-empty observation index' recall_tool_healthy
 warn_probe 'wiki edition endpoint healthy' wiki_healthy
 probe 'Telnyx available credit at least $10' balance_check
 warn_probe 'Telnyx available credit at least $25' balance_warn

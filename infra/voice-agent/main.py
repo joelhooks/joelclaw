@@ -22,6 +22,7 @@ from pathlib import Path
 
 import yaml
 import call_tracker
+from voice_recall import run_recall_work
 from livekit.agents import Agent, AgentSession, RoomInputOptions, WorkerOptions, cli, function_tool
 from livekit.plugins import deepgram, elevenlabs, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.english import EnglishModel
@@ -170,6 +171,7 @@ You are speaking over the phone via SIP. Adapt your soul/personality for VOICE:
 - Numbers and times should be spoken naturally: "three thirty" not "15:30".
 - If asked to do something you can't do by voice, say "I'll add that as a task" and use add_task.
 - You have tools for Joel's calendar, tasks, system health, vault search, email, and events.
+- Use recall_work for questions about what we did or decided in earlier work.
 - You can search Joel's Slack, read threads, and — ONLY when Joel explicitly directs it on this call — reply as him. Always read the exact reply back and get a yes first.
 - You can list available voices and switch your voice mid-conversation.
 - You can sample voices by speaking a test phrase in different voices.
@@ -339,10 +341,16 @@ def _loop_brief(loop: dict) -> str:
 
 
 class JoelclawVoiceAgent(Agent):
-    def __init__(self, tts_instance: elevenlabs.TTS, original_voice_id: str) -> None:
+    def __init__(
+        self,
+        tts_instance: elevenlabs.TTS,
+        original_voice_id: str,
+        caller_verified: bool | None = None,
+    ) -> None:
         super().__init__(instructions=build_system_instructions())
         self._tts = tts_instance
         self._original_voice_id = original_voice_id
+        self._caller_verified = caller_verified
 
     @function_tool
     async def list_voices(self) -> str:
@@ -862,6 +870,17 @@ class JoelclawVoiceAgent(Agent):
     # --- Long-term memory recall (Typesense via joelclaw CLI) ---
 
     @function_tool
+    async def recall_work(self, query: str, days: int = 7) -> str:
+        """Recall what we did or decided in recent work. Returns speech-ready gists."""
+        return await asyncio.to_thread(
+            run_recall_work,
+            query,
+            days,
+            self._caller_verified,
+            env=_tool_env(),
+        )
+
+    @function_tool
     async def recall(self, query: str) -> str:
         """Search long-term memory (Typesense) for past observations, decisions, and context.
         Use when Joel references something from earlier or you need historical context."""
@@ -1053,6 +1072,15 @@ def _caller_allowed(caller_raw: str, allowed_callers: set[str]) -> tuple[bool, s
     if not caller:
         return False, caller
     return caller in allowed_callers, caller
+
+
+def _caller_is_verified_joel(caller: str, joel_phone_number: str | None = None) -> bool:
+    """Verify Joel by exact normalized Telnyx caller ID; missing identity fails closed."""
+    expected = _normalize_caller(
+        joel_phone_number if joel_phone_number is not None else os.environ.get("JOEL_PHONE_NUMBER", "")
+    )
+    actual = _normalize_caller(caller)
+    return bool(expected and actual and expected == actual)
 
 
 def prewarm(proc) -> None:
@@ -1658,7 +1686,13 @@ async def entrypoint(ctx) -> None:
             logger.info("METRIC eou delay=%.2fs", getattr(m, "end_of_utterance_delay", -1.0))
             call_tracker.track_turn(ctx.room.name, eouDelayMs=int(getattr(m, "end_of_utterance_delay", 0) * 1000))
 
-    agent = JoelclawVoiceAgent(tts_instance, original_voice_id)
+    # Tool access follows the private-line allowlist, but sensitive memory has a
+    # narrower edge: the normalized caller ID must exactly match Joel's number.
+    agent = JoelclawVoiceAgent(
+        tts_instance,
+        original_voice_id,
+        caller_verified=_caller_is_verified_joel(caller),
+    )
     await session.start(agent=agent, room=ctx.room, room_input_options=_room_input_options())
     _arm_cover(session, asyncio.get_running_loop())
     call_tracker.track_session_start(ctx.room.name, "private", caller)
