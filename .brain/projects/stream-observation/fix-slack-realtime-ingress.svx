@@ -19,3 +19,7 @@ daemon unreachable on flagg, Typesense realtime docs end 2026-05-31, Inngest
 POST failures silently swallowed. Diagnose why the daemon stopped, restore
 it under supervision (launchd/canary — silent drift doctrine), and make the
 Inngest handoff failure loud. Receipts in the ingress inventory.
+
+## Status (2026-07-13): staged, human canary pending
+
+Migration gap confirmed (never ported to flagg). Daemon revived supervised, loud handoff, worker test posts flowed and were cleaned up. REMAINING: Joel posts 'flagg Slack ingress human canary' in #brain-joel from his real client; if no Inngest event, the admin-UI contingency checklist is in the task brief output. Also surfaced: a separate Typesense embedding failure downstream (follow-up).

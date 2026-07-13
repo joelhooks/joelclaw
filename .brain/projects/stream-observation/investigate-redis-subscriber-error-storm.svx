@@ -36,3 +36,7 @@ non-storm `source, action` groups survived the cleanup with zero count
 decreases at the preservation cutoff.
 
 Full receipt: [Kill the storm, clean the debris](../../tasks/kill-redis-error-storm.svx).
+
+## Resolution (2026-07-13)
+
+Root cause fixed in gateway redis channel; error-emission budget added (cap + summary row — no future storms). ClickHouse debris cleaned: final storm query 0 rows, non-storm telemetry preserved. Unblocks build-observer-telemetry-watch.
