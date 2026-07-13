@@ -1,0 +1,16 @@
+---
+title: "Scaffold joelclaw-api"
+type: "question"
+kind: "task"
+status: "open"
+interaction: "AFK"
+parent: "./video-pipeline-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Scaffold joelclaw-api
+
+## Question
+
+Stand up `joelhooks/joelclaw-api` per the [charter](./charter-joelclaw-api.svx): jj-colocated repo at `~/Code/joelhooks/joelclaw-api`; Bun + `bun test`; tsgo (TS 7) typechecking with tsc fallback wired in CI-style check script; effect-smol (Effect v4); XState v5; ultracite with its ox presets (oxlint/oxfmt underneath — verify the preset wiring actually exists in current ultracite and record the config); Effect HttpApi skeleton with one health endpoint served via Bun/Hono on a fixed port (pick and record it); service bearer token leased from agent-secrets; `.agent_sources/github.com/{Effect-TS/effect, statelyai/xstate, honojs/hono}` cloned read-only with an AGENTS.md that mandates inspecting them before non-trivial edits (copy the joelclaw-central convention). No Convex content yet — custody transfer is the next task. Resolved when `bun test` and the typecheck pass, the health endpoint answers on localhost, and the resolution records port, package name, and any stack substitutions forced by reality (e.g. tsgo or ultracite-ox not actually workable today — record what was swapped and why, loudly).
