@@ -1632,6 +1632,17 @@ export type Events = {
       [key: string]: unknown;
     };
   };
+  "telnyx/message.received": {
+    data: {
+      id?: string;
+      direction?: string;
+      type?: string;
+      text?: string;
+      from?: { phone_number?: string; [key: string]: unknown };
+      to?: Array<{ phone_number?: string; [key: string]: unknown }>;
+      [key: string]: unknown;
+    };
+  };
 
   // --- Telegram callbacks (inline keyboard actions) ---
   "telegram/callback.received": {
