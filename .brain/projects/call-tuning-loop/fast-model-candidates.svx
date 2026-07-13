@@ -1,0 +1,64 @@
+---
+title: "Fast-model candidates for the conversational loop"
+type: "asset"
+parent: "./research-fast-model-candidates.svx"
+created_at: "2026-07-13"
+updated: "2026-07-13"
+privacy: "private"
+---
+
+# Fast-model candidates for the conversational loop
+
+## Recommendation
+
+Trial these in order:
+
+1. **`anthropic/claude-haiku-4.5`** — best first bet. It keeps the Anthropic family, so persona and tool behavior have the smallest migration risk, while OpenRouter's current best-provider p50 TTFT is **0.41s**, less than half Sonnet 4.6's **0.86s** live OpenRouter p50 and roughly one-third of our **1.28s real-call median**.
+2. **`openai/gpt-5.4-mini` with reasoning minimized/disabled** — best cross-family quality challenger. Current OpenRouter best-provider p50 is **0.82s** with low observed tool-call error rates. It is cheaper than Haiku on input and similarly priced on output.
+3. **`openai/gpt-4.1-mini`** — mature cheap control. Current OpenRouter best-provider p50 is **0.75s** and provider tool-call errors are 0–1.08%. A voice practitioner calls GPT-4.1 the safe tool-heavy default; Mini preserves the API/tool shape at much lower cost, but its quality must be proven on our 15-tool prompt.
+
+Do **not** put Gemini 3.1 Flash Lite in the first three. It is fast and cheap, but OpenRouter's current provider data shows **5.51–8.18% tool-call error**, too risky for a tool-heavy live call. Keep it as the speed-floor follow-up if Exacto routing or our own test disproves that concern.
+
+## Comparison
+
+OpenRouter values below are live one-week figures observed 2026-07-13. They move with provider load. “TTFT” is OpenRouter's `Latency` metric: time to first token.
+
+| Model | OpenRouter p50 TTFT, best provider | Observed tool-call error | Price / 1M input → output | Normalized call cost* | Read |
+|---|---:|---:|---:|---:|---|
+| Baseline: `anthropic/claude-sonnet-4.6` | 0.86s; our calls 1.28s median / 5.4s p95 | 0.10–0.68% among best shown providers | $3 → $15 | **$0.1275** | Quality ceiling; tail latency is the problem |
+| **`anthropic/claude-haiku-4.5`** | **0.41s** | 0.18–1.85% | $1 → $5 | **$0.0425** | Same-family swap; strongest first experiment |
+| **`openai/gpt-5.4-mini`** | **0.82s** | 0.26–0.75% | $0.75 → $4.50 | **$0.0323** | Strong tool/agent positioning; disable reasoning |
+| **`openai/gpt-4.1-mini`** | **0.75s** | 0–1.08% | $0.40 → $1.60 | **$0.0168** | Cheap, mature, concise control |
+| Hold: `google/gemini-3.1-flash-lite` | **0.66s** | **5.51–8.18%** | $0.25 → $1.50 | **$0.0108** | Fastest cheap option, but current tool reliability is a red flag |
+
+\*Normalized cost is not a measured call bill. It prices a fixed ten-turn call with 4,000 input tokens resent per turn and 50 output tokens per turn: 40,000 input + 500 output tokens. Actual cost depends heavily on prompt caching, transcript growth, and tool round trips.
+
+## Why Haiku first
+
+- [Anthropic's latency guide](https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/reduce-latency) names Haiku 4.5 as its speed-critical model.
+- [OpenRouter's Haiku 4.5 page](https://openrouter.ai/anthropic/claude-haiku-4.5) currently shows 0.41s best-provider p50 TTFT, 89 tok/s, and 0.18–1.85% tool-call errors across the fastest reported providers.
+- A [2026 voice-agent comparison](https://wildrunai.com/blog/llm-comparison-voice-agents-2026) reports sub-600ms median TTFT and says Haiku inherits Anthropic's strong instruction following on speech-recognition transcripts. It warns that deeply nested multi-tool flows are less consistent than Sonnet. Our 15-tool surface makes that the main acceptance gate.
+- A separate [streaming latency test](https://www.kunalganglani.com/blog/llm-api-latency-benchmarks-2026) measured Haiku at 597ms and found it more concise than Gemini Flash. Concision matters because the persona must speak in short turns.
+
+## Why GPT-5.4 Mini second
+
+- [OpenRouter](https://openrouter.ai/openai/gpt-5.4-mini) positions it for chat and agent workflows. Current data shows 0.82s best-provider p50, 68 tok/s, and tool-call errors of 0.26% on Azure and 0.75% on OpenAI.
+- [Softcery's 2026 voice guide](https://softcery.com/lab/ai-voice-agents-choosing-the-right-llm) recommends non-reasoning/minimal reasoning for voice and reports medium effort can push Mini TTFT to roughly 8.24s. The A/B configuration must pin the lowest available reasoning mode rather than inherit a coding-agent default.
+- OpenRouter's page reports a 73.3% IFBench instruction-following score and 83.3% on the telecom slice of τ²-Bench. Those are supporting signals, not substitutes for our persona and tool tests.
+
+## Why GPT-4.1 Mini third
+
+- [OpenRouter](https://openrouter.ai/openai/gpt-4.1-mini) reports 0.75s best-provider p50, $0.40/$1.60 pricing, an 84.1% IFEval score, and tool support through the standard OpenRouter API.
+- Current provider data shows low tool-call error, including 0% on the small Azure EU sample, 0.14% on Azure, and 1.08% on OpenAI.
+- Practitioner evidence conflicts on latency. [WildRun AI](https://wildrunai.com/blog/llm-comparison-voice-agents-2026) reports the full GPT-4.1 around 450ms and calls it the safest production default for tool-heavy voice. A [small independent streaming test](https://www.kunalganglani.com/blog/llm-api-latency-benchmarks-2026) measured GPT-4.1 Mini near 2.4s. That disagreement is exactly why this candidate belongs in a real-call A/B rather than being selected from a chart.
+
+## Trial gates
+
+Use the same recorded call set and tool schemas for every model. A model advances only if it:
+
+1. Cuts real-call median TTFT by at least 30% without worsening p95.
+2. Produces no malformed tool arguments and no material increase in wrong-tool or missed-tool calls.
+3. Keeps replies terse, preserves the Aussie persona, and does not narrate tool machinery.
+4. Preserves interruption recovery and does not turn tool latency into unexplained dead air.
+
+Route by exact model and provider policy during the experiment. OpenRouter offers **Nitro** for speed and **Exacto** for tool-call accuracy; changing routing mode mid-cell would muddle the result. [OpenRouter documents those modes on each model page](https://openrouter.ai/openai/gpt-5.4-mini).
