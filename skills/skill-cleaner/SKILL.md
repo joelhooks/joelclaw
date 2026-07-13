@@ -45,7 +45,7 @@ node --experimental-strip-types skills/skill-cleaner/scripts/skill-cleaner.ts --
 
 2. Read the report in this order:
 
-- `Skill Budget`: GPT-5.5-ish context size, 2% skill budget, model-budgeted usage, and pre-budget full-list pressure.
+- `Skill Budget`: GPT-5.6 Sol-sized context, 2% skill budget, model-budgeted usage, and pre-budget full-list pressure.
 - `Description candidates`: long descriptions where tighter plain language saves prompt budget.
 - `Duplicates`: same skill name or near-identical description/body across Pi, joelclaw canonical, external packs, Codex, and project roots.
 - `Unused candidates`: no recent `$skill` mention, `SKILL.md` read, or explicit skill-use trace in recent Pi/Codex/Claude logs.
