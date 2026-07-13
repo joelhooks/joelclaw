@@ -2,6 +2,7 @@
 title: "Decide the Gateway Redis Channel's Fate (reflex arc in an observer world)"
 type: "wayfinder_ticket"
 status: "open"
+assignee: "claude steering (flagg, session 14d06369, 2026-07-13)"
 labels:
   - "wayfinder:grilling"
 interaction: "HITL"
