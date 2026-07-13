@@ -48,12 +48,12 @@ export const voicePublicCallAnalyze = inngest.createFunction(
       const url = process.env.CONVEX_URL?.trim() || "http://127.0.0.1:3210";
       const client = new ConvexHttpClient(url);
       const adminKey = process.env.CONVEX_ADMIN_KEY?.trim();
-      if (adminKey) client.setAdminAuth(adminKey);
+      if (adminKey) client.setAuth(adminKey);
       await client.mutation(addAnalysis, { ...analysis, judgeStatus: "pending" });
     });
 
-    // TODO: add rubric judging through the repo's pi inference path once this
-    // event can safely pass transcript text without introducing a paid provider.
+    // voice-call-judge independently consumes this event on the host worker.
+    // Keep this objective receipt separate so judging failures remain visible as pending.
     return { room: analysis.room, objective: analysis.objective, judgeStatus: "pending" };
   },
 );

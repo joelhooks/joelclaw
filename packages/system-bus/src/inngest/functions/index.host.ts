@@ -134,6 +134,7 @@ import { vipEmailThreadsBackfill } from "./vip-email-backfill";
 import { vipEmailReceived } from "./vip-email-received";
 import { vipEmailBrief } from "./vip-morning-brief";
 import { voiceCallCompleted } from "./voice-call-completed";
+import { voiceCallJudge } from "./voice-call-judge";
 import { voiceMissedCall } from "./voice-missed-call";
 import { voicePublicCallAnalyze } from "./voice-public-call-analyze";
 import { voicePublicSmsReply } from "./voice-public-sms-reply";
@@ -211,6 +212,7 @@ export const hostFunctionDefinitions = [
   transcriptionCleanup,
   telegramCallbackReceived,
   voiceCallCompleted,
+  voiceCallJudge,
   voicePublicCallAnalyze,
   voicePublicSmsReply,
   voiceMissedCall,

@@ -63,7 +63,37 @@ function SessionCard({ session }: { session: Session }) {
       {detail?.analysis ? <div className="analysis">
         <span>quality</span>
         {detail.analysis.scores
-          ? <strong>{detail.analysis.scores.coherence}/5 coherence · {detail.analysis.scores.warmth}/5 warmth</strong>
+          ? <>
+              <strong>
+                {detail.analysis.scores.mean !== undefined
+                  ? `${detail.analysis.scores.mean}/5 · ${detail.analysis.scores.label ?? "judged"}`
+                  : `${detail.analysis.scores.coherence}/5 coherence · ${detail.analysis.scores.warmth}/5 warmth`}
+              </strong>
+              {detail.analysis.scores.dimensions?.length
+                ? <>
+                    <p>{detail.analysis.scores.dimensions.map((dimension) => `${dimension.key}: ${dimension.score ?? "N/O"}`).join(" · ")}</p>
+                    <details>
+                      <summary>score receipts</summary>
+                      {detail.analysis.scores.dimensions.map((dimension) => <p key={dimension.key}>
+                        <strong>{dimension.key}: {dimension.score ?? "N/O"}</strong>{" "}{dimension.justification}
+                        {dimension.quote ? <> <q>{dimension.quote}</q></> : null}
+                      </p>)}
+                    </details>
+                  </>
+                : null}
+              {detail.analysis.scores.taxonomyTags?.length
+                ? <p>tags: {detail.analysis.scores.taxonomyTags.join(", ")}</p>
+                : null}
+              {detail.analysis.scores.hardFails && Object.values(detail.analysis.scores.hardFails).some(Boolean)
+                ? <p>hard fails: {Object.entries(detail.analysis.scores.hardFails).filter(([, flagged]) => flagged).map(([flag]) => flag).join(", ")}{detail.analysis.scores.hardFailEvidence ? ` · ${Object.values(detail.analysis.scores.hardFailEvidence).filter(Boolean).join(" · ")}` : ""}</p>
+                : null}
+              {detail.analysis.scores.confidence !== undefined ? <p>confidence: {Math.round(detail.analysis.scores.confidence * 100)}%</p> : null}
+              {detail.analysis.scores.modelTier
+                ? <p>judge: {detail.analysis.scores.modelTier}{detail.analysis.scores.escalationReason ? ` · ${detail.analysis.scores.escalationReason}` : ""}</p>
+                : null}
+              {detail.analysis.scores.warnings?.length ? <p>warnings: {detail.analysis.scores.warnings.join(" · ")}</p> : null}
+              {detail.analysis.scores.reviewRequired ? <p>NEEDS JOEL: max-tier judgment remains uncertain.</p> : null}
+            </>
           : <strong>judge pending</strong>}
         {detail.analysis.scores?.notes ? <p>{detail.analysis.scores.notes}</p> : null}
       </div> : null}

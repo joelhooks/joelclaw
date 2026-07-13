@@ -141,6 +141,7 @@ export { vipEmailThreadsBackfill } from "./vip-email-backfill";
 export { vipEmailReceived } from "./vip-email-received";
 export { vipEmailBrief } from "./vip-morning-brief";
 export { voiceCallCompleted } from "./voice-call-completed";
+export { voiceCallJudge } from "./voice-call-judge";
 export { voiceMissedCall } from "./voice-missed-call";
 export { voicePublicCallAnalyze } from "./voice-public-call-analyze";
 export { voicePublicSmsReply } from "./voice-public-sms-reply";

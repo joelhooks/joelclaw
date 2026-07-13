@@ -1584,6 +1584,7 @@ export type Events = {
       turns?: number;
       duration?: number;
       sessionId?: string;
+      timingReceipts?: { silentToolChain?: boolean };
     };
   };
   "voice/public-call.completed": {
@@ -1594,6 +1595,18 @@ export type Events = {
       duration_s?: number;
       turns?: number;
       timestamp?: string;
+      timingReceipts?: { silentToolChain?: boolean };
+    };
+  };
+  "voice/call.judge.requested": {
+    data: {
+      transcript: string;
+      room: string;
+      tier: "private" | "guest" | "public" | "synthetic";
+      duration?: number;
+      turns?: number;
+      timestamp?: string;
+      timingReceipts?: { silentToolChain?: boolean };
     };
   };
   "notification/call.requested": {
