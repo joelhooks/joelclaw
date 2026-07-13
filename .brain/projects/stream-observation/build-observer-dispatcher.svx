@@ -1,0 +1,25 @@
+---
+title: "Build the Observer Dispatcher (terra:low routing pane)"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./stream-observation-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Build the Observer Dispatcher
+
+## Question
+
+Per the closed redis-channel-fate decision: a dedicated pane in the observer
+herdr session running a classifier agent — gpt-5.6-terra at LOW effort,
+system-prompt tuned for classify-and-route only (extension-gated identity,
+same pattern as the observer: headless, tiny toolset — classify, wake via
+herdr agent send, notify via joelclaw notify, drop). Consumes the slimmed
+Redis pub/sub (TTLd, emission-budgeted). Allowlist config (VIP, invokes,
+anomalies) as data, not code. Woken sessions get reason + pointer, never
+payload. Receipts: a VIP-class test signal waking a target pane in under
+60s; a non-allowlisted signal correctly dropping to batch.

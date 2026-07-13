@@ -1,0 +1,23 @@
+---
+title: "Retire the Gateway Prompt-Feeding Loop"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./stream-observation-brief.svx"
+blockers: ["./build-observer-dispatcher.svx"]
+created_at: "2026-07-13"
+---
+
+# Retire the Gateway Prompt-Feeding Loop
+
+## Question
+
+Once the dispatcher is live: retire drainEvents → enqueuePrompt and the
+Redis-lists-as-storage pattern in packages/gateway; keep the budget code on
+whatever pub/sub survives; TTL every remaining list; migrate the
+operator-relay ping path onto dispatcher rules; delete dead code with
+receipts (what consumed each list, proven idle before removal). The
+interactive personas (phone, herdr sessions) are unaffected — only the
+bespoke always-on feeding tube dies.

@@ -1,7 +1,7 @@
 ---
 title: "Decide the Gateway Redis Channel's Fate (reflex arc in an observer world)"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 assignee: "claude steering (flagg, session 14d06369, 2026-07-13)"
 labels:
   - "wayfinder:grilling"
@@ -29,3 +29,25 @@ reflex arc's target should become "wake the right herdr session"
 slimming path for the redis channel, with the storm-budget code kept
 wherever pub/sub survives. Adjacent to the Observer/Bugle boundary grilling
 — same redistricting, interaction lane.
+
+## Answer (2026-07-13, grilled with Joel)
+
+**(b) Wake, dont feed — with the dispatcher inside the observer session.**
+
+1. The reflex arc shrinks to ROUTING. A small classifier agent — terra on
+   LOW effort, tuned for classification + system routing — runs as a
+   dedicated pane in the observer herdr session (Joels refinement). Signals
+   flow to it; it decides: wake a herdr session (herdr agent send), page
+   Joel (joelclaw notify), or drop-to-batch (the observer will see it).
+2. Context never rides the signal. A woken session gets "you were woken
+   because X; recall has the rest" — memory is the only context assembler.
+   No prompt injection, no Redis-lists-as-pseudo-memory.
+3. Tiny reflex allowlist: VIP email, direct invokes/@mentions,
+   telemetry-watch anomalies (paging grade). Everything else is observer
+   food on the 30-minute lane.
+4. Transport slims: thin Redis pub/sub into the dispatcher, every list
+   TTLd, emission-budget code guards it. The always-on gateway personas
+   prompt-feeding loop (drainEvents → enqueuePrompt) retires once the
+   dispatcher lands.
+
+Graduates: build-observer-dispatcher; retire-gateway-prompt-loop.
