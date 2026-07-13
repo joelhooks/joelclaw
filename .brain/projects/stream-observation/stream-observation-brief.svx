@@ -55,6 +55,8 @@ updated only when it resolves.
 - **Skills**: `/skill:grill-master`, `/skill:axiom-investigation` (log-flow
   archaeology), `/skill:brain-first-workflow`.
 
+- **Standing call (Joel, 2026-07-13): observer-session panes are FAMILY-AWARE and speak pi-intercom.** Every pane in the observer session (orchestrator, dispatcher, distill workers) knows its parent and siblings (roles + pane ids — a session registry the orchestrator maintains, or live herdr pane list on their socket), and intra-family communication uses pi-intercom (pi-subagents native supervisor/child messaging, structured, in-context) instead of raw TUI text injection. herdr send-keys demotes to wake/lifecycle only.
+
 ## Decision ledger
 
 <!-- one line per closed ticket: gist + link -->

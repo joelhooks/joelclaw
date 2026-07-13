@@ -23,3 +23,14 @@ Redis pub/sub (TTLd, emission-budgeted). Allowlist config (VIP, invokes,
 anomalies) as data, not code. Woken sessions get reason + pointer, never
 payload. Receipts: a VIP-class test signal waking a target pane in under
 60s; a non-allowlisted signal correctly dropping to batch.
+
+## Addendum (Joel, 2026-07-13): family awareness + intercom
+
+The dispatcher is a family member, not a lone pane: its context includes
+parent (orchestrator) and sibling roles/pane ids, and it reports routing
+decisions to the orchestrator via pi-intercom (structured message: signal,
+classification, action taken) — so wakes/pages/drops land in the
+orchestrator's context and thus in tick reports and memory. Map the actual
+intercom API from pi-subagents source (~/.pi/agent/npm/node_modules/pi-subagents/src,
+subagent-control.ts + prompt-runtime) — the reply/notification channels are
+already live in production workers.
