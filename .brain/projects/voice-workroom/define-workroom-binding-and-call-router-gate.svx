@@ -1,0 +1,46 @@
+---
+title: "Define Workroom Binding and the Call Router Gate"
+type: "question"
+kind: "grilling"
+status: "open"
+interaction: "HITL"
+parent: "./voice-workroom-brief.svx"
+blockers: []
+created_at: "2026-07-11"
+---
+
+# Define Workroom Binding and the Call Router Gate
+
+## Question
+
+What is the concrete contract binding a call to a workroom (call ↔ pi session ↔ Discord thread ↔ brief/question)? Joel's fixed direction: a basic router gate at call start — offer a few known open threads, or take open-ended yapping as search input to find the right one. Specify: how the gate ranks and phrases its candidates (recency? ready questions? active engine runs?), what "open-ended yapping → find shit" searches against (registry recentThreads, Typesense, ready questions), what happens for a genuinely new topic (auto-create thread + session immediately, or park in a lobby session until named), whether one call can switch workrooms mid-conversation, and exactly what lands in the Discord thread at call end (summary format, transcript link, next-actions). This decision gates the registry multi-surface surgery spec.
+
+## Design input (Joel + steering session, 2026-07-12 evening)
+
+Joel: resume-able threads/conversations on the private line is the interesting
+part; pi's session TREE + FORKING is "rad and might be interesting here"; and
+the voice agent should "100% leverage" today's joelclaw-wiki memory sessions.
+
+Context that sharpens this ticket:
+- The wiki's agentic-memory ADR was ACCEPTED today (2026-07-12): sessions are
+  first-class surface — the change-log of the brain — and the destination is
+  Mastra-style recall over Typesense + Brain docs + session history "so every
+  context understands all the work in flight." A phone call is one of those
+  contexts.
+- Session transcripts already indexed (Typesense via `joelclaw sessions
+  search`); pi sessions are JSONL trees whose forking maps naturally to voice:
+  "let's fork here and chase X" → branch the session at the current node,
+  hang up, resume either branch later by voice OR text. Tangents become
+  branches instead of lost context.
+- Layered proposal for the grilling:
+  1. **Phase 1 (buildable pre-surgery):** a `session_recall` /
+     `resume_context` voice tool over the existing session index — "pick up
+     where we left off on canaries" loads a compacted session summary into
+     the call. Conversational continuity without engine changes.
+  2. **Phase 2 (this ticket's real question):** the pi-discord-threads
+     registry (ThreadRecord ↔ pi session, resume/steer/followUp) gains voice
+     as a surface — a call attaches to a workroom, true resume/steer of the
+     live session, forking exposed as a spoken verb.
+- The wiki's session-edge feasibility memo (same day) is a caution: joining
+  sessions to artifacts by timestamp is heuristic; bindings must be explicit
+  (participant attribute, registry record), never inferred.

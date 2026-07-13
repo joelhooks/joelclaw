@@ -1,0 +1,56 @@
+---
+title: "Build Voice Observation Recall (very tested)"
+type: "question"
+kind: "task"
+status: "closed"
+assignee: "pi worker (steered by claude session 14d06369)"
+interaction: "AFK"
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-07-12"
+closed_at: "2026-07-12"
+---
+
+# Build Voice Observation Recall (very tested)
+
+## Question
+
+Joel's charter (2026-07-12): the voice agent (`joelclaw/infra/voice-agent/`,
+ShitRat phone line) "needs this, and be sure it is very tested."
+
+Add a dedicated `@function_tool` (e.g. `recall_work(query, days)`) to the
+LiveKit voice worker that queries the observation layer via the rebuilt
+`joelclaw sessions search`, formatted for SPEECH: gists as sentences, no
+URLs read aloud (offer to DM the brain.joelclaw.com link instead), most
+recent first. Voice-map doctrine is law: the tool FAILS SOFT (Typesense or
+CLI down → one graceful spoken sentence, never a dead call), bounded
+timeout, answering never depends on it.
+
+**Privacy edge (hard requirement)**: `privacy: sensitive` observations are
+NEVER spoken unless the caller is verified-Joel (Telnyx caller id — the
+public-shitrat-line makes this real, not theoretical). Default posture on
+unverified callers: sensitive hits silently excluded.
+
+**Very tested** (Joel's words — the acceptance bar):
+- Unit tests: CLI-output parsing, speech formatting, sensitive filtering by
+  caller identity, empty-result phrasing, CLI error/timeout → fail-soft
+  sentence. Fake-CLI fixture; no live dependencies in unit tests.
+- Integration receipt: real query against the live collection from the tool
+  path, output captured.
+- `verify-voice.sh` gains a recall-tool check (doctrine: silent drift is
+  the enemy).
+- Existing `tests/` suite still green.
+
+Blocked by build-observations-recall-typesense (consumes its CLI surface).
+
+## Resolution (2026-07-12)
+
+Shipped: `recall_work(query, days)` tool in the LiveKit voice worker.
+Speech-first formatting (gists as sentences, recency-phrased, URLs never
+spoken — DM offer instead), fail-soft everywhere, and the privacy edge done
+right: private-line allowlist grants tool access but NOT sensitive recall —
+that requires exact caller-id match to Joel's number; unknown fails closed.
+Tests 2 → 12 (parsing, formatting, sensitive filtering by caller class,
+empty, timeout fail-soft; fake-CLI fixtures, nothing live in units); live
+integration receipt captured; verify-voice.sh checks the recall path.
+Steering re-ran the suite independently: 12 passed.

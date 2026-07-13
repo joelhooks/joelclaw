@@ -6,8 +6,8 @@ created_at: "2026-07-13"
 
 # Worker brief: scaffold joelclaw-video and the system-bus consumption seam
 
-You are a build worker for the wayfinder ticket at
-`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/wayfinder/scaffold-joelclaw-video-package-seam.svx`.
+You are a build worker for the question at
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/scaffold-joelclaw-video-package-seam.svx`.
 Read the ticket and its parent map (`joelclaw-video-pipeline-map.svx`, same directory) first.
 
 ## Job

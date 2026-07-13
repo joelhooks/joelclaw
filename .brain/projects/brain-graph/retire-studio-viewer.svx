@@ -1,0 +1,21 @@
+---
+title: "Retire the joels-mac-studio /notes/ Viewer at Parity"
+type: "question"
+kind: "task"
+status: "open"
+interaction: "AFK"
+parent: "./brain-graph-brief.svx"
+blockers: ["./build-brain-page-renderer.svx"]
+created_at: "2026-07-12"
+---
+
+# Retire the joels-mac-studio /notes/ Viewer at Parity
+
+## Question
+
+Once Brain pages render on brain.joelclaw.com at parity: shut down the
+Studio viewer, update `operator-network-context.svx` + the tailnet-topology
+skill so agents stop minting `joels-mac-studio…/notes/` URLs, and leave a
+pointer/redirect note. Parity = the pages Joel actually visits render
+correctly (spot-check across the three registered roots), not pixel
+equality.

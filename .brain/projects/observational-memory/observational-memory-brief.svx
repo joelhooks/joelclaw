@@ -1,0 +1,94 @@
+---
+title: "Chart the joelclaw Observational Memory Write Loop"
+type: "brief"
+status: "active"
+created_at: "2026-07-12"
+privacy: "private"
+---
+
+# Chart the joelclaw Observational Memory Write Loop
+
+## Finish line
+
+Joel's charter (2026-07-12, verbatim intent): *agent transcripts continuously
+distilled into observations, efficiently, in a durable process, across the
+joelclaw fleet.*
+
+Reached when: a durable observer loop runs over pi/claude/codex session
+transcripts fleet-wide, continuously (threshold/cadence, not on-demand),
+distilling them into **observation pages** — `.svx` in a Brain section,
+rendered at brain.joelclaw.com, nodes in the graph — each carrying provenance
+(session id, machine, repos touched, commits via the change ledger) and
+surviving a Joel read-through as *worth recalling*, not transcript sludge. A
+reflector pass condenses aging observations without losing citations. The
+distilled layer reaches every agent context (rhizomatic briefing + a recall
+surface) — the ADR's functional bar: "every context we run in has the ability
+to understand all of the work that we're doing."
+
+## Notes
+
+- **Prior art in-house**: the Bugle pipeline IS an observer (gather →
+  normalize → pi extraction behind versioned schemas → open loops) — pointed
+  at external streams. This map points the same discipline at the fleet's own
+  session transcripts. Do not fork the philosophy: deterministic collection
+  first, bounded pi judgment behind versioned schemas with receipts, fail
+  loud.
+- **Vision authority**: [agentic-memory-system-vision ADR](../../resources/decisions/agentic-memory-system-vision.svx)
+  (accepted) — sessions are first-class memory surface; the bar is functional
+  recall, not architecture. The [Mastra OM frame](https://mastra.ai/docs/memory/observational-memory)
+  (Observer/Reflector, token-threshold triggers, async buffering, 5–40×
+  compression, recall tool) is the reference model, adapted not copied.
+- **House patterns**: Inngest durable functions are the joelclaw runtime for
+  "durable process"; pi for all inference (no paid APIs); Typesense indexes
+  sessions already; the session change ledger (Pi runtime v1) provides
+  hash-proven session→commit attribution; graph.json v2 + wikilinks for
+  structure; brainbench for honesty. `.brain` law: observations are `.svx`.
+- **Privacy is inherited, with one new edge**: transcripts contain secrets,
+  tokens, and third-party content. Observation pages are publications (they
+  render on the paper) — the distiller needs a redaction boundary equivalent
+  to the wiki's redact.ts BEFORE anything ships. Decided boundaries from
+  `define-privacy-access-publication-boundaries` apply unchanged.
+- **Efficiency is a stated requirement**: bounded token spend per day,
+  observation only on new material (cursor over capture stream), compression
+  ratios measured. Distillation quality > coverage — noise control is the
+  hard half.
+- **Storage decision (accepted 2026-07-12)**: files are truth, databases are projections — [decision record](../../resources/decisions/files-are-truth-databases-are-projections.svx). Observation pages live as `.svx` in git; Typesense/graph/ClickHouse only ever hold rebuildable views. Named exit triggers in the record; do not relitigate when a new database looks fun.
+- **Skills**: `/skill:grill-master`, `/skill:brain-first-workflow`,
+  `/skill:session-search`, `/skill:effect-ts`, `/skill:joel-writing-style`.
+
+## Decision ledger
+
+<!-- one line per closed ticket: gist + link -->
+
+- [Decide the Observation Schema and Brain Placement](./decide-observation-schema.svx) — per-session atoms (reflector composes threads later) as `.svx` in `dark-wizard/.brain/observations/` → `/user/observations/…`; v1 frontmatter w/ provenance + derivation.promptHash; extractors are body sections behind a versioned pi prompt; noise bar: no mutations + <15k tokens → index line, no page.
+- [Define the Transcript Redaction Boundary](./define-transcript-redaction-boundary.svx) — memory covers ALL work: sensitive domains get `privacy: sensitive` pages (recallable, never rendered); secrets never persist even unrendered (git is publishing) — mandatory secret-scan before write, one retry then tombstone; local inference moves enforcement to persistence.
+- [Decide the Observer Runtime and Trigger Topology](./decide-observer-runtime-topology.svx) — flagg-central durable herdr ORCHESTRATOR (pi gpt-5.6-sol medium: cursor, noise bar, batching, spawning) commanding observable herdr panes of gpt-5.6-terra distillation agents, ds4-central for cheap local classify jobs that can spawn observable sub-agent panes; supervisor canary for durability; gpt-5.6-terra as frontier comparator/reflector; continuous loop over indexed deltas.
+- [Research Session Capture Coverage Across the Fleet](./research-session-capture-coverage.svx) — Pi+Claude on flagg+blaine are healthy (~43 conversations/day, same-day indexing); Codex delivery broken everywhere (→ fix-codex-capture-delivery); panda uncaptured (fine, decommissioning); change ledger is Pi-on-flagg only, so `commits` is best-effort elsewhere.
+
+- [Build Observation Recall: Typesense Projection + sessions-search Replacement](./build-observations-recall-typesense.svx) — shipped: 75-doc rebuildable projection; `sessions search` now answers from the distilled layer with canonical page URLs; raw behind `--raw`; dark-wizard hostname bug dead.
+
+- [Build Voice Observation Recall (very tested)](./build-voice-observation-recall.svx) — the phone line answers "what did we do" from the distilled layer: speech-formatted, fail-soft, sensitive only on exact caller-id match (fails closed); tests 2→12 + verify-voice.sh recall check.
+
+- [Evaluate qmd as the Brain Knowledge-Recall Projection](./evaluate-qmd-brain-recall.svx) — ADOPTED: hybrid local search over 509 svx files (36s embed on Metal); qmd = knowledge projection, Typesense = stream projection; supersedes add-observation-embeddings (closed); productionization chartered.
+
+- **Consumption charted separately (2026-07-13)**: the [recall-consumption map](../recall-consumption/recall-consumption-brief.svx) owns how agents/surfaces USE the distilled layer (briefing push, qmd pull, Bugle editorial — two tickets re-parented there). This map keeps the write loop, page quality, and the reflector.
+
+## Not yet specified
+
+- **Observer deployment reality (2026-07-12)**: v0 runs as workspace `Observer` in the MAIN herdr server (pane in `~/.joelclaw/observer-pane-id`, 30-min tick LaunchAgent `com.joelclaw.observer-tick`). CORRECTED: herdr sessions were the feature all along (`herdr session attach observer`, per-session state dirs); the earlier 'shared state' incident was a raw second server on the default socket — operator error. The observer now lives in herdr session `observer`, pane w1:p1, cwd `~/Code/joelhooks/joelclaw-observer`. Also learned: resume flag is `pi --session <id>`; charter-restart with the persisted cursor is the correct daemon recovery anyway.
+- Reflector condensation policy — **Joel's frame (2026-07-12): observational memory is a node cluster getting intelligently compressed over time.** The reflector is EDGE-PRESERVING GRAPH COMPACTION, not summarization: replace a dense cluster of session atoms with a supernode carrying the union of the cluster's edges, citations intact; redundancy dies, topology survives. Yields a temporal gradient: recent = full atoms, middle = reflected threads, deep past = promoted durable pages. Benchable as edge preservation in brainbench. This is also the fuck-Obsidian demo: a graph that grows nodes you didn't write and compresses itself visibly.
+- Rhizomatic-briefing integration of the distilled layer (the collection +
+  CLI half graduated 2026-07-12 → build-observations-recall-typesense).
+- **Secrets at rest in capture** (found 2026-07-12 by a tombstoned epoch): a credential existed in a session transcript — jsonl + Typesense hold it at rest. The observer refused to republish (contract worked), but capture-side secret hygiene (scan/redact at capture time, scrub existing index) is unscoped. Needs its own ticket when graduated.
+- Brainbench leg for observation quality ("worth recalling" rubric).
+- Historical backfill of pre-loop sessions (months of transcripts exist).
+- Cross-machine dedup when the same work appears in multiple sessions.
+- ClickHouse event mirror of observer runs (telemetry, blessed 2026-07-12).
+- Retention/compaction of raw observations after reflection.
+
+## Out of scope
+
+- External-stream observation (mail/Slack/Front/Discord) — the Bugle owns it. *(2026-07-13: returning as a fresh effort — [stream-observation map](../stream-observation/stream-observation-brief.svx); the boundary redraw is that map's grilling ticket.)*
+- Public or multi-user anything; paid-API inference.
+- Rebuilding session capture itself — capture exists; gaps found by the
+  coverage research ticket get fixed, not redesigned.

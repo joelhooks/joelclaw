@@ -3,7 +3,7 @@ title: "qmd Brain recall spike"
 type: resource
 status: complete
 created: 2026-07-12
-source_ticket: "../projects/wayfinder/evaluate-qmd-brain-recall.svx"
+source_ticket: "../projects/observational-memory/evaluate-qmd-brain-recall.svx"
 tags:
   - qmd
   - recall
@@ -86,7 +86,7 @@ All commands requested five JSON results. Scores below are qmd's reported scores
 ### “what did we decide about memory compression”
 
 - `qmd search`: returned only the observation-embedding ticket, this spike ticket, and this task because they quote the exact query. It did **not** find the underlying decision from meaning alone.
-- `qmd vsearch`: returned `qmd://joelclaw/projects/wayfinder/joelclaw-observational-memory-map.svx` at rank 2 (`0.38`).
+- `qmd vsearch`: returned `qmd://joelclaw/projects/observational-memory/observational-memory-brief.svx` at rank 2 (`0.38`).
 - `qmd query`: reranked that map to rank 1 (`0.89`). The page contains the actual decision: observational memory is a node cluster compacted over time, with the reflector preserving graph edges and citations.
 
 Best receipt: hybrid search turned a benchmark-contaminated lexical miss into the canonical map as the top result.

@@ -1,0 +1,24 @@
+---
+title: "Decide the Observer/Bugle Boundary Redraw"
+type: "question"
+kind: "grilling"
+status: "open"
+interaction: "HITL"
+parent: "./stream-observation-brief.svx"
+blockers: ["./research-stream-ingress-inventory.svx"]
+created_at: "2026-07-13"
+---
+
+# Decide the Observer/Bugle Boundary Redraw
+
+## Question
+
+Old law: "the Bugle owns external streams; the Observer owns the fleet's
+own work" (obs-memory map Out of scope + VISION.md). Proposed redraw: the
+OBSERVER owns all WRITING of memory (sessions and streams, one
+discipline); the BUGLE becomes purely editorial — mining observation pages
+(prime source) instead of cold-reading raw sources at 6am. Decide it,
+including migration order (which Bugle adapters retire when), what happens
+to the Bugle's own SourceArtifact→Observation layers, and then update
+VISION.md + the obs-memory map's out-of-scope note to match. Resolves the
+architecture question this map exists to answer.

@@ -4,9 +4,9 @@ You are a pi worker in pane wJ:p3, steered by a Claude session in wJ:p1. Work au
 
 ## Read first
 
-- `.brain/projects/wayfinder/write-agentic-memory-vision-adr.svx` — your ticket. It is the contract; its four bullet points are the ADR's required sections.
-- `.brain/projects/wayfinder/joelclaw-brain-graph-map.svx` — the map. The Destination and "substrate insight" sections are the grilling record you draft from; quote the substrate insight faithfully.
-- `.brain/projects/wayfinder/joelclaw-personal-wiki-map.svx` — the adjoining wiki map (product boundary + fixed technical direction you must not contradict).
+- `.brain/projects/brain-graph/write-agentic-memory-vision-adr.svx` — your ticket. It is the contract; its four bullet points are the ADR's required sections.
+- `.brain/projects/brain-graph/brain-graph-brief.svx` — the map. The Destination and "substrate insight" sections are the grilling record you draft from; quote the substrate insight faithfully.
+- `.brain/projects/personal-wiki/personal-wiki-brief.svx` — the adjoining wiki map (product boundary + fixed technical direction you must not contradict).
 - `~/.brain/resources/fleet-sync-doctrine.svx` — how dark-wizard actually syncs (the user-brain-as-repo claim must match it).
 - https://mastra.ai/docs/memory/overview — the memory vocabulary (message history / working memory / semantic recall / observational memory).
 

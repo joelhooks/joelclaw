@@ -1,0 +1,77 @@
+---
+title: "Build the Observer as an Activated Pi Extension"
+type: "question"
+kind: "task"
+status: "open"
+interaction: "AFK"
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Build the Observer as an Activated Pi Extension
+
+## Question
+
+Convert the observer charter (`dark-wizard/.brain/tasks/observer-loop-charter.svx`)
+from a kickoff prompt into an activated pi extension that injects the
+observer constitution into the SYSTEM PROMPT (Amendment 3 of the topology
+ticket). Study existing extensions (`~/.pi/agent/extensions/` —
+memory-capture, herdr-name-sync, herdr-callsign) for the API. Requirements:
+
+- Activation is explicit (flag/env/config), never default — only the
+  observer session gets observer identity.
+- Charter content sourced from the svx file at session start (file remains
+  the editable truth; extension is the injection mechanism).
+- Cache-aware: charter injects as a stable prefix; anything dynamic
+  (cursor value, date) arrives in tick prompts, not the system prompt.
+- Restart story: `observer-tick.sh` gains an ensure-session step — if the
+  pane's pi is dead, relaunch `pi` with the extension activated; identity
+  comes from the extension, state from the cursor. Include daily session
+  rotation (fresh session each morning, cursor carries over).
+- Receipts: a tick executed under extension identity with no kickoff
+  prompt; a simulated compaction (or long session) showing the charter
+  still governs.
+
+## Addendum (Joel, 2026-07-12): headless tool policy
+
+The extension MUST disable interactive/blocking tools for observer sessions —
+MCQ/ask-user style prompts, quick-pick dialogs, anything that waits on a
+human. A headless daemon that asks a question deadlocks until the next human
+visit (the quick-pick modal that swallowed a tick during today's migration is
+the receipt). Enumerate pi's interactive tool surface from source/extensions
+and turn all of it off under observer identity; when the observer would have
+asked, it instead records the question in its tick report and proceeds
+conservatively (doubt → sensitive, gaps → report loudly).
+
+## Addendum 2 (Joel, 2026-07-12): override + bespoke agents + specific context
+
+- The extension **OVERRIDES the system prompt**, not appends — the observer's
+  constitution is its whole identity, not a footnote under default pi
+  instructions.
+- **Clear the default pi-subagent registry** for observer sessions and
+  register bespoke agents for its actual tasks (e.g. terra-distiller,
+  ds4-classifier, completeness-checker) — the observer spawns from its own
+  cast, not the general-purpose roster.
+- The pi session runs in a **specific context**: pinned cwd, pinned env,
+  observer-only config scope — nothing inherited by accident.
+- Pairs with [spec-herdr-session-management](./spec-herdr-session-management.svx):
+  `herdr session attach observer` is the front door to this session.
+
+## Home (Joel, 2026-07-12)
+
+The extension lives in its own repo: `~/Code/joelhooks/joelclaw-observer`
+(joelhooks/joelclaw-observer). Scaffolded with the full spec in AGENTS.md;
+build work executes there.
+
+## Addendum 3 (Joel, 2026-07-12): delegate to existing session tooling
+
+`joelclaw sessions` already ships the observer's primitives: `extract`
+(bounded window context — IS read_session_window), `chunks` (query +
+neighboring raw context), `inspect` (regex transcript surgery), and
+especially `signals` (role-aware high-signal user-turn mining by kind:
+friction/preference/decision/praise/correction/workflow-pattern/failure/
+repair-request/mode-mismatch). v1.1: lib.ts delegates to these CLIs in
+never-throw wrappers instead of raw Typesense queries, and `signals`
+output seeds the Decisions/Observations sections of epoch pages before
+terra distills — pre-mined signal beats cold extraction.

@@ -2,7 +2,7 @@
 title: "Task: observations Typesense projection + sessions-search replacement"
 type: task-brief
 created: 2026-07-12
-parent: ".brain/projects/wayfinder/build-observations-recall-typesense.svx"
+parent: ".brain/projects/observational-memory/build-observations-recall-typesense.svx"
 ---
 
 # Observations recall: Typesense projection + sessions-search replacement
@@ -10,7 +10,7 @@ parent: ".brain/projects/wayfinder/build-observations-recall-typesense.svx"
 You are on flagg in `~/Code/joelhooks/joelclaw` (pnpm monorepo, Bun, Effect —
 read `.claude/CLAUDE.md` and `AGENTS.md` first; validation checklist there is
 mandatory). Governing decisions, read before coding:
-`.brain/projects/wayfinder/build-observations-recall-typesense.svx` (your
+`.brain/projects/observational-memory/build-observations-recall-typesense.svx` (your
 ticket), `decide-observation-schema.svx` (Resolution — the file format),
 `.brain/resources/decisions/files-are-truth-databases-are-projections.svx`.
 

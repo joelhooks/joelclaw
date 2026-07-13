@@ -1,0 +1,68 @@
+---
+title: "Chart the JoelClaw Video Pipeline"
+type: "brief"
+status: "active"
+created_at: "2026-07-13"
+privacy: "private"
+---
+
+# Chart the JoelClaw Video Pipeline
+
+## Finish line
+
+A durable Mux/Inngest video publishing pipeline living in `joelhooks/joelclaw-video` and consumed by joelclaw's system-bus: any agent or CLI hands it a pointer to a video and gets back a shareable watch URL, with draft/published and public/unlisted/private states backed by local Convex. The long game is a personal Loom replacement that agents can publish through on Joel's behalf.
+
+The first proof is phase 1: a filesystem path on flagg goes in, a Mux asset/playback id comes out. The map is done when phase 1 is live, the agent publish surface is decided, and the watch-page phase is fully specifiable.
+
+## Notes
+
+### Fixed direction (decided in the 2026-07-13 charting grill)
+
+- **Deploy shape:** `joelclaw-video` is a standalone repo publishing a package; joelclaw's `packages/system-bus` imports it and registers its Inngest functions alongside the existing 110+. One Inngest app; the existing mux webhook provider (`packages/system-bus/src/webhooks/providers/mux.ts`, secret already leased in `serve.ts`) just works.
+- **Ingest:** Mux direct upload — create an upload via the Mux API and PUT the bytes from flagg. No public exposure, no staging required for phase 1. Asset settings must include a progressive/downloadable rendition — mirror course-builder's `getMuxOptions` (`packages/core/src/lib/mux.ts`: `video_quality: plus`, `max_resolution_tier: 2160p`, `mp4_support: standard`, generated English subtitles) but verify against current Mux docs; `mp4_support` may have been superseded by `static_renditions`.
+- **Metadata store:** local Convex mirrors course-builder's content-resource shape for video resources. States: draft/published crossed with public/unlisted/private.
+- **Originals:** archived (NAS/Garage) alongside Mux, with easy TTL-based cleanup so the archive doesn't fill with shit. Mux is the delivery layer, not the only copy.
+- **Watch page:** a real one is part of the destination — not just `player.mux.com` links.
+- **Transcripts (added 2026-07-13):** super important, and via **Deepgram** the way course-builder does it — not Mux's auto-generated captions. Running course-builder locally is a legitimate aid for studying its flow. Existing prior art: joelclaw's mux webhook receiver on flagg is verified live (see Decisions so far), and `media-transcription-pipeline.ts` already speaks to transcription.
+
+### Execution override
+
+Phase 1 (file pointer → Mux → asset/playback id) and the Deepgram transcript flow are carried into the map as task tickets: they're the proof the rest of the map decides against, and later decisions (agent surface, watch page) need a real pipeline to measure. The Mux webhook repoint is also carried — it's plumbing the pipeline dies without.
+
+### Yoink source
+
+`badass-courses/course-builder` (checked out at `~/Code/badass-courses/course-builder`) — `packages/core/src/inngest/video-processing/` (events + functions: video-uploaded, video-ready, transcript-ready, add-srt-to-mux-asset, video-processing-error, remove-completed-video) and `packages/core/src/lib/mux.ts`. Yoink liberally; drop the Sanity/party-specific bits.
+
+Prior art already in joelclaw: mux webhook provider (above), `packages/system-bus/src/inngest/functions/media-process.ts` (claim-check pattern, NAS at `joel@three-body`), `media-transcription-pipeline.ts`, `video-download.ts`.
+
+### Skills every session should consult
+
+- `/skill:grill-master`, `/skill:brain-first-workflow`
+- `/skill:grill-me` and `/skill:grill-with-docs`
+- `/skill:effect-ts` for package code
+- `/skill:local-convex` and `/skill:garage` for the metadata and archive tickets
+- `/skill:tailnet-topology` for any URL/exposure question
+
+## Decision ledger
+
+<!-- Closed ticket resolutions are appended here as one-line linked gists. -->
+
+- [Verify Mux Webhook Wiring on Flagg](./verify-mux-webhook-wiring.svx) — receiver verified live on flagg (port 3111; `hooks.joelclaw.com` and the Funnel URL both 401 unsigned probes correctly; API token authenticates and lists real assets), but the dashboard registration likely still points at decommissioning panda and the account can't be confirmed from the machine — spun off [Repoint the Mux Webhook Registration and Verify the Account](./repoint-mux-webhook-registration.svx).
+- [Repoint the Mux Webhook Registration and Verify the Account](./repoint-mux-webhook-registration.svx) — done same day: Joel disabled the panda registration and registered the joelclaw endpoint; new per-endpoint secret rotated into agent-secrets, worker bounced, and a synthetic signed `video.asset.ready` delivered `200` through `https://hooks.joelclaw.com/webhooks/mux` into Inngest (tampered control got `401`). Mux webhook plumbing is fully live for phase 1.
+- [Decide the Originals Archive and TTL Cleanup](./decide-originals-archive-ttl.svx) — Garage bucket on three-body; publish copies (never moves) the source; 90-day TTL enforced by an Inngest cron sweep whose delete gate checks live that the Mux asset is `ready` AND has a progressive rendition; phase 1 must record archive key + checksum on the video record.
+- [Audit Course-Builder's Video Pipeline for the Yoink](./audit-course-builder-video-pipeline.svx) — yoink the choreography, rework the implementation: `static_renditions` replaces deprecated `mp4_support`, rendition readiness is a separate webhook state, course-builder's Deepgram callback is unauthenticated (ours must not be), skip the `ContentResource.fields` bag. Full map: [yoink audit](./docs/course-builder-video-yoink-audit.svx).
+- [Scaffold joelclaw-video and the System-Bus Consumption Seam](./scaffold-joelclaw-video-package-seam.svx) — repo live at `~/Code/joelhooks/joelclaw-video` (jj colocated), package `joelclaw-video` exports `createVideoFunctions(inngest)` with inngest as peer dep, consumed via pnpm `link:`; hello function registered in system-bus, tsc/tests green; `link:`-in-k8s-image caveat recorded for deploy time.
+- **E2E receipt (not a ticket):** [manual agent-driven Mux publish run](./docs/e2e-mux-manual-run-2026-07-13.svx) — a 12 s ffmpeg clip went file → direct upload → asset ready → progressive `highest.mp4`, with live webhooks verified through hooks.joelclaw.com into Inngest and four public URLs 200-checked, entirely from agent tools. Surfaced [Make Agent Webhook Streaming Work for Mux Events](./make-agent-webhook-streaming-work-for-mux.svx) (session subscriptions only dispatch github events today).
+
+## Not yet specified
+
+- **Arbitrary pointers beyond a flagg filesystem path** — remote URLs, files on blaine/panda, NAS paths, browser uploads. Phase 1 is flagg-local; the pointer taxonomy sharpens once the pipeline exists.
+- **Transcript display on the watch page** — the pipeline side graduated to [Port the Deepgram Transcript Flow](./port-deepgram-transcript-flow.svx); how transcripts render/share on the watch page waits on the watch-page charting.
+- **Privacy enforcement on playback** — Mux signed playback policies for private/unlisted videos vs public-policy-plus-obscure-slug; waits on the Convex model and watch page.
+- **Announce/share flow** — publishing pings Joel (Discord DM with the watch URL) or posts where the agent was asked; shape follows the agent-surface decision.
+
+## Out of scope
+
+- **Recording capture tooling** — the Loom-replacement *recorder* (screen/cam capture) is its own future effort; this map starts at "a video file exists."
+- **Comments, view analytics, viewer identity** on the watch page — Loom features beyond publish-and-share.
+- **Migrating egghead/badass-courses production video** — this pipeline is personal infrastructure, not a course-builder replacement.

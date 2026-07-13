@@ -3,7 +3,7 @@ title: "Recall quality baseline — July 2026"
 type: "brainbench_receipt"
 status: "baseline"
 created_at: "2026-07-13"
-source_ticket: "../projects/wayfinder/bench-recall-quality.svx"
+source_ticket: "../projects/recall-consumption/bench-recall-quality.svx"
 privacy: "private"
 labels:
   - "brainbench"

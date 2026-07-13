@@ -4,9 +4,9 @@ You are a pi worker in pane wJ:p2, steered by a Claude session in wJ:p1. Work au
 
 ## Read first
 
-- `.brain/projects/wayfinder/research-graph-store-weird-ideas.svx` — your ticket. It is the contract.
-- `.brain/projects/wayfinder/joelclaw-brain-graph-map.svx` — the map: destination, substrate insight, standing preferences.
-- `.brain/projects/wayfinder/build-wikilink-edges-graph-json.svx` — the existing single-root graph.json (704 nodes, 145 edges) your candidates must ingest.
+- `.brain/projects/brain-graph/research-graph-store-weird-ideas.svx` — your ticket. It is the contract.
+- `.brain/projects/brain-graph/brain-graph-brief.svx` — the map: destination, substrate insight, standing preferences.
+- `.brain/projects/bugle-redesign/build-wikilink-edges-graph-json.svx` — the existing single-root graph.json (704 nodes, 145 edges) your candidates must ingest.
 
 ## The job
 

@@ -1,0 +1,36 @@
+---
+title: "Wikibench: Capsule Replay and Rubric"
+type: "question"
+kind: "prototype"
+status: "open"
+interaction: "HITL"
+parent: "./bugle-redesign-brief.svx"
+blockers: []
+created_at: "2026-07-12"
+assignee: "pi worker bugle-wikibench (w9:pF, steered by claude w9:pA)"
+claimed_at: "2026-07-12"
+---
+
+# Wikibench: Capsule Replay and Rubric
+
+## Question
+
+Make edition quality measurable so the pipeline can be tuned parametrically over time — across prompts, models, agents, and harness config — instead of by vibes.
+
+- **Day capsule**: a frozen real day — its observations, prior edition, and metadata — snapshotted so the pipeline replays deterministically-in-inputs without live gather. Capsules are the bench's fixtures; today (2026-07-12) becomes the first one.
+- **Replay runner**: run extract → reconcile → build on a capsule, tagged with a config label (prompt contract versions, model), producing a candidate edition for scoring. Real pi calls at run time; never in unit tests.
+- **Rubric v1**: deterministic checks first — claim-verifier verdict ratios (correctness), banned-phrase/register scans (voice), all-questions-end-in-"?", shipped-requires-receipt, schema validity (structure), wall time and any token counts the bridge exposes (efficiency). Judged dimensions behind a flag — selection quality and ELI5-technical clarity, scored by a pi judge against a written rubric.
+- **Results over time**: append-only score log keyed by capsule + config label + contract versions, with a report that shows the trend. "Did that prompt change help?" becomes a lookup.
+- **Baseline**: score the current single-shot pipeline on the first capsule before any newsroom refactor exists — the number the refactor has to beat.
+
+Resolved when a capsule replays, the rubric scores it, a baseline is recorded, and Joel has reacted to the first scored report (the rubric's weights are his taste to set).
+
+## Status (2026-07-12) — built, baseline recorded, awaiting Joel's read
+
+Shipped by the bugle-wikibench pi worker (steered mid-flight with Joel's "checklists KILL thinking" correction — the judge writes its editorial review in prose first, then scores), verified and committed by the steering session (wiki repo `ac3d8ab`).
+
+**Baseline (`baseline-single-shot`, 2026-07-12 capsule):** correctness **36/100** (30 supported, 16 overreach, 0 unsupported, 5 unverifiable — the paper's overreach habit, now a number), voice 65/100 (7 third-person-"Joel" hits, 0 banned phrases, headline clean), structure 100/100, efficiency 85/100 (141s), judged selection **4/5**, judged clarity **4/5**. The judge's review is worth reading in full (in `data/bench/runs/.../`): "the lead is consequential because it catches the paper failing its core job... The weakness is density — too many secondary loops dilute front-page priority."
+
+Known gap: token counts are null (PiBridge exposes model + promptHash, not usage) — efficiency is wall-time only until the bridge grows usage reporting.
+
+Open for: Joel's reaction to the first scored report + rubric weights. The newsroom refactor now has its number to beat.

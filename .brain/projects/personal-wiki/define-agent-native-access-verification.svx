@@ -1,0 +1,16 @@
+---
+title: "Define Agent-Native Access and Verification"
+type: "question"
+kind: "research"
+status: "open"
+interaction: "AFK"
+parent: "./personal-wiki-brief.svx"
+blockers: []
+created_at: "2026-07-10"
+---
+
+# Define Agent-Native Access and Verification
+
+## Question
+
+What contracts make every important wiki capability discoverable, readable, and testable by agents through the CLI, structured JSON or Markdown projections, stable URLs, semantic HTML, accessibility metadata, browser automation, and deterministic fixtures without making the visual interface serve machine needs badly?

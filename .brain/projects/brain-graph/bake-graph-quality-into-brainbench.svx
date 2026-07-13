@@ -1,0 +1,39 @@
+---
+title: "Bake Graph Quality into Brainbench"
+type: "question"
+kind: "task"
+status: "closed"
+interaction: "AFK"
+parent: "./brain-graph-brief.svx"
+blockers: []
+created_at: "2026-07-12"
+assignee: "pi worker (wJ:p4 follow-up, steered by claude wJ:p1)"
+claimed_at: "2026-07-12"
+---
+
+# Bake Graph Quality into Brainbench
+
+## Question
+
+Joel: "bake the QUALITY of the graph into our brainbench (aka wikibench) and have a clear agentic use and testing story for this project."
+
+Extend the bugle map's built [Wikibench](../bugle-redesign/wikibench-capsule-replay-rubric.svx) (capsules, replay runner, rubric, append-only score log — do NOT rebuild any of it) with a graph leg:
+
+- **Deterministic graph checks**: wikilink resolution correctness against the namespace policy (local-first, global-unique, ambiguous-flagged), provenance completeness per node, orphan rate, unresolved/ambiguity honesty (flagged loudly, never guessed), cross-root edge validity, rebuild determinism.
+- **Agentic recall scenarios**: the testing story for the proposes/disposes contract — a fixture set of real questions ("what's blocking X", "what touched this page recently", "what connects A to B") with expected node sets; score whether Typesense-seeds + graph-expansion surfaces them, with provenance intact. This is the bench expression of the ADR's bar: recall that works in every context.
+- **Score log integration**: graph-quality runs keyed by graph schema version + config label in the same append-only log, so "did schema v3 help recall?" becomes a lookup like the edition bench.
+
+HITL tail like the original wikibench: Joel reacts to the first scored graph report and sets rubric weights. Resolved when the graph leg scores a real build, the recall scenarios run against the live projection, and a baseline is recorded for schema v2.
+
+## Resolution (2026-07-12)
+
+Built by the wJ:p4 pi worker, verified and committed by the steering session (wiki `29ad9c7`: 158 tests, check clean). Schema-v2 baseline recorded in `data/bench/graph-runs/` (runtime artifact, gitignored like all bench outputs); scenarios in `data/bench/graph-scenarios-v2.json`; bench code in `src/lib/bench/graph-quality.ts` + `scripts/bench-graph.ts`.
+
+**Baseline (graph-v2, hand seeds):** deterministic checks **4/6**, recall scenarios **3/6**, precision **0.32**, recall **0.50**. The honest failure list is the value:
+
+- **79.49% orphan rate** — most nodes (largely observations) have no edges; the graph is sparser than it looks.
+- One stale/missing wikilink; **unresolved nodes outrank real pages** in expansion (ranking bug, cheap fix, real recall damage).
+- Missing parent/source-observation edge types — builder gaps the next schema rev should close.
+- Typesense half **honestly not run** (not reachable from this repo's bench yet) — hand-picked seeds through graph expansion only; the composed proposes/disposes score awaits Typesense wiring.
+
+The numbers to beat are recorded; "did that change help recall?" is now a lookup. HITL tail closed 2026-07-12: Joel reviewed the baseline — "rubric is a fine start." Rubric v1 weights stand until a scored run gives a reason to move them.

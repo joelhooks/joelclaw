@@ -2,7 +2,9 @@
 title: "Task: kill the redis.subscriber.error storm + clean the ClickHouse debris"
 type: task-brief
 created: 2026-07-13
-parent: ".brain/projects/wayfinder/investigate-redis-subscriber-error-storm.svx"
+completed: 2026-07-13
+status: completed
+parent: ".brain/projects/stream-observation/investigate-redis-subscriber-error-storm.svx"
 ---
 
 # Kill the storm, clean the debris
@@ -28,3 +30,31 @@ paths (other workers own them).
 
 No commits (steering reviews). Print DONE with root cause, fix, before/after
 counts.
+
+## Completion receipt
+
+The producer was not in `packages/system-bus`; that task location was stale. The
+only producer was `packages/gateway/src/channels/redis.ts`. Every failed manual
+reconnect created a new subscriber/command pair without disposing the previous
+ioredis clients. Each old client kept its own retry loop and uncapped error
+listener. The subscriber count therefore grew on every retry during the Redis
+outage.
+
+The fix disposes failed client generations before replacement, rebinds the
+message store after recovery, bounds shutdown cleanup, and deduplicates Redis
+errors in one-minute windows. Each distinct error gets at most one detail row
+per window (maximum three distinct errors); repeats collapse into one summary
+row. Aggregate errors now retain bounded cause metadata.
+
+ClickHouse cleanup used two sequential partition-scoped mutations, July first,
+then June. Both completed with zero failed or pending parts. `DROP PARTITION`
+was rejected because both months contained non-storm rows.
+
+- Before: 102,301,523 rows; 102,052,982 storm rows; 248,541 non-storm rows;
+  3.76 GiB active table data.
+- After: 249,087 rows; 0 storm rows; 249,087 non-storm rows; 26.41 MiB active
+  table data.
+- Preservation cutoff: all 141 non-storm `source, action` groups survived with
+  zero count decreases. One group gained 80 late-arriving rows.
+- Verification: `bunx tsc --noEmit`, targeted Bun tests, Biome, both ClickHouse
+  mutation checks, and an end-to-end OTEL event persisted to ClickHouse.

@@ -1,0 +1,22 @@
+---
+title: "Feedback Boxes That Compile to a Prompt"
+type: "question"
+kind: "prototype"
+status: "open"
+interaction: "HITL"
+parent: "./bugle-redesign-brief.svx"
+blockers: []
+created_at: "2026-07-12"
+assignee: "pi worker bugle-feedback (w9:pE, steered by claude w9:pA)"
+claimed_at: "2026-07-12"
+---
+
+# Feedback Boxes That Compile to a Prompt
+
+## Question
+
+Joel: "the daily page should have feedback text areas when it requires my input and a 'copy feedback to concise json' button such that I can copy my feedback and it will put a prompt on the clipboard that I can then send to any joelclaw agent and it will be understood immediately."
+
+The paper stays reporting-only — textareas are client-local, the button writes nothing anywhere. It compiles typed answers into one clipboard prompt (the CopyPrompt pattern, gathered page-wide): a short actionable preamble + concise JSON `{kind: "bugle-feedback", editionId, editionUrl, answers: [{loopId, question, answer}], editorNote}`. Empty boxes excluded. Two surfaces: a textarea under each "Questions requiring Joel" item, and one page-end box for feedback about the paper itself (voice, selection, layout) — which doubles as rubric-calibration data for wikibench.
+
+Resolved when Joel answers real questions on the live paper at https://daily.joelclaw.com, pastes the copied prompt into a joelclaw agent, and the agent acts on it without needing explanation.

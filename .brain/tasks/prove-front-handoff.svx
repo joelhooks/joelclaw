@@ -2,7 +2,7 @@
 title: "Task: prove or fix the Front durable handoff"
 type: task-brief
 created: 2026-07-13
-parent: ".brain/projects/wayfinder/verify-front-inngest-handoff.svx"
+parent: ".brain/projects/stream-observation/verify-front-inngest-handoff.svx"
 ---
 
 # Prove (or fix) the Front handoff

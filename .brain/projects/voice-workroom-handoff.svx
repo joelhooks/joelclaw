@@ -6,16 +6,16 @@ created_at: "2026-07-12"
 tags:
   - handoff
   - voice
-  - wayfinder
+  - grill-master
 ---
 
 # Voice Workroom — Session Handoff 2026-07-12
 
-Continuation surface for the **JoelClaw Voice Workroom** effort. The map is truth: [`.brain/projects/wayfinder/joelclaw-voice-workroom-map.svx`](./wayfinder/joelclaw-voice-workroom-map.svx) — read it (and the wayfinder skill at `/Users/joel/.agents/skills/wayfinder/SKILL.md`) before doing anything.
+Continuation surface for the **JoelClaw Voice Workroom** effort. The map is truth: [`.brain/projects/voice-workroom/voice-workroom-brief.svx`](./voice-workroom/voice-workroom-brief.svx) — read it (and the grill-master skill at `~/.claude/skills/grill-master/SKILL.md`) before doing anything.
 
 ## Current objective
 
-Work the map's frontier, one ticket per session. The destination: phone-in ShitRat bound to pi-discord-threads sessions and wayfinder tracker state — resumable as voice or text, recallable, discoverable across products.
+Work the map's frontier, one ticket per session. The destination: phone-in ShitRat bound to pi-discord-threads sessions and grill-master tracker state — resumable as voice or text, recallable, discoverable across products.
 
 ## Live state (all verified working 2026-07-11 night)
 
@@ -60,4 +60,4 @@ Work the map's frontier, one ticket per session. The destination: phone-in ShitR
 
 ## Skills to use
 
-`/skill:wayfinder` (the loop), `/skill:grill-me` + `/skill:grill-with-docs` (HITL tickets), `/skill:panda-host` (ADR recovery), `/skill:session-search` (this session's transcript is the provenance for most decisions).
+`/skill:grill-master` (the loop), `/skill:grill-me` + `/skill:grill-with-docs` (HITL tickets), `/skill:panda-host` (ADR recovery), `/skill:session-search` (this session's transcript is the provenance for most decisions).
