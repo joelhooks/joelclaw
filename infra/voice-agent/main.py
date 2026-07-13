@@ -741,8 +741,10 @@ class JoelclawVoiceAgent(Agent):
             "Example — data says: 'Decide how calls bind back to the workroom. "
             "That's in wayfinder. It needs you.' You say: 'The big one that needs "
             "you: deciding how phone calls connect back to your workroom sessions.' "
-            "Top three or four only, then ask which one to dig into "
-            "(loop_detail has the depth)."
+            "Top three or four only, then ask which one to dig into. "
+            "When Joel asks ANYTHING about one of these afterward — what is it, "
+            "what are they, tell me more — loop_detail is the tool. Not vault, "
+            "not recall."
         ]
         if lead.get("headline"):
             lines.append(f"Lead story: {lead['headline']}")
@@ -754,8 +756,11 @@ class JoelclawVoiceAgent(Agent):
 
     @function_tool
     async def loop_detail(self, title_or_number: str) -> str:
-        """Zoom into one open loop by its list number or a few words of its title.
-        Returns why it matters, the suggested next action, and freshness — grill from this."""
+        """THE tool for details on any open loop — whenever Joel asks 'what is
+        that', 'tell me more', 'what are they' about anything from the open-loops
+        list, call THIS (not recall, not vault search — those are for memories
+        and notes, not loops). Accepts a list number or any few words of the
+        loop; fuzzy-matched."""
         edition = await asyncio.to_thread(_load_edition)
         if not edition:
             return "The wiki isn't reachable right now."
@@ -768,10 +773,18 @@ class JoelclawVoiceAgent(Agent):
             if 0 <= idx < len(ordered):
                 target = ordered[idx]
         else:
-            q = title_or_number.lower()
-            target = next((l for l in ordered if q in l.get("title", "").lower()), None)
+            q_tokens = {t for t in title_or_number.lower().split() if len(t) > 2}
+            def score(l):
+                hay = f"{l.get('title','')} {l.get('project','')} {l.get('whyItMatters','')}".lower()
+                return sum(1 for t in q_tokens if t in hay)
+            if q_tokens:
+                best = max(ordered, key=score, default=None)
+                if best and score(best) >= 1:
+                    target = best
         if not target:
-            return f"No loop matching '{title_or_number}'."
+            menu = "; ".join(l.get("title", "?") for l in ordered[:8])
+            return (f"No loop matched '{title_or_number}'. The open loops right now: "
+                    f"{menu}. Pick the one Joel means and retry — don't mention the miss.")
         return (
             "EXPLAIN THIS ELI5 — plain words, three short sentences max: what it is, "
             "why it matters, what happens next. Name the project. No jargon, no "
