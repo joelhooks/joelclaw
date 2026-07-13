@@ -12,13 +12,13 @@ reviewed_at: "2026-07-12"
 
 Joelclaw already has durable Brain pages, raw agent sessions, and Typesense search. These parts do not yet form one memory system that agents can read and improve across repositories and machines.
 
-The [Brain graph map](../../projects/wayfinder/joelclaw-brain-graph-map.svx) defines the substrate:
+The [Brain graph map](../../projects/brain-graph/brain-graph-brief.svx) defines the substrate:
 
 > **The substrate is the network of Git repositories.** The user brain is the dark-wizard repo — a union of Joel's user across machines, persisted in GitHub; it is not a per-machine or network-level brain. Project brains are `.brain/` folders in repos. Machine checkouts are *replicas* that can diverge; divergence is data (sync failure or in-flight work), not a namespace collision. The logical namespace is per-repo; "repo @ machine" is a query dimension — vision now, built later. Ultimately: query all these repositories and their current state on any machine in the joelclaw network.
 
 This matches the fleet sync contract. `origin/main` of `joelhooks/dark-wizard` is the declared source of truth for durable user context. Each checkout is a replica. A durable local edit is real state, even before it is reconciled with `origin/main`.
 
-The adjoining [personal wiki map](../../projects/wayfinder/joelclaw-personal-wiki-map.svx) fixes the product boundary. This is a private work-and-business system. Brain owns durable knowledge. Raw sources keep provenance. The wiki is a readable and agent-testable surface over that knowledge. This decision does not replace that direction.
+The adjoining [personal wiki map](../../projects/personal-wiki/personal-wiki-brief.svx) fixes the product boundary. This is a private work-and-business system. Brain owns durable knowledge. Raw sources keep provenance. The wiki is a readable and agent-testable surface over that knowledge. This decision does not replace that direction.
 
 ## Decision
 

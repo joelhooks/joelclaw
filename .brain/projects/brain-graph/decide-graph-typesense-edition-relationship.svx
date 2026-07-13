@@ -1,0 +1,42 @@
+---
+title: "Decide How the Graph Relates to Typesense Recall and the Edition Build"
+type: "question"
+kind: "grilling"
+status: "closed"
+interaction: "HITL"
+parent: "./brain-graph-brief.svx"
+blockers:
+  - "./research-graph-store-weird-ideas.svx"
+created_at: "2026-07-12"
+assignee: "claude steering session (wJ:p1, grilled Joel live)"
+claimed_at: "2026-07-12"
+---
+
+# Decide How the Graph Relates to Typesense Recall and the Edition Build
+
+## Question
+
+Three query-ish systems now coexist: the graph (traversal, backlinks, structure), Typesense (semantic + FTS recall over sessions and content), and the edition build (curated daily distillation). Draw the boundaries:
+
+- Which questions go to which system, and where do they compose (e.g. "find related notes" = Typesense recall filtered/ranked by graph proximity)?
+- Does brain/graph content get indexed *into* Typesense, and from which projection — the store, graph.json, or the source `.svx`?
+- The edition build currently reads its own inputs; post-proof, does it read the graph (editions cite nodes, edges back) so acceptance item 6 — editions as graph citizens — is structural rather than cosmetic?
+- Mastra-frame check: if Typesense is semantic recall and the graph is the durable memory structure, name that mapping explicitly so the follow-on write-loop map inherits clean vocabulary.
+
+Blocked by the graph-store research: the boundaries depend on what the store can actually answer cheaply.
+
+## Resolution (2026-07-12)
+
+Grilled live; Joel adopted the phased recommendation verbatim and added the quality requirement.
+
+**The recall contract: Typesense proposes, the graph disposes.**
+
+- Typesense (semantic + FTS over sessions, brain docs, observations) returns ranked seed hits; the graph expands each seed 1–2 hops (backlinks, evidence, project membership, later session change-edges) and re-ranks by graph proximity + recency; results are nodes with provenance, never bare text blobs.
+- **Semantic similarity never becomes an edge; graph structure never pretends to be relevance.** The two failure modes this contract exists to prevent.
+- Bar inherited from the accepted vision ADR: recall that works in every running context.
+
+**Phased session edges:** promote session→page change-edges into the graph as soon as session indexes yield "this session edited these files/pages" deterministically — derivable from data that already exists (session transcripts + git commits share timestamps and paths). Graduated to [Build Session→Page Change-Edges](./build-session-change-edges.svx).
+
+**Quality is benched, not vibed** (Joel): the QUALITY of the graph gets baked into wikibench/brainbench with a clear agentic use and testing story. Graduated to [Bake Graph Quality into Brainbench](./bake-graph-quality-into-brainbench.svx), extending the bugle map's built [Wikibench capsule/rubric](../bugle-redesign/wikibench-capsule-replay-rubric.svx) rather than duplicating it.
+
+**Boundaries settled alongside:** graph.json stays the structural truth (Typesense remains a rebuildable index over source svx + sessions, never the graph's source); editions remain graph citizens per acceptance item 6. Unblocks [Decide the Agent Query Surface](./decide-agent-query-surface.svx) — the `search` verb is now specified by this contract.

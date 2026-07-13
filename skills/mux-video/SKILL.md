@@ -154,7 +154,7 @@ import MuxPlayer from "@mux/mux-player-react";
 
 ## Webhook Events
 
-Mux webhooks are registered at: `https://hooks.joelclaw.com/webhooks/mux` (repointed 2026-07-13; the old panda registration is disabled — see `.brain/projects/wayfinder/repoint-mux-webhook-registration.svx`)
+Mux webhooks are registered at: `https://hooks.joelclaw.com/webhooks/mux` (repointed 2026-07-13; the old panda registration is disabled — see `.brain/projects/video-pipeline/repoint-mux-webhook-registration.svx`)
 
 The webhook provider (`packages/system-bus/src/webhooks/providers/mux.ts`) handles HMAC-SHA256 verification and normalizes events into the Inngest pipeline.
 

@@ -1,0 +1,36 @@
+---
+title: "Research Voice Observation Pipeline Integration"
+type: "question"
+kind: "research"
+status: "open"
+interaction: "AFK"
+parent: "./voice-workroom-brief.svx"
+blockers: []
+created_at: "2026-07-11"
+---
+
+# Research Voice Observation Pipeline Integration
+
+## Question
+
+Joel's contract for voice memory: turns feed into observations that get compacted, starred, and ranked, with short- and long-term memory, from direct session context through Typesense to markdown. Map the existing pipeline end to end — what consumes `memory/session.ended` (which `voice-call-completed.ts` already emits), where compaction/starring/ranking happen today, what the short-term vs long-term stores actually are, and how observations become markdown. Then propose the voice integration: per-turn observation extraction vs per-call, how the turn-fidelity split works in practice (compacted turns written to the bound pi session JSONL for text resume; verbatim transcript in `voice_transcripts`, cross-referenced), and what `resolution_session` provenance links from grill-master decisions back into. Deliverable: a markdown asset with the pipeline map and a concrete integration proposal.
+
+## Design input (2026-07-12, voice session)
+
+Joel: track active call sessions in local-convex and build a live dashboard at
+live.joelclaw.com (tailnet). Convex's reactive queries make the dashboard cheap;
+the worker now logs per-turn `METRIC` lines (LLM TTFT, TTS TTFB, EOU delay) that
+are the natural turn-row feed. Fuller sketch:
+`~/Code/joelhooks/joelclaw-voice/.brain/projects/live-call-dashboard.svx`.
+Constraint carried from the map: worker writes must be fire-and-forget —
+answering depends on nothing but LiveKit + LLM.
+
+## Known gap (2026-07-12 transcript sweep)
+
+Interrupted or multi-part assistant turns lose content in saved transcripts:
+"The six that need you:" saves with no list following, though the caller
+audibly heard (and complained about) the list. Likely LiveKit's
+spoken-sync truncation of interrupted messages in session.history. The
+observation pipeline should not treat session.history as the complete spoken
+record — per-turn capture (the Convex turn rows / transcription events) is
+the honest source for what was actually said aloud.

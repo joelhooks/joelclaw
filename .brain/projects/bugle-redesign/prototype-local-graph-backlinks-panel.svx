@@ -1,0 +1,24 @@
+---
+title: "Prototype the Local Graph and Backlinks Panel"
+type: "question"
+kind: "prototype"
+status: "open"
+interaction: "HITL"
+parent: "./bugle-redesign-brief.svx"
+blockers: []
+created_at: "2026-07-12"
+assignee: "pi worker bugle-local-graph (w9:pD, steered by claude w9:pA)"
+claimed_at: "2026-07-12"
+---
+<!-- blocker cleared: graph.json ticket closed 2026-07-12 -->
+
+
+# Prototype the Local Graph and Backlinks Panel
+
+## Question
+
+The Roam/Logseq payoff: loop and observation pages get backlinks ("what points here") and a small local-graph panel — 1–2 hops out from the current node, rendered from `graph.json` as quiet inline SVG. Tufte rules: no physics-simulation toy, no zooming hairball; a legible, static neighborhood diagram that answers "what is this connected to and why".
+
+Prototype it on the live wiki and let Joel navigate by graph for a few days. Resolved when he keeps it — or the panel dies and the answer records why.
+
+**Status 2026-07-12**: live (wiki `dab3193`) — backlinks ("What points here") + 1–2 hop neighborhood SVG on loop/observation pages, deterministic radial layout, truncation stated. Note: loops mostly have out-edges only, so backlinks shine on observation pages. Awaiting Joel's navigate-and-keep verdict at https://brain.joelclaw.com.

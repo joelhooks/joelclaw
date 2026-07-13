@@ -1,0 +1,27 @@
+---
+title: "Lay Out the Paper Fresh Each Run"
+type: "question"
+kind: "prototype"
+status: "open"
+interaction: "HITL"
+parent: "./bugle-redesign-brief.svx"
+blockers:
+  - "Build the Bugle Design System"
+created_at: "2026-07-12"
+---
+
+# Lay Out the Paper Fresh Each Run
+
+## Question
+
+The editorial pass: a pi layout-editor stage in the edition build that reads the day's content — loops, shipped news, questions, digests, media — and emits a layout spec composing that day's front page from the design system. A big-ship day leads with the shipped feature and its screenshot full-width; a decision-heavy day puts the question desk up top; a quiet day prints compact. The news decides.
+
+Design to settle in the prototype:
+
+- What signals drive composition (shipped count, needsJoel weight, fresh-vs-carried ratio, media availability) and how they're presented to the layout editor.
+- How much freedom the spec schema grants v1 — start narrow (ordering + emphasis + component choice), widen as trust builds.
+- Anti-hallucination, same as extraction: the spec only binds registered components to real content ids; invalid specs fall back to the fixed layout, loudly.
+- The spec is preserved with its edition (immutable) — the archive becomes a flip-through of daily front pages, each designed for its day.
+- Prompt carries the design system's composition rules; promptHash versioned like the extraction contract.
+
+Resolved when several consecutive live editions at https://daily.joelclaw.com compose differently because their days differed, and Joel trusts the editor's taste.

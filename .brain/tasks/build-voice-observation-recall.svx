@@ -2,14 +2,14 @@
 title: "Task: voice observation recall — speech-formatted, fail-soft, very tested"
 type: task-brief
 created: 2026-07-12
-parent: ".brain/projects/wayfinder/build-voice-observation-recall.svx"
+parent: ".brain/projects/observational-memory/build-voice-observation-recall.svx"
 ---
 
 # Voice observation recall
 
 You are on flagg in `~/Code/joelhooks/joelclaw`, working ONLY in
 `infra/voice-agent/`. Read first: your ticket
-(`.brain/projects/wayfinder/build-voice-observation-recall.svx` — the
+(`.brain/projects/observational-memory/build-voice-observation-recall.svx` — the
 privacy edge and test bar there are the acceptance criteria), the voice
 worker `infra/voice-agent/main.py` (study the existing `@function_tool`
 patterns, `_tool_env()`, and the existing long-term recall section

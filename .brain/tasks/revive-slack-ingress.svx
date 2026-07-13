@@ -2,7 +2,7 @@
 title: "Task: revive Slack realtime ingress under supervision"
 type: task-brief
 created: 2026-07-13
-parent: ".brain/projects/wayfinder/fix-slack-realtime-ingress.svx"
+parent: ".brain/projects/stream-observation/fix-slack-realtime-ingress.svx"
 ---
 
 # Revive Slack realtime ingress

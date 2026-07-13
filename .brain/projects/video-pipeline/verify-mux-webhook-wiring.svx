@@ -1,0 +1,32 @@
+---
+title: "Verify Mux Webhook Wiring on Flagg"
+type: "question"
+kind: "task"
+status: "closed"
+interaction: "AFK"
+parent: "./video-pipeline-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Verify Mux Webhook Wiring on Flagg
+
+## Question
+
+Joel asked (2026-07-13): verify the Mux webhooks are on flagg and tied to his personal joelhooks@gmail.com account.
+
+## Resolution
+
+Resolved 2026-07-13. The **receiver** is verified on flagg; the **dashboard registration and account** could not be verified from here and moved to [Repoint the Mux Webhook Registration and Verify the Account](./repoint-mux-webhook-registration.svx).
+
+Verified live:
+
+- The webhook gateway runs on flagg (bun, port 3111, `packages/system-bus/src/webhooks/server.ts`) with the `mux` provider registered; `GET /webhooks` reports healthy.
+- Two public routes land on it and both return a fast `401 Invalid signature` on unsigned POSTs to `/webhooks/mux` (the documented healthy behavior): the canonical `https://hooks.joelclaw.com/webhooks/mux` and flagg's Funnel `https://joels-mac-studio.tail7af24.ts.net:10000/webhooks/mux`. The legacy `https://panda.tail7af24.ts.net/webhooks/mux` also still answers (panda relays to flagg per [central-webhook-migration](../central-webhook-migration.svx)).
+- Mux API credentials work: leased `mux_token_id`/`mux_token_secret` from agent-secrets authenticate against `api.mux.com` and list real assets. Note: an existing recent asset shows `mp4_support: "none"` — past uploads have no progressive rendition, confirming the audit ticket's settings concern.
+
+Could NOT be verified from the machine (Mux has no webhook-management or whoami API):
+
+- **Which URL is registered in the Mux dashboard.** `skills/mux-video/SKILL.md:157` says the panda URL; the central-webhook-migration note lists Mux's endpoint update as still open (Front migrated 2026-07-10, Mux not yet). Best evidence says the registration still points at panda — a dead-man switch given panda's decommission.
+- **Which account owns the token.** No receipt ties it to joelhooks@gmail.com; dashboard-only fact.
+- **Signed-delivery verification** — `mux_signing_secret` is per-endpoint; whether it matches whatever endpoint is actually registered needs a real signed delivery.

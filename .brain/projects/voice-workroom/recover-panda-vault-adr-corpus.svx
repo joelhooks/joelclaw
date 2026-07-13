@@ -1,0 +1,16 @@
+---
+title: "Recover the Panda Vault ADR Corpus"
+type: "question"
+kind: "task"
+status: "open"
+interaction: "AFK"
+parent: "./voice-workroom-brief.svx"
+blockers: []
+created_at: "2026-07-11"
+---
+
+# Recover the Panda Vault ADR Corpus
+
+## Question
+
+Recover the full Vault ADR corpus (~157 decision records, `~/Vault/docs/decisions/`) before panda is decommissioned — flagg's `~/Vault` holds only `Resources`, and neither the joelclaw checkouts nor the NAS backup paths contain the ADR texts. ADR-0043 (Agent Voice Conversations via Self-Hosted LiveKit) and ADR-0178 (LiveKit Voice Worker Durability Contract, 131 lines — the post-mortem for "ringing with no answer") are the immediate need: the new voice ADR must supersede 0178's contract knowingly, not blind. Land the corpus somewhere durable and indexed (joelclaw `docs/decisions/` or `.brain/resources/decisions/`, then Typesense), and record where. Use `/skill:panda-host` for remote access; verify data exists at the destination before anything on panda is deleted, per the standing decommission rule.

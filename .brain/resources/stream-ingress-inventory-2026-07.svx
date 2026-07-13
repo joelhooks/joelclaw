@@ -4,7 +4,7 @@ type: "research_receipt"
 status: "complete"
 created_at: "2026-07-13"
 privacy: "private"
-source_ticket: "../projects/wayfinder/research-stream-ingress-inventory.svx"
+source_ticket: "../projects/stream-observation/research-stream-ingress-inventory.svx"
 labels:
   - "wayfinder:research"
   - "stream-ingress"
@@ -16,7 +16,7 @@ labels:
 
 # Stream ingress inventory
 
-Answer to [Research the Existing Stream Ingress](../projects/wayfinder/research-stream-ingress-inventory.svx).
+Answer to [Research the Existing Stream Ingress](../projects/stream-observation/research-stream-ingress-inventory.svx).
 
 ## Bottom line
 
@@ -191,4 +191,4 @@ The wiki's `/Users/joel/Code/joelhooks/joelclaw-wiki/.brain/source-capabilities.
 6. **Bugle Slack coverage is absent.** The Bugle currently cold-reads Front/GitHub/X but cannot mine Slack.
 7. **Retention is mostly accidental.** Typesense and Bugle artifacts have no explicit TTL; Redis is operationally deleted; Inngest retention is unknown.
 
-These gaps should feed [Decide the Stream Epoch Model](../projects/wayfinder/decide-stream-epoch-model.svx) and [Decide the Stream Quality Contract](../projects/wayfinder/decide-stream-quality-contract.svx), not be papered over with guessed rates.
+These gaps should feed [Decide the Stream Epoch Model](../projects/stream-observation/decide-stream-epoch-model.svx) and [Decide the Stream Quality Contract](../projects/stream-observation/decide-stream-quality-contract.svx), not be papered over with guessed rates.

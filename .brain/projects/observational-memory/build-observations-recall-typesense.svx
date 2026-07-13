@@ -1,0 +1,42 @@
+---
+title: "Build Observation Recall: Typesense Projection + sessions-search Replacement"
+type: "question"
+kind: "task"
+status: "closed"
+assignee: "pi worker (steered by claude session 14d06369)"
+interaction: "AFK"
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-07-12"
+closed_at: "2026-07-12"
+---
+
+# Build Observation Recall: Typesense Projection + sessions-search Replacement
+
+## Question
+
+Joel's charter (2026-07-12): observation pages "should absolutely be groomed
+into a Typesense collection and replace existing joelclaw session search cli."
+
+Build: (1) an `observations` Typesense collection as a DETERMINISTIC,
+REBUILDABLE projection of `dark-wizard/.brain/observations/*.svx` (files are
+truth — see the storage decision record); fields from schema-v1 frontmatter +
+gist + observations/decisions sections; sensitive pages indexed (local recall
+is chartered) but flagged. (2) An idempotent indexer
+(`joelclaw observations index --rebuild`). (3) `joelclaw sessions search`
+defaults to the observation layer — results return the canonical
+brain.joelclaw.com page URL + sessionId, sensitive results labeled; raw
+chunk search demoted to `--raw`. (4) Fix the stale `dark-wizard` ssh-host
+default in the sessions code (flagg-rename fallout, found 2026-07-12).
+
+Distilled-first recall is the ADR functional bar made concrete: "every
+context understands the work." The rhizomatic-briefing integration stays in
+map fog — this ticket is collection + CLI.
+
+## Resolution (2026-07-12)
+
+Shipped: `observations` collection (75 docs, deterministic projection,
+`joelclaw observations index --rebuild`); `joelclaw sessions search` defaults
+to the distilled layer (gist + canonical brain.joelclaw.com URL + sensitive
+labeling), `--raw` preserved; stale `dark-wizard` ssh default fixed. Steering
+re-verified receipts independently. Unblocks build-voice-observation-recall.

@@ -1,0 +1,26 @@
+---
+title: "Scaffold joelclaw-video and the System-Bus Consumption Seam"
+type: "question"
+kind: "task"
+status: "closed"
+interaction: "AFK"
+parent: "./video-pipeline-brief.svx"
+blockers: []
+assignee: "flagg steering session + pi worker (2026-07-13)"
+created_at: "2026-07-13"
+---
+
+# Scaffold joelclaw-video and the System-Bus Consumption Seam
+
+## Question
+
+Create `joelhooks/joelclaw-video` (repo + package skeleton: Bun, TypeScript strict, Effect where it earns its keep, `bun test`) and settle the consumption mechanics: how does `packages/system-bus` in the joelclaw monorepo import a package from an external repo — published to npm, GitHub Packages, git dependency, or a local link during development — given joelclaw is pnpm workspaces and imports cross boundaries via `@joelclaw/*`? The package must export Inngest functions system-bus can register in its existing serve list without adopting course-builder's adapter machinery. Resolved when the repo exists, `system-bus` successfully registers a hello-world Inngest function from it, and the resolution records the package name, versioning/release flow, and the dev-loop for editing both repos at once. Use ShitRat tooling for the GitHub side per standing rules.
+
+## Resolution
+
+Resolved 2026-07-13 by pi worker (callsign Huffy Greebo), verified independently by the steering session (bun test 1 pass; monorepo `bunx tsc --noEmit` clean; registration diff is two lines + spread).
+
+- **Repo:** `/Users/joel/Code/joelhooks/joelclaw-video`, jj colocated. Package name **`joelclaw-video`** (unscoped — `@joelclaw/*` is reserved for internal workspace packages and confuses the biome import-boundary rules).
+- **Seam:** the package exports `createVideoFunctions(inngest)` — host app injects its Inngest client, gets function definitions back; `inngest` is a peer dependency so there is exactly one client instance. Hello-world `joelclaw-video-hello` on event `video/hello` registered in `packages/system-bus/src/inngest/functions/index.host.ts`.
+- **Consumption:** pnpm **`link:../../../joelclaw-video`** in system-bus's package.json — live edit-both-repos dev loop, no publish step.
+- **Known caveats:** (1) `link:` requires the sibling checkout to exist wherever system-bus is built — fine on flagg, but the k8s worker image build (`k8s/publish-system-bus-worker.sh`) needs the repo in build context or a swap to a published version; revisit at deploy time. (2) `pnpm biome check packages/` carries 38 pre-existing diagnostics in unrelated files — none from this change.

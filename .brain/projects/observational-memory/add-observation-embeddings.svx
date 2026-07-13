@@ -1,0 +1,31 @@
+---
+title: "Add Vector Embeddings to the Observations Collection"
+type: "question"
+kind: "task"
+status: "closed"
+interaction: "AFK"
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Add Vector Embeddings to the Observations Collection
+
+## Question
+
+The `observations` Typesense collection (shipped 2026-07-12) is lexical-only —
+no embedding field, so recall is keyword FTS, not semantic. Add a Typesense
+auto-embedding field over gist + observations + decisions and switch
+`joelclaw sessions search` to hybrid (keyword + vector) queries.
+
+Candidate embedder: `qwen3-embedding:8b` already pulled in flagg's ollama
+(openai-compatible endpoint :11434/v1) via Typesense remote-embedding
+model_config; fallback is a Typesense built-in S-BERT model. Constraints:
+files stay truth (embedding is projection state, regenerated on --rebuild);
+indexing stays idempotent; no paid APIs. Receipts: a semantic query that
+lexical search misses ("what did we decide about memory compression" finding
+the node-cluster/reflector observation) returning the right page.
+
+## Superseded (2026-07-13)
+
+qmd adopted as the knowledge projection (see evaluate-qmd-brain-recall Resolution) — hybrid semantic recall over the full svx corpus including observations, local models, MCP. Typesense embedding work not needed.

@@ -2,13 +2,13 @@
 title: "Task: qmd spike — hybrid recall over brain roots + observations"
 type: task-brief
 created: 2026-07-12
-parent: ".brain/projects/wayfinder/evaluate-qmd-brain-recall.svx"
+parent: ".brain/projects/observational-memory/evaluate-qmd-brain-recall.svx"
 ---
 
 # qmd spike
 
 You are on flagg in `~/Code/joelhooks/joelclaw`. Read your ticket
-(`.brain/projects/wayfinder/evaluate-qmd-brain-recall.svx`) and skim
+(`.brain/projects/observational-memory/evaluate-qmd-brain-recall.svx`) and skim
 https://github.com/tobi/qmd (or its README via npm). Evaluate qmd as the
 KNOWLEDGE-recall projection over the Brain.
 

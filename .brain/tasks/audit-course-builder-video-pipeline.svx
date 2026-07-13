@@ -6,8 +6,8 @@ created_at: "2026-07-13"
 
 # Worker brief: audit course-builder's video pipeline for the yoink
 
-You are a research worker for the wayfinder ticket at
-`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/wayfinder/audit-course-builder-video-pipeline.svx`.
+You are a research worker for the question at
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/audit-course-builder-video-pipeline.svx`.
 Read the ticket and its parent map (`joelclaw-video-pipeline-map.svx`, same directory) first — they define the destination and fixed decisions.
 
 ## Job
@@ -29,7 +29,7 @@ Read end to end:
 ## Deliverable
 
 Write ONE file:
-`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/wayfinder/docs/course-builder-video-yoink-audit.svx`
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/docs/course-builder-video-yoink-audit.svx`
 
 (.svx is mandatory — never .md inside .brain.) Structure: summary up top; then per-function verdict table (port / rework / skip, with why); Mux settings JSON (verified vs unverified clearly marked); direct-upload notes; Deepgram contract; contentResource/videoResource schema sketch; open questions.
 

@@ -1,0 +1,60 @@
+---
+title: "Consolidate scheduled jobs on Inngest cron"
+type: "question"
+kind: "task"
+status: "open"
+interaction: "AFK"
+parent: "./bugle-redesign-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Consolidate scheduled jobs on Inngest cron
+
+## Question
+
+JoelClaw already HAS a cron solution — Inngest cron triggers (`{ cron: "..." }`
+on `createFunction`, e.g. `voice-telnyx-balance` at `0 */6 * * *`). But
+scheduled work keeps landing elsewhere because agents forget or the worker
+deploy loop feels heavy: flagg LaunchAgents (`com.joelclaw.wiki-serve` is
+serve-not-cron, but `com.joelclaw.sms-vetting-check` is pure cron), the 6am
+daily pipeline, per-repo scripts. Where should scheduled jobs live, and what
+makes Inngest the path of least resistance?
+
+## Origin (2026-07-13)
+
+Joel, during the public-line SMS build: "i also thought we had a joelclaw cron
+solution but if not we should add that to the system todo list. feels like
+inngest would slay at this or we could bring in dkron." We do have it —
+Inngest cron. The SMS vetting watch shipped twice in one session because of
+this gap: first as a LaunchAgent (worked immediately, no deploy), then
+migrated to `voice-sms-vetting-check` (Inngest cron, the right home, but
+inert until the host worker redeploys).
+
+## Shape of the work
+
+- Inventory: `launchctl list | grep joelclaw` on flagg (and panda/blaine),
+  plus crontabs, plus scripts invoked by the daily pipeline. Tag each as
+  serve / cron / watchdog.
+- Policy: Inngest-cron-first for anything that is (a) API-driven, (b) wants
+  observability/retries, (c) should survive machine reshuffles. LaunchAgents
+  stay for host-bound serve daemons and things that must run when the worker
+  itself is down (watchdogs watching the bus can't live on the bus).
+- The friction to kill: a new Inngest function is inert until the host worker
+  restarts. Either make worker deploys cheap/automatic or document the
+  one-liner, because "LaunchAgent because deploy felt heavy" is how sprawl
+  happens.
+- dkron: only if the inventory surfaces a real gap Inngest can't cover
+  (cross-machine scheduling with no bus dependency). Don't add a third
+  scheduler just to have one.
+
+## Receipts
+
+- `packages/system-bus/src/inngest/functions/voice-telnyx-balance.ts` — prior
+  art, cron trigger.
+- `packages/system-bus/src/inngest/functions/voice-sms-vetting-check.ts` —
+  the migration that prompted this.
+- `infra/voice-agent/sms-campaign-vetting-check.sh` +
+  `com.joelclaw.sms-vetting-check` LaunchAgent — the stopgap to retire once
+  the Inngest fn is verified live.
+- `~/.brain/projects/public-shitrat-line-sms.svx` — full SMS-line context.

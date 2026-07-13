@@ -2,13 +2,13 @@
 title: "Task: research session-capture coverage across the fleet"
 type: task-brief
 created: 2026-07-12
-parent: ".brain/projects/wayfinder/research-session-capture-coverage.svx"
+parent: ".brain/projects/observational-memory/research-session-capture-coverage.svx"
 ---
 
 # Research session-capture coverage across the fleet
 
 READ-ONLY reconnaissance for the observational-memory write loop
-(`.brain/projects/wayfinder/joelclaw-observational-memory-map.svx`). You are
+(`.brain/projects/observational-memory/observational-memory-brief.svx`). You are
 on flagg in `~/Code/joelhooks/joelclaw`. Ground truth only — receipts for
 every claim (the exact command + trimmed output). No mutations anywhere: no
 writes to Typesense, no config changes, no commits.

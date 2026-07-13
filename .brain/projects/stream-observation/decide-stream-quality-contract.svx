@@ -1,0 +1,25 @@
+---
+title: "Decide the Stream Quality Contract (not total dogshit)"
+type: "question"
+kind: "grilling"
+status: "open"
+interaction: "HITL"
+parent: "./stream-observation-brief.svx"
+blockers: ["./research-stream-ingress-inventory.svx"]
+created_at: "2026-07-13"
+---
+
+# Decide the Stream Quality Contract
+
+## Question
+
+Joel's charter verbatim: "how do we create actionable, useful, high quality
+observations from the raw data flow that isn't total dogshit?" Decide the
+gates: an actionability requirement (a page must carry a decision, a loop,
+a change, or an anomaly — else index-line), signals-style pre-mining per
+medium (what is a high-signal turn in Slack? in Front? in a GitHub event
+stream?), dedup policy across sources, per-source validator teeth
+(sensitiveReason defaults for Front/customer content), volume budgets
+(pages/day caps per source so memory stays readable), and who tombstones
+what. The proven session-side mechanisms are the template; the grilling
+decides their per-source calibration.

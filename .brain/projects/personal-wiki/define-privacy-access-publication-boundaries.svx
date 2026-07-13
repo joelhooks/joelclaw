@@ -1,0 +1,70 @@
+---
+title: "Define Privacy, Access, and Publication Boundaries"
+type: "question"
+kind: "grilling"
+status: "closed"
+assignee: "claude (flagg, session 14d06369, 2026-07-12)"
+closed_at: "2026-07-12"
+interaction: "HITL"
+parent: "./personal-wiki-brief.svx"
+blockers: []
+created_at: "2026-07-10"
+---
+
+# Define Privacy, Access, and Publication Boundaries
+
+## Resolution (2026-07-12, grilled with Joel)
+
+1. **Access**: tailnet membership IS the auth. Single tier, every tailnet
+   device reads everything, no app-level auth, no device ACL. All nine nodes
+   are `joelhooks@`; the joelclaw subdomains remain Joel-only surfaces even
+   if broader access arrives someday.
+2. **Redaction is presentation, not just data hygiene** (Joel's charter:
+   "redaction could be a style"). Two layers. Data at rest always safe:
+   secrets/tokens never persisted, third-party content only as bounded
+   redact.ts excerpts, hard exclusions (sensitive/captures/people/
+   family-health) never rendered. Presentation: **secure mode by default**
+   (PII spans masked — blur/half-revealed); a floating **JoelClaw toolbar**
+   (left edge, feature flags) flips reveal mode for the current session,
+   auto-reverting. Reveal can only un-mask what's stored. Driver: readership
+   is Joel-only at the network layer but not at the pixel layer — he records
+   screen-share YouTube videos on these machines; default pixels must be
+   safe to leak. Toolbar mechanics land in `decide-brain-svx-rendering-model`.
+3. **Audit**: none. No view/reveal logs — single-reader theater. ClickHouse
+   exists for *general* event streams (build/system observability) whenever
+   useful; that's telemetry, not privacy machinery.
+4. **Retention**: indefinite by default.
+5. **Deletion**: privacy scrub is the one chartered exception to edition
+   immutability — edit the snapshot under `data/editions/`, rebuild, leave a
+   one-line tombstone ("excerpt removed <date>"). Git history is the audit
+   trail; rewriting it is allowed only as a named deliberate act.
+   *(Recommended, unobjected — Joel can amend.)*
+
+Unblocks `decide-brain-svx-rendering-model` (toolbar + privacy-key contract
+now defined).
+
+## Grilling notes (2026-07-12, in progress)
+
+- **Access/readership (decided)**: single tier, tailnet-wide read, no
+  app-level auth, no device ACL needed. It's Joel-only right now; all nine
+  tailnet nodes are `joelhooks@`. Even if access opens up later, the
+  joelclaw subdomains used this way remain Joel's personal surfaces.
+  Tailnet membership IS the auth.
+- **Redaction as presentation (decided)**: two layers. DATA layer keeps the
+  AGENTS.md contract verbatim — secrets/tokens never persisted, third-party
+  content stored only as bounded redacted excerpts via redact.ts, hard
+  exclusions (sensitive/captures/people/family-health) never rendered.
+  PRESENTATION layer: pages default to **secure mode** (PII spans masked —
+  blur/half-revealed); a floating JoelClaw toolbar (left edge, feature
+  flags) flips **reveal mode** for the current session (session-scoped,
+  auto-reverts). Reveal can only un-mask what's stored — secrets are
+  unrevealable because they're never stored. Rationale: readership is
+  Joel-only at the network layer but NOT at the pixel layer — he now records
+  screen-share YouTube videos on these machines; default pixels must be
+  safe to leak. Toolbar/flag mechanics belong to the rendering-model
+  ticket; the CONTRACT (safe-at-rest data, mask-by-default, session reveal)
+  is this ticket's boundary.
+
+## Question
+
+Who and what may access the primary wiki from Flagg, the fleet, Joel's phone, and remote environments; how are private work streams separated from redacted public-safe projections; and what authentication, audit, retention, and deletion boundaries are required before Slack, Front, Gmail, Discord, and session evidence can appear together?

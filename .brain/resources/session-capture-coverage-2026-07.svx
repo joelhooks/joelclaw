@@ -276,7 +276,7 @@ Coverage is successful Pi `write`/`edit` tool results with pre/post blob hashes,
 per-turn `changeSetId`, repo/worktree/HEAD identity, plus deterministic
 commit-attribution by blob equality. Bash mutations get an unattributed marker.
 Claude, Codex, bash worktree diffing, supersession, and rewrite lineage are not
-covered. Source: `.brain/projects/wayfinder/instrument-session-change-ledger.svx`.
+covered. Source: `.brain/projects/brain-graph/instrument-session-change-ledger.svx`.
 
 ## Named gaps
 

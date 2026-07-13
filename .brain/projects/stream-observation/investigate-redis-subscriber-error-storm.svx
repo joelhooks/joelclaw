@@ -1,0 +1,38 @@
+---
+title: "Kill the redis.subscriber.error Storm (102M rows)"
+type: "question"
+kind: "task"
+status: "complete"
+completed_at: "2026-07-13"
+assignee: "pi worker (steered by claude session 14d06369)"
+interaction: "AFK"
+parent: "./stream-observation-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Kill the redis.subscriber.error Storm (102M rows)
+
+## Question
+
+ClickHouse holds 102,052,982 `redis.subscriber.error` rows — 99.78% of the
+entire OTEL table, poisoning the telemetry sink the observer/anomaly work
+depends on. Find the erroring subscriber (system-bus), fix the root cause,
+and decide cleanup (drop the storm partition-wise vs let 180d TTL eat it).
+Receipts from the ingress inventory.
+
+## Answer
+
+The gateway Redis retry loop leaked one subscriber/command client pair per
+manual retry. Old ioredis clients kept reconnecting and each subscriber emitted
+an uncapped `redis.subscriber.error` row. The code fix disposes failed pairs,
+rebinds the message store on recovery, bounds shutdown cleanup, and emits
+bounded detail-plus-summary telemetry.
+
+ClickHouse was cleaned with partition-scoped `ALTER DELETE` mutations for
+`202607` and `202606`. Both mutations completed. Storm rows fell from
+102,052,982 to 0; active table storage fell from 3.76 GiB to 26.41 MiB. All 141
+non-storm `source, action` groups survived the cleanup with zero count
+decreases at the preservation cutoff.
+
+Full receipt: [Kill the storm, clean the debris](../../tasks/kill-redis-error-storm.svx).

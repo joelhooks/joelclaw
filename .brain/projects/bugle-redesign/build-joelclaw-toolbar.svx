@@ -1,0 +1,22 @@
+---
+title: "Build the JoelClaw Toolbar (secure mode v1)"
+type: "question"
+kind: "task"
+status: "open"
+interaction: "AFK"
+parent: "./bugle-redesign-brief.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Build the JoelClaw Toolbar (secure mode v1)
+
+## Question
+
+Fixed left rail on every wiki page. Session-scoped flags (localStorage):
+`secureMode` default-ON masking marked third-party excerpt spans on
+edition/source surfaces (Brain-note prose is Joel's own and unmasked),
+`reveal` (auto-reverting), provenance detail level, graph-panel toggle.
+Contract from the closed privacy ticket: reveal can only un-mask what's
+stored; secrets are never stored, so never revealable. Quiet-taste rule
+applies — this is a tool rail, not chrome.

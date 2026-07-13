@@ -1,0 +1,16 @@
+---
+title: "Verify the Wiki Toolchain and Runtime Boundaries"
+type: "question"
+kind: "research"
+status: "open"
+interaction: "AFK"
+parent: "./personal-wiki-brief.svx"
+blockers: []
+created_at: "2026-07-10"
+---
+
+# Verify the Wiki Toolchain and Runtime Boundaries
+
+## Question
+
+What exact compatible versions, configurations, and architectural boundaries should the prototype use for SvelteKit, MDSvX, `tufte-mdsvx`, TypeScript 7, Oxfmt, Oxlint, Ultracite, XState v5, Effect v4 beta, Convex, and the Pi-agent bridge—and which unstable APIs must be pinned, wrapped, or avoided?

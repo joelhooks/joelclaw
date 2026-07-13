@@ -1,0 +1,34 @@
+---
+title: "Restore Dial Tone via LiveKit Cloud"
+type: "question"
+kind: "task"
+status: "closed"
+interaction: "HITL"
+parent: "./voice-workroom-brief.svx"
+blockers: []
+created_at: "2026-07-11"
+---
+
+# Restore Dial Tone via LiveKit Cloud
+
+## Question
+
+Get the phone answering again: create the LiveKit Cloud project, configure the SIP inbound trunk and dispatch rule, repoint the Telnyx DID (+1 360 605 1697) from the dead k8s path (`clanker-001:5060`) to the LiveKit Cloud SIP endpoint, swap `LIVEKIT_URL` to the cloud WSS URL in the worker env, lease the new `livekit_api_key`/`livekit_api_secret` via agent-secrets, and re-enable `com.joel.voice-agent` (the existing worker at `infra/voice-agent/main.py` — no code changes beyond config expected). HITL because LiveKit Cloud account creation and Telnyx trunk changes need Joel. Resolved when Joel calls the DID and the agent answers; the resolution records the cloud project URL, SIP endpoint, dispatch rule ID, and where the secrets live — later tickets depend on these facts.
+
+## Resolution
+
+Resolved 2026-07-11 (PT). Joel called the DID and Panda answered; both directions verified live.
+
+The plan changed in three ways worth remembering:
+
+1. **The old DID was gone.** The Telnyx account (`joelclawbot@gmail.com`) had a −$1.44 balance; the number `+1 360 605 1697` had been released and is not re-buyable. A lapsed balance silently killed BOTH directions of telephony — outbound `call_joel`/SMS had been dead too. New DID purchased: **+1 360 389 4321**.
+2. **Never derive a LiveKit SIP URI.** Everything under `.sip.livekit.cloud` is wildcard DNS, so a guessed hostname resolves and then 404s every INVITE ("your call cannot be completed as dialed" at the carrier). The real project SIP URI comes from the dashboard only: `3u3nhn7qkku.sip.livekit.cloud`.
+3. **The worker rejected its own calls.** Caller identity was parsed from the room name; outbound rooms don't embed one, and the agent judged before the phone leg joined. Fixed in `main.py`: `await ctx.connect()`, wait for the SIP participant (90s), judge `sip.phoneNumber` attribute, room-name parse as fallback.
+
+Recorded facts:
+
+- LiveKit Cloud project: `wss://shitrat-8in6ohwr.livekit.cloud`; SIP URI `sip:3u3nhn7qkku.sip.livekit.cloud`
+- Inbound trunk `ST_sp5bRD9369Di` (number +13603894321); dispatch rule `SDR_NqfyvnCWAA7j` (per-caller rooms, `call-` prefix); outbound trunk `ST_KAQ9ZS6xW6Fo` (to `sip.telnyx.com`, credential auth)
+- Telnyx: FQDN connection `joelclaw-livekit-cloud` (id 3002093382945212121, TCP, OVP `joelclaw-outbound` attached), FQDN record id 3002093479196100316, number id 3002093239323854548
+- Secrets (agent-secrets): `livekit_url`, `livekit_api_key`, `livekit_api_secret` rotated to cloud values; `telnyx_phone_number` → new DID; new `telnyx_sip_user`/`telnyx_sip_pass`; bare `openrouter_api_key` created (only `blaine::`/`panda::` namespaced copies existed — the failed lease's JSON error envelope was being exported as the API key; `run.sh` now hard-fails on bad leases)
+- Worker: `com.joel.voice-agent` LaunchAgent, registered as `AW_Sd4ZQ6uxabpv`, voice = Tom (Australian Bloke, `DYkrAHD8iwork3YSUBbs`) per `~/.config/joelclaw/voice-agent.yaml`
