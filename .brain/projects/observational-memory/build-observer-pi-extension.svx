@@ -84,3 +84,26 @@ wiring so family members message each other in-band. Registry maintained by
 the orchestrator (state file next to the cursor); dispatcher and workers
 read it at start and on change. herdr send-keys demotes to wake/lifecycle
 only.
+
+## Addendum 5 (Joel, 2026-07-13): no opaque spinners — long work belongs in sub-agents
+
+Joel's UX feedback on the live observer: tool calls "don't provide any
+visual feedback of progress/activity, just spins on 'working'" — and long
+work "generally belongs in a sub-agent." v1.5 design rule:
+
+1. **Orchestrator tools stay short.** Anything beyond a few seconds of wall
+   time must not run inline inside a tool call. distill_window stops
+   running nested pi -p inline: it delegates — spawn_worker (v1.4 surface)
+   for a visible terra pane per batch (name-synced, ping-waited,
+   family-registered), or a pi-subagent from the bespoke roster where pi
+   renders subagent activity natively. publish()'s wiki build likewise
+   delegates or backgrounds with a progress receipt.
+2. **Progress is a first-class output**: whatever the ExtensionAPI offers
+   for streaming tool progress/details (check pi-mono source), use it for
+   the short tools too — counts as they accumulate, not silence then a
+   blob.
+3. Acceptance: attach to the observer session during a busy tick and SEE
+   the work — distiller panes appearing, working, closing — with the
+   orchestrator's own pane never spinning more than seconds.
+
+Sequenced after the dispatcher build (same files in flight).
