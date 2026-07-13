@@ -1,0 +1,25 @@
+---
+title: "Research the Existing Stream Ingress (webhooks to where?)"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:research"
+interaction: "AFK"
+parent: "./joelclaw-stream-observation-map.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Research the Existing Stream Ingress
+
+## Question
+
+Ground truth for "how do webhooks flow into memory": where do Front and
+Slack realtime updates actually land today (gateway channels? Inngest
+functions? ClickHouse tables? Redis? dropped on the floor?) — exact code
+paths in joelclaw (packages/gateway, packages/system-bus), event shapes,
+volumes/day per source, retention, and what ClickHouse currently holds.
+Also inventory the Bugle's existing source adapters (which of
+Front/Slack/GitHub/Twitter it already reads at build time, and how).
+Receipts per claim. Output: a coverage matrix svx in .brain/resources/
+— the epoch-model and quality grillings are blocked on this.

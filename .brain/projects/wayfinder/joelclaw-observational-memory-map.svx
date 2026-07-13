@@ -91,7 +91,7 @@ to understand all of the work that we're doing."
 
 ## Out of scope
 
-- External-stream observation (mail/Slack/Front/Discord) — the Bugle owns it.
+- External-stream observation (mail/Slack/Front/Discord) — the Bugle owns it. *(2026-07-13: returning as a fresh effort — [stream-observation map](./joelclaw-stream-observation-map.svx); the boundary redraw is that map's grilling ticket.)*
 - Public or multi-user anything; paid-API inference.
 - Rebuilding session capture itself — capture exists; gaps found by the
   coverage research ticket get fixed, not redesigned.

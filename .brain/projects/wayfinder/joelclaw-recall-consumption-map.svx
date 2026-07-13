@@ -52,7 +52,7 @@ enough; ingest changes belong to the observational-memory map, not here.
 
 ## Decisions so far
 
-<!-- one line per closed ticket: gist + link -->
+- [Bench Recall Quality](./bench-recall-quality.svx) — consumption leg shipped with five held-out canonical-page queries outside Brain roots; July baseline: sessions-search 1/5 (MRR 0.20), qmd hybrid 3/5 (MRR 0.34), paper index 0/5 (MRR 0.00). The zeroes stay visible as coverage failures.
 
 ## Not yet specified
 
