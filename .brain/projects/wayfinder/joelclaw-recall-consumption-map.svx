@@ -54,6 +54,8 @@ enough; ingest changes belong to the observational-memory map, not here.
 
 - [Bench Recall Quality](./bench-recall-quality.svx) — consumption leg shipped with five held-out canonical-page queries outside Brain roots; July baseline: sessions-search 1/5 (MRR 0.20), qmd hybrid 3/5 (MRR 0.34), paper index 0/5 (MRR 0.00). The zeroes stay visible as coverage failures.
 
+- [Bench Recall Quality (brainbench consumption leg)](./bench-recall-quality.svx) — baseline shipped: known-answer fixtures scored across all three pull surfaces; rerun cadence as corpus grows.
+
 ## Not yet specified
 
 - Cross-machine pull: sessions-search rides central Typesense (works
