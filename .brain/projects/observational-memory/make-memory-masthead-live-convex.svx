@@ -1,0 +1,43 @@
+---
+title: "Make the memory masthead a live Convex attachment via joelclaw-api"
+type: "question"
+kind: "task"
+status: "open"
+interaction: "AFK"
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Make the memory masthead live via Convex
+
+## Question
+
+Joel (live steering, 2026-07-13): "it'd be sick if it could be a live convex
+attachment via joelclaw-api." The static masthead at the root of
+brain.joelclaw.com (built 2026-07-13, renders from a single `memory-pulse`
+JSON object with a stable `#memory-masthead` mount point and
+`build/memory-pulse.json` artifact) becomes live: the numbers update without
+a wiki rebuild.
+
+Decide and build the attachment path:
+
+- **Ingest**: something writes the pulse into Convex — candidates: the
+  observer's publish step, the tick supervisor, or a small launchd publisher
+  reading `~/.joelclaw/*` receipts + dark-wizard observations. Local
+  self-hosted Convex (`CONVEX_URL=http://127.0.0.1:3210`) with joelclaw-api
+  (flagg:3111) as the canonical surface — follow the repo's hexagonal
+  boundaries and ADRs.
+- **Delivery**: what the browser talks to — Convex client subscription
+  directly vs joelclaw-api SSE/poll proxy. Constraint: the paper is
+  tailnet-only and read on phones/laptops, so the endpoint must be a
+  tailnet-reachable URL (never localhost/raw ports in the page; URL ladder
+  applies), and it must fail soft back to the static render when
+  unreachable.
+- **Privacy**: pulse content is already the least-sensitive projection
+  (counts + non-sensitive titles); keep the sensitive-title exclusion at
+  ingest, not at render.
+
+Done when the root masthead updates within a minute of a new observation page
+or tick without rebuilding the wiki, with the static render as fallback, and
+the receipts (ingest path, endpoint, fallback behavior) recorded here.
