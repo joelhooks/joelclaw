@@ -1,0 +1,35 @@
+---
+title: "Build the Observer as an Activated Pi Extension"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-observational-memory-map.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Build the Observer as an Activated Pi Extension
+
+## Question
+
+Convert the observer charter (`dark-wizard/.brain/tasks/observer-loop-charter.svx`)
+from a kickoff prompt into an activated pi extension that injects the
+observer constitution into the SYSTEM PROMPT (Amendment 3 of the topology
+ticket). Study existing extensions (`~/.pi/agent/extensions/` —
+memory-capture, herdr-name-sync, herdr-callsign) for the API. Requirements:
+
+- Activation is explicit (flag/env/config), never default — only the
+  observer session gets observer identity.
+- Charter content sourced from the svx file at session start (file remains
+  the editable truth; extension is the injection mechanism).
+- Cache-aware: charter injects as a stable prefix; anything dynamic
+  (cursor value, date) arrives in tick prompts, not the system prompt.
+- Restart story: `observer-tick.sh` gains an ensure-session step — if the
+  pane's pi is dead, relaunch `pi` with the extension activated; identity
+  comes from the extension, state from the cursor. Include daily session
+  rotation (fresh session each morning, cursor carries over).
+- Receipts: a tick executed under extension identity with no kickoff
+  prompt; a simulated compaction (or long session) showing the charter
+  still governs.

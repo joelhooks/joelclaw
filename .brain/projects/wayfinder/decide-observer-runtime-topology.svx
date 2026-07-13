@@ -110,3 +110,30 @@ callsigns, herdr-pings turn events, `herdr-ping-wait` wake loop — the
 orchestrator uses the same loop the steering session used to run today's
 renderer/coverage/prototype workers. Today was the live rehearsal of this
 exact pattern.
+
+## Amendment 3 (2026-07-12, Joel — extension identity + cache-aware turns)
+
+1. **The observer is an activated pi EXTENSION, not a kickoff prompt.** The
+   charter injects into the SYSTEM PROMPT via an extension (pattern:
+   existing extensions like memory-capture), activated for the observer
+   session. Why it matters: a kickoff prompt is just the first user message
+   — compaction eventually summarizes it away and the daemon drifts from
+   its own constitution. System-prompt identity survives every turn and
+   every compaction, and restart becomes `pi` + extension activation, no
+   fragile prompt string (today's migration proved kickoff-restart is
+   brittle).
+2. **Cache-aware turn design.** With a stable system-prompt prefix, every
+   tick rides the provider prompt cache. Consequences to build in:
+   - Maximize the stable prefix (charter + tool config fixed; nothing
+     dynamic above the fold).
+   - Tick cadence considered against provider cache TTL — batch work per
+     tick to amortize cold prefixes rather than many tiny warm-up turns.
+   - **Daily session rotation**: identity lives in the extension, state
+     lives in the cursor file + observation pages — so the session itself
+     is disposable. Rotate fresh each morning: bounded context, no
+     compaction debt, clean cache.
+   - Tick reports stay one line; worker panes carry the heavy tokens
+     (already chartered) — the orchestrator's context is a ledger, not a
+     warehouse.
+
+Graduates: build-observer-pi-extension.
