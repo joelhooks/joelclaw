@@ -1,13 +1,14 @@
 ---
 title: "Spec: herdr Session Management (named, isolated, attachable sessions)"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 labels:
   - "wayfinder:task"
 interaction: "HITL"
 parent: "./joelclaw-observational-memory-map.svx"
 blockers: []
 created_at: "2026-07-12"
+closed_at: "2026-07-12"
 ---
 
 # Spec: herdr Session Management
@@ -38,3 +39,13 @@ Requires the herdr source repo (not checked out on flagg — likely blaine).
 The observer is the driving use case; the observer-pi-extension ticket
 carries the in-session requirements (system-prompt OVERRIDE, bespoke
 subagents, headless tool policy).
+
+## Resolution (2026-07-12): ALREADY SHIPPED — closed with egg on the assistant's face
+
+`herdr session list|attach|stop|delete` and `herdr --session <name>` exist in
+0.7.3 with per-session state dirs (`~/.config/herdr/sessions/<name>/`). The
+2026-07-12 "shared session.json disaster" was operator error: a raw second
+server pointed at the DEFAULT socket instead of using sessions. The observer
+now runs in session `observer` (pane w1:p1, cwd `~/Code/joelhooks/joelclaw-observer`),
+tick script targets `herdr --session observer`, attach via
+`herdr session attach observer`. Nothing to build.
