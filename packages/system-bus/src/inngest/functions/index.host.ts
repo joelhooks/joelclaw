@@ -1,6 +1,7 @@
 import { createVideoFunctions } from "joelclaw-video";
 import { echoFizzle } from "../../memory/echo-fizzle";
 import { inngest } from "../client";
+import { webhookSubscriptionDispatchGeneric } from "./webhook-subscription-dispatch-generic";
 import { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 import { adrPitchExecute } from "./adr-pitch-execute";
 import { agentChainRun } from "./agent-chain-run";
@@ -165,6 +166,7 @@ export const hostFunctionDefinitions = [
   videoDownload,
   videoDownloadLegacyAlias,
   ...videoFunctionDefinitions,
+  webhookSubscriptionDispatchGeneric,
   transcriptProcess,
   transcriptProcessLegacyAlias,
   transcriptIndexWeb,
