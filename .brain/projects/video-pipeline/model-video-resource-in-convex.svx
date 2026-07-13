@@ -2,7 +2,8 @@
 title: "Model the Video Resource in Local Convex"
 type: "question"
 kind: "grilling"
-status: "open"
+status: "closed"
+assignee: "flagg-claude-steering 2026-07-13"
 interaction: "HITL"
 parent: "./video-pipeline-brief.svx"
 blockers:
@@ -15,3 +16,17 @@ created_at: "2026-07-13"
 ## Question
 
 Domain-model the video resource in local Convex, mirroring course-builder's content-resource shape where it helps and dropping it where it doesn't. Must cover: lifecycle state (draft/published) crossed with visibility (public/unlisted/private); Mux identifiers (upload id, asset id, playback id(s), asset status); the source pointer and archive location; the share slug the watch URL is built from; who/what published it (Joel vs which agent — the agentic pipeline needs attribution); and timestamps enough to drive the originals TTL. Decide what is state-machine (can a published video go back to draft? what does deleting mean — Mux asset deleted, archive deleted, both?) and what indexes the watch page and CLI need. Grill via `/skill:grill-me` with `/skill:local-convex` loaded; blocked on the yoink audit because course-builder's videoResource/contentResource schemas are the reference input.
+
+## Answer
+
+Answered 2026-07-13 with Joel (grill in the steering session).
+
+**Storage — video is just a type of content resource (Joel's call).** One row in the existing `contentResources` table (`apps/web/convex/schema.ts:125`) with `type: "videoResource"`; no Convex schema migration needed. The yoink audit's don't-copy-the-fields-bag warning is honored at the **code edge**, exactly as course-builder does it: a typed schema validates `fields` on every read and write (course-builder's reference: `packages/core/src/schemas/video-resource.ts` `VideoResourceSchema`; ours in Effect Schema to match the joelclaw-api stack). The raw bag is never passed around.
+
+**Field set** — course-builder's base: `title`, `duration`, `resolution`, `muxAssetId`, `muxPlaybackId`, `transcript`, `srt`, `wordLevelSrt`, `chapters`, and the processing `state` enum (`new → processing → preparing → ready | errored`, plus `deleted`). JoelClaw deltas: `muxUploadId`, `staticRenditionStatus` (rendition readiness is a separate webhook state), **`lifecycle`** (`draft`/`published` — orthogonal to processing state), **`visibility`** (`public`/`unlisted`/`private`), **`shareSlug`** (short random unguessable, canonical) + **`vanityAlias`** (nullable — rides the shortlink system), **`publishedBy`** (attribution: joel or which agent), **`sourcePointer`** (`{host, path}`), **`archive`** (`{key, checksum, archivedAt}` — the TTL sweep contract), `publishedAt`.
+
+**Identity & correlation:** `resourceId = "video:<shareSlug>"`. Mux `passthrough` carries the resourceId, so every webhook correlates through the existing `by_resourceId` index — **zero new indexes**. `searchText` gets title now, transcript when Deepgram lands.
+
+**State machine:** processing state (Mux lifecycle) and publish lifecycle are independent axes. `draft ↔ published` flips freely (unpublish 404s the watch page). Delete = tombstone: `deletedAt` set in Convex (slug never re-minted, webhook stragglers land on a tombstone), Mux asset and Garage object hard-deleted.
+
+**Write path:** through **joelclaw-api** — Joel's call (2026-07-13): a new generally-useful application layer (Hono?, pocock-quality TS 7, effect-smol v4, xstate v5, oxfmt/oxlint/ultracite; eventual MCP + CLI coverage) owns Convex mutations. Chartering it graduated to [Charter joelclaw-api](./charter-joelclaw-api.svx). Phase 1 keeps its stash-and-backfill fallback so the build never blocks on the new app.
