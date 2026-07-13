@@ -3,11 +3,12 @@ title: "Research: Fast-Model Candidates for the Conversational Loop"
 type: "question"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker (wE:p2, herdr, 2026-07-13)"
 parent: "./call-tuning-loop-brief.svx"
 blockers: []
 created_at: "2026-07-13"
+closed_at: "2026-07-13"
 ---
 
 # Research: Fast-Model Candidates for the Conversational Loop
@@ -22,3 +23,9 @@ good at terse persona adherence. Check published TTFT/latency data (OpenRouter
 throughput stats, provider docs), price per call, and any voice-agent
 practitioner reports. Deliverable: comparison asset with a ranked
 recommendation.
+
+## Answer (2026-07-13)
+
+Rank the A/B cells: **Claude Haiku 4.5 first**, **GPT-5.4 Mini with reasoning minimized/disabled second**, and **GPT-4.1 Mini third**. Haiku is the lowest-risk family swap and currently shows 0.41s best-provider p50 TTFT on OpenRouter. GPT-5.4 Mini is the stronger cross-family agentic challenger; GPT-4.1 Mini is the cheap mature control. Hold Gemini 3.1 Flash Lite despite its 0.66s p50: current OpenRouter provider data shows 5.51–8.18% tool-call errors, a bad fit for a 15-tool live agent.
+
+Full comparison, normalized call-cost math, receipts, caveats, and trial gates: [fast-model-candidates](./fast-model-candidates.svx).
