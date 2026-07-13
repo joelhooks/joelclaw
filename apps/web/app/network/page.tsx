@@ -10,7 +10,7 @@ import { ConvexHttpClient } from "convex/browser";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { Suspense } from "react";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 import { SITE_NAME } from "@/lib/constants";
 
 type NetworkNode = {
@@ -79,7 +79,7 @@ function getConvexClient(): ConvexHttpClient | null {
     convex = new ConvexHttpClient(convexUrl);
     const deployKey = readConvexDeployKey();
     if (deployKey) {
-      convex.setAdminAuth(deployKey);
+      (convex as ConvexHttpClient & { setAdminAuth: (token: string) => void }).setAdminAuth(deployKey);
     }
   }
   return convex;

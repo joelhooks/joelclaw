@@ -20,7 +20,7 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer";
 import { Textarea } from "@/components/ui/textarea";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 
 interface ReviewSheetProps {
   open: boolean;

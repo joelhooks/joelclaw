@@ -3,7 +3,7 @@
 import { useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 
 /**
  * Invisible island that subscribes to a Convex content resource's hash.

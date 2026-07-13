@@ -7,7 +7,7 @@ import { SearchBar } from "@repo/ui/search-bar";
 import { useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
 
 export default function SyslogPage() {

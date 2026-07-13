@@ -3,7 +3,7 @@ import fs from "fs";
 import matter from "gray-matter";
 import { cacheLife, cacheTag } from "next/cache";
 import path from "path";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 import {
   readConvexDeployKey,
   readConvexUrl,
@@ -49,7 +49,7 @@ function getConvexClient(): ConvexHttpClient | null {
 
   const deployKey = readConvexDeployKey();
   if (deployKey) {
-    convexClient.setAdminAuth(deployKey);
+    (convexClient as ConvexHttpClient & { setAdminAuth: (token: string) => void }).setAdminAuth(deployKey);
   }
 
   return convexClient;

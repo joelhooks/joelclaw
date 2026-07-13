@@ -5,7 +5,7 @@ import { SearchBar } from "@repo/ui/search-bar";
 import { useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
 
 const CATEGORY_COLORS: Record<string, string> = {
