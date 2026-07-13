@@ -4,6 +4,7 @@ type: "question"
 kind: "task"
 status: "open"
 interaction: "AFK"
+assignee: "pi worker (steered by claude grill-master session, claimed 2026-07-13T20:27Z)"
 parent: "./stream-observation-brief.svx"
 blockers: ["./investigate-redis-subscriber-error-storm.svx"]
 created_at: "2026-07-13"
