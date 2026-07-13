@@ -75,3 +75,12 @@ repair-request/mode-mismatch). v1.1: lib.ts delegates to these CLIs in
 never-throw wrappers instead of raw Typesense queries, and `signals`
 output seeds the Decisions/Observations sections of epoch pages before
 terra distills — pre-mined signal beats cold extraction.
+
+## Addendum 4 (Joel, 2026-07-13): family awareness in the extension
+
+The extension injects FAMILY CONTEXT for every observer-session pane:
+role, parent pane id, sibling registry (role → pane id), and pi-intercom
+wiring so family members message each other in-band. Registry maintained by
+the orchestrator (state file next to the cursor); dispatcher and workers
+read it at start and on change. herdr send-keys demotes to wake/lifecycle
+only.
