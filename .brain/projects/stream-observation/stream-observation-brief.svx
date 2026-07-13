@@ -64,6 +64,8 @@ updated only when it resolves.
 - [Kill the redis.subscriber.error Storm](./investigate-redis-subscriber-error-storm.svx) — root cause + emission budget shipped; 102M debris rows cleaned (0 remain); telemetry-watch unblocked.
 - [Prove (or Fix) the Front Durable Handoff](./verify-front-inngest-handoff.svx) — migration gap: handlers registered cluster-side, never on flagg host; fixed with end-to-end receipt + freshness check.
 
+- [Decide the Gateway Redis Channels Fate](./decide-gateway-redis-channel-fate.svx) — wake-dont-feed: reflex shrinks to a terra:low DISPATCHER pane inside the observer session (classify → wake/notify/drop); context only ever comes from recall; tiny allowlist; prompt-feeding loop retires.
+
 ## Not yet specified
 
 - GitHub + Twitter ingress (no webhooks today — pull adapters? new hooks?
