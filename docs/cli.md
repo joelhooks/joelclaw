@@ -739,7 +739,7 @@ Semantics:
 - `mail locks` now prefers the local git-mailbox `file_reservations/` artifact store when available because `/mail/api/locks` can under-report advisory file reservations while still reporting mailbox internals like archive/commit locks. Responses expose `source` and `fallback_reason` when artifact fallback was required.
 - `subscribe check` emits Inngest request events for scoped checks and for all-subscription checks when the queue pilot is off; `response.ids` are event/request IDs (inspect via `joelclaw event <event-id>`), not run IDs unless explicitly returned as `runIds`.
 - when `QUEUE_PILOTS=subscriptions`, unscoped `subscribe check` returns queue metadata instead of Inngest response ids because the request first lands in Redis and is forwarded by the Restate drainer.
-- `recall` rewrite telemetry now exposes `rewrite.strategy` (`disabled|skipped|haiku|openai|fallback`) and `rewrite.reason` so low-ROI rewrite skips/fallbacks are queryable; short/literal/direct-id queries skip LLM rewrite by design. The default rewrite model is `openai-codex/gpt-5.5`; set `JOELCLAW_RECALL_REWRITE_MODEL` only to an approved model.
+- `recall` rewrite telemetry now exposes `rewrite.strategy` (`disabled|skipped|haiku|openai|fallback`) and `rewrite.reason` so low-ROI rewrite skips/fallbacks are queryable; short/literal/direct-id queries skip LLM rewrite by design. The default rewrite model is `openai-codex/gpt-5.6-sol`; set `JOELCLAW_RECALL_REWRITE_MODEL` only to an approved model.
 
 ## Webhook command tree (ADR-0185)
 
