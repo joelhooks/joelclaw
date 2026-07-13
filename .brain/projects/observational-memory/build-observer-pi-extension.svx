@@ -168,3 +168,11 @@ pi-tui has proper responsive tools (resize handling, responsive rendering
 primitives) — use them as intended and panes are resilient by construction.
 Sensible minimums + queue-over-shrink stay, but the primary defense against
 TUI size crashes is responsive rendering done right, not layout fear.
+### 6.9 (steering, 2026-07-13, live incident): release/dev checkout split
+
+Auto-rotation relaunched the observer onto a workers mid-surgery working
+tree — 86 qualifying windows lost sessionIds in production. Standing
+architecture: the observer family RUNS from ~/.joelclaw/observer-release
+(git worktree pinned to the last steering-approved commit); workers edit
+the dev tree; steering promotes by advancing the release worktree at
+commit time. Runtime never loads uncommitted code again.
