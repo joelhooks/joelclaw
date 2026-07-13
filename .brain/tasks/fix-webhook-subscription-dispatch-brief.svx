@@ -1,0 +1,25 @@
+---
+title: "Worker brief: make agent webhook streaming work for mux"
+type: "task_brief"
+created_at: "2026-07-13"
+---
+
+# Worker brief: make agent webhook streaming work for mux events
+
+You are a build worker for the question at
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/make-agent-webhook-streaming-work-for-mux.svx`. Read it first, plus the E2E receipt it links.
+
+## Job
+
+In the joelclaw monorepo (`/Users/joel/Code/joelhooks/joelclaw`), generalize session webhook-subscription dispatch beyond github:
+
+1. Study `packages/system-bus/src/inngest/functions/webhook-subscription-dispatch.ts` (today: one function triggered by `github/workflow_run.completed` with github-specific artifact enrichment) and `packages/system-bus/src/lib/webhook-subscriptions.ts` (matching/claim/publish primitives — reuse them).
+2. Add a **generic dispatcher** Inngest function triggered by `mux/*` events (Inngest v3 supports wildcard event triggers — verify against the inngest package in node_modules; if wildcards are unsupported in this version, register explicit triggers for the mux event names the provider normalizes: asset.created, asset.ready, asset.errored, asset.updated, asset.static_rendition.ready, upload.created, upload.asset_created, upload.cancelled). No github-style enrichment — match subscriptions, claim delivery (idempotent), publish to the subscription's Redis replay list + notify channel, emit otel. Keep it small; the github function stays untouched.
+3. Design it so adding `deepgram/*` later is one line (provider list or second trigger), and say in code where.
+4. **Tests:** unit-test the new function's match/publish path with `bun test` alongside the existing `webhook-subscriptions.test.ts` patterns. Run the existing system-bus tests you touch nothing else in: `cd packages/system-bus && bun test src/lib/webhook-subscriptions.test.ts` plus your new test file.
+5. Prove `bunx tsc --noEmit` clean from repo root.
+
+## Rules
+
+- Touch ONLY: the new dispatcher file, the function registration index that includes it (find how webhook-subscription-dispatch registers — likely `inngest/functions/index.host.ts` or a shared index), and your test file. NOTHING else — many concurrent sessions have uncommitted work here. Never `git add`, never commit, never restart workers or LaunchAgents (the steering session deploys and live-verifies).
+- When finished print `DONE:` + files touched, trigger mechanism chosen (wildcard vs explicit list, with the version evidence), and the commands that prove green.
