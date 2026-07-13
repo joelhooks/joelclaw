@@ -700,6 +700,9 @@ importers:
       ioredis:
         specifier: ^5.9.3
         version: 5.9.3
+      joelclaw-video:
+        specifier: link:../../../joelclaw-video
+        version: link:../../../joelclaw-video
       oauth-1.0a:
         specifier: ^2.2.6
         version: 2.2.6

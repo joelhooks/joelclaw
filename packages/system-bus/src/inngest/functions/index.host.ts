@@ -1,4 +1,6 @@
+import { createVideoFunctions } from "joelclaw-video";
 import { echoFizzle } from "../../memory/echo-fizzle";
+import { inngest } from "../client";
 import { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 import { adrPitchExecute } from "./adr-pitch-execute";
 import { agentChainRun } from "./agent-chain-run";
@@ -139,6 +141,8 @@ import { xContentHook } from "./x-content-hook";
 import { xDiscoveryHook } from "./x-discovery-hook";
 import { xPost } from "./x-post";
 
+const videoFunctionDefinitions = createVideoFunctions(inngest);
+
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";
 }
@@ -155,6 +159,7 @@ export const hostFunctionDefinitions = [
   gatewayBehaviorDailyReview,
   videoDownload,
   videoDownloadLegacyAlias,
+  ...videoFunctionDefinitions,
   transcriptProcess,
   transcriptProcessLegacyAlias,
   transcriptIndexWeb,
