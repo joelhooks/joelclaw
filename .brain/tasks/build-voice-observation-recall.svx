@@ -1,0 +1,57 @@
+---
+title: "Task: voice observation recall — speech-formatted, fail-soft, very tested"
+type: task-brief
+created: 2026-07-12
+parent: ".brain/projects/wayfinder/build-voice-observation-recall.svx"
+---
+
+# Voice observation recall
+
+You are on flagg in `~/Code/joelhooks/joelclaw`, working ONLY in
+`infra/voice-agent/`. Read first: your ticket
+(`.brain/projects/wayfinder/build-voice-observation-recall.svx` — the
+privacy edge and test bar there are the acceptance criteria), the voice
+worker `infra/voice-agent/main.py` (study the existing `@function_tool`
+patterns, `_tool_env()`, and the existing long-term recall section
+~line 862), and `verify-voice.sh`.
+
+## Build
+
+1. `@function_tool recall_work(query: str, days: int = 7)` — shells
+   `joelclaw sessions search` (the new observation-layer default, shipped
+   today: gists + canonical brain.joelclaw.com URLs + privacy field).
+   Speech formatting: 2-3 most recent gists as plain sentences with day
+   references ("earlier today", "yesterday"); NEVER read URLs aloud —
+   mention "I can send you the link" and use the existing send/DM tool if
+   asked. Bounded timeout (follow existing tool patterns).
+2. **Fail-soft**: CLI error, timeout, empty index → one graceful spoken
+   sentence ("my memory search is down right now" / "nothing distilled on
+   that yet"). The tool must never raise into the call loop.
+3. **Sensitive filtering by caller identity**: results with
+   `privacy: sensitive` are spoken ONLY when the caller is verified-Joel
+   (find how main.py/call_tracker.py knows caller identity — Telnyx caller
+   id; follow the existing public/private context split). Unverified: drop
+   silently. When identity is undeterminable, treat as unverified.
+4. Prompt guidance: extend the system prompt's recall guidance minimally so
+   the agent knows recall_work is for "what did we do/decide" questions.
+5. `verify-voice.sh`: add a recall-tool check (CLI reachable + collection
+   non-empty + tool registered), consistent with its existing style.
+
+## Very tested (the point)
+
+- Unit tests in `infra/voice-agent/tests/`: parsing of CLI JSON, speech
+  formatting, sensitive filtering (verified vs unverified vs unknown
+  caller), empty results phrasing, error/timeout → fail-soft sentence.
+  Fake the CLI via fixture/monkeypatch — unit tests hit nothing live.
+- Integration receipt: one real `recall_work`-path query against the live
+  collection, output captured in your DONE summary.
+- Existing tests stay green (`pytest` in infra/voice-agent per its
+  pyproject/uv setup — use `uv run pytest`).
+
+## Rules
+
+- No commits, no pushes, no service restarts. Do not touch the LaunchAgent.
+- Only `infra/voice-agent/**` (code+tests) may change.
+- Print a DONE summary: files touched, test count before/after, all test
+  output tails, the integration receipt, decisions made on caller-identity
+  mechanics.
