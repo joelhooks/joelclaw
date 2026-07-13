@@ -1,0 +1,37 @@
+---
+title: "Worker task: judge rubric prototype from real calls"
+type: "asset"
+parent: "../projects/call-tuning-loop/draft-judge-rubric.svx"
+created_at: "2026-07-13"
+privacy: "private"
+---
+
+Work the claimed question `.brain/projects/call-tuning-loop/draft-judge-rubric.svx`
+(brief: `call-tuning-loop-brief.svx`; autonomy charter: `infra/voice-agent/VISION.md`).
+
+Draft the rubric the judge will score EVERY call against, then hand-score three
+real calls with it so Joel can argue with concrete numbers, not abstractions.
+
+Sources: transcripts in `~/.joelclaw/workspace/memory/voice/` (private) and
+`voice/public/` (public); per-turn latency rows in Convex (read via
+`cd apps/live-dashboard && bunx convex run calls:recentSessions` with env from
+`/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/local-convex/app-admin.env`,
+CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210); seed dimensions in the question
+file; yesterday's failure receipts in the brief's Notes.
+
+Deliverables:
+1. Asset `.brain/projects/call-tuning-loop/judge-rubric-prototype.svx`:
+   - The rubric: 5-8 dimensions max, each with a name, one-line ELI5
+     definition, 1-5 anchor descriptions (what a 1 sounds like, what a 5
+     sounds like — QUOTE real calls for anchors), and which tiers it applies
+     to (public/private/both).
+   - The failure taxonomy: the tag set retros aggregate by, seeded from real
+     failures (tracker-speak, silent tool chain, wrong-tool routing, opener
+     repeat, recitation voice...), each tag with one real example.
+   - Three hand-scored calls, diverse: the 46-turn public conversation, one
+     private grilling call, one short public poke. Per-dimension scores WITH
+     the quote that justifies each score.
+   - A NEEDS-JOEL list: every place you were unsure how Joel would weigh it.
+2. Do NOT close the question — it's HITL; Joel signs after reacting. Leave
+   status open, append a "## Prototype ready (2026-07-13)" line linking the asset.
+Work autonomously, do not commit, print a DONE summary.
