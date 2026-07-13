@@ -15,7 +15,7 @@ const addAnalysis = makeFunctionReference<
   "mutation",
   { room: string; objective: { turns: number; durationS: number; turnsPerMin: number }; judgeStatus: "pending"; createdAt: number },
   unknown
->("calls:addAnalysis");
+>("callTelemetry:addAnalysis");
 
 function finiteNumber(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? "0"));

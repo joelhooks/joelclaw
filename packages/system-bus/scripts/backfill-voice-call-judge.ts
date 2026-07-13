@@ -17,7 +17,7 @@ const sessionDetail = makeFunctionReference<
   "query",
   { room: string },
   { analysis: { judgeStatus?: string; scores?: { judgeVersion?: string } } | null } | null
->("calls:sessionDetail");
+>("callTelemetry:sessionDetail");
 
 function convexClient(): ConvexHttpClient {
   const url = process.env.CONVEX_URL?.trim() || "http://127.0.0.1:3210";
