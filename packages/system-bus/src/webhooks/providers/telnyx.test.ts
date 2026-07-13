@@ -59,6 +59,19 @@ describe("telnyxProvider.normalizePayload", () => {
     }
   });
 
+  test("maps inbound SMS (message.received) with message id idempotency", () => {
+    const [event] = telnyxProvider.normalizePayload({
+      data: {
+        id: "msg-event-1",
+        event_type: "message.received",
+        payload: { id: "msg-1", from: { phone_number: "+15555550100" }, text: "hi shitrat" },
+      },
+    }, {});
+    expect(event?.name).toBe("message.received");
+    expect(event?.data.text).toBe("hi shitrat");
+    expect(event?.idempotencyKey).toBe("telnyx-message.received-msg-event-1");
+  });
+
   test("ignores unsupported events", () => {
     expect(telnyxProvider.normalizePayload({
       data: { event_type: "call.bridged", payload: {} },
