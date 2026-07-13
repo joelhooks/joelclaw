@@ -151,3 +151,13 @@ good labels; callsigns identify who; spawn_worker names pane+tab at birth
 and briefs workers to name their session; extension init names the observer
 tab/workspace. Naming discipline extracted from the herdr-orchestration
 skill into both charters. No agent wanks around rediscovering conventions.
+### 6.7 (Joel, 2026-07-13): panes over tabs; self-cleaning is mechanical
+
+Joel prefers PANES for monitoring — revise 6.5: distillers spawn as panes in
+a stable grid with enforced minimum dimensions; concurrency is
+geometry-capped (queue work rather than shrink anyone); observer +
+dispatcher are persistent anchors never squeezed below viable; tabs only as
+overflow. And the observer cleans its own herdr shit mechanically: a
+cleanup sweep every tick + in spawn/harvest paths closing done/stray panes
+it owns. Acceptance state: persistent anchors + actively-working labeled
+panes, nothing else, ever.
