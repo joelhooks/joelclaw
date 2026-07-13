@@ -2,6 +2,7 @@
 title: "Build the Observer Dispatcher (terra:low routing pane)"
 type: "wayfinder_ticket"
 status: "open"
+assignee: "pi worker (steered by claude session 14d06369)"
 labels:
   - "wayfinder:task"
 interaction: "AFK"
