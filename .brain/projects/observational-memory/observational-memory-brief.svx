@@ -56,6 +56,8 @@ to understand all of the work that we're doing."
 - **Skills**: `/skill:grill-master`, `/skill:brain-first-workflow`,
   `/skill:session-search`, `/skill:effect-ts`, `/skill:joel-writing-style`.
 
+- **Standing call (Joel, 2026-07-13): no opaque spinners.** Long-running work is delegated to visible sub-agents/panes; orchestrator tool calls stay seconds-short; progress streams. Spec: extension ticket Addendum 5.
+
 ## Decision ledger
 
 <!-- one line per closed ticket: gist + link -->
