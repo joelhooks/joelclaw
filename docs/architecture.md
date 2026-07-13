@@ -237,7 +237,7 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - Model selection catalog
 - Provider fallback chains
 - Single source of truth for model→provider mappings
-- Pipeline policy is OpenAI Codex-first: GPT-5.5 for default/summary/digest/reasoning/complex work, GPT-5.4 Mini for cheap simple/classification/json/rewrite work, GPT-5.4 as stable secondary fallback. Anthropic catalog entries remain for compatibility and vision fallback, not pipeline defaults.
+- Pipeline policy is OpenAI Codex-first: GPT-5.6 Sol for default/summary/digest/reasoning/complex work, GPT-5.4 Mini for cheap simple/classification/json/rewrite work, GPT-5.4 as stable secondary fallback. Anthropic catalog entries remain for compatibility and vision fallback, not pipeline defaults.
 
 **@joelclaw/model-fallback**
 - Provider fallback implementation
