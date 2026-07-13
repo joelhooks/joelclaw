@@ -67,7 +67,42 @@ export const addAnalysis = mutation({
   args: {
     room: v.string(), objective: v.object({ turns: v.number(), durationS: v.number(), turnsPerMin: v.number() }),
     judgeStatus: v.union(v.literal("pending"), v.literal("done")),
-    scores: v.optional(v.object({ coherence: v.number(), warmth: v.number(), notes: v.string() })),
+    scores: v.optional(v.object({
+      coherence: v.number(),
+      warmth: v.number(),
+      notes: v.string(),
+      mean: v.optional(v.number()),
+      label: v.optional(v.union(
+        v.literal("clean"),
+        v.literal("clean-so-far"),
+        v.literal("needs-attention"),
+        v.literal("hard-fail"),
+      )),
+      dimensions: v.optional(v.array(v.object({
+        key: v.string(), score: v.union(v.number(), v.null()), justification: v.string(), quote: v.string(),
+      }))),
+      taxonomyTags: v.optional(v.array(v.string())),
+      hardFails: v.optional(v.object({
+        privacy_boundary_breach: v.boolean(),
+        missing_public_disclosure: v.boolean(),
+        invented_receipt: v.boolean(),
+        unsafe_action: v.boolean(),
+      })),
+      hardFailEvidence: v.optional(v.object({
+        privacy_boundary_breach: v.string(),
+        missing_public_disclosure: v.string(),
+        invented_receipt: v.string(),
+        unsafe_action: v.string(),
+      })),
+      confidence: v.optional(v.number()),
+      judgeVersion: v.optional(v.string()),
+      modelTier: v.optional(v.union(v.literal("cheap"), v.literal("escalated"))),
+      model: v.optional(v.string()),
+      provider: v.optional(v.string()),
+      escalationReason: v.optional(v.string()),
+      reviewRequired: v.optional(v.boolean()),
+      warnings: v.optional(v.array(v.string())),
+    })),
     createdAt: v.optional(v.number()),
   },
   handler: (ctx, args) => ctx.db.insert("analyses", { ...args, createdAt: args.createdAt ?? Date.now() }),
@@ -91,10 +126,11 @@ export const sessionDetail = query({
   handler: async (ctx, { room }) => {
     const session = await ctx.db.query("sessions").withIndex("by_room", (q) => q.eq("room", room)).unique();
     if (!session) return null;
-    const [turns, analysis] = await Promise.all([
+    const [turns, analyses] = await Promise.all([
       ctx.db.query("turns").withIndex("by_room_idx", (q) => q.eq("sessionRoom", room)).collect(),
-      ctx.db.query("analyses").withIndex("by_room", (q) => q.eq("room", room)).order("desc").first(),
+      ctx.db.query("analyses").withIndex("by_room", (q) => q.eq("room", room)).order("desc").collect(),
     ]);
+    const analysis = analyses.find((row) => row.judgeStatus === "done") ?? analyses[0] ?? null;
     return { session, turns, analysis };
   },
 });

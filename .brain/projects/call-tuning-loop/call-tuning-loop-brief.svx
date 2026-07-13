@@ -45,6 +45,7 @@ driving it.
 - [Define the Auto-Apply Surface](./define-autoapply-surface.svx) — resolved as the autonomy charter `infra/voice-agent/VISION.md`: allowlisted text auto-applies under four mechanical guardrails; persona/config/models gated; quarantine surfaces forbidden; promotion ladder + intelligence escalation (up to pi gpt-5.6-rol:xhigh) defined.
 
 - [Draft the Judge Rubric and Failure Taxonomy](./draft-judge-rubric.svx) — signed: 8 dimensions, 13 tags, N/O-excluded means, four hard-fails, bland public calls cap at 2; calibration = three hand-scored real calls.
+- **2026-07-13 — Judge implementation:** host `voice-call-judge` fans out from public and private completion events, dispatches the signed rubric through no-tools pi cheap→escalated tiers, validates quote/hard-fail receipts, writes rich Convex analyses, and exposes a dry-run-first backlog runner. Runtime rollout and corpus mutation remain with steering. Receipt: [build-judge-function](./build-judge-function.svx).
 
 ## Not yet specified
 

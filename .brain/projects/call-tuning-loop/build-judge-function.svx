@@ -3,13 +3,14 @@ title: "Build the Judge — Inngest + pi Agent Dispatch"
 type: "question"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker (wE:p6, herdr, 2026-07-13)"
 parent: "./call-tuning-loop-brief.svx"
 blockers:
   - "./draft-judge-rubric.svx"
   - "./research-transcript-fidelity.svx"
 created_at: "2026-07-13"
+closed_at: "2026-07-13"
 ---
 
 # Build the Judge — Inngest + pi Agent Dispatch
@@ -22,3 +23,34 @@ writes scores + taxonomy tags to the Convex analyses row (judgeStatus done),
 and surfaces them on the dashboard. Private transcripts stay on-machine
 through the pi path. Resolved when every new call lands judged within minutes
 and the backlog corpus is scored.
+
+## Answer (2026-07-13)
+
+Built `voice-call-judge` as a host-role Inngest function. It fans out from both
+`voice/public-call.completed` and the existing private `voice/call.completed`
+event without touching the private memory-pipeline consumer. A manual
+`voice/call.judge.requested` trigger backs the one-shot corpus runner.
+
+The function loads the signed rubric verbatim, includes the three calibration
+calls and Convex timing rows, dispatches the no-tools `voice-call-judge` pi
+agent on the cheap tier, validates exact transcript quotes and hard-fail
+receipts, and escalates invalid, low-confidence, conflicting, or incident
+judgments to `voice-call-judge-escalated`. Residual max-tier uncertainty is
+stored as `reviewRequired` / `NEEDS-JOEL`, never presented as clean.
+
+Rich scores remain backward-compatible with the old coherence/warmth shape:
+N/O-excluded mean, clean/clean-so-far/needs-attention/hard-fail label, eight
+dimensions, taxonomy tags, four hard-fail flags and evidence, confidence,
+model tier, escalation receipt, and validation warnings. Dashboard call cards
+show those fields. `backfill-voice-call-judge.ts` scans the local private/public
+transcript corpus, skips only this judge version, defaults to dry-run, and emits
+idempotent room-keyed requests with `--apply`.
+
+Verification: six focused Bun tests pass; live-dashboard TypeScript passes;
+host function import passes; Biome passes on all touched files except the
+pre-existing unrelated import-order drift in dirty `index.host.ts`; the package
+TypeScript check reaches only three pre-existing unrelated errors. A real local
+pi canary passed on `gpt-5.4-mini` with a schema-valid `clean-so-far` judgment.
+Per the worker brief, no worker restart, function registration, deployment, or
+backfill mutation was performed; steering still owns rollout and the first
+runtime/backlog proof.
