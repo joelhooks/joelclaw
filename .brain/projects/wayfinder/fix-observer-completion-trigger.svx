@@ -25,3 +25,15 @@ signal? Either fix the status transitions in capture, or change the observer
 trigger to an activity-age heuristic (session's last event older than N
 minutes = observable) — probably both. Receipt: a tick that finds and pages
 a genuinely-just-finished session without human help.
+
+## Reframe (Joel, 2026-07-12): completion was the wrong concept
+
+"Looking for 'completed' sessions kinda misses it a bit." Sessions here are
+long-lived organisms (the steering session ran two days); they pause and
+resume and never formally end. The observer should watch ACTIVITY WINDOWS:
+any session with ≥N new indexed tokens since the cursor (or quiet-after-
+activity for M minutes) yields an EPOCH observation of just the new window.
+A session produces many pages over its life. Completion status becomes
+irrelevant to the trigger (the runs_dev status hygiene question can be
+pursued separately or dropped). This also subsumes prototype finding #1 —
+monster sessions were always going to need epoch atoms.
