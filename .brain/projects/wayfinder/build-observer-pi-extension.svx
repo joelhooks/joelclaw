@@ -33,3 +33,14 @@ memory-capture, herdr-name-sync, herdr-callsign) for the API. Requirements:
 - Receipts: a tick executed under extension identity with no kickoff
   prompt; a simulated compaction (or long session) showing the charter
   still governs.
+
+## Addendum (Joel, 2026-07-12): headless tool policy
+
+The extension MUST disable interactive/blocking tools for observer sessions —
+MCQ/ask-user style prompts, quick-pick dialogs, anything that waits on a
+human. A headless daemon that asks a question deadlocks until the next human
+visit (the quick-pick modal that swallowed a tick during today's migration is
+the receipt). Enumerate pi's interactive tool surface from source/extensions
+and turn all of it off under observer identity; when the observer would have
+asked, it instead records the question in its tick report and proceeds
+conservatively (doubt → sensitive, gaps → report loudly).
