@@ -1,0 +1,26 @@
+---
+title: "Worker task: honest spoken record research"
+type: "asset"
+parent: "../projects/call-tuning-loop/research-transcript-fidelity.svx"
+created_at: "2026-07-13"
+privacy: "private"
+---
+
+Work the claimed question `.brain/projects/call-tuning-loop/research-transcript-fidelity.svx`
+for the brief `.brain/projects/call-tuning-loop/call-tuning-loop-brief.svx`.
+
+Investigate livekit-agents 1.4.x AS INSTALLED at
+`infra/voice-agent/.venv/lib/python3.14/site-packages/livekit/agents/` (read
+the source — voice/, audio_recognition.py, transcription/) plus official docs:
+how interrupted speech affects session.history (truncated? dropped?), what
+events fire per spoken segment (transcription events, playout callbacks), and
+the cleanest hook to capture what was ACTUALLY spoken. Reproduce receipt:
+transcript 2026-07-12-151052.md shows "The six that need you:" with the list
+Joel audibly heard missing. Check whether our Convex addTurn transcriptLine
+field is the right carrier. Deliver:
+1. Asset `.brain/projects/call-tuning-loop/spoken-record-capture.svx` — the
+   recommended mechanism with API receipts (file:line from the installed
+   package), sized for the judge build to consume.
+2. `## Answer (2026-07-13)` in the question file, status closed + closed_at.
+3. One ledger line on the brief.
+Work autonomously, do not commit, print a DONE summary.

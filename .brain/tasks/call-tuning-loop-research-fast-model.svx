@@ -1,0 +1,23 @@
+---
+title: "Worker task: fast-model candidate research"
+type: "asset"
+parent: "../projects/call-tuning-loop/research-fast-model-candidates.svx"
+created_at: "2026-07-13"
+privacy: "private"
+---
+
+Work the claimed question `.brain/projects/call-tuning-loop/research-fast-model-candidates.svx`
+for the brief `.brain/projects/call-tuning-loop/call-tuning-loop-brief.svx`.
+
+You have web search/fetch tools — use them. Ground every latency/price claim in
+a source link (OpenRouter model pages/throughput stats, provider docs,
+practitioner posts). Current baseline: anthropic/claude-sonnet-4.6 via
+OpenRouter, TTFT median 1.28s / p95 5.4s on real calls, heavy function-calling
+(15+ tools), terse Aussie persona. Deliver:
+1. An asset file `.brain/projects/call-tuning-loop/fast-model-candidates.svx`
+   (type asset, parent the question) — comparison table + ranked recommendation
+   of 2-3 candidates with receipts.
+2. In the question file: an `## Answer (2026-07-13)` section gisting the
+   ranking, status flipped to "closed" with closed_at.
+3. One ledger line appended to the brief's Decision ledger.
+Work autonomously, do not commit, print a DONE summary.

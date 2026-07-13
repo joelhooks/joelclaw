@@ -1,0 +1,23 @@
+---
+title: "Draft the Judge Rubric and Failure Taxonomy"
+type: "question"
+kind: "prototype"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./call-tuning-loop-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Draft the Judge Rubric and Failure Taxonomy
+
+## Question
+
+Draft, from the real 26-call corpus, the rubric the judge scores every call
+against and the failure taxonomy retros aggregate by — then Joel reacts.
+Seed dimensions from the research + yesterday's findings: coherence, warmth /
+cozy, brevity discipline, jargon leakage (tracker-speak), tool-failure
+narration, dead-air handling, repair quality, teach-mode adherence,
+piss-taking quality (public). Output: a scored-example prototype (3 real calls
+scored by hand) Joel can argue with. Resolved when Joel signs the rubric.

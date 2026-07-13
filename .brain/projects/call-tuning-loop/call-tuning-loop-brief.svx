@@ -1,0 +1,53 @@
+---
+title: "Call-Driven Tuning Loop"
+type: "brief"
+status: "active"
+created_at: "2026-07-13"
+privacy: "private"
+---
+
+# Call-Driven Tuning Loop
+
+## Finish line
+
+Every call automatically becomes a scored receipt (objective latency + LLM-judge
+quality + failure taxonomy); a daily retro distills receipts into tunings —
+allowlisted text changes auto-applied with receipts, everything else proposed as
+reviewable diffs; and the loop has proven itself by shipping tunings that
+measurably moved the numbers (fast-model A/B is the proving experiment). Done
+when calls-in → tunings-out runs with neither Joel nor a steering session
+driving it.
+
+## Notes
+
+- Chartered 2026-07-13 from Joel: "we had a good number of calls, let's use
+  them to improve." Corpus at charter: 15 public / 3 private / 3 guest Convex
+  sessions, 26 transcripts, 7 caller cards, per-turn latency rows.
+- **Judge runs on Inngest leveraging pi agents** (Joel, 2026-07-13) — the
+  agent-dispatch pattern; no new paid keys in system-bus.
+- **Retro rides the 6am daily pipeline** (Joel, 2026-07-13) — same rhythm as
+  the Bugle and the public-brain gardener.
+- **Autonomy: gardener-style direct** (Joel, 2026-07-13) — low-risk text
+  tunings auto-apply with receipts; code/config always gated. The allowlist is
+  its own question.
+- **Execution authorized**: this effort builds the loop, not just decides it.
+- Prior receipts: yesterday's hand-run version of this loop (transcript sweep →
+  7 behavior fixes, commits 16f6b89d/a5cd0d97/18362f49/2cc52470) is the manual
+  baseline the automation replaces. Research corpus:
+  `joelclaw-voice/.brain/resources/voice-ux-deep-research-2026-07.svx`.
+- Skills: grill-master, herdr-orchestration, session-search, local-convex.
+
+## Decision ledger
+
+## Not yet specified
+
+- Whether guest/public judge findings ever tune the PRIVATE persona (cross-tier
+  learning) or tiers tune independently.
+- How the loop reports itself (Bugle section? gateway notify? brief appendix?).
+- When the loop earns code-change autonomy.
+
+## Out of scope
+
+- Speech-to-speech model swap — stays behind the workroom brief's latency
+  trigger; this loop only feeds it evidence.
+- The semantic-memory (libSQL) layer over the public brain — separate effort.
