@@ -1,0 +1,19 @@
+---
+title: "Port the Deepgram Transcript Flow"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-video-pipeline-map.svx"
+blockers:
+  - "./audit-course-builder-video-pipeline.svx"
+  - "./build-file-to-mux-phase-one.svx"
+created_at: "2026-07-13"
+---
+
+# Port the Deepgram Transcript Flow
+
+## Question
+
+Transcripts are super important (Joel, 2026-07-13): use Deepgram the way course-builder does, not Mux's auto-generated captions. Port the flow — course-builder's `order-transcript.ts` → `transcript-ready.ts` → `add-srt-to-mux-asset.ts` chain (and the deepgram callback shape it relies on) — into `joelclaw-video`, wired to fire on `video/publish.completed`. Open sub-questions to settle while building: what URL Deepgram fetches the media from (the archived original? a Mux static rendition? Deepgram's direct file upload from flagg?); where transcript + SRT land (Convex on the video resource, plus SRT pushed onto the Mux asset as a text track like course-builder does); how the Deepgram callback re-enters flagg (a `deepgram` provider in the webhook gateway, mirroring the mux provider); and whether joelclaw's existing `media-transcription-pipeline.ts` shares this path or stays separate. Deepgram credentials via agent-secrets. Running course-builder locally to watch its transcript flow end-to-end is a legitimate aid here if reading isn't enough. Resolved when a phase-1 published video ends up with a transcript in Convex and captions on the Mux asset.

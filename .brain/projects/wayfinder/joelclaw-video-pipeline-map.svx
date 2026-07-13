@@ -26,10 +26,11 @@ The first proof is phase 1: a filesystem path on flagg goes in, a Mux asset/play
 - **Metadata store:** local Convex mirrors course-builder's content-resource shape for video resources. States: draft/published crossed with public/unlisted/private.
 - **Originals:** archived (NAS/Garage) alongside Mux, with easy TTL-based cleanup so the archive doesn't fill with shit. Mux is the delivery layer, not the only copy.
 - **Watch page:** a real one is part of the destination — not just `player.mux.com` links.
+- **Transcripts (added 2026-07-13):** super important, and via **Deepgram** the way course-builder does it — not Mux's auto-generated captions. Running course-builder locally is a legitimate aid for studying its flow. Existing prior art: joelclaw's mux webhook receiver on flagg is verified live (see Decisions so far), and `media-transcription-pipeline.ts` already speaks to transcription.
 
 ### Execution override
 
-Phase 1 (file pointer → Mux → asset/playback id) is carried into the map as a task ticket: it's the proof the rest of the map decides against, and later decisions (agent surface, watch page) need a real pipeline to measure.
+Phase 1 (file pointer → Mux → asset/playback id) and the Deepgram transcript flow are carried into the map as task tickets: they're the proof the rest of the map decides against, and later decisions (agent surface, watch page) need a real pipeline to measure. The Mux webhook repoint is also carried — it's plumbing the pipeline dies without.
 
 ### Yoink source
 
@@ -49,10 +50,12 @@ Prior art already in joelclaw: mux webhook provider (above), `packages/system-bu
 
 <!-- Closed ticket resolutions are appended here as one-line linked gists. -->
 
+- [Verify Mux Webhook Wiring on Flagg](./verify-mux-webhook-wiring.svx) — receiver verified live on flagg (port 3111; `hooks.joelclaw.com` and the Funnel URL both 401 unsigned probes correctly; API token authenticates and lists real assets), but the dashboard registration likely still points at decommissioning panda and the account can't be confirmed from the machine — spun off [Repoint the Mux Webhook Registration and Verify the Account](./repoint-mux-webhook-registration.svx).
+
 ## Not yet specified
 
 - **Arbitrary pointers beyond a flagg filesystem path** — remote URLs, files on blaine/panda, NAS paths, browser uploads. Phase 1 is flagg-local; the pointer taxonomy sharpens once the pipeline exists.
-- **Transcripts and captions** — course-builder's transcript flow (order-transcript → transcript-ready → SRT onto the Mux asset) vs joelclaw's existing `media-transcription-pipeline.ts`; convergence unclear until phase 1 lands. Loom parity wants these on the watch page.
+- **Transcript display on the watch page** — the pipeline side graduated to [Port the Deepgram Transcript Flow](./port-deepgram-transcript-flow.svx); how transcripts render/share on the watch page waits on the watch-page charting.
 - **Privacy enforcement on playback** — Mux signed playback policies for private/unlisted videos vs public-policy-plus-obscure-slug; waits on the Convex model and watch page.
 - **Announce/share flow** — publishing pings Joel (Discord DM with the watch URL) or posts where the agent was asked; shape follows the agent-surface decision.
 

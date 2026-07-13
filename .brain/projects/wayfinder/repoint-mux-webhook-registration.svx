@@ -1,0 +1,17 @@
+---
+title: "Repoint the Mux Webhook Registration and Verify the Account"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "HITL"
+parent: "./joelclaw-video-pipeline-map.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Repoint the Mux Webhook Registration and Verify the Account
+
+## Question
+
+Dashboard-only work (needs Joel logged into dashboard.mux.com): (1) Confirm the account owning the environment behind agent-secrets' `mux_token_id` is his personal **joelhooks@gmail.com** — not an egghead/badass-courses org — and record which environment (name + env id). (2) Register `https://hooks.joelclaw.com/webhooks/mux` as the webhook endpoint per the central-webhook-migration playbook. The signing secret is **per-endpoint**: the new registration issues a new secret that must replace `mux_signing_secret` in agent-secrets, then bounce the system-bus worker so `MUX_WEBHOOK_SECRET` reloads. (3) Prove it with a signed delivery (Mux dashboard "send test event", or any real upload) landing as an `mux/*` Inngest event. (4) Only after readback proves the new registration, delete the old `panda.tail7af24.ts.net` registration and fix `skills/mux-video/SKILL.md:157`. Resolved when a signed delivery verifies on the hooks.joelclaw.com endpoint and the resolution records account email, environment, and where the new secret lives. Context: [Verify Mux Webhook Wiring on Flagg](./verify-mux-webhook-wiring.svx).
