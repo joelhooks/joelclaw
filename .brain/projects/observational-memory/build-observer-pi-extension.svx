@@ -131,3 +131,13 @@ The disease is one thing: labor done by ghosts.
    actually nice. No full-text JSON in visible results: compact human lines
    (counts/statuses/slugs), JSON demoted to details/fold or a verbose flag,
    pi-tui components where extensions can register renderers.
+
+### 6.5 (Joel, 2026-07-13): pi TUI size sensitivity — crash hazard
+
+pi is SUPER sensitive to terminal size and will crash if a pane is not
+responsive/sized properly. Rules: spawned pi panes get viable dimensions
+(prefer tab-per-worker in the observer session over ever-thinner column
+splits); minimum-size check before launching pi anywhere, refuse loudly if
+too small; sibling closes must not resize a pane under a running pi;
+pi-tui rendering tolerates narrow widths. Receipts include surviving a
+sibling close.
