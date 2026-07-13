@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import math
+import time
 import os
 import random
 import subprocess
@@ -164,6 +165,7 @@ You are speaking over the phone via SIP. Adapt your soul/personality for VOICE:
 - If you catch yourself listing, stop — say the one that matters and offer the rest.
 - Don't read out URLs, JSON, code, or technical IDs. Summarize instead.
 - NEVER speak tracker notation: no slugs, no brackets, no dash-separated-names, no ticket numbers. Every tool result gets translated into plain spoken sentences before it leaves your mouth — say "the voice workroom" not "joelclaw-voice-workroom-map". If a reply would sound like a terminal, rewrite it as a person first.
+- ONE tool call, then talk. Answer from the first result and offer to dig deeper — never chain silent lookups. If a question truly needs several lookups, say what you're doing between them ("checking your calendar too").
 - For lists of more than 3 items, give the top 1 and offer "want the rest?"
 - Numbers and times should be spoken naturally: "three thirty" not "15:30".
 - If asked to do something you can't do by voice, say "I'll add that as a task" and use add_task.
@@ -224,7 +226,40 @@ def _tool_env() -> dict[str, str]:
     return env
 
 
+# Thinking cover: tool shell-outs take seconds and used to run in dead silence
+# (real call 2026-07-12: 22s mute tool chain). Every _run() fires a short spoken
+# filler through the active session, at most one per window.
+_COVER = {"session": None, "loop": None, "last": 0.0}
+_COVER_FILLERS = ["One sec.", "Hang on.", "Checking.", "Let me look.", "Gimme a tick.", "Digging."]
+_COVER_WINDOW_S = 8.0
+
+
+def _arm_cover(session, loop) -> None:
+    _COVER["session"], _COVER["loop"], _COVER["last"] = session, loop, 0.0
+
+
+def _speak_cover() -> None:
+    session, loop = _COVER.get("session"), _COVER.get("loop")
+    now = time.monotonic()
+    if not session or not loop or now - _COVER["last"] < _COVER_WINDOW_S:
+        return
+    _COVER["last"] = now
+    filler = random.choice(_COVER_FILLERS)
+
+    def _say():
+        try:
+            session.say(filler)
+        except Exception:
+            pass
+
+    try:
+        loop.call_soon_threadsafe(_say)
+    except Exception:
+        pass
+
+
 def _run(cmd: list[str], timeout: int = 30) -> str:
+    _speak_cover()
     """Run a shell command and return stdout. Swallows errors gracefully for voice."""
     try:
         result = subprocess.run(
@@ -1597,6 +1632,7 @@ async def entrypoint(ctx) -> None:
 
     agent = JoelclawVoiceAgent(tts_instance, original_voice_id)
     await session.start(agent=agent, room=ctx.room, room_input_options=_room_input_options())
+    _arm_cover(session, asyncio.get_running_loop())
     call_tracker.track_session_start(ctx.room.name, "private", caller)
     heartbeat_task = call_tracker.start_heartbeat(ctx.room.name)
 
