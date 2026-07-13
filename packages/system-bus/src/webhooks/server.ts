@@ -137,9 +137,52 @@ async function dispatchWebhookEvents(providerId: string, provider: WebhookProvid
   };
 }
 
+function buildWebhookDispatchFailureEvent(
+  providerId: string,
+  provider: WebhookProvider,
+  events: NormalizedEvent[],
+  error: unknown,
+) {
+  return {
+    level: "error" as const,
+    source: "worker",
+    component: "webhook",
+    action: "webhook.forward.failed",
+    success: false,
+    error: error instanceof Error ? error.message : String(error),
+    metadata: {
+      provider: providerId,
+      totalEvents: events.length,
+      eventNames: events.map((event) => buildWebhookEventName(provider, event)),
+    },
+  };
+}
+
+async function persistWebhookDispatchFailure(
+  providerId: string,
+  provider: WebhookProvider,
+  events: NormalizedEvent[],
+  error: unknown,
+  emit: typeof emitOtelEvent = emitOtelEvent,
+) {
+  const result = await emit(
+    buildWebhookDispatchFailureEvent(providerId, provider, events, error),
+  );
+  if (!result.stored) {
+    console.error("[webhooks] failed to persist dispatch failure receipt", {
+      provider: providerId,
+      eventId: result.eventId,
+      error: result.error ?? result.clickhouse.error ?? result.clickhouse.queueError ?? "not stored",
+    });
+  }
+  return result;
+}
+
 export const __webhookServerTestUtils = {
   buildWebhookEventName,
   shouldQueueWebhookEvent,
+  buildWebhookDispatchFailureEvent,
+  persistWebhookDispatchFailure,
 };
 
 // ── Hono app ─────────────────────────────────────────────
@@ -363,6 +406,12 @@ webhookApp.post("/:provider", async (c) => {
           provider: providerId,
           error: error?.message,
         });
+        await persistWebhookDispatchFailure(
+          providerId,
+          provider,
+          events,
+          error,
+        );
         return c.json({ ok: false, error: "Failed to dispatch events" }, 500);
       }
     }

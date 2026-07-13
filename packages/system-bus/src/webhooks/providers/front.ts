@@ -20,7 +20,7 @@ import type { NormalizedEvent, WebhookProvider } from "../types";
 
 /** Front Event type → normalized Inngest event name.
  *  Rules webhooks use short Event types, not app-level "inbound_received" style. */
-const EVENT_MAP: Record<string, string> = {
+const RULES_EVENT_MAP: Record<string, string> = {
   inbound: "message.received",
   outbound: "message.sent",
   move: "conversation.moved",
@@ -33,6 +33,22 @@ const EVENT_MAP: Record<string, string> = {
   tag: "tag.added",
   untag: "tag.removed",
   comment: "comment.added",
+};
+
+/** Application webhooks use long event names and wrap the resource in `payload`. */
+const APPLICATION_EVENT_MAP: Record<string, string> = {
+  inbound_received: "message.received",
+  outbound_sent: "message.sent",
+  message_delivery_failed: "message.failed",
+  conversation_archived: "conversation.archived",
+  conversation_reopened: "conversation.reopened",
+  conversation_deleted: "conversation.deleted",
+  conversation_snoozed: "conversation.snoozed",
+  conversation_snooze_expired: "conversation.unsnoozed",
+  new_comment_added: "comment.added",
+  assignee_changed: "assignee.changed",
+  tag_added: "tag.added",
+  tag_removed: "tag.removed",
 };
 
 function signaturesMatch(signature: string, computed: string): boolean {
@@ -100,44 +116,57 @@ export const frontProvider: WebhookProvider = {
     const type = body.type as string | undefined;
     if (!type) return [];
 
-    const mappedName = EVENT_MAP[type];
+    const applicationPayload = (body.payload ?? {}) as Record<string, unknown>;
+    const isApplicationWebhook = Object.hasOwn(APPLICATION_EVENT_MAP, type);
+    const mappedName = isApplicationWebhook
+      ? APPLICATION_EVENT_MAP[type]
+      : RULES_EVENT_MAP[type];
     if (!mappedName) return [];
 
-    // Rules webhook Event object: top-level conversation, source, target
-    const conversation = (body.conversation ?? {}) as Record<string, unknown>;
-    const source = (body.source ?? {}) as Record<string, unknown>;
-    const target = (body.target ?? {}) as Record<string, unknown>;
+    // Rules events keep resources at the top level. Application events wrap them in payload.
+    const eventPayload = isApplicationWebhook ? applicationPayload : body;
+    const conversation = (
+      eventPayload.conversation ?? (isApplicationWebhook ? eventPayload : {})
+    ) as Record<string, unknown>;
+    const source = (eventPayload.source ?? {}) as Record<string, unknown>;
+    const target = (eventPayload.target ?? {}) as Record<string, unknown>;
     const targetData = (target.data ?? {}) as Record<string, unknown>;
+    const messageData = isApplicationWebhook ? eventPayload : targetData;
     const sourceData = (source.data ?? {}) as Record<string, unknown>;
 
     const conversationId = String(conversation.id ?? "");
-    const eventId = String(body.id ?? "");
-    const idempotencyKey = `front-${type}-${eventId || conversationId}-${body.emitted_at ?? Date.now()}`;
+    const eventId = String(eventPayload.id ?? body.id ?? "");
+    const emittedAt = body.emitted_at ?? body.ts ?? Date.now();
+    const idempotencyKey = `front-${type}-${eventId || conversationId}-${emittedAt}`;
 
     // Inbound/outbound message events
-    if (type === "inbound" || type === "outbound") {
-      // target.data is the message object
-      const recipients = Array.isArray(targetData.recipients)
-        ? (targetData.recipients as Array<Record<string, unknown>>)
+    if (
+      type === "inbound" ||
+      type === "outbound" ||
+      type === "inbound_received" ||
+      type === "outbound_sent"
+    ) {
+      const recipients = Array.isArray(messageData.recipients)
+        ? (messageData.recipients as Array<Record<string, unknown>>)
         : [];
       const fromRecipient = recipients.find((r) => r.role === "from");
       const toRecipients = recipients.filter((r) => r.role === "to");
-      const author = (targetData.author ?? {}) as Record<string, unknown>;
+      const author = (messageData.author ?? {}) as Record<string, unknown>;
 
       return [{
         name: mappedName,
         data: {
           conversationId,
-          messageId: String(targetData.id ?? ""),
+          messageId: String(messageData.id ?? ""),
           from: String(fromRecipient?.handle ?? author.email ?? ""),
           fromName: String(fromRecipient?.name ?? ""),
           to: toRecipients.map((r) => String(r.handle ?? "")),
-          subject: String(targetData.subject ?? conversation.subject ?? ""),
-          body: String(targetData.body ?? ""),
-          bodyPlain: String(targetData.text ?? ""),
-          preview: String(targetData.blurb ?? ""),
-          isInbound: type === "inbound",
-          attachmentCount: Array.isArray(targetData.attachments) ? targetData.attachments.length : 0,
+          subject: String(messageData.subject ?? conversation.subject ?? ""),
+          body: String(messageData.body ?? ""),
+          bodyPlain: String(messageData.text ?? ""),
+          preview: String(messageData.blurb ?? ""),
+          isInbound: type === "inbound" || type === "inbound_received",
+          attachmentCount: Array.isArray(messageData.attachments) ? messageData.attachments.length : 0,
         },
         idempotencyKey,
       }];
@@ -156,7 +185,7 @@ export const frontProvider: WebhookProvider = {
     }
 
     // Assignee changed (assign/unassign)
-    if (type === "assign" || type === "unassign") {
+    if (type === "assign" || type === "unassign" || type === "assignee_changed") {
       return [{
         name: mappedName,
         data: {
@@ -170,7 +199,7 @@ export const frontProvider: WebhookProvider = {
     }
 
     // Comment added
-    if (type === "comment") {
+    if (type === "comment" || type === "new_comment_added") {
       return [{
         name: mappedName,
         data: {
@@ -183,7 +212,7 @@ export const frontProvider: WebhookProvider = {
     }
 
     // Tag added/removed
-    if (type === "tag" || type === "untag") {
+    if (type === "tag" || type === "untag" || type === "tag_added" || type === "tag_removed") {
       return [{
         name: mappedName,
         data: {
@@ -198,7 +227,7 @@ export const frontProvider: WebhookProvider = {
     // Fallback for mapped but unhandled types
     return [{
       name: mappedName,
-      data: { conversationId, raw: body },
+      data: { conversationId, raw: eventPayload },
       idempotencyKey,
     }];
   },

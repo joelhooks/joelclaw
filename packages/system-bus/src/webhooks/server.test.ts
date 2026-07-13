@@ -3,7 +3,12 @@ import { createHmac } from "node:crypto";
 import { __webhookServerTestUtils, webhookApp } from "./server";
 import type { NormalizedEvent, WebhookProvider } from "./types";
 
-const { buildWebhookEventName, shouldQueueWebhookEvent } = __webhookServerTestUtils;
+const {
+  buildWebhookEventName,
+  shouldQueueWebhookEvent,
+  buildWebhookDispatchFailureEvent,
+  persistWebhookDispatchFailure,
+} = __webhookServerTestUtils;
 
 const githubProvider: WebhookProvider = {
   id: "github",
@@ -68,6 +73,52 @@ describe("webhook server queue pilot helpers", () => {
     process.env.QUEUE_PILOTS = "github";
 
     expect(shouldQueueWebhookEvent("vercel", workflowCompleted)).toBe(false);
+  });
+
+  test("builds a durable failure receipt for rejected Inngest sends", () => {
+    const receipt = buildWebhookDispatchFailureEvent(
+      "github",
+      githubProvider,
+      [workflowCompleted],
+      new Error("Inngest unavailable"),
+    );
+
+    expect(receipt).toMatchObject({
+      level: "error",
+      component: "webhook",
+      action: "webhook.forward.failed",
+      success: false,
+      error: "Inngest unavailable",
+      metadata: {
+        provider: "github",
+        totalEvents: 1,
+        eventNames: ["github/workflow_run.completed"],
+      },
+    });
+  });
+
+  test("surfaces when the dispatch failure receipt could not be stored", async () => {
+    const result = await persistWebhookDispatchFailure(
+      "github",
+      githubProvider,
+      [workflowCompleted],
+      new Error("Inngest unavailable"),
+      async () => ({
+        stored: false,
+        eventId: "failed-receipt",
+        error: "ClickHouse and outbox unavailable",
+        clickhouse: { written: false, queued: false, error: "unreachable" },
+        typesense: { written: false, skipped: true },
+        convex: { written: false, pruned: 0, skipped: true },
+        sentry: { written: false, skipped: true },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      stored: false,
+      eventId: "failed-receipt",
+      error: "ClickHouse and outbox unavailable",
+    });
   });
 });
 

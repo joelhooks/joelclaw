@@ -25,3 +25,31 @@ channel_messages). Don't touch slack or redis-subscriber.
    minutes, timestamped.
 
 No commits. Print DONE with the break found, fix, and receipts.
+
+## Completion receipt — 2026-07-13
+
+Status: complete, uncommitted.
+
+Breaks found:
+
+1. Flagg Inngest had `channel-message-ingest` registered, but no `front/*` handlers. The handlers still belonged only to the dead Panda cluster worker; its pod had been unavailable for 36 days because Flannel could not create a pod sandbox (`/run/flannel/subnet.env` missing).
+2. The Front provider only normalized Rules event names such as `inbound`. Live application webhooks used `inbound_received` and returned `200` with `events: 0`.
+3. Failed webhook dispatches returned `500` but had no durable OTEL failure receipt.
+
+Fix:
+
+- moved the three Front handlers from cluster ownership to Flagg host ownership;
+- restored both application and Rules webhook normalization;
+- added `webhook.forward.failed` OTEL receipts and explicit logging when ClickHouse/outbox cannot store one;
+- added a critical `Front Projection` system health check against the newest plausible `channel_messages` email timestamp (60-minute default threshold; future-dated poison ignored).
+
+End-to-end proof used a controlled replay of real Front inbound message `msg_3dfe89t1` without printing or storing new raw customer content in this receipt:
+
+- webhook route: `200`, one direct `front/message.received` event;
+- Front event: `01KXE7X0EZC76NR85K2KQQQE5J`;
+- Front handler run: `01KXE7X0N2T6K6BA8QMYN39CFN`, completed;
+- channel ingest run: `01KXE7X1C69HH8DMATMT56CCW2`, completed after one transient Typesense retry;
+- Typesense document: `email:cnv_1ogscqcl:1783963223324:b43a3cbc3599c7bd` at `2026-07-13T17:20:23.324Z`;
+- final health run: `01KXE851SPJRADBJEYMPS0QR59`, `Front Projection ok`, age 4 minutes.
+
+Validation: 34 focused tests passed; targeted Biome and `git diff --check` passed. Package typecheck remained blocked by two unrelated pre-existing errors in `voice-public-call-analyze.ts` and untracked `wiki-edition-build.ts`.
