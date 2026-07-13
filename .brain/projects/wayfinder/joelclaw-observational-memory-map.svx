@@ -78,6 +78,7 @@ to understand all of the work that we're doing."
 - Reflector condensation policy — **Joel's frame (2026-07-12): observational memory is a node cluster getting intelligently compressed over time.** The reflector is EDGE-PRESERVING GRAPH COMPACTION, not summarization: replace a dense cluster of session atoms with a supernode carrying the union of the cluster's edges, citations intact; redundancy dies, topology survives. Yields a temporal gradient: recent = full atoms, middle = reflected threads, deep past = promoted durable pages. Benchable as edge preservation in brainbench. This is also the fuck-Obsidian demo: a graph that grows nodes you didn't write and compresses itself visibly.
 - Rhizomatic-briefing integration of the distilled layer (the collection +
   CLI half graduated 2026-07-12 → build-observations-recall-typesense).
+- **Secrets at rest in capture** (found 2026-07-12 by a tombstoned epoch): a credential existed in a session transcript — jsonl + Typesense hold it at rest. The observer refused to republish (contract worked), but capture-side secret hygiene (scan/redact at capture time, scrub existing index) is unscoped. Needs its own ticket when graduated.
 - Brainbench leg for observation quality ("worth recalling" rubric).
 - Historical backfill of pre-loop sessions (months of transcripts exist).
 - Cross-machine dedup when the same work appears in multiple sessions.
