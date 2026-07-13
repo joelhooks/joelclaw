@@ -1,0 +1,27 @@
+---
+title: "Build Observations as a Prime Bugle Source"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-observational-memory-map.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Build Observations as a Prime Bugle Source
+
+## Question
+
+Joel's charter (2026-07-12): the observation layer "should technically be a
+PRIME source for the joelclaw-wiki." Implement the read-only source adapter
+over `dark-wizard/.brain/observations/**`: `## Open questions / next
+actions` sections yield OpenLoopCandidates; `## Decisions` yields
+loop-closure evidence (feeds close-loops-when-reality-closes-them);
+provenance = page's brain.joelclaw.com URL + sessionId. The full proposed
+adapter contract — including the Observation-vs-observation naming
+resolution — is written in
+[observer-system-architecture](../../../dark-wizard/.brain/resources/observer-system-architecture.svx)
+(dark-wizard resources; renders at /user/resources/observer-system-architecture).
+Respect the Bugle 4-layer data contract; adapter read-only like all others.

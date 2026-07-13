@@ -1,0 +1,164 @@
+---
+title: "qmd Brain recall spike"
+type: resource
+status: complete
+created: 2026-07-12
+source_ticket: "../projects/wayfinder/evaluate-qmd-brain-recall.svx"
+tags:
+  - qmd
+  - recall
+  - observational-memory
+  - wayfinder
+---
+
+# qmd Brain recall spike
+
+## Verdict
+
+**Use qmd as the local KNOWLEDGE-recall projection over registered Brain roots, and close the separate `add-observation-embeddings` direction rather than adding another vector field to the observation-only Typesense collection.** qmd already indexes the whole knowledge corpus, including observations, and gives us BM25, vectors, hybrid reranking, local models, stable `qmd://` provenance, and an MCP surface from one rebuildable SQLite projection. Keep Typesense as the STREAM projection for run chunks, raw session scans, distributed capture, and operational filters. Do not make qmd the stream store.
+
+This is a qualified yes, not a wire-it-everywhere-today yes. Before qmd becomes a default agent tool, add a deterministic refresh trigger, a real recall benchmark that does not index its own test prompts, and a privacy contract for agents allowed to query sensitive Brain pages. `.svx` is searchable as markdown, but qmd does not understand MDSvX semantics: YAML frontmatter and component tags enter chunks and sometimes pollute snippets. A small projection/preprocessing layer that strips non-content frontmatter fields and component markup would improve ranking and output cleanliness without changing files as truth.
+
+## Setup receipts
+
+Host: `flagg` (Apple M4 Max). Runtime: Bun `1.3.14`, Node `v24.16.0`, Homebrew SQLite at `/opt/homebrew/opt/sqlite`.
+
+```text
+$ bun install -g @tobilu/qmd
+installed @tobilu/qmd@2.5.3
+238 packages installed [2.15s]
+real 2.16
+
+$ qmd --version
+qmd 2.5.3
+```
+
+Bun reported five blocked dependency postinstalls, but qmd's shipped native stack worked. `qmd doctor` verified `better-sqlite3 12.10.0`, SQLite `3.53.1`, and `sqlite-vec v0.1.9`.
+
+The source of collection truth was `/Users/joel/Code/joelhooks/dark-wizard/brain-roots.json`. The exact qmd setup was:
+
+```sh
+qmd collection add /Users/joel/Code/joelhooks/dark-wizard/.brain --name user --mask '**/*.svx'
+qmd collection add /Users/joel/Code/joelhooks/joelclaw/.brain --name joelclaw --mask '**/*.svx'
+qmd collection add /Users/joel/Code/joelhooks/joelclaw-wiki/.brain --name wiki --mask '**/*.svx'
+qmd collection include user
+qmd collection include joelclaw
+qmd collection include wiki
+```
+
+qmd wrote only its own config, `~/.config/qmd/index.yml`, plus its rebuildable cache under `~/.cache/qmd/`.
+
+| Collection | Root | Files |
+| --- | --- | ---: |
+| `user` | `dark-wizard/.brain` | 382 |
+| `joelclaw` | `joelclaw/.brain` | 97 |
+| `wiki` | `joelclaw-wiki/.brain` | 30 |
+| **Total** |  | **509** |
+
+`qmd ls user/observations` returned the live observation pages, including `qmd://user/observations/2026-07-12-flagg-claude-observer-distillation-prototype-spawn.svx`. Observations therefore land through the registered dark-wizard root without a special collection.
+
+Two indexed files shared content hashes, so embedding reported 507 unique documents from 509 paths.
+
+## Embedding receipt
+
+```text
+$ qmd doctor
+✓ device probe: GPU metal (macOS Metal backend); offloading enabled
+  devices: Apple M4 Max; VRAM 107.5 GB free / 107.5 GB total
+  12 CPU math cores
+
+$ /usr/bin/time -p qmd embed
+Model: embeddinggemma-300M-Q8_0.gguf
+✓ Done! Embedded 1343 chunks from 507 documents in 36s
+real 36.34
+user 9.85
+sys 1.55
+```
+
+The embedding model download was 333.59 MB and was included in that 36.34-second run. The first semantic and hybrid queries then downloaded the generation and reranking models. Final qmd cache size was 2.1 GB: 318 MB embedding model, 1.2 GB query-expansion model, 610 MB reranker, and a 13 MB SQLite index.
+
+`qmd doctor` after embedding verified all 507 documents on embedding fingerprint `c37385`, sampled vectors reproducible, and all three GGUF models valid. On macOS qmd automatically set `GGML_METAL_NO_RESIDENCY=1` to avoid a llama.cpp Metal residency bug while preserving GPU offload.
+
+## Query receipts
+
+All commands requested five JSON results. Scores below are qmd's reported scores. The indexed task and ticket contain the literal benchmark query, which contaminates lexical results for the first query; that is itself an important benchmark-design receipt.
+
+### “what did we decide about memory compression”
+
+- `qmd search`: returned only the observation-embedding ticket, this spike ticket, and this task because they quote the exact query. It did **not** find the underlying decision from meaning alone.
+- `qmd vsearch`: returned `qmd://joelclaw/projects/wayfinder/joelclaw-observational-memory-map.svx` at rank 2 (`0.38`).
+- `qmd query`: reranked that map to rank 1 (`0.89`). The page contains the actual decision: observational memory is a node cluster compacted over time, with the reflector preserving graph edges and citations.
+
+Best receipt: hybrid search turned a benchmark-contaminated lexical miss into the canonical map as the top result.
+
+### “observer privacy tombstone”
+
+- `qmd search`: the live tombstone observation was rank 2 (`0.85`): `qmd://user/observations/2026-07-13-flagg-claude-observer-v11-exercise.svx`.
+- `qmd vsearch`: the same observation was rank 1 (`0.45`).
+- `qmd query`: the observational-memory map was rank 1 (`0.93`), the live tombstone observation rank 2 (`0.56`), and the transcript-redaction boundary rank 3 (`0.45`).
+
+This is the strongest cross-root receipt: one query joined the policy/map in joelclaw with runtime evidence in dark-wizard observations.
+
+### “files are truth databases are projections”
+
+All three modes returned `qmd://joelclaw/resources/decisions/files-are-truth-databases-are-projections.svx` at rank 1: BM25 `0.91`, vector `0.47`, hybrid `0.93`.
+
+### Semantic-only probe
+
+Query: “how should old memory nodes merge without losing relationships and citations”
+
+- `qmd search`: zero results.
+- `qmd vsearch`: the observational-memory map appeared at rank 5 (`0.40`).
+- `qmd query`: the map appeared at rank 3 (`0.38`), with the snippet “a reflector pass condenses aging observations without losing citations.”
+
+This proves semantic recall beyond lexical overlap, but the ranking is not yet good enough to trust blindly: unrelated Heddle and machine-migration pages outranked the canonical map. qmd is a useful candidate generator; provenance and benchmarked ranking still matter.
+
+## Latency
+
+Each query ran in a new qmd process. “Cold” means the first run for a new query. “Warm” means an immediate exact-query repeat, which benefits from qmd/model/query caches. Medians cover the four queries above.
+
+| Mode | Cold median | Cold range | Warm median | Warm range |
+| --- | ---: | ---: | ---: | ---: |
+| `qmd search` | 82 ms | 78–83 ms | 81 ms | 78–82 ms |
+| `qmd vsearch` | 1.58 s | 1.56–1.59 s | 507 ms | 502–517 ms |
+| `qmd query` | 5.13 s | 4.78–5.21 s | 519 ms | 510–563 ms |
+
+One-time first-ever cold starts were slower because models downloaded: first `vsearch` was 23.14 s while downloading the 1.2 GB expansion model; first `query` was 12.84 s while downloading the 610 MB reranker. Those download timings are excluded from the steady cold medians above.
+
+The surprisingly fast exact-query warm results suggest qmd caches more than model pages. A production integration should benchmark varied queries rather than advertise ~0.5 s as general hybrid latency.
+
+## MCP smoke
+
+`qmd mcp` started silently over stdio. A raw MCP `initialize` request negotiated protocol `2025-03-26` and returned server `qmd 2.5.3`. `tools/list` returned four tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `query` | Typed lexical/vector/HyDE search with optional intent |
+| `get` | Retrieve one document by path or docid |
+| `multi_get` | Retrieve paths/docids/globs in a batch |
+| `status` | Index and collection health |
+
+No Pi, Claude, or MCP settings file was changed.
+
+## `.svx` chunking findings
+
+qmd treats `.svx` through its regex/markdown chunker. That mostly works because Brain prose uses markdown headings, and the 900-token chunks with overlap preserved useful sections. It does not parse MDSvX as a distinct language.
+
+Observed rough edges:
+
+1. **Frontmatter pollution.** Searching `promptHash` returned observation snippets made almost entirely of YAML (`model`, `promptHash`, `privacy`, closing `---`). The “observer privacy tombstone” BM25 results also included pages because `privacy: private` appeared in frontmatter, not because their body discussed privacy.
+2. **Component markup leaks.** Searching `VaultHighConfidenceReview` returned literal `<VaultHighConfidenceReview />` snippets. Semantic search could still find the surrounding prose, but a component-only page cannot expose the data rendered by that component because qmd indexes source files, not rendered component output or `.brain/data` dependencies.
+3. **Task/test contamination.** Tickets that spell out expected search queries rank as perfect lexical answers. Bench fixtures must live outside indexed roots or use held-out phrasing.
+4. **No frontmatter policy filter.** Collection filtering exists; field-level filtering by `privacy` does not. qmd is safe only inside the same local trust boundary until the MCP caller policy is explicit.
+
+Recommended projection shape: generate normalized, rebuildable markdown text per `.svx` page for qmd indexing—retain title, headings, prose, links, canonical path, and useful provenance; drop hashes and renderer-only markup; optionally add textual summaries of approved component data. Keep the source `.svx` files canonical.
+
+## Typesense / qmd split
+
+| Surface | Job |
+| --- | --- |
+| qmd | Local KNOWLEDGE recall across all registered Brain roots and observation pages; hybrid semantic retrieval; document fetch by stable provenance; agent MCP/CLI use. |
+| Typesense | STREAM recall over run chunks and raw sessions; distributed ingestion; operational facets, recency filters, and fleet-facing APIs. |
+| Brain `.svx` | Canonical authored/distilled truth. Both databases remain disposable projections. |
+
+The existing observation-only Typesense projection can remain temporarily for shipped callers such as voice recall, but it should not gain a second embedding system if qmd is adopted. Migrate callers behind one recall interface, benchmark qmd against the current Typesense path, then retire the duplicate observation semantic-index ticket rather than maintaining two local knowledge vector stacks.

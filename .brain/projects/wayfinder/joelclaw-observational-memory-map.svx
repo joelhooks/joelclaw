@@ -72,6 +72,8 @@ to understand all of the work that we're doing."
 
 - [Build Voice Observation Recall (very tested)](./build-voice-observation-recall.svx) — the phone line answers "what did we do" from the distilled layer: speech-formatted, fail-soft, sensitive only on exact caller-id match (fails closed); tests 2→12 + verify-voice.sh recall check.
 
+- [Evaluate qmd as the Brain Knowledge-Recall Projection](./evaluate-qmd-brain-recall.svx) — ADOPTED: hybrid local search over 509 svx files (36s embed on Metal); qmd = knowledge projection, Typesense = stream projection; supersedes add-observation-embeddings (closed); productionization chartered.
+
 ## Not yet specified
 
 - **Observer deployment reality (2026-07-12)**: v0 runs as workspace `Observer` in the MAIN herdr server (pane in `~/.joelclaw/observer-pane-id`, 30-min tick LaunchAgent `com.joelclaw.observer-tick`). CORRECTED: herdr sessions were the feature all along (`herdr session attach observer`, per-session state dirs); the earlier 'shared state' incident was a raw second server on the default socket — operator error. The observer now lives in herdr session `observer`, pane w1:p1, cwd `~/Code/joelhooks/joelclaw-observer`. Also learned: resume flag is `pi --session <id>`; charter-restart with the persisted cursor is the correct daemon recovery anyway.
