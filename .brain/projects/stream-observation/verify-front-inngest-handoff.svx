@@ -2,7 +2,7 @@
 title: "Prove (or Fix) the Front Durable Handoff"
 type: "question"
 kind: "task"
-status: "open"
+status: "complete"
 assignee: "pi worker (steered by claude session 14d06369)"
 interaction: "AFK"
 parent: "./stream-observation-brief.svx"
@@ -19,3 +19,9 @@ unproven: zero live events observed in 24h, channel_messages projection
 stale since 2026-05-31, lifecycle/tag/comment events dispatched with no
 located consumer. Trace one real webhook end-to-end, fix the break, and add
 a freshness check so this can't rot silently again.
+
+## Result — 2026-07-13
+
+Complete. Flagg had no registered `front/*` handlers because ownership remained on the unavailable Panda cluster worker. Live application webhooks also used event names the Rules-only normalizer discarded. Front handlers now belong to the Flagg host worker, both Front webhook formats normalize, dispatch failures emit `webhook.forward.failed`, and system health checks final email projection freshness.
+
+Full IDs, test receipts, and the controlled real-inbound replay are recorded in [the task completion receipt](../../tasks/prove-front-handoff.svx#completion-receipt--2026-07-13).

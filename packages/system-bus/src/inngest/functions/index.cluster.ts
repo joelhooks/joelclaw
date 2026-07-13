@@ -1,11 +1,6 @@
 import { approvalRequest, approvalResolve } from "./approval";
 import { checkMemoryReview } from "./check-memory-review";
 import {
-  frontAssigneeChanged,
-  frontMessageReceived,
-  frontMessageSent,
-} from "./front-notify";
-import {
   githubPackagePublished,
   githubWorkflowRunCompleted,
 } from "./github-notify";
@@ -32,9 +27,6 @@ export const clusterFunctionDefinitions = [
   todoistCommentAdded,
   todoistTaskCompleted,
   todoistTaskCreated,
-  frontMessageReceived,
-  frontMessageSent,
-  frontAssigneeChanged,
   todoistMemoryReviewBridge,
   githubWorkflowRunCompleted,
   githubPackagePublished,

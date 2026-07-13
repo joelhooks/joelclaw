@@ -58,6 +58,11 @@ import { emailNag } from "./email-nag";
 import { embedText } from "./embed";
 import { friction } from "./friction";
 import { frictionFix } from "./friction-fix";
+import {
+  frontAssigneeChanged,
+  frontMessageReceived,
+  frontMessageSent,
+} from "./front-notify";
 import { gatewayBehaviorDailyReview } from "./gateway-behavior-review";
 import { gatewayHandleMessage } from "./gateway-handle-message";
 import { gatewaySendMessage } from "./gateway-send-message";
@@ -221,6 +226,9 @@ export const hostFunctionDefinitions = [
   granolaBackfill,
   friction,
   frictionFix,
+  frontMessageReceived,
+  frontMessageSent,
+  frontAssigneeChanged,
   telnyxNotify,
   proposalTriage,
   batchReview,
