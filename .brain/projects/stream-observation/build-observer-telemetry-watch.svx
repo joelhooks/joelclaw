@@ -2,12 +2,13 @@
 title: "Build the Observer Telemetry Watch (ClickHouse pings → anomaly observations)"
 type: "question"
 kind: "task"
-status: "open"
+status: "complete"
 interaction: "AFK"
 assignee: "pi worker (steered by claude grill-master session, claimed 2026-07-13T20:27Z)"
 parent: "./stream-observation-brief.svx"
 blockers: ["./investigate-redis-subscriber-error-storm.svx"]
 created_at: "2026-07-13"
+completed_at: "2026-07-13"
 ---
 
 # Build the Observer Telemetry Watch
@@ -40,3 +41,23 @@ index line at most).
 Blocked by the storm cleanup: a sink that is 99.78% noise can't be
 baselined. Consumes the ingress inventory's source list as the initial
 watchlist.
+
+
+## Answer (2026-07-13)
+
+Built by a pi worker under grill-master steering, live the same day.
+
+- `telemetry_watch` tool in the observer extension (`joelclaw-observer`
+  commit `bf721294`): four fixed ClickHouse queries (per-source freshness,
+  error-rate delta vs 7-day baseline, volume cliffs both directions,
+  projection lag p95) against `joelclaw.otel_events` on three-body
+  (192.168.1.163:8123). The model never authors SQL.
+- Threshold-crossing state machine in `~/.joelclaw/observer-telemetry.json`:
+  pages fire on OPEN and on RECOVERED, never on steady state. 35 tests green.
+- Charter wired as tick step 2 (dark-wizard `55437cb`).
+- **Acceptance receipt**: first live tick opened four anomalies and wrote
+  `2026-07-13-08e0a19220a3.svx` (kind: anomaly, sensitive, query receipts as
+  provenance) — including the `memory`/`proof`/`pi` OTel sources dead since
+  June 21 (31,582 minutes), invisible until this watch. Gateway error spike
+  (98/h vs 1.57/h baseline) also caught. System sickness now enters memory
+  within one tick.
