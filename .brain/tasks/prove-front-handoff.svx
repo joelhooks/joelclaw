@@ -1,0 +1,27 @@
+---
+title: "Task: prove or fix the Front durable handoff"
+type: task-brief
+created: 2026-07-13
+parent: ".brain/projects/wayfinder/verify-front-inngest-handoff.svx"
+---
+
+# Prove (or fix) the Front handoff
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. Ground truth:
+`.brain/resources/stream-ingress-inventory-2026-07.svx` — webhooks arrive
+(274/day) but projections stale since 2026-05-31; `front/*` Inngest events
+unobserved in 24h; lifecycle events may have no consumer. YOUR SCOPE: the
+front path (webhook route → normalizer → Inngest → handlers → Typesense
+channel_messages). Don't touch slack or redis-subscriber.
+
+1. Trace ONE real inbound webhook end-to-end with receipts at each hop
+   (edge log/OTEL row → Inngest event → handler run → projection doc).
+   Find the break.
+2. Fix it. Likely suspects per inventory: Inngest send failing silently,
+   handler not registered, Typesense projection erroring.
+3. Add a freshness check (system-bus health or wiki system:check style):
+   newest channel_messages email doc age — fail loud past threshold.
+4. Receipt: a fresh Front message appearing in channel_messages within
+   minutes, timestamped.
+
+No commits. Print DONE with the break found, fix, and receipts.

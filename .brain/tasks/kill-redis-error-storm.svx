@@ -1,0 +1,30 @@
+---
+title: "Task: kill the redis.subscriber.error storm + clean the ClickHouse debris"
+type: task-brief
+created: 2026-07-13
+parent: ".brain/projects/wayfinder/investigate-redis-subscriber-error-storm.svx"
+---
+
+# Kill the storm, clean the debris
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. Ground truth:
+`.brain/resources/stream-ingress-inventory-2026-07.svx` — 102,052,982
+`redis.subscriber.error` rows (99.78% of otel_events, ClickHouse on
+three-body). YOUR SCOPE: the redis subscriber component in
+packages/system-bus + ClickHouse cleanup. Do not touch slack/front webhook
+paths (other workers own them).
+
+1. Root-cause: find the erroring subscriber, read the actual error rows
+   (sample metadata), fix the cause in code. Rate-limit/dedupe error
+   emission so no single failure can storm the sink again (cap + summary
+   row pattern).
+2. CLEANUP (Joel-authorized, 2026-07-13 "clean clickhouse of debris"):
+   delete the `redis.subscriber.error` rows — prefer partition-scoped
+   ALTER DELETE or drop-by-partition where the storm dominates. Receipts:
+   row count + disk size before/after; verify NON-storm rows survive
+   (count by source/action before+after).
+3. Validation: bunx tsc --noEmit; targeted tests if the component has them;
+   emit a test event end-to-end.
+
+No commits (steering reviews). Print DONE with root cause, fix, before/after
+counts.

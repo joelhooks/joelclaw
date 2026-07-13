@@ -1,0 +1,32 @@
+---
+title: "Task: revive Slack realtime ingress under supervision"
+type: task-brief
+created: 2026-07-13
+parent: ".brain/projects/wayfinder/fix-slack-realtime-ingress.svx"
+---
+
+# Revive Slack realtime ingress
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. Ground truth:
+`.brain/resources/stream-ingress-inventory-2026-07.svx` — Socket Mode path
+dead since ~2026-05-31, gateway daemon unreachable, Inngest POST failures
+silently swallowed. YOUR SCOPE: the slack path in packages/gateway + its
+supervision. Don't touch front or the redis-subscriber component.
+
+1. Diagnose why the daemon is dead: process/launchd state, token validity
+   (Socket Mode app token — check secrets/leases), crash logs, last exit.
+2. Restore it SUPERVISED: launchd keep-alive + a freshness canary (doctrine:
+   silent drift is the enemy — six weeks dead proves it). Starting/loading
+   the service is in-scope; receipts for every mutation.
+3. Make the Inngest handoff failure LOUD (no more swallowed POSTs).
+4. If anything requires Joel in the Slack admin UI (app reinstall, token
+   rotation, event subscriptions, scopes) — Socket Mode needs no public
+   webhook URL, but verify — produce a PRECISE HITL CHECKLIST: exact
+   admin URLs, exact toggles/scopes, where the new token goes (secrets
+   path). Joel suspects UI work may be needed; tell him exactly what.
+5. Receipt: a real Slack message from an important channel visible in the
+   pipeline (or, if blocked on the HITL checklist, everything staged so
+   the checklist is the only remaining step).
+
+No commits. Print DONE with diagnosis, receipts, and the HITL checklist if
+needed.

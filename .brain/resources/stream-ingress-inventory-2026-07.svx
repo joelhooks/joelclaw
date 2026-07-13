@@ -1,0 +1,194 @@
+---
+title: "Stream ingress inventory: Front, Slack, ClickHouse, and Bugle"
+type: "research_receipt"
+status: "complete"
+created_at: "2026-07-13"
+privacy: "private"
+source_ticket: "../projects/wayfinder/research-stream-ingress-inventory.svx"
+labels:
+  - "wayfinder:research"
+  - "stream-ingress"
+  - "front"
+  - "slack"
+  - "clickhouse"
+  - "bugle"
+---
+
+# Stream ingress inventory
+
+Answer to [Research the Existing Stream Ingress](../projects/wayfinder/research-stream-ingress-inventory.svx).
+
+## Bottom line
+
+- **Front is live at the webhook edge.** Valid Front requests are arriving at `POST /webhooks/front` and producing ClickHouse OTEL metadata. The last 14 complete UTC days held **3,833 valid Front webhooks: 273.8/day average, 294/day median, 86–417/day range**.
+- **Front's durable downstream is not currently proven.** The code awaits an Inngest send, but the live `front/*` event query returned zero for 24 hours, `channel_messages` has no email document newer than 2026-05-31, and ClickHouse has no `webhook.forwarded` row for Front. Treat the current landing point as **ClickHouse ingress telemetry plus an unverified Inngest handoff**, not as durable message memory.
+- **Slack realtime is selective, not a firehose.** Socket Mode filters most workspace traffic. Only invokes, Joel-authored messages, and configured important-channel messages reach the live gateway or realtime Typesense handoff.
+- **Slack realtime appears stopped/stale.** ClickHouse has **zero Slack/channel-ingest rows in the last 30 days**, realtime `channel_messages` has **461 Slack documents total but zero in the last 30 days** and ends at **2026-05-31**, and the live gateway check on Flagg reported the daemon unreachable with no active sessions.
+- **ClickHouse holds OTEL, not the raw Front or Slack stream.** It currently has **102,301,016 rows / about 3.76 GiB on disk**, from 2026-01-15 through 2026-07-13, with a 180-day TTL. **99.78% of rows are `redis-channel` telemetry**, chiefly a 102,052,982-row `redis.subscriber.error` storm. It is not a usable raw message archive.
+- **The Bugle reads Front, GitHub, and X at edition-collection time. It does not read Slack.** `bun run build` only renders existing snapshots; collection is the separate `bun run wiki -- edition build` path.
+
+## Coverage matrix
+
+| Source | Realtime ingress today | Event shape retained by ingress | Where it can land | Live volume / freshness | Retention | Ground-truth verdict |
+|---|---|---|---|---|---|---|
+| **Front** | Signed HTTP webhook at `/webhooks/front`; Rules HMAC-SHA1 or application HMAC-SHA256; 256 KiB body cap. | Normalizer maps inbound/outbound, conversation lifecycle, assign/unassign, tag/untag, and comment. Message events carry conversation/message IDs, sender, recipients, subject, HTML/plain body, preview, direction, and attachment count. | OTEL metadata → ClickHouse. Normalized event → Inngest `front/*`. Only `message.received`, `message.sent`, and `assignee.changed` have registered Front handlers. Inbound handler attempts a bounded `channel/message.received` projection into Typesense `channel_messages`; non-VIP also notifies gateway Redis, VIP emits `vip/email.received`. | **3,833 valid webhooks over 14 complete days; 273.8/day average.** 3,788 were `inbound`; other types totaled 45. Current edge latest: 2026-07-13 16:31 UTC. Downstream projection latest: 2026-05-31; zero email projection docs in last 30 days. | ClickHouse raw OTEL: 180 days. Redis gateway list: no TTL, but drained/deleted operationally. Typesense `channel_messages`: no TTL found. Inngest SQLite is persistent, but no repo-configured event/run retention was found. Raw webhook body is not stored in ClickHouse. | **Edge live; durable message-memory landing unproven/stale.** Lifecycle/tag/comment events are dispatched but no Front consumer was located, so they can terminate in Inngest history without application side effects. |
+| **Slack realtime** | `@slack/bolt` Socket Mode listens for `message`, `app_mention`, and `reaction_added`. | Parser keeps channel/type, user, text, `ts`, `thread_ts`, subtype, and bot ID. It drops missing/blank/bot/self/unsupported-subtype messages and process-local duplicates. | Invoke messages directly enqueue a live gateway turn. Joel/important-channel passive messages go to Redis as `slack.signal.received`. Both accepted message paths fire-and-forget `channel/message.received` to Inngest → Typesense `channel_messages` → classify request. Everything else is intentionally ignored. | **Current observed rate: 0/day.** No ClickHouse Slack/channel-ingest rows in 30 days. Realtime Typesense has 461 Slack docs total, oldest 2026-03-28, newest 2026-05-31, zero in last 30 days. Flagg gateway status: daemon unreachable, no active sessions. | Dedupe: in-memory last 500 IDs only. Redis event list: no TTL; deleted after drain/shutdown. Typesense realtime docs: no TTL found. Inngest POST failure is silently swallowed. | **Selective path exists in code, but live retention is stale and failure can be silent.** No full-workspace realtime archive exists. |
+| **Slack historical backfill** | Separate Inngest event `channel/slack.backfill.requested`; reads Slack Web API/search with a leased user token. | `slack_messages` stores channel/user/text, source timestamp, thread/reaction/attachment metadata, and `ingested_at`. | Typesense `slack_messages`. This is separate from Socket Mode realtime ingress. | **33,262 docs**, source range 2025-04-29 through 2026-04-29. Latest ingest shown 2026-04-29. | No TTL or prune path found. Upsert by deterministic message ID. | **Useful stale historical projection, not current ingress.** |
+| **ClickHouse OTEL** | `/observability/emit` / `emitOtelEvent` write through system-bus; failed writes spool to a local filesystem outbox. | OTEL row: timestamp, level, source, component, action, success, duration, error, metadata JSON/keys, IDs, and search text. | `joelclaw.otel_events` on three-body. | **102,301,016 rows**, 2026-01-15 through 2026-07-13, about 3.76 GiB. 102,072,281 rows are `redis-channel`; 102,052,982 are `redis.subscriber.error`. Front is visible only as webhook metadata. Slack is absent in the last 30 days. | Table TTL is `timestamp + 180 days`. Local failed-write outbox has no time TTL; it drains in batches after a successful ClickHouse write. | **Canonical telemetry sink, not source-message storage. Signal is badly dominated by a Redis error storm.** |
+
+## Front: exact code path
+
+1. `packages/system-bus/src/serve.ts:728` mounts the webhook app at `/webhooks`.
+2. `packages/system-bus/src/webhooks/server.ts:198-289` accepts `POST /:provider`, applies the body limit, verifies the provider signature, parses JSON, emits `webhook.received`, and normalizes the request.
+3. `packages/system-bus/src/webhooks/providers/front.ts:23-34` maps Rules event types. `front.ts:65-99` implements both Front signature schemes. `front.ts:106-204` builds normalized events and idempotency keys.
+4. `packages/system-bus/src/webhooks/server.ts:102-137` sends Front events directly to Inngest as `front/<normalized-name>` with the normalized idempotency key.
+5. `packages/system-bus/src/inngest/functions/front-notify.ts:58-181`, `:186-235`, and `:240-289` are the only Front handlers located: inbound, outbound, and assignee change.
+6. Inbound only: `front-notify.ts:111-128` sends a bounded `channel/message.received` event; `packages/system-bus/src/inngest/functions/channel-message-ingest.ts:113-180` validates, hashes, and upserts it into Typesense, emits `channel.message.ingested` OTEL, then asks for classification.
+7. Gateway notifications pass through `packages/system-bus/src/inngest/middleware/gateway.ts:186-255` into Redis. The gateway classifies Front inbound signals at `packages/gateway/src/operator-relay.ts:310-425`.
+
+### Front event shape and consumer gap
+
+The normalizer supports more event names than the application consumes:
+
+| Normalized name | Handler located? | Application side effect |
+|---|---:|---|
+| `front/message.received` | yes | context fetch, bounded Typesense projection, gateway or VIP event |
+| `front/message.sent` | yes | context fetch and gateway notification |
+| `front/assignee.changed` | yes | context fetch and gateway notification |
+| `front/conversation.moved` | no | none found after Inngest acceptance |
+| `front/conversation.archived` | no | none found |
+| `front/conversation.reopened` | no | none found |
+| `front/conversation.deleted` | no | none found |
+| `front/conversation.restored` | no | none found |
+| `front/tag.added` / `front/tag.removed` | no | none found |
+| `front/comment.added` | no | none found |
+
+Receipts: event map at `packages/system-bus/src/webhooks/providers/front.ts:23-34`; registered Front exports at `packages/system-bus/src/inngest/functions/index.cluster.ts:4-37` and `packages/system-bus/src/inngest/functions/index.ts:62-64`.
+
+### Front live volume receipt
+
+Read-only ClickHouse query run 2026-07-13 UTC:
+
+```sql
+SELECT JSONExtractString(metadata_json,'event_type') event_type, count()
+FROM joelclaw.otel_events
+WHERE action='webhook.received'
+  AND JSONExtractString(metadata_json,'provider')='front'
+  AND timestamp >= toDateTime('2026-06-29 00:00:00')
+  AND timestamp <  toDateTime('2026-07-13 00:00:00')
+GROUP BY event_type;
+```
+
+Result: inbound 3,788; `inbound_received` 24; `out_reply` 10; outbound 6; `outbound_sent` 3; `tag_added` 2. Total 3,833. Daily aggregate: average 273.8, median 294, min 86, max 417.
+
+Caution: this counts valid webhook requests at the edge, not proven durable downstream messages. Current contradiction receipts:
+
+- ClickHouse has 5,361 `webhook.received` Front rows and 5,401 measured handlers since 2026-06-22, but no Front `webhook.forwarded` row.
+- `joelclaw events --prefix front/ --hours 24` returned zero events on 2026-07-13.
+- Typesense `channel_messages` had zero email documents newer than the 30-day cutoff; newest email document was 2026-05-31.
+- Worker stdout contains generic `events forwarded` messages, but the compact log surface omitted provider fields. That is not enough to resolve the contradiction.
+
+Therefore this inventory marks the handoff **unverified**, not definitely successful and not definitely dropped.
+
+## Slack: exact code path
+
+1. `packages/gateway/src/channels/slack.ts:1004-1145` leases bot/app tokens, creates a Bolt app with `socketMode: true`, and registers `message`, `app_mention`, and `reaction_added` listeners.
+2. `slack.ts:457-497` parses the bounded message/reaction shapes. `slack.ts:637-658` performs hard drops. Dedupe is an in-memory 500-entry set at `slack.ts:305-310` and `:413-422`.
+3. `slack.ts:667-735` decides invoke/Reply Grant behavior. `:735-833` routes accepted traffic:
+   - invoke → direct gateway enqueue;
+   - Joel/important-channel passive signal → Redis `slack.signal.received`;
+   - other workspace traffic → intentionally quiet.
+4. `slack.ts:17-43` independently posts `channel/message.received` to Inngest. Missing config returns silently and fetch errors are swallowed.
+5. `packages/gateway/src/lib/inngest-event.ts:5-72` resolves the event key/base URL.
+6. `packages/system-bus/src/inngest/functions/channel-message-ingest.ts:113-180` is the host-worker consumer and Typesense upsert path.
+7. `packages/gateway/src/channels/redis.ts:1029-1051` pushes gateway events to `joelclaw:events:gateway` and publishes a wake-up notification. `redis.ts:1061-1064` deletes the list on shutdown.
+
+### Slack live-state receipts
+
+Read-only checks run 2026-07-13:
+
+- ClickHouse query over the last 30 days for `component='slack-channel'`, Slack actions, or `component='channel-ingest'`: **zero rows**.
+- Typesense `channel_messages`, `channel_type:=slack`: **461 total**, oldest 2026-03-28, newest 2026-05-31, **zero in the last 30 days**.
+- Typesense `slack_messages`: **33,262 total**, source timestamps 2025-04-29 through 2026-04-29.
+- `joelclaw gateway status --json`: `healthy:false`, daemon `reachable:false`, `activeSessions:[]`, checked on Flagg.
+
+This does not prove another host has no Slack process. It does prove the canonical ClickHouse and Typesense surfaces have no current Slack realtime evidence.
+
+## What ClickHouse actually holds
+
+Live table receipt, 2026-07-13:
+
+```text
+Table: joelclaw.otel_events
+Engine: MergeTree
+Rows: 102,301,016
+Disk: ~3.76 GiB
+Bounds: 2026-01-15 16:15 UTC → 2026-07-13 16:49 UTC
+Partitions: 202601 (14), 202606 (98,776,560), 202607 (3,524,415 at first inventory query)
+TTL: timestamp + 180 days
+```
+
+Top components:
+
+| Component | Rows |
+|---|---:|
+| `redis-channel` | 102,072,281 |
+| `nas-backup` | 66,614 |
+| `system-bus` | 37,109 |
+| `self-healing` | 26,726 |
+| `memory-run-captured` | 16,530 |
+| `agent-usage.pi` | 14,938 |
+| `webhook` | 13,599 |
+| `agent-usage.claude` | 8,050 |
+
+The dominant action is `redis.subscriber.error` at 102,052,982 rows. This is why total row count must not be mistaken for useful stream volume.
+
+Schema and TTL receipts: `packages/system-bus/src/observability/clickhouse-store.ts:3-30`, `:77-128`, `:142-187`. Durability/outbox receipts: `packages/system-bus/src/observability/store.ts:626-704` and `packages/system-bus/src/observability/otel-outbox.ts:1-128`.
+
+## Bugle source-adapter matrix
+
+| Source | Adapter landed? | Read path | Build/edition wiring | Snapshot and retention |
+|---|---:|---|---|---|
+| **Front** | yes | Runs metadata-only `skill front inbox <id> --json --limit <n>` for three default support inboxes; no message-body command. Filters conversations to the edition window. | `channels.toml` has `front-support`; `adapterForChannel` selects `makeFrontAdapter`; manifest-driven `wiki edition build` includes it. | Sensitive normalized artifacts with stable IDs are written under `data/artifacts`; no prune/TTL found. Re-collection overwrites the stable artifact file. |
+| **Slack** | **no** | None. No Slack adapter, channel manifest entry, or factory case. | Not collected by Bugle. | None. |
+| **GitHub** | yes | Authenticated `gh api` reads notifications, up to 50 starred repos, and up to 50 user events. | Three manifest channels: notifications, starred, events. | Private normalized artifacts; no cache or retention sweep found. |
+| **Twitter/X** | yes, likes only | Leases four X OAuth 1.0a secrets, reads `/2/users/me`, then up to 25 liked tweets with creation timestamps. User ID cache is process-memory only. | Manifest channel `x-likes`; factory selects `makeXAdapter`. | Private normalized artifacts; no response cache or retention sweep found. Unsupported signals return `blocked`. |
+
+Bugle receipts:
+
+- Manifest coverage: `/Users/joel/Code/joelhooks/joelclaw-wiki/channels.toml:1-61`.
+- Factory coverage and explicit absence of Slack: `/Users/joel/Code/joelhooks/joelclaw-wiki/src/lib/services/channel-factory.ts:1-113`.
+- Front fetch/shape/windowing: `/Users/joel/Code/joelhooks/joelclaw-wiki/src/lib/services/sources/front-source.ts:14-43`, `:71-174`, `:180-274`.
+- GitHub API commands and health: `/Users/joel/Code/joelhooks/joelclaw-wiki/src/lib/services/sources/github-source.ts:233-352`.
+- X OAuth/read/cache/likes-only path: `/Users/joel/Code/joelhooks/joelclaw-wiki/src/lib/services/sources/x-source.ts:147-374`.
+- Manifest-driven edition collection: `/Users/joel/Code/joelhooks/joelclaw-wiki/src/cli/wiki.ts:181-239`.
+- Filesystem snapshots and immutable-edition guard: `/Users/joel/Code/joelhooks/joelclaw-wiki/src/lib/services/store.ts:87-108`, `:202-246`.
+- Render build is separate from collection: `/Users/joel/Code/joelhooks/joelclaw-wiki/package.json:7-28` (`build` is system check + Vite; `wiki` is the collector CLI).
+
+The wiki's `/Users/joel/Code/joelhooks/joelclaw-wiki/.brain/source-capabilities.svx:18-25` still says Front is “available, not landed” and GitHub is deferred. That page is stale relative to the actual adapters and `channels.toml`.
+
+## Retention map
+
+| Layer | Retention truth |
+|---|---|
+| Slack process dedupe | Last 500 IDs in memory; lost on restart. |
+| Gateway Redis event list | No TTL. Drained with `DEL`; shutdown also deletes it. Batch list has no TTL and waits for flush/wake. |
+| Reply Grant approval | 2 hours (`setex`). Reply Grant itself expires at its absolute grant expiry. |
+| Inngest | SQLite directory is persistent in k8s/central manifests. No event/run retention setting was found in repo config. Runtime default remains unverified. |
+| Typesense `channel_messages` | No TTL/prune path found. Deterministic upsert IDs. Current projection is stale. |
+| Typesense `slack_messages` | No TTL/prune path found. Deterministic upsert IDs. Historical backfill is stale. |
+| ClickHouse `otel_events` | 180-day row TTL. Failed writes can persist in local filesystem outbox until a later successful drain; no outbox age TTL found. |
+| Bugle artifacts | Stable-ID JSON files can be overwritten by later collection. No prune/TTL found. |
+| Bugle editions | Immutable by default; overwrite requires `--force`. No prune/TTL found. |
+
+## Gaps that block the epoch model
+
+1. **There is no canonical raw Slack stream.** Realtime only covers selected messages; backfill is stale and separate.
+2. **Slack delivery to Inngest is allowed to fail silently.** There is no receipt joining Socket Mode event → Inngest event ID → Typesense document ID.
+3. **Front edge volume is measurable, but downstream acceptance is not.** The three live surfaces disagree.
+4. **Front lifecycle/tag/comment events have no consumer.** They are normalized but do not become application state or observation candidates.
+5. **ClickHouse is telemetry-only and badly polluted.** The Redis error storm dwarfs every useful source; epochs cannot use global OTEL row volume without source/action exclusions.
+6. **Bugle Slack coverage is absent.** The Bugle currently cold-reads Front/GitHub/X but cannot mine Slack.
+7. **Retention is mostly accidental.** Typesense and Bugle artifacts have no explicit TTL; Redis is operationally deleted; Inngest retention is unknown.
+
+These gaps should feed [Decide the Stream Epoch Model](../projects/wayfinder/decide-stream-epoch-model.svx) and [Decide the Stream Quality Contract](../projects/wayfinder/decide-stream-quality-contract.svx), not be papered over with guessed rates.

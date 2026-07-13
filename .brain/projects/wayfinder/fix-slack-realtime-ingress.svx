@@ -2,6 +2,7 @@
 title: "Revive Slack Realtime Ingress (dead since ~05-31)"
 type: "wayfinder_ticket"
 status: "open"
+assignee: "pi worker (steered by claude session 14d06369)"
 labels:
   - "wayfinder:task"
 interaction: "AFK"
