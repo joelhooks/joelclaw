@@ -4,7 +4,7 @@ import type { StatusKind } from "@repo/ui/status-badge";
 import { StatusPulseDot } from "@repo/ui/status-badge";
 import { useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 
 interface FeedbackStatusProps {
   resourceId: string;

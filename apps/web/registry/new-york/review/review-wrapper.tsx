@@ -15,7 +15,7 @@ import { useQuery } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InlineComment } from "@/components/review/inline-comment";
 import { ReviewFab } from "@/components/review/review-fab";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 
 interface ReviewWrapperProps {
   contentId: string;

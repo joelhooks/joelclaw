@@ -14,7 +14,7 @@ import { createPortal } from "react-dom";
 import { useAutoResize } from "@/components/review/use-auto-resize";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 
 interface InlineCommentProps {
   contentId: string;

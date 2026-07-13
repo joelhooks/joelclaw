@@ -27,6 +27,7 @@
     "geist": "^1.7.0",
     "gray-matter": "^4.0.3",
     "lucide-react": "^0.564.0",
+    "joelclaw-api": "link:../../../joelclaw-api",
     "next": "16.1.6",
     "next-mdx-remote": "^6.0.0",
     "nuqs": "^2.8.8",

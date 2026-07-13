@@ -10,7 +10,7 @@ import { MessageSquarePlus } from "lucide-react";
  */
 import { useState } from "react";
 import { ReviewSheet } from "@/components/review/review-sheet";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 
 interface ReviewFabProps {
   contentId: string;

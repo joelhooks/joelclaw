@@ -11,7 +11,7 @@
  */
 import { useQuery } from "convex/react";
 import { ReviewWrapper } from "@/components/review/review-wrapper";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 
 interface ReviewGateProps {
   contentId: string;

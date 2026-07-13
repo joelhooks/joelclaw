@@ -1,6 +1,6 @@
 import { ConvexHttpClient } from "convex/browser";
 import { cacheLife, cacheTag } from "next/cache";
-import { api } from "@/convex/_generated/api";
+import { api } from "joelclaw-api/convex/_generated/api";
 import {
   buildAdrRouteSlugs,
   resolveAdrSourceSlug,
@@ -92,7 +92,7 @@ function getConvexClient(): ConvexHttpClient | null {
 
   const deployKey = readConvexDeployKey();
   if (deployKey) {
-    convexClient.setAdminAuth(deployKey);
+    (convexClient as ConvexHttpClient & { setAdminAuth: (token: string) => void }).setAdminAuth(deployKey);
   }
 
   return convexClient;
