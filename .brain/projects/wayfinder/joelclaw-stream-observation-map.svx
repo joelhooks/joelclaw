@@ -68,9 +68,7 @@ updated only when it resolves.
 
 - GitHub + Twitter ingress (no webhooks today — pull adapters? new hooks?
   hangs on the ingress research).
-- ClickHouse "pings": the observer periodically reading telemetry for
-  anomaly observations (system self-awareness pages) — shape unclear until
-  the epoch model lands.
+- (graduated 2026-07-13 → build-observer-telemetry-watch)
 - Cross-source dedup (same event arriving via Slack AND GitHub AND Front).
 - Whether stream observations get their own Brain section or share
   `observations/` with a `source:` field.
