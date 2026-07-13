@@ -1,0 +1,47 @@
+---
+title: "Task: qmd spike — hybrid recall over brain roots + observations"
+type: task-brief
+created: 2026-07-12
+parent: ".brain/projects/wayfinder/evaluate-qmd-brain-recall.svx"
+---
+
+# qmd spike
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. Read your ticket
+(`.brain/projects/wayfinder/evaluate-qmd-brain-recall.svx`) and skim
+https://github.com/tobi/qmd (or its README via npm). Evaluate qmd as the
+KNOWLEDGE-recall projection over the Brain.
+
+## Do
+
+1. Install: `bun install -g @tobilu/qmd` (Node≥22/bun present; macOS
+   Homebrew SQLite exists). Models auto-download (~2GB to ~/.cache/qmd) —
+   allowed.
+2. Collections from the registry (`brain-roots.json` in dark-wizard):
+   `qmd collection add <root-path> --name <root-name>` with `**/*.svx`
+   include globs (check the exact flag surface — `collection include`).
+   Also confirm observations land via the dark-wizard root.
+3. `qmd embed` (time it; note GPU/Metal detection), then receipts:
+   - `qmd search`, `qmd vsearch`, `qmd query` for: "what did we decide about
+     memory compression" (should surface the node-cluster/reflector map
+     notes + decision pages), "observer privacy tombstone", "files are
+     truth databases are projections", one query of your choosing that
+     lexical misses but semantic finds.
+   - Latency per mode (cold + warm).
+4. MCP smoke: `qmd mcp` stdio starts; list its tools (don't wire into any
+   settings files — read-only smoke).
+5. Verdict paragraph: does this supersede add-observation-embeddings?
+   What's the Typesense/qmd split? Any svx-specific chunking issues
+   (frontmatter/components in snippets)?
+
+## Output
+
+Write `.brain/resources/qmd-brain-recall-spike.svx` in THIS repo (svx law):
+setup receipts, query receipts (trimmed), latency table, verdict. Print a
+DONE summary with the verdict and the best receipt.
+
+## Rules
+
+- No commits/pushes. No settings/config file edits outside qmd's own
+  `~/.config/qmd/`. Nothing written to dark-wizard or joelclaw-wiki.
+- Read-only against the brain roots.
