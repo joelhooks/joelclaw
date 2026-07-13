@@ -74,6 +74,8 @@ to understand all of the work that we're doing."
 
 - [Evaluate qmd as the Brain Knowledge-Recall Projection](./evaluate-qmd-brain-recall.svx) — ADOPTED: hybrid local search over 509 svx files (36s embed on Metal); qmd = knowledge projection, Typesense = stream projection; supersedes add-observation-embeddings (closed); productionization chartered.
 
+- **Consumption charted separately (2026-07-13)**: the [recall-consumption map](./joelclaw-recall-consumption-map.svx) owns how agents/surfaces USE the distilled layer (briefing push, qmd pull, Bugle editorial — two tickets re-parented there). This map keeps the write loop, page quality, and the reflector.
+
 ## Not yet specified
 
 - **Observer deployment reality (2026-07-12)**: v0 runs as workspace `Observer` in the MAIN herdr server (pane in `~/.joelclaw/observer-pane-id`, 30-min tick LaunchAgent `com.joelclaw.observer-tick`). CORRECTED: herdr sessions were the feature all along (`herdr session attach observer`, per-session state dirs); the earlier 'shared state' incident was a raw second server on the default socket — operator error. The observer now lives in herdr session `observer`, pane w1:p1, cwd `~/Code/joelhooks/joelclaw-observer`. Also learned: resume flag is `pi --session <id>`; charter-restart with the persisted cursor is the correct daemon recovery anyway.

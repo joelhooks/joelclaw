@@ -1,0 +1,23 @@
+---
+title: "Bench Recall Quality (brainbench consumption leg)"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-recall-consumption-map.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Bench Recall Quality
+
+## Question
+
+Add a consumption leg to brainbench: known-answer retrieval queries over
+the distilled layer ("what did we decide about X" with a canonical page as
+truth), scored for hit-rank across the three pull surfaces (sessions
+search, qmd hybrid, paper index). Benchmark prompts live OUTSIDE indexed
+Brain roots (qmd spike caveat). Baseline now, rerun as the corpus grows —
+recall quality measured, not vibed. Page-quality benching stays on the
+observational-memory map.
