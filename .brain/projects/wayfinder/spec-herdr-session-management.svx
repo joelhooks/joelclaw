@@ -1,0 +1,40 @@
+---
+title: "Spec: herdr Session Management (named, isolated, attachable sessions)"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "HITL"
+parent: "./joelclaw-observational-memory-map.svx"
+blockers: []
+created_at: "2026-07-12"
+---
+
+# Spec: herdr Session Management
+
+## Question
+
+Joel's charter (2026-07-12, verbatim shape): herdr grows first-class SESSION
+management —
+
+```
+herdr session list
+herdr session attach work
+herdr session attach side-project
+herdr session stop work
+herdr session delete side-project
+```
+
+A session is a named, fully isolated universe: its own workspaces, tabs,
+panes, agents, and PERSISTED STATE (this kills the shared-session.json
+hazard proven 2026-07-12 — a second server restored the main server's 14
+workspaces and had to be reverted). `herdr session attach observer` attaches
+the observer's whole world: the orchestrator pane plus every sub-agent pane
+it spawned. Detach leaves it running; stop/delete manage lifecycle. Sessions
+survive reboot (server-per-session or one server with namespaced state —
+implementation's call; the UX above is the contract).
+
+Requires the herdr source repo (not checked out on flagg — likely blaine).
+The observer is the driving use case; the observer-pi-extension ticket
+carries the in-session requirements (system-prompt OVERRIDE, bespoke
+subagents, headless tool policy).
