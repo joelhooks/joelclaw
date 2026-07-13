@@ -2862,7 +2862,11 @@ function describeIMessageChannelHealth(channel: Record<string, unknown>): string
 }
 
 function describeSlackChannelHealth(channel: Record<string, unknown>): string {
-  return channel.connected === true ? "socket connected" : "socket not connected";
+  const socketState = typeof channel.socketState === "string" ? channel.socketState : "unknown";
+  const reconnectCount = typeof channel.reconnectCount === "number" ? channel.reconnectCount : 0;
+  return channel.connected === true
+    ? `socket connected (${socketState}, reconnects ${reconnectCount})`
+    : `socket not connected (${socketState}, reconnects ${reconnectCount})`;
 }
 
 function getTelegramHealPolicy(channel: Record<string, unknown>): TelegramHealPolicy {
@@ -3494,6 +3498,10 @@ function getChannelRuntimeSnapshots(): Record<string, Record<string, unknown>> {
       started: slack.started,
       healthy: Boolean(SLACK_ALLOWED_USER_ID) ? slack.connected : false,
       connected: slack.connected,
+      socketState: slack.socketState,
+      lastSocketTransitionAt: slack.lastSocketTransitionAt,
+      lastSocketConnectedAt: slack.lastSocketConnectedAt,
+      reconnectCount: slack.reconnectCount,
       botUserId: slack.botUserId,
       allowedUserId: slack.allowedUserId,
     },
@@ -4520,13 +4528,9 @@ const enqueueToGateway = async (source: string, prompt: string, metadata?: Recor
 };
 
 // ── Redis channel (self-healing — retries on failure, won't crash daemon) ──
-await startRedisChannel(enqueueToGateway);
-
-const redisClient = getRedisClient();
-await maybeRefreshChannelHealthMuteState(true);
-if (redisClient) {
+const initializeMessageStore = async (client: NonNullable<ReturnType<typeof getRedisClient>>) => {
   await initMessageStore(
-    redisClient,
+    client,
     {
       emit: (action: string, detail: string, extra?: Record<string, unknown>) => {
         void emitGatewayOtel({
@@ -4544,8 +4548,18 @@ if (redisClient) {
     },
   );
   await trimOld();
+};
+
+await startRedisChannel(enqueueToGateway, {
+  onRecovered: initializeMessageStore,
+});
+
+const redisClient = getRedisClient();
+await maybeRefreshChannelHealthMuteState(true);
+if (redisClient) {
+  await initializeMessageStore(redisClient);
 } else {
-  console.warn("[gateway:store] redis command client unavailable; durable replay skipped");
+  console.warn("[gateway:store] redis command client unavailable; durable replay skipped until recovery");
 }
 
 // ── Discord channel ────────────────────────────────────

@@ -11,6 +11,7 @@ import {
   type OperatorSignalBucket,
 } from "../operator-relay";
 import type { OutboundEnvelope } from "../outbound/envelope";
+import { describeError, ErrorEmissionBudget, type ErrorSummary } from "./error-emission-budget";
 import { type InlineButton, send as sendTelegram } from "./telegram";
 
 export type EnqueueFn = (
@@ -38,6 +39,8 @@ const MODE_KEY = "joelclaw:mode";
 // HEARTBEAT_PATH removed — gateway no longer processes HEARTBEAT.md (ADR-0103)
 const DEDUP_MAX = 500;
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const REDIS_ERROR_WINDOW_MS = 60_000;
+const REDIS_ERROR_MAX_DISTINCT_PER_WINDOW = 3;
 const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
   ? parseInt(process.env.TELEGRAM_USER_ID, 10)
   : undefined;
@@ -83,6 +86,79 @@ let runtimeState: RedisRuntimeState = {
   subscriberStatus: "idle",
   commandStatus: "idle",
 };
+
+const redisErrorBudgets = {
+  subscriber: new ErrorEmissionBudget({
+    windowMs: REDIS_ERROR_WINDOW_MS,
+    maxDistinctPerWindow: REDIS_ERROR_MAX_DISTINCT_PER_WINDOW,
+  }),
+  command: new ErrorEmissionBudget({
+    windowMs: REDIS_ERROR_WINDOW_MS,
+    maxDistinctPerWindow: REDIS_ERROR_MAX_DISTINCT_PER_WINDOW,
+  }),
+};
+
+type RedisClientKind = keyof typeof redisErrorBudgets;
+
+function emitRedisErrorSummary(kind: RedisClientKind, summary: ErrorSummary): void {
+  console.warn(`[gateway:redis] ${kind} errors suppressed`, {
+    count: summary.suppressed,
+    windowMs: summary.windowEndedAt - summary.windowStartedAt,
+  });
+  void emitGatewayOtel({
+    level: "warn",
+    component: "redis-channel",
+    action: `redis.${kind}.error.summary`,
+    success: false,
+    error: `${summary.suppressed} repeated Redis ${kind} errors suppressed`,
+    metadata: {
+      emitted: summary.emitted,
+      suppressed: summary.suppressed,
+      suppressedSignatures: summary.suppressedSignatures,
+      windowStartedAt: new Date(summary.windowStartedAt).toISOString(),
+      windowEndedAt: new Date(summary.windowEndedAt).toISOString(),
+    },
+  });
+}
+
+function emitRedisClientError(kind: RedisClientKind, error: unknown): void {
+  const description = describeError(error);
+  const decision = redisErrorBudgets[kind].record(description.signature);
+  if (decision.summary) emitRedisErrorSummary(kind, decision.summary);
+  if (!decision.emit) return;
+
+  console.error(`[gateway:redis] ${kind} error`, { error });
+  void emitGatewayOtel({
+    level: "error",
+    component: "redis-channel",
+    action: `redis.${kind}.error`,
+    success: false,
+    error: description.message,
+    metadata: {
+      errorName: description.name,
+      ...(description.code ? { errorCode: description.code } : {}),
+      causes: description.causes,
+    },
+  });
+}
+
+function flushRedisErrorSummary(kind: RedisClientKind): void {
+  const summary = redisErrorBudgets[kind].flush();
+  if (summary) emitRedisErrorSummary(kind, summary);
+}
+
+function disposeRedisClients(expectedSub = sub, expectedCmd = cmd): void {
+  if (expectedSub) {
+    expectedSub.removeAllListeners();
+    expectedSub.disconnect(false);
+    if (sub === expectedSub) sub = undefined;
+  }
+  if (expectedCmd) {
+    expectedCmd.removeAllListeners();
+    expectedCmd.disconnect(false);
+    if (cmd === expectedCmd) cmd = undefined;
+  }
+}
 
 function currentRedisClientStatus(client: Redis | undefined): string {
   return client?.status ?? "idle";
@@ -823,7 +899,11 @@ async function migrateLegacyEvents(): Promise<void> {
 }
 
 // ── Self-healing: retry start on Redis failure ───────
+type RedisRecoveredFn = (client: Redis) => void | Promise<void>;
+
 let _startEnqueue: EnqueueFn | undefined;
+let _onRecovered: RedisRecoveredFn | undefined;
+let _needsRecoveryRebind = false;
 let _retryTimer: ReturnType<typeof setTimeout> | undefined;
 const RETRY_DELAY_MS = 5_000;
 const MAX_RETRY_DELAY_MS = 60_000;
@@ -851,60 +931,70 @@ function scheduleRetry(): void {
 
 async function doStart(enqueue: EnqueueFn): Promise<void> {
   enqueuePrompt = enqueue;
-  sub = new Redis(redisOpts);
-  cmd = new Redis(redisOpts);
+  const needsRecoveryRebind = _needsRecoveryRebind;
 
-  // Track ready state for health checks
+  // Manual retry replaces the pair. Dispose the previous ioredis clients first;
+  // otherwise every failed attempt keeps its own retry loop and error listeners.
+  disposeRedisClients();
+  const nextSub = new Redis(redisOpts);
+  const nextCmd = new Redis(redisOpts);
+  sub = nextSub;
+  cmd = nextCmd;
+
   let subReady = false;
   let cmdReady = false;
-  sub.on("ready", () => { subReady = true; _retryCount = 0; });
-  cmd.on("ready", () => { cmdReady = true; _retryCount = 0; });
+  const markRecovered = () => {
+    if (!subReady || !cmdReady) return;
+    _retryCount = 0;
+    flushRedisErrorSummary("subscriber");
+    flushRedisErrorSummary("command");
+  };
+  nextSub.on("ready", () => { subReady = true; markRecovered(); });
+  nextCmd.on("ready", () => { cmdReady = true; markRecovered(); });
 
-  sub.on("error", (error: unknown) => {
-    console.error("[gateway:redis] subscriber error", { error });
-    void emitGatewayOtel({
-      level: "error",
-      component: "redis-channel",
-      action: "redis.subscriber.error",
-      success: false,
-      error: String(error),
-    });
+  nextSub.on("error", (error: unknown) => {
+    emitRedisClientError("subscriber", error);
   });
-  cmd.on("error", (error: unknown) => {
-    console.error("[gateway:redis] command client error", { error });
-    void emitGatewayOtel({
-      level: "error",
-      component: "redis-channel",
-      action: "redis.command.error",
-      success: false,
-      error: String(error),
-    });
+  nextCmd.on("error", (error: unknown) => {
+    emitRedisClientError("command", error);
   });
 
-  // On disconnect, mark as not started and schedule reconnect
-  sub.on("close", () => {
+  // On disconnect, mark as not started and schedule reconnect.
+  nextSub.on("close", () => {
+    subReady = false;
     if (started) {
       console.warn("[gateway:redis] subscriber disconnected — will reconnect");
       started = false;
+      _needsRecoveryRebind = true;
       scheduleRetry();
     }
   });
-  cmd.on("close", () => {
+  nextCmd.on("close", () => {
+    cmdReady = false;
     if (started) {
       console.warn("[gateway:redis] command client disconnected — will reconnect");
       started = false;
+      _needsRecoveryRebind = true;
       scheduleRetry();
     }
   });
 
-  await sub.connect();
-  await cmd.connect();
+  try {
+    await nextSub.connect();
+    await nextCmd.connect();
 
-  await cmd.sadd(SESSIONS_SET, SESSION_ID);
-  await sub.subscribe(NOTIFY_CHANNEL);
-  await sub.subscribe(LEGACY_NOTIFY_CHANNEL);
+    await nextCmd.sadd(SESSIONS_SET, SESSION_ID);
+    await nextSub.subscribe(NOTIFY_CHANNEL);
+    await nextSub.subscribe(LEGACY_NOTIFY_CHANNEL);
+  } catch (error) {
+    // A failed pair must not survive into the next manual retry. Leaving it
+    // alive creates one ioredis retry loop per attempt and an exponential
+    // telemetry storm during a long Redis outage.
+    disposeRedisClients(nextSub, nextCmd);
+    throw error;
+  }
 
-  sub.on("message", () => {
+  nextSub.on("message", () => {
     void drainEvents();
   });
 
@@ -929,15 +1019,38 @@ async function doStart(enqueue: EnqueueFn): Promise<void> {
       sessionId: SESSION_ID,
     },
   });
+
+  if (needsRecoveryRebind && _onRecovered) {
+    try {
+      await _onRecovered(nextCmd);
+      if (cmd === nextCmd) _needsRecoveryRebind = false;
+    } catch (error) {
+      console.error("[gateway:redis] recovery rebind failed", { error });
+      void emitGatewayOtel({
+        level: "error",
+        component: "redis-channel",
+        action: "redis.recovery.rebind.failed",
+        success: false,
+        error: String(error),
+      });
+    }
+  } else if (needsRecoveryRebind) {
+    _needsRecoveryRebind = false;
+  }
 }
 
-export async function start(enqueue: EnqueueFn): Promise<void> {
+export async function start(
+  enqueue: EnqueueFn,
+  options?: { onRecovered?: RedisRecoveredFn },
+): Promise<void> {
   if (started) return;
   _startEnqueue = enqueue;
+  _onRecovered = options?.onRecovered;
   try {
     await doStart(enqueue);
   } catch (error) {
     const lastError = String(error);
+    _needsRecoveryRebind = true;
     console.error("[gateway:redis] initial connect failed — will retry", { error });
     updateRuntimeState("redis_degraded", "initial_connect_failed", {
       lastError,
@@ -1055,21 +1168,31 @@ export async function shutdown(): Promise<void> {
     _retryTimer = undefined;
   }
   _startEnqueue = undefined;
+  _onRecovered = undefined;
+  _needsRecoveryRebind = false;
+  flushRedisErrorSummary("subscriber");
+  flushRedisErrorSummary("command");
 
   try {
-    if (cmd) {
-      await cmd.srem(SESSIONS_SET, SESSION_ID);
-      await cmd.del(EVENT_LIST);
+    const cleanupClient = cmd;
+    if (cleanupClient?.status === "ready") {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        Promise.all([
+          cleanupClient.srem(SESSIONS_SET, SESSION_ID),
+          cleanupClient.del(EVENT_LIST),
+        ]),
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(resolve, 2_000);
+        }),
+      ]);
+      if (timeout) clearTimeout(timeout);
     }
   } catch (error) {
     console.error("[gateway:redis] cleanup failed", { error });
   } finally {
-    try {
-      if (sub) {
-        await sub.unsubscribe(NOTIFY_CHANNEL, LEGACY_NOTIFY_CHANNEL);
-      }
-    } catch {}
-
+    // Process shutdown does not need a Redis round trip to unsubscribe. A
+    // direct disconnect is bounded even while Redis is unavailable.
     if (sub) {
       sub.disconnect();
       sub = undefined;
