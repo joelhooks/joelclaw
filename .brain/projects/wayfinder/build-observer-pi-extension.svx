@@ -58,3 +58,9 @@ conservatively (doubt → sensitive, gaps → report loudly).
   observer-only config scope — nothing inherited by accident.
 - Pairs with [spec-herdr-session-management](./spec-herdr-session-management.svx):
   `herdr session attach observer` is the front door to this session.
+
+## Home (Joel, 2026-07-12)
+
+The extension lives in its own repo: `~/Code/joelhooks/joelclaw-observer`
+(joelhooks/joelclaw-observer). Scaffolded with the full spec in AGENTS.md;
+build work executes there.
