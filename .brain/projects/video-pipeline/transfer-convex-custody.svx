@@ -2,7 +2,7 @@
 title: "Transfer Convex Custody to joelclaw-api"
 type: "question"
 kind: "task"
-status: "open"
+status: "closed"
 assignee: "flagg-claude-steering + pi worker (2026-07-13, drive-to-done)"
 interaction: "AFK"
 parent: "./video-pipeline-brief.svx"
@@ -16,3 +16,9 @@ created_at: "2026-07-13"
 ## Question
 
 Execute the custody decision from the [charter](./charter-joelclaw-api.svx): move the `convex/` directory (schema, functions, deployment config, admin credentials) from `apps/web` in the joelclaw monorepo into `joelclaw-api`, making joelclaw-api the sole deployer of the existing self-hosted deployment on :3210. apps/web keeps direct Convex reads, consuming the generated client/types from joelclaw-api via `link:` (same seam as joelclaw-video→system-bus). Consult `/skill:local-convex` before touching the deployment. Verification is the hard part and is non-negotiable: after the move, (1) `convex deploy` from joelclaw-api succeeds against :3210 with an unchanged schema hash, (2) apps/web typechecks and its pages still read (vaultNotes, contentResources, systemStatus paths exercised), (3) nothing references the old apps/web/convex path. Watch for: codegen output location, env var custody (CONVEX_URL, admin key — where leased from), and the monorepo's tsconfig/biome exclusions for the departed directory. Other sessions work in the monorepo concurrently — touch only what the move requires, never `git add -A`. Resolved when the readback proves all three checks and the resolution records the new deploy command, where credentials live, and the apps/web dep wiring.
+
+## Answer
+
+Resolved 2026-07-13 (pi worker Serene Tomjon across three steered rounds; steering independently re-verified tsc + wiring). `convex/` (schema, functions, deployer role for the :3210 self-hosted backend) now lives in `joelclaw-api`; `apps/web/convex` is GONE and apps/web consumes `joelclaw-api/convex/_generated/api` via `link:`. All four readback checks passed: deploy clean with schema validation, apps/web `tsc --noEmit` clean, no old-path references outside .brain/docs history, live `systemStatus:list` read works. Committed `d2466320` (monorepo) + jj-described (joelclaw-api).
+
+Two collisions surfaced and handled on the way: (1) live `sessions` rows carrying call telemetry (`callerHash`, `transcriptTail`, …) blocked schema validation — resolved with a deliberate temporary `v.union` of the auth and call shapes, retirement chartered in [Separate Call Telemetry from the Sessions Table](./separate-call-telemetry-from-sessions.svx); (2) the writer is `apps/live-dashboard/convex/calls.ts` (a SECOND convex dir deploying to the same backend — the exact one-deployment-two-owners failure the custody decision exists to end) called from `infra/voice-agent/call_tracker.py`. Admin key custody: local-convex `app-admin.env` via `generate-admin-env.sh`.
