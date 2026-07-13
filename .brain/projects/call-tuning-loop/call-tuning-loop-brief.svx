@@ -42,11 +42,12 @@ driving it.
 - **2026-07-13 — Fast-model A/B ranking:** trial `anthropic/claude-haiku-4.5` first, `openai/gpt-5.4-mini` with reasoning minimized/disabled second, and `openai/gpt-4.1-mini` third; hold Gemini 3.1 Flash Lite until tool-call reliability improves or Exacto routing proves otherwise. Receipt: [fast-model-candidates](./fast-model-candidates.svx). Amended (Joel): grok-4.5 and gpt-5.6-luna|terra:low join the trial cells.
 - **2026-07-13 — Honest spoken record:** judge from append-only `conversation_item_added` spoken items, not close-time `session.history` or the rolling `transcriptTail`; interrupted assistant text is LiveKit's synchronized playout transcript. Receipt: [spoken-record-capture](./spoken-record-capture.svx).
 
+- [Define the Auto-Apply Surface](./define-autoapply-surface.svx) — resolved as the autonomy charter `infra/voice-agent/VISION.md`: allowlisted text auto-applies under four mechanical guardrails; persona/config/models gated; quarantine surfaces forbidden; promotion ladder + intelligence escalation (up to pi gpt-5.6-rol:xhigh) defined.
+
 ## Not yet specified
 
 - Whether guest/public judge findings ever tune the PRIVATE persona (cross-tier
   learning) or tiers tune independently.
-- How the loop reports itself (Bugle section? gateway notify? brief appendix?).
 - When the loop earns code-change autonomy.
 
 ## Out of scope
