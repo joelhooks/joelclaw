@@ -4,7 +4,7 @@ type: "question"
 kind: "task"
 interaction: "AFK"
 status: "open"
-assignee: ""
+assignee: "pi worker (wE:p6, herdr, 2026-07-13)"
 parent: "./call-tuning-loop-brief.svx"
 blockers:
   - "./draft-judge-rubric.svx"
