@@ -2,6 +2,7 @@
 title: "Bench Recall Quality (brainbench consumption leg)"
 type: "wayfinder_ticket"
 status: "open"
+assignee: "pi worker (steered by claude session 14d06369)"
 labels:
   - "wayfinder:task"
 interaction: "AFK"

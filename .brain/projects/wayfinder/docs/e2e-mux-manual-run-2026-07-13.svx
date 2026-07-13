@@ -1,0 +1,28 @@
+---
+title: "E2E receipt: manual agent-driven Mux publish run"
+type: "receipt"
+created_at: "2026-07-13"
+---
+
+# E2E receipt: manual agent-driven Mux publish run (2026-07-13)
+
+A full dry run of phase 1 executed by the steering agent by hand — no dashboard, no human in the loop after "go" — to prove the pipeline is fully agent-drivable and to de-risk the phase-1 build. Everything below happened from agent tools on flagg.
+
+## The chain, with evidence
+
+1. **Clip forged:** ffmpeg `testsrc2` + sine tone, 12 s, 720p30, H.264/AAC, 4.8 MB. (Homebrew ffmpeg lacks `drawtext` — burned-in labels need another route if we ever want them.)
+2. **Direct upload created** via `POST /video/v1/uploads` with leased agent-secrets creds. The **current API accepted** `playback_policies` + `static_renditions: [{"resolution":"highest"}]` + `video_quality: "plus"` + `passthrough` — confirming the audit's recommended settings work verbatim. Upload id `i01LSADF5fAbB02euxtsfmFS1xrFq2GMxhIJI9sTNqOd00`.
+3. **Bytes PUT** to the upload URL: HTTP 200 in 1.5 s.
+4. **Asset ready:** `kqxhFOGPiqouDr46HVpof016mk3TXeKytS5EWiz5FfRo`, playback id `js0000C1Fx6tYhPcJdpVpGnasE00CpoK018LzMBcJwaW4kc`, 720p, static rendition `highest.mp4` status `ready` (5.9 MB) — progressive rendition confirmed end to end, unlike the account's prior `mp4_support: "none"` assets.
+5. **Webhooks flowed live** through `https://hooks.joelclaw.com/webhooks/mux` with the rotated per-endpoint secret — gateway log shows `mux/upload.asset_created`, `mux/asset.ready`, `mux/asset.static_rendition.ready`, `mux/asset.updated`, all signature-verified → 200 → emitted to Inngest. Note: `asset.static_rendition.ready` and `asset.updated` aren't in the provider's `EVENT_MAP` but pass through via the `video.`-prefix fallback — the normalizer already speaks the whole current event vocabulary.
+6. **Public URLs 200-checked:** `stream.mux.com/<pid>.m3u8`, `player.mux.com/<pid>`, `image.mux.com/<pid>/thumbnail.jpg`, and `stream.mux.com/<pid>/highest.mp4` all return 200.
+
+Test asset **retained** (passthrough `joelclaw-video-e2e-2026-07-13`) for watch-page prototyping.
+
+## The one gap: agent event streaming
+
+`joelclaw webhook subscribe mux asset.ready --stream` created a live subscription (Redis index key present) but delivered nothing: `webhook-subscription-dispatch.ts` only implements dispatch for `github/workflow_run.completed`. The CLI accepts subscriptions no dispatcher serves. Agent-side monitoring worked anyway via Mux API polling and the gateway log, but the purpose-built streaming surface is dead for mux — ticketed as [Make Agent Webhook Streaming Work for Mux Events](../make-agent-webhook-streaming-work-for-mux.svx).
+
+## What this buys phase 1
+
+The build is now assembly, not discovery: exact working request JSON (this doc + the audit), proven webhook vocabulary, proven upload mechanics and timing (12 s clip: upload→ready well under a minute), and a known-good verification checklist (asset ready + rendition ready + four 200s).

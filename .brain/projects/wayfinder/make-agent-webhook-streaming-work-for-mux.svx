@@ -1,0 +1,17 @@
+---
+title: "Make Agent Webhook Streaming Work for Mux Events"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-video-pipeline-map.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Make Agent Webhook Streaming Work for Mux Events
+
+## Question
+
+Found during the [2026-07-13 E2E run](./docs/e2e-mux-manual-run-2026-07-13.svx): `joelclaw webhook subscribe mux asset.ready --stream` registers a subscription (ADR-0185 Redis keys land) that nothing ever dispatches — `packages/system-bus/src/inngest/functions/webhook-subscription-dispatch.ts` only triggers on `github/workflow_run.completed`. The CLI silently accepts subscriptions for every provider the gateway knows. Fix: generalize dispatch so session subscriptions deliver for `mux/*` (and, when it exists, `deepgram/*`) — either an Inngest wildcard-trigger dispatcher or per-provider trigger registration; decide which while implementing, and either constrain the CLI to dispatchable providers or make dispatch universal. This is the agent monitoring surface for the agentic Loom vision — "agents publish and watch it land" needs streamed events, not API polling. Resolved when `joelclaw webhook subscribe mux asset.ready --stream` prints a real event during a video publish.
