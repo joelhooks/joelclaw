@@ -3,8 +3,9 @@ title: "Define the Auto-Apply Surface"
 type: "question"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-13"
+assignee: "claude (flagg, steering session, 2026-07-13)"
 parent: "./call-tuning-loop-brief.svx"
 blockers: []
 created_at: "2026-07-13"
@@ -20,3 +21,16 @@ persona instruction text blocks, tool docstrings, public-context.md /
 shitrat-brain pages (already gardened), config knobs (endpointing delays?).
 And what's the receipt shape (commit message contract, Bugle mention, revert
 path)? Resolved when an explicit allowlist + receipt contract is written.
+
+## Answer (2026-07-13)
+
+Resolved as the project's autonomy charter: **[infra/voice-agent/VISION.md](../../../infra/voice-agent/VISION.md)** —
+Joel's framing: it DEFINES what automation does autonomously and where he's in
+the loop. Gist: auto-apply = openers + greeting flavors + tool docstrings/
+result-headers only; persona, config knobs, models, tools, carrier, spend all
+gated; quarantine/disclosure/allowlist forbidden forever. Receipts: one
+retro(auto) commit per tuning + a Bugle "Tuning receipts" item. Guardrails:
+compile + banned-grep + max two tunings per retro + post-apply synthetic call
+with auto-revert. Promotion ladder: ten clean applies + sign-off up, any
+revert demotes. Intelligence may escalate to pi with gpt-5.6-rol:xhigh when
+warranted — logged, and never escalating authority.
