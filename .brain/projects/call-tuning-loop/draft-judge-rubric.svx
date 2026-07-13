@@ -4,7 +4,7 @@ type: "question"
 kind: "prototype"
 interaction: "HITL"
 status: "open"
-assignee: ""
+assignee: "pi worker (wE:p6, herdr, 2026-07-13)"
 parent: "./call-tuning-loop-brief.svx"
 blockers: []
 created_at: "2026-07-13"
@@ -21,3 +21,7 @@ cozy, brevity discipline, jargon leakage (tracker-speak), tool-failure
 narration, dead-air handling, repair quality, teach-mode adherence,
 piss-taking quality (public). Output: a scored-example prototype (3 real calls
 scored by hand) Joel can argue with. Resolved when Joel signs the rubric.
+
+## Prototype ready (2026-07-13)
+
+[Review the scored rubric, failure taxonomy, and NEEDS-JOEL decisions](./judge-rubric-prototype.svx).
