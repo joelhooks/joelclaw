@@ -1,0 +1,23 @@
+---
+title: "Research: the Honest Spoken Record for Judging"
+type: "question"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (wE:p6, herdr, 2026-07-13)"
+parent: "./call-tuning-loop-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Research: the Honest Spoken Record for Judging
+
+## Question
+
+session.history loses interrupted/list turns (receipt: "The six that need
+you:" saved with no list; caller audibly heard it). The judge must score what
+was actually SAID. Investigate livekit-agents 1.4.x: transcription/spoken-sync
+events, per-segment callbacks, whether interrupted content is truncated or
+dropped, and whether our Convex turn rows / transcriptLine field can carry the
+true record. Deliverable: an asset stating the recommended capture mechanism
+with API receipts, sized for the judge build to consume.

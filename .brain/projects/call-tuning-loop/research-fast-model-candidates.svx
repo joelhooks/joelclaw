@@ -1,0 +1,24 @@
+---
+title: "Research: Fast-Model Candidates for the Conversational Loop"
+type: "question"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (wE:p2, herdr, 2026-07-13)"
+parent: "./call-tuning-loop-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Research: Fast-Model Candidates for the Conversational Loop
+
+## Question
+
+TTFT is ~70% of perceived response latency (median 1.28s, p95 5.4s on
+anthropic/claude-sonnet-4.6 via OpenRouter). Which 2-3 candidates should the
+A/B trial? Constraints: available via OpenRouter (the approved voice path),
+strong function-calling (the agent is tool-heavy), low TTFT with streaming,
+good at terse persona adherence. Check published TTFT/latency data (OpenRouter
+throughput stats, provider docs), price per call, and any voice-agent
+practitioner reports. Deliverable: comparison asset with a ranked
+recommendation.
