@@ -1,0 +1,63 @@
+---
+title: "Chart the JoelClaw Video Pipeline"
+type: "wayfinder_map"
+status: "active"
+labels:
+  - "wayfinder:map"
+created_at: "2026-07-13"
+tracker: "local-brain"
+privacy: "private"
+---
+
+# Chart the JoelClaw Video Pipeline
+
+## Destination
+
+A durable Mux/Inngest video publishing pipeline living in `joelhooks/joelclaw-video` and consumed by joelclaw's system-bus: any agent or CLI hands it a pointer to a video and gets back a shareable watch URL, with draft/published and public/unlisted/private states backed by local Convex. The long game is a personal Loom replacement that agents can publish through on Joel's behalf.
+
+The first proof is phase 1: a filesystem path on flagg goes in, a Mux asset/playback id comes out. The map is done when phase 1 is live, the agent publish surface is decided, and the watch-page phase is fully specifiable.
+
+## Notes
+
+### Fixed direction (decided in the 2026-07-13 charting grill)
+
+- **Deploy shape:** `joelclaw-video` is a standalone repo publishing a package; joelclaw's `packages/system-bus` imports it and registers its Inngest functions alongside the existing 110+. One Inngest app; the existing mux webhook provider (`packages/system-bus/src/webhooks/providers/mux.ts`, secret already leased in `serve.ts`) just works.
+- **Ingest:** Mux direct upload — create an upload via the Mux API and PUT the bytes from flagg. No public exposure, no staging required for phase 1. Asset settings must include a progressive/downloadable rendition — mirror course-builder's `getMuxOptions` (`packages/core/src/lib/mux.ts`: `video_quality: plus`, `max_resolution_tier: 2160p`, `mp4_support: standard`, generated English subtitles) but verify against current Mux docs; `mp4_support` may have been superseded by `static_renditions`.
+- **Metadata store:** local Convex mirrors course-builder's content-resource shape for video resources. States: draft/published crossed with public/unlisted/private.
+- **Originals:** archived (NAS/Garage) alongside Mux, with easy TTL-based cleanup so the archive doesn't fill with shit. Mux is the delivery layer, not the only copy.
+- **Watch page:** a real one is part of the destination — not just `player.mux.com` links.
+
+### Execution override
+
+Phase 1 (file pointer → Mux → asset/playback id) is carried into the map as a task ticket: it's the proof the rest of the map decides against, and later decisions (agent surface, watch page) need a real pipeline to measure.
+
+### Yoink source
+
+`badass-courses/course-builder` (checked out at `~/Code/badass-courses/course-builder`) — `packages/core/src/inngest/video-processing/` (events + functions: video-uploaded, video-ready, transcript-ready, add-srt-to-mux-asset, video-processing-error, remove-completed-video) and `packages/core/src/lib/mux.ts`. Yoink liberally; drop the Sanity/party-specific bits.
+
+Prior art already in joelclaw: mux webhook provider (above), `packages/system-bus/src/inngest/functions/media-process.ts` (claim-check pattern, NAS at `joel@three-body`), `media-transcription-pipeline.ts`, `video-download.ts`.
+
+### Skills every session should consult
+
+- `/skill:wayfinder`, `/skill:brain-first-workflow`
+- `/skill:grill-me` and `/skill:grill-with-docs`
+- `/skill:effect-ts` for package code
+- `/skill:local-convex` and `/skill:garage` for the metadata and archive tickets
+- `/skill:tailnet-topology` for any URL/exposure question
+
+## Decisions so far
+
+<!-- Closed ticket resolutions are appended here as one-line linked gists. -->
+
+## Not yet specified
+
+- **Arbitrary pointers beyond a flagg filesystem path** — remote URLs, files on blaine/panda, NAS paths, browser uploads. Phase 1 is flagg-local; the pointer taxonomy sharpens once the pipeline exists.
+- **Transcripts and captions** — course-builder's transcript flow (order-transcript → transcript-ready → SRT onto the Mux asset) vs joelclaw's existing `media-transcription-pipeline.ts`; convergence unclear until phase 1 lands. Loom parity wants these on the watch page.
+- **Privacy enforcement on playback** — Mux signed playback policies for private/unlisted videos vs public-policy-plus-obscure-slug; waits on the Convex model and watch page.
+- **Announce/share flow** — publishing pings Joel (Discord DM with the watch URL) or posts where the agent was asked; shape follows the agent-surface decision.
+
+## Out of scope
+
+- **Recording capture tooling** — the Loom-replacement *recorder* (screen/cam capture) is its own future effort; this map starts at "a video file exists."
+- **Comments, view analytics, viewer identity** on the watch page — Loom features beyond publish-and-share.
+- **Migrating egghead/badass-courses production video** — this pipeline is personal infrastructure, not a course-builder replacement.

@@ -1,0 +1,17 @@
+---
+title: "Scaffold joelclaw-video and the System-Bus Consumption Seam"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-video-pipeline-map.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Scaffold joelclaw-video and the System-Bus Consumption Seam
+
+## Question
+
+Create `joelhooks/joelclaw-video` (repo + package skeleton: Bun, TypeScript strict, Effect where it earns its keep, `bun test`) and settle the consumption mechanics: how does `packages/system-bus` in the joelclaw monorepo import a package from an external repo — published to npm, GitHub Packages, git dependency, or a local link during development — given joelclaw is pnpm workspaces and imports cross boundaries via `@joelclaw/*`? The package must export Inngest functions system-bus can register in its existing serve list without adopting course-builder's adapter machinery. Resolved when the repo exists, `system-bus` successfully registers a hello-world Inngest function from it, and the resolution records the package name, versioning/release flow, and the dev-loop for editing both repos at once. Use ShitRat tooling for the GitHub side per standing rules.
