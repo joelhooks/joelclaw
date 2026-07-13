@@ -1,7 +1,7 @@
 ---
 title: "Build Voice Observation Recall (very tested)"
 type: "wayfinder_ticket"
-status: "open"
+status: "closed"
 assignee: "pi worker (steered by claude session 14d06369)"
 labels:
   - "wayfinder:task"
@@ -9,6 +9,7 @@ interaction: "AFK"
 parent: "./joelclaw-observational-memory-map.svx"
 blockers: []
 created_at: "2026-07-12"
+closed_at: "2026-07-12"
 ---
 
 # Build Voice Observation Recall (very tested)
@@ -42,3 +43,15 @@ unverified callers: sensitive hits silently excluded.
 - Existing `tests/` suite still green.
 
 Blocked by build-observations-recall-typesense (consumes its CLI surface).
+
+## Resolution (2026-07-12)
+
+Shipped: `recall_work(query, days)` tool in the LiveKit voice worker.
+Speech-first formatting (gists as sentences, recency-phrased, URLs never
+spoken — DM offer instead), fail-soft everywhere, and the privacy edge done
+right: private-line allowlist grants tool access but NOT sensitive recall —
+that requires exact caller-id match to Joel's number; unknown fails closed.
+Tests 2 → 12 (parsing, formatting, sensitive filtering by caller class,
+empty, timeout fail-soft; fake-CLI fixtures, nothing live in units); live
+integration receipt captured; verify-voice.sh checks the recall path.
+Steering re-ran the suite independently: 12 passed.

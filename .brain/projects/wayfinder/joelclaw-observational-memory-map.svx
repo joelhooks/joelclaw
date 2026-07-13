@@ -70,6 +70,8 @@ to understand all of the work that we're doing."
 
 - [Build Observation Recall: Typesense Projection + sessions-search Replacement](./build-observations-recall-typesense.svx) — shipped: 75-doc rebuildable projection; `sessions search` now answers from the distilled layer with canonical page URLs; raw behind `--raw`; dark-wizard hostname bug dead.
 
+- [Build Voice Observation Recall (very tested)](./build-voice-observation-recall.svx) — the phone line answers "what did we do" from the distilled layer: speech-formatted, fail-soft, sensitive only on exact caller-id match (fails closed); tests 2→12 + verify-voice.sh recall check.
+
 ## Not yet specified
 
 - Reflector condensation policy — **Joel's frame (2026-07-12): observational memory is a node cluster getting intelligently compressed over time.** The reflector is EDGE-PRESERVING GRAPH COMPACTION, not summarization: replace a dense cluster of session atoms with a supernode carrying the union of the cluster's edges, citations intact; redundancy dies, topology survives. Yields a temporal gradient: recent = full atoms, middle = reflected threads, deep past = promoted durable pages. Benchable as edge preservation in brainbench. This is also the fuck-Obsidian demo: a graph that grows nodes you didn't write and compresses itself visibly.
