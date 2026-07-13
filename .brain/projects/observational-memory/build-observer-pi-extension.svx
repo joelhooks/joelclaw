@@ -161,3 +161,10 @@ overflow. And the observer cleans its own herdr shit mechanically: a
 cleanup sweep every tick + in spawn/harvest paths closing done/stray panes
 it owns. Acceptance state: persistent anchors + actively-working labeled
 panes, nothing else, ever.
+
+### 6.8 (Joel, 2026-07-13): pi-tui responsiveness is the real defense
+
+pi-tui has proper responsive tools (resize handling, responsive rendering
+primitives) — use them as intended and panes are resilient by construction.
+Sensible minimums + queue-over-shrink stay, but the primary defense against
+TUI size crashes is responsive rendering done right, not layout fear.
