@@ -14,8 +14,8 @@ import { discoverCmd } from "./commands/discover";
 import { docsCmd } from "./commands/docs";
 import { emailCmd } from "./commands/email";
 import { eventCmd } from "./commands/event";
-import { fleetCmd } from "./commands/fleet";
 import { eventsCmd } from "./commands/events";
+import { fleetCmd } from "./commands/fleet";
 import { gatewayCmd } from "./commands/gateway";
 import { healCmd } from "./commands/heal";
 import { inngestCmd } from "./commands/inngest";
@@ -30,6 +30,7 @@ import { nasCmd } from "./commands/nas";
 import { noteCmd } from "./commands/note";
 import { notifyCmd } from "./commands/notify";
 import { o11yCmd } from "./commands/o11y";
+import { observationsCmd } from "./commands/observations";
 import { otelCmd } from "./commands/otel";
 import { pdsCmd } from "./commands/pds";
 import { queueCmd } from "./commands/queue";
@@ -190,8 +191,9 @@ const root = Command.make("joelclaw", {}, () =>
               "joelclaw search <query> [-c collection] [-n limit] [-f filter] [--semantic]",
             satellite:
               "joelclaw satellite {health|repair-request} [--notify] [--central-ssh joel@panda]",
+            observations: "joelclaw observations index [--rebuild]",
             sessions:
-              "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--extract] [--machine flagg] [--ssh-target joel@flagg]",
+              "joelclaw sessions search <query> [--raw] [--source typesense|local|ssh|both] [--extract] [--machine host] [--ssh-target joel@flagg]",
             session:
               "joelclaw session search <query> (alias for sessions)",
             docs: "joelclaw docs {add|search|context|list|show|status|enrich|reindex}",
@@ -337,6 +339,7 @@ const root = Command.make("joelclaw", {}, () =>
     pdsCmd,
     otelCmd,
     o11yCmd,
+    observationsCmd,
     usageCmd,
     inngestCmd,
     subscribeCmd,
