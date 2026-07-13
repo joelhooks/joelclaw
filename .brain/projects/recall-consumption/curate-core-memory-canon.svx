@@ -1,0 +1,25 @@
+---
+title: "Curate the Core Memory Canon (principles fused everywhere)"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "HITL"
+parent: "./recall-consumption-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Curate the Core Memory Canon
+
+## Question
+
+Layer 1 of the briefing answer: a small curated set of core-memory pages
+(principles, vision lines, standing law — files-are-truth, gates-never-
+default, secrets-never-persist, no-opaque-spinners, .svx law, refuse-loudly)
+that COMPILES into dark-wizard graft blocks so every agent on the fleet
+carries them fused in its system prompt. Decide with Joel: the initial
+canon list (one breath to read), the source location
+(dark-wizard/.brain/core-memories/?), the compile step (graft-block
+generation from svx), and the promotion path (reflector monthly promotion
+proposes; Joel accepts). HITL — the canon is Joel's voice.
