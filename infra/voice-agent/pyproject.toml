@@ -12,3 +12,11 @@ dependencies = [
     "livekit-plugins-noise-cancellation>=0.2.6",
     "convex>=0.7.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
