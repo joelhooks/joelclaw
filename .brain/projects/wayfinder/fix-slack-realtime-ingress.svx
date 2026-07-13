@@ -1,0 +1,21 @@
+---
+title: "Revive Slack Realtime Ingress (dead since ~05-31)"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:task"
+interaction: "AFK"
+parent: "./joelclaw-stream-observation-map.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Revive Slack Realtime Ingress (dead since ~05-31)
+
+## Question
+
+Socket Mode path exists in code but is dead: 0 events in 30 days, gateway
+daemon unreachable on flagg, Typesense realtime docs end 2026-05-31, Inngest
+POST failures silently swallowed. Diagnose why the daemon stopped, restore
+it under supervision (launchd/canary — silent drift doctrine), and make the
+Inngest handoff failure loud. Receipts in the ingress inventory.
