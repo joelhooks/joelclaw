@@ -64,6 +64,8 @@ updated only when it resolves.
 - [Research the Existing Stream Ingress](./research-stream-ingress-inventory.svx) — Front edge LIVE (274/day) but durable handoff unproven; Slack realtime DEAD since ~05-31 (daemon unreachable); ClickHouse 99.78% a redis.subscriber.error storm (102M rows); Bugle reads Front/GitHub/X, never Slack. Three repair tasks graduated; grillings unblocked.
 
 - [Kill the redis.subscriber.error Storm](./investigate-redis-subscriber-error-storm.svx) — root cause + emission budget shipped; 102M debris rows cleaned (0 remain); telemetry-watch unblocked.
+- [Build the Observer Telemetry Watch](./build-observer-telemetry-watch.svx) — telemetry_watch live in the observer tick: fixed ClickHouse queries, threshold-crossing anomaly/recovery pages; first tick caught memory/proof/pi sources dead since June 21 + gateway error spike; system sickness now enters memory within one tick.
+
 - [Prove (or Fix) the Front Durable Handoff](./verify-front-inngest-handoff.svx) — migration gap: handlers registered cluster-side, never on flagg host; fixed with end-to-end receipt + freshness check.
 
 - [Decide the Gateway Redis Channels Fate](./decide-gateway-redis-channel-fate.svx) — wake-dont-feed: reflex shrinks to a terra:low DISPATCHER pane inside the observer session (classify → wake/notify/drop); context only ever comes from recall; tiny allowlist; prompt-feeding loop retires.
