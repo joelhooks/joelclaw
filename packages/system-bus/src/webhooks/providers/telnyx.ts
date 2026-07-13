@@ -2,7 +2,7 @@ import { createPublicKey, verify } from "node:crypto";
 import type { NormalizedEvent, WebhookProvider } from "../types";
 
 const SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
-const EVENT_TYPES = new Set(["call.initiated", "call.answered", "call.hangup"]);
+const EVENT_TYPES = new Set(["call.initiated", "call.answered", "call.hangup", "message.received"]);
 let warnedMissingKey = false;
 
 export const telnyxProvider: WebhookProvider = {
