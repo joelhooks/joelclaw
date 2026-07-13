@@ -46,3 +46,10 @@ one line in that day's observation index (skipped ≠ invisible).
 
 `derivation.promptHash` is load-bearing: it's what makes distilled memory
 auditable months later. Prototype may amend all of this — that's its job.
+
+## Amendment (Joel, 2026-07-12): epoch atoms
+
+The atom is a SESSION EPOCH, not a whole session: an observation page covers
+the new-activity window since the last observation of that session
+(frontmatter gains window bounds; multiple pages per sessionId over its
+life). The reflector composes per-session and per-thread views from epochs.
