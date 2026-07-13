@@ -62,6 +62,8 @@ updated only when it resolves.
 
 <!-- one line per closed ticket: gist + link -->
 
+- [Research the Existing Stream Ingress](./research-stream-ingress-inventory.svx) — Front edge LIVE (274/day) but durable handoff unproven; Slack realtime DEAD since ~05-31 (daemon unreachable); ClickHouse 99.78% a redis.subscriber.error storm (102M rows); Bugle reads Front/GitHub/X, never Slack. Three repair tasks graduated; grillings unblocked.
+
 ## Not yet specified
 
 - GitHub + Twitter ingress (no webhooks today — pull adapters? new hooks?
