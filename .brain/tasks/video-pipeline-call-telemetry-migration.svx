@@ -1,0 +1,39 @@
+---
+title: "Worker task: migrate call telemetry into joelclaw-api custody"
+type: "asset"
+parent: "../projects/video-pipeline/separate-call-telemetry-from-sessions.svx"
+created_at: "2026-07-13"
+privacy: "private"
+---
+
+Work the claimed question
+`joelclaw/.brain/projects/video-pipeline/separate-call-telemetry-from-sessions.svx`
+— read its Coordination note for the full write contract, plus
+`transfer-convex-custody.svx` and `charter-joelclaw-api.svx` (same dir) for law.
+
+Repos: `~/Code/joelhooks/joelclaw-api` (a JJ repo — use jj status/diff to
+inspect, make NO commits) and `~/Code/joelhooks/joelclaw` (no commits either).
+Read joelclaw-api/AGENTS.md first and follow its toolchain (Bun, effect-smol,
+ultracite/ox) and .agent_sources doctrine.
+
+Build, tightly partitioned:
+1. `joelclaw-api/convex/callTelemetry.ts` — dedicated callSessions/callTurns/
+   callAnalyses tables per the contract note; port logic from
+   `joelclaw/apps/live-dashboard/convex/calls.ts` + maintenance/crons (7-day
+   purge). schema.ts: APPEND the three tables only — touch nothing else in it.
+2. Deploy from joelclaw-api ONLY (env: CONVEX_SELF_HOSTED_URL
+   http://127.0.0.1:3210 + admin key sourced from
+   /Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/local-convex/app-admin.env).
+   NEVER run convex deploy from apps/live-dashboard.
+3. Repoint writers to the new function names: `joelclaw/infra/voice-agent/
+   call_tracker.py` (mutation names only), `packages/system-bus/src/inngest/
+   functions/voice-call-judge.ts` + `voice-public-call-analyze.ts` +
+   `scripts/backfill-voice-call-judge.ts`. Do NOT touch main.py.
+4. Verify: a test mutation lands a row (write one synthetic callSessions row
+   and read it back via your new query); bunx tsc --noEmit green in joelclaw;
+   joelclaw-api checks per its AGENTS.md.
+5. Leave a completion note in the question file (do not close it — the
+   custody session co-reads it); DONE summary with function names + any
+   schema.ts conflict you hit (if schema.ts has drifted mid-work, STOP and
+   note it rather than force it).
+No commits anywhere. Print a DONE summary.
