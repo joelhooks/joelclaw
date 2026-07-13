@@ -141,3 +141,13 @@ splits); minimum-size check before launching pi anywhere, refuse loudly if
 too small; sibling closes must not resize a pane under a running pi;
 pi-tui rendering tolerates narrow widths. Receipts include surviving a
 sibling close.
+### 6.6 (Joel, 2026-07-13): naming is context, baked in
+
+Every family agent names everything appropriately for the work — and the
+conventions live IN their baked context (charters/extension), not in claude
+skills they cannot read. Mechanics: name-sync mirrors pi session names onto
+pane labels, so workers SET their session name as the mechanical path to
+good labels; callsigns identify who; spawn_worker names pane+tab at birth
+and briefs workers to name their session; extension init names the observer
+tab/workspace. Naming discipline extracted from the herdr-orchestration
+skill into both charters. No agent wanks around rediscovering conventions.
