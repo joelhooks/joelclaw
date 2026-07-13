@@ -1,0 +1,30 @@
+---
+title: "Decide the Gateway Redis Channel's Fate (reflex arc in an observer world)"
+type: "wayfinder_ticket"
+status: "open"
+labels:
+  - "wayfinder:grilling"
+interaction: "HITL"
+parent: "./stream-observation-brief.svx"
+blockers: []
+created_at: "2026-07-13"
+---
+
+# Decide the Gateway Redis Channel's Fate
+
+## Question
+
+Joel (2026-07-13, post-storm): "worth thinking if this needs to exist in our
+world today with herdr observer running." The gateway redis channel was the
+pre-herdr reflex arc: realtime signals (slack.signal.received, front
+non-VIP notifies) queued in unTTL'd Redis lists to wake the interactive
+ShitRat gateway persona. In today's world: memory is the observer's job
+(30-min batch, durable pages), interaction is herdr sessions + the phone
+line, and Redis-lists-as-pseudo-memory is exactly the unowned state the
+storm grew in. Decide: (a) what genuinely needs REALTIME reflex (VIP email,
+urgent pages) vs what is now observer/batch territory; (b) whether the
+reflex arc's target should become "wake the right herdr session"
+(herdr agent send) instead of a bespoke gateway loop; (c) retirement or
+slimming path for the redis channel, with the storm-budget code kept
+wherever pub/sub survives. Adjacent to the Observer/Bugle boundary grilling
+— same redistricting, interaction lane.

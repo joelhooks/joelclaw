@@ -2,7 +2,7 @@
 title: "Revive Slack Realtime Ingress (dead since ~05-31)"
 type: "question"
 kind: "task"
-status: "open"
+status: "closed"
 assignee: "pi worker (steered by claude session 14d06369)"
 interaction: "AFK"
 parent: "./stream-observation-brief.svx"
@@ -23,3 +23,7 @@ Inngest handoff failure loud. Receipts in the ingress inventory.
 ## Status (2026-07-13): staged, human canary pending
 
 Migration gap confirmed (never ported to flagg). Daemon revived supervised, loud handoff, worker test posts flowed and were cleaned up. REMAINING: Joel posts 'flagg Slack ingress human canary' in #brain-joel from his real client; if no Inngest event, the admin-UI contingency checklist is in the task brief output. Also surfaced: a separate Typesense embedding failure downstream (follow-up).
+
+## Resolution (2026-07-13)
+
+HUMAN CANARY CONFIRMED: Joel's real post in #brain-joel arrived end-to-end (Socket Mode → gateway → Inngest → Typesense channel_messages, classified with concepts). No Slack admin UI work was needed — Socket Mode dials out, no URL to go stale. Slack realtime ingress is live on flagg for the first time. Follow-up noted separately: downstream Typesense embedding failure.
