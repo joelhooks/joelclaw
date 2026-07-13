@@ -938,10 +938,14 @@ def _gather_context_fast() -> str:
         if edition:
             loops = edition.get("loops", [])
             needs_joel = [l for l in loops if l.get("needsJoel")]
-            ordered = (needs_joel + [l for l in loops if not l.get("needsJoel")])[:6]
+            # Same slice as the open_loops tool ([:8]) — the greeting once said
+            # "six loops" and the tool then showed eight ("I undercounted").
+            ordered = (needs_joel + [l for l in loops if not l.get("needsJoel")])[:8]
             lead = edition.get("lead", {})
             lines = [f"Lead: {lead.get('headline', '')}"] if lead.get("headline") else []
             lines += [f"- {_loop_brief(l)}" for l in ordered]
+            if len(loops) > len(ordered):
+                lines.append(f"(plus {len(loops) - len(ordered)} more, lower priority)")
             sections.append("## Today's Open Loops\n" + "\n".join(lines))
     except Exception:
         pass
@@ -1066,17 +1070,28 @@ def _vad_for(ctx):
     return vad or silero.VAD.load()
 
 
+_SYNTHETIC_PROMPTS = (
+    "The user just connected",
+    "A caller just connected",
+    "A RETURNING caller just connected",
+    "Time's up — wrap the call",
+)
+
+
 def _history_lines(session: AgentSession, user_label: str) -> list[str]:
-    """Flatten session.history (a ChatContext) into speaker-labelled transcript lines."""
+    """Flatten session.history (a ChatContext) into speaker-labelled transcript
+    lines. Synthetic greeting/wrap prompts are ours, not the speaker's — they
+    must never enter transcripts or the memory pipeline as user words."""
     items = getattr(getattr(session, "history", None), "items", None) or []
     lines = []
     for item in items:
         if getattr(item, "type", "") != "message" or item.role not in ("user", "assistant"):
             continue
         text = (getattr(item, "text_content", None) or "").strip()
-        if text:
-            speaker = user_label if item.role == "user" else "ShitRat"
-            lines.append(f"**{speaker}**: {text}")
+        if not text or any(text.startswith(p) for p in _SYNTHETIC_PROMPTS):
+            continue
+        speaker = user_label if item.role == "user" else "ShitRat"
+        lines.append(f"**{speaker}**: {text}")
     return lines
 
 
