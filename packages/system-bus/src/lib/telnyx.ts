@@ -246,6 +246,53 @@ export const sendSMS = async (to: string, from: string, text: string): Promise<M
   });
 };
 
+type PhoneNumberCampaignsResponse = {
+  records?: Array<Record<string, unknown>>;
+  data?: Array<Record<string, unknown>>;
+};
+
+export const isNumberAttachedToCampaign = async (phoneNumber: string): Promise<boolean> => {
+  const encoded = encodeURIComponent(phoneNumber);
+  const payload = await telnyxRequest<PhoneNumberCampaignsResponse>(
+    `/10dlc/phone_number_campaigns?filter%5BtelephoneNumber%5D=${encoded}`,
+    { method: "GET" },
+  );
+  return (payload.records ?? payload.data ?? []).length > 0;
+};
+
+export type CampaignAttachResult = "attached" | "pending" | "transient" | "failed";
+
+/** Attach a DID to a 10DLC campaign. Telnyx 10036 = campaign still in carrier
+ * vetting, 10007 = transient upstream error — both are retry-tomorrow states,
+ * not failures. */
+export const attachNumberToCampaign = async (
+  phoneNumber: string,
+  campaignId: string,
+): Promise<{ result: CampaignAttachResult; detail?: string }> => {
+  try {
+    await telnyxRequest("/10dlc/phone_number_campaigns", {
+      method: "POST",
+      body: JSON.stringify({ phoneNumber, campaignId }),
+    });
+    return { result: "attached" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('"10036"')) return { result: "pending" };
+    if (message.includes('"10007"')) return { result: "transient" };
+    return { result: "failed", detail: message.slice(0, 500) };
+  }
+};
+
+/** Best-effort 10DLC campaign delete; Telnyx refuses while TCR_PENDING. */
+export const tryDeleteCampaign = async (campaignId: string): Promise<boolean> => {
+  try {
+    await telnyxRequest(`/10dlc/campaign/${campaignId}`, { method: "DELETE" });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const checkSMSEnabled = async (phoneNumber: string): Promise<boolean> => {
   const encoded = encodeURIComponent(phoneNumber);
   const payload = await telnyxRequest<PhoneNumbersResponse>(

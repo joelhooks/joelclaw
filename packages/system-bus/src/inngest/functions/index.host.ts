@@ -129,6 +129,7 @@ import { voiceCallCompleted } from "./voice-call-completed";
 import { voiceMissedCall } from "./voice-missed-call";
 import { voicePublicCallAnalyze } from "./voice-public-call-analyze";
 import { voicePublicSmsReply } from "./voice-public-sms-reply";
+import { voiceSmsVettingCheck } from "./voice-sms-vetting-check";
 import { voiceSyntheticCall } from "./voice-synthetic-call";
 import { voiceTelnyxBalance } from "./voice-telnyx-balance";
 import { voiceWorkerCanary } from "./voice-worker-canary";
@@ -201,6 +202,7 @@ export const hostFunctionDefinitions = [
   voicePublicCallAnalyze,
   voicePublicSmsReply,
   voiceMissedCall,
+  voiceSmsVettingCheck,
   voiceSyntheticCall,
   voiceTelnyxBalance,
   voiceWorkerCanary,
