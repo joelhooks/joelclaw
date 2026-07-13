@@ -1,0 +1,24 @@
+---
+title: "Worker brief: scaffold joelclaw-video and the system-bus seam"
+type: "task_brief"
+created_at: "2026-07-13"
+---
+
+# Worker brief: scaffold joelclaw-video and the system-bus consumption seam
+
+You are a build worker for the wayfinder ticket at
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/wayfinder/scaffold-joelclaw-video-package-seam.svx`.
+Read the ticket and its parent map (`joelclaw-video-pipeline-map.svx`, same directory) first.
+
+## Job
+
+1. **Create the local repo** at `/Users/joel/Code/joelhooks/joelclaw-video` (it must not exist yet — abort loudly if it does). Initialize with jj colocated (`/opt/homebrew/bin/jj git init --colocate`), falling back to plain `git init` only if jj fails. Bun runtime, TypeScript strict, `bun test`. Keep the skeleton lean: `src/index.ts` exporting a `createVideoFunctions(inngest)` factory (or similar — you propose the seam) that returns Inngest functions; one hello-world function (`joelclaw-video-hello`, triggered by event `video/hello`) that just logs and returns; one passing `bun test`. Package name: propose one (`@joelclaw/video` vs `joelclaw-video`) and justify — note the monorepo reserves `@joelclaw/*` for internal workspace packages, so check whether reusing that scope for an external package confuses the biome import-boundary rules.
+2. **Settle the consumption mechanics** — the actual decision of this ticket. joelclaw is a pnpm workspace monorepo (`/Users/joel/Code/joelhooks/joelclaw`); how does `packages/system-bus` depend on a package from an external repo with a sane dev loop? Evaluate concretely (try them, don't just theorize): `file:` / `link:` protocol dependency, pnpm workspace injection, published-to-GitHub-Packages, git dependency. Optimize for: edit-both-repos-live during development, deterministic CI/deploy later. Recommend one, implement it.
+3. **Wire it**: register the hello-world function in system-bus's serve list (find how existing functions register — `packages/system-bus/src/inngest/functions/` and the serve/index wiring), then prove: `bunx tsc --noEmit` clean and `pnpm biome check packages/` clean in joelclaw, and `bun test` clean in joelclaw-video. Do NOT deploy, do NOT run the k8s publish script, do NOT restart any worker or LaunchAgent.
+
+## Rules
+
+- In `/Users/joel/Code/joelhooks/joelclaw`: touch ONLY the files needed to register the dependency + function (package.json of system-bus, the function registration point, lockfile). Other sessions have uncommitted work in this repo — never run `git add`, never commit, never revert files you didn't change.
+- In the NEW repo: leave everything as working copy; do not push anywhere; do not create a GitHub repo (the steering session handles GitHub via ShitRat tooling).
+- No paid API keys; nothing needs Mux here — this is plumbing only.
+- When finished, print `DONE:` followed by: the consumption mechanism you chose and why (5 lines max), the exact files you touched in joelclaw, and the commands that prove green.

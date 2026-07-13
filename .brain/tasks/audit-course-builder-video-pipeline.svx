@@ -1,0 +1,41 @@
+---
+title: "Worker brief: audit course-builder's video pipeline"
+type: "task_brief"
+created_at: "2026-07-13"
+---
+
+# Worker brief: audit course-builder's video pipeline for the yoink
+
+You are a research worker for the wayfinder ticket at
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/wayfinder/audit-course-builder-video-pipeline.svx`.
+Read the ticket and its parent map (`joelclaw-video-pipeline-map.svx`, same directory) first — they define the destination and fixed decisions.
+
+## Job
+
+Produce a **yoink map**: which parts of course-builder's video pipeline port into a new standalone package (`joelclaw-video`, consumed by joelclaw's system-bus Inngest app), which need rework, which we skip.
+
+Read end to end:
+
+- `/Users/joel/Code/badass-courses/course-builder/packages/core/src/inngest/video-processing/**` (all events + functions)
+- `/Users/joel/Code/badass-courses/course-builder/packages/core/src/lib/mux.ts`
+- The Deepgram side: find and read the transcript ordering code (`order-transcript.ts`, `transcript-ready.ts`, `add-srt-to-mux-asset.ts`) AND the Deepgram request/callback contract they rely on (search the repo for deepgram — there's likely a provider/util package). Document the exact callback payload shape and how course-builder authenticates it.
+- The videoResource / contentResource schema these functions read and write — the Convex-model ticket depends on your description of it.
+
+## Must-verify against current Mux documentation (use web access; if you have none, say so loudly in the output)
+
+1. Exact asset settings that guarantee a **progressive/downloadable rendition** today. Course-builder uses `mp4_support: "standard"`; Mux has been moving to `static_renditions`. Joel's existing Mux environment shows recent assets with `mp4_support: "none"` — we must not repeat that. Record the exact JSON we should send.
+2. The direct-upload flow (create upload → PUT bytes → `video.upload.asset_created` → `video.asset.ready`) including resumability for multi-GB screen recordings, and map its webhook events onto joelclaw's existing normalizer EVENT_MAP in `/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/webhooks/providers/mux.ts`.
+
+## Deliverable
+
+Write ONE file:
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/wayfinder/docs/course-builder-video-yoink-audit.svx`
+
+(.svx is mandatory — never .md inside .brain.) Structure: summary up top; then per-function verdict table (port / rework / skip, with why); Mux settings JSON (verified vs unverified clearly marked); direct-upload notes; Deepgram contract; contentResource/videoResource schema sketch; open questions.
+
+## Rules
+
+- Read-only everywhere except that one deliverable file. Do NOT commit, do NOT push, do NOT touch any other file. Other agent sessions are working in these repos concurrently.
+- Course-builder is reference material — never modify it.
+- Source-ground every claim with a `path:line` pointer.
+- When finished, print `DONE:` followed by a 10-line summary of your verdicts.
