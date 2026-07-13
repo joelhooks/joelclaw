@@ -22,3 +22,26 @@ observations — the temporal-gradient conflict rule, validated day one),
 token budget per briefing, sensitive handling (include locally?), and WHICH
 surfaces get it: claude hook, pi APPEND/extension, codex AGENTS — same
 content everywhere or per-runtime shaping?
+
+## Charter input (Joel, 2026-07-13): vision, inertia, and the annoyance bar
+
+Joel: memory relates to VISION.md as "the vision an inertia of my systems" —
+and the failure mode is a coding session "reminding me about some past
+bullshit i don't care about." Principles for the grilling:
+
+1. **Collision-triggered over ambient**: memory speaks when the session is
+   about to CONTRADICT it, not when it merely remembers. Decisions already
+   carry exit clauses (see files-are-truth: "named exit triggers", "do not
+   relitigate") — recall surfaces a decision only when work approaches its
+   territory, as guardrail not narration.
+2. **Compile, don't converse**: vision belongs in machinery (validators,
+   gates, charters) wherever possible; the briefing carries only what can't
+   be compiled — current heading (active arc, frontier), ~3 lines, scoped
+   to the session's repo/brief. Direction, not history.
+3. **The annoyance bar is measurable**: a briefing line earns its place only
+   if it changes what the session does. Consumption telemetry (fog) becomes
+   interest decay — unengaged recall stops surfacing. Bar: not "worth
+   recalling" but "worth interrupting with." Silence is the default state.
+4. Vision docs sit at the TOP of the temporal gradient (canon); the
+   reflector's monthly promotion feeds them; they outrank everything in
+   recall conflicts.
