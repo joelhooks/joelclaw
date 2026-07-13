@@ -127,3 +127,7 @@ The disease is one thing: labor done by ghosts.
    panes closed promptly, scratch/test panes never left behind. The baked
    charter playbook already says this — enforce it in the TOOLS (spawn_worker
    auto-labels; close_worker in every harvest path) so it cannot be skipped.
+4. **Human-readable tool output (Joel, same day)**: we have pi-tui — make it
+   actually nice. No full-text JSON in visible results: compact human lines
+   (counts/statuses/slugs), JSON demoted to details/fold or a verbose flag,
+   pi-tui components where extensions can register renderers.
