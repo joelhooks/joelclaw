@@ -28,8 +28,8 @@ describe("pi attempt args", () => {
   });
 
   test("appends thinking level to the model pattern", () => {
-    const args = __testables.buildPiAttemptArgs("openai-codex/gpt-5.5", { thinking: "high" });
+    const args = __testables.buildPiAttemptArgs("openai-codex/gpt-5.6-sol", { thinking: "high" });
 
-    expect(args[args.indexOf("--models") + 1]).toBe("openai-codex/gpt-5.5:high");
+    expect(args[args.indexOf("--models") + 1]).toBe("openai-codex/gpt-5.6-sol:high");
   });
 });

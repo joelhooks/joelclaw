@@ -188,7 +188,7 @@ Recent dynamic probes added for the 2026-03-17 Colima/Restate incident:
   - `sos_telegram_chat_id`
   - `sos_telegram_secret_name` (defaults to `telegram_bot_token`)
 - Talon now leases Telegram tokens via `secrets lease <name> --ttl ...` (no `--raw`). If you still see `curl: (3) URL rejected: Malformed input to a URL function`, redeploy the latest Talon binary.
-- Agent fallback commands must stay on approved models only: `openai-codex/gpt-5.5` primary and `anthropic/claude-opus-4.7` secondary. Do not restore Ollama/Azure/provider drift in Talon config.
+- Agent fallback commands must stay on approved models only: `openai-codex/gpt-5.6-sol` primary and `anthropic/claude-opus-4.7` secondary. Do not restore Ollama/Azure/provider drift in Talon config.
 - iMessage recipient remains `sos_recipient`
 
 ## Launchd Management

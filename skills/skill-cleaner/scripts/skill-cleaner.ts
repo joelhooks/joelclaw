@@ -70,7 +70,7 @@ const noLogs = args.has("--no-logs");
 const deepLogs = args.has("--deep-logs");
 const json = args.has("--json");
 const includeAll = args.has("--all");
-const model = argValue("--model", "gpt-5.5");
+const model = argValue("--model", "gpt-5.6-sol");
 const budgetPercent = Number(argValue("--budget-percent", "2"));
 const contextTokensOverride = argValue("--context-tokens", "");
 const charsPerToken = Number(argValue("--chars-per-token", "4"));
@@ -147,7 +147,7 @@ function piModelContext(modelName: string): {
     } catch {}
   }
 
-  return { tokens: 272_000, source: "fallback:gpt-5.5", effectivePercent: 95 };
+  return { tokens: 272_000, source: "fallback:gpt-5.6-sol", effectivePercent: 95 };
 }
 
 function walkFiles(root: string, predicate: (file: string) => boolean, maxDepth = 8): string[] {

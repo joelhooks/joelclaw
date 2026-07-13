@@ -22,7 +22,7 @@ export type GatewayConfig = {
   verbose: boolean;
 } & FallbackConfig;
 
-const DEFAULT_MODEL: GatewayModel = "gpt-5.5";
+const DEFAULT_MODEL: GatewayModel = "gpt-5.6-sol";
 const DEFAULT_THINKING_LEVEL: GatewayThinkingLevel = "low";
 const DEFAULT_VERBOSE = false;
 

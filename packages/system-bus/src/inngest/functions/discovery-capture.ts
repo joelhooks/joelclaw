@@ -282,7 +282,7 @@ export const discoveryCapture = inngest.createFunction(
                 component: "discovery-capture",
                 action: "discovery.capture.generate",
                 system: "You are a discovery analysis assistant that writes discovery notes using Vault conventions.",
-                model: "openai-codex/gpt-5.5",
+                model: "openai-codex/gpt-5.6-sol",
                 maxAttempts: 1,
                 timeout: DISCOVERY_GENERATE_TIMEOUT_MS,
                 metadata: {

@@ -30,7 +30,7 @@ describe("buildInferenceRoute", () => {
     expect(plan.requestedModel).toBeUndefined();
     expect(plan.attempts[0]!.reason).toBe("policy");
     expect(plan.attempts).toEqual([
-      { model: "openai-codex/gpt-5.5", provider: "openai-codex", reason: "policy", attempt: 0 },
+      { model: "openai-codex/gpt-5.6-sol", provider: "openai-codex", reason: "policy", attempt: 0 },
       { model: "anthropic/claude-sonnet-4-6", provider: "anthropic", reason: "policy", attempt: 1 },
       { model: "anthropic/claude-opus-4-6", provider: "anthropic", reason: "policy", attempt: 2 },
       { model: "openai-codex/gpt-5.4", provider: "openai-codex", reason: "fallback", attempt: 3 },
@@ -45,7 +45,7 @@ describe("buildInferenceRoute", () => {
     expect(plan.attempts.slice(0, 3)).toEqual([
       { model: "openai-codex/gpt-5.4-mini", provider: "openai-codex", reason: "policy", attempt: 0 },
       { model: "openai-codex/gpt-5.4", provider: "openai-codex", reason: "policy", attempt: 1 },
-      { model: "openai-codex/gpt-5.5", provider: "openai-codex", reason: "policy", attempt: 2 },
+      { model: "openai-codex/gpt-5.6-sol", provider: "openai-codex", reason: "policy", attempt: 2 },
     ]);
     expect(plan.attempts).toContainEqual({
       model: "anthropic/claude-haiku-4-5",
@@ -149,7 +149,7 @@ describe("buildInferenceRoute", () => {
     const heavyTasks = ["summary", "digest", "default", "reasoning", "complex"] as const;
     for (const task of heavyTasks) {
       expect(DEFAULT_TASK_TO_MODELS[task].slice(0, 2)).toEqual([
-        "openai-codex/gpt-5.5",
+        "openai-codex/gpt-5.6-sol",
         "openai-codex/gpt-5.4",
       ]);
     }

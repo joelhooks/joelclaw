@@ -18,7 +18,7 @@ const RECALL_EMBED_DIMS = 384
 // so 2s guaranteed timeout on every first invocation. 6s gives enough headroom
 // for cold start + Haiku inference while the circuit breaker catches persistent failures.
 const REWRITE_TIMEOUT_MS = Number(process.env.JOELCLAW_RECALL_REWRITE_TIMEOUT) || 6_000
-const RECALL_REWRITE_MODEL = process.env.JOELCLAW_RECALL_REWRITE_MODEL?.trim() || "openai-codex/gpt-5.5"
+const RECALL_REWRITE_MODEL = process.env.JOELCLAW_RECALL_REWRITE_MODEL?.trim() || "openai-codex/gpt-5.6-sol"
 const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
 const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
 

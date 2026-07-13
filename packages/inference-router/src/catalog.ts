@@ -2,8 +2,8 @@ import type { InferenceCatalogEntry, InferenceModelId, InferenceProvider, Infere
 
 export const INFERENCE_POLICY_VERSION = "2026-05-05-codex-policy-v4";
 
-export const MODEL_OPENAI_CODEX_CODEx = "openai-codex/gpt-5.5";
-export const MODEL_OPENAI_CODEX_SPARK = "openai-codex/gpt-5.5";
+export const MODEL_OPENAI_CODEX_CODEx = "openai-codex/gpt-5.6-sol";
+export const MODEL_OPENAI_CODEX_SPARK = "openai-codex/gpt-5.6-sol";
 export const MODEL_OPENAI_CODEX_SPARK_LEGACY = "openai-codex/gpt-5.4";
 
 export const MODEL_CATALOG: Record<string, InferenceCatalogEntry> = {
@@ -35,17 +35,11 @@ export const MODEL_CATALOG: Record<string, InferenceCatalogEntry> = {
     description: "Anthropic Claude Haiku 4.5",
     supportedTasks: ["simple", "classification", "json", "default", "rewrite", "summary", "vision"],
   },
-  "openai-codex/gpt-5.5": {
-    id: "openai-codex/gpt-5.5",
+  "openai-codex/gpt-5.6-sol": {
+    id: "openai-codex/gpt-5.6-sol",
     provider: "openai-codex",
-    aliases: [
-      "gpt-5.5",
-      "gpt-55",
-      "gpt-5.5-codex",
-      "gpt-5.5-codex-spark",
-      "gpt-5-5-codex",
-    ],
-    description: "OpenAI GPT-5.5 via Codex provider",
+    aliases: ["gpt-5.6-sol", "gpt-56-sol", "sol"],
+    description: "OpenAI GPT-5.6 Sol via Codex provider",
     supportedTasks: [
       "summary",
       "digest",
@@ -147,59 +141,57 @@ export const DEFAULT_TASK_TO_MODELS: Record<InferenceTask, InferenceModelId[]> =
   simple: [
     "openai-codex/gpt-5.4-mini",
     "openai-codex/gpt-5.4",
-    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
   ],
   classification: [
     "openai-codex/gpt-5.4-mini",
     "openai-codex/gpt-5.4",
-    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
   ],
   summary: [
-    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
     "openai-codex/gpt-5.4",
     "openai-codex/gpt-5.4-mini",
   ],
   digest: [
-    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
     "openai-codex/gpt-5.4",
     "openai-codex/gpt-5.4-mini",
   ],
   vision: [
-    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
     "anthropic/claude-sonnet-4-6",
     "anthropic/claude-opus-4-6",
   ],
   reasoning: [
-    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
     "openai-codex/gpt-5.4",
     "openai-codex/gpt-5.4-mini",
   ],
   json: [
     "openai-codex/gpt-5.4-mini",
     "openai-codex/gpt-5.4",
-    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
   ],
   default: [
-    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
     "openai-codex/gpt-5.4",
     "openai-codex/gpt-5.4-mini",
   ],
   complex: [
-    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
     "openai-codex/gpt-5.4",
     "openai-codex/gpt-5.4-mini",
   ],
   rewrite: [
     "openai-codex/gpt-5.4-mini",
     "openai-codex/gpt-5.4",
-    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
   ],
 };
 
 export const GATEWAY_ALLOWED_MODELS = [
-  "gpt-5.5",
-  "gpt-5.5-codex",
-  "gpt-5.5-codex-spark",
+  "gpt-5.6-sol",
   "gpt-5.4",
   "gpt-5.4-codex",
   "gpt-5.4-codex-spark",
@@ -217,9 +209,7 @@ export const GATEWAY_ALLOWED_MODELS = [
 ] as const;
 
 export const GATEWAY_MODEL_TO_PROVIDER: Record<(typeof GATEWAY_ALLOWED_MODELS)[number], InferenceProvider> = {
-  "gpt-5.5": "openai-codex",
-  "gpt-5.5-codex": "openai-codex",
-  "gpt-5.5-codex-spark": "openai-codex",
+  "gpt-5.6-sol": "openai-codex",
   "gpt-5.4": "openai-codex",
   "gpt-5.4-codex": "openai-codex",
   "gpt-5.4-codex-spark": "openai-codex",

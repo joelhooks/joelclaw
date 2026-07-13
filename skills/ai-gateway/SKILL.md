@@ -144,7 +144,7 @@ const result = await generateText({
   - Incorrect: `anthropic/claude-sonnet-4-6`
 - Before hardcoding model IDs, call `gateway.getAvailableModels()` and pick from the returned IDs.
 - Default text model for AI Gateway examples: `openai/gpt-5.4`. Use Anthropic only when a specific capability requires it.
-- For joelclaw pi/Codex surfaces, the current verified models are `openai-codex/gpt-5.5`, `openai-codex/gpt-5.4`, `openai-codex/gpt-5.4-mini`, and `openai-codex/gpt-5.1-codex-mini`; no Codex nano model is exposed in pi 0.73.0.
+- For joelclaw pi/Codex surfaces, the current verified models are `openai-codex/gpt-5.6-sol`, `openai-codex/gpt-5.4`, `openai-codex/gpt-5.4-mini`, and `openai-codex/gpt-5.1-codex-mini`; no Codex nano model is exposed in pi 0.73.0.
 - Do not default to outdated choices like `openai/gpt-4o`.
 
 ```ts

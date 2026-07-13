@@ -6,7 +6,7 @@ import { __testables, estimateCost, getModelRate, type ModelRate } from "./model
 
 const openrouterBody = {
   data: [
-    { id: "openai/gpt-5.5", pricing: { prompt: "0.000002", completion: "0.000006" } },
+    { id: "openai/gpt-5.6-sol", pricing: { prompt: "0.000002", completion: "0.000006" } },
     { id: "anthropic/claude-haiku-4.5", pricing: { prompt: "0.000001", completion: "0.000005" } },
     { id: "anthropic/claude-opus-4-6", pricing: { prompt: "0.000015", completion: "0.000075" } },
   ],
@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 
 const benchmarkRate: ModelRate = {
-  model: "openai/gpt-5.5",
+  model: "openai/gpt-5.6-sol",
   promptUsdPerToken: 0.000002,
   completionUsdPerToken: 0.000006,
   source: "openrouter",
@@ -86,11 +86,11 @@ describe("getModelRate", () => {
 
   test("matches bare model id against provider-prefixed openrouter id", async () => {
     const cachePath = await tmpCachePath();
-    const rate = await getModelRate("gpt-5.5", {
+    const rate = await getModelRate("gpt-5.6-sol", {
       fetchImpl: fetchReturning(openrouterBody),
       cachePath,
     });
-    expect(rate?.model).toBe("openai/gpt-5.5");
+    expect(rate?.model).toBe("openai/gpt-5.6-sol");
     expect(rate?.promptUsdPerToken).toBe(0.000002);
     expect(rate?.completionUsdPerToken).toBe(0.000006);
   });
@@ -106,7 +106,7 @@ describe("getModelRate", () => {
 
   test("returns null when fetch fails and no cache exists", async () => {
     const cachePath = await tmpCachePath();
-    const rate = await getModelRate("gpt-5.5", {
+    const rate = await getModelRate("gpt-5.6-sol", {
       fetchImpl: failingFetch,
       cachePath,
     });
@@ -122,7 +122,7 @@ describe("getModelRate", () => {
         fetchedAt: staleFetchedAt,
         models: [
           {
-            id: "openai/gpt-5.5",
+            id: "openai/gpt-5.6-sol",
             promptUsdPerToken: 0.000002,
             completionUsdPerToken: 0.000006,
           },
@@ -131,18 +131,18 @@ describe("getModelRate", () => {
       "utf8",
     );
 
-    const rate = await getModelRate("gpt-5.5", {
+    const rate = await getModelRate("gpt-5.6-sol", {
       fetchImpl: failingFetch,
       cachePath,
     });
     expect(rate).not.toBeNull();
-    expect(rate?.model).toBe("openai/gpt-5.5");
+    expect(rate?.model).toBe("openai/gpt-5.6-sol");
     expect(rate?.fetchedAt).toBe(staleFetchedAt);
   });
 
   test("writes cache file after a successful fetch", async () => {
     const cachePath = await tmpCachePath();
-    await getModelRate("gpt-5.5", {
+    await getModelRate("gpt-5.6-sol", {
       fetchImpl: fetchReturning(openrouterBody),
       cachePath,
     });

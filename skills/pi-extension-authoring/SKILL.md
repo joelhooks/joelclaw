@@ -116,8 +116,8 @@ npm list -g --depth=0 | rg '@earendil-works/pi-coding-agent|@mariozechner/pi-cod
 Smoke-test both base Pi and full extension/tool startup with an approved model:
 
 ```bash
-pi -p --no-session --no-tools --no-extensions --no-context-files --model openai-codex/gpt-5.5 "Reply with exactly OK."
-pi -p --no-session --no-context-files --model openai-codex/gpt-5.5 "Reply with exactly OK."
+pi -p --no-session --no-tools --no-extensions --no-context-files --model openai-codex/gpt-5.6-sol "Reply with exactly OK."
+pi -p --no-session --no-context-files --model openai-codex/gpt-5.6-sol "Reply with exactly OK."
 ```
 
 Clean untracked npm lockfiles generated inside git package checkouts when the package does not track them.

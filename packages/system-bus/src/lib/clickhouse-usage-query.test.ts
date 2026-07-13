@@ -93,12 +93,12 @@ describe("clickhouse-usage-query", () => {
 
     test("applies optional equality filters with escaping", () => {
       const sql = buildRollupSql(
-        { component: "model-router", model: "gpt-5.5", systemId: "fla'gg" },
+        { component: "model-router", model: "gpt-5.6-sol", systemId: "fla'gg" },
         testConfig,
       );
 
       expect(sql).toContain("component = 'model-router'");
-      expect(sql).toContain("JSONExtractString(metadata_json, 'model') = 'gpt-5.5'");
+      expect(sql).toContain("JSONExtractString(metadata_json, 'model') = 'gpt-5.6-sol'");
       expect(sql).toContain("coalesce(systemId, 'unknown') = 'fla\\'gg'");
     });
 
@@ -164,7 +164,7 @@ describe("clickhouse-usage-query", () => {
         day: "2026-07-09",
         component: "model-router",
         action: "model_router.result",
-        model: "gpt-5.5",
+        model: "gpt-5.6-sol",
         provider: "openai-codex",
         systemId: "flagg",
         calls: "12",
@@ -181,7 +181,7 @@ describe("clickhouse-usage-query", () => {
         day: "2026-07-09",
         component: "model-router",
         action: "model_router.result",
-        model: "gpt-5.5",
+        model: "gpt-5.6-sol",
         provider: "openai-codex",
         systemId: "flagg",
         calls: 12,

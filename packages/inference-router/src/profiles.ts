@@ -37,7 +37,7 @@ export const AGENT_PROFILES: Record<string, AgentProfile> = {
     tags: ["reflection"],
     defaults: {
       task: "summary",
-      model: "openai-codex/gpt-5.5",
+      model: "openai-codex/gpt-5.6-sol",
       noTools: true,
     },
   },

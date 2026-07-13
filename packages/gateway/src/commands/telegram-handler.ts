@@ -64,7 +64,7 @@ const DOWNSTREAM_AGENT_TRACE_TIMEOUT_MS = 120_000;
 // Keep historical slash-command aliases stable while routing them to Codex models.
 const LIGHT_MODEL_MAP: Record<string, { provider: string; id: string }> = {
   haiku: { provider: "openai-codex", id: "gpt-5.4-mini" },
-  sonnet: { provider: "openai-codex", id: "gpt-5.5" },
+  sonnet: { provider: "openai-codex", id: "gpt-5.6-sol" },
 };
 
 const TELEGRAM_NATIVE_COMMANDS = [

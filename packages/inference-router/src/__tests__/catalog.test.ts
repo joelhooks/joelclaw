@@ -13,7 +13,7 @@ describe("catalog helpers", () => {
     expect(normalizeModel("anthropic/claude-opus-4-6")).toBe("anthropic/claude-opus-4-6");
     expect(normalizeModel("claude-opus-4-6")).toBe("anthropic/claude-opus-4-6");
     expect(normalizeModel("  CLAUDE-HAIKU-4-5 ")).toBe("anthropic/claude-haiku-4-5");
-    expect(normalizeModel("OPENAI-CODEX/GPT-5.5-CODEX")).toBe("openai-codex/gpt-5.5");
+    expect(normalizeModel("OPENAI-CODEX/GPT-5.6-SOL")).toBe("openai-codex/gpt-5.6-sol");
     expect(normalizeModel("OPENAI-CODEX/GPT-5.3-CODEX")).toBe("openai-codex/gpt-5.4");
     expect(normalizeModel("OPENAI-CODEX/GPT-5.4-MINI")).toBe("openai-codex/gpt-5.4-mini");
   });
@@ -33,7 +33,7 @@ describe("catalog helpers", () => {
   test("inferProviderFromModel resolves all providers and fallback behavior", () => {
     expect(inferProviderFromModel("anthropic/claude-opus-4-6")).toBe("anthropic");
     expect(inferProviderFromModel("openai/gpt-5.2")).toBe("openai");
-    expect(inferProviderFromModel("openai-codex/gpt-5.5")).toBe("openai-codex");
+    expect(inferProviderFromModel("openai-codex/gpt-5.6-sol")).toBe("openai-codex");
     expect(inferProviderFromModel("openai-codex/gpt-5.4")).toBe("openai-codex");
     expect(inferProviderFromModel("gpt-5.4-mini")).toBe("openai-codex");
     expect(inferProviderFromModel("claude-opus-4-6")).toBe("anthropic");
@@ -43,10 +43,8 @@ describe("catalog helpers", () => {
   });
 
   test("gateway model config allows Codex mini and keeps Anthropic compatibility", () => {
-    expect(GATEWAY_ALLOWED_MODELS.slice(0, 7)).toEqual([
-      "gpt-5.5",
-      "gpt-5.5-codex",
-      "gpt-5.5-codex-spark",
+    expect(GATEWAY_ALLOWED_MODELS.slice(0, 5)).toEqual([
+      "gpt-5.6-sol",
       "gpt-5.4",
       "gpt-5.4-codex",
       "gpt-5.4-codex-spark",

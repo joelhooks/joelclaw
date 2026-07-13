@@ -183,7 +183,7 @@ impl Default for EscalationConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            cloud_command: "pi -p --no-session --no-extensions --model openai-codex/gpt-5.5"
+            cloud_command: "pi -p --no-session --no-extensions --model openai-codex/gpt-5.6-sol"
                 .to_string(),
             local_command: "pi -p --no-session --no-extensions --model anthropic/claude-opus-4.7"
                 .to_string(),
@@ -429,7 +429,7 @@ sos_telegram_secret_name = "telegram_bot_token"
 critical_threshold_secs = 900
 
 [agent]
-cloud_command = "pi -p --no-session --no-extensions --model openai-codex/gpt-5.5"
+cloud_command = "pi -p --no-session --no-extensions --model openai-codex/gpt-5.6-sol"
 local_command = "pi -p --no-session --no-extensions --model anthropic/claude-opus-4.7"
 timeout_secs = 120
 

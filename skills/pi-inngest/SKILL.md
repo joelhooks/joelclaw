@@ -72,7 +72,7 @@ Current local facts:
 - Joel-user clients/canaries may still run as Joel when they write Joel-side Brain files.
 - Pi auth is file-backed by `auth.json` in Pi's agent dir.
 - Pi agent dir is resolved by `PI_CODING_AGENT_DIR`; otherwise Pi uses `~/.pi/agent` for the current OS user.
-- The verified model lane for this work is `openai-codex/gpt-5.5`.
+- The verified model lane for this work is `openai-codex/gpt-5.6-sol`.
 
 For durable service access:
 
@@ -100,7 +100,7 @@ import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
 import { getModel } from '@earendil-works/pi-ai';
 
 const provider = 'openai-codex';
-const model = getModel(provider, 'gpt-5.5');
+const model = getModel(provider, 'gpt-5.6-sol');
 const registry = ModelRegistry.create(AuthStorage.create());
 const auth = await registry.getApiKeyAndHeaders(model);
 console.log(JSON.stringify({
@@ -183,7 +183,7 @@ import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
 const inngest = new Inngest({ id: 'joelclaw-example' });
 
 async function runPiAiSummary(prompt: string) {
-  const model = getModel('openai-codex', 'gpt-5.5');
+  const model = getModel('openai-codex', 'gpt-5.6-sol');
   const registry = ModelRegistry.create(AuthStorage.create());
   const auth = await registry.getApiKeyAndHeaders(model);
 
@@ -330,7 +330,7 @@ For link-ingest style context work:
 
 ```sh
 pi \
-  --model openai-codex/gpt-5.5 \
+  --model openai-codex/gpt-5.6-sol \
   --thinking low \
   --no-extensions \
   --no-context-files \
