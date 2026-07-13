@@ -2,7 +2,7 @@
 title: "Charter joelclaw-api"
 type: "question"
 kind: "grilling"
-status: "open"
+status: "closed"
 assignee: "flagg-claude-steering 2026-07-13 (grilling)"
 interaction: "HITL"
 parent: "./video-pipeline-brief.svx"
@@ -15,3 +15,25 @@ created_at: "2026-07-13"
 ## Question
 
 Joel named a new component while answering the Convex-model question (2026-07-13): **joelclaw-api**, the application layer that owns Convex mutations for the video pipeline and is "GENERALLY USEFUL for joelclaw." His stack spec, verbatim intent: Hono (probably), pocock-quality TypeScript 7, effect-smol (Effect v4), XState v5, oxfmt/oxlint/ultracite — with MCP and CLI coverage eventually. Decide enough to unblock the pipeline: where it lives (new repo like joelclaw-video, or a package/app in the monorepo), what phase-1 surface the video pipeline needs from it (create/update video resource, flip lifecycle/visibility, tombstone), how it talks to Convex (client of `apps/web/convex` mutations vs owning its own), how Inngest functions call it (HTTP on flagg? direct import?), and auth for agent callers. This is bigger than the video effort — if the grill reveals a full charter's worth of scope, spin it into its own brief and leave this question holding only what the pipeline needs.
+
+## Answer
+
+Answered 2026-07-13, three-round grill with Joel.
+
+**Jurisdiction — the strangler, said out loud.** joelclaw-api is the new center of gravity for joelclaw, not a video sidecar. **First bite:** the video pipeline + the shortlink system. **No-touch list until the pattern proves itself:** the 110+ Inngest functions, the webhook gateway, gateway channels, CLI internals, apps/web pages — every later bite gets its own explicit decision; nothing migrates by default. Strangling beyond the video pilot is out of this brief's scope and belongs to a future joelclaw-api brief.
+
+**Shape:** standalone repo `joelhooks/joelclaw-api` (the new toolchain breathes free of the monorepo), consumed via the same `link:` seam as joelclaw-video. Runs as Bun + Hono on flagg, **tailnet-only**, as a Central/LaunchAgent service (port fixed at build time). The public watch page / shortlink redirects do NOT ride this exposure — that seam belongs to [Design the Shortlink System](./design-shortlink-system.svx) and the watch-page question.
+
+**Convex custody — full transfer, BEFORE phase 1, strictly serial.** The `convex/` directory (schema + functions + deployer role for the existing :3210 deployment) moves from apps/web to joelclaw-api wholesale; apps/web keeps direct Convex reads with types consumed from joelclaw-api via `link:`. Sequencing is **custody → api video mutations → phase-1 pipeline** — phase 1's stash-and-backfill fallback is retired; [Build Phase 1](./build-file-to-mux-phase-one.svx) now blocks on the transfer.
+
+**Toolchain (pinned):** Bun runtime + `bun test`; TS 7 / tsgo as typechecker (tsc fallback if the preview breaks); effect-smol (Effect v4); **XState v5 as the general pattern for all API workflows** (Joel's call — not just the video machine; Convex stores machine snapshots); **ultracite with its ox presets** (Joel's correction: ultracite layers over oxlint/oxfmt — one preset, oxc underneath).
+
+**Contract-first:** Effect HttpApi — one contract derives the server, the typed client, and OpenAPI; MCP tools and CLI commands generate from that contract later (the "generally useful" payoff). Hono hosts the HttpApi if the mounting needs it.
+
+**Auth:** one service bearer token leased from agent-secrets; callers declare an `actor` field that becomes `publishedBy` attribution (trust-the-tailnet for phase 1; per-agent tokens are a later bite).
+
+**Phase-1 surface** (what the pipeline needs): `createVideo`, `patchFromMuxWebhook`, `setLifecycle`, `setVisibility`, `tombstoneDelete`, `getBySlug` — all enforcing the model from [Model the Video Resource in Local Convex](./model-video-resource-in-convex.svx).
+
+**`.agent_sources` doctrine (Joel, mid-grill):** the repo scaffolds with read-only pattern archives per the joelclaw-central/joelclaw-brain convention — `.agent_sources/github.com/Effect-TS/effect`, `github.com/statelyai/xstate`, `github.com/honojs/hono` — and AGENTS.md instructs inspecting them before non-trivial Effect/XState edits. Idiomatic implementation is source-grounded, not vibes.
+
+Unfolded: [Scaffold joelclaw-api](./scaffold-joelclaw-api.svx) and [Transfer Convex Custody to joelclaw-api](./transfer-convex-custody.svx).
