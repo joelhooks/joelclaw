@@ -144,6 +144,7 @@ export { voiceCallCompleted } from "./voice-call-completed";
 export { voiceMissedCall } from "./voice-missed-call";
 export { voicePublicCallAnalyze } from "./voice-public-call-analyze";
 export { voicePublicSmsReply } from "./voice-public-sms-reply";
+export { voiceSmsVettingCheck } from "./voice-sms-vetting-check";
 export { voiceSyntheticCall } from "./voice-synthetic-call";
 export { voiceTelnyxBalance } from "./voice-telnyx-balance";
 export { voiceWorkerCanary } from "./voice-worker-canary";
