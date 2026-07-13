@@ -51,6 +51,7 @@ Prior art already in joelclaw: mux webhook provider (above), `packages/system-bu
 <!-- Closed ticket resolutions are appended here as one-line linked gists. -->
 
 - [Verify Mux Webhook Wiring on Flagg](./verify-mux-webhook-wiring.svx) — receiver verified live on flagg (port 3111; `hooks.joelclaw.com` and the Funnel URL both 401 unsigned probes correctly; API token authenticates and lists real assets), but the dashboard registration likely still points at decommissioning panda and the account can't be confirmed from the machine — spun off [Repoint the Mux Webhook Registration and Verify the Account](./repoint-mux-webhook-registration.svx).
+- [Repoint the Mux Webhook Registration and Verify the Account](./repoint-mux-webhook-registration.svx) — done same day: Joel disabled the panda registration and registered the joelclaw endpoint; new per-endpoint secret rotated into agent-secrets, worker bounced, and a synthetic signed `video.asset.ready` delivered `200` through `https://hooks.joelclaw.com/webhooks/mux` into Inngest (tampered control got `401`). Mux webhook plumbing is fully live for phase 1.
 
 ## Not yet specified
 
