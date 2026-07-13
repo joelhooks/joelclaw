@@ -107,3 +107,23 @@ work "generally belongs in a sub-agent." v1.5 design rule:
    orchestrator's own pane never spinning more than seconds.
 
 Sequenced after the dispatcher build (same files in flight).
+
+## Addendum 6 (Joel, 2026-07-13): no ghost runs, aesthetic herdr management
+
+Joels live complaints: the observers herdr management is VERY unaesthetic
+in the session GUI, and it uses no-session non-interactive pi, which sucks.
+The disease is one thing: labor done by ghosts.
+
+1. **Kill --no-session everywhere.** Every pi the observer runs — nested
+   distills included — gets a REAL session: captured by memory-capture
+   (the memory systems own work must enter memory), resumable, inspectable.
+   Short-lived is fine; sessionless is not.
+2. **Visible work happens in real panes**: distillation batches through
+   spawn_worker panes — name-synced, callsigned, family-registered — not
+   hidden child processes. The GUI of the observer session is a product
+   surface Joel attaches to; treat it like one.
+3. **Aesthetics are managed state**: every spawned pane labeled at birth
+   (emoji + plain phrase), tab/workspace names kept current, harvested
+   panes closed promptly, scratch/test panes never left behind. The baked
+   charter playbook already says this — enforce it in the TOOLS (spawn_worker
+   auto-labels; close_worker in every harvest path) so it cannot be skipped.
