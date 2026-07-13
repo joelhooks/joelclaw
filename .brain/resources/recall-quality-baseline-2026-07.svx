@@ -1,0 +1,83 @@
+---
+title: "Recall quality baseline — July 2026"
+type: "brainbench_receipt"
+status: "baseline"
+created_at: "2026-07-13"
+source_ticket: "../projects/wayfinder/bench-recall-quality.svx"
+privacy: "private"
+labels:
+  - "brainbench"
+  - "recall"
+  - "baseline"
+---
+
+# Recall quality baseline — July 2026
+
+Brainbench now measures known-answer retrieval across the three live pull surfaces instead of treating recall quality as a vibe.
+
+The held-out fixture is `fixtures/brainbench/recall-quality-v1.json`. It is outside every registered `.brain` root, so qmd cannot index its own prompts. Fixture SHA-256: `891f0a919b43b2604b61856dac493d923f23fc3490daa79dc96f9755916de226`.
+
+Run id: `recall-v1-baseline-2026-07-ca67b63dfc`  
+Runtime receipt: `joelclaw-wiki/data/bench/recall-runs/recall-v1-baseline-2026-07-ca67b63dfc/result.json`  
+Append-only score log: `joelclaw-wiki/data/bench/results.jsonl`
+
+## Baseline
+
+Five held-out questions each name one canonical Brain page as truth. A dash means the canonical page did not appear in the top 10.
+
+| Known answer | sessions-search | qmd hybrid | paper index |
+| --- | ---: | ---: | ---: |
+| Files are truth; databases are projections | — | — | — |
+| Edge-preserving memory compaction | — | 1 | — |
+| qmd knowledge-projection spike | — | — | — |
+| Observer recursion tombstone | 1 | 2 | — |
+| Typesense proposes; graph disposes | — | 5 | — |
+
+| Surface | Hits | Recall@1 | Recall@3 | Recall@5 | MRR | Mean latency | Errors |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `sessions-search` | 1/5 | 0.20 | 0.20 | 0.20 | 0.20 | 217.5 ms | 0 |
+| `qmd-hybrid` | 3/5 | 0.20 | 0.40 | 0.60 | 0.34 | 836.8 ms | 0 |
+| `paper-index` | 0/5 | 0.00 | 0.00 | 0.00 | 0.00 | 269.7 ms | 0 |
+
+The numbers are intentionally ugly. They are the point.
+
+## What the baseline says
+
+- `sessions-search` found the canonical observer observation at rank 1. It missed the four authored knowledge pages because its default projection is distilled observations, not the full Brain corpus.
+- qmd hybrid was the strongest surface. It found the observational-memory map at rank 1, the runtime observation at rank 2, and the Brain Graph map at rank 5. It missed the source/projection decision and the qmd spike receipt for the held-out wording.
+- The paper index leg queried the existing read-only Typesense `brain_graph_nodes` projection. It returned no canonical answer. Four expected pages were absent from the local `data/graph.json` used by the paper index. The one expected page present in that graph carried `privacy: private` and correctly returned 404 from `brain_graph_nodes` under the index's privacy deny gate. This is measured index coverage failure, not an adapter error.
+- All three adapters completed without runtime errors. The result separates a clean miss from an unavailable or malformed surface. qmd latency is warm-cache because the exact fixture was rerun after the validation pass; rank scores were identical in both runs.
+
+## Implementation receipt
+
+The consumption leg lives beside the existing Wikibench graph and edition legs in `joelclaw-wiki`:
+
+- `src/lib/bench/recall-quality.ts` — canonical page identity, strict adapter decoding, rank scoring, summaries, and result decoding.
+- `src/lib/bench/recall-quality.test.ts` — normalization, adapter schema drift, hit-rank, MRR, and fail-loud coverage.
+- `scripts/bench-recall.ts` — read-only adapters for `joelclaw sessions search`, `qmd query --format json`, and the paper's `brain_graph_nodes` index; writes the existing append-only score log and a per-run JSON receipt.
+- `scripts/bench-report.ts` — prints the recall leg beside edition and graph results.
+
+Exact baseline command:
+
+```bash
+cd /Users/joel/Code/joelhooks/joelclaw-wiki
+bun scripts/bench-recall.ts \
+  --fixture ../joelclaw/fixtures/brainbench/recall-quality-v1.json \
+  --label baseline-2026-07
+```
+
+Validation:
+
+- `bun test src/lib/bench/recall-quality.test.ts` — 5 passed, 0 failed, 19 assertions.
+- `bun run test` — 171 passed across 34 test files.
+- Targeted `oxfmt --check` and `oxlint` over the four changed wiki files — clean.
+- `bun scripts/bench-report.ts` — printed all three recall surfaces from the shared score log.
+- `bun run check` — 0 errors, 0 warnings.
+- The runtime receipt records the fixture SHA-256, rejects malformed adapter payloads, verifies every expected canonical page exists, and proves the fixture is outside every registered Brain root before querying.
+- Exact fixture-prompt scan across `.brain` — all five held-out queries absent.
+- qmd runtime: 2.5.3, 509 indexed `.svx` files, 1,343 embedded chunks.
+- joelclaw CLI: 0.2.0.
+
+Two unrelated repository-wide gates were already red: full wiki formatting reports 36 pre-existing files, and full wiki lint reports `src/lib/services/graph-typesense-index.ts:128` (`no-useless-fallback-in-spread`). The changed wiki files pass both targeted gates. The joelclaw Brain checker is also blocked by the pre-existing `.brain/projects/wayfinder/BRAIN.md` and nested `.pi/notes-bridge` support files; this work added no `.md` Brain prose.
+
+No commit or push was made.
