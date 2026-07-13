@@ -1,0 +1,15 @@
+{
+  "connected": true,
+  "connectedAt": "2026-07-13T02:44:54.726Z",
+  "cwd": "/Users/joel/Code/joelhooks/joelclaw/.brain/projects/wayfinder",
+  "sessionFile": null,
+  "leafId": "d8bf8bb2",
+  "route": "/notes",
+  "url": "http://127.0.0.1:4213/notes",
+  "preferredUrl": "https://pi-notes-4213.localhost/notes",
+  "bridgeUrl": "http://127.0.0.1:4326",
+  "eventsUrl": "http://127.0.0.1:4326/events",
+  "reviewBatchesUrl": "http://127.0.0.1:4326/review-batches",
+  "bridgeMode": "sse-direct",
+  "portlessOptional": true
+}
