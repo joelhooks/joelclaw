@@ -1,0 +1,32 @@
+---
+title: "Worker brief: transfer Convex custody to joelclaw-api"
+type: "task_brief"
+created_at: "2026-07-13"
+---
+
+# Worker brief: transfer Convex custody to joelclaw-api
+
+You are a build worker for the question at
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/transfer-convex-custody.svx`.
+Read it, the charter (`charter-joelclaw-api.svx`), and load the `local-convex` skill BEFORE touching anything — this task moves a LIVE self-hosted deployment's source of truth.
+
+## Job
+
+Move Convex ownership from `joelclaw/apps/web` to `/Users/joel/Code/joelhooks/joelclaw-api` (repo exists — scaffolded earlier today):
+
+1. **Inventory first, move second.** Map everything under `apps/web/convex/` (schema, functions incl. auth/http, `_generated`, config) and find how deploys run today (search apps/web package.json scripts, root scripts, launchd/docs, and the local-convex skill for the deploy command + env: self-hosted URL :3210, admin key source). Write the inventory into your DONE output.
+2. **Move the directory** into `joelclaw-api/convex/` (git mv-style copy in the new repo; delete from apps/web only after verification passes). Wire joelclaw-api's package.json with the convex dep + `deploy`/`codegen` scripts. The deployment target stays the SAME running backend on :3210 — you are moving the source tree + deployer role, not the data or the server.
+3. **apps/web keeps reading:** add `joelclaw-api` as a `link:` dependency of apps/web (same pattern as system-bus→joelclaw-video) and repoint every apps/web import of `convex/_generated/*` to the package's exported generated client. joelclaw-api must export the generated api/types cleanly for this.
+4. **Deploy + verify (non-negotiable, in this order):**
+   a. `convex deploy` (or the repo's equivalent) from joelclaw-api against :3210 succeeds with the schema UNCHANGED — no table added/removed/modified in this task.
+   b. apps/web: `bunx tsc --noEmit` (or the app's typecheck) clean.
+   c. Grep proves no remaining references to `apps/web/convex` paths anywhere in the monorepo (excluding docs history and `.brain`).
+   d. One live read works post-deploy: query an existing table (e.g. `systemStatus` or `contentResources` count) via the deployed functions using the same client env apps/web uses.
+5. If ANY verification fails and the fix isn't obvious inside your scope, STOP, restore apps/web to working state (the convex/ dir stays in both places rather than broken in either), and report the failure loudly. A half-moved deployment is the worst outcome.
+
+## Rules
+
+- Monorepo: touch ONLY `apps/web` convex dir + its package.json/tsconfig/imports and the lockfile. Never `git add`, never commit (steering reviews). joelclaw-api repo: leave as jj working copy on top of the scaffold commit.
+- Do NOT wipe, reset, reseed, or migrate data. Do NOT touch the running backend container/service beyond `convex deploy` + reads.
+- Concurrent sessions are working in the monorepo — do not revert or "clean up" files you didn't change.
+- When finished print `DONE:` + the inventory, deploy command + env custody (where the admin key lives — name only, never the value), files touched in apps/web, and the four verification results.

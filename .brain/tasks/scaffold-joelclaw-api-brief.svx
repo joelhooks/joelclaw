@@ -1,0 +1,32 @@
+---
+title: "Worker brief: scaffold joelclaw-api"
+type: "task_brief"
+created_at: "2026-07-13"
+---
+
+# Worker brief: scaffold joelclaw-api
+
+You are a build worker for the question at
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/scaffold-joelclaw-api.svx`.
+Read it, plus the charter (`charter-joelclaw-api.svx`) and the brief (`video-pipeline-brief.svx`), same directory, before writing any code. The charter is law for this task.
+
+## Job
+
+Create `/Users/joel/Code/joelhooks/joelclaw-api` (abort loudly if it exists). jj colocated init (`/opt/homebrew/bin/jj git init --colocate`; plain `git init` fallback).
+
+1. **Toolchain, exactly as chartered — verify each piece against reality and record substitutions loudly:**
+   - Bun runtime + `bun test`.
+   - tsgo (TypeScript 7 native preview, `@typescript/native-preview`) as the typechecker in the check script; if it can't handle the code today, wire `tsc` as the checker and record WHY.
+   - effect-smol (Effect v4). Before writing non-trivial Effect code, clone and inspect `.agent_sources` (below).
+   - XState v5 (dependency + one trivial machine proving the wiring, e.g. a health state machine — general pattern per the charter).
+   - ultracite with its ox presets (oxlint/oxfmt underneath). Verify current ultracite actually ships ox presets; if it's biome-only in reality, use plain oxlint+oxfmt and record the substitution.
+2. **`.agent_sources` doctrine (mandatory):** shallow-clone read-only pattern archives to `.agent_sources/github.com/Effect-TS/effect`, `.agent_sources/github.com/statelyai/xstate`, `.agent_sources/github.com/honojs/hono` (`git clone --depth 1`). Add `.agent_sources/` to `.gitignore`. Write an `AGENTS.md` copying the joelclaw-central convention (see `/Users/joel/Code/joelhooks/joelclaw-central/AGENTS.md` lines 1–15 for the shape): use them as read-only pattern archives, inspect before non-trivial Effect/XState edits.
+3. **Skeleton:** Effect HttpApi contract with a `GET /health` endpoint (returns `{ok:true, service:"joelclaw-api", version}`), served on Bun. Port: pick a free fixed port in the 42xx range (check `lsof` for collisions), record it. Auth middleware stub: bearer token read from env `JOELCLAW_API_TOKEN` (leased at runtime later — do NOT create secrets), health endpoint exempt. If Effect HttpApi (effect-smol `unstable/http`) fights Bun serving, mount it via Hono and record how.
+4. **Prove:** `bun test` (at least: health handler test + machine test), typecheck script, lint script — all green. `curl localhost:<port>/health` answers while you run it (then stop the server; do NOT install any LaunchAgent).
+
+## Rules
+
+- New repo only — do not touch the joelclaw monorepo, joelclaw-video, or any other repo.
+- Work is left as described jj working copy; no pushes, no GitHub repo creation.
+- No paid API keys. No secrets created. No LaunchAgents.
+- When finished print `DONE:` + package name, port, file tree (top 2 levels), the check commands that prove green, and any stack substitutions with reasons.

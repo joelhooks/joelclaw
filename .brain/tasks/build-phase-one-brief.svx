@@ -1,0 +1,26 @@
+---
+title: "Worker brief: build phase 1 — file pointer to Mux asset"
+type: "task_brief"
+created_at: "2026-07-13"
+---
+
+# Worker brief: build phase 1 — file pointer to Mux asset
+
+You are a build worker for the question at
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/build-file-to-mux-phase-one.svx`.
+Read it FIRST, then: the brief (`video-pipeline-brief.svx`), the model answer (`model-video-resource-in-convex.svx`), the charter (`charter-joelclaw-api.svx`), the yoink audit (`docs/course-builder-video-yoink-audit.svx`), and the E2E receipt (`docs/e2e-mux-manual-run-2026-07-13.svx`) — the receipt contains the exact working Mux request JSON and webhook vocabulary; treat it as the spec.
+
+## Job
+
+Three layers, in order:
+
+1. **joelclaw-api video mutations** (`/Users/joel/Code/joelhooks/joelclaw-api`, owns convex/): implement the model exactly — `contentResources` row with `type: "videoResource"`, Effect Schema validating the fields bag at every edge, `resourceId = "video:<shareSlug>"` (~10-char alphanumeric nanoid), lifecycle×visibility axes, XState v5 machine governing processing state transitions (new→processing→preparing→ready|errored, tombstone delete). Convex mutations: `videos.create`, `videos.patchFromMuxWebhook`, `videos.setLifecycle`, `videos.setVisibility`, `videos.tombstone`, query `videos.getBySlug`. Expose over the HttpApi contract with the bearer-token auth stub. Deploy to :3210.
+2. **joelclaw-video pipeline** (`/Users/joel/Code/joelhooks/joelclaw-video`, consumed by system-bus): Inngest function on `video/publish.requested` `{path, title?, actor}`: validate file (exists, video mime, size cap 20GB), compute SHA-256 checksum (idempotency key), call joelclaw-api `videos.create` (state new, actor→publishedBy), archive the original: copy to the Garage bucket per the TTL decision in `decide-originals-archive-ttl.svx` (consult the `garage` skill; create bucket `joelclaw-videos` if absent; record key+checksum via the api), create Mux direct upload with the E2E-receipt settings (playback_policies public, video_quality plus, static_renditions highest, passthrough = resourceId), PUT the bytes (stream, not memory-load; sequential chunks for >1GB per the audit), then a second Inngest function correlating `mux/asset.ready` + `mux/asset.static_rendition.ready` by passthrough → `videos.patchFromMuxWebhook` → emit `video/publish.completed` {resourceId, muxAssetId, playbackId, watchHint: player.mux.com URL}. `mux/asset.errored` → patch state errored + emit `video/publish.failed` loudly. Mux + api credentials leased via agent-secrets/env like siblings.
+3. **Tests + green:** bun tests for machine transitions and event contracts in both repos; `bunx tsc --noEmit` clean in the monorepo; joelclaw-video + joelclaw-api checks green. Do NOT restart the system-bus worker or run any live publish — the steering session deploys and runs the live E2E.
+
+## Rules
+
+- Monorepo: you should need to touch NOTHING outside the joelclaw-video link seam already wired (if registration of new functions requires an index edit, that one file only). Never git add/commit.
+- joelclaw-api and joelclaw-video: leave as jj working copies; no pushes.
+- No LaunchAgent installs, no worker restarts, no live Mux uploads from you (unit-level only — the steering session does the live run).
+- When finished print `DONE:` + files per repo, event contracts (exact names + payload shapes), the deploy/check commands run, and anything you had to decide that the docs didn't cover.

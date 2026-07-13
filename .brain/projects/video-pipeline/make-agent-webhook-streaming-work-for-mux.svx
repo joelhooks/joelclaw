@@ -3,6 +3,7 @@ title: "Make Agent Webhook Streaming Work for Mux Events"
 type: "question"
 kind: "task"
 status: "open"
+assignee: "flagg-claude-steering + pi worker (2026-07-13, drive-to-done)"
 interaction: "AFK"
 parent: "./video-pipeline-brief.svx"
 blockers: []
