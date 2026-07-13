@@ -29,3 +29,8 @@ recommendation.
 Rank the A/B cells: **Claude Haiku 4.5 first**, **GPT-5.4 Mini with reasoning minimized/disabled second**, and **GPT-4.1 Mini third**. Haiku is the lowest-risk family swap and currently shows 0.41s best-provider p50 TTFT on OpenRouter. GPT-5.4 Mini is the stronger cross-family agentic challenger; GPT-4.1 Mini is the cheap mature control. Hold Gemini 3.1 Flash Lite despite its 0.66s p50: current OpenRouter provider data shows 5.51–8.18% tool-call errors, a bad fit for a 15-tool live agent.
 
 Full comparison, normalized call-cost math, receipts, caveats, and trial gates: [fast-model-candidates](./fast-model-candidates.svx).
+
+**Amendment (Joel, 2026-07-13):** add `x-ai/grok-4.5` and `openai/gpt-5.6-luna`
+/ `openai/gpt-5.6-terra` at low reasoning effort to the trial cells. Receipts
+for these being pulled as a follow-up; the A/B question inherits the expanded
+cell list either way.

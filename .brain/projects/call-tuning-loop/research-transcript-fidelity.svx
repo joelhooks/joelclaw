@@ -3,11 +3,12 @@ title: "Research: the Honest Spoken Record for Judging"
 type: "question"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker (wE:p6, herdr, 2026-07-13)"
 parent: "./call-tuning-loop-brief.svx"
 blockers: []
 created_at: "2026-07-13"
+closed_at: "2026-07-13"
 ---
 
 # Research: the Honest Spoken Record for Judging
@@ -21,3 +22,25 @@ events, per-segment callbacks, whether interrupted content is truncated or
 dropped, and whether our Convex turn rows / transcriptLine field can carry the
 true record. Deliverable: an asset stating the recommended capture mechanism
 with API receipts, sized for the judge build to consume.
+
+## Answer (2026-07-13)
+
+Use LiveKit's public `conversation_item_added` event and persist every committed
+user/assistant message as an append-only spoken item. In installed
+livekit-agents 1.4.2, interrupted assistant output is replaced with the
+synchronized transcript from completed playout before the message is committed;
+the event therefore carries the package's best record of what reached the
+caller, including `item.interrupted`.
+
+The current Convex `addTurn.transcriptLine` path is not sufficient: no handler
+sends it, Convex keeps it only in the session's rolling 12-line tail, and the
+inserted turn row drops it. Add a dedicated spoken-item mutation/table with
+room, sequence, message ID, speaker, text, interruption flag, and commit time.
+
+The stated receipt did not reproduce: the file currently at
+`~/.joelclaw/workspace/memory/voice/2026-07-12-151052.md:33-42` contains the
+heading and all six list items. That weakens the specific claim that history
+dropped this turn, but not the recommendation to capture committed items live.
+
+Full mechanism, source line receipts, schema contract, and canary:
+[Spoken record capture](./spoken-record-capture.svx).
