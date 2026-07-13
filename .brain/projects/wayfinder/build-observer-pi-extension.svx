@@ -44,3 +44,17 @@ the receipt). Enumerate pi's interactive tool surface from source/extensions
 and turn all of it off under observer identity; when the observer would have
 asked, it instead records the question in its tick report and proceeds
 conservatively (doubt → sensitive, gaps → report loudly).
+
+## Addendum 2 (Joel, 2026-07-12): override + bespoke agents + specific context
+
+- The extension **OVERRIDES the system prompt**, not appends — the observer's
+  constitution is its whole identity, not a footnote under default pi
+  instructions.
+- **Clear the default pi-subagent registry** for observer sessions and
+  register bespoke agents for its actual tasks (e.g. terra-distiller,
+  ds4-classifier, completeness-checker) — the observer spawns from its own
+  cast, not the general-purpose roster.
+- The pi session runs in a **specific context**: pinned cwd, pinned env,
+  observer-only config scope — nothing inherited by accident.
+- Pairs with [spec-herdr-session-management](./spec-herdr-session-management.svx):
+  `herdr session attach observer` is the front door to this session.
