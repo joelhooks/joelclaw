@@ -1,0 +1,82 @@
+---
+title: "Chart Stream Observation: External Sources into Memory"
+type: "wayfinder_map"
+status: "active"
+labels:
+  - "wayfinder:map"
+created_at: "2026-07-13"
+tracker: "local-brain"
+privacy: "private"
+---
+
+# Chart Stream Observation: External Sources into Memory
+
+## Destination
+
+External streams — Front, Slack (webhooks already flowing realtime), GitHub,
+Twitter, ClickHouse telemetry — flow through the observer's distillation
+discipline into the same observation memory: webhook/ping → accumulated raw
+events → source epochs → validated, provenance-carrying observation pages
+that are ACTIONABLE and worth recalling ("not total dogshit" — Joel's
+charter, 2026-07-13). Reached when a Slack decision, a Front escalation, or
+a GitHub release lands in memory the same afternoon with the same schema
+discipline as session epochs, and the Bugle mines those pages instead of
+cold-reading raw sources at 6am.
+
+**This map deliberately redraws a boundary**: the observational-memory map
+ruled external streams out of scope ("the Bugle owns it") and VISION.md
+echoes it. Per wayfinder doctrine that returns as a fresh effort — this is
+it. The redraw itself is a grilling ticket; VISION.md and the old map get
+updated only when it resolves.
+
+## Notes
+
+- **The generalizing insight**: the observer's epoch model maps onto
+  streams — a source (channel, inbox, repo, metric family) plays the role
+  of a session; webhook events accumulate like chunks; epochs form by
+  volume/quiet-gap; versioned-prompt distillation + validator teeth +
+  privacy contract + tombstones apply unchanged. Build ONE write
+  discipline, not a second pipeline.
+- **Quality is the charter's soul**: raw webhook flow is high-volume
+  garbage. Every quality mechanism proven this week applies: noise bars,
+  signals-style pre-mining, validators that refuse, actionability
+  requirements, index-lines for the skipped, dedup. "Actionable, useful,
+  high quality" is the acceptance test on every ticket here.
+- **What exists (verify, don't trust)**: Front + Slack realtime webhooks
+  land somewhere in joelclaw (gateway channels / Inngest functions / 110+
+  durable fns); ClickHouse blessed for event streams; the Bugle's read-only
+  adapters + 4-layer contract + redact.ts; the observer's full machinery.
+  GitHub/Twitter have NO known ingress yet.
+- **Privacy is sharper here than anywhere**: Front is customer content,
+  Slack is third parties. The redaction resolution + secret-scan +
+  sensitive-classification apply at full strength; stream observations
+  default suspicious.
+- **Adjacency**: [observational-memory](./joelclaw-observational-memory-map.svx)
+  (machinery reused, boundary redrawn), [recall-consumption](./joelclaw-recall-consumption-map.svx)
+  (these pages flow into the same briefing/qmd/Bugle surfaces),
+  [bugle redesign](./joelclaw-bugle-redesign-map.svx) (editorial stays there).
+- **Skills**: `/skill:wayfinder`, `/skill:axiom-investigation` (log-flow
+  archaeology), `/skill:brain-first-workflow`.
+
+## Decisions so far
+
+<!-- one line per closed ticket: gist + link -->
+
+## Not yet specified
+
+- GitHub + Twitter ingress (no webhooks today — pull adapters? new hooks?
+  hangs on the ingress research).
+- ClickHouse "pings": the observer periodically reading telemetry for
+  anomaly observations (system self-awareness pages) — shape unclear until
+  the epoch model lands.
+- Cross-source dedup (same event arriving via Slack AND GitHub AND Front).
+- Whether stream observations get their own Brain section or share
+  `observations/` with a `source:` field.
+
+## Out of scope
+
+- Editorial (editions, open-loop presentation) — the Bugle keeps it; this
+  map feeds it.
+- Sending/replying/acting on any stream — read-only forever, per standing
+  law.
+- Public access to anything.
