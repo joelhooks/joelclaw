@@ -7,6 +7,7 @@ import { Args, Command, Options } from "@effect/cli"
 import { Effect } from "effect"
 import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
+import { searchObservations } from "./observations"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const RUN_CHUNKS_COLLECTION = "run_chunks_dev"
@@ -1111,6 +1112,11 @@ const extractOpt = Options.boolean("extract").pipe(
   Options.withDescription("Extract bounded task context for matching local/raw session hits")
 )
 
+const rawOpt = Options.boolean("raw").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Search the legacy raw session chunk/transcript layer instead of distilled observations")
+)
+
 const formatOpt = Options.choice("format", ["json", "markdown"] as const).pipe(
   Options.withDefault("json" as const),
   Options.withDescription("Output format for extraction payloads")
@@ -1190,10 +1196,27 @@ const searchCmd = Command.make(
     limit: limitOpt,
     maxFiles: maxFilesOpt,
     extract: extractOpt,
+    raw: rawOpt,
   },
-  ({ query, source, machine, runtime, sshTarget, limit, maxFiles, extract }) =>
+  ({ query, source, machine, runtime, sshTarget, limit, maxFiles, extract, raw }) =>
     Effect.gen(function* () {
       try {
+        if (!raw) {
+          const observations = yield* Effect.promise(() => searchObservations(query, limit, machine, runtime))
+          yield* writeEnvelope(respond("sessions search", {
+            query,
+            source: "observations",
+            machine,
+            runtime,
+            found: observations.found,
+            hits: observations.hits,
+          }, [{
+            command: `sessions search ${JSON.stringify(query)} --raw --machine ${machine} --runtime ${runtime} --limit ${limit}`,
+            description: "Search legacy raw session chunks and transcripts",
+          }]))
+          return
+        }
+
         const rawSource = source === "both"
           ? (isLocalMachine(machine) ? "local" : "ssh")
           : source
@@ -1235,7 +1258,7 @@ const searchCmd = Command.make(
 
         yield* writeEnvelope(respond("sessions search", {
           query,
-          source,
+          source: `raw:${source}`,
           resolvedRawSource: source === "both" ? rawSource : undefined,
           machine,
           runtime,
@@ -1249,19 +1272,19 @@ const searchCmd = Command.make(
           extractions,
         }, [
           {
-            command: `sessions search "${query.replace(/"/g, "\\\"")}" --source typesense --machine ${machine} --runtime ${runtime} --limit ${limit}`,
+            command: `sessions search "${query.replace(/"/g, "\\\"")}" --raw --source typesense --machine ${machine} --runtime ${runtime} --limit ${limit}`,
             description: "Search Central Typesense session chunks only",
           },
           {
-            command: `sessions search "${query.replace(/"/g, "\\\"")}" --source local --machine ${machine} --runtime all --limit ${limit}`,
+            command: `sessions search "${query.replace(/"/g, "\\\"")}" --raw --source local --machine ${machine} --runtime all --limit ${limit}`,
             description: "Search raw local Pi/Claude/Codex session files",
           },
           {
-            command: `sessions search "${query.replace(/"/g, "\\\"")}" --source ssh --ssh-target ${sshTarget} --runtime all --limit ${limit}`,
+            command: `sessions search "${query.replace(/"/g, "\\\"")}" --raw --source ssh --ssh-target ${sshTarget} --runtime all --limit ${limit}`,
             description: "Search raw remote Pi/Claude/Codex session files over SSH",
           },
           {
-            command: `sessions search "${query.replace(/"/g, "\\\"")}" --source ${source} --machine ${machine} --runtime ${runtime} --limit ${limit} --extract`,
+            command: `sessions search "${query.replace(/"/g, "\\\"")}" --raw --source ${source} --machine ${machine} --runtime ${runtime} --limit ${limit} --extract`,
             description: "Search and extract bounded task context from top raw hits",
           },
           {
@@ -1278,8 +1301,8 @@ const searchCmd = Command.make(
             error.fix,
             [
               { command: "secrets status", description: "Check agent-secrets health" },
-              { command: "sessions search <query> --source local", description: "Bypass Typesense and search raw local session files", params: { query: { required: true } } },
-              { command: "sessions search <query> --source ssh", description: "Bypass Typesense and search raw remote session files", params: { query: { required: true } } },
+              { command: "sessions search <query> --raw --source local", description: "Bypass Typesense and search raw local session files", params: { query: { required: true } } },
+              { command: "sessions search <query> --raw --source ssh", description: "Bypass Typesense and search raw remote session files", params: { query: { required: true } } },
             ]
           ))
           return
