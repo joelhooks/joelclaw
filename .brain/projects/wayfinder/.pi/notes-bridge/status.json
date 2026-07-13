@@ -1,0 +1,11 @@
+{
+  "state": "connected",
+  "route": "/notes",
+  "url": "http://127.0.0.1:4213/notes",
+  "preferredUrl": "https://pi-notes-4213.localhost/notes",
+  "bridgeUrl": "http://127.0.0.1:4326",
+  "eventsUrl": "http://127.0.0.1:4326/events",
+  "reviewBatchesUrl": "http://127.0.0.1:4326/review-batches",
+  "portlessOptional": true,
+  "updatedAt": "2026-07-13T02:44:54.726Z"
+}

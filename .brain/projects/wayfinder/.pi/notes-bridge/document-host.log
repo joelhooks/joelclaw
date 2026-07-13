@@ -1,0 +1,16 @@
+$ vite dev --host 127.0.0.1
+7:44:08 PM [vite] (client) Re-optimizing dependencies because vite config has changed
+7:44:08 PM [vite] (ssr) Re-optimizing dependencies because vite config has changed
+
+  VITE v8.1.4  ready in 494 ms
+
+  ➜  Local:   http://127.0.0.1:4219/
+error: script "dev" exited with code 143
+$ vite dev --host 127.0.0.1
+7:44:54 PM [vite] (client) Re-optimizing dependencies because vite config has changed
+7:44:54 PM [vite] (ssr) Re-optimizing dependencies because vite config has changed
+
+  VITE v8.1.4  ready in 500 ms
+
+  ➜  Local:   http://127.0.0.1:4213/
+error: script "dev" exited with code 143
