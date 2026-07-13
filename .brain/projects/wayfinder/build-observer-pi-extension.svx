@@ -64,3 +64,15 @@ conservatively (doubt → sensitive, gaps → report loudly).
 The extension lives in its own repo: `~/Code/joelhooks/joelclaw-observer`
 (joelhooks/joelclaw-observer). Scaffolded with the full spec in AGENTS.md;
 build work executes there.
+
+## Addendum 3 (Joel, 2026-07-12): delegate to existing session tooling
+
+`joelclaw sessions` already ships the observer's primitives: `extract`
+(bounded window context — IS read_session_window), `chunks` (query +
+neighboring raw context), `inspect` (regex transcript surgery), and
+especially `signals` (role-aware high-signal user-turn mining by kind:
+friction/preference/decision/praise/correction/workflow-pattern/failure/
+repair-request/mode-mismatch). v1.1: lib.ts delegates to these CLIs in
+never-throw wrappers instead of raw Typesense queries, and `signals`
+output seeds the Decisions/Observations sections of epoch pages before
+terra distills — pre-mined signal beats cold extraction.
