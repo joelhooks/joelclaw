@@ -55,6 +55,7 @@ import { summaryCmd } from "./commands/summary";
 import { tuiCmd } from "./commands/tui";
 import { usageCmd } from "./commands/usage";
 import { vaultCmd } from "./commands/vault";
+import { videoCmd } from "./commands/video";
 import { watchCmd } from "./commands/watch";
 import { webhookCmd } from "./commands/webhook";
 import { workloadCmd } from "./commands/workload";
@@ -214,6 +215,7 @@ const root = Command.make("joelclaw", {}, () =>
             otel: "joelclaw otel {list|search|stats|emit}",
             o11y: "joelclaw o11y {session|system}",
             usage: "joelclaw usage [--hours 24] [--component <c>] [--model <m>] [--machine <id>] [--limit 500] [--json]",
+            video: "joelclaw video trace <resourceId|slug> [--hours N] [--limit N]",
             subscribe: "joelclaw subscribe {list|add|remove|check|summary}",
             webhook: "joelclaw webhook {subscribe|unsubscribe|list|stream}",
             knowledge: "joelclaw knowledge {sync|search|note|clear-failed}",
@@ -344,6 +346,7 @@ const root = Command.make("joelclaw", {}, () =>
     o11yCmd,
     observationsCmd,
     usageCmd,
+    videoCmd,
     inngestCmd,
     subscribeCmd,
     webhookCmd,
