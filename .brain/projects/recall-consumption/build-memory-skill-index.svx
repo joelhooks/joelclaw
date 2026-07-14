@@ -1,9 +1,9 @@
 ---
 title: "Build the Memory Skill-Index (runtime memories as unfoldable entries)"
-type: "wayfinder_ticket"
+type: "question"
+kind: "task"
 status: "open"
-labels:
-  - "wayfinder:task"
+assignee: "pi worker (flagg, herdr pane wB:pZ, 2026-07-13)"
 interaction: "AFK"
 parent: "./recall-consumption-brief.svx"
 blockers: []

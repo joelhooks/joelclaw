@@ -1,0 +1,57 @@
+---
+title: "Task: observations as a prime Bugle source (read-only adapter)"
+type: task-brief
+created: 2026-07-13
+parent: "../projects/recall-consumption/build-observations-bugle-source.svx"
+---
+
+# Observations as a prime Bugle source
+
+You are on flagg in `~/Code/joelhooks/joelclaw-wiki` (AGENTS.md is LAW —
+editorial mandate, Fabrication Rule, read-only source adapters, never
+publish sensitive-flagged content). NO commits, NO push, NO deploy — the
+steering session reviews, commits, builds, 200-checks.
+
+Read first:
+1. Your claimed question:
+   `~/Code/joelhooks/joelclaw/.brain/projects/recall-consumption/build-observations-bugle-source.svx`
+2. The adapter contract (your spec, already written):
+   `~/Code/joelhooks/dark-wizard/.brain/resources/observer-system-architecture.svx`
+   — including the Observation-vs-observation naming resolution.
+3. How existing source adapters are built in this repo (find them; extend
+   the pattern, never fork it).
+
+## Deliverable
+
+The read-only source adapter over
+`~/Code/joelhooks/dark-wizard/.brain/observations/**` per the contract:
+
+- `## Open questions / next actions` sections → OpenLoopCandidates.
+- `## Decisions` sections → loop-closure evidence (feeds
+  close-loops-when-reality-closes-them).
+- Provenance on every item: the page's brain.joelclaw.com URL + sessionId.
+- `privacy: sensitive` pages NEVER cross into any rendered tier — skip
+  them entirely at the adapter, titles included.
+- Respect the Bugle 4-layer data contract; adapter is read-only like all
+  others; page-scoped failures never build-fatal.
+
+## Question-file edits (part of the deliverable)
+
+Append `## Answer (2026-07-13)` + receipts to the claimed question file;
+flip `status: "closed"` + `closed_at`. Steering writes the ledger line.
+
+## Verify
+
+`bun run build` (retry once) + `bun run lint` (a pre-existing failure in
+graph-typesense-index.ts is known; anything NEW is yours). Receipt: the
+built edition (or adapter test output) showing real OpenLoopCandidates
+extracted from today's observation pages — paste 2–3 examples with their
+provenance in your DONE summary. If today's pages yield zero candidates,
+show the parse working on whatever exists — never invent examples.
+
+## Rules
+
+Set your Pi session name to "📰 Bugle observations adapter" immediately.
+Stay inside the source-adapter surface — do not touch the memory masthead,
+bench files, or unrelated routes. Work autonomously. Do not commit. Print
+DONE with receipts.

@@ -44,6 +44,7 @@ enough; ingest changes belong to the observational-memory map, not here.
 - **Privacy inherited**: sensitive = recallable locally, never rendered,
   never spoken to unverified callers, never in any surface that leaves the
   tailnet. The qmd caller-boundary caveat gates MCP exposure.
+- **External reference (foraged 2026-07-13, Joel)**: [Memory on the harness level (dhravya.dev)](https://dhravya.dev/writing/memory-on-the-harness-level/) — independent validation of the architecture split: implicit observational write (our observer), pushed profile for the hot path (our skill-shaped canon+index briefing), filesystem agentic recall (our skill-index), intentional forgetting (the reflector, observational-memory map). Its static/dynamic profile split and voice-is-push-only table are folded into the open questions.
 - **Skills**: `/skill:grill-master`, `/skill:session-search`,
   `/skill:brain-first-workflow`, `/skill:joel-writing-style`.
 
