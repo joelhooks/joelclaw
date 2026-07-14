@@ -2,7 +2,7 @@
 title: "Build Phase 1: File Pointer to Mux Asset"
 type: "question"
 kind: "task"
-status: "open"
+status: "closed"
 assignee: "flagg-claude-steering + pi worker (2026-07-13, drive-to-done)"
 interaction: "AFK"
 parent: "./video-pipeline-brief.svx"
@@ -18,3 +18,19 @@ created_at: "2026-07-13"
 ## Question
 
 Build the proof pipeline in `joelclaw-video`, registered through system-bus: an event (working name `video/publish.requested`) carrying a flagg filesystem path triggers an Inngest function that validates the file, creates a Mux direct upload with the audited asset settings (progressive rendition; captions come from the Deepgram ticket, not Mux auto-gen), PUTs the bytes, then correlates the already-routed mux webhook events (`upload.asset_created` → `asset.ready`) to land asset id + playback id, emitting `video/publish.completed` and failing loud on `asset.errored`. Durability posture matches the rest of system-bus: idempotency-keyed on file checksum or upload id, steps retryable, no silent failures. Record the video through joelclaw-api's mutations (`createVideo`, `patchFromMuxWebhook`) — the [charter](./charter-joelclaw-api.svx) fixed strict sequencing (custody → api mutations → this build), the stash-and-backfill fallback is retired, and defining the video mutations in joelclaw-api per [the model](./model-video-resource-in-convex.svx) is this build's first step. Mux credentials go through agent-secrets like every other provider. Resolved when a real screen recording on flagg goes in and a playing `player.mux.com/<PLAYBACK_ID>` URL comes out, with the run visible in Inngest. The resolution records the event contracts — the agent-surface and watch-page tickets depend on them.
+
+## Answer
+
+Resolved 2026-07-14 (pi worker Bursarial Felmet built it; steering session drove the live E2E through four attempts and fixed what reality found). **Phase 1 is live**: `/Users/joel/Movies/joelclaw-video/first-light.mp4` went in via `video/publish.requested`; out came Mux asset `7mezBnM1GO9M61IC6herttduTSAgCq697u02PPhcqrQU`, playback `j53DPGudGinE6O88LHEgtd1MSl003kLS300X8Gl5jfHnM` (all four public URLs 200: m3u8, player, thumbnail, `highest.mp4`), the original archived in Garage `joelclaw-videos` with checksum + size recorded, and the Convex record (`video:olPVU1y6iI`) driven to `state: ready` / rendition `ready`, then flipped `published`/`unlisted` via the API — `publishedBy: claude-steering-flagg`. Joel got the Slack pong (`deliveredTo: ["slack"]`).
+
+**Event contracts (live):** `video/publish.requested` `{path, title?, actor}` → `video/publish.completed` `{resourceId, muxAssetId, playbackId, watchHint}`; `video/publish.failed` `{resourceId, error}`. Correlation by Mux `passthrough` = resourceId. `videos.create` is checksum-idempotent — four attempts produced ONE record.
+
+**What the live run taught (all fixed in place):**
+1. aws-sdk `PutObject` hangs forever under Bun with an fs-stream body (no ContentLength) — archive step now uses `Bun.S3Client`.
+2. `Bun.S3Client.write()` returns 0 for `Bun.file` bodies — verification is by readback (exists + size), never return value.
+3. The Convex archive validator needed `size` (the TTL sweep wants it).
+4. Port 4200 collided with a pi-notes vite dev server — joelclaw-api moved to **:4242**; first-free-port selection is not durable.
+5. Coarse Inngest `/v1` run status reads "Scheduled" during step retry backoff — use the `runTrace` GraphQL query for truth (feeds the forensics question).
+6. Correlate runs that failed during the port-collision window were recovered by replaying the real Mux asset payload as `mux/asset.ready` + `mux/asset.static_rendition.ready` events — idempotent patching made replay safe.
+
+**Facts:** joelclaw-api serves :4242 (currently a steering-session background process — LaunchAgent graduation still owed); worker leases video env at boot (`serve.ts`, commit `078f1484`); Garage bucket `joelclaw-videos` (created via NAS `sudo docker exec joelclaw-garage /garage bucket create/allow`); minor gap noted: duration/resolution not yet mapped onto the record by the webhook patch.
