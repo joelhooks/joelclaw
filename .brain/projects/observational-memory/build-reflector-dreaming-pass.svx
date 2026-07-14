@@ -6,7 +6,7 @@ status: "open"
 assignee: ""
 interaction: "AFK"
 parent: "./observational-memory-brief.svx"
-blockers: []
+blockers: ["./research-salience-decay-mechanisms.svx"]
 created_at: "2026-07-13"
 ---
 
@@ -38,6 +38,14 @@ dedicated LaunchAgent):
 - Same integrity rules as the observer: receipts-only reports, schema v1,
   secret-scan on every written page, deterministic where possible with
   bounded pi judgment.
+
+**Standing call (Joel, 2026-07-14): forgetting is implemented at the RECALL
+layer — salience decay, ranking, rollup blur. The substrate never lies, it
+just gets quiet.** The filesystem is substrate/cold store (today git; could
+tier to NAS/Garage/S3 as it grows); recall surfaces project from it, and
+decay lives in the projections, never as deletion from the substrate. The
+observer can re-reminisce: anything that becomes relevant again re-derives
+from the cold store.
 
 Done when: one real dreaming run condenses a week of pages into rollups
 with citations intact, the observations directory shrinks, recall bench

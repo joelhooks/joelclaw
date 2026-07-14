@@ -1,0 +1,45 @@
+---
+title: "Task: research salience decay mechanisms (recall-layer forgetting)"
+type: task-brief
+created: 2026-07-14
+parent: "../projects/observational-memory/research-salience-decay-mechanisms.svx"
+---
+
+# Research salience decay
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. AFK research — web + local
+docs, NO code changes, NO commits.
+
+Read your claimed question first:
+`.brain/projects/observational-memory/research-salience-decay-mechanisms.svx`
+— it lists the systems to survey and the required output shape. Context:
+`.brain/projects/observational-memory/build-reflector-dreaming-pass.svx`
+(the consumer of your recommendation) and
+https://dhravya.dev/writing/memory-on-the-harness-level/ (the post that
+sharpened this).
+
+Governing frame (Joel, verbatim): "forgetting is implemented at the recall
+layer — salience decay, ranking, rollup blur. The substrate never lies, it
+just gets quiet."
+
+## Deliverable
+
+ONE asset file:
+`.brain/projects/observational-memory/salience-decay-survey.svx` with
+frontmatter `type: "asset"`, `parent: "./research-salience-decay-mechanisms.svx"`,
+`title`, `created_at`, `privacy: "private"`. Contents: mechanism comparison
+table across the surveyed systems (what decays, what signal feeds it, cost),
+the cognitive-science anchors worth stealing, and a recommended v1 scoring
+function for our skill-index + reflector computable from what we actually
+have (observation frontmatter: started/ended/tokens/repos; access telemetry:
+none yet — say what minimal telemetry would unlock). Every claim cited
+(URL or file path). No fabricated citations — if you can't verify a claim,
+mark it unverified.
+
+Then: append `## Answer (2026-07-14)` to the question file linking the
+asset + 3-sentence gist; flip `status: "closed"` + `closed_at`.
+
+## Rules
+
+Set your Pi session name to "🔬 Salience decay research" immediately. Work
+autonomously. Do not commit. Print DONE with the asset path and gist.

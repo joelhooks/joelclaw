@@ -1,0 +1,33 @@
+---
+title: "Research Salience Decay: How Memory Systems Forget at the Recall Layer"
+type: "question"
+kind: "research"
+status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p11, 2026-07-14)"
+interaction: "AFK"
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-07-14"
+---
+
+# Research Salience Decay
+
+## Question
+
+Design input for the reflector (Joel, 2026-07-14: forgetting lives at the
+recall layer — salience decay, ranking, rollup blur; the substrate never
+lies, it just gets quiet). Survey how existing systems implement forgetting
+without deletion, and produce a recommendation asset for the reflector build:
+
+- Agent-memory systems: Letta/MemGPT, Mastra OM (Observer/Reflector),
+  supermemory (intentional forgetting / profile decay), generative-agents
+  (recency × importance × relevance scoring), Zep/Graphiti temporal edges.
+- Cognitive-science anchors worth stealing: consolidation as detail-loss/
+  generalization, retrieval-failure-as-forgetting, interference, spaced
+  repetition (does an access-time signal earn a memory its salience back?).
+- Concrete mechanisms to compare: exponential decay on index rank,
+  access-count reinforcement, rollup blur levels (day → week → month),
+  temporal-gradient conflict rules, consumption-telemetry feedback.
+- Output: one asset page — mechanism comparison table + a recommended v1
+  scoring function for the skill-index and reflector (cheap to compute from
+  frontmatter + access telemetry we actually have), with citations.
