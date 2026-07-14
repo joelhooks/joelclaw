@@ -3,7 +3,8 @@ title: "Research the Front Backlog Shape (what ARE the 15k, and the burn-down pl
 type: "question"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-14T17:21:25.600Z"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
 parent: "./front-sanity-brief.svx"
 blockers: []
@@ -27,3 +28,7 @@ standing mechanism defends it. Also spec the time-boxed sweep windows
 (24h/7d/30d) for the external-context digest's Front section — exact
 fields the digest should render instead of the all-time total.
 Proposals only; every bulk action waits on Joel.
+
+## Answer (2026-07-14)
+
+The metadata-only traversal found 15,061 distinct open conversations: 3,490 touched in 30 days and 5,945 older than 90 days. A conservative terminal cut removes 2,309 notifications plus 653 newsletters, while bounce/auto-reply counts remain an honest metadata gap. The staged burn-down, reversible archive receipt, 3,000-open steady-state proposal, Front-rule defense, and digest contract are in [Front backlog analysis](./front-backlog-analysis.svx).
