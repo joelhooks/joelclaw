@@ -2,12 +2,13 @@
 title: "Build the Memory Skill-Index (runtime memories as unfoldable entries)"
 type: "question"
 kind: "task"
-status: "open"
+status: "closed"
 assignee: "pi worker (flagg, herdr pane wB:pZ, 2026-07-13)"
 interaction: "AFK"
 parent: "./recall-consumption-brief.svx"
 blockers: []
 created_at: "2026-07-13"
+closed_at: "2026-07-13"
 ---
 
 # Build the Memory Skill-Index
@@ -26,3 +27,22 @@ mechanism or plain prompt-index works better per runtime. Budget: small N,
 interest decay hooks reserved for consumption telemetry. Receipt: fresh
 sessions in two different repos wake with DIFFERENT, correctly-scoped
 indexes; opening an entry unfolds the page in one tool call.
+
+## Answer (2026-07-13)
+
+Built `joelclaw briefing --repo <path>` in `packages/cli`. It reads schema-v1
+observation pages plus repo-local and matching global Brain `.svx` pages,
+recency-ranks a budgeted index, emits absolute file pointers, and keeps
+sensitive bodies out of the index while marking entries `sensitive: true`.
+The heading includes the newest scoped arc, frontier, and observation delta;
+the day index is included when present. JSON uses the standard HATEOAS
+envelope. `--format text` emits prompt-ready text. Interest decay is reserved
+behind an explicit consumption-telemetry TODO. Injectors remain out of scope.
+
+Receipts:
+
+- `joelclaw briefing --repo ~/Code/joelhooks/joelclaw-observer`
+- `joelclaw briefing --repo ~/Code/joelhooks/joelclaw-wiki`
+- `bunx tsc --noEmit`
+- `pnpm biome check packages/`
+- compiled CLI and ran `joelclaw status`

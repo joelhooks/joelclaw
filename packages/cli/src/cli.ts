@@ -6,6 +6,7 @@ import { GATEWAY_ALLOWED_MODELS as ALLOWED_MODELS } from "@joelclaw/inference-ro
 import { Console, Effect } from "effect";
 import { agentCmd } from "./commands/agent";
 import { approvalsCmd } from "./commands/approvals";
+import { briefingCmd } from "./commands/briefing";
 import { callCmd } from "./commands/call";
 import { capabilitiesCmd } from "./commands/capabilities";
 import { contentCmd } from "./commands/content";
@@ -150,6 +151,7 @@ const root = Command.make("joelclaw", {}, () =>
             started: r.startedAt,
           })),
           commands: {
+            briefing: "joelclaw briefing --repo <path> [--budget N] [--format json|text]",
             content: "joelclaw content {seed|verify|prune [--apply]}",
             send: "joelclaw send <event> [-d JSON]",
             runs: "joelclaw runs [--count N] [--status S] [--hours H]",
@@ -289,6 +291,7 @@ const root = Command.make("joelclaw", {}, () =>
   Command.withSubcommands([
     agentCmd,
     contentCmd,
+    briefingCmd,
     discoverCmd,
     noteCmd,
     sendCmd,
