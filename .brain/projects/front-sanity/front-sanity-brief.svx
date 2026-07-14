@@ -1,0 +1,60 @@
+---
+title: "Front Sanity: from 15,067 open conversations to a sane steady state"
+type: "brief"
+status: "active"
+created_at: "2026-07-14"
+privacy: "private"
+---
+
+# Front Sanity
+
+Chartered 2026-07-14 when the observer's first external-context digest
+surfaced the number: **15,067 open conversations** in the Front inbox
+projection. Joel: "front sweeps can be time boxed (last 24 hours, 7
+days, 30 days) — it'd be nice to figure out a plan to get it sane from
+the 15k over time too."
+
+## Finish line
+
+Front's open-conversation count sits at a sane steady state (target set
+by the analysis, confirmed by Joel), the external-context digest and the
+paper's health surfaces report Front in **time-boxed windows** (24h /
+7d / 30d) instead of one scary total, and a standing mechanism (nightly
+sweep rule, archive policy, or triage cadence) keeps it from regrowing —
+maintained without a human remembering to do it.
+
+## Vocabulary
+
+- **time-boxed sweep** — Front counts reported per window (24h/7d/30d
+  activity), not the all-time open total.
+- **sane steady state** — the open count the analysis recommends and
+  Joel confirms; the number the maintenance mechanism defends.
+
+## Notes
+
+- Front is CUSTOMER SUPPORT — content is sensitive by default; every
+  analysis works on counts, ages, tags, and senders in aggregate; bodies
+  never leave Front. Read-only until Joel approves any bulk action; bulk
+  archive/close operations are explicitly Joel-approved, staged, and
+  reversible (Front archive ≠ delete).
+- Surfaces already in play: `joelclaw email inbox` (CLI), the wiki Front
+  adapter (read-only), `front-message-*` inngest functions, the
+  external-context digest's Front section
+  (joelclaw-observer, `assembleExternalSourceSection`).
+- Execution authorized for `kind: task` questions EXCEPT bulk mutations
+  of the Front inbox, which are HITL-gated per above (Joel, 2026-07-14,
+  charter).
+
+## Decision ledger
+
+<!-- one line per closed question: gist + link -->
+
+## Not yet specified
+
+- Whether steady-state maintenance lives in Front rules/macros or on the
+  joelclaw bus (the analysis should recommend).
+
+## Out of scope
+
+- Replying to or triaging individual conversations by content — that's
+  support work, not system work.
