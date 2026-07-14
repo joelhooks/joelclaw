@@ -1,0 +1,79 @@
+---
+title: "Task: Front burn-down stages 1–2 — tag-then-archive notifications + newsletters (APPROVED)"
+type: task-brief
+created: 2026-07-14
+parent: "../projects/front-sanity/front-sanity-brief.svx"
+---
+
+# Front burn-down, stages 1–2 (approved execution)
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. This task MUTATES the
+Front inbox — Joel approved stages 1–2 on 2026-07-14 ("everything's
+approved, go"), recorded in the brief Notes. The approval covers EXACTLY
+the two high-confidence cohorts below; nothing else. Stages 3–4 are NOT
+approved for mutation. Archive only — NEVER delete/trash, NEVER reply,
+NEVER change assignees. Metadata only, as before: no bodies, subjects,
+or customer identities read or persisted. Set your pi session name to
+"🔥 Front burn-down 1–2" immediately.
+
+Read first — the analysis is the spec, follow it exactly:
+`.brain/projects/front-sanity/front-backlog-analysis.svx`
+(§ Terminal-cohort estimate for the classifier, § Staged burn-down,
+§ Reversibility receipt), and the brief beside it.
+
+## The classifier (verbatim from the analysis — do not widen it)
+
+- **Stage 1, notifications** — sender domain exactly one of:
+  `github.com`, `circleci.com`, `sentry.io`, `vercel.com`,
+  `betterstack.com`, `uptimerobot.com`, `pagerduty.com`, `slack.com`.
+- **Stage 2, newsletters** — sender domain exactly one of:
+  `substack.com`, `beehiiv.com`, `buttondown.email`,
+  `convertkit-mail.com`, `ghost.io`, `mailchimp.com`,
+  `campaign-archive.com` (subdomain matches like `mail.beehiiv.com`
+  count for these newsletter infra domains, per the analysis's counts).
+- Open conversations only (`is:open`). Exclusive: a conversation already
+  tagged by stage 1 never re-matches stage 2.
+
+## Execution, per stage (the reversibility receipt is law)
+
+1. **Fresh recount** of the cohort (the snapshot is hours old); record
+   `stage, measuredAt, classifier domains, count, preStageOpenTotal`.
+2. **Tag first**: apply the private tag `front-sanity-stage-1-2026-07-14`
+   (resp. `-stage-2-`) to every matched conversation. Tagging is the
+   resume point — if interrupted, re-run tags idempotently.
+3. **Archive the tagged set** (`PATCH /conversations/{id}` status
+   archived, or the bulk endpoint if the API offers one). Respect 429s
+   with backoff; bounded batches; log progress counts to your receipt as
+   you go.
+4. **Post-stage recount**: open total after; delta must reconcile with
+   the tagged count (small drift from live traffic is expected — record
+   it, don't chase it).
+5. Stage 2 only starts after stage 1's receipt is complete.
+
+## Receipts
+
+Write ONE asset:
+`.brain/projects/front-sanity/burndown-stages-1-2-receipt.svx`
+(`type: "asset"`, `parent: "./front-sanity-brief.svx"`) with both
+stages' receipts: fresh counts, tagged counts, archived counts, pre/post
+open totals, drift notes, rollback instructions restated with the exact
+tag names, and anything that refused to archive (count + reason, no
+identities). The 7-day rollback window ends 2026-07-21 — say so.
+
+## Canary rules (the standing defense)
+
+After stage 2: attempt to create the tag-only canary rules via the Front
+API (one per approved domain group, action = apply tag
+`front-sanity-canary`, NO archive action yet). If the API doesn't
+support rule creation (likely), write the exact rule specs (name,
+filter, action) into the receipt asset for Joel to click in — honest
+fallback, no silent skip.
+
+## Rules
+
+Work autonomously. Do not commit. If ANYTHING about the match looks
+wrong mid-run (a cohort recount wildly off the analysis, a domain
+matching conversations that look non-terminal by metadata), STOP that
+stage, record what you saw, and continue to the receipt — a partial
+honest run beats a complete wrong one. Print DONE with both stages'
+headline numbers.

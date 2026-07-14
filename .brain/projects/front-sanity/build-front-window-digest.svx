@@ -4,7 +4,7 @@ type: "question"
 kind: "task"
 interaction: "AFK"
 status: "open"
-assignee: ""
+assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
 parent: "./front-sanity-brief.svx"
 blockers: []
 created_at: "2026-07-14"
@@ -23,4 +23,6 @@ traversal like the analysis ran, bounded runtime) and renders open total
 with delta, 24h/7d/30d touched windows, aged count, known-terminal
 counts, and coverage — never subjects, senders, or item spillover. The
 previous-snapshot comparison needs a small state file (the telemetry
-watch pattern). Stale counts render as stale, never as fresh.
+watch pattern). Stale counts render as stale, never as fresh. The approved 3,000-open
+ceiling is an invariant: when enumerated open exceeds it, the section
+emits a HIGH gap line (feeds tick_summary and the paper health strip).
