@@ -1,0 +1,62 @@
+---
+title: "Task: Front backlog shape — aggregates, cohorts, burn-down proposal"
+type: task-brief
+created: 2026-07-14
+parent: "../projects/front-sanity/research-front-backlog-shape.svx"
+---
+
+# Front backlog shape
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. **READ-ONLY research on
+CUSTOMER SUPPORT data**: aggregates only — counts, ages, tags, sender
+domains. NEVER read, quote, or persist conversation bodies or customer
+names/emails; domains and counts are the floor of granularity. No
+commits, no Front mutations of any kind. Set your pi session name to
+"📬 Front backlog shape" immediately.
+
+Read first:
+1. Your claimed question + the brief (Notes bind you — sensitivity
+   rules):
+   `.brain/projects/front-sanity/research-front-backlog-shape.svx` and
+   `front-sanity-brief.svx` beside it.
+2. The available surface: `joelclaw email --help` (inbox queries), the
+   `front-message-*` inngest functions, and the wiki's read-only Front
+   adapter (`~/Code/joelhooks/joelclaw-wiki/src/lib/services/sources/front-source.ts`)
+   for how the API is paged/authed. If the CLI can't answer a cut,
+   query the Front API read-only the way the adapter does.
+
+## Deliverable
+
+ONE asset:
+`.brain/projects/front-sanity/front-backlog-analysis.svx`
+(`type: "asset"`, `parent: "./research-front-backlog-shape.svx"`,
+`privacy: "private"`) with:
+
+1. **The shape, real numbers**: total open; touched in last 24h / 7d /
+   30d / 90d / older; per-inbox and per-tag counts; top sender DOMAINS
+   by volume; terminal-cohort estimates (newsletters, notifications,
+   bounces, auto-replies — identified by headers/tags/domains, not by
+   reading bodies).
+2. **Staged burn-down proposal**: per cohort — what a bulk archive
+   removes (recomputed count), in what order, with what reversibility
+   receipt (Front archive is reversible; say how to undo). Expected
+   count after each stage; the recommended sane steady state.
+3. **Standing defense**: the mechanism that keeps it sane (Front
+   rule/macro vs a bus sweep function — recommend one, say why).
+4. **Time-boxed sweep spec**: the exact fields the external-context
+   digest's Front section should render (24h/7d/30d windows + open
+   total trend) — the shape
+   `assembleExternalSourceSection` in joelclaw-observer should consume.
+
+If an aggregate is unreachable read-only, say what you tried and record
+the honest gap — never estimate silently.
+
+## Question-file edits (part of the deliverable)
+
+Append `## Answer (2026-07-14)` + 3-sentence gist linking the asset;
+flip `status: "closed"` + `closed_at`. Steering writes the ledger line.
+
+## Rules
+
+Work autonomously. Do not commit. Aggregates only. Print DONE with the
+headline numbers.

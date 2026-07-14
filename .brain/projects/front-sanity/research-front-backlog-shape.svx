@@ -1,0 +1,29 @@
+---
+title: "Research the Front Backlog Shape (what ARE the 15k, and the burn-down plan)"
+type: "question"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
+parent: "./front-sanity-brief.svx"
+blockers: []
+created_at: "2026-07-14"
+---
+
+# Research the Front Backlog Shape
+
+## Question
+
+15,067 open conversations is a shape, not a number. Analyze read-only
+via the joelclaw CLI / Front API surface — aggregates only, never
+bodies: age distribution (how many touched in 24h / 7d / 30d / 90d /
+older), inbox/tag breakdown, top senders by volume (domains ok, no
+content), and how many are obviously terminal (newsletters,
+notifications, bounced, auto-replies) vs plausibly-live threads.
+Produce an asset with the numbers plus a staged burn-down proposal:
+what a bulk-archive of the terminal cohorts would remove (recompute the
+count per cohort), what a sane steady state looks like, and what
+standing mechanism defends it. Also spec the time-boxed sweep windows
+(24h/7d/30d) for the external-context digest's Front section — exact
+fields the digest should render instead of the all-time total.
+Proposals only; every bulk action waits on Joel.
