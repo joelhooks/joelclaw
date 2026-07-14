@@ -1,0 +1,67 @@
+---
+title: "Task: make check-system-health machine-aware (k8s lives on panda)"
+type: task-brief
+created: 2026-07-14
+parent: "~/Code/joelhooks/joelclaw-wiki/.brain/projects/daily-operating-paper/fix-health-check-machine-awareness.svx"
+---
+
+# Make check-system-health machine-aware
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. NO commits, NO push, NO
+deploy/publish (do not run any `publish-system-bus-worker` script — code
++ tests only; steering deploys at harvest). The repo has unrelated dirty
+files and local commits — stay narrow, never `git add`. Set your pi
+session name to "🏥 Machine-aware health check" immediately.
+
+Read first:
+1. Your claimed question (the why + the standing facts):
+   `~/Code/joelhooks/joelclaw-wiki/.brain/projects/daily-operating-paper/fix-health-check-machine-awareness.svx`
+2. The health check: find `check/system-health` in
+   `packages/system-bus/src/inngest/functions/` and the k8s probe used by
+   `joelclaw status` (packages/cli). Understand exactly where
+   `k8s.ok: false → system.fatal` happens.
+3. Repo law: `.claude/CLAUDE.md` validation checklist, `@joelclaw/*`
+   import boundaries, Effect idioms.
+
+## The facts
+
+The k8s cluster lives on **panda**, not flagg. flagg correctly has no
+local kubectl/k3d. The current check treats that as fatal and has fired
+`system.fatal` every 15 minutes — a false alarm that fed a dispatcher
+self-wake loop (78/78 wakes, see the wake-rate analysis next to your
+question file). Panda is also on a decommission path, so the placement
+WILL move.
+
+## Deliverable
+
+1. A **host→service mapping in config, not code**: which hosts carry
+   which checked services (k8s → panda today). Follow the repo's config
+   idiom (find how other host-specific config is done; if none exists,
+   propose the smallest data-driven shape — a config file or env-driven
+   map, never `if (hostname === "flagg")` scattered in functions).
+2. The k8s check becomes machine-aware via `hostname` against that map:
+   on a host that doesn't carry k8s, report status
+   `"not-hosted-here (hosted on: panda)"` as HEALTHY context — never
+   fatal, never degraded. On the hosting host, the existing local check
+   runs unchanged. (Remote probing over the tailnet is a later step —
+   note it, don't build it; flagg has no kubeconfig for panda.)
+3. `joelclaw status` k8s section reflects the same semantics.
+4. Tests in the repo idiom for the mapping + the not-hosted-here path.
+
+## Verify
+
+`bunx tsc --noEmit` green; `pnpm biome check` on the files you touched
+(repo-wide has pre-existing failures — anything NEW is yours); targeted
+tests green. Receipt in DONE: the new `joelclaw status` k8s output (run
+the built CLI from source or show the test output — never invent), and
+the exact code path that previously emitted `system.fatal` with what it
+emits now.
+
+## Question-file edits (part of the deliverable)
+
+Append `## Answer (2026-07-14)` + receipts to the claimed question file,
+flip `status: "closed"` + `closed_at`. Steering writes the ledger line.
+
+## Rules
+
+Work autonomously. Do not commit. Print DONE with receipts.

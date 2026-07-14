@@ -1,0 +1,33 @@
+---
+title: "Observe the Project Trackers (.brain/projects) as a First-Class Target"
+type: "question"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-07-14"
+---
+
+# Observe the Project Trackers as a First-Class Target
+
+## Question
+
+Standing call (Joel, 2026-07-14): `~/Code/joelhooks/joelclaw/.brain/projects`
+— and by extension every registered root's `.brain/projects` tracker
+tree — "feels like a super important observation target." Today the
+observer watches session transcripts and ClickHouse telemetry; tracker
+events happen off-camera: a brief chartered, a question opened, claimed,
+closed, a ledger line landing. Those are exactly the decisions/loops
+memory should carry.
+
+Decide the shape: does the observer tick diff the tracker trees (git log
+across registered roots is cheap and citable) and distill tracker deltas
+into observation pages; do tracker events emit gateway signals the
+dispatcher classifies; or does the work-sweep (already scanning every
+root, wiki `work-sweep.ts`) grow a delta mode the observer consumes?
+Interaction with the reflector (tracker observations blur like the rest)
+and with the Bugle (question opens ARE open loops — avoid
+double-derivation with the observation-page adapter). Joel speaks for
+himself here.
