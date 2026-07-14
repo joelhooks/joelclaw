@@ -1,0 +1,17 @@
+---
+title: "Give the Video Pipeline Forensic Observability"
+type: "question"
+kind: "task"
+status: "open"
+interaction: "AFK"
+parent: "./video-pipeline-brief.svx"
+blockers:
+  - "./build-file-to-mux-phase-one.svx"
+created_at: "2026-07-13"
+---
+
+# Give the Video Pipeline Forensic Observability
+
+## Question
+
+Joel, mid-drive 2026-07-13, after an evening of blind debugging: "aggressive high cardinality structured logging, clickhouse, the ability to do forensics and stop this blind bs." The infrastructure already exists — `emitOtelEvent` (`packages/system-bus/src/observability/emit.ts`) writes to ClickHouse `joelclaw.otel_events` on three-body (`192.168.1.163:8123`, ~1k events/hour from memory/nas-backup/agent-usage) — the video pipeline just doesn't emit into it. Build: (1) **per-step structured events** in `joelclaw-video` (component `video-pipeline`): step start/success/failure with resourceId, shareSlug, uploadId, muxAssetId, checksum, byte sizes, durations, attempt numbers, full error text — every apiCall failure included; (2) the same discipline in **joelclaw-api** request handling (component `joelclaw-api`: route, actor, resourceId, status, duration — observability is first-class in the strangler, not bolted on); (3) a **forensics CLI**: `joelclaw video trace <resourceId|slug>` querying ClickHouse for the full story of one video (pattern: `lib/clickhouse-usage-query.ts`), plus an Inngest run-trace view wrapping the `runTrace` GraphQL query that tonight had to be hand-rolled (the coarse `/v1` REST status reads "Scheduled" during step retries and misled diagnosis twice); (4) record tonight's forensic lessons in the events it emits — archive readback (write-returns-0 quirk), retry-backoff visibility. Resolved when a publish run's every step is queryable in ClickHouse seconds after it happens and the CLI reconstructs tonight's class of failure in one command.
