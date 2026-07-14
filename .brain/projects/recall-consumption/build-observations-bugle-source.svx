@@ -2,7 +2,8 @@
 title: "Build Observations as a Prime Bugle Source"
 type: "question"
 kind: "task"
-status: "open"
+status: "closed"
+closed_at: "2026-07-13"
 assignee: "pi worker (flagg, herdr pane wB:p0, 2026-07-13)"
 interaction: "AFK"
 parent: "./recall-consumption-brief.svx"
@@ -25,3 +26,22 @@ resolution — is written in
 [observer-system-architecture](../../../dark-wizard/.brain/resources/observer-system-architecture.svx)
 (dark-wizard resources; renders at /user/resources/observer-system-architecture).
 Respect the Bugle 4-layer data contract; adapter read-only like all others.
+
+## Answer (2026-07-13)
+
+Implemented the read-only `observation-page` adapter in
+`joelclaw-wiki/src/lib/services/sources/observation-page-source.ts`.
+It reads `dark-wizard/.brain/observations/**`, extracts only the named
+`Open questions / next actions` and `Decisions` sections, and emits
+`ObservationPageArtifact` records as the first layer. Sensitive pages are
+skipped before title, URL, or body projection. Every artifact carries the
+paper URL and `sessionId` in its pointer/metadata.
+
+Receipts:
+
+- `bunx vitest run src/lib/services/sources/observation-page-source.test.ts`: 3 passing tests.
+- Real adapter gather for 2026-07-13: 19 artifacts, with sensitive pages skipped.
+- Temporary receipt build at `/tmp/bugle-observation-build.7Ee1Or/editions/2026-07-13-observation-adapter-receipt.json`: 54 normalized observations, 8 OpenLoopCandidates, and observation-backed candidates including `Make the observer finish backlog without detached workers.` and `Turn voice-agent research into a testable phone-agent rubric.` Their evidence pointers carry the page URLs and `sessionId` locators above.
+- Examples: `The observer loop reached its first end-to-end memory write after live fixes` → `https://brain.joelclaw.com/user/observations/2026-07-13-3a94b8f4c8ce/`, session `3b3e4b53-4891-4aaf-be7d-4ee23c18f253`; `Voice-agent UX research prioritized turn-taking and interruption recovery` → `https://brain.joelclaw.com/user/observations/2026-07-13-cc85ef8a1072/`, session `0d9e4f52-1bf8-4418-9fee-990159cd3be9`; `2026-07-13-brainbench-recall-quality.svx` → `https://brain.joelclaw.com/user/observations/2026-07-13-brainbench-recall-quality/`, session `019f5c2c-6043-7b8f-9ffd-8470601a0ed8`.
+- `bun run check`: green. `bun run build`: green.
+- `bun run lint`: only the known pre-existing `unicorn(no-useless-fallback-in-spread)` failure in `src/lib/services/graph-typesense-index.ts:128`.

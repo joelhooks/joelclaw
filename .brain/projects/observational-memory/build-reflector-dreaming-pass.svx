@@ -3,7 +3,7 @@ title: "Build the Reflector: Nightly Dreaming Pass (consolidate, reconcile, forg
 type: "question"
 kind: "task"
 status: "open"
-assignee: ""
+assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
 interaction: "AFK"
 parent: "./observational-memory-brief.svx"
 blockers: ["./research-salience-decay-mechanisms.svx"]
