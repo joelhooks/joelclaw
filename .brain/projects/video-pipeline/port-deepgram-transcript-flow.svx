@@ -2,7 +2,8 @@
 title: "Port the Deepgram Transcript Flow"
 type: "question"
 kind: "task"
-status: "open"
+status: "closed"
+closed_at: "2026-07-14"
 assignee: "claude (flagg, herdr pane wQ:p1 steering + workers, 2026-07-14)"
 interaction: "AFK"
 parent: "./video-pipeline-brief.svx"
@@ -21,3 +22,21 @@ Transcripts are super important (Joel, 2026-07-13): use Deepgram the way course-
 **Scope update at claim (2026-07-14, steering):** the wzrrd charter ([Personal video sharing on wzrrd](/Users/joel/Code/joelhooks/wzrrd-sh-cli/.brain/projects/personal-video-sharing/personal-video-sharing-brief.svx)) moved the render surface since this was written. Concretized flow: rendition.ready → Deepgram `listen` (nova-3, source = the public `highest.mp4` rendition URL, callback `hooks.joelclaw.com/webhooks/deepgram?token=<agent-secrets deepgram_callback_token>&resourceId=...`) → gateway `deepgram` provider (token verified constant-time) emits `deepgram/transcript.ready` → new joelclaw-video function builds text+VTT, PATCHes wzrrd `/api/videos/<slug>/transcript` (inline; wzrrd stores to R2 `wzrrd-media` and serves `/v/<slug>/captions.vtt`), patches Convex with the transcript, then adds the wzrrd captions URL to the Mux asset as a text track so every mux-player gets captions natively. Resolution bar unchanged in spirit: a published video ends with transcript in Convex, captions on the Mux asset, and transcript visible on the wzrrd watch page.
 
 **Second scope update (Joel, 2026-07-14, mid-build): "deepgram flow needs to move to cloudflare."** The flagg-side build (gateway `deepgram` provider, joelclaw-video request step + transcript function, joelclaw-api setTranscript) was stopped mid-flight and discarded. New home: wzrrd Workers own the whole flow — request Deepgram on publish (source = the public Mux rendition URL), receive the token-verified callback at `wzrrd.sh/api/webhooks/deepgram`, build VTT/text in the Worker, store to R2, serve captions, and push the captions URL onto the Mux asset as a text track (Mux creds already live on the Worker for revoke). Convex gets no pushed transcript (Cloudflare can't reach tailnet-only joelclaw-api); if joelclaw wants a copy it pulls from wzrrd. The build now rides the wzrrd effort's worker briefs.
+
+## Answer (2026-07-14)
+
+Live in production, Cloudflare-native per Joel's mid-build call. The flow: publish (or
+`POST /api/videos/<slug>/transcribe`) fire-and-forgets a Deepgram nova-3 request from the wzrrd
+Worker (source = the public Mux `highest.mp4` rendition); the token-verified callback at
+`wzrrd.sh/api/webhooks/deepgram` builds VTT from utterances + text from paragraphs, stores both
+in R2 (`wzrrd-media`), serves captions at `/v/<slug>/captions.vtt`, renders the transcript on
+the watch page, and attaches the captions URL to the Mux asset as a native text track
+(status: ready, verified via Mux API). Acceptance receipts on Joel's real video
+`wzrrd.sh/v/ejnhot35jD`. Deviations from the original bar, both deliberate: no transcript copy
+in Convex (Cloudflare can't reach tailnet-only joelclaw-api — wzrrd R2/D1 is transcript truth;
+joelclaw pulls if ever needed), and the first flagg-side build (gateway provider + Inngest leg)
+was discarded mid-flight when Joel moved the flow to Cloudflare. Side receipts: the destination
+ASR spike (cloud-video-default brief) recommends Workers AI Whisper turbo as the eventual
+default with Nova-3 fallback — Deepgram-direct remains the incumbent until the Workflow spine
+lands. Gotcha for the fleet: rotating the Cloudflare API token kills GitHub Actions deploys —
+the repo secret `CLOUDFLARE_API_TOKEN` must be synced too (fixed via `gh secret set`).
