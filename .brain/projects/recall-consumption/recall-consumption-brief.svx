@@ -56,6 +56,8 @@ enough; ingest changes belong to the observational-memory map, not here.
 
 - [Decide the Session-Start Briefing Contract](./decide-briefing-distillation-contract.svx) — memories are SKILL-SHAPED: core canon fused via fleet grafts; runtime memories as a budgeted repo-scoped title+description index that agents unfold on relevance (collision-by-shape); heading + delta line; one content brain, three thin injectors. Graduated: canon curation (HITL) + skill-index build.
 
+- [Build the Memory Skill-Index](./build-memory-skill-index.svx) — `joelclaw briefing --repo <path>` live: heading (arc/delta from newest scoped observations) + budgeted repo-scoped index with one-call unfold pointers; receipt 51 vs 77 scoped observations across two repos. v1 gap on record: index entries surface repo task-briefs; observation pages inform heading/counts but don't rank as entries yet.
+
 ## Not yet specified
 
 - Cross-machine pull: sessions-search rides central Typesense (works
