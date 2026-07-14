@@ -3,6 +3,7 @@ title: "Effect-ify the Video Pipeline with Forensic Observability"
 type: "question"
 kind: "task"
 status: "open"
+assignee: "flagg-claude-steering + pi worker (2026-07-14, drive)"
 interaction: "AFK"
 parent: "./video-pipeline-brief.svx"
 blockers:
