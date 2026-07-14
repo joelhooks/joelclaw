@@ -1,0 +1,47 @@
+---
+title: "Wire the Nightly Dream: LaunchAgent + week/month blur ladder"
+type: "question"
+kind: "task"
+status: "open"
+assignee: ""
+interaction: "AFK"
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-07-14"
+---
+
+# Wire the Nightly Dream: LaunchAgent + week/month blur ladder
+
+## Question
+
+The first real dream ran supervised
+([Build the Reflector](./build-reflector-dreaming-pass.svx), closed
+2026-07-14). Two pieces make it nightly and complete the spec's ladder:
+
+1. **Nightly trigger**: rewrite `bin/observer-dream.sh` to invoke
+   `applyReflectorDream` directly (the pass is fully deterministic — no pi
+   session needed for v1), install to `~/.joelclaw/bin`, and wire a
+   LaunchAgent (`com.joelclaw.observer-dream`, ~6am, following the
+   observer-tick pattern). Commit cadence: the live observer's publish
+   tick already sweeps observation-tree changes to origin (proven
+   2026-07-14, commit `6abfc34`), so the dream job itself need not push —
+   verify that holds, or add an explicit commit step. Policy knobs:
+   minAgeDays=7, cap stated in every receipt.
+2. **Week/month ladder**: `groupReflectorRollups` currently re-groups
+   aged rollups at DAY granularity (kind is not consulted) — once rollups
+   turn 7 days old, a nightly dream would churn rollup-of-rollup at the
+   same blur level. Wire `reflectorBlurLayer`'s rollup escalation into
+   grouping: rollups ≥30 days collapse weekly, ≥90 days monthly; plain
+   pages keep the day path. Until this lands, dreams are manual-only —
+   there is no churn risk because no automation exists, but the
+   LaunchAgent (piece 1) MUST NOT ship before this guard does.
+
+Also fold in (small, same surface): a rollup-aware validator (schema v1
+demands `windowFrom`/`windowTo` > 0, which is meaningless for rollups —
+validate rollups with their own required set), and consider normalizing
+repo identity upstream in the distill prompt so `normalizeReflectorRepo`
+has less to repair.
+
+Done when: the LaunchAgent dreams nightly at minAgeDays=7 with the
+ladder guard in place, one unattended run leaves a receipt page and a
+pushed dark-wizard commit, and the recall bench still does not regress.
