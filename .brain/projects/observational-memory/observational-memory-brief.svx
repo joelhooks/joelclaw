@@ -60,6 +60,8 @@ to understand all of the work that we're doing."
 
 ## Decision ledger
 
+- [Research Salience Decay](./research-salience-decay-mechanisms.svx) — survey shipped ([asset](./salience-decay-survey.svx)): the pattern everywhere is rank-decay/blur/validity-close, never deletion; v1 score recommended (14-day half-life recency × repo scope × log-token work), telemetry gap named (deliberate-recall events only, impressions poison the signal). Reflector unblocked.
+
 <!-- one line per closed ticket: gist + link -->
 
 - [Decide the Observation Schema and Brain Placement](./decide-observation-schema.svx) — per-session atoms (reflector composes threads later) as `.svx` in `dark-wizard/.brain/observations/` → `/user/observations/…`; v1 frontmatter w/ provenance + derivation.promptHash; extractors are body sections behind a versioned pi prompt; noise bar: no mutations + <15k tokens → index line, no page.

@@ -1,0 +1,103 @@
+---
+type: asset
+parent: "./research-salience-decay-mechanisms.svx"
+title: "Salience decay survey: forgetting at the recall layer"
+created_at: "2026-07-14"
+privacy: "private"
+---
+
+# Salience decay survey
+
+## Bottom line
+
+The useful pattern is not deletion. Systems either (a) lower a memory's chance of entering context, (b) replace detail with a denser abstraction, or (c) close a fact's validity window while preserving its source history. That matches the governing frame for this project: the filesystem remains the substrate; recall decides what is loud, quiet, blurred, or current. [`.brain/projects/observational-memory/build-reflector-dreaming-pass.svx`](./build-reflector-dreaming-pass.svx); [Mastra Observational Memory](https://mastra.ai/docs/memory/observational-memory); [Graphiti paper](https://arxiv.org/html/2501.13956v1)
+
+## Mechanism comparison
+
+| System / mechanism | What decays or changes | Signal feeding it | Cost / risk for us |
+|---|---|---|---|
+| **Generative Agents** | Retrieval priority decays exponentially after last retrieval; reflections add higher-level memories beside observations. The source stream remains comprehensive. | Recency, embedding relevance, and LLM-assigned importance; source implementation uses `0.995` per sandbox hour and combines normalized signals. Reflection triggers when recent importance crosses a threshold. | Cheap at read time once embeddings and access timestamps exist. It needs a query relevance score, an importance field, and access writes. We have none of the access telemetry yet. [Park et al., 2023](https://ar5iv.labs.arxiv.org/html/2304.03442)
+|
+| **Mastra Observer / Reflector** | Raw messages are compressed into observations; observations are later condensed, combined, and generalized into reflections. Retrieval mode keeps links back to raw message ranges, so compression need not destroy the substrate. | Token thresholds and background idle/buffer activation, not demonstrated per-item salience decay. Default thresholds documented: 30,000 message tokens for observation and 40,000 observation tokens for reflection. | Model-token cost and possible detail loss. Provenance links are the key thing to steal. This is close to our observer → reflector shape, but it is not evidence for a per-observation decay curve. [Mastra OM docs](https://mastra.ai/docs/memory/observational-memory); [Mastra OM reference](https://mastra.ai/docs/memory/observational-memory/llms.txt)
+|
+| **Letta / MemGPT** | Core memory is bounded and editable; recall keeps the complete interaction history searchable; archival memory stores explicitly formulated knowledge. Sleep-time agents asynchronously reorganize memory blocks. | Agent/tool decisions about what to rewrite, move, or retrieve; sleep-time work uses idle compute rather than a documented numeric decay function. | Flexible but judgment-heavy. It can preserve a cold history while changing the active projection. We should borrow the asynchronous reflector idea, not rely on an LLM to invent the decay policy. [Letta agent memory](https://www.letta.com/blog/agent-memory/); [Letta sleep-time compute](https://www.letta.com/blog/sleep-time-compute/)
+|
+| **Supermemory** | Expiring facts are automatically excluded after their time-bound event; contradicted facts are updated/linked; a forgotten memory is soft-deleted from search but retained. | Explicit dates / expiration, contradiction detection, and memory operations. I found no verified public source for a continuous numeric “profile decay” score. | Good model for intentional forgetting and reversibility. Do not call this salience decay: the public docs support expiry and soft-delete, not gradual rank decay. [Graph memory](https://supermemory.ai/docs/concepts/graph-memory); [memory operations](https://supermemory.ai/docs/memory-operations)
+|
+| **Zep / Graphiti** | Superseded temporal edges are invalidated by closing validity windows, not deleted. Historical edges and episode provenance remain queryable. | Valid time, ingestion time, semantic conflict comparison, and newer-edge precedence. | Strong reconciliation model for facts, not a general salience score. It requires temporal extraction and graph-shaped conflict logic. Borrow “close, don't erase” and provenance; avoid importing a graph engine for v1. [Zep / Graphiti paper](https://arxiv.org/html/2501.13956v1); [Graphiti overview](https://help.getzep.com/graphiti/getting-started/overview)
+|
+| **Rollup blur: day → week → month** | Detail is replaced by a progressively denser summary while source pages remain available. This is the proposed reflector mechanism, not a verified implementation claim about one surveyed product. | Age, relatedness, duplicate/conflict structure, and promotion decisions. | Cheap recall surface, but summarization can erase chronology or citations. Every rollup needs source pointers and a receipt of what was blurred. [`.brain/projects/observational-memory/decide-observation-schema.svx`](./decide-observation-schema.svx); [`.brain/projects/observational-memory/build-reflector-dreaming-pass.svx`](./build-reflector-dreaming-pass.svx)
+|
+| **Consumption telemetry feedback** | A recalled item earns salience back; untouched items quietly lose rank. This is the desired future mechanism, not available today. | `last_accessed_at`, access count, query/context, and ideally whether the item was actually injected or useful. | Powerful but easy to poison with automated probes. Record only deliberate recall/injection events first; separate search impressions from accepted context. [Park et al., 2023](https://ar5iv.labs.arxiv.org/html/2304.03442); [`.brain/projects/recall-consumption/build-memory-skill-index.svx`](../recall-consumption/build-memory-skill-index.svx)
+|
+
+## Cognitive-science anchors worth stealing
+
+1. **Retrieval failure is not the same as substrate loss.** Apparent forgetting can mean a stored memory is inaccessible under the current cue, rather than erased. That supports quieting a recall projection while retaining the `.svx` source. The practical caveat is that this source is a secondary psychology explainer, not a primary experiment, so treat the distinction as a design anchor rather than a settled implementation law. [Albert Psychology review](https://www.albert.io/blog/forgetting-ap-psychology-review)
+
+2. **Consolidation can trade detail for a more general representation.** The spacing/reconsolidation review describes memory as being reorganized into a more effective representation and emphasizes that retrieval can make a trace modifiable again. For the reflector: preserve citations and source pointers, but allow the active representation to become shorter and more general. [Frontiers review](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2017.00962/full)
+
+3. **Spacing makes retrieval useful, not merely frequent access.** The review reports that spaced retrieval can improve later retention and that retrieval difficulty can contribute to the spacing effect. A single access counter is therefore too crude: repeated automated reads should not equal a meaningful re-use event. [Frontiers review](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2017.00962/full)
+
+4. **Interference deserves a separate rule.** Newer or competing information can make an older item harder to retrieve even when the old source remains intact. Our equivalent is temporal-gradient conflict handling: newer decisions should win the current projection, while the superseded page remains linked and queryable. The specific mapping from human interference to our file graph is an engineering analogy, not a directly validated result. [Albert Psychology review](https://www.albert.io/blog/forgetting-ap-psychology-review); [Zep / Graphiti paper](https://arxiv.org/html/2501.13956v1)
+
+## Recommended v1
+
+### Principle
+
+Use **rank decay plus blur, never source deletion**. Keep original observation pages in the filesystem. Let the skill-index and reflector compute a bounded projection whose score falls with age, is scoped by repo, and uses only weak work-signal proxies until access telemetry exists.
+
+### Score available today
+
+For an observation `o` and target repo `r`, compute:
+
+```text
+age_days = max(0, (now - ended(o)) / 86_400_000)
+recency  = exp(-ln(2) * age_days / 14)
+scope    = 1.00 if r ∈ repos(o)
+           0.60 if repos(o) is empty (global)
+           0.00 otherwise
+work     = min(1, log1p(tokens(o)) / log1p(100_000))
+
+v1_score = 0.55 * scope + 0.35 * recency + 0.10 * work
+```
+
+Use `ended` when present, then `started`; use a deterministic tie-breaker on path. The 14-day half-life is a tunable starting policy, not a cognitive fact or a measured optimum. The `tokens` term is only a work-size proxy; it must never be described as importance. `repos` gives the strongest current signal because the skill-index is repo-scoped. These inputs are present in schema-v1 observation frontmatter. [`.brain/projects/observational-memory/decide-observation-schema.svx`](./decide-observation-schema.svx); [`.brain/projects/recall-consumption/build-memory-skill-index.svx`](../recall-consumption/build-memory-skill-index.svx); [example schema-v1 observation](../../../dark-wizard/.brain/observations/2026-07-12-flagg-pi-graph-orphan-edges.svx)
+
+### Reflector policy around the score
+
+- **Day layer:** keep recent observation detail and exact citations.
+- **Week layer:** merge related atoms, preserve every source path/session ID, and mark conflicts with newer evidence winning the active statement.
+- **Month layer:** promote only repeated or explicitly durable facts into the skill-index; retain the rollup's source list.
+- **Quiet, don't delete:** below the score threshold, remove an item from default injection but leave it searchable and recoverable.
+- **Never count a rollup as a new fact without links:** a summary inherits the citations of its inputs and names the inputs directly.
+
+This follows the local schema's session-epoch model and the project's explicit “substrate never lies” decision. [`.brain/projects/observational-memory/decide-observation-schema.svx`](./decide-observation-schema.svx); [`.brain/projects/observational-memory/build-reflector-dreaming-pass.svx`](./build-reflector-dreaming-pass.svx)
+
+### Minimal telemetry that unlocks better decay
+
+Add one append-only event per deliberate recall/injection, not per search candidate:
+
+```text
+memory_id or canonical page path
+surface: skill-index | qmd | Typesense | voice | other
+query_or_context_hash
+shown_at
+accepted: boolean | unknown
+```
+
+Derive `last_accessed_at` and a bounded access count in the rebuildable projection. Then add a small reinforcement term, for example:
+
+```text
+reinforcement = min(1, log1p(meaningful_accesses) / log1p(8))
+score = 0.50 * scope + 0.30 * recency + 0.10 * work + 0.10 * reinforcement
+```
+
+Do not treat an impression as a successful retrieval. Distinguish “shown”, “injected”, and “used” when the surfaces can report it. The current skill-index explicitly reserves interest decay for consumption telemetry, and the current observation schema has no access fields. [`.brain/projects/recall-consumption/build-memory-skill-index.svx`](../recall-consumption/build-memory-skill-index.svx); [`.brain/projects/observational-memory/decide-observation-schema.svx`](./decide-observation-schema.svx)
+
+## Unverified / not claimed
+
+- I did not verify a public Supermemory implementation of continuous profile decay; the verified docs support expiry, contradiction updates, and reversible soft-delete.
+- I did not find evidence that Mastra's Reflector applies per-item exponential salience decay; its documented mechanism is thresholded compression/reflection.
+- The 14-day half-life and all v1 weights above are proposed policy, not benchmark results.
+- No access telemetry exists in the current schema, so this survey cannot claim that retrieval should restore salience in our system yet.
