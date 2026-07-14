@@ -8,40 +8,44 @@ created_at: "2026-07-14"
 
 # Front sanity burn-down stages 1–2 receipt
 
-- Run status: **running**
-- Started: 2026-07-14T18:21:09.171Z
-- Finished: not finished
-- Current phase: stage-1-recount
+- Run status: **complete**
+- Started: 2026-07-14T18:23:47.658Z
+- Finished: 2026-07-14T18:57:41.915Z
+- Current phase: finished
 - Stop reason: none
-- Prior safety stop: A first metadata-only recount at 2026-07-14T18:20:32Z stopped before mutation because the safety check incorrectly treated Front's legacy assigned/unassigned conversation status values as non-open. The `is:open` search itself is the open-state authority. That run made zero tag or archive mutations; this run corrected the check.
+- Prior safety stop: Two metadata-only attempts stopped before conversation mutation: the first at 2026-07-14T18:20:32Z because a safety check incorrectly treated Front's legacy assigned/unassigned values as non-open; the second because `/me` returns the company (`cmp_…`), not a teammate owner for a private tag. Both runs made zero tag or archive mutations. This run uses the dominant existing private-tag teammate owner discovered from tag metadata, without reading teammate identity fields.
 - Privacy boundary: metadata only. No message/body endpoints were called. No subjects, bodies, full addresses, or customer identities were persisted.
 - Mutation boundary: tag then archive only. No replies, deletes, trash, assignee changes, or stages 3–4 mutations.
 
 ## Stage 1: notifications
 
-- Status: **recounting**
-- Measured at: not measured
+- Status: **complete**
+- Measured at: 2026-07-14T18:25:40.329Z
 - Query: `is:open`
 - Match semantics: sender domain equals exactly one approved domain
 - Classifier SHA-256: `dd813c4439e94fb8d8e4d5163b659643a06ad8682758c2087649ff09946d878b`
 - Temporary private tag: `front-sanity-stage-1-2026-07-14`
-- Fresh cohort count: **0**
-- Pre-stage open total: **unknown enumerated / unknown API-reported**
+- Fresh cohort count: **2,263**
+- Pre-stage open total: **15,072 enumerated / 15,073 API-reported**
 - Already tagged at recount: 0
-- Tagged and eligible for archive: 0
+- Tagged and eligible for archive: 2,263
 - Tag failures withheld from archive: 0
-- Archived: 0
+- Archived: 2,263
 - Archive refusals/failures: 0
-- Post-stage open total: **not measured enumerated / not measured API-reported**
-- Observed enumerated delta: not measured
-- Live-traffic drift (observed delta minus successful archives): not measured
-- Last progress write: 2026-07-14T18:21:09.174Z
+- Post-stage open total: **12,816 enumerated / 13,148 API-reported**
+- Observed enumerated delta: 2,256
+- Live-traffic drift (observed delta minus successful archives): -7
+- Last progress write: 2026-07-14T18:48:21.093Z
 
 ### Classifier domains
 
 | Domain | Fresh matches |
 | --- | ---: |
-| _(none)_ | 0 |
+| `github.com` | 1,947 |
+| `vercel.com` | 306 |
+| `slack.com` | 7 |
+| `uptimerobot.com` | 2 |
+| `sentry.io` | 1 |
 
 ### Refusals and failures
 
@@ -51,6 +55,52 @@ Tagging:
 Archiving:
 - None.
 
+### Stage note
+
+Stage complete. Observed open delta 2,256 versus 2,263 successful archive calls; live-traffic drift -7.
+
+
+## Stage 2: newsletters
+
+- Status: **complete**
+- Measured at: 2026-07-14T18:50:04.722Z
+- Query: `is:open`
+- Match semantics: sender domain equals or is a subdomain of one approved newsletter infrastructure domain; stage-1 tag excluded
+- Classifier SHA-256: `809a1c80148c6bbeaecdcc08ff48580cf895e2fc1ab12f4901632f57a51fbf01`
+- Temporary private tag: `front-sanity-stage-2-2026-07-14`
+- Fresh cohort count: **656**
+- Pre-stage open total: **12,813 enumerated / 12,814 API-reported**
+- Already tagged at recount: 0
+- Tagged and eligible for archive: 656
+- Tag failures withheld from archive: 0
+- Archived: 656
+- Archive refusals/failures: 0
+- Post-stage open total: **12,178 enumerated / 12,487 API-reported**
+- Observed enumerated delta: 635
+- Live-traffic drift (observed delta minus successful archives): -21
+- Last progress write: 2026-07-14T18:57:40.048Z
+
+### Classifier domains
+
+| Domain | Fresh matches |
+| --- | ---: |
+| `substack.com` | 391 |
+| `mail.beehiiv.com` | 209 |
+| `ghost.io` | 52 |
+| `mailchimp.com` | 3 |
+| `buttondown.email` | 1 |
+
+### Refusals and failures
+
+Tagging:
+- None.
+
+Archiving:
+- None.
+
+### Stage note
+
+Stage complete. Observed open delta 635 versus 656 successful archive calls; live-traffic drift -21.
 
 
 ## Seven-day rollback
@@ -66,6 +116,29 @@ The rollback window ends **2026-07-21**. Keep both temporary tags until then.
 ## Canary rules
 
 - Canary tag: `front-sanity-canary`
-- Status: **not-started**
+- Status: **API creation unsupported or rejected; exact click-in specs recorded below**
 
-_Not attempted yet._
+### Front sanity canary — approved notifications
+
+- Filter: open incoming conversations where sender domain equals exactly one of: `github.com`, `circleci.com`, `sentry.io`, `vercel.com`, `betterstack.com`, `uptimerobot.com`, `pagerduty.com`, `slack.com`
+- Action: apply tag `front-sanity-canary`
+- Archive action: **none**
+- API attempt: not created: HTTP 403 (Missing required scopes: [rules:write])
+
+### Front sanity canary — approved newsletters
+
+- Filter: open incoming conversations where sender domain equals or is a subdomain of one of: `substack.com`, `beehiiv.com`, `buttondown.email`, `convertkit-mail.com`, `ghost.io`, `mailchimp.com`, `campaign-archive.com`
+- Action: apply tag `front-sanity-canary`
+- Archive action: **none**
+- API attempt: not created: HTTP 403 (Missing required scopes: [rules:write])
+
+## Settled readback verification
+
+Measured at `2026-07-14T19:00:15.034Z`, after Front's search index settled:
+
+- Open total: **12,163 enumerated / 12,164 API-reported** across 122 pages.
+- Stage 1 tag: **2,263 total, 2,263 archived, 0 open**, private tag confirmed.
+- Stage 2 tag: **656 total, 656 archived, 0 open**, private tag confirmed.
+- Canary tag: private tag confirmed, 0 conversations tagged.
+- Fresh classifier residue: 3 new stage-1-domain conversations and 0 stage-2-domain conversations were open. The three stage-1 items arrived after the approved stage snapshot and were not chased.
+- The hundreds-row API/enumeration gaps in the immediate post-stage recounts were transient search-index drift during the bulk archive. The settled recount returned to the normal one-row gap.
