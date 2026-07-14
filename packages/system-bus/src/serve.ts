@@ -40,6 +40,7 @@ const WEBHOOK_SECRETS = [
   { env: "MUX_TOKEN_ID", secret: "mux_token_id" },
   { env: "MUX_TOKEN_SECRET", secret: "mux_token_secret" },
   { env: "JOELCLAW_API_TOKEN", secret: "joelclaw_api_token" },
+  { env: "WZRRD_VIDEO_SERVICE_TOKEN", secret: "wzrrd_video_service_token" },
   { env: "AWS_ACCESS_KEY_ID", secret: "garage_s3_access_key_id" },
   { env: "AWS_SECRET_ACCESS_KEY", secret: "garage_s3_secret_access_key" },
 ] as const;
