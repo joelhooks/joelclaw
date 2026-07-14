@@ -49,6 +49,8 @@ maintained without a human remembering to do it.
 
 <!-- one line per closed question: gist + link -->
 
+- [Research the Front Backlog Shape](./research-front-backlog-shape.svx) — 15,061 enumerated ([asset](./front-backlog-analysis.svx)): mostly Personal Gmail (8,429) + egghead (5,466) piped into Front, not support; only 23 touched in 24h, 76.8% older than 30d; conservative terminal cut = 2,309 notifications + 653 newsletters → 12,099; stages 3-4 (age-based, 9,308 convs) gated on Front-native review; steady-state proposal 3,000 ceiling; defense = Front rules (tag-canary 7d, then archive), observer stays read-only alerting; time-boxed digest contract specced exactly.
+
 ## Not yet specified
 
 - Whether steady-state maintenance lives in Front rules/macros or on the

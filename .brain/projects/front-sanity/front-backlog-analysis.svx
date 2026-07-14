@@ -1,0 +1,221 @@
+---
+title: "Front backlog analysis: shape, burn-down, and standing defense"
+type: "asset"
+parent: "./research-front-backlog-shape.svx"
+privacy: "private"
+created_at: "2026-07-14"
+snapshot_at: "2026-07-14T17:21:25.600Z"
+---
+
+# Front backlog analysis
+
+## Headline
+
+At `2026-07-14T17:21:25.600Z`, a full metadata-only traversal found **15,061 distinct open conversations** across 151 pages. Front's `_total` said **15,062** at the start of that traversal, so the honest snapshot is **15,061 enumerated / 15,062 reported**; the one-conversation gap is live-search drift, not a hidden estimate. **Only 3,490 were touched in the last 30 days, while 5,945 were older than 90 days.**
+
+The conservative domain/tag classifier found **2,309 notifications** and **653 newsletters**. Removing those two non-overlapping cohorts would take the enumerated backlog from **15,061 to 12,099**. The remaining 12,099 are *unclassified*, not proven live: the available metadata cannot safely distinguish people, stale resolved work, bounces, or auto-replies without reading finer-grained identity/header data.
+
+## Method and privacy boundary
+
+- Read-only source: `GET /conversations/search/is:open`, paged to exhaustion at 100 rows per page.
+- Enumerated metadata: conversation ID for in-memory deduplication, last activity timestamp, inbox membership, tags, status, and sender domain derived in memory from Front's recipient handle.
+- Persisted here: counts, timestamps, inbox labels, tag names, and domains only.
+- Never called a conversation, message, or body endpoint. Never read or persisted a subject, body, customer name, full email address, or message header.
+- The traversal changed while it ran: `_total=15,062`, enumerated distinct rows `15,061`. Treat all counts as one timestamped operational snapshot, not transactional truth.
+
+## Age shape
+
+The exclusive buckets add to 15,061.
+
+| Last touched | Exclusive count | Cumulative count |
+| --- | ---: | ---: |
+| 0-24 hours | 23 | 23 |
+| >24 hours-7 days | 777 | 800 |
+| >7-30 days | 2,690 | 3,490 |
+| >30-90 days | 5,626 | 9,116 |
+| >90 days | 5,945 | 5,945 older than 90 days |
+
+This is mostly an old backlog: **76.8% (11,571)** is older than 30 days. Activity is much smaller than the scary all-time number: 23 touched in 24 hours, 800 in 7 days, and 3,490 in 30 days.
+
+## Inbox shape
+
+The six workspace inbox totals were queried separately with `is:open inbox:<id>` at `2026-07-14T17:21:38.600Z`.
+
+| Normalized inbox label | Open |
+| --- | ---: |
+| Personal Gmail | 8,429 |
+| egghead mailbox | 5,466 |
+| badass.dev mailbox | 1,382 |
+| other small inbox | 19 |
+| Skill Recordings | 0 |
+| LinkedIn | 0 |
+
+These memberships overlap. Their sum is 15,296, not the unique total; do not add them when rendering system health. The separate 40-product/channel catalog had one open conversation in one channel and zero in the other 39, so it does not explain the 15k backlog.
+
+## Tag shape
+
+Tag counts overlap because a conversation may have multiple tags.
+
+| Tag | Open conversations |
+| --- | ---: |
+| `Inbox` | 15,061 |
+| `emberwave` | 7 |
+| `cwa` | 1 |
+| `MEGA.dev` | 1 |
+
+Tags are not currently rich enough to classify the backlog. Every open conversation carries `Inbox`; only nine conversations have an additional listed tag.
+
+## Top sender domains
+
+Domains are allowed aggregate metadata. These are the top 25 of 1,088 distinct domains.
+
+| Domain | Open |
+| --- | ---: |
+| `github.com` | 1,946 |
+| `mercury.com` | 477 |
+| `substack.com` | 390 |
+| `theinformation.com` | 389 |
+| `stripe.com` | 340 |
+| `google.com` | 330 |
+| `vercel.com` | 306 |
+| `robinhood.com` | 270 |
+| `ahrefs.com` | 266 |
+| `egghead.io` | 227 |
+| `mail.beehiiv.com` | 208 |
+| `em.shutterfly.com` | 168 |
+| `rs.email.nextdoor.com` | 164 |
+| `email.inngest.com` | 160 |
+| `npmjs.com` | 160 |
+| `bandcamp.com` | 140 |
+| `amazon.com` | 133 |
+| `creator.patreon.com` | 128 |
+| `usps.com` | 123 |
+| `patreon.com` | 122 |
+| `planetscale.com` | 108 |
+| `profitwell.com` | 106 |
+| `sanity.io` | 104 |
+| `welcome.americanexpress.com` | 102 |
+| `gmail.com` | 100 |
+
+A high-volume domain is not automatically safe to archive. Financial, account, shipping, and product domains can carry actionable messages; they stay unclassified here.
+
+## Terminal-cohort estimate
+
+Classification was deliberately conservative and exclusive, in this order: bounce evidence, auto-reply evidence, notification evidence, newsletter evidence, then unclassified. Notification domains were limited to known machine-notification infrastructure (`github.com`, `circleci.com`, `sentry.io`, `vercel.com`, `betterstack.com`, `uptimerobot.com`, `pagerduty.com`, and `slack.com`). Newsletter domains were limited to known newsletter infrastructure (`substack.com`, `beehiiv.com`, `buttondown.email`, `convertkit-mail.com`, `ghost.io`, `mailchimp.com`, and `campaign-archive.com`). Matching tag names would also count, but the current tag set supplied none.
+
+| Exclusive cohort | Count | What the count means |
+| --- | ---: | --- |
+| Notifications | 2,309 | High-confidence domain/tag match |
+| Newsletters | 653 | High-confidence domain/tag match |
+| Bounces | 0 detected | No usable tag/domain evidence; **not** proof there are no bounces |
+| Auto-replies | 0 detected | No usable tag evidence; **not** proof there are no auto-replies |
+| Plausibly live or unclassified | 12,099 | Everything else; **not** proof of human/live work |
+
+Known terminal age split:
+
+| Cohort | 0-24h | >24h-7d | >7-30d | >30-90d | >90d |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Notifications | 2 | 235 | 239 | 569 | 1,264 |
+| Newsletters | 2 | 34 | 187 | 134 | 296 |
+| Unclassified | 19 | 508 | 2,264 | 4,923 | 4,385 |
+
+The unreachable aggregate is **bounce/auto-reply classification**. I tried the CLI inbox/search surfaces, the Front search API, available tags, status, domains, and the read-only adapter shape. Headers are not exposed by the conversation search result, and calling message endpoints would cross this task's privacy boundary, so no bounce or auto-reply count was invented.
+
+## Staged burn-down proposal
+
+Every stage is a proposal. Joel must approve each mutation after a fresh dry-run recount.
+
+| Stage | Cohort | Snapshot removal | Expected open after stage | Gate |
+| --- | --- | ---: | ---: | --- |
+| 0 | Baseline | 0 | 15,061 | Save timestamped aggregate receipt |
+| 1 | High-confidence notifications | 2,309 | 12,752 | Recompute by the exact domain/tag classifier; review domains; approve |
+| 2 | High-confidence newsletters | 653 | 12,099 | Recompute after stage 1; review domains; approve |
+| 3 | Unclassified older than 90d | 4,385 | 7,714 | **Do not archive on age alone.** Review a bounded Front-native sample and exclusion rules first; Joel approves |
+| 4 | Unclassified 30-90d | 4,923 | 2,791 | Same gate, only after stage 3 holds for a week |
+
+Stages 1-2 are the defensible metadata-only cuts. Stages 3-4 are where the big number actually dies, but age is not terminal evidence; treating those 9,308 conversations as safe without a Front-native review would be reckless.
+
+### Reversibility receipt
+
+For each approved stage:
+
+1. Recompute the exact cohort immediately before mutation and record `stage`, `measuredAt`, classifier version/hash, domain/tag filters, count, and pre-stage open total.
+2. Apply a temporary private Front tag such as `front-sanity-stage-1-2026-07-14` to the matched set before archiving, then record the post-stage open total and count delta. The receipt remains private and contains no bodies or customer identities.
+3. Keep the tag for a seven-day rollback window. Undo in Front by filtering the archived view by that stage tag, bulk changing status back to **Open**, verifying the restored count, and then removing the temporary tag only after the rollback window.
+4. API fallback for an individual rollback is `PATCH /conversations/{id}` with `{ "status": "open" }`, but the tagged Front UI batch is safer because Front can distinguish workspace and personal archive state.
+
+Front archive is reversible; delete/trash is not part of this plan.
+
+## Recommended sane steady state
+
+Use **3,000 open conversations** as the first measurable ceiling, with two stricter invariants:
+
+- zero known terminal conversations older than 24 hours;
+- zero unclassified conversations older than 30 days unless deliberately tagged as waiting/retained.
+
+The ceiling is grounded in this snapshot: 2,791 unclassified conversations were touched in the last 30 days, leaving a small operational buffer. It is a starting target for Joel to confirm, not a claim that all 2,791 are real work.
+
+## Standing defense
+
+**Use Front rules for mutations; use joelclaw only for aggregate observation and alerts.**
+
+Front rules are the sharper default because classification and archive happen at the source, immediately, without exporting bodies or depending on the bus, worker health, model calls, or a nightly batch. Create narrow rules for approved high-confidence notification/newsletter domains, initially tag-only for seven days, then switch to archive after the canary shows no false positives. Keep finance, account, shipping, customer, and unknown domains out of those rules.
+
+A nightly joelclaw observer projection should remain read-only. It should compute the windows below, compare them with the prior snapshot, and alert when the 3,000 ceiling or age invariants break. A bus sweep function that mutates Front would duplicate Front's rule engine and create a worse rollback and privacy boundary.
+
+## Time-boxed Front digest contract
+
+`assembleExternalSourceSection` should consume an aggregate projection, not conversation items. Proposed exact shape:
+
+```ts
+type FrontAggregateProjection = {
+  source: "front"
+  ok: boolean
+  checkedAt: string
+  command: "front-aggregate-read-only"
+  summary: string
+  metrics: {
+    openTotal: {
+      enumerated: number
+      apiReported: number
+      previousEnumerated: number | null
+      delta: number | null
+      previousCheckedAt: string | null
+    }
+    touched: {
+      last24h: number
+      last7d: number
+      last30d: number
+      olderThan90d: number
+    }
+    knownTerminal: {
+      notifications: number
+      newsletters: number
+      bouncesDetected: number
+      autoRepliesDetected: number
+      classificationGap: string | null
+    }
+    inboxes: Array<{ label: string; open: number }>
+    inboxCountsOverlap: boolean
+    consistency: {
+      pages: number
+      deduplicatedRows: number
+      apiTotalGap: number
+      partial: boolean
+    }
+  }
+  error?: string
+  lastGoodAt?: string
+}
+```
+
+The Front section should render exactly these bounded lines:
+
+1. `Front: {enumerated} open ({delta with sign} since {previousCheckedAt}; API reported {apiReported}).`
+2. `Touched: {last24h} in 24h · {last7d} in 7d · {last30d} in 30d.`
+3. `Aged: {olderThan90d} older than 90d.`
+4. `Known terminal: {notifications} notifications · {newsletters} newsletters · {bouncesDetected} bounces detected · {autoRepliesDetected} auto-replies detected.`
+5. `Coverage: {deduplicatedRows} rows / {pages} pages; {classificationGap or "metadata classification complete"}.`
+6. On failure: the existing explicit unreachable line with `lastGoodAt`; never reuse a stale count without marking it stale.
+
+Do not render subjects, senders, customer identities, conversation links, or item spillover in the aggregate Front section. Inbox counts belong in the private receipt/details surface; the daily digest needs the total trend and 24h/7d/30d windows first.
