@@ -1,0 +1,37 @@
+---
+title: "Worker brief: Effect-ify the video pipeline with forensic observability + node port"
+type: "task_brief"
+created_at: "2026-07-14"
+---
+
+# Worker brief: Effect-ify, instrument, and node-port
+
+You are a build worker for the question at
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/instrument-video-pipeline-forensics.svx`.
+Read it fully first, plus the brief (`video-pipeline-brief.svx` — the two 2026-07-14 runtime/Effect standing calls are law) and the phase-1 answer (`build-file-to-mux-phase-one.svx` — its bug list is your acceptance test).
+
+**MANDATORY before writing Effect code:** inspect `.agent_sources/github.com/Effect-TS/effect-smol` in joelclaw-api for current v4 idioms (Config, Schema, timeout, withSpan, tagged errors, http client). The repo's AGENTS.md says this; obey it.
+
+## Job (one coherent rewrite, three payoffs)
+
+1. **Node port of joelclaw-api** (`~/Code/joelhooks/joelclaw-api`): swap `Bun.serve` for `@hono/node-server`, target Node 24 (nvm/system node — record which). tsgo stays the typechecker. Tests: move to `node:test` or keep bun test as a dev-only harness — your call, justify in DECISIONS.md. The api must run with plain `node` (via tsx or a build step — pick the boring option).
+2. **Effect-deep** in both repos, grounded in effect-smol idioms:
+   - Every external call (Convex, Mux, Garage, joelclaw-api) wrapped with `Effect.timeout` (30s default, uploads longer) and typed tagged errors — the aws-sdk hang class must die by timeout, never hang.
+   - All env reads through Effect `Config` with explicit defaults in ONE module per repo — no more scattered `process.env.X ?? "landmine"`.
+   - `apiCall` becomes a Schema-validated HTTP client (request + response schemas).
+   - joelclaw-video's Inngest functions keep their step structure (Inngest owns retry/durability) — steps internally run Effect programs via a small runtime adapter.
+3. **Forensics:**
+   - Every step and api route emits high-cardinality structured events via system-bus's `emitOtelEvent` pattern → ClickHouse `joelclaw.otel_events` (components `video-pipeline` / `joelclaw-api`): resourceId, shareSlug, uploadId, muxAssetId, checksum, sizes, durations, attempt, route, actor, status, full error text. Use Effect `withSpan` + a tiny exporter bridging spans to emitOtelEvent, or direct emits — whichever reads cleaner in effect-smol idiom; justify.
+   - New CLI command in the joelclaw monorepo (`packages/cli/src/commands/`, follow existing `@effect/cli` command patterns): `joelclaw video trace <resourceId|slug>` — queries ClickHouse (pattern: `packages/system-bus/src/lib/clickhouse-usage-query.ts`) AND wraps the Inngest `runTrace` GraphQL query (server `http://127.0.0.1:8288/v0/gql`; the coarse /v1 REST status lies during retry backoff — say so in the command's output when statuses disagree). One command reconstructs a publish end to end.
+   - Also map `duration` and `resolution` from the mux asset payload onto the video record in the webhook patch (known gap from phase 1).
+
+## Acceptance (from the phase-1 battle)
+
+A publish run must produce: per-step ClickHouse events queryable seconds later; any hung external call dies by timeout with a typed error; config landmines impossible (one Config module); `joelclaw video trace olPVU1y6iI` tells tonight's whole story.
+
+## Rules
+
+- Repos: joelclaw-video + joelclaw-api (jj working copies, no pushes) + joelclaw monorepo (ONLY the new CLI command file(s) + its registration; never git add/commit; concurrent sessions present).
+- Green required: both repos' tests + typechecks; monorepo `bunx tsc --noEmit`; CLI compiles (`bun build packages/cli/src/cli.ts --compile --outfile /tmp/joelclaw-test-build` — do NOT overwrite the real binary).
+- Do NOT deploy convex, restart workers, or run live publishes — steering verifies live.
+- Print `DONE:` + files per repo, idiom decisions (with effect-smol source pointers), and the check commands that prove green.
