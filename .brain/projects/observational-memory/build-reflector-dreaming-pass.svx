@@ -18,6 +18,20 @@ created_at: "2026-07-13"
 (synthesized to-spec 2026-07-14 from the steering conversation + salience
 survey — a worker can build from it without another decision).
 
+**Build landed (2026-07-14, joelclaw-observer `tlrytxmy`)**: reflector lib
+(v1 salience, day/repo/privacy grouping, blur ladder, validity windows,
+archive paths, citation survival), `JOELCLAW_REFLECTOR=1`-gated
+`reflector_dream` dry-run tool, staged `bin/observer-dream.sh`. 43 tests;
+live dry run: 50 pages → 21 rollups, compression 0.82, dark-wizard
+untouched. Steering hardened at harvest: rollup derivation labeled
+`deterministic` (worker had fabricated a pi-agent label), `sk-`/`xox`
+named secret patterns added to cover the dashed-token entropy skip,
+multi-repo pages archive exactly once. **Open for acceptance**: the real
+(non-dry) run — needs the archive mover, a rollup-aware validator
+(schema v1 demands `windowFrom`/`windowTo` > 0, senseless for rollups),
+LaunchAgent install of the supervisor, and the recall bench run
+before/after the first live dream.
+
 
 The brief's finish line requires it ("a reflector pass condenses aging
 observations without losing citations") and it was never chartered as a
