@@ -58,6 +58,8 @@ enough; ingest changes belong to the observational-memory map, not here.
 
 - [Build the Memory Skill-Index](./build-memory-skill-index.svx) — `joelclaw briefing --repo <path>` live: heading (arc/delta from newest scoped observations) + budgeted repo-scoped index with one-call unfold pointers; receipt 51 vs 77 scoped observations across two repos. v1 gap on record: index entries surface repo task-briefs; observation pages inform heading/counts but don't rank as entries yet.
 
+- [Build Observations as a Prime Bugle Source](./build-observations-bugle-source.svx) — read-only `observation-page` adapter live in the wiki pipeline: `Open questions / next actions` → OpenLoopCandidates, `Decisions` → loop-closure evidence, page URL + sessionId provenance on every item, sensitive pages skipped before any projection; receipt build extracted 8 real candidates from 54 observations.
+
 ## Not yet specified
 
 - Cross-machine pull: sessions-search rides central Typesense (works
