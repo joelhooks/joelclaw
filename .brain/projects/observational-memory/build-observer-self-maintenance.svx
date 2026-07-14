@@ -1,0 +1,37 @@
+---
+title: "Build Observer Self-Maintenance: systems-check, pane gardening, self-reflection"
+type: "question"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-07-14"
+---
+
+# Build Observer Self-Maintenance
+
+## Question
+
+Standing call (Joel, 2026-07-14): "observer should occasionally systems
+check itself, garden open panes, reflect on its state in the system for
+observation." Add a periodic self-maintenance behavior to the observer
+family (a tick step or its own cadence, e.g. every Nth tick):
+
+- **Systems check**: family integrity (dispatcher alive on current
+  release, tick log healthy, dedupe state sane, telemetry watch state
+  fresh, unpublished observation backlog size).
+- **Pane gardening**: close/adopt stray panes in the observer herdr
+  session (dead workers, too-small retries, stale labels) — the
+  2026-07-14 dispatcher too-small loop and w2/w3 sprawl are the case
+  studies; supervisor-owned, deterministic, receipts logged.
+- **Self-reflection for observation**: a periodic observation page about
+  the observer's own state (pages written, spend, anomalies it raised,
+  what it fixed) — the loop observing itself, same schema, same noise
+  bar; feeds the masthead and the reflector like everything else.
+
+Constraints: deterministic where possible, pi judgment only behind the
+existing schemas; never touch panes outside the observer session; the
+self-page respects the noise bar (no daily empty navel-gazing — write
+only when there's signal).
