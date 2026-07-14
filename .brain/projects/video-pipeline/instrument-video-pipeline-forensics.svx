@@ -1,5 +1,5 @@
 ---
-title: "Give the Video Pipeline Forensic Observability"
+title: "Effect-ify the Video Pipeline with Forensic Observability"
 type: "question"
 kind: "task"
 status: "open"
@@ -10,8 +10,10 @@ blockers:
 created_at: "2026-07-13"
 ---
 
-# Give the Video Pipeline Forensic Observability
+# Effect-ify the Video Pipeline with Forensic Observability
 
 ## Question
 
 Joel, mid-drive 2026-07-13, after an evening of blind debugging: "aggressive high cardinality structured logging, clickhouse, the ability to do forensics and stop this blind bs." The infrastructure already exists — `emitOtelEvent` (`packages/system-bus/src/observability/emit.ts`) writes to ClickHouse `joelclaw.otel_events` on three-body (`192.168.1.163:8123`, ~1k events/hour from memory/nas-backup/agent-usage) — the video pipeline just doesn't emit into it. Build: (1) **per-step structured events** in `joelclaw-video` (component `video-pipeline`): step start/success/failure with resourceId, shareSlug, uploadId, muxAssetId, checksum, byte sizes, durations, attempt numbers, full error text — every apiCall failure included; (2) the same discipline in **joelclaw-api** request handling (component `joelclaw-api`: route, actor, resourceId, status, duration — observability is first-class in the strangler, not bolted on); (3) a **forensics CLI**: `joelclaw video trace <resourceId|slug>` querying ClickHouse for the full story of one video (pattern: `lib/clickhouse-usage-query.ts`), plus an Inngest run-trace view wrapping the `runTrace` GraphQL query that tonight had to be hand-rolled (the coarse `/v1` REST status reads "Scheduled" during step retries and misled diagnosis twice); (4) record tonight's forensic lessons in the events it emits — archive readback (write-returns-0 quirk), retry-backoff visibility. Resolved when a publish run's every step is queryable in ClickHouse seconds after it happens and the CLI reconstructs tonight's class of failure in one command.
+
+**Scope extended (Joel, 2026-07-14, post-phase-1 stack retro):** this is now ONE rewrite with three payoffs — (a) **port joelclaw-api to Node** (swap Bun.serve for @hono/node-server, node 24 + tsgo; nothing else is Bun-load-bearing; keep bun test or move to node:test, worker's call with justification); (b) **Effect-deep**: pipeline steps and api routes become Effect services grounded in `.agent_sources/github.com/Effect-TS/effect-smol` — `Effect.timeout` on every external call (the aws-sdk hang would have died in seconds), `Config` for every env read (the :3210/:4200/:4242 default landmines), Schema-validated HTTP client for apiCall, typed tagged errors; (c) the original forensics scope: `withSpan` per step exporting to `emitOtelEvent` → ClickHouse, plus the `joelclaw video trace <slug>` CLI. The phase-1 answer's bug list is the acceptance test: every failure mode from tonight must be visible, timed out, or typed. joelclaw-video's Inngest functions stay structurally simple (Inngest owns retry/durability) but gain timeouts, Config, and spans.
