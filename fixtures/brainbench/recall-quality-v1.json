@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "description": "Held-out known-answer queries for Brain consumption recall. This fixture lives outside every registered .brain root so qmd cannot index its own prompts.",
+  "topK": 10,
+  "queries": [
+    {
+      "id": "files-before-projections",
+      "type": "semantic",
+      "query": "Where is the rule that rebuildable indexes must never become canonical memory?",
+      "description": "Find the durable-source versus disposable-projection decision.",
+      "expected": {
+        "root": "joelclaw",
+        "path": ".brain/resources/decisions/files-are-truth-databases-are-projections.svx"
+      }
+    },
+    {
+      "id": "edge-preserving-memory-compaction",
+      "type": "semantic",
+      "query": "How are aging memory atoms condensed while retaining their links and citations?",
+      "description": "Find the observational-memory map's edge-preserving compaction decision.",
+      "expected": {
+        "root": "joelclaw",
+        "path": ".brain/projects/observational-memory/observational-memory-brief.svx"
+      }
+    },
+    {
+      "id": "qmd-knowledge-projection",
+      "type": "semantic",
+      "query": "What evidence chose local hybrid markdown search as the knowledge projection?",
+      "description": "Find the qmd adoption spike receipt.",
+      "expected": {
+        "root": "joelclaw",
+        "path": ".brain/resources/qmd-brain-recall-spike.svx"
+      }
+    },
+    {
+      "id": "observer-recursion-tombstone",
+      "type": "exact",
+      "query": "Which runtime note records the observer recursion tombstone and the too-narrow activity scan?",
+      "description": "Find the distilled runtime observation that triggered the observer follow-up work.",
+      "expected": {
+        "root": "user",
+        "path": ".brain/observations/archive/2026-07/2026-07-13-flagg-claude-observer-v11-exercise.svx"
+      }
+    },
+    {
+      "id": "typesense-proposes-graph-disposes",
+      "type": "semantic",
+      "query": "Where is the contract that relevance proposes candidates but graph structure decides relationships?",
+      "description": "Find the Brain Graph map that owns the proposes/disposes boundary.",
+      "expected": {
+        "root": "joelclaw",
+        "path": ".brain/projects/brain-graph/brain-graph-brief.svx"
+      }
+    }
+  ]
+}

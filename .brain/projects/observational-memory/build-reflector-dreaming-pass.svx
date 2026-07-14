@@ -2,7 +2,8 @@
 title: "Build the Reflector: Nightly Dreaming Pass (consolidate, reconcile, forget)"
 type: "question"
 kind: "task"
-status: "open"
+status: "closed"
+closed_at: "2026-07-14"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
 interaction: "AFK"
 parent: "./observational-memory-brief.svx"
@@ -70,3 +71,36 @@ Done when: one real dreaming run condenses a week of pages into rollups
 with citations intact, the observations directory shrinks, recall bench
 (recall-consumption map) does not regress, and the run leaves a receipt
 page.
+
+## Answer (2026-07-14)
+
+The first real dream ran (Joel: "run it") and the done-when held end to end.
+
+- **Run**: `applyReflectorDream` on the live tree — 132 pages read, 85
+  pages ≥1 day old condensed into 26 day/repo/privacy rollups, originals
+  moved to `observations/archive/2026-07/`, receipt page
+  `2026-07-14-dream-receipt-024779dc.svx`. Stated deviation: minAgeDays=1
+  (corpus is 3 days old; 1 day is the proportional stand-in for the 7-day
+  nightly policy). Compression 0.81.
+- **Citations intact**: spot-checked — archived sources listed verbatim
+  (path, sessionId, machine, commits) in their rollups.
+- **Directory shrank**: 132 → 74 top-level pages (26 of those rollups).
+- **Recall bench did not regress**: before/after runs identical
+  (sessions-search 1/5 MRR 0.20, qmd 1/5 0.10, paper 0/5) once
+  `canonicalPageKey` learned archive identity — a moved page is the same
+  page; the momentary 0/5 was a scoring-key artifact, and the archived
+  fixture page still retrieves at rank 2 on qmd.
+- **Canaries held**: briefing arc unchanged with scoped count 54 → 46;
+  masthead day counts preserved (rollups/receipts excluded from activity,
+  `pagesTotal` = substrate size); Bugle adapter skips `archive/`.
+- Live aborts fixed during the run: repo-spelling slug collision
+  (`github.com/x/y` vs `x/y` → `normalizeReflectorRepo`), all-writes-
+  before-all-moves ordering held (aborts left every original in place).
+- Commits: observer `tlrytxmy` + `vmkkxnkq`; wiki `2c00152`; the dream
+  itself was swept to origin by the live observer's own publish tick
+  (`6abfc34`) — the loop committed its own dream.
+
+Follow-up graduated: [Wire the Nightly Dream](./wire-nightly-dream-blur-ladder.svx)
+— LaunchAgent + week/month ladder; note `groupReflectorRollups` re-groups
+aged rollups at day granularity until that lands (manual dreams only, so
+no churn until then).

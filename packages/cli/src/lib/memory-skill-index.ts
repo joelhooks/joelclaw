@@ -138,6 +138,8 @@ export function buildMemorySkillIndex(options: {
     .filter((page): page is Page => page !== null)
   const observationPages = allObservationPages
     .filter((page) => page.frontmatter.type === "observation" && page.frontmatter.schemaVersion === 1)
+    // Reflector-archived originals stay in the substrate but go quiet here; their rollups rank instead.
+    .filter((page) => !page.path.includes(`${observationsDir}/archive/`))
   const localBrainPages = filesUnder(join(repo, ".brain"))
     .map((path) => parsePage(path, "brain"))
     .filter((page): page is Page => page !== null)
@@ -155,7 +157,8 @@ export function buildMemorySkillIndex(options: {
     .map((page) => ({ ...page, score: repoMatch(page, repo) }))
     .filter((page) => page.score > 0)
     .sort((a, b) => observationDate(b) - observationDate(a))
-  const newest = scopedObservations[0]
+  // Rollups rank as entries but never narrate the arc — the arc is the newest real session, not the dream that condensed old ones.
+  const newest = scopedObservations.find((page) => page.frontmatter.kind !== "rollup" && page.frontmatter.kind !== "dream-receipt") ?? scopedObservations[0]
   const activeArc = newest ? trimLine(newest.title) : null
   const frontier = newest ? (values(newest.frontmatter.frontier)[0] ?? extractSectionLine(newest.body, "Open questions / next actions")) : null
   const sinceLast = newest
