@@ -3,7 +3,7 @@ title: "Build the Time-Boxed Front Digest Section (windows, not the scary total)
 type: "question"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
 parent: "./front-sanity-brief.svx"
 blockers: []
@@ -26,3 +26,37 @@ previous-snapshot comparison needs a small state file (the telemetry
 watch pattern). Stale counts render as stale, never as fresh. The approved 3,000-open
 ceiling is an invariant: when enumerated open exceeds it, the section
 emits a HIGH gap line (feeds tick_summary and the paper health strip).
+
+## Answer (2026-07-14)
+
+Implemented in `~/Code/joelhooks/joelclaw-observer` without commits or Front mutations.
+
+Receipts:
+
+- Code: `.pi/extensions/observer/lib.ts`
+  - added `FrontAggregateProjection`, offline/mockable aggregate traversal, terminal classifier, bucket math, previous-snapshot migration/state, Front API read-only fetcher, contract renderer, and ceiling gap extraction.
+  - `assembleExternalSourceSection` now renders the aggregate Front section instead of sampled conversation spillover.
+  - `assembleExternalContextDigest` carries Front ceiling gaps in `receipt.gaps` for `tick_summary`.
+- Tests: `test/observer.test.ts`
+  - bucket arithmetic + dedupe
+  - classifier exclusivity
+  - delta/state migration through tmpdir state
+  - stale failure render with `lastGoodAt`
+  - ceiling gap trigger
+  - contract render shape
+- Verification:
+  - `bun test` → 65 pass, 0 fail.
+  - `bun --check .pi/extensions/observer/lib.ts test/observer.test.ts` → clean.
+- Real read-only bounded traversal:
+  - command used tmp state under `/tmp/front-aggregate-run-yrQA0S/state.json`.
+  - cap: 3 pages, partial=true.
+  - result: 300 enumerated open / 15,073 API reported, 3 pages, no state writes outside tmp.
+  - HIGH gap: `Front API reports 15073 open conversations above ceiling 3000; partial enumeration saw 300`.
+  - rendered lines:
+    1. `Front: 300 open (n/a since never; API reported 15073).`
+    2. `Touched: 0 in 24h · 0 in 7d · 0 in 30d.`
+    3. `Aged: 300 older than 90d.`
+    4. `Known terminal: 80 notifications · 12 newsletters · 0 bounces detected · 0 auto-replies detected.`
+    5. `Coverage: 300 rows / 3 pages; bounce/auto-reply classification is metadata-limited.`
+
+Note: a larger 31-page bounded read hit Front's search rate limit after 23 pages. The traversal reports that as stale/unreachable when no prior tmp snapshot exists; it does not reuse stale counts.
