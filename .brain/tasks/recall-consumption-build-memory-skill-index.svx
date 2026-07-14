@@ -1,0 +1,68 @@
+---
+title: "Task: build the memory skill-index (joelclaw briefing)"
+type: task-brief
+created: 2026-07-13
+parent: "../projects/recall-consumption/build-memory-skill-index.svx"
+---
+
+# Build the memory skill-index
+
+You are on flagg in `~/Code/joelhooks/joelclaw` (the monorepo — read
+`.claude/CLAUDE.md` and `AGENTS.md`; Effect + @effect/cli patterns; check
+`skills/` before implementing). NO commits — the steering session reviews
+and commits.
+
+Read first:
+1. Your claimed question: `.brain/projects/recall-consumption/build-memory-skill-index.svx`
+2. The decided contract (your spec):
+   `.brain/projects/recall-consumption/decide-briefing-distillation-contract.svx` — the
+   Answer section is law: memories are skill-shaped, three layers, one
+   content brain / three thin injectors.
+3. The brief for context: `.brain/projects/recall-consumption/recall-consumption-brief.svx`
+
+## Deliverable
+
+`joelclaw briefing --repo <path>` (new CLI command, packages/cli): computes
+
+- **Heading**: active arc / frontier / since-last-session delta — derived
+  from the newest observation pages
+  (`~/Code/joelhooks/dark-wizard/.brain/observations/*.svx`, schema-v1
+  frontmatter) scoped to the repo, plus the day index if present.
+- **Memory index**: budgeted (default N=10), repo-scoped entries — title +
+  one-line description + page pointer — from observation pages and Brain
+  notes relevant to the repo (frontmatter `repos:` when present; path/topic
+  heuristics otherwise; recency-ranked v1, interest-decay hooks left as a
+  stated TODO for consumption telemetry).
+- **Unfold path**: each entry's pointer must resolve in ONE tool call —
+  absolute file path (file read first; qmd/Typesense lookup is a later
+  layer, do not build it now).
+- Sensitive pages (`privacy: sensitive`): include locally-scoped entries but
+  mark them `sensitive: true`; never include their body text in the index.
+- Output: HATEOAS JSON envelope (house style) AND `--format text` for
+  direct prompt injection.
+
+DO NOT build the injectors (claude hook / pi extension / codex wiring) —
+that is a separate blocked question. Your receipt is the computation:
+running `joelclaw briefing --repo ~/Code/joelhooks/joelclaw-observer` and
+`--repo ~/Code/joelhooks/joelclaw-wiki` yields DIFFERENT, correctly-scoped
+indexes with real page pointers that resolve.
+
+## Question-file edits (part of the deliverable)
+
+Append an `## Answer (2026-07-13)` section to your claimed question file
+describing what was built + receipts; flip `status: "closed"` and add
+`closed_at`. The steering session writes the ledger line.
+
+## Validate
+
+`bunx tsc --noEmit`, `pnpm biome check packages/`, rebuild the CLI
+(`bun build packages/cli/src/cli.ts --compile --outfile ~/.bun/bin/joelclaw`)
+and run `joelclaw status` as crash test, then run the two receipt commands
+above and paste their (truncated) output in your DONE summary.
+
+## Rules
+
+Set your Pi session name to "🧠 Memory skill-index build" immediately. Stay
+inside packages/cli + shared packages the command genuinely needs; do not
+touch bugle, gateway channels, or web app. Work autonomously. Do not
+commit. Print DONE with receipts.

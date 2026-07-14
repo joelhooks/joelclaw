@@ -3,6 +3,7 @@ title: "Build Observations as a Prime Bugle Source"
 type: "question"
 kind: "task"
 status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p0, 2026-07-13)"
 interaction: "AFK"
 parent: "./recall-consumption-brief.svx"
 blockers: []

@@ -5,7 +5,7 @@ kind: "task"
 status: "open"
 interaction: "AFK"
 parent: "./recall-consumption-brief.svx"
-blockers: ["./decide-briefing-distillation-contract.svx"]
+blockers: ["./decide-briefing-distillation-contract.svx", "./build-memory-skill-index.svx"]
 created_at: "2026-07-13"
 ---
 
@@ -18,3 +18,5 @@ Implement the decided briefing contract across the agreed surfaces
 collection (and qmd once wired), fail-soft, within the decided token
 budget. Receipt: a fresh session on flagg AND blaine whose first context
 already names yesterday's distilled work.
+
+> Blocker added 2026-07-13 (steering): the contract's answer makes `joelclaw briefing` the skill-index question's artifact; this question delivers it to the three injectors after it exists.

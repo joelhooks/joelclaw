@@ -1,9 +1,9 @@
 ---
 title: "Curate the Core Memory Canon (principles fused everywhere)"
-type: "wayfinder_ticket"
+type: "question"
+kind: "task"
 status: "open"
-labels:
-  - "wayfinder:task"
+assignee: ""
 interaction: "HITL"
 parent: "./recall-consumption-brief.svx"
 blockers: []
