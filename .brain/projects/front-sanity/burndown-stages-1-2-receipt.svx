@@ -1,0 +1,71 @@
+---
+title: "Front sanity burn-down stages 1–2 receipt"
+type: "asset"
+parent: "./front-sanity-brief.svx"
+privacy: "private"
+created_at: "2026-07-14"
+---
+
+# Front sanity burn-down stages 1–2 receipt
+
+- Run status: **running**
+- Started: 2026-07-14T18:21:09.171Z
+- Finished: not finished
+- Current phase: stage-1-recount
+- Stop reason: none
+- Prior safety stop: A first metadata-only recount at 2026-07-14T18:20:32Z stopped before mutation because the safety check incorrectly treated Front's legacy assigned/unassigned conversation status values as non-open. The `is:open` search itself is the open-state authority. That run made zero tag or archive mutations; this run corrected the check.
+- Privacy boundary: metadata only. No message/body endpoints were called. No subjects, bodies, full addresses, or customer identities were persisted.
+- Mutation boundary: tag then archive only. No replies, deletes, trash, assignee changes, or stages 3–4 mutations.
+
+## Stage 1: notifications
+
+- Status: **recounting**
+- Measured at: not measured
+- Query: `is:open`
+- Match semantics: sender domain equals exactly one approved domain
+- Classifier SHA-256: `dd813c4439e94fb8d8e4d5163b659643a06ad8682758c2087649ff09946d878b`
+- Temporary private tag: `front-sanity-stage-1-2026-07-14`
+- Fresh cohort count: **0**
+- Pre-stage open total: **unknown enumerated / unknown API-reported**
+- Already tagged at recount: 0
+- Tagged and eligible for archive: 0
+- Tag failures withheld from archive: 0
+- Archived: 0
+- Archive refusals/failures: 0
+- Post-stage open total: **not measured enumerated / not measured API-reported**
+- Observed enumerated delta: not measured
+- Live-traffic drift (observed delta minus successful archives): not measured
+- Last progress write: 2026-07-14T18:21:09.174Z
+
+### Classifier domains
+
+| Domain | Fresh matches |
+| --- | ---: |
+| _(none)_ | 0 |
+
+### Refusals and failures
+
+Tagging:
+- None.
+
+Archiving:
+- None.
+
+
+
+## Seven-day rollback
+
+The rollback window ends **2026-07-21**. Keep both temporary tags until then.
+
+1. In Front, switch to archived conversations and filter by `front-sanity-stage-1-2026-07-14` for stage 1 or `front-sanity-stage-2-2026-07-14` for stage 2.
+2. Bulk change the filtered conversations back to **Open**.
+3. Verify the restored count against the matching stage receipt above.
+4. Remove the temporary tag only after the rollback window ends and restoration is no longer needed.
+5. Individual API fallback: `PATCH /conversations/{id}` with `{ "status": "open" }`. The tagged Front UI batch is safer.
+
+## Canary rules
+
+- Canary tag: `front-sanity-canary`
+- Status: **not-started**
+
+_Not attempted yet._
