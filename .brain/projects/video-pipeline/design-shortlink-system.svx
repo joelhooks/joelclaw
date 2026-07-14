@@ -2,7 +2,8 @@
 title: "Design the Shortlink System"
 type: "question"
 kind: "grilling"
-status: "open"
+status: "closed"
+closed_at: "2026-07-14"
 interaction: "HITL"
 parent: "./video-pipeline-brief.svx"
 blockers: []
@@ -14,3 +15,7 @@ created_at: "2026-07-13"
 ## Question
 
 Joel, answering the share-slug question (2026-07-13): random slug + optional vanity alias, and "we want a shortlink system too so might as well build that here." Design the general shortlink system with videos as its first client: domain (joel.dev shortlinks already exist in the URL ladder — same system or new? what serves video watch links vs generic redirects), storage (a `shortlinks` table in local Convex mapping slug → target with hit counts?), who can mint (Joel + agents, through joelclaw-api), collision/reservation rules for vanity aliases, and whether the video watch URL *is* a shortlink or shortlinks merely point at watch URLs. Related: [Charter joelclaw-api](./charter-joelclaw-api.svx) (the minting surface) and [Chart the Watch Page](./chart-watch-page-phase.svx) (the URL it resolves to). Tension to resolve (from the charter): joelclaw-api is **tailnet-only**, but shortlinks and watch URLs must resolve for strangers — the public redirect/serving layer is a separate exposure this design owns.
+
+## Answer (2026-07-14)
+
+Absorbed by the new effort [Personal video sharing on wzrrd (loom-like)](/Users/joel/Code/joelhooks/wzrrd-sh-cli/.brain/projects/personal-video-sharing/personal-video-sharing-brief.svx), chartered by Joel 2026-07-14. His call at that charter: the watch URL **is** the shortlink — `https://wzrrd.sh/v/<shareSlug>` (the unguessable Convex shareSlug, e.g. `olPVU1y6iI`), a first-class record on wzrrd.sh, not a static site and not a separate redirect layer. That dissolves the tailnet-exposure tension this question carried: wzrrd.sh is already public Cloudflare, joelclaw pushes records to it via `POST /api/videos`. A generic (non-video) shortlink system was not chartered; if wanted later it's a fresh effort — vanity aliases stay fog on the wzrrd brief.
