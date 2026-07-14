@@ -13,6 +13,8 @@ import {
   buildServiceHealthCandidates,
   type EndpointCandidateFailure,
   type EndpointClass,
+  type K8sHealthProbeOptions,
+  probeK8sHealth,
   resolveEndpoint,
   summarizeSkippedCandidates,
 } from "@joelclaw/endpoint-resolver";
@@ -27,6 +29,7 @@ import { pushGatewayEvent } from "./agent-loop/utils";
 type ServiceStatus = {
   name: string;
   ok: boolean;
+  status?: string;
   detail?: string;
   durationMs?: number;
   endpoint?: string;
@@ -83,7 +86,9 @@ const CRITICAL_COMPONENTS = new Set([
   "worker",
   "gateway",
   "typesense",
+  "kubernetes",
   "agent secrets",
+  "front projection",
 ]);
 const AGENT_DISPATCH_CANARY_COMPONENT = "Agent Dispatch Canary";
 const HEALTH_LAST_CHECK_KEY = "health:last_check";
@@ -114,6 +119,10 @@ const HEALTH_AGENT_DISPATCH_CANARY_TIMEOUT_SECONDS = 5;
 const HEALTH_AGENT_DISPATCH_CANARY_SLEEP_SECONDS = 120;
 const HEALTH_AGENT_DISPATCH_CANARY_WAIT_TIMEOUT_MS = 90_000;
 const HEALTH_AGENT_DISPATCH_CANARY_POLL_INTERVAL_MS = 1_000;
+const FRONT_PROJECTION_FRESHNESS_MINUTES = Math.max(
+  15,
+  getNumericEnv("FRONT_PROJECTION_FRESHNESS_MINUTES", 60),
+);
 const GATEWAY_HEALING_RETRY_POLICY = {
   maxRetries: 10,
   sleepMinMs: 90_000,
@@ -618,6 +627,13 @@ async function warnOtelGapViaEvents(
   }
 }
 
+async function checkKubernetes(options?: K8sHealthProbeOptions): Promise<ServiceStatus> {
+  return {
+    name: "Kubernetes",
+    ...probeK8sHealth(options),
+  };
+}
+
 async function checkRedis(): Promise<ServiceStatus> {
   const redis = new Redis({ host: "localhost", port: 6379, lazyConnect: true, connectTimeout: 3000 });
   redis.on("error", () => {});
@@ -724,6 +740,78 @@ async function checkGateway(): Promise<ServiceStatus> {
     return { name: "Gateway", ok: false, detail: `unexpected status ${res.status}` };
   } catch (err) {
     return { name: "Gateway", ok: false, detail: String(err) };
+  }
+}
+
+export function selectLatestPlausibleTimestamp(
+  hits: typesense.TypesenseHit[],
+  now: number,
+): number | null {
+  const maxFutureSkewMs = 5 * 60_000;
+  const timestamps = hits
+    .map((hit) => hit.document.timestamp)
+    .map((timestamp) => typeof timestamp === "number"
+      ? timestamp
+      : typeof timestamp === "string"
+        ? Number.parseInt(timestamp, 10)
+        : Number.NaN)
+    .filter((timestamp) => (
+      Number.isFinite(timestamp) && timestamp > 0 && timestamp <= now + maxFutureSkewMs
+    ));
+
+  return timestamps.length > 0 ? Math.max(...timestamps) : null;
+}
+
+export function classifyFrontProjectionFreshness(params: {
+  now: number;
+  latestTimestamp: number | null;
+  thresholdMinutes?: number;
+}): ServiceStatus {
+  const thresholdMinutes = params.thresholdMinutes ?? FRONT_PROJECTION_FRESHNESS_MINUTES;
+  const latestTimestamp = params.latestTimestamp;
+
+  if (!latestTimestamp || !Number.isFinite(latestTimestamp) || latestTimestamp <= 0) {
+    return {
+      name: "Front Projection",
+      ok: false,
+      detail: `no email documents in channel_messages; threshold=${thresholdMinutes}m`,
+    };
+  }
+
+  const ageMs = Math.max(0, params.now - latestTimestamp);
+  const ageMinutes = Math.floor(ageMs / 60_000);
+  const ok = ageMs <= thresholdMinutes * 60_000;
+  return {
+    name: "Front Projection",
+    ok,
+    detail: `newest=${new Date(latestTimestamp).toISOString()}; age=${ageMinutes}m; threshold=${thresholdMinutes}m`,
+  };
+}
+
+async function checkFrontProjectionFreshness(): Promise<ServiceStatus> {
+  try {
+    const result = await typesense.search({
+      collection: typesense.CHANNEL_MESSAGES_COLLECTION,
+      q: "*",
+      query_by: "text",
+      filter_by: "channel_type:=email",
+      sort_by: "timestamp:desc",
+      include_fields: "id,timestamp,channel_id",
+      per_page: 10,
+      search_cutoff_ms: 750,
+    });
+    const now = Date.now();
+
+    return classifyFrontProjectionFreshness({
+      now,
+      latestTimestamp: selectLatestPlausibleTimestamp(result.hits, now),
+    });
+  } catch (error) {
+    return {
+      name: "Front Projection",
+      ok: false,
+      detail: `freshness query failed: ${String(error).slice(0, 180)}`,
+    };
   }
 }
 
@@ -1109,6 +1197,8 @@ export const checkSystemHealth = inngest.createFunction(
             timedServiceCheck("Gateway", checkGateway),
             timedServiceCheck("Webhooks", checkWebhooks),
             timedServiceCheck("Typesense", checkTypesense),
+            timedServiceCheck("Kubernetes", checkKubernetes),
+            timedServiceCheck("Front Projection", checkFrontProjectionFreshness),
             timedServiceCheck("Agent Secrets", checkAgentSecrets),
             timedServiceCheck("NFS Mounts", checkNfsMounts),
           ]);
@@ -1860,6 +1950,10 @@ export const __checkSystemHealthTestUtils = {
   checkWorker,
   checkTypesense,
   checkWebhooks,
+  checkKubernetes,
+  checkFrontProjectionFreshness,
+  selectLatestPlausibleTimestamp,
+  classifyFrontProjectionFreshness,
   interpretAgentSecretsStatus,
   resolveHealthCanaryScheduleMode,
   classifyHealthSummary,

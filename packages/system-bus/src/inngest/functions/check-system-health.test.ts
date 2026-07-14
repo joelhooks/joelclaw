@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { __endpointResolverTestUtils } from "@joelclaw/endpoint-resolver";
+import {
+  __endpointResolverTestUtils,
+  type ServicePlacementConfig,
+} from "@joelclaw/endpoint-resolver";
 import {
   __checkSystemHealthTestUtils,
   resolveHealthCheckMode,
@@ -7,8 +10,15 @@ import {
 } from "./check-system-health";
 
 const originalFetch = globalThis.fetch;
-const { checkWebhooks, classifyHealthSummary, interpretAgentSecretsStatus } =
-  __checkSystemHealthTestUtils;
+const {
+  checkWebhooks,
+  checkFrontProjectionFreshness,
+  checkKubernetes,
+  selectLatestPlausibleTimestamp,
+  classifyFrontProjectionFreshness,
+  classifyHealthSummary,
+  interpretAgentSecretsStatus,
+} = __checkSystemHealthTestUtils;
 
 process.env.JOELCLAW_COLIMA_VM_IP = "10.10.10.10";
 
@@ -165,6 +175,99 @@ describe("check/system-health endpoint fallback", () => {
   });
 });
 
+describe("check/system-health Front projection freshness", () => {
+  test("passes when the newest email projection is within the threshold", () => {
+    const now = Date.parse("2026-07-13T17:00:00.000Z");
+    const result = classifyFrontProjectionFreshness({
+      now,
+      latestTimestamp: now - 5 * 60_000,
+      thresholdMinutes: 60,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain("age=5m");
+  });
+
+  test("fails loud when the newest email projection is stale or missing", () => {
+    const now = Date.parse("2026-07-13T17:00:00.000Z");
+    expect(classifyFrontProjectionFreshness({
+      now,
+      latestTimestamp: now - 61 * 60_000,
+      thresholdMinutes: 60,
+    }).ok).toBe(false);
+    expect(classifyFrontProjectionFreshness({
+      now,
+      latestTimestamp: null,
+      thresholdMinutes: 60,
+    })).toMatchObject({
+      name: "Front Projection",
+      ok: false,
+    });
+  });
+
+  test("ignores future-dated projection poison and uses the newest plausible receipt", () => {
+    const now = Date.parse("2026-07-13T17:00:00.000Z");
+    const selected = selectLatestPlausibleTimestamp([
+      { document: { timestamp: now + 60 * 60_000 } },
+      { document: { timestamp: now - 2 * 60_000 } },
+    ], now);
+
+    expect(selected).toBe(now - 2 * 60_000);
+  });
+
+  test("queries the final channel_messages email projection", async () => {
+    const timestamp = Date.now() - 2 * 60_000;
+    let requestedUrl = "";
+    globalThis.fetch = (async (url: string | URL) => {
+      requestedUrl = String(url);
+      return new Response(JSON.stringify({
+        found: 1,
+        hits: [{ document: { id: "email:receipt", timestamp, channel_id: "cnv_123" } }],
+      }), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await checkFrontProjectionFreshness();
+
+    expect(result.ok).toBe(true);
+    expect(requestedUrl).toContain("/collections/channel_messages/documents/search?");
+    expect(requestedUrl).toContain("filter_by=channel_type%3A%3Demail");
+    expect(requestedUrl).toContain("sort_by=timestamp%3Adesc");
+  });
+});
+
+describe("check/system-health machine-aware Kubernetes check", () => {
+  test("keeps k8s healthy and out of fatal classification when hosted elsewhere", async () => {
+    const placement = {
+      version: 1,
+      hosts: [{ hostname: "panda", services: ["k8s"] }],
+    } as const satisfies ServicePlacementConfig;
+    let kubectlRuns = 0;
+
+    const kubernetes = await checkKubernetes({
+      hostname: "flagg",
+      placement,
+      runKubectl: () => {
+        kubectlRuns += 1;
+        throw new Error("must not run");
+      },
+    });
+    const summary = classifyHealthSummary({
+      services: [kubernetes],
+      agentDispatchCanary: null,
+    });
+
+    expect(kubectlRuns).toBe(0);
+    expect(kubernetes).toMatchObject({
+      name: "Kubernetes",
+      ok: true,
+      status: "not-hosted-here (hosted on: panda)",
+      detail: "not-hosted-here (hosted on: panda)",
+    });
+    expect(summary.degradedCount).toBe(0);
+    expect(summary.hasCriticalDegradation).toBe(false);
+  });
+});
+
 describe("check/system-health summary classification", () => {
   test("treats non-critical degradation as warn-but-successful", () => {
     const result = classifyHealthSummary({
@@ -186,6 +289,7 @@ describe("check/system-health summary classification", () => {
     const result = classifyHealthSummary({
       services: [
         { name: "Worker", ok: false, detail: "unreachable" },
+        { name: "Front Projection", ok: false, detail: "age=61m" },
         { name: "NFS Mounts", ok: false, detail: "nas-nvme: missing" },
       ],
       agentDispatchCanary: {
@@ -196,10 +300,14 @@ describe("check/system-health summary classification", () => {
       },
     });
 
-    expect(result.degradedCount).toBe(3);
-    expect(result.criticalDegradedCount).toBe(2);
+    expect(result.degradedCount).toBe(4);
+    expect(result.criticalDegradedCount).toBe(3);
     expect(result.nonCriticalDegradedCount).toBe(1);
-    expect(result.criticalDegradedServices).toEqual(["Worker", "Agent Dispatch Canary"]);
+    expect(result.criticalDegradedServices).toEqual([
+      "Worker",
+      "Front Projection",
+      "Agent Dispatch Canary",
+    ]);
     expect(result.hasCriticalDegradation).toBe(true);
   });
 });
