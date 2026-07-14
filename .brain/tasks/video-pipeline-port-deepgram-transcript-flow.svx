@@ -1,0 +1,75 @@
+---
+title: "Worker brief: Deepgram transcript flow — joelclaw side"
+type: "task_brief"
+created_at: "2026-07-14"
+---
+
+# Worker brief: Deepgram transcript flow — joelclaw side
+
+You are a build worker for the question at
+`/Users/joel/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/port-deepgram-transcript-flow.svx`
+— read it fully INCLUDING the scope update at the bottom; that concretized flow is the spec.
+Also read the wzrrd brief's standing calls
+(`/Users/joel/Code/joelhooks/wzrrd-sh-cli/.brain/projects/personal-video-sharing/personal-video-sharing-brief.svx`)
+and the closed transcript-flow decision next to it.
+
+**Working repos:**
+- `/Users/joel/Code/joelhooks/joelclaw` monorepo — webhook gateway provider + serve.ts leases
+  ONLY. Concurrent sessions: never git add/commit.
+- `/Users/joel/Code/joelhooks/joelclaw-video` (jj; house Effect v4 idioms — follow
+  `src/wzrrd-client.ts` as the exemplar for a Schema-validated external client with Config +
+  timeout + tagged errors + OTEL forensics).
+- `/Users/joel/Code/joelhooks/joelclaw-api` (jj) — one small route + Convex mutation.
+
+## Job
+
+1. **Gateway provider** `packages/system-bus/src/webhooks/providers/deepgram.ts` (mirror
+   `providers/mux.ts` + its test pattern): id `deepgram`, verification = constant-time compare
+   of the `token` query param against env `DEEPGRAM_CALLBACK_TOKEN`; normalize to event
+   `transcript.ready` with data = `{ resourceId: <query param>, requestId?, results: <body> }`.
+   Register in `webhooks/server.ts`. serve.ts lease lines:
+   `{ env: "DEEPGRAM_API_KEY", secret: "deepgram_api_key" }` and
+   `{ env: "DEEPGRAM_CALLBACK_TOKEN", secret: "deepgram_callback_token" }` (both already exist
+   in agent-secrets). Add `"deepgram"` to the generic dispatcher's provider list
+   (`webhook-subscription-dispatch-generic.ts`) with event name `transcript.ready`.
+2. **Request step** in joelclaw-video's rendition.ready path (after the patch step, guarded on
+   the record not already having a transcript): POST
+   `https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&punctuate=true&paragraphs=true&utterances=true&callback=<URL-ENCODED https://hooks.joelclaw.com/webhooks/deepgram?token=...&resourceId=...>&callback_method=post`
+   with body `{ "url": "https://stream.mux.com/<playbackId>/highest.mp4" }`, header
+   `Authorization: Token <DEEPGRAM_API_KEY>`. Effect Config: `DEEPGRAM_API_KEY`,
+   `DEEPGRAM_CALLBACK_TOKEN`, `HOOKS_BASE_URL` (default `https://hooks.joelclaw.com`).
+   Forensics: `deepgram-request.started/completed/failed` with resourceId + deepgram request_id.
+3. **Transcript-ready function** in joelclaw-video (new Inngest fn
+   `joelclaw-video-deepgram-transcript`, trigger `deepgram/transcript.ready`, retries 3):
+   - Parse Deepgram results (channels[0].alternatives[0]): full transcript text (prefer
+     paragraphs when present) + build WebVTT from utterances (small pure util with a unit test:
+     cue timestamps `HH:MM:SS.mmm`, sensible line lengths).
+   - PATCH wzrrd `POST`-style per its transcript API: `PATCH /api/videos/<shareSlug>/transcript`
+     with inline `{ vtt, text, excerpt (first ~300 chars), language }`, bearer
+     `WZRRD_VIDEO_SERVICE_TOKEN` (already in env/leases). NOTE: a concurrent worker is changing
+     wzrrd to accept inline and store to R2 — code to the contract
+     `{ vtt: string, text: string, excerpt?: string, language?: string }` and a
+     `{ ok, video, captionsUrl }` response carrying
+     `captionsUrl = https://wzrrd.sh/v/<slug>/captions.vtt`.
+   - Patch Convex: add to joelclaw-api a `POST /api/videos/:resourceId/transcript` route +
+     `videos.setTranscript` mutation storing `fields.transcript = { text, language, excerpt,
+     source: "deepgram", updatedAt }` (follow existing route/mutation patterns exactly).
+   - Add the captions to the Mux asset as a text track:
+     `POST https://api.mux.com/video/v1/assets/<assetId>/tracks` with
+     `{ url: <captionsUrl>, type: "text", text_type: "subtitles", language_code: <lang|en>,
+     name: "English", closed_captions: false }` — tolerate 400 "already exists" style duplicate
+     errors as success on retries.
+   - Forensics on every step (`deepgram-transcript.*`, `mux-text-track.*`).
+4. Do NOT restart workers, deploy convex, or run live tests — steering owns acceptance.
+
+## Green required
+
+joelclaw-video: `bunx tsc --noEmit` + `bun test`. joelclaw-api: `bun run typecheck` + `bun test`
+(pre-existing lint debt in custody files is NOT yours to fix). Monorepo: `bunx tsc --noEmit`
++ tests for the new provider file.
+
+## Deliverables (file edits only)
+
+Code as above + append a `## Build notes (2026-07-14)` section to the question file (files
+touched per repo, contracts, env names) — do NOT close the question; steering closes after
+live acceptance. Print DONE summary. Never commit.
