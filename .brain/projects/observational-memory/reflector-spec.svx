@@ -1,0 +1,126 @@
+---
+type: "asset"
+parent: "./build-reflector-dreaming-pass.svx"
+title: "Spec: the Reflector — nightly dreaming pass (synthesized to-spec, 2026-07-14)"
+created_at: "2026-07-14"
+privacy: "private"
+---
+
+# Spec: the Reflector
+
+Synthesized from the 2026-07-13/14 steering conversation, the
+[reflector question](./build-reflector-dreaming-pass.svx), the
+[salience-decay survey](./salience-decay-survey.svx), and the
+observational-memory brief. Nothing here was re-asked; every decision below
+was made in conversation or in a closed question.
+
+## Problem statement
+
+The observer writes append-only episodic pages — 43 in one day, 130+ total
+after two days. Files are essentially permanent: the store has photographic
+memory, which is a curse — contradictions stack instead of resolving,
+detail never blurs into generalization, and recall quality degrades as the
+corpus grows. The brief's finish line has always required "a reflector pass
+condenses aging observations without losing citations"; it was never built.
+
+## Solution
+
+A nightly dreaming pass that implements forgetting **at the recall layer**
+(Joel, standing call, verbatim): *salience decay, ranking, rollup blur —
+the substrate never lies, it just gets quiet.* The reflector consolidates
+aging epochs into denser rollups, closes superseded claims without erasing
+them, proposes canon promotions, and reports everything it blurred or
+quieted. Original pages remain in the substrate forever; only their
+salience in projections changes. Anything that becomes relevant again
+re-derives from the cold store (re-reminiscence).
+
+## User stories
+
+1. As the observer, I want last week's twelve fix-loop epochs condensed
+   into one rollup so my activity scan and the skill-index rank one dense
+   page instead of twelve stale ones.
+2. As Joel, I want contradictions resolved in the current projection
+   (newest decision wins, superseded page linked) so recall never serves
+   me both versions as equals.
+3. As Joel, I want a receipt of every dream run — what was condensed, what
+   was quieted, what was proposed for canon — so nothing decays silently.
+4. As a future canon curation session, I want the reflector's promotion
+   proposals accumulated in one place so curation is a review, not a hunt.
+5. As the recall bench, I want held-out queries to score no worse after a
+   dream run than before it.
+
+## Implementation decisions
+
+- **Trigger**: nightly, off the hot path, joining flagg's existing 6am
+  pipeline cadence (a dedicated LaunchAgent following the observer-tick
+  supervisor pattern is the accepted shape). Fresh session per dream run;
+  observer-family integrity rules apply unchanged: receipts-only reports,
+  explicit activation gate, foreground subagents only — never the batch
+  form, never detached (charter law, live receipts 2026-07-13).
+- **Salience score (v1, from the survey — adopted)**:
+  `recency (exp decay, 14-day half-life) × repo-scope (1.0 / 0.6 global / 0)
+  × work-signal (log1p(tokens)/log1p(100k))` — pure frontmatter arithmetic.
+  NO access-telemetry reinforcement in v1: impressions poison the signal;
+  reinforcement waits until deliberate-recall events are distinguishable
+  from automated probes (survey's warning, adopted as a decision).
+- **Rollup blur ladder**: day → week → month. Epochs older than 7 days
+  collapse into per-day-per-repo rollups; rollups older than ~30 days
+  collapse again into weekly/monthly. Each rollup is schema-v1 with a
+  distinct `kind: rollup`, carries every source page's citations
+  (sessionId, machine, commits) verbatim, and links every source page.
+- **Reconciliation = close, don't erase** (Zep/Graphiti semantics; also
+  rhizomatic's retraction-as-new-claim — design vocabulary only, no
+  substrate adoption): a superseded claim gets a closed validity window in
+  the rollup and a link to what superseded it. History stays queryable.
+- **Originals stay in the substrate, moved to a quieter room**: source
+  pages relocate to an archive area within the observations tree
+  (month-partitioned), leaving projections (day index, skill-index,
+  Typesense, masthead pulse) ranking only the rollup. The archive is still
+  `.svx`-in-git — substrate tiering to NAS/Garage/S3 is explicitly a later
+  effort (brief unknown, not this build).
+- **Promotion proposes, curation disposes**: durable facts the dream pass
+  identifies accumulate as canon *candidates* in a proposals page; the
+  HITL canon question consumes them. The reflector never edits grafts or
+  canon directly.
+- **Integrity**: secret-scan every written rollup; MDSvX-escape; schema
+  validation with teaching errors; deterministic grouping (day/repo
+  arithmetic) with pi judgment (terra) confined to the summarization step
+  behind the versioned schema; sensitive pages roll up only into sensitive
+  rollups, never mixed.
+- **Efficiency**: bounded pages per dream run (cap, stated in the receipt
+  when hit — no silent truncation); compression ratio measured and
+  reported per run.
+
+## Testing decisions
+
+- **Existing seam, extended — no new seams**: pure functions in the
+  observer extension's lib, tested in the existing single test file idiom
+  (currently 35 passing). All reflector logic that can be pure must be:
+  salience scoring, rollup grouping, blur-ladder selection, validity-window
+  supersede logic, archive-path computation, citation-survival assembly.
+- **No live dependencies in tests**: no pi calls, no ClickHouse, no
+  filesystem beyond tmpdirs (the repo's established pattern).
+- **Acceptance is one real dream run** (from the question, unchanged):
+  a week of pages condensed with citations intact, projections shrink,
+  recall bench does not regress, receipt page written.
+
+## Out of scope
+
+- Substrate tiering (S3/Garage/NAS cold store) — brief unknown, sharpens
+  after this lands.
+- Access-telemetry salience reinforcement — waits on consumption telemetry
+  that distinguishes deliberate recall.
+- Rhizomatic/Chorus substrate adoption — semantics borrowed, store rejected
+  (files-are-truth, standing decision with exit triggers).
+- Canon curation itself — HITL, Joel's voice, separate question.
+- Embeddings/vector work — separate closed question owns that surface.
+
+## Further notes
+
+- The masthead pulse and `joelclaw briefing` both read the observations
+  tree directly; the archive move MUST keep both correct (they should rank
+  rollups, not lose counts) — their fail-soft behavior is the canary.
+- The recall bench (recall-consumption map) is the regression gate; run it
+  before and after the first live dream.
+- The dream run's receipt page is itself an observation — the dreaming is
+  observed like everything else.
