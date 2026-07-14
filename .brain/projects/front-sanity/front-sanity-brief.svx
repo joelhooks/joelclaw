@@ -41,6 +41,7 @@ maintained without a human remembering to do it.
   adapter (read-only), `front-message-*` inngest functions, the
   external-context digest's Front section
   (joelclaw-observer, `assembleExternalSourceSection`).
+- APPROVED (Joel, 2026-07-14, "everything's approved, go"): burn-down stages 1-2 (notifications + newsletters, tag-then-archive with 7-day rollback), the 3,000-open ceiling, the Front-rules canary defense, and the time-boxed digest build. Stages 3-4 remain gated by the analysis's own Front-native-review requirement.
 - Execution authorized for `kind: task` questions EXCEPT bulk mutations
   of the Front inbox, which are HITL-gated per above (Joel, 2026-07-14,
   charter).
