@@ -14,6 +14,11 @@ created_at: "2026-07-13"
 
 ## Question
 
+**Spec ready-for-agent**: [Spec: the Reflector](./reflector-spec.svx)
+(synthesized to-spec 2026-07-14 from the steering conversation + salience
+survey — a worker can build from it without another decision).
+
+
 The brief's finish line requires it ("a reflector pass condenses aging
 observations without losing citations") and it was never chartered as a
 question. Sharpened by the harness-level memory post (foraged 2026-07-13,
