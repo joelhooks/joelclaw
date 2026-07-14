@@ -3,7 +3,7 @@ title: "Wire the Nightly Dream: LaunchAgent + week/month blur ladder"
 type: "question"
 kind: "task"
 status: "open"
-assignee: ""
+assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
 interaction: "AFK"
 parent: "./observational-memory-brief.svx"
 blockers: []
@@ -45,3 +45,28 @@ has less to repair.
 Done when: the LaunchAgent dreams nightly at minAgeDays=7 with the
 ladder guard in place, one unattended run leaves a receipt page and a
 pushed dark-wizard commit, and the recall bench still does not regress.
+
+## Progress (2026-07-14, steering)
+
+Built, hardened, installed — awaiting the unattended proof.
+
+- Worker delivered the ladder guard, rollup-aware validator (gates every
+  reflector write, before any move), deterministic `bin/observer-dream.sh`,
+  staged plist, distill-prompt repo nudge; 49 tests.
+- Steering fixes at harvest: default observations path was
+  `.brain/resources/observations` (wrong — would have failed loud nightly);
+  `minAgeDays < 7` knob restored for supervised runs (plain pages answer to
+  minAgeDays alone, only rollups ride the blur ladder); no-op dreams write
+  no receipt page (JSON log line only — no daily substrate lint);
+  LaunchAgent-safe PATH (launchd has no `bun`). 51 tests; scripted tmpdir
+  e2e green. Commit `yulyykwt` (c44c8cd).
+- Installed: release worktree promoted to c44c8cd, script at
+  `~/.joelclaw/bin/observer-dream.sh`, LaunchAgent
+  `com.joelclaw.observer-dream` loaded (06:10 daily). Kickstart proof
+  against the real tree: 75 pages read, 0 eligible at minAgeDays=7
+  (corpus too young), no writes, receipt logged to /tmp/observer-dream.log.
+
+Remaining for done-when: the first unattended run that actually condenses
+(plain pages from 2026-07-13/14 turn 7 days old ≈ 2026-07-20/21) with a
+receipt page and the observer publish tick sweeping it to origin, plus a
+recall-bench check after. Until then the job no-ops harmlessly each dawn.
