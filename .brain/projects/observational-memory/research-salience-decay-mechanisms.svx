@@ -2,12 +2,13 @@
 title: "Research Salience Decay: How Memory Systems Forget at the Recall Layer"
 type: "question"
 kind: "research"
-status: "open"
+status: "closed"
 assignee: "pi worker (flagg, herdr pane wB:p11, 2026-07-14)"
 interaction: "AFK"
 parent: "./observational-memory-brief.svx"
 blockers: []
 created_at: "2026-07-14"
+closed_at: "2026-07-14"
 ---
 
 # Research Salience Decay
@@ -31,3 +32,7 @@ without deletion, and produce a recommendation asset for the reflector build:
 - Output: one asset page — mechanism comparison table + a recommended v1
   scoring function for the skill-index and reflector (cheap to compute from
   frontmatter + access telemetry we actually have), with citations.
+
+## Answer (2026-07-14)
+
+[Salience decay survey](./salience-decay-survey.svx) compares recall-rank decay, observer/reflector compression, bounded memory blocks, expiry/soft-delete, temporal invalidation, rollup blur, and future consumption telemetry. The recommendation is a source-preserving v1 score using repo scope, a 14-day recency half-life, and a small tokens-derived work proxy; it explicitly does not pretend tokens are importance. Access telemetry does not exist yet, so the asset specifies the minimum deliberate recall/injection event needed before access can reinforce salience.
