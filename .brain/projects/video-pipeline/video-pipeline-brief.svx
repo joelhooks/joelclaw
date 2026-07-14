@@ -72,7 +72,7 @@ Prior art already in joelclaw: mux webhook provider (above), `packages/system-bu
 - **Arbitrary pointers beyond a flagg filesystem path** — remote URLs, files on blaine/panda, NAS paths, browser uploads. Phase 1 is flagg-local; the pointer taxonomy sharpens once the pipeline exists.
 - **Transcript display on the watch page** — the pipeline side graduated to [Port the Deepgram Transcript Flow](./port-deepgram-transcript-flow.svx); how transcripts render/share on the watch page waits on the watch-page charting.
 - **Privacy enforcement on playback** — Mux signed playback policies for private/unlisted videos vs public-policy-plus-obscure-slug; waits on the Convex model and watch page.
-- **Announce/share flow** — publishing pings Joel (Discord DM with the watch URL) or posts where the agent was asked; shape follows the agent-surface decision.
+- **Announce/share flow** — publishing pings Joel (Slack/Discord DM with the watch URL) or posts where the agent was asked; shape follows the agent-surface decision. Lesson from the first pong (2026-07-14): the gateway routes Slack to a cached lastPromptSource DM id that can go stale (channel_not_found), and notify reports deliveredTo on queue-accept, not delivery — fix is conversations.open-fresh + honest delivery status, owed to the gateway (or absorbed when the api takes messaging).
 
 ## Out of scope
 
