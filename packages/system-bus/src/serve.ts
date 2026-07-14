@@ -36,6 +36,12 @@ const WEBHOOK_SECRETS = [
   { env: "TELNYX_PUBLIC_KEY", secret: "telnyx_public_key" },
   { env: "X_CONSUMER_SECRET", secret: "x_consumer_secret" },
   { env: "TYPESENSE_API_KEY", secret: "typesense_api_key" },
+  // Video pipeline: joelclaw-video functions read these from process.env at step time
+  { env: "MUX_TOKEN_ID", secret: "mux_token_id" },
+  { env: "MUX_TOKEN_SECRET", secret: "mux_token_secret" },
+  { env: "JOELCLAW_API_TOKEN", secret: "joelclaw_api_token" },
+  { env: "AWS_ACCESS_KEY_ID", secret: "garage_s3_access_key_id" },
+  { env: "AWS_SECRET_ACCESS_KEY", secret: "garage_s3_secret_access_key" },
 ] as const;
 
 if (SHOULD_LEASE_WEBHOOK_SECRETS) {
