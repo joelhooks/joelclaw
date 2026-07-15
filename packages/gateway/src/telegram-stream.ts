@@ -13,7 +13,12 @@
  */
 
 import { TelegramConverter } from "@joelclaw/markdown-formatter";
-import { emitGatewayOtel } from "@joelclaw/telemetry";
+import {
+  type ChannelAuditSeed,
+  createChannelDeliveryAudit,
+  emitGatewayOtel,
+  summarizeChannelError,
+} from "@joelclaw/telemetry";
 import type { Bot } from "grammy";
 
 const converter = new TelegramConverter();
@@ -32,12 +37,14 @@ export type TelegramStreamOptions = {
   chatId: number;
   bot: Bot;
   replyTo?: number;
+  audit?: ChannelAuditSeed;
 };
 
 type StreamState = {
   chatId: number;
   bot: Bot;
   replyTo?: number;
+  audit?: ChannelAuditSeed;
 
   // Typing indicator
   typingTimer: ReturnType<typeof setInterval> | undefined;
@@ -79,6 +86,7 @@ export function begin(options: TelegramStreamOptions): void {
     chatId: options.chatId,
     bot: options.bot,
     replyTo: options.replyTo,
+    audit: options.audit,
     typingTimer: undefined,
     messageId: undefined,
     sentMessageIds: [],
@@ -189,55 +197,98 @@ export async function finish(
     return false;
   }
 
-  // Final edit without cursor — convert to HTML
-  try {
-    const html = toHtml(finalText);
-    const displayText = truncateForTelegram(html);
-    await state.bot.api.editMessageText(
-      state.chatId,
-      state.messageId,
-      displayText,
-      { parse_mode: "HTML" as const },
-    );
-    console.log("[telegram-stream] finalized", {
-      chatId: state.chatId,
-      messageId: state.messageId,
-      textLength: finalText.length,
-      messageCount: state.sentMessageIds.length,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!msg.includes("message is not modified")) {
-      console.warn("[telegram-stream] final edit failed", { error: msg });
-    }
-  }
-
-  // If the HTML exceeded one message, send remaining chunks
-  const html = toHtml(finalText);
-  if (html.length > TELEGRAM_MAX_CHARS) {
-    const chunks = converter.chunk(finalText);
-    // First chunk was already sent via editMessageText above, send the rest
-    if (chunks.length > 1) {
-      await sendOverflowHtmlChunks(state, chunks.slice(1));
-    }
-  }
+  const audit = createChannelDeliveryAudit(finalText, {
+    ...state.audit,
+    producer: state.audit?.producer ?? "gateway-telegram-stream",
+    route: state.audit?.route ?? `telegram:${state.chatId}`,
+    inReplyToMessageId: state.audit?.inReplyToMessageId ?? state.replyTo,
+  });
+  const finalizationStartedAt = Date.now();
 
   void emitGatewayOtel({
     level: "info",
     component: "telegram-stream",
-    action: "telegram.stream.completed",
+    action: "telegram.delivery.attempted",
     success: true,
     metadata: {
+      ...audit,
       chatId: state.chatId,
-      totalLength: finalText.length,
-      messageCount: state.sentMessageIds.length,
-      durationMs: Date.now() - state.lastEditAt,
+      streaming: true,
+      telegramMessageIds: state.sentMessageIds,
     },
   });
 
-  cleanup(state);
-  activeStream = undefined;
-  return true;
+  try {
+    const html = toHtml(finalText);
+    const displayText = truncateForTelegram(html);
+    try {
+      await state.bot.api.editMessageText(
+        state.chatId,
+        state.messageId,
+        displayText,
+        { parse_mode: "HTML" as const },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("message is not modified")) throw error;
+    }
+
+    if (html.length > TELEGRAM_MAX_CHARS) {
+      const chunks = converter.chunk(finalText);
+      if (chunks.length > 1) {
+        await sendOverflowHtmlChunks(state, chunks.slice(1));
+      }
+    }
+
+    console.log("[telegram-stream] finalized", {
+      chatId: state.chatId,
+      messageId: state.messageId,
+      flowId: audit.flowId,
+      textLength: finalText.length,
+      messageCount: state.sentMessageIds.length,
+    });
+    await emitGatewayOtel({
+      level: "info",
+      component: "telegram-stream",
+      action: "telegram.delivery.confirmed",
+      success: true,
+      critical: true,
+      duration_ms: Date.now() - finalizationStartedAt,
+      metadata: {
+        ...audit,
+        chatId: state.chatId,
+        streaming: true,
+        telegramMessageIds: state.sentMessageIds,
+      },
+    });
+
+    cleanup(state);
+    activeStream = undefined;
+    return true;
+  } catch (error) {
+    // An initial streamed message is already visible. Treat finalization failure
+    // as a terminal partial delivery instead of resending the full response and
+    // duplicating content in Telegram.
+    await emitGatewayOtel({
+      level: "error",
+      component: "telegram-stream",
+      action: "telegram.delivery.partial",
+      success: false,
+      critical: true,
+      duration_ms: Date.now() - finalizationStartedAt,
+      error: summarizeChannelError(error),
+      metadata: {
+        ...audit,
+        chatId: state.chatId,
+        streaming: true,
+        telegramMessageIds: state.sentMessageIds,
+        stage: "finalize",
+      },
+    });
+    cleanup(state);
+    activeStream = undefined;
+    return true;
+  }
 }
 
 /**
@@ -421,11 +472,11 @@ async function sendOverflowHtmlChunks(
         parse_mode: "HTML" as const,
       });
       state.sentMessageIds.push(msg.message_id);
-    } catch (err) {
+    } catch (error) {
       console.warn("[telegram-stream] overflow chunk failed", {
-        error: err instanceof Error ? err.message : String(err),
+        error: error instanceof Error ? error.message : String(error),
       });
-      break;
+      throw error;
     }
   }
 }

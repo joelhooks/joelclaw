@@ -4,7 +4,13 @@ import { mkdir } from "node:fs/promises";
 import { extname } from "node:path";
 import type { FormatConverter } from "@joelclaw/markdown-formatter";
 import { escapeText, TelegramConverter } from "@joelclaw/markdown-formatter";
-import { emitGatewayOtel } from "@joelclaw/telemetry";
+import {
+  type ChannelAuditSeed,
+  type ChannelDeliveryAudit,
+  createChannelDeliveryAudit,
+  emitGatewayOtel,
+  summarizeChannelError,
+} from "@joelclaw/telemetry";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { Bot, InputFile } from "grammy";
 import Redis from "ioredis";
@@ -74,7 +80,15 @@ export interface RichSendOptions {
   buttons?: InlineButton[][];  // rows of buttons
   silent?: boolean;            // disable_notification
   noPreview?: boolean;         // disable_web_page_preview
+  audit?: ChannelAuditSeed;
 }
+
+export type TelegramDeliveryReceipt = {
+  status: "confirmed";
+  audit: ChannelDeliveryAudit;
+  telegramMessageIds: number[];
+  usedFallback: boolean;
+};
 
 export type TelegramStartOptions = {
   configureBot?: (bot: Bot) => void | Promise<void>;
@@ -194,30 +208,38 @@ const ACTION_LABELS: Record<string, string> = {
 }
 
 async function sendCallbackTimeoutMessage(chatId: number, route: string, traceId: string): Promise<void> {
-  if (!bot) return;
-  await bot.api.sendMessage(
-    chatId,
-    [
+  await sendTelegramMessage(chatId, {
+    text: [
       "⚠️ <b>Callback timed out</b>",
       `Route: <code>${escapeText(route)}</code>`,
       `Trace: <code>${escapeText(traceId)}</code>`,
     ].join("\n"),
-    { parse_mode: "HTML" },
-  );
+    format: "html",
+  }, {
+    audit: {
+      flowId: traceId,
+      producer: "telegram-callback-timeout",
+      route,
+    },
+  });
 }
 
 async function sendCallbackFailureMessage(chatId: number, route: string, traceId: string, error: string): Promise<void> {
-  if (!bot) return;
-  await bot.api.sendMessage(
-    chatId,
-    [
+  await sendTelegramMessage(chatId, {
+    text: [
       "❌ <b>Callback failed</b>",
       `Route: <code>${escapeText(route)}</code>`,
       `Trace: <code>${escapeText(traceId)}</code>`,
       `Error: <code>${escapeText(error)}</code>`,
     ].join("\n"),
-    { parse_mode: "HTML" },
-  );
+    format: "html",
+  }, {
+    audit: {
+      flowId: traceId,
+      producer: "telegram-callback-failure",
+      route,
+    },
+  });
 }
 
 function mimeFromExt(ext: string): string {
@@ -694,6 +716,7 @@ function mapOutboundFromSendOptions(target: string, text: string, options?: Send
     ...(mappedButtons ? { buttons: mappedButtons } : {}),
     ...(options?.silent !== undefined ? { silent: options.silent } : {}),
     ...(options?.noPreview !== undefined ? { noPreview: options.noPreview } : {}),
+    ...(options?.audit ? { audit: options.audit } : {}),
   };
 
   const payload = options?.format ? { text, format: options.format } : text;
@@ -734,15 +757,15 @@ export class TelegramChannel implements Channel {
     target: string,
     message: string | OutboundEnvelope,
     options?: RichSendOptions,
-  ): Promise<void> {
+  ): Promise<TelegramDeliveryReceipt> {
     const chatId = resolveTargetChatId(target);
     if (chatId === undefined) {
       console.error("[gateway:telegram] cannot send telegram message: invalid target", { target });
-      return;
+      throw new Error("invalid_telegram_target");
     }
     const resolved = resolveSendInput(message, options);
     const payload = resolved.format ? { text: resolved.text, format: resolved.format } : resolved.text;
-    await sendTelegramMessage(chatId, payload, resolved.options);
+    return sendTelegramMessage(chatId, payload, resolved.options);
   }
 
   async sendMedia(target: string, media: SendMediaPayload, options?: SendOptions): Promise<void> {
@@ -756,7 +779,7 @@ export class TelegramChannel implements Channel {
       ? Number.parseInt(options.replyTo, 10)
       : undefined;
 
-    await sendTelegramMedia(chatId, media, { replyTo });
+    await sendTelegramMedia(chatId, media, { replyTo, audit: options?.audit });
   }
 }
 
@@ -1097,9 +1120,19 @@ async function startTelegramChannel(
     const receivedAt = Date.now();
     const text = ctx.message.text;
     const chatId = ctx.chat.id;
+    const messageId = ctx.message.message_id;
+    const audit = createChannelDeliveryAudit(text, {
+      flowId: `telegram-inbound:${chatId}:${messageId}`,
+      producer: "telegram-user",
+      requestedAtMs: receivedAt,
+      route: `telegram:${chatId}`,
+      inReplyToMessageId: ctx.message.reply_to_message?.message_id,
+    }, receivedAt);
 
     console.log("[gateway:telegram] message received", {
       chatId,
+      messageId,
+      flowId: audit.flowId,
       length: text.length,
     });
 
@@ -1109,25 +1142,31 @@ async function startTelegramChannel(
       prompt,
       metadata: {
         telegramChatId: chatId,
-        telegramMessageId: ctx.message.message_id,
+        telegramMessageId: messageId,
+        telegramFlowId: audit.flowId,
+        channelAudit: audit,
       },
       replyTo: ctx.message.reply_to_message ? String(ctx.message.reply_to_message.message_id) : undefined,
     });
-    void emitGatewayOtel({
-      level: "debug",
-      component: "telegram-channel",
-      action: "telegram.message.received",
-      success: true,
-      duration_ms: Date.now() - receivedAt,
-      metadata: {
-        chatId,
-        length: text.length,
-      },
+    await enqueuePrompt!(`telegram:${chatId}`, prompt, {
+      telegramChatId: chatId,
+      telegramMessageId: messageId,
+      telegramFlowId: audit.flowId,
+      channelAudit: audit,
     });
 
-    enqueuePrompt!(`telegram:${chatId}`, prompt, {
-      telegramChatId: chatId,
-      telegramMessageId: ctx.message.message_id,
+    await emitGatewayOtel({
+      level: "info",
+      component: "telegram-channel",
+      action: "telegram.inbound.accepted",
+      success: true,
+      critical: true,
+      duration_ms: Date.now() - receivedAt,
+      metadata: {
+        ...audit,
+        chatId,
+        telegramMessageId: messageId,
+      },
     });
   });
 
@@ -1924,31 +1963,34 @@ async function sendTelegramMessage(
   chatId: number,
   message: string | OutboundEnvelope,
   options?: RichSendOptions,
-): Promise<void> {
+): Promise<TelegramDeliveryReceipt> {
+  const sendInput = resolveSendInput(message, options);
+  const text = sendInput.text;
+  const mergedOptions = sendInput.options;
+  const audit = createChannelDeliveryAudit(text, mergedOptions?.audit);
+  const sendStartedAt = Date.now();
+
   if (!bot) {
+    const error = "bot_not_started";
     console.error("[gateway:telegram] bot not started, can't send");
-    void emitGatewayOtel({
-      level: "warn",
+    await emitGatewayOtel({
+      level: "error",
       component: "telegram-channel",
-      action: "telegram.send.skipped",
+      action: "telegram.delivery.failed",
       success: false,
-      error: "bot_not_started",
+      error,
+      metadata: { ...audit, chatId, stage: "preflight" },
     });
-    return;
+    throw new Error(error);
   }
 
-  // Show typing indicator
+  // Show typing indicator. This is UX only, not a delivery hop.
   try {
     await bot.api.sendChatAction(chatId, "typing");
   } catch {
     // non-critical
   }
 
-  const sendInput = resolveSendInput(message, options);
-  const text = sendInput.text;
-  const mergedOptions = sendInput.options;
-
-  // Build inline keyboard if buttons provided
   const replyMarkup = mergedOptions?.buttons
     ? {
         inline_keyboard: mergedOptions.buttons.map(row =>
@@ -1966,17 +2008,30 @@ async function sendTelegramMessage(
     void emitGatewayOtel({
       level: "warn",
       component: "telegram-channel",
-      action: "telegram.send.html_invalid",
-      success: false,
-      metadata: {
-        chatId,
-      },
+      action: "telegram.delivery.format_fallback",
+      success: true,
+      metadata: { ...audit, chatId, reason: "html_invalid" },
     });
   }
+
   const chunks = chunkMode === "markdown"
     ? telegramConverter.chunk(text)
     : chunkMessage(formattedText);
-  const sendStartedAt = Date.now();
+  const telegramMessageIds: number[] = [];
+  let usedFallback = !parseAsHtml;
+
+  void emitGatewayOtel({
+    level: "info",
+    component: "telegram-channel",
+    action: "telegram.delivery.attempted",
+    success: true,
+    metadata: {
+      ...audit,
+      chatId,
+      chunks: chunks.length,
+      hasButtons: Boolean(replyMarkup),
+    },
+  });
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
@@ -1986,72 +2041,106 @@ async function sendTelegramMessage(
     try {
       const sent = await bot.api.sendMessage(chatId, chunk, {
         ...(parseAsHtml ? { parse_mode: "HTML" as const } : {}),
-        // Only attach buttons to the last chunk
         ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
         ...(mergedOptions?.replyTo ? { reply_parameters: { message_id: mergedOptions.replyTo } } : {}),
         ...(mergedOptions?.silent ? { disable_notification: true } : {}),
         ...(mergedOptions?.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
       });
-      // ADR-0209: Record outbound message ID for thread reply-to tracking
-      if (isLast && sent?.message_id && _onOutboundMessageId) {
+      telegramMessageIds.push(sent.message_id);
+      if (isLast && _onOutboundMessageId) {
         _onOutboundMessageId(sent.message_id);
       }
     } catch (error) {
       if (!parseAsHtml) {
         console.error("[gateway:telegram] plain send failed", { error });
-        void emitGatewayOtel({
+        await emitGatewayOtel({
           level: "error",
           component: "telegram-channel",
-          action: "telegram.send.failed",
+          action: "telegram.delivery.failed",
           success: false,
-          error: String(error),
-          metadata: { chatId },
+          error: summarizeChannelError(error),
+          duration_ms: Date.now() - sendStartedAt,
+          metadata: {
+            ...audit,
+            chatId,
+            chunkIndex: i,
+            stage: "send",
+            telegramMessageIds,
+          },
         });
-        break;
+        throw error;
       }
 
-      // Fallback: send as plain text if HTML parsing fails
       console.warn("[gateway:telegram] HTML send failed, trying plain text", { error });
       void emitGatewayOtel({
         level: "warn",
         component: "telegram-channel",
-        action: "telegram.send.html_failed",
-        success: false,
-        error: String(error),
-        metadata: { chatId },
+        action: "telegram.delivery.retrying_plain_text",
+        success: true,
+        metadata: {
+          ...audit,
+          chatId,
+          chunkIndex: i,
+          initialError: summarizeChannelError(error),
+        },
       });
+
       try {
-        await bot.api.sendMessage(chatId, stripHtmlTags(formattedText).slice(0, CHUNK_MAX), {
+        const sent = await bot.api.sendMessage(chatId, stripHtmlTags(chunk).slice(0, CHUNK_MAX), {
           ...(mergedOptions?.replyTo ? { reply_parameters: { message_id: mergedOptions.replyTo } } : {}),
           ...(mergedOptions?.silent ? { disable_notification: true } : {}),
           ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
         });
+        telegramMessageIds.push(sent.message_id);
+        usedFallback = true;
+        if (isLast && _onOutboundMessageId) {
+          _onOutboundMessageId(sent.message_id);
+        }
       } catch (fallbackError) {
         console.error("[gateway:telegram] send failed completely", { fallbackError });
-        void emitGatewayOtel({
+        await emitGatewayOtel({
           level: "error",
           component: "telegram-channel",
-          action: "telegram.send.failed",
+          action: "telegram.delivery.failed",
           success: false,
-          error: String(fallbackError),
-          metadata: { chatId },
+          error: summarizeChannelError(fallbackError),
+          duration_ms: Date.now() - sendStartedAt,
+          metadata: {
+            ...audit,
+            chatId,
+            chunkIndex: i,
+            stage: "plain_text_fallback",
+            telegramMessageIds,
+          },
         });
+        throw fallbackError;
       }
-      break; // don't continue chunking if we had to fallback
     }
   }
-  void emitGatewayOtel({
-    level: "debug",
+
+  await emitGatewayOtel({
+    level: "info",
     component: "telegram-channel",
-    action: "telegram.send.completed",
+    action: "telegram.delivery.confirmed",
     success: true,
+    critical: true,
     duration_ms: Date.now() - sendStartedAt,
     metadata: {
+      ...audit,
       chatId,
-      chunks: chunks.length,
-      length: text.length,
+      chunksRequested: chunks.length,
+      chunksConfirmed: telegramMessageIds.length,
+      telegramMessageIds,
+      usedFallback,
     },
   });
+
+  return {
+    status: "confirmed",
+    audit,
+    telegramMessageIds,
+    usedFallback,
+  };
 }
 
 /**
@@ -2061,31 +2150,44 @@ async function sendTelegramMessage(
 async function sendTelegramMedia(
   chatId: number,
   media: SendMediaPayload,
-  options?: { caption?: string; replyTo?: number; asVoice?: boolean },
-): Promise<void> {
+  options?: { caption?: string; replyTo?: number; asVoice?: boolean; audit?: ChannelAuditSeed },
+): Promise<TelegramDeliveryReceipt> {
+  const caption = media.caption ?? options?.caption ?? "";
+  const audit = createChannelDeliveryAudit(caption, options?.audit);
+  const sendStartedAt = Date.now();
+
   if (!bot) {
+    const error = "bot_not_started";
     console.error("[gateway:telegram] bot not started, can't send media");
-    void emitGatewayOtel({
-      level: "warn",
+    await emitGatewayOtel({
+      level: "error",
       component: "telegram-channel",
-      action: "telegram.send_media.skipped",
+      action: "telegram.delivery.failed",
       success: false,
-      error: "bot_not_started",
+      error,
+      metadata: { ...audit, chatId, media: true, stage: "preflight" },
     });
-    return;
+    throw new Error(error);
   }
 
   const source = media.path ?? media.url;
   if (!source) {
+    const error = "media_source_missing";
     console.error("[gateway:telegram] sendMedia requires media.path or media.url", { chatId });
-    return;
+    await emitGatewayOtel({
+      level: "error",
+      component: "telegram-channel",
+      action: "telegram.delivery.failed",
+      success: false,
+      error,
+      metadata: { ...audit, chatId, media: true, stage: "preflight" },
+    });
+    throw new Error(error);
   }
 
   const mimeType = media.mimeType || (media.path ? mimeFromExt(extname(media.path) || ".bin") : "application/octet-stream");
   const kind = mediaKindFromMimeType(mimeType, media.path);
   const sendAsVoice = options?.asVoice ?? mimeType === "audio/ogg";
-
-  // Show appropriate typing indicator
   const action = kind === "photo" ? "upload_photo"
     : kind === "video" ? "upload_video"
     : kind === "audio" ? "upload_voice"
@@ -2093,68 +2195,102 @@ async function sendTelegramMedia(
   try { await bot.api.sendChatAction(chatId, action); } catch {}
 
   const file = media.path ? new InputFile(media.path) : media.url!;
-  const caption = media.caption ?? options?.caption;
   const params = {
     ...(caption ? { caption, parse_mode: "HTML" as const } : {}),
     ...(options?.replyTo ? { reply_parameters: { message_id: options.replyTo } } : {}),
   };
+  let usedFallback = false;
+  let sent: { message_id: number };
+
+  void emitGatewayOtel({
+    level: "info",
+    component: "telegram-channel",
+    action: "telegram.delivery.attempted",
+    success: true,
+    metadata: { ...audit, chatId, media: true, kind, mimeType },
+  });
 
   try {
     switch (kind) {
       case "photo":
-        await bot.api.sendPhoto(chatId, file, params);
+        sent = await bot.api.sendPhoto(chatId, file, params);
         break;
       case "video":
-        await bot.api.sendVideo(chatId, file, params);
+        sent = await bot.api.sendVideo(chatId, file, params);
         break;
       case "audio":
         if (sendAsVoice) {
           try {
-            await bot.api.sendVoice(chatId, file, params);
-          } catch (err) {
-            if (/VOICE_MESSAGES_FORBIDDEN/.test(String(err))) {
-              await bot.api.sendAudio(chatId, file, params);
-            } else throw err;
+            sent = await bot.api.sendVoice(chatId, file, params);
+          } catch (error) {
+            if (!/VOICE_MESSAGES_FORBIDDEN/.test(String(error))) throw error;
+            usedFallback = true;
+            sent = await bot.api.sendAudio(chatId, file, params);
           }
         } else {
-          await bot.api.sendAudio(chatId, file, params);
+          sent = await bot.api.sendAudio(chatId, file, params);
         }
         break;
       default:
-        await bot.api.sendDocument(chatId, file, params);
+        sent = await bot.api.sendDocument(chatId, file, params);
     }
-    console.log("[gateway:telegram] media sent", { chatId, kind, mimeType, source });
-    void emitGatewayOtel({
-      level: "info",
-      component: "telegram-channel",
-      action: "telegram.send_media.completed",
-      success: true,
-      metadata: { chatId, kind, mimeType },
-    });
   } catch (error) {
     console.error("[gateway:telegram] sendMedia failed, trying as document", { kind, error });
     void emitGatewayOtel({
-      level: "error",
+      level: "warn",
       component: "telegram-channel",
-      action: "telegram.send_media.failed",
-      success: false,
-      error: String(error),
-      metadata: { chatId, kind },
+      action: "telegram.delivery.retrying_document",
+      success: true,
+      metadata: {
+        ...audit,
+        chatId,
+        kind,
+        initialError: summarizeChannelError(error),
+      },
     });
     try {
-      await bot.api.sendDocument(chatId, file, params);
-    } catch (fallbackErr) {
-      console.error("[gateway:telegram] sendMedia fallback failed", { fallbackErr });
-      void emitGatewayOtel({
+      sent = await bot.api.sendDocument(chatId, file, params);
+      usedFallback = true;
+    } catch (fallbackError) {
+      console.error("[gateway:telegram] sendMedia fallback failed", { fallbackError });
+      await emitGatewayOtel({
         level: "error",
         component: "telegram-channel",
-        action: "telegram.send_media.fallback_failed",
+        action: "telegram.delivery.failed",
         success: false,
-        error: String(fallbackErr),
-        metadata: { chatId, kind },
+        error: summarizeChannelError(fallbackError),
+        duration_ms: Date.now() - sendStartedAt,
+        metadata: { ...audit, chatId, media: true, kind, stage: "document_fallback" },
       });
+      throw fallbackError;
     }
   }
+
+  console.log("[gateway:telegram] media sent", { chatId, kind, mimeType, flowId: audit.flowId });
+  await emitGatewayOtel({
+    level: "info",
+    component: "telegram-channel",
+    action: "telegram.delivery.confirmed",
+    success: true,
+    critical: true,
+    duration_ms: Date.now() - sendStartedAt,
+    metadata: {
+      ...audit,
+      chatId,
+      media: true,
+      kind,
+      mimeType,
+      telegramMessageIds: [sent.message_id],
+      usedFallback,
+    },
+  });
+
+  return {
+    status: "confirmed",
+    audit,
+    telegramMessageIds: [sent.message_id],
+    usedFallback,
+  };
 }
 
 /**
@@ -2179,18 +2315,18 @@ export async function send(
   chatId: number,
   message: string | OutboundEnvelope,
   options?: RichSendOptions,
-): Promise<void> {
+): Promise<TelegramDeliveryReceipt> {
   const instance = getDefaultTelegramChannel();
-  await instance.sendWithLegacy(String(chatId), message, options);
+  return instance.sendWithLegacy(String(chatId), message, options);
 }
 
 export async function sendMedia(
   chatId: number,
   filePath: string,
-  options?: { caption?: string; replyTo?: number; asVoice?: boolean },
-): Promise<void> {
+  options?: { caption?: string; replyTo?: number; asVoice?: boolean; audit?: ChannelAuditSeed },
+): Promise<TelegramDeliveryReceipt> {
   const mimeType = mimeFromExt(extname(filePath) || ".bin");
-  await sendTelegramMedia(chatId, {
+  return sendTelegramMedia(chatId, {
     path: filePath,
     mimeType,
     caption: options?.caption,

@@ -1,7 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { emitGatewayOtel } from "@joelclaw/telemetry";
+import {
+  type ChannelAuditSeed,
+  emitGatewayOtel,
+  summarizeChannelError,
+} from "@joelclaw/telemetry";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import Redis from "ioredis";
 import {
@@ -593,6 +597,25 @@ function parseEnvelopeFormat(value: unknown): OutboundEnvelope["format"] | undef
   return undefined;
 }
 
+function parseChannelAudit(value: unknown): ChannelAuditSeed | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const audit = value as Record<string, unknown>;
+  if (typeof audit.flowId !== "string" || audit.flowId.trim().length === 0) return undefined;
+
+  return {
+    flowId: audit.flowId,
+    ...(typeof audit.producer === "string" ? { producer: audit.producer } : {}),
+    ...(typeof audit.originSystemId === "string" ? { originSystemId: audit.originSystemId } : {}),
+    ...(typeof audit.eventId === "string" ? { eventId: audit.eventId } : {}),
+    ...(typeof audit.requestedAtMs === "number" ? { requestedAtMs: audit.requestedAtMs } : {}),
+    ...(typeof audit.queuedAtMs === "number" ? { queuedAtMs: audit.queuedAtMs } : {}),
+    ...(typeof audit.route === "string" ? { route: audit.route } : {}),
+    ...(typeof audit.inReplyToMessageId === "number"
+      ? { inReplyToMessageId: audit.inReplyToMessageId }
+      : {}),
+  };
+}
+
 async function sendImmediateTelegramEscalation(events: SystemEvent[]): Promise<void> {
   if (!TELEGRAM_USER_ID || events.length === 0) return;
 
@@ -613,6 +636,14 @@ async function sendImmediateTelegramEscalation(events: SystemEvent[]): Promise<v
       text: directMessage,
       format: parseEnvelopeFormat(payload.telegramFormat),
       buttons: parseInlineButtons(payload.telegramButtons),
+    }, {
+      audit: parseChannelAudit(payload.audit) ?? {
+        flowId: `gateway-event:${event.id}`,
+        producer: event.source,
+        eventId: event.id,
+        requestedAtMs: event.ts,
+        route: "redis-immediate",
+      },
     });
   }
 
@@ -628,7 +659,22 @@ async function sendImmediateTelegramEscalation(events: SystemEvent[]): Promise<v
     }),
   ];
 
-  await sendTelegram(TELEGRAM_USER_ID, lines.join("\n"));
+  const onlyEvent = legacyEvents.length === 1 ? legacyEvents[0] : undefined;
+  const onlyEventPayload = onlyEvent?.payload as Record<string, unknown> | undefined;
+  await sendTelegram(TELEGRAM_USER_ID, lines.join("\n"), {
+    audit: onlyEvent
+      ? parseChannelAudit(onlyEventPayload?.audit) ?? {
+          flowId: `gateway-event:${onlyEvent.id}`,
+          producer: onlyEvent.source,
+          eventId: onlyEvent.id,
+          requestedAtMs: onlyEvent.ts,
+          route: "redis-immediate",
+        }
+      : {
+          producer: "gateway-immediate-batch",
+          route: "redis-immediate",
+        },
+  });
 }
 
 async function drainEvents(): Promise<void> {
@@ -763,19 +809,32 @@ async function drainEvents(): Promise<void> {
 
     const immediateTelegramEvents = actionable.filter(isImmediateTelegramEvent);
     if (immediateTelegramEvents.length > 0) {
-      await sendImmediateTelegramEscalation(immediateTelegramEvents).catch((error) => {
+      try {
+        await sendImmediateTelegramEscalation(immediateTelegramEvents);
+        void emitGatewayOtel({
+          level: "info",
+          component: "redis-channel",
+          action: "events.immediate_telegram",
+          success: true,
+          metadata: {
+            count: immediateTelegramEvents.length,
+            eventTypes: immediateTelegramEvents.map((event) => event.type),
+          },
+        });
+      } catch (error) {
         console.error("[gateway:redis] immediate telegram escalation failed", { error });
-      });
-      void emitGatewayOtel({
-        level: "info",
-        component: "redis-channel",
-        action: "events.immediate_telegram",
-        success: true,
-        metadata: {
-          count: immediateTelegramEvents.length,
-          eventTypes: immediateTelegramEvents.map((event) => event.type),
-        },
-      });
+        void emitGatewayOtel({
+          level: "error",
+          component: "redis-channel",
+          action: "events.immediate_telegram",
+          success: false,
+          error: summarizeChannelError(error),
+          metadata: {
+            count: immediateTelegramEvents.length,
+            eventTypes: immediateTelegramEvents.map((event) => event.type),
+          },
+        });
+      }
     }
 
     const immediateTelegramOnlyCount = actionable.filter(isTelegramOnlyImmediateEvent).length;
@@ -822,6 +881,9 @@ async function drainEvents(): Promise<void> {
     const hasHumanMessageEvent = actionable.some((event) => isHumanInboundMessageEvent(event));
     const backgroundOnly = !hasInteractiveEvent && !hasHumanMessageEvent;
     const eventTypes = Array.from(new Set(actionable.map((event) => event.type)));
+    const channelAudit = actionable.length === 1
+      ? parseChannelAudit(actionable[0]?.payload.audit)
+      : undefined;
 
     await enqueuePrompt(source, prompt, {
       eventCount: actionable.length,
@@ -830,6 +892,7 @@ async function drainEvents(): Promise<void> {
       originSession,
       backgroundOnly,
       sourceKind: getSourceKind(source),
+      ...(channelAudit ? { channelAudit } : {}),
     });
     void emitGatewayOtel({
       level: "info",

@@ -249,6 +249,10 @@ describe("command queue supersession", () => {
         expect(getActiveRequestMetadata()).toMatchObject({
           operatorTraceId: "cmd_trace_demo",
           command: "status",
+          channelAudit: {
+            flowId: "telegram-inbound:1:42",
+            producer: "telegram-user",
+          },
         });
         markPromptEntered?.();
         await promptGate;
@@ -262,6 +266,10 @@ describe("command queue supersession", () => {
     await enqueue("telegram:1", "status", {
       operatorTraceId: "cmd_trace_demo",
       command: "status",
+      channelAudit: {
+        flowId: "telegram-inbound:1:42",
+        producer: "telegram-user",
+      },
     });
     const draining = drain();
     await promptEntered;

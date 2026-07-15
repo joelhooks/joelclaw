@@ -7,7 +7,13 @@ import { extname, join } from "node:path";
 import { getCatalogModel as resolveModelFromCatalog } from "@joelclaw/inference-router";
 import { init as initMessageStore, trimOld } from "@joelclaw/message-store";
 import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-fallback";
-import { emitGatewayOtel } from "@joelclaw/telemetry";
+import {
+  type ChannelAuditSeed,
+  type ChannelDeliveryAudit,
+  createChannelDeliveryAudit,
+  emitGatewayOtel,
+  summarizeChannelError,
+} from "@joelclaw/telemetry";
 import { getModel } from "@mariozechner/pi-ai";
 import { calculateContextTokens, createAgentSession, DefaultResourceLoader, getLastAssistantUsage, type LoadExtensionsResult, SessionManager } from "@mariozechner/pi-coding-agent";
 import {
@@ -33,7 +39,7 @@ import { getRuntimeState as getIMessageRuntimeState, send as sendIMessage, shutd
 import { getRedisClient, getRuntimeState as getRedisRuntimeState, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
 import { getRuntimeState as getSlackRuntimeState, isStarted as isSlackStarted, send as sendSlack, shutdown as shutdownSlack, start as startSlack } from "./channels/slack";
 import { getBot, getRuntimeState as getTelegramRuntimeState, parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, setOutboundMessageIdCallback, shutdown as shutdownTelegram, start as startTelegram, TelegramChannel } from "./channels/telegram";
-import type { SendMediaPayload } from "./channels/types";
+import type { SendMediaPayload, SendOptions } from "./channels/types";
 import {
   drain,
   enqueue,
@@ -1632,7 +1638,26 @@ onPrompt(() => {
     const chatId = parseChatId(source) ?? TELEGRAM_USER_ID;
     const bot = getBot();
     if (bot && chatId) {
-      telegramStream.begin({ chatId, bot });
+      const replyToAnchor = getActiveThreadContext()?.replyToAnchor;
+      const replyTo = replyToAnchor && /^-?\d+$/.test(replyToAnchor)
+        ? Number.parseInt(replyToAnchor, 10)
+        : undefined;
+      const activeAudit = getChannelAuditFromMetadata(getActiveRequestMetadata());
+      telegramStream.begin({
+        chatId,
+        bot,
+        replyTo,
+        audit: {
+          ...activeAudit,
+          ...(!activeAudit?.flowId && replyTo
+            ? { flowId: `telegram-inbound:${chatId}:${replyTo}` }
+            : {}),
+          producer: activeAudit?.producer ?? "gateway-agent-response",
+          route: activeAudit?.route ?? source,
+          inReplyToMessageId: activeAudit?.inReplyToMessageId ?? replyTo,
+          requestedAtMs: activeAudit?.requestedAtMs ?? now,
+        },
+      });
     }
   }
 });
@@ -1666,6 +1691,28 @@ function compactErrorForAlert(errorText: string, maxLength = 220): string {
 function getOperatorTraceIdFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
   const traceId = metadata?.operatorTraceId;
   return typeof traceId === "string" && traceId.length > 0 ? traceId : undefined;
+}
+
+function getChannelAuditFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): ChannelAuditSeed | undefined {
+  const value = metadata?.channelAudit;
+  if (!value || typeof value !== "object") return undefined;
+  const audit = value as Record<string, unknown>;
+  if (typeof audit.flowId !== "string" || audit.flowId.trim().length === 0) return undefined;
+
+  return {
+    flowId: audit.flowId,
+    ...(typeof audit.producer === "string" ? { producer: audit.producer } : {}),
+    ...(typeof audit.originSystemId === "string" ? { originSystemId: audit.originSystemId } : {}),
+    ...(typeof audit.eventId === "string" ? { eventId: audit.eventId } : {}),
+    ...(typeof audit.requestedAtMs === "number" ? { requestedAtMs: audit.requestedAtMs } : {}),
+    ...(typeof audit.queuedAtMs === "number" ? { queuedAtMs: audit.queuedAtMs } : {}),
+    ...(typeof audit.route === "string" ? { route: audit.route } : {}),
+    ...(typeof audit.inReplyToMessageId === "number"
+      ? { inReplyToMessageId: audit.inReplyToMessageId }
+      : {}),
+  };
 }
 
 function getOperatorCommandLabel(metadata: Record<string, unknown> | undefined): string {
@@ -2068,10 +2115,20 @@ registerChannel("console", {
     });
 
     try {
+      const replyTo = typeof relayEnvelope.replyTo === "string"
+        ? Number.parseInt(relayEnvelope.replyTo, 10)
+        : relayEnvelope.replyTo;
+      const activeAudit = getChannelAuditFromMetadata(getActiveRequestMetadata());
       await sendTelegram(TELEGRAM_USER_ID, relayEnvelope.text, {
         buttons: relayEnvelope.buttons,
         silent: relayEnvelope.silent,
-        replyTo: typeof relayEnvelope.replyTo === "string" ? Number.parseInt(relayEnvelope.replyTo, 10) : relayEnvelope.replyTo,
+        replyTo,
+        audit: {
+          ...activeAudit,
+          producer: activeAudit?.producer ?? "gateway-console-forward",
+          route: activeAudit?.route ?? source ?? "console",
+          inReplyToMessageId: activeAudit?.inReplyToMessageId ?? replyTo,
+        },
       });
       void emitGatewayOtel({
         level: "info",
@@ -2126,10 +2183,23 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
       }
 
       try {
+        const replyTo = typeof envelope.replyTo === "string"
+          ? Number.parseInt(envelope.replyTo, 10)
+          : envelope.replyTo;
+        const activeAudit = getChannelAuditFromMetadata(getActiveRequestMetadata());
         await sendTelegram(chatId, envelope.text, {
           buttons: envelope.buttons,
           silent: envelope.silent,
-          replyTo: typeof envelope.replyTo === "string" ? Number.parseInt(envelope.replyTo, 10) : envelope.replyTo,
+          replyTo,
+          audit: {
+            ...activeAudit,
+            ...(!activeAudit?.flowId && context?.source?.startsWith("telegram:") && replyTo
+              ? { flowId: `telegram-inbound:${chatId}:${replyTo}` }
+              : {}),
+            producer: activeAudit?.producer ?? "gateway-agent-response",
+            route: activeAudit?.route ?? context?.source ?? "telegram",
+            inReplyToMessageId: activeAudit?.inReplyToMessageId ?? replyTo,
+          },
         });
         console.log("[gateway:telegram] message sent successfully", { chatId });
       } catch (error) {
@@ -2651,9 +2721,10 @@ async function maybeNotifySessionPressure(snapshot: ReturnType<typeof getSession
       : "elevated";
   const message = buildSessionPressureAlertMessage(alertKind, snapshot);
   const silent = alertKind !== "critical";
-  const shouldSendTelegram = Boolean(TELEGRAM_USER_ID) && shouldSendSessionPressureTelegramNotice(alertKind);
+  const telegramUserId = TELEGRAM_USER_ID;
+  const shouldSendTelegram = Boolean(telegramUserId) && shouldSendSessionPressureTelegramNotice(alertKind);
 
-  if (!shouldSendTelegram) {
+  if (!shouldSendTelegram || !telegramUserId) {
     void emitGatewayOtel({
       level: kind === "critical" ? "warn" : "info",
       component: "daemon.session-pressure",
@@ -2668,7 +2739,7 @@ async function maybeNotifySessionPressure(snapshot: ReturnType<typeof getSession
   }
 
   try {
-    await sendTelegram(TELEGRAM_USER_ID, message, { silent });
+    await sendTelegram(telegramUserId, message, { silent });
     void emitGatewayOtel({
       level: kind === "critical" ? "warn" : "info",
       component: "daemon.session-pressure",
@@ -4862,8 +4933,8 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
     await msgSub.subscribe("joelclaw:notify:outbound");
     const telegramMessageOutboundChannel = new TelegramChannel();
     type MessageChannelAdapter = {
-      send: (target: string, text: string) => Promise<void>;
-      sendMedia?: (target: string, media: SendMediaPayload) => Promise<void>;
+      send: (target: string, text: string, options?: SendOptions) => Promise<void>;
+      sendMedia?: (target: string, media: SendMediaPayload, options?: SendOptions) => Promise<void>;
     };
 
     const resolveMessageChannel = (channelRef: string): {
@@ -4879,7 +4950,7 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
           adapter: {
             send: (target, text) => telegramMessageOutboundChannel.send(target, text),
             sendMedia: telegramMessageOutboundChannel.sendMedia
-              ? (target, media) => telegramMessageOutboundChannel.sendMedia!(target, media)
+              ? (target, media, options) => telegramMessageOutboundChannel.sendMedia!(target, media, options)
               : undefined,
           },
           target: `telegram:${chatId}`,
@@ -4924,6 +4995,8 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
         await msgCmd.del("joelclaw:outbound:messages");
 
         for (const item of raw) {
+          let itemAudit: ChannelDeliveryAudit | undefined;
+          let itemChannel = "unknown";
           try {
             const msg = JSON.parse(item) as {
               channel: string;
@@ -4935,24 +5008,73 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
               media_path?: string;
               mime_type?: string;
               caption?: string;
+              ts?: string;
+              audit?: ChannelDeliveryAudit;
             };
 
+            itemChannel = msg.channel;
             const resolvedChannel = resolveMessageChannel(msg.channel);
             const hasMedia = Boolean(msg.media_url || msg.media_path);
+            const parsedQueuedAt = msg.ts ? Date.parse(msg.ts) : Number.NaN;
+            const audit = msg.audit ?? createChannelDeliveryAudit(msg.caption ?? msg.text ?? "", {
+              producer: "legacy-outbound-queue",
+              requestedAtMs: Number.isFinite(parsedQueuedAt) ? parsedQueuedAt : undefined,
+              queuedAtMs: Number.isFinite(parsedQueuedAt) ? parsedQueuedAt : undefined,
+              route: "redis-outbound",
+            });
+            itemAudit = audit;
+            const dequeuedAtMs = Date.now();
 
             console.log("[gateway] message outbound →", {
               channel: msg.channel,
+              flowId: audit.flowId,
+              originSystemId: audit.originSystemId,
+              producer: audit.producer,
               hasKeyboard: !!msg.inline_keyboard,
               edit: msg.edit_message_id,
               hasMedia,
             });
 
+            void emitGatewayOtel({
+              level: "info",
+              component: "daemon.outbound-queue",
+              action: "channel.delivery.dequeued",
+              success: true,
+              critical: true,
+              metadata: {
+                ...audit,
+                channel: msg.channel,
+                gatewayDequeuedAtMs: dequeuedAtMs,
+                queueWaitMs: audit.queuedAtMs !== undefined
+                  ? Math.max(0, dequeuedAtMs - audit.queuedAtMs)
+                  : undefined,
+                hasKeyboard: Boolean(msg.inline_keyboard),
+                editMessage: Boolean(msg.edit_message_id),
+                hasMedia,
+              },
+            });
+
             if (!resolvedChannel) {
+              const error = `unsupported_channel:${msg.channel}`;
               console.warn("[gateway] message outbound: unsupported channel", { channel: msg.channel });
+              await emitGatewayOtel({
+                level: "error",
+                component: "daemon.outbound-queue",
+                action: "channel.delivery.failed",
+                success: false,
+                error,
+                metadata: { ...audit, channel: msg.channel, stage: "route" },
+              });
               continue;
             }
 
             const { adapter, target, telegramChatId } = resolvedChannel;
+            const sendOptions: SendOptions = {
+              audit: {
+                ...audit,
+                route: "redis-outbound",
+              },
+            };
 
             if (hasMedia) {
               const media: SendMediaPayload = {
@@ -4965,43 +5087,96 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
               };
 
               if (adapter.sendMedia) {
-                await adapter.sendMedia(target, media);
+                await adapter.sendMedia(target, media, sendOptions);
               } else {
                 const mediaLink = msg.media_url ?? msg.media_path ?? "";
                 const fallbackText = [msg.caption ?? msg.text, mediaLink]
                   .filter((part): part is string => Boolean(part && part.trim()))
                   .join("\n");
-                await adapter.send(target, fallbackText || mediaLink);
+                await adapter.send(target, fallbackText || mediaLink, sendOptions);
               }
               continue;
             }
 
             if (msg.channel === "telegram" || msg.channel.startsWith("telegram:")) {
-              const tgBot = getBot();
-              if (!tgBot) {
-                console.error("[gateway] message outbound: telegram bot not available");
-                continue;
-              }
-              if (!telegramChatId) continue;
+              if (!telegramChatId) throw new Error("telegram_chat_id_missing");
 
               if (msg.edit_message_id) {
-                // Edit existing message
-                await tgBot.api.editMessageText(telegramChatId, msg.edit_message_id, msg.text, {
-                  parse_mode: "HTML",
-                  reply_markup: msg.remove_keyboard ? { inline_keyboard: [] } : undefined,
-                }).catch((err) => console.warn("[gateway] edit message failed", err));
+                const tgBot = getBot();
+                if (!tgBot) throw new Error("telegram_bot_not_available");
+                const editStartedAt = Date.now();
+                try {
+                  await tgBot.api.editMessageText(telegramChatId, msg.edit_message_id, msg.text, {
+                    parse_mode: "HTML",
+                    reply_markup: msg.remove_keyboard ? { inline_keyboard: [] } : undefined,
+                  });
+                  await emitGatewayOtel({
+                    level: "info",
+                    component: "telegram-channel",
+                    action: "telegram.delivery.confirmed",
+                    success: true,
+                    critical: true,
+                    duration_ms: Date.now() - editStartedAt,
+                    metadata: {
+                      ...audit,
+                      chatId: telegramChatId,
+                      telegramMessageIds: [msg.edit_message_id],
+                      operation: "edit",
+                    },
+                  });
+                } catch (error) {
+                  await emitGatewayOtel({
+                    level: "error",
+                    component: "telegram-channel",
+                    action: "telegram.delivery.failed",
+                    success: false,
+                    error: summarizeChannelError(error),
+                    duration_ms: Date.now() - editStartedAt,
+                    metadata: {
+                      ...audit,
+                      chatId: telegramChatId,
+                      telegramMessageIds: [msg.edit_message_id],
+                      operation: "edit",
+                    },
+                  });
+                  throw error;
+                }
               } else {
-                // Send new message
-                await tgBot.api.sendMessage(telegramChatId, msg.text, {
-                  parse_mode: "HTML",
-                  reply_markup: msg.inline_keyboard ? { inline_keyboard: msg.inline_keyboard } : undefined,
+                await sendTelegram(telegramChatId, {
+                  text: msg.text,
+                  format: "html",
+                }, {
+                  buttons: msg.inline_keyboard?.map(row => row.map(button => ({
+                    text: button.text,
+                    action: button.callback_data,
+                  }))),
+                  audit: {
+                    ...audit,
+                    route: "redis-outbound",
+                  },
                 });
               }
             } else {
-              await adapter.send(target, msg.text);
+              await adapter.send(target, msg.text, sendOptions);
             }
           } catch (err) {
-            console.error("[gateway] message outbound item failed", { error: err });
+            console.error("[gateway] message outbound item failed", {
+              error: err,
+              flowId: itemAudit?.flowId,
+              channel: itemChannel,
+            });
+            await emitGatewayOtel({
+              level: "error",
+              component: "daemon.outbound-queue",
+              action: "channel.delivery.failed",
+              success: false,
+              error: summarizeChannelError(err),
+              metadata: {
+                ...(itemAudit ?? {}),
+                channel: itemChannel,
+                stage: "delivery",
+              },
+            });
           }
         }
       } catch (err) {
@@ -5276,9 +5451,15 @@ function getHealthStatus(): {
       consecutivePromptFailures: failures,
       waitingForTurnEnd,
       maintenanceActive,
-      maintenanceKind: activeGatewayMaintenance?.kind ?? (session.isCompacting ? "compact" : undefined),
-      maintenanceReason: activeGatewayMaintenance?.reason ?? (session.isCompacting ? "session_compacting" : undefined),
-      maintenanceElapsedMs: activeGatewayMaintenance ? now - activeGatewayMaintenance.startedAt : undefined,
+      ...(activeGatewayMaintenance?.kind || session.isCompacting
+        ? { maintenanceKind: activeGatewayMaintenance?.kind ?? "compact" }
+        : {}),
+      ...(activeGatewayMaintenance?.reason || session.isCompacting
+        ? { maintenanceReason: activeGatewayMaintenance?.reason ?? "session_compacting" }
+        : {}),
+      ...(activeGatewayMaintenance
+        ? { maintenanceElapsedMs: now - activeGatewayMaintenance.startedAt }
+        : {}),
       stuckRecoveryPending: recoveryPending,
       stuckRecoveryDeadlineMs: recoveryDeadlineInMs,
       fallbackGraceRemainingMs,

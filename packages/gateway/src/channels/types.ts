@@ -1,3 +1,5 @@
+import type { ChannelAuditSeed } from "@joelclaw/telemetry";
+
 /** Consumer channels — bidirectional messaging platforms */
 export type ChannelPlatform = "telegram" | "slack" | "discord" | "imessage";
 
@@ -16,6 +18,7 @@ export interface SendOptions {
   threadId?: string;
   noPreview?: boolean;
   media?: SendMediaPayload;
+  audit?: ChannelAuditSeed;
 }
 
 export interface InboundMessage {
