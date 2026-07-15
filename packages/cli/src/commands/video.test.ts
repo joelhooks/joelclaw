@@ -23,6 +23,11 @@ describe("video trace helpers", () => {
       resourceId: "video:olPVU1y6iI",
       shareSlug: "olPVU1y6iI",
     })
+    expect(__videoTestUtils.normalizeLookup("cloudshare1234567890")).toEqual({
+      input: "cloudshare1234567890",
+      resourceId: "video:cloudshare1234567890",
+      shareSlug: "cloudshare1234567890",
+    })
     expect(() => __videoTestUtils.normalizeLookup("video:")).toThrow()
   })
 
