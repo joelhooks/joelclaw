@@ -1,6 +1,6 @@
 ---
 title: "Decide How the Graph Relates to Typesense Recall and the Edition Build"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 interaction: "HITL"
@@ -14,7 +14,7 @@ claimed_at: "2026-07-12"
 
 # Decide How the Graph Relates to Typesense Recall and the Edition Build
 
-## Question
+## Step
 
 Three query-ish systems now coexist: the graph (traversal, backlinks, structure), Typesense (semantic + FTS recall over sessions and content), and the edition build (curated daily distillation). Draw the boundaries:
 

@@ -1,6 +1,6 @@
 ---
 title: "Draft the Judge Rubric and Failure Taxonomy"
-type: "question"
+type: "step"
 kind: "prototype"
 interaction: "HITL"
 status: "closed"
@@ -13,7 +13,7 @@ created_at: "2026-07-13"
 
 # Draft the Judge Rubric and Failure Taxonomy
 
-## Question
+## Step
 
 Draft, from the real 26-call corpus, the rubric the judge scores every call
 against and the failure taxonomy retros aggregate by — then Joel reacts.
@@ -27,7 +27,7 @@ scored by hand) Joel can argue with. Resolved when Joel signs the rubric.
 
 [Review the scored rubric, failure taxonomy, and NEEDS-JOEL decisions](./judge-rubric-prototype.svx).
 
-## Answer (2026-07-13)
+## Result (2026-07-13)
 
 Rubric signed by Joel: 8 dimensions (coherent/grounded, warm/alive,
 brief/listenable, plain speech, honest tool+silence handling, repair, line/mode

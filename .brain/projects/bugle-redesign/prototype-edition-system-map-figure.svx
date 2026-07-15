@@ -1,6 +1,6 @@
 ---
 title: "Prototype the Edition System-Map Figure"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -15,7 +15,7 @@ claimed_at: "2026-07-12"
 
 # Prototype the Edition System-Map Figure
 
-## Question
+## Step
 
 The paper should draw the situation, not just describe it — loopcraft's "System map" flow-chart figure is the register. Generate an SVG figure for each edition: today's loops, the projects they belong to, the sources feeding them, with a caption. Layout must be deterministic (hand-rolled ranks or a dagre-style pass over graph.json data) — pi does not freehand the diagram, because a wrong picture is a wrong claim and the correctness bar applies to figures too.
 

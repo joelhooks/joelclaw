@@ -1,6 +1,6 @@
 ---
 title: "Build the Schedule: event contract, inngest sleepUntil function, `joelclaw wake` CLI"
-type: "question"
+type: "step"
 kind: "task"
 interaction: "AFK"
 status: "closed"
@@ -12,7 +12,7 @@ created_at: "2026-07-14"
 
 # Build the Schedule (bus side)
 
-## Question
+## Step
 
 The clock half, in joelclaw: a versioned event contract
 (`pane/schedule.requested`: verb wake|spawn|revive, at (ISO) or in
@@ -26,7 +26,7 @@ APIs or a small registry the function maintains). HATEOAS envelopes,
 Effect idioms, tests per repo checklist. The dispatcher's execution of
 the due signal is its own question.
 
-## Answer (2026-07-14)
+## Result (2026-07-14)
 
 Built the versioned `pane/schedule.requested` contract, the host-side
 `pane/schedule` Inngest function, Redis-backed pending registry, cancellation

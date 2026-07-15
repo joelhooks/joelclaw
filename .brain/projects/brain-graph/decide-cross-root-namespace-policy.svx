@@ -1,6 +1,6 @@
 ---
 title: "Decide the Cross-Root Namespace and Wikilink Resolution Policy"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 interaction: "HITL"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Decide the Cross-Root Namespace and Wikilink Resolution Policy
 
-## Question
+## Step
 
 When `[[some-note]]` appears in the dark-wizard user brain and both `joelclaw` and `joelclaw-wiki` have a `some-note.svx`, what happens? The logical namespace is per-repo (map's substrate insight — replicas diverging is data, not collision), but the *authoring* namespace across repos needs a policy:
 

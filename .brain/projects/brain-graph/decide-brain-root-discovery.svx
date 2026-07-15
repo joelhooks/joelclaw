@@ -1,6 +1,6 @@
 ---
 title: "Decide Brain-Root Discovery and Registration"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 interaction: "HITL"
@@ -11,7 +11,7 @@ created_at: "2026-07-12"
 
 # Decide Brain-Root Discovery and Registration
 
-## Question
+## Step
 
 How does the wiki know which brain roots exist? The candidates:
 

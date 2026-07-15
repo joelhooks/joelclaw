@@ -1,6 +1,6 @@
 ---
 title: "Build the Bugle Design System"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Build the Bugle Design System
 
-## Question
+## Step
 
 The palette that per-run editorial composition draws from — so every day's paper can be different and every day's paper is unmistakably the Bugle.
 

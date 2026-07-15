@@ -1,6 +1,6 @@
 ---
 title: "Define Privacy, Access, and Publication Boundaries"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 assignee: "claude (flagg, session 14d06369, 2026-07-12)"
@@ -65,6 +65,6 @@ now defined).
   ticket; the CONTRACT (safe-at-rest data, mask-by-default, session reveal)
   is this ticket's boundary.
 
-## Question
+## Step
 
 Who and what may access the primary wiki from Flagg, the fleet, Joel's phone, and remote environments; how are private work streams separated from redacted public-safe projections; and what authentication, audit, retention, and deletion boundaries are required before Slack, Front, Gmail, Discord, and session evidence can appear together?

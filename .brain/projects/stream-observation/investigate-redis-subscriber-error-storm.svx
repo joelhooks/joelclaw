@@ -1,6 +1,6 @@
 ---
 title: "Kill the redis.subscriber.error Storm (102M rows)"
-type: "question"
+type: "step"
 kind: "task"
 status: "complete"
 completed_at: "2026-07-13"
@@ -13,7 +13,7 @@ created_at: "2026-07-13"
 
 # Kill the redis.subscriber.error Storm (102M rows)
 
-## Question
+## Step
 
 ClickHouse holds 102,052,982 `redis.subscriber.error` rows — 99.78% of the
 entire OTEL table, poisoning the telemetry sink the observer/anomaly work
@@ -21,7 +21,7 @@ depends on. Find the erroring subscriber (system-bus), fix the root cause,
 and decide cleanup (drop the storm partition-wise vs let 180d TTL eat it).
 Receipts from the ingress inventory.
 
-## Answer
+## Result
 
 The gateway Redis retry loop leaked one subscriber/command client pair per
 manual retry. Old ioredis clients kept reconnecting and each subscriber emitted

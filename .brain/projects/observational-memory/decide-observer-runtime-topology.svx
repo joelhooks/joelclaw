@@ -1,6 +1,6 @@
 ---
 title: "Decide the Observer Runtime and Trigger Topology"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 interaction: "HITL"
@@ -13,7 +13,7 @@ assignee: "claude (flagg, session 14d06369, grilled with Joel)"
 
 # Decide the Observer Runtime and Trigger Topology
 
-## Question
+## Step
 
 Per-machine observers over local captures vs one central observer on flagg
 over synced/indexed sessions (Typesense already sees them)? Trigger policy:

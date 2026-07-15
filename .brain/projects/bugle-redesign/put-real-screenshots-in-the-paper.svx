@@ -1,6 +1,6 @@
 ---
 title: "Put Real Screenshots in the Paper"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Put Real Screenshots in the Paper
 
-## Question
+## Step
 
 A screenshot is a citation you can see — the fabrication rule extended to pixels. When a loop's evidence names a URL on Joel's own surfaces (a shipped feature, a new page, a dashboard), the edition build captures it headless and the paper prints it as a figure. The Shipped beat gets a photo of the actual thing that shipped.
 

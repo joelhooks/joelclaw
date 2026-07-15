@@ -1,6 +1,6 @@
 ---
 title: "Build Dispatcher Verb Execution: due signals become panes"
-type: "question"
+type: "step"
 kind: "task"
 interaction: "AFK"
 status: "closed"
@@ -13,7 +13,7 @@ created_at: "2026-07-14"
 
 # Build Dispatcher Verb Execution
 
-## Question
+## Step
 
 The hands half, in joelclaw-observer: the dispatcher classifies
 `pane.schedule.due` as a first-class fate (not invoke-pattern matching —
@@ -27,7 +27,7 @@ pane created). Spawned panes are ordinary pi sessions — never gated
 roles. Also: a thin observer-family tool (or documented `joelclaw wake`
 usage in the charter) so the observer itself can say "wake me in 2h."
 
-## Answer (2026-07-14)
+## Result (2026-07-14)
 
 Built in `~/Code/joelhooks/joelclaw-observer` without live-firing the running observer session.
 

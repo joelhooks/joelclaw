@@ -1,6 +1,6 @@
 ---
 title: "Audit Course-Builder's Video Pipeline for the Yoink"
-type: "question"
+type: "step"
 kind: "research"
 status: "closed"
 interaction: "AFK"
@@ -12,7 +12,7 @@ created_at: "2026-07-13"
 
 # Audit Course-Builder's Video Pipeline for the Yoink
 
-## Question
+## Step
 
 Read `~/Code/badass-courses/course-builder/packages/core/src/inngest/video-processing/**` and `packages/core/src/lib/mux.ts` end to end and produce a markdown yoink map: which events, functions, and schemas port into `joelclaw-video` as-is, which need rework (anything touching Sanity, party/adapter seams, or course-builder's DB), and which we skip. Two things must be verified against **current** Mux docs, not just course-builder's code: (1) the asset settings that guarantee a progressive/downloadable rendition — course-builder uses `mp4_support: "standard"` but Mux has been moving to `static_renditions`; record the exact settings we should use. (2) The direct-upload flow (create upload → PUT bytes → `video.upload.asset_created` → `video.asset.ready`) and how its webhook events map onto joelclaw's existing mux provider event names (`packages/system-bus/src/webhooks/providers/mux.ts` EVENT_MAP). Pay extra attention to the transcript chain (`order-transcript.ts` → `transcript-ready.ts` → `add-srt-to-mux-asset.ts` and the Deepgram callback contract) — it feeds the transcript port ticket, and Joel flagged running course-builder locally as a legitimate aid if reading isn't enough. Link the summary as an asset from this ticket.
 

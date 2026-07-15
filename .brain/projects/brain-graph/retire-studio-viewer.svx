@@ -1,6 +1,6 @@
 ---
 title: "Retire the joels-mac-studio /notes/ Viewer at Parity"
-type: "question"
+type: "step"
 kind: "task"
 status: "open"
 interaction: "AFK"
@@ -11,7 +11,7 @@ created_at: "2026-07-12"
 
 # Retire the joels-mac-studio /notes/ Viewer at Parity
 
-## Question
+## Step
 
 Once Brain pages render on brain.joelclaw.com at parity: shut down the
 Studio viewer, update `operator-network-context.svx` + the tailnet-topology

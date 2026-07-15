@@ -1,6 +1,6 @@
 ---
 title: "Observe the Project Trackers (.brain/projects) as a First-Class Target"
-type: "question"
+type: "step"
 kind: "grilling"
 interaction: "HITL"
 status: "open"
@@ -12,7 +12,7 @@ created_at: "2026-07-14"
 
 # Observe the Project Trackers as a First-Class Target
 
-## Question
+## Step
 
 Standing call (Joel, 2026-07-14): `~/Code/joelhooks/joelclaw/.brain/projects`
 — and by extension every registered root's `.brain/projects` tracker

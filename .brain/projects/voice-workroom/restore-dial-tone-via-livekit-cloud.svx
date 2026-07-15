@@ -1,6 +1,6 @@
 ---
 title: "Restore Dial Tone via LiveKit Cloud"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "HITL"
@@ -11,7 +11,7 @@ created_at: "2026-07-11"
 
 # Restore Dial Tone via LiveKit Cloud
 
-## Question
+## Step
 
 Get the phone answering again: create the LiveKit Cloud project, configure the SIP inbound trunk and dispatch rule, repoint the Telnyx DID (+1 360 605 1697) from the dead k8s path (`clanker-001:5060`) to the LiveKit Cloud SIP endpoint, swap `LIVEKIT_URL` to the cloud WSS URL in the worker env, lease the new `livekit_api_key`/`livekit_api_secret` via agent-secrets, and re-enable `com.joel.voice-agent` (the existing worker at `infra/voice-agent/main.py` — no code changes beyond config expected). HITL because LiveKit Cloud account creation and Telnyx trunk changes need Joel. Resolved when Joel calls the DID and the agent answers; the resolution records the cloud project URL, SIP endpoint, dispatch rule ID, and where the secrets live — later tickets depend on these facts.
 

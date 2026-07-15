@@ -1,6 +1,6 @@
 ---
 title: "Feedback Boxes That Compile to a Prompt"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Feedback Boxes That Compile to a Prompt
 
-## Question
+## Step
 
 Joel: "the daily page should have feedback text areas when it requires my input and a 'copy feedback to concise json' button such that I can copy my feedback and it will put a prompt on the clipboard that I can then send to any joelclaw agent and it will be understood immediately."
 

@@ -1,6 +1,6 @@
 ---
 title: "Evaluate qmd as the Brain Knowledge-Recall Projection"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 assignee: "pi worker (steered by claude session 14d06369)"
@@ -13,7 +13,7 @@ closed_at: "2026-07-13"
 
 # Evaluate qmd as the Brain Knowledge-Recall Projection
 
-## Question
+## Step
 
 Joel flagged [tobi/qmd](https://github.com/tobi/qmd): local hybrid search
 (SQLite FTS5 + sqlite-vec + RRF + local reranker, MCP server, TS SDK) over

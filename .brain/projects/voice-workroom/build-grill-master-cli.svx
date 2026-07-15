@@ -1,6 +1,6 @@
 ---
 title: "Build the grill-master CLI and Tracker Contract"
-type: "question"
+type: "step"
 kind: "task"
 status: "open"
 interaction: "AFK"
@@ -11,7 +11,7 @@ created_at: "2026-07-11"
 
 # Build the grill-master CLI and Tracker Contract
 
-## Question
+## Step
 
 Build the `grill-master` CLI (Effect, joelclaw CLI conventions, `--json` HATEOAS envelopes) as the only writer the voice agent uses against local-brain trackers. Commands: `maps` (cross-product discovery via an explicit product registry — a Brain resource or `~/.config/joelclaw/grill-master-products.toml`, not a `~/Code` glob), `frontier <map>` (open + unblocked + unclaimed, with real blockers-by-title resolution), `claim`/`release` (new `claimed_by`/`claimed_at` frontmatter with a stale-claim TTL so a crashed session doesn't wedge a ticket), `resolve` (append `## Resolution`, set closed + `resolved_at` + `resolution_session` pointing at the session/transcript that produced it, append a one-line gist to the map's Decisions so far), `append-decision`, `create-ticket`. Include a `grill-master check` extending `pi-notes brain check` (which validates nothing grill-master-specific today): blockers resolve to real titles, parents exist, status enums hold, decisions-index matches closed tickets, stale claims flagged. Writes are atomic (temp+rename) and each mutation is a git commit — decisions become unlosable by construction. Resolved when this map itself can be worked entirely through the CLI.
 

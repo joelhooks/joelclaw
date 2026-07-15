@@ -1,6 +1,6 @@
 ---
 title: "Add Vector Embeddings to the Observations Collection"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -11,7 +11,7 @@ created_at: "2026-07-12"
 
 # Add Vector Embeddings to the Observations Collection
 
-## Question
+## Step
 
 The `observations` Typesense collection (shipped 2026-07-12) is lexical-only —
 no embedding field, so recall is keyword FTS, not semantic. Add a Typesense

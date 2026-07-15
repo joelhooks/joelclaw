@@ -1,6 +1,6 @@
 ---
 title: "Define the Open Loop and Editorial Model"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "open"
 interaction: "HITL"
@@ -11,6 +11,6 @@ created_at: "2026-07-10"
 
 # Define the Open Loop and Editorial Model
 
-## Question
+## Step
 
 What kinds of open loops exist, what lifecycle and closure rules distinguish them, how do confidence and freshness work, how are conflicting detections reconciled, and what editorial rules decide the lead story, daily theme, supporting sections, questions for Joel, and material that does not deserve space in a dated edition?

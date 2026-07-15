@@ -1,6 +1,6 @@
 ---
 title: "Research: the Honest Spoken Record for Judging"
-type: "question"
+type: "step"
 kind: "research"
 interaction: "AFK"
 status: "closed"
@@ -13,7 +13,7 @@ closed_at: "2026-07-13"
 
 # Research: the Honest Spoken Record for Judging
 
-## Question
+## Step
 
 session.history loses interrupted/list turns (receipt: "The six that need
 you:" saved with no list; caller audibly heard it). The judge must score what
@@ -23,7 +23,7 @@ dropped, and whether our Convex turn rows / transcriptLine field can carry the
 true record. Deliverable: an asset stating the recommended capture mechanism
 with API receipts, sized for the judge build to consume.
 
-## Answer (2026-07-13)
+## Result (2026-07-13)
 
 Use LiveKit's public `conversation_item_added` event and persist every committed
 user/assistant message as an append-only spoken item. In installed

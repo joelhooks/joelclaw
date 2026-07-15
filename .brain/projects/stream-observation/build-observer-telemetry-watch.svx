@@ -1,6 +1,6 @@
 ---
 title: "Build the Observer Telemetry Watch (ClickHouse pings → anomaly observations)"
-type: "question"
+type: "step"
 kind: "task"
 status: "complete"
 interaction: "AFK"
@@ -13,7 +13,7 @@ completed_at: "2026-07-13"
 
 # Build the Observer Telemetry Watch
 
-## Question
+## Step
 
 Joel's charter (2026-07-13, mid-incident): "this is specifically why the
 observer should be watching clickhouse!" The 2026-07 receipts are the spec —
@@ -43,7 +43,7 @@ baselined. Consumes the ingress inventory's source list as the initial
 watchlist.
 
 
-## Answer (2026-07-13)
+## Result (2026-07-13)
 
 Built by a pi worker under grill-master steering, live the same day.
 

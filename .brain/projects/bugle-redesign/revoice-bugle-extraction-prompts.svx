@@ -1,6 +1,6 @@
 ---
 title: "Re-voice the Bugle: Briefing Prose From the Extraction Prompts"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Re-voice the Bugle: Briefing Prose From the Extraction Prompts
 
-## Question
+## Step
 
 The paper writes ABOUT Joel in LLM-newspaper register — today's lead: "Joel's Private Wiki Moves From Architecture Notes to the Front Page Test", loops that need "his brain next". Charter says briefing voice: the paper talks to *you*.
 

@@ -1,6 +1,6 @@
 ---
 title: "Build the Multi-Root Graph Projection"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -15,7 +15,7 @@ claimed_at: "2026-07-12"
 
 # Build the Multi-Root Graph Projection
 
-## Question
+## Step
 
 Extend the single-root `graph.json` (704 nodes, 145 edges — see [the closed bugle ticket](../bugle-redesign/build-wikilink-edges-graph-json.svx)) to the proof's three roots: dark-wizard user brain, `joelclaw` `.brain`, `joelclaw-wiki` `.brain`, read from flagg's local checkouts via the decided discovery mechanism.
 

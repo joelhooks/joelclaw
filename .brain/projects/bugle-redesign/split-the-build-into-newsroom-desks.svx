@@ -1,6 +1,6 @@
 ---
 title: "Split the Build Into Newsroom Desks"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -15,7 +15,7 @@ created_at: "2026-07-12"
 
 # Split the Build Into Newsroom Desks
 
-## Question
+## Step
 
 Joel's direction: custom pi agents with appropriate prompts and focused tooling per desk, running ultra-efficiently in tokens and time, producing an excellent paper.
 

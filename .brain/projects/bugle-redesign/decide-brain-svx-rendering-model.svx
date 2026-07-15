@@ -1,6 +1,6 @@
 ---
 title: "Decide the Brain SVX Rendering Model"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 assignee: "claude (flagg, session 14d06369, 2026-07-12)"
@@ -79,7 +79,7 @@ renderer parity).
   mint these URLs only once pages render there (exact-URL 200-check rule
   stands); the Studio mapping remains the fallback until parity.
 
-## Question
+## Step
 
 Joel's charter (2026-07-12, verbatim intent): the wiki should REFERENCE `.svx`
 files across the Brain and render them in the SvelteKit app — not accumulate

@@ -1,6 +1,6 @@
 ---
 title: "Bench Recall Quality (brainbench consumption leg)"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 assignee: "pi worker (steered by claude session 14d06369)"
@@ -14,7 +14,7 @@ closed_at: "2026-07-13"
 
 # Bench Recall Quality
 
-## Question
+## Step
 
 Add a consumption leg to brainbench: known-answer retrieval queries over
 the distilled layer ("what did we decide about X" with a canonical page as

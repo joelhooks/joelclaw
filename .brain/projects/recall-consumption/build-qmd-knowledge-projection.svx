@@ -1,6 +1,6 @@
 ---
 title: "Productionize qmd as the Knowledge Projection"
-type: "question"
+type: "step"
 kind: "task"
 status: "open"
 interaction: "AFK"
@@ -11,7 +11,7 @@ created_at: "2026-07-13"
 
 # Productionize qmd as the Knowledge Projection
 
-## Question
+## Step
 
 Spike adopted (evaluate-qmd-brain-recall). Make it real: collections managed
 from `brain-roots.json` (registration = indexing, one source of truth),

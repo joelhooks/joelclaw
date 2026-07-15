@@ -1,6 +1,6 @@
 ---
 title: "Instrument Session Capture with a Change Ledger"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Instrument Session Capture with a Change Ledger
 
-## Question
+## Step
 
 Implement the capture contract from the [session-edge feasibility memo](../../../../joelclaw-wiki/.brain/session-edge-feasibility.svx) so session→page change-edges become deterministically derivable:
 

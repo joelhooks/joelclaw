@@ -1,6 +1,6 @@
 ---
 title: "Decide the Stream Epoch Model (what is a session for a firehose?)"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "open"
 interaction: "HITL"
@@ -11,7 +11,7 @@ created_at: "2026-07-13"
 
 # Decide the Stream Epoch Model
 
-## Question
+## Step
 
 Map the observer's epoch model onto streams: what plays the session role
 per source (Slack channel? thread? Front inbox? conversation? GitHub repo?

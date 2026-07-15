@@ -1,6 +1,6 @@
 ---
 title: "Define the Transcript Redaction Boundary"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 interaction: "HITL"
@@ -13,7 +13,7 @@ assignee: "claude (flagg, session 14d06369, grilled with Joel)"
 
 # Define the Transcript Redaction Boundary
 
-## Question
+## Step
 
 Transcripts contain secrets, tokens, customer content, and third-party
 text. Observation pages are publications (rendered on the paper). Define the

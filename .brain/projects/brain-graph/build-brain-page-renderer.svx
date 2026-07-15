@@ -1,6 +1,6 @@
 ---
 title: "Build the Brain Page Renderer"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -13,7 +13,7 @@ assignee: "pi worker Fractious Jerakeen (wB:p7), steered by claude (session 14d0
 
 # Build the Brain Page Renderer
 
-## Question
+## Step
 
 Implement Brain page rendering per the closed `decide-brain-svx-rendering-model`
 resolution: routes `/<root>/<slug…>` over the registered roots

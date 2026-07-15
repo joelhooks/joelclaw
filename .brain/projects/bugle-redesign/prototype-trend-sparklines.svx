@@ -1,6 +1,6 @@
 ---
 title: "Prototype Trend Sparklines From Edition History"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Prototype Trend Sparklines From Edition History
 
-## Question
+## Step
 
 Tufte small multiples from `data/editions/*.json` — the history already exists, nothing new to collect. Candidates: observations per source over time (is gmail quiet? is github spiking?), open-loop count and age distribution across editions, shipped-vs-open trajectory once loop closure lands. Deterministic inline SVG, word-sized where it earns it — a true sparkline inside a sentence beats a chart block.
 

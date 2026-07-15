@@ -1,6 +1,6 @@
 ---
 title: "Build Phase 1: File Pointer to Mux Asset"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 assignee: "flagg-claude-steering + pi worker (2026-07-13, drive-to-done)"
@@ -15,11 +15,11 @@ created_at: "2026-07-13"
 
 # Build Phase 1: File Pointer to Mux Asset
 
-## Question
+## Step
 
 Build the proof pipeline in `joelclaw-video`, registered through system-bus: an event (working name `video/publish.requested`) carrying a flagg filesystem path triggers an Inngest function that validates the file, creates a Mux direct upload with the audited asset settings (progressive rendition; captions come from the Deepgram ticket, not Mux auto-gen), PUTs the bytes, then correlates the already-routed mux webhook events (`upload.asset_created` → `asset.ready`) to land asset id + playback id, emitting `video/publish.completed` and failing loud on `asset.errored`. Durability posture matches the rest of system-bus: idempotency-keyed on file checksum or upload id, steps retryable, no silent failures. Record the video through joelclaw-api's mutations (`createVideo`, `patchFromMuxWebhook`) — the [charter](./charter-joelclaw-api.svx) fixed strict sequencing (custody → api mutations → this build), the stash-and-backfill fallback is retired, and defining the video mutations in joelclaw-api per [the model](./model-video-resource-in-convex.svx) is this build's first step. Mux credentials go through agent-secrets like every other provider. Resolved when a real screen recording on flagg goes in and a playing `player.mux.com/<PLAYBACK_ID>` URL comes out, with the run visible in Inngest. The resolution records the event contracts — the agent-surface and watch-page tickets depend on them.
 
-## Answer
+## Result
 
 Resolved 2026-07-14 (pi worker Bursarial Felmet built it; steering session drove the live E2E through four attempts and fixed what reality found). **Phase 1 is live**: `/Users/joel/Movies/joelclaw-video/first-light.mp4` went in via `video/publish.requested`; out came Mux asset `7mezBnM1GO9M61IC6herttduTSAgCq697u02PPhcqrQU`, playback `j53DPGudGinE6O88LHEgtd1MSl003kLS300X8Gl5jfHnM` (all four public URLs 200: m3u8, player, thumbnail, `highest.mp4`), the original archived in Garage `joelclaw-videos` with checksum + size recorded, and the Convex record (`video:olPVU1y6iI`) driven to `state: ready` / rendition `ready`, then flipped `published`/`unlisted` via the API — `publishedBy: claude-steering-flagg`. Joel got the Slack pong (`deliveredTo: ["slack"]`).
 

@@ -1,6 +1,6 @@
 ---
 title: "Build the Reflector: Nightly Dreaming Pass (consolidate, reconcile, forget)"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 closed_at: "2026-07-14"
@@ -13,7 +13,7 @@ created_at: "2026-07-13"
 
 # Build the Reflector: Nightly Dreaming Pass
 
-## Question
+## Step
 
 **Spec ready-for-agent**: [Spec: the Reflector](./reflector-spec.svx)
 (synthesized to-spec 2026-07-14 from the steering conversation + salience
@@ -72,7 +72,7 @@ with citations intact, the observations directory shrinks, recall bench
 (recall-consumption map) does not regress, and the run leaves a receipt
 page.
 
-## Answer (2026-07-14)
+## Result (2026-07-14)
 
 The first real dream ran (Joel: "run it") and the done-when held end to end.
 

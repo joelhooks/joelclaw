@@ -1,6 +1,6 @@
 ---
 title: "Verify Every Edition Claim Against Its Evidence"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Verify Every Edition Claim Against Its Evidence
 
-## Question
+## Step
 
 "SUPER important to get the information correct." Build a verification pass that runs after extraction, before the edition is preserved: an independent pi verifier checks each prose claim — headline, framing, whyItMatters, digests, and every marked take — against the observations it cites. A claim its evidence doesn't support gets flagged (v1: a visible unverified mark in the rendered paper, not silently killed), and takes must carry their synthesized mark plus evidence refs or they don't print.
 

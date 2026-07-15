@@ -1,6 +1,6 @@
 ---
 title: "Decide the Agent Publish Surface"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "open"
 interaction: "HITL"
@@ -12,6 +12,6 @@ created_at: "2026-07-13"
 
 # Decide the Agent Publish Surface
 
-## Question
+## Step
 
 How do Joel and his agents actually invoke publishing? Candidates: a `joelclaw video publish <path>` CLI command (the natural joelclaw shape — `@effect/cli`, HATEOAS envelope, agents already shell out to it), raw gateway/Inngest event emission, an MCP tool, or several of these over one event contract. Decide the blessed surface(s), what a *draft-by-default vs published-by-default* publish looks like per caller (an agent publishing on Joel's behalf probably lands as draft/unlisted until he flips it), how the caller gets the resulting URL back (poll? Inngest run output? Discord DM?), and what guardrails an agentic publisher needs (size limits, rate, attribution required). Blocked on phase 1 because the event contract it records is the thing being wrapped.
