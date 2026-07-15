@@ -4,6 +4,7 @@ import {
   createOtelEventPayload,
   ingestOtelPayload,
   OTEL_INGEST_URL,
+  readSystemBusEnv,
   resolveDefaultOtelSessionId,
   resolveDefaultOtelSystemId,
 } from "../../lib/otel-ingest"
@@ -132,12 +133,14 @@ function asSettingString(value: unknown): string | undefined {
 
 function resolveClickHouseConfig(context?: CapabilityContext): ClickHouseAdapterConfig {
   const settings = context?.config.capabilities.otel?.adapters?.["clickhouse-otel"] ?? {}
+  const runtimeEnv = readSystemBusEnv()
+  const value = (key: string): string | undefined => process.env[key]?.trim() || runtimeEnv[key]?.trim()
   return {
-    url: (asSettingString(settings.url) ?? process.env.CLICKHOUSE_URL ?? DEFAULT_CLICKHOUSE_URL).replace(/\/+$/u, ""),
-    database: asSettingString(settings.database) ?? process.env.CLICKHOUSE_DATABASE ?? DEFAULT_DATABASE,
-    table: asSettingString(settings.table) ?? process.env.CLICKHOUSE_OTEL_TABLE ?? DEFAULT_TABLE,
-    username: asSettingString(settings.username) ?? process.env.CLICKHOUSE_USER,
-    password: asSettingString(settings.password) ?? process.env.CLICKHOUSE_PASSWORD,
+    url: (asSettingString(settings.url) ?? value("CLICKHOUSE_URL") ?? DEFAULT_CLICKHOUSE_URL).replace(/\/+$/u, ""),
+    database: asSettingString(settings.database) ?? value("CLICKHOUSE_DATABASE") ?? DEFAULT_DATABASE,
+    table: asSettingString(settings.table) ?? value("CLICKHOUSE_OTEL_TABLE") ?? DEFAULT_TABLE,
+    username: asSettingString(settings.username) ?? value("CLICKHOUSE_USER"),
+    password: asSettingString(settings.password) ?? value("CLICKHOUSE_PASSWORD"),
   }
 }
 

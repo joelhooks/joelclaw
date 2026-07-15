@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
-import { hostname, homedir } from "node:os"
+import { homedir, hostname } from "node:os"
 import { join } from "node:path"
 
 const SYSTEM_BUS_ENV_PATH = join(homedir(), ".config", "system-bus.env")
 
-function readSystemBusEnv(): Record<string, string> {
+export function readSystemBusEnv(): Record<string, string> {
   if (!existsSync(SYSTEM_BUS_ENV_PATH)) return {}
   const env: Record<string, string> = {}
   for (const line of readFileSync(SYSTEM_BUS_ENV_PATH, "utf8").split("\n")) {
