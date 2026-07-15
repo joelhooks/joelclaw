@@ -27,7 +27,7 @@
     {
       "id": "FBP-2",
       "title": "Bridge feedbackItems to content-review Inngest function",
-      "description": "The feedback:create Convex mutation stores feedback but doesn't trigger the content-review agent. Add a feedbackSubmitted Convex action (or modify feedback:create) that fires content/review.submitted to Inngest after storing the feedback item. This bridges the new feedback form path to the existing content-review-apply Inngest function. The action should POST to CONVEX_INNGEST_EVENT_URL (env var in Convex dashboard). File: apps/web/convex/feedback.ts",
+      "description": "The feedback:create Convex mutation stores feedback but doesn't trigger the content-review agent. Add a feedbackSubmitted Convex action (or modify feedback:create) that fires content/review.submitted to Inngest after storing the feedback item. This bridges the new feedback form path to the existing content-review-apply Inngest function. The action should POST to CONVEX_INNGEST_EVENT_URL (env var in Convex dashboard). File: joelclaw-api/convex/feedback.ts",
       "status": "done",
       "priority": 2,
       "acceptance": [
@@ -37,7 +37,7 @@
         "TypeScript compiles clean"
       ],
       "context": {
-        "feedback_mutation": "apps/web/convex/feedback.ts",
+        "feedback_mutation": "joelclaw-api/convex/feedback.ts",
         "content_review_fn": "packages/system-bus/src/inngest/functions/content-review.ts",
         "event_name": "content/review.submitted",
         "note": "Use Convex scheduler.runAfter or internal action for async fire-and-forget. Don't block the mutation on the HTTP call."
@@ -59,7 +59,7 @@
       ],
       "context": {
         "file": "packages/system-bus/src/inngest/functions/content-review.ts",
-        "convex_feedback": "apps/web/convex/feedback.ts",
+        "convex_feedback": "joelclaw-api/convex/feedback.ts",
         "convex_url": "https://tough-panda-917.convex.cloud",
         "note": "Use ConvexHttpClient to query feedback:listByResource and call feedback:markApplied/markFailed mutations."
       }

@@ -185,7 +185,7 @@ Important files:
 - `compose.yaml` starts `ghcr.io/get-convex/convex-backend` and `ghcr.io/get-convex/convex-dashboard`.
 - `generate-admin-env.sh` stores the generated self-hosted admin key in `app-admin.env` without printing it.
 - `run.sh` performs the bootstrap, starts the backend/dashboard, and writes the admin env.
-- `smoke-self-hosted-convex.sh` deploys `apps/web/convex`, writes/reads/removes a temporary row, exports a snapshot, and verifies the export ZIP.
+- `smoke-self-hosted-convex.sh` deploys `joelclaw-api/convex`, writes/reads/removes a temporary row, exports a snapshot, and verifies the export ZIP.
 
 ## Selective Exposure
 

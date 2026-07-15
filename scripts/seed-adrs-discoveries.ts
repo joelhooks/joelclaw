@@ -2,7 +2,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { api } from "../apps/web/convex/_generated/api";
+import { api } from "../../joelclaw-api/convex/_generated/api";
 import { ConvexHttpClient } from "../apps/web/node_modules/convex/browser";
 import type { FunctionReference } from "../apps/web/node_modules/convex/server";
 import matter from "../apps/web/node_modules/gray-matter";

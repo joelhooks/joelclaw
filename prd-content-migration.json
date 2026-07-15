@@ -5,7 +5,7 @@
     "repo": "~/Code/joelhooks/joelclaw",
     "adrs": ["0154", "0106", "0084"],
     "existing_infrastructure": [
-      "contentResources table with upsert mutation (apps/web/convex/contentResources.ts)",
+      "contentResources table with upsert mutation (joelclaw-api/convex/contentResources.ts)",
       "LazyReviewGate wrapping article content (apps/web/app/[slug]/page.tsx)",
       "ReviewSheet + review submit route firing content/review.submitted Inngest events",
       "PostContent already uses 'use cache' directive",
