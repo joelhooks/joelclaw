@@ -56,6 +56,8 @@ dropped.
 
 <!-- one line per closed question: gist + link -->
 
+- [Build the Schedule (bus side)](./build-schedule-events-function-cli.svx) — `pane/schedule.requested` contract + inngest `step.sleepUntil` function w/ cancellation race + Redis pending registry + `joelclaw wake at|in|list|cancel`; live receipt: real schedule enqueued (200) and cleanly cancelled. Dispatcher execution now READY.
+
 ## Not yet specified
 
 - Recurring schedules (every weekday at 9am) — one-shots first; recurrence
