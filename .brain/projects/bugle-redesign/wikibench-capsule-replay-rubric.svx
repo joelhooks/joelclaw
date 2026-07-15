@@ -1,6 +1,6 @@
 ---
 title: "Wikibench: Capsule Replay and Rubric"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Wikibench: Capsule Replay and Rubric
 
-## Question
+## Step
 
 Make edition quality measurable so the pipeline can be tuned parametrically over time — across prompts, models, agents, and harness config — instead of by vibes.
 

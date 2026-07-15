@@ -1,6 +1,6 @@
 ---
 title: "Run the Fast-Model A/B"
-type: "question"
+type: "step"
 kind: "task"
 interaction: "HITL"
 status: "open"
@@ -14,7 +14,7 @@ created_at: "2026-07-13"
 
 # Run the Fast-Model A/B
 
-## Question
+## Step
 
 Flip llm.model in the local config to the ranked candidate, run several days
 of real calls on each arm, and decide on receipts: TTFT distribution (Convex

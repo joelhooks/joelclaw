@@ -1,6 +1,6 @@
 ---
 title: "Prototype Cross-Root Navigation: Wikilinks, Backlinks, Provenance"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -15,7 +15,7 @@ claimed_at: "2026-07-12"
 
 # Prototype Cross-Root Navigation: Wikilinks, Backlinks, Provenance
 
-## Question
+## Step
 
 The proof's clickable surface, on the live wiki: pages from all three roots render (per the rendering model the bugle map decides); `[[wikilinks]]` navigate within and across roots; broken and ambiguous links are visible, never silent; backlinks panels show what points here from *any* root; every page carries its provenance block — root repo, path, commit.
 

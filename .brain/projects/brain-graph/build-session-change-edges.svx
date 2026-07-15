@@ -1,6 +1,6 @@
 ---
 title: "Build Session→Page Change-Edges"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Build Session→Page Change-Edges
 
-## Question
+## Step
 
 The "what changed recently, and how, with deep intent" layer from the accepted vision ADR, made structural: edges from agent sessions to the brain pages/files they touched.
 

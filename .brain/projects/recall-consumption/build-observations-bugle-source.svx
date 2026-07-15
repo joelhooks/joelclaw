@@ -1,6 +1,6 @@
 ---
 title: "Build Observations as a Prime Bugle Source"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 closed_at: "2026-07-13"
@@ -13,7 +13,7 @@ created_at: "2026-07-13"
 
 # Build Observations as a Prime Bugle Source
 
-## Question
+## Step
 
 Joel's charter (2026-07-12): the observation layer "should technically be a
 PRIME source for the joelclaw-wiki." Implement the read-only source adapter
@@ -27,7 +27,7 @@ resolution — is written in
 (dark-wizard resources; renders at /user/resources/observer-system-architecture).
 Respect the Bugle 4-layer data contract; adapter read-only like all others.
 
-## Answer (2026-07-13)
+## Result (2026-07-13)
 
 Implemented the read-only `observation-page` adapter in
 `joelclaw-wiki/src/lib/services/sources/observation-page-source.ts`.

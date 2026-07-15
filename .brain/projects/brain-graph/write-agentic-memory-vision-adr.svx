@@ -1,6 +1,6 @@
 ---
 title: "Write the Agentic Memory System Vision ADR"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Write the Agentic Memory System Vision ADR
 
-## Question
+## Step
 
 Joel's condition on the constrained proof: the VISION stays clear and part of the design process. Write it down as a durable decision record — the distributed, multi-agent, multi-machine, agentic-first second brain:
 

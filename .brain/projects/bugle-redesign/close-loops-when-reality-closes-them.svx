@@ -1,6 +1,6 @@
 ---
 title: "Close Loops When Reality Closes Them"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 interaction: "HITL"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Close Loops When Reality Closes Them
 
-## Question
+## Step
 
 Today's lead (2026-07-12) says wiki v0 "needs a real vertical slice, not another plan" — two days after v0 shipped, automated, and got its own domain. Loops never learn they're done, so the paper leads with stale reality. That is the single worst "information correct" failure the bugle has.
 

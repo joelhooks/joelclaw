@@ -1,6 +1,6 @@
 ---
 title: "Research Session Capture Coverage Across the Fleet"
-type: "question"
+type: "step"
 kind: "research"
 status: "closed"
 assignee: "pi worker (steered by claude session 14d06369)"
@@ -13,7 +13,7 @@ closed_at: "2026-07-12"
 
 # Research Session Capture Coverage Across the Fleet
 
-## Question
+## Step
 
 Ground truth before design: which agent transcripts are actually captured
 today (pi/claude/codex × blaine/flagg/panda), where they land, how fresh,

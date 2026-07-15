@@ -1,6 +1,6 @@
 ---
 title: "Bake Graph Quality into Brainbench"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Bake Graph Quality into Brainbench
 
-## Question
+## Step
 
 Joel: "bake the QUALITY of the graph into our brainbench (aka wikibench) and have a clear agentic use and testing story for this project."
 

@@ -1,6 +1,6 @@
 ---
 title: "Build Wikilink Edges and the graph.json Projection"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Build Wikilink Edges and the graph.json Projection
 
-## Question
+## Step
 
 The graph substrate (product-direction steps 2–3, Roam/Logseq lens). Parse `[[wikilinks]]` and explicit references across Brain pages, loops, observations, and editions into a typed edge list, then project `graph.json` as a deterministic, versioned build output the UI reads — same pattern as editions: built by the CLI, read-only at render time.
 

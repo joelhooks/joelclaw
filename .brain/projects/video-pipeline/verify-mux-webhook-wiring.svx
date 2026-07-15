@@ -1,6 +1,6 @@
 ---
 title: "Verify Mux Webhook Wiring on Flagg"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -11,7 +11,7 @@ created_at: "2026-07-13"
 
 # Verify Mux Webhook Wiring on Flagg
 
-## Question
+## Step
 
 Joel asked (2026-07-13): verify the Mux webhooks are on flagg and tied to his personal joelhooks@gmail.com account.
 

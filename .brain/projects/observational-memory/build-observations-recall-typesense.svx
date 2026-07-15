@@ -1,6 +1,6 @@
 ---
 title: "Build Observation Recall: Typesense Projection + sessions-search Replacement"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 assignee: "pi worker (steered by claude session 14d06369)"
@@ -13,7 +13,7 @@ closed_at: "2026-07-12"
 
 # Build Observation Recall: Typesense Projection + sessions-search Replacement
 
-## Question
+## Step
 
 Joel's charter (2026-07-12): observation pages "should absolutely be groomed
 into a Typesense collection and replace existing joelclaw session search cli."

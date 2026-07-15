@@ -1,6 +1,6 @@
 ---
 title: "Prototype the Daily Front Page with Real Data"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -16,6 +16,6 @@ created_at: "2026-07-10"
 
 # Prototype the Daily Front Page with Real Data
 
-## Question
+## Step
 
 What newspaper-like front page, built on `tufte-mdsvx` with actual open loops and evidence, gives Joel the clearest eye-flow from headline and daily theme through meaningful changes, blocked or stale loops, new connections, questions, and source-backed detail without becoming a dashboard or an AI-generated wall of summaries?

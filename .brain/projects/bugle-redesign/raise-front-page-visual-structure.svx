@@ -1,6 +1,6 @@
 ---
 title: "Raise the Front Page to Loopcraft's Visual Structure"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "closed"
 interaction: "HITL"
@@ -11,7 +11,7 @@ created_at: "2026-07-12"
 
 # Raise the Front Page to Loopcraft's Visual Structure
 
-## Question
+## Step
 
 The wiki and [loopcraft](https://aie-loopcraft-workshop-2026.wzrrd.sh/) run the *same* tufte tokens — same accent, same Source Serif 4, same paper background. Loopcraft feels better because of structure, not palette: tool cards, an SVG flow-chart figure with caption, a lesson-strip nav, quickstart surface blocks, headings that are direct sentences.
 

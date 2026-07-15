@@ -1,6 +1,6 @@
 ---
 title: "Define the Auto-Apply Surface"
-type: "question"
+type: "step"
 kind: "grilling"
 interaction: "HITL"
 status: "closed"
@@ -13,7 +13,7 @@ created_at: "2026-07-13"
 
 # Define the Auto-Apply Surface
 
-## Question
+## Step
 
 Gardener-style direct is granted — but exactly which files may the retro
 change without a human gate? Candidates: public-openers.txt, GREETING_FLAVORS,
@@ -22,7 +22,7 @@ shitrat-brain pages (already gardened), config knobs (endpointing delays?).
 And what's the receipt shape (commit message contract, Bugle mention, revert
 path)? Resolved when an explicit allowlist + receipt contract is written.
 
-## Answer (2026-07-13)
+## Result (2026-07-13)
 
 Resolved as the project's autonomy charter: **[infra/voice-agent/VISION.md](../../../infra/voice-agent/VISION.md)** —
 Joel's framing: it DEFINES what automation does autonomously and where he's in

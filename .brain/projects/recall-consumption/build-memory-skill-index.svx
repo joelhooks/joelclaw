@@ -1,6 +1,6 @@
 ---
 title: "Build the Memory Skill-Index (runtime memories as unfoldable entries)"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 assignee: "pi worker (flagg, herdr pane wB:pZ, 2026-07-13)"
@@ -13,7 +13,7 @@ closed_at: "2026-07-13"
 
 # Build the Memory Skill-Index
 
-## Question
+## Step
 
 Layer 2+3 of the briefing answer: `joelclaw briefing --repo <cwd>` computes
 heading (active arc, frontier, since-last-session delta) + a budgeted,
@@ -28,7 +28,7 @@ interest decay hooks reserved for consumption telemetry. Receipt: fresh
 sessions in two different repos wake with DIFFERENT, correctly-scoped
 indexes; opening an entry unfolds the page in one tool call.
 
-## Answer (2026-07-13)
+## Result (2026-07-13)
 
 Built `joelclaw briefing --repo <path>` in `packages/cli`. It reads schema-v1
 observation pages plus repo-local and matching global Brain `.svx` pages,

@@ -1,6 +1,6 @@
 ---
 title: "Consolidate scheduled jobs on Inngest cron"
-type: "question"
+type: "step"
 kind: "task"
 status: "open"
 interaction: "AFK"
@@ -11,7 +11,7 @@ created_at: "2026-07-13"
 
 # Consolidate scheduled jobs on Inngest cron
 
-## Question
+## Step
 
 JoelClaw already HAS a cron solution — Inngest cron triggers (`{ cron: "..." }`
 on `createFunction`, e.g. `voice-telnyx-balance` at `0 */6 * * *`). But

@@ -1,6 +1,6 @@
 ---
 title: "Port the Deepgram Transcript Flow"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 closed_at: "2026-07-14"
@@ -15,7 +15,7 @@ created_at: "2026-07-13"
 
 # Port the Deepgram Transcript Flow
 
-## Question
+## Step
 
 Transcripts are super important (Joel, 2026-07-13): use Deepgram the way course-builder does, not Mux's auto-generated captions. Port the flow — course-builder's `order-transcript.ts` → `transcript-ready.ts` → `add-srt-to-mux-asset.ts` chain (and the deepgram callback shape it relies on) — into `joelclaw-video`, wired to fire on `video/publish.completed`. Open sub-questions to settle while building: what URL Deepgram fetches the media from (the archived original? a Mux static rendition? Deepgram's direct file upload from flagg?); where transcript + SRT land (Convex on the video resource, plus SRT pushed onto the Mux asset as a text track like course-builder does); how the Deepgram callback re-enters flagg — Joel confirmed (2026-07-13) we need a Deepgram webhook/callback path: a `deepgram` provider in the webhook gateway at `https://hooks.joelclaw.com/webhooks/deepgram`, mirroring the mux provider, with whatever auth Deepgram callbacks actually support (they don't HMAC-sign like Mux — verify the current scheme, likely a callback token/secret in header or URL, before trusting payloads); and whether joelclaw's existing `media-transcription-pipeline.ts` shares this path or stays separate. Deepgram credentials via agent-secrets. Running course-builder locally to watch its transcript flow end-to-end is a legitimate aid here if reading isn't enough. Resolved when a phase-1 published video ends up with a transcript in Convex and captions on the Mux asset.
 
@@ -23,7 +23,7 @@ Transcripts are super important (Joel, 2026-07-13): use Deepgram the way course-
 
 **Second scope update (Joel, 2026-07-14, mid-build): "deepgram flow needs to move to cloudflare."** The flagg-side build (gateway `deepgram` provider, joelclaw-video request step + transcript function, joelclaw-api setTranscript) was stopped mid-flight and discarded. New home: wzrrd Workers own the whole flow — request Deepgram on publish (source = the public Mux rendition URL), receive the token-verified callback at `wzrrd.sh/api/webhooks/deepgram`, build VTT/text in the Worker, store to R2, serve captions, and push the captions URL onto the Mux asset as a text track (Mux creds already live on the Worker for revoke). Convex gets no pushed transcript (Cloudflare can't reach tailnet-only joelclaw-api); if joelclaw wants a copy it pulls from wzrrd. The build now rides the wzrrd effort's worker briefs.
 
-## Answer (2026-07-14)
+## Result (2026-07-14)
 
 Live in production, Cloudflare-native per Joel's mid-build call. The flow: publish (or
 `POST /api/videos/<slug>/transcribe`) fire-and-forgets a Deepgram nova-3 request from the wzrrd

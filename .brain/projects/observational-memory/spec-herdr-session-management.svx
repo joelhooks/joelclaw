@@ -1,6 +1,6 @@
 ---
 title: "Spec: herdr Session Management (named, isolated, attachable sessions)"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "HITL"
@@ -12,7 +12,7 @@ closed_at: "2026-07-12"
 
 # Spec: herdr Session Management
 
-## Question
+## Step
 
 Joel's charter (2026-07-12, verbatim shape): herdr grows first-class SESSION
 management —

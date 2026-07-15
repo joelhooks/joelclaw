@@ -1,6 +1,6 @@
 ---
 title: "Build the Time-Boxed Front Digest Section (windows, not the scary total)"
-type: "question"
+type: "step"
 kind: "task"
 interaction: "AFK"
 status: "closed"
@@ -12,7 +12,7 @@ created_at: "2026-07-14"
 
 # Build the Time-Boxed Front Digest Section
 
-## Question
+## Step
 
 Implement the analysis's digest contract
 ([Front backlog analysis](./front-backlog-analysis.svx) § "Time-boxed
@@ -27,7 +27,7 @@ watch pattern). Stale counts render as stale, never as fresh. The approved 3,000
 ceiling is an invariant: when enumerated open exceeds it, the section
 emits a HIGH gap line (feeds tick_summary and the paper health strip).
 
-## Answer (2026-07-14)
+## Result (2026-07-14)
 
 Implemented in `~/Code/joelhooks/joelclaw-observer` without commits or Front mutations.
 

@@ -1,6 +1,6 @@
 ---
 title: "Build Schedule Visibility: pending wakes where Joel looks"
-type: "question"
+type: "step"
 kind: "task"
 interaction: "AFK"
 status: "open"
@@ -13,7 +13,7 @@ created_at: "2026-07-14"
 
 # Build Schedule Visibility
 
-## Question
+## Step
 
 Pending schedules visible without asking: `joelclaw wake list` is the
 floor (built with the CLI); this question decides + builds the glanceable

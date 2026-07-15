@@ -1,6 +1,6 @@
 ---
 title: "Research the Graph Store — Entertain the Weird Ideas"
-type: "question"
+type: "step"
 kind: "research"
 status: "closed"
 interaction: "AFK"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Research the Graph Store — Entertain the Weird Ideas
 
-## Question
+## Step
 
 What should hold the Brain Graph, judged by what's practical/SOTA to run on flagg and how it pairs with Typesense (semantic + FTS recall stays in Typesense; the store owns traversal, backlinks, path queries)?
 

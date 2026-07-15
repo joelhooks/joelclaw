@@ -1,6 +1,6 @@
 ---
 title: "Decide the Session-Start Briefing Contract for the Distilled Layer"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 assignee: "claude steering (flagg, session 14d06369, 2026-07-13)"
@@ -12,7 +12,7 @@ created_at: "2026-07-13"
 
 # Decide the Session-Start Briefing Contract
 
-## Question
+## Step
 
 What does every agent wake up knowing? The rhizomatic briefing (claude
 SessionStart hook) currently carries shallow session metadata. Decide: how
@@ -47,7 +47,7 @@ bullshit i don't care about." Principles for the grilling:
    reflector's monthly promotion feeds them; they outrank everything in
    recall conflicts.
 
-## Answer (2026-07-13, grilled with Joel)
+## Result (2026-07-13, grilled with Joel)
 
 **Memories are skill-shaped, and memory loads in layers.**
 

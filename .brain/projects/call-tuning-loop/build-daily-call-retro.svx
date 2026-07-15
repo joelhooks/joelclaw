@@ -1,6 +1,6 @@
 ---
 title: "Build the Daily Call Retro"
-type: "question"
+type: "step"
 kind: "task"
 interaction: "AFK"
 status: "open"
@@ -14,7 +14,7 @@ created_at: "2026-07-13"
 
 # Build the Daily Call Retro
 
-## Question
+## Step
 
 The 6am step: read yesterday's judged receipts, aggregate the failure
 taxonomy, distill tunings — auto-apply allowlisted text changes with the

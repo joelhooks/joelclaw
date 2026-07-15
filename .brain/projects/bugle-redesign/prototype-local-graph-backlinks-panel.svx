@@ -1,6 +1,6 @@
 ---
 title: "Prototype the Local Graph and Backlinks Panel"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -15,7 +15,7 @@ claimed_at: "2026-07-12"
 
 # Prototype the Local Graph and Backlinks Panel
 
-## Question
+## Step
 
 The Roam/Logseq payoff: loop and observation pages get backlinks ("what points here") and a small local-graph panel — 1–2 hops out from the current node, rendered from `graph.json` as quiet inline SVG. Tufte rules: no physics-simulation toy, no zooming hairball; a legible, static neighborhood diagram that answers "what is this connected to and why".
 

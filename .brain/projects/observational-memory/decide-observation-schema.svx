@@ -1,6 +1,6 @@
 ---
 title: "Decide the Observation Schema and Brain Placement"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 assignee: "claude (flagg, session 14d06369, grilling with Joel)"
@@ -13,7 +13,7 @@ closed_at: "2026-07-12"
 
 # Decide the Observation Schema and Brain Placement
 
-## Question
+## Step
 
 What IS an observation? Shape (frontmatter fields, provenance: sessionId,
 machine, repos, commits-via-ledger, time range), granularity (per session?

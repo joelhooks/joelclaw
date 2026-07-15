@@ -1,6 +1,6 @@
 ---
 title: "Build Voice Observation Recall (very tested)"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 assignee: "pi worker (steered by claude session 14d06369)"
@@ -13,7 +13,7 @@ closed_at: "2026-07-12"
 
 # Build Voice Observation Recall (very tested)
 
-## Question
+## Step
 
 Joel's charter (2026-07-12): the voice agent (`joelclaw/infra/voice-agent/`,
 ShitRat phone line) "needs this, and be sure it is very tested."

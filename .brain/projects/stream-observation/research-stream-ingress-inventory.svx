@@ -1,6 +1,6 @@
 ---
 title: "Research the Existing Stream Ingress (webhooks to where?)"
-type: "question"
+type: "step"
 kind: "research"
 status: "closed"
 assignee: "pi worker (steered by claude session 14d06369)"
@@ -13,7 +13,7 @@ closed_at: "2026-07-13"
 
 # Research the Existing Stream Ingress
 
-## Question
+## Step
 
 Ground truth for "how do webhooks flow into memory": where do Front and
 Slack realtime updates actually land today (gateway channels? Inngest

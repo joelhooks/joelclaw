@@ -1,6 +1,6 @@
 ---
 title: "Lay Out the Paper Fresh Each Run"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -12,7 +12,7 @@ created_at: "2026-07-12"
 
 # Lay Out the Paper Fresh Each Run
 
-## Question
+## Step
 
 The editorial pass: a pi layout-editor stage in the edition build that reads the day's content — loops, shipped news, questions, digests, media — and emits a layout spec composing that day's front page from the design system. A big-ship day leads with the shipped feature and its screenshot full-width; a decision-heavy day puts the question desk up top; a quiet day prints compact. The news decides.
 

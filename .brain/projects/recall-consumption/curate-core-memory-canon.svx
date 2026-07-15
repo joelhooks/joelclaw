@@ -1,6 +1,6 @@
 ---
 title: "Curate the Core Memory Canon (principles fused everywhere)"
-type: "question"
+type: "step"
 kind: "task"
 status: "open"
 assignee: ""
@@ -12,7 +12,7 @@ created_at: "2026-07-13"
 
 # Curate the Core Memory Canon
 
-## Question
+## Step
 
 Layer 1 of the briefing answer: a small curated set of core-memory pages
 (principles, vision lines, standing law — files-are-truth, gates-never-

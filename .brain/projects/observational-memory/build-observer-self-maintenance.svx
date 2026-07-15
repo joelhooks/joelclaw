@@ -1,6 +1,6 @@
 ---
 title: "Build Observer Self-Maintenance: systems-check, pane gardening, self-reflection"
-type: "question"
+type: "step"
 kind: "task"
 interaction: "AFK"
 status: "closed"
@@ -12,7 +12,7 @@ created_at: "2026-07-14"
 
 # Build Observer Self-Maintenance
 
-## Question
+## Step
 
 Standing call (Joel, 2026-07-14): "observer should occasionally systems
 check itself, garden open panes, reflect on its state in the system for
@@ -36,7 +36,7 @@ existing schemas; never touch panes outside the observer session; the
 self-page respects the noise bar (no daily empty navel-gazing — write
 only when there's signal).
 
-## Answer (2026-07-14)
+## Result (2026-07-14)
 
 Built in `~/Code/joelhooks/joelclaw-observer` as staged machinery. First live run is steering's.
 

@@ -1,6 +1,6 @@
 ---
 title: "Prototype the Data Gathering CLI with Pi Agents"
-type: "question"
+type: "step"
 kind: "prototype"
 status: "open"
 interaction: "HITL"
@@ -16,6 +16,6 @@ created_at: "2026-07-10"
 
 # Prototype the Data Gathering CLI with Pi Agents
 
-## Question
+## Step
 
 What is the smallest real CLI slice in which XState v5 owns explicit ingestion lifecycle, Effect v4 services collect and normalize source data, and bounded Pi agents identify open loops and produce schema-validated editorial candidates with provenance, retries, cancellation, resumability, and useful failure receipts?

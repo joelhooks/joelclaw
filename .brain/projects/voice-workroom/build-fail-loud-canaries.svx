@@ -1,6 +1,6 @@
 ---
 title: "Build Fail-Loud Canaries and Boot Verification"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -14,7 +14,7 @@ claimed_at: "2026-07-12"
 
 # Build Fail-Loud Canaries and Boot Verification
 
-## Question
+## Step
 
 Ship the fail-loud layer the same week as dial tone — shipping voice without it is how ADR-0178 happens again. Four pieces: (1) missed-call paging — Telnyx webhook on unanswered inbound fires an Inngest function that alerts via `joelclaw notify`/SMS within seconds; (2) worker-registration canary — Inngest cron asserts the worker is registered with LiveKit Cloud (process-up is not the check) and alerts with a cause on miss, including the secrets-lease crash-loop case; (3) daily synthetic call — scheduled end-to-end test call through Telnyx → LiveKit SIP → worker answers, speaks a token, hangs up, asserting answer within N seconds; (4) `verify-voice.sh` per the NAS boot-durability doctrine — hard-fails on missing plist, unregistered worker, unleasable secrets, unhealthy Typesense, and asserts the logged-in-session assumption the user-LaunchAgent choice depends on; runs at boot and on cron. Resolved when killing the worker pages Joel within minutes and a fresh boot verifies clean.
 

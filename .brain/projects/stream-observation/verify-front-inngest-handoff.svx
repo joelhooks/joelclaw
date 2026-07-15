@@ -1,6 +1,6 @@
 ---
 title: "Prove (or Fix) the Front Durable Handoff"
-type: "question"
+type: "step"
 kind: "task"
 status: "complete"
 assignee: "pi worker (steered by claude session 14d06369)"
@@ -12,7 +12,7 @@ created_at: "2026-07-13"
 
 # Prove (or Fix) the Front Durable Handoff
 
-## Question
+## Step
 
 Front webhooks arrive (274/day) but the Inngest `front/*` downstream is
 unproven: zero live events observed in 24h, channel_messages projection

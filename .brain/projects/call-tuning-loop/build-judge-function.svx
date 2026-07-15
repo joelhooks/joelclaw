@@ -1,6 +1,6 @@
 ---
 title: "Build the Judge — Inngest + pi Agent Dispatch"
-type: "question"
+type: "step"
 kind: "task"
 interaction: "AFK"
 status: "closed"
@@ -15,7 +15,7 @@ closed_at: "2026-07-13"
 
 # Build the Judge — Inngest + pi Agent Dispatch
 
-## Question
+## Step
 
 Wire judging end-to-end: on voice/public-call.completed (and the private
 call path), an Inngest function dispatches a pi agent with the signed rubric,
@@ -24,7 +24,7 @@ and surfaces them on the dashboard. Private transcripts stay on-machine
 through the pi path. Resolved when every new call lands judged within minutes
 and the backlog corpus is scored.
 
-## Answer (2026-07-13)
+## Result (2026-07-13)
 
 Built `voice-call-judge` as a host-role Inngest function. It fans out from both
 `voice/public-call.completed` and the existing private `voice/call.completed`

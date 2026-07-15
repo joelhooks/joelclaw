@@ -1,6 +1,6 @@
 ---
 title: "Rename daily.joelclaw.com to brain.joelclaw.com"
-type: "question"
+type: "step"
 kind: "task"
 status: "closed"
 interaction: "AFK"
@@ -13,7 +13,7 @@ claimed_at: "2026-07-12"
 
 # Rename daily.joelclaw.com to brain.joelclaw.com
 
-## Question
+## Step
 
 Mechanical rename, tailnet-only posture unchanged. On flagg: public DNS record for `brain.joelclaw.com` pointing at the `daily` sidecar's tailnet 100.x IP (same pattern as today — off-tailnet nothing answers); Caddy config in `infra/daily-sidecar/` serves the new host and 301-redirects `daily.joelclaw.com` to it; verify both the new host and the redirect return correct responses from a tailnet device before calling it done.
 

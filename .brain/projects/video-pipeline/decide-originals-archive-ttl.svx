@@ -1,6 +1,6 @@
 ---
 title: "Decide the Originals Archive and TTL Cleanup"
-type: "question"
+type: "step"
 kind: "grilling"
 status: "closed"
 interaction: "HITL"
@@ -11,7 +11,7 @@ created_at: "2026-07-13"
 
 # Decide the Originals Archive and TTL Cleanup
 
-## Question
+## Step
 
 Where do source video files land, and how do they get cleaned up without babysitting? Options include a Garage bucket on three-body (does Garage support S3 lifecycle/expiry rules, or does an Inngest cron sweep do it?), a plain NAS path with a cron sweep (the `media-process.ts` pattern: `joel@three-body:/volume1/home/joel/media`), or tiered (keep 30 days hot, then delete-if-Mux-asset-healthy). Joel's constraint from charting: archive originals so Mux isn't the only copy, but "cleanup ez so we don't fill it with shit — probably TTL based." Decide the location, the TTL, what the TTL is conditioned on (never delete an original whose Mux asset is errored or gone), and what phase 1 must record per video (archive path + checksum?) to make the sweep safe. Consult `/skill:garage` and the panda-decommission constraint (nothing new lands on panda).
 
