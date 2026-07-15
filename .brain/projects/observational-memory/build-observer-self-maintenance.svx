@@ -50,3 +50,36 @@ Receipts:
 - Tests added in `test/observer.test.ts` for integrity report assembly, protected-pane gardening, noise bar, and validator.
 - Verification: `bun test` green, 69 pass.
 - Real dry run (read-only) found dispatcher alive on release sha `31f5fc543ed4`, tick/family/dedupe/telemetry/pending state healthy, unpublished backlog `0`, and one warning: `/tmp/observer-context.log` missing. It proposed closing stale pane `w3:pM` and renaming observer/dispatcher labels; no actions were applied.
+
+## Installed (2026-07-15)
+
+Steering installed the staged wiring into production per Joel's standing
+call ("the observer session needs to be cleaned up regularly and should
+occupy a single tab … all named and consistent and not duplicates or
+noops"):
+
+- Manual gardening pass first: closed 4 dead/blank panes (`w4:p1`,
+  `w4:pF`, `w4:pG`, `w4:pH`) and 1 finished scheduled worker (`w4:pC`,
+  the cold-proof SPAWN — its receipt confirmed HTTP 200 + DM sent),
+  collapsing 4 tabs to the single family tab.
+- Lesson recorded: `w4:pH` was the LIVE observer mislabeled by its own
+  nested subagent (the `HERDR_PANE_ID` inheritance gotcha); the v4
+  gardening rename-to-canonical (`👁️ Observer` / `📡 Dispatcher`)
+  prevents that disguise recurring. The blank `w4:pG`/tab `w4:t8` came
+  from the v3 tick script's `tab create` shape-gap (`result.root_pane`)
+  — fixed in the staged copy now installed.
+- Install: repo `bin/observer-tick.sh` (at `34a5056`) copied to
+  `~/.joelclaw/bin/observer-tick.sh`, headed as v4; LaunchAgent
+  `com.joelclaw.observer-tick` unchanged (same path, 1800s interval).
+- Supervised v4 run: recreated observer as `w4:pJ` via split from
+  dispatcher, self-maintenance `--apply` ran live — gardening applied
+  one real fix (dispatcher label drift → `📡 Dispatcher`), noise bar
+  said write (gardening acted), self-reflection page validated
+  (`2026-07-15-observer-self-reflection`), one honest warning
+  (`observer-context` log missing — that LaunchAgent is staged, not
+  installed, by design).
+- End state verified: ONE family tab `w4:t5`, exactly two panes —
+  `👁️ Observer` (`w4:pJ`, working) + `📡 Dispatcher` (`w4:p8`, idle).
+- Still staged: the self-reflection observation WRITE path
+  (`writePolicy: staged only`) — the page is built and validated each
+  run but not yet written to `.brain/observations`.
