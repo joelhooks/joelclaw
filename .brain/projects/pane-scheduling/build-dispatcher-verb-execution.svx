@@ -3,7 +3,7 @@ title: "Build Dispatcher Verb Execution: due signals become panes"
 type: "question"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
 parent: "./pane-scheduling-brief.svx"
 blockers:
@@ -26,3 +26,31 @@ Every execution writes a decision receipt (verb, scheduleId, late flag,
 pane created). Spawned panes are ordinary pi sessions — never gated
 roles. Also: a thin observer-family tool (or documented `joelclaw wake`
 usage in the charter) so the observer itself can say "wake me in 2h."
+
+## Answer (2026-07-14)
+
+Built in `~/Code/joelhooks/joelclaw-observer` without live-firing the running observer session.
+
+Receipts:
+
+- `dispatch-rules.json` now names `pane.schedule.due` in `paneScheduleKinds`.
+- `.pi/extensions/dispatcher/lib.ts` classifies due signals before notify/anomaly/VIP/invoke text matching.
+- `.pi/extensions/dispatcher/lib.ts` adds pure schedule parsing/planning, pane-size fallback planning, loop continuation lookup from `joelclaw-wiki/data/editions/*.json`, and versioned executed-schedule state migration.
+- `.pi/extensions/dispatcher/index.ts` adds the thin herdr shell: WAKE sends to a resolved target and presses enter; SPAWN creates a labeled `⏰` pane and runs `pi @briefPath`; REVIVE writes a temp prompt file and launches `pi @promptFile`.
+- Idempotency state: `~/.joelclaw/observer-dispatcher-executed-schedules.json` via schema v1. Re-delivered executed `scheduleId`s append a `schedule_duplicate_drop` receipt instead of executing again.
+- Decision receipts append to `~/.joelclaw/observer-dispatcher-decisions.jsonl` with verb, scheduleId, late flag, pane-created/refusal, planned commands, and shell detail.
+- Missing target/brief/loop/prompt paths produce refusal receipts and no pane.
+- Pane safety uses split-first, then closes too-small split panes and falls back to a fresh tab, matching the tick script's 80x24 viability lesson.
+
+Planned command examples from test fixtures:
+
+- WAKE: `herdr --session observer agent send w1:p1 "SCHEDULE_WAKE\\nscheduleId: sched-wake\\nlate: true"` then `herdr --session observer pane send-keys w1:p1 enter`.
+- SPAWN: `herdr --session observer pane split w1:p2 --direction right --ratio 0.5 --cwd /repo --no-focus`; rename `$PANE` to `⏰ Wake the thing`; run `cd '/repo' && pi @'<briefPath>' "Scheduled SPAWN sched-spawn"`.
+- REVIVE: too-small split fixture chooses `herdr --session observer tab create --cwd /repo --label "👁️📡 Observer family — memory loop + dispatcher" --no-focus`; rename `$PANE` to `⏰ Continue useful work`; run `cd '/repo' && pi @'/tmp/sched-revive.md'`.
+
+Verification:
+
+- `bun --check .pi/extensions/dispatcher/lib.ts .pi/extensions/dispatcher/index.ts`
+- `bun test` — 75 pass, 0 fail.
+
+Live end-to-end firing remains steering's acceptance gate.

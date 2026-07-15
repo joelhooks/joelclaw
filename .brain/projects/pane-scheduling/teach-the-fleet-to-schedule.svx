@@ -1,0 +1,31 @@
+---
+title: "Teach the Fleet to Schedule: 'schedule this' works in every agent session"
+type: "question"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
+parent: "./pane-scheduling-brief.svx"
+blockers: []
+created_at: "2026-07-14"
+---
+
+# Teach the Fleet to Schedule
+
+## Question
+
+Standing call (Joel, 2026-07-14): "the entire FLEET should know how to
+schedule jobs wake panes etc. if i say 'schedule this' or whatever it
+should be understood and executed." The capability exists (`joelclaw
+wake at|in|list|cancel`, verbs WAKE/SPAWN/REVIVE); this question
+distributes the KNOWLEDGE so any claude/pi/codex session on any machine
+resolves "schedule this," "remind me at 6," "revive that loop tomorrow"
+into the right `joelclaw wake` invocation without being told how.
+Vehicle: dark-wizard — a `pane-scheduling` skill (skills/ sync) with the
+verb semantics, natural-language→flag mapping, and worked examples, plus
+a thin fleet-graft block pointing at it from the standing prompts (the
+machine-identity pattern). Includes what an agent does when the bus is
+unreachable from its machine (honest failure line, never silent). Done
+when the skill + graft are staged, installed on flagg, and a cold agent
+session given "schedule a pane for 6pm to check X" produces the correct
+command.
