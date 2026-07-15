@@ -52,6 +52,7 @@ yarn-error.log*
 .adal/
 .agent/
 .agent_sources/
+.pi-subagents/
 .augment/
 .cline/
 .codebuddy/
@@ -82,6 +83,10 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+__pycache__/
+*.py[cod]
+/pipe
+/~/
 /infra/worker-supervisor/target/
 skills/.DS_Store
 infra/talon/target/
