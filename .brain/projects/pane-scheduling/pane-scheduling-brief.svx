@@ -1,0 +1,71 @@
+---
+title: "Pane Scheduling: panes awaken later or get revived"
+type: "brief"
+status: "active"
+created_at: "2026-07-14"
+privacy: "private"
+---
+
+# Pane Scheduling
+
+Chartered 2026-07-14 from Joel: "with the observer we can easily
+schedule panes to AWAKEN LATER or get REVIVED." Every primitive already
+exists — inngest runs durable scheduled jobs, the dispatcher wakes
+targets through herdr, continuation prompts carry full resume context.
+This effort composes them.
+
+## Finish line
+
+One durable schedule with three verbs, each proven live once, on time,
+with receipts: **WAKE** (a prompt lands in an existing pane/agent at
+time T), **SPAWN** (a new pane at time T runs a task brief), **REVIVE**
+(a new pane at time T boots from an open loop's continuation prompt and
+resumes the dead thread). Both Joel and agents can schedule (`joelclaw
+wake …` / an observer-family tool). Durability rides inngest — entries
+survive restarts because `step.sleepUntil` does. Fired panes appear in
+the **observer family herdr session** (Joel, charter), labeled ⏰.
+Pending schedules are visible somewhere Joel actually looks. Misfires
+(machine asleep at T) fire on recovery flagged **late**, never silently
+dropped.
+
+## Vocabulary
+
+- **WAKE / SPAWN / REVIVE** — the three verbs: prompt an existing pane;
+  new pane + task brief; new pane + a loop's continuation prompt.
+- **due signal** — the gateway event the inngest function emits when a
+  schedule fires; the dispatcher executes the verb.
+- **late fire** — a due signal delivered after its time T (sleep,
+  outage); executed anyway, labeled late in the receipt.
+
+## Notes
+
+- **The clock is inngest** (Joel, charter, 2026-07-14: "inngest has
+  scheduled jobs") — no new daemons, no cron files; durability and
+  event-driven revival come free. The dispatcher executes; it already
+  owns herdr wake machinery and the family registry.
+- Spawned/revived panes live in the observer family session (Joel,
+  charter) — automation stays with automation; labels make it scannable.
+- Skills: `herdr-orchestration`; repo law for inngest functions
+  (joelclaw `.claude/CLAUDE.md` validation checklist).
+- Gates stay sacred: revived/spawned panes are ordinary pi sessions —
+  never gated observer/dispatcher roles.
+- **Execution authorized** for `kind: task` questions (Joel, 2026-07-14,
+  charter): workers build, steering reviews/commits/installs.
+
+## Decision ledger
+
+<!-- one line per closed question: gist + link -->
+
+## Not yet specified
+
+- Recurring schedules (every weekday at 9am) — one-shots first; recurrence
+  graduates when a real need shows up.
+- Whether REVIVE should also work from an observation page (not just a
+  loop) — the reflector's citations would make that possible.
+- Cancellation UX beyond `joelclaw wake cancel <id>` (paper button?).
+
+## Out of scope
+
+- Replacing the observer tick or the nightly LaunchAgents with inngest —
+  they work; this effort adds a scheduler, it doesn't migrate cadences.
+- Waking Joel (notifications are the dispatcher's existing lane).

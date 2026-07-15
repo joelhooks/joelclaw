@@ -1,0 +1,70 @@
+---
+title: "Task: schedule event contract + inngest sleepUntil function + joelclaw wake CLI"
+type: task-brief
+created: 2026-07-14
+parent: "../projects/pane-scheduling/build-schedule-events-function-cli.svx"
+---
+
+# The schedule, bus side
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. NO commits, NO push, NO
+deploy/publish scripts. Repo has unrelated dirt — stay narrow. Set your
+pi session name to "⏰ Schedule events + wake CLI" immediately.
+
+Read first:
+1. Your claimed question + the brief (Vocabulary + Notes bind you):
+   `.brain/projects/pane-scheduling/build-schedule-events-function-cli.svx`
+   and `pane-scheduling-brief.svx` beside it.
+2. Repo law: `.claude/CLAUDE.md` (validation checklist, Effect idioms,
+   @joelclaw/* boundaries, HATEOAS envelopes). Find how existing inngest
+   functions with sleeps/scheduling are structured
+   (`packages/system-bus/src/inngest/functions/` — check/stale-loops,
+   email-nag, or scheduled.timer users are likely references) and how
+   gateway events get pushed (`pushGatewayEvent` in
+   check-system-health is a live example).
+3. How `joelclaw` CLI commands are built (`packages/cli/src/commands/`,
+   @effect/cli, HATEOAS envelope convention).
+
+## Deliverables
+
+1. **Event contract** (versioned, in the domain the repo keeps event
+   schemas): `pane/schedule.requested` — scheduleId (generated), verb
+   `wake|spawn|revive`, `at` ISO or `in` duration (resolve to `at` at
+   request time), target (wake), briefPath (spawn), loopId (revive),
+   prompt (optional extra context for any verb), requestedBy, createdAt.
+   Validation with teaching errors (verb/field mismatches).
+2. **Inngest function** `pane/schedule` — triggered by the request
+   event: validate, `step.sleepUntil(at)`, then push the **due signal**
+   `pane.schedule.due` to the gateway carrying the full entry plus
+   `late: true` when fired more than 5 minutes past `at`. Cancellation:
+   listen for `pane/schedule.cancelled` (inngest `waitForEvent` race vs
+   the sleep — the repo may already have this pattern; find it) so
+   `cancel` actually stops the sleep.
+3. **CLI**: `joelclaw wake at <ISO|natural> …`, `joelclaw wake in <2h>
+   …` with `--verb wake|spawn|revive`, `--target`, `--brief`, `--loop`,
+   `--prompt`; `joelclaw wake list` (pending entries — from inngest run
+   state or a small registry file the function maintains; pick what the
+   repo can honestly query) and `joelclaw wake cancel <scheduleId>`.
+   HATEOAS envelopes; text + json.
+4. **Tests** per repo idiom for contract validation, at/in resolution,
+   late-flag arithmetic, and CLI parsing. `bunx tsc --noEmit` green;
+   targeted biome green.
+
+The dispatcher-side execution of the due signal is NOT yours — emit the
+signal, done. Do not edit dispatch-rules or the observer repo.
+
+## Verify
+
+Receipts in DONE: tsc + biome + tests output; one dry `joelclaw wake in
+5m --verb spawn --brief /tmp/x.svx` against the BUILT CLI showing the
+envelope (the event may enqueue for real if the bus is up — that's fine
+and is itself a receipt; note the scheduleId so steering can cancel it).
+
+## Question-file edits (part of the deliverable)
+
+Append `## Answer (2026-07-14)` + receipts, flip status closed.
+Steering writes the ledger line.
+
+## Rules
+
+Work autonomously. Do not commit. Print DONE with receipts.

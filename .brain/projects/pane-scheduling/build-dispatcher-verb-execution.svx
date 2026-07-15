@@ -1,0 +1,28 @@
+---
+title: "Build Dispatcher Verb Execution: due signals become panes"
+type: "question"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./pane-scheduling-brief.svx"
+blockers:
+  - "./build-schedule-events-function-cli.svx"
+created_at: "2026-07-14"
+---
+
+# Build Dispatcher Verb Execution
+
+## Question
+
+The hands half, in joelclaw-observer: the dispatcher classifies
+`pane.schedule.due` as a first-class fate (not invoke-pattern matching —
+a named kind in dispatch-rules) and executes the verb via herdr in the
+observer family session: WAKE = `agent send` + enter to the target (from
+the family registry or pane id); SPAWN = new labeled ⏰ pane + `pi
+@briefPath`; REVIVE = resolve the loop's continuation prompt (from the
+wiki's edition/loops data — read-only) and boot a new ⏰ pane with it.
+Every execution writes a decision receipt (verb, scheduleId, late flag,
+pane created). Spawned panes are ordinary pi sessions — never gated
+roles. Also: a thin observer-family tool (or documented `joelclaw wake`
+usage in the charter) so the observer itself can say "wake me in 2h."

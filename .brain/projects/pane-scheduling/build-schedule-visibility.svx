@@ -1,0 +1,23 @@
+---
+title: "Build Schedule Visibility: pending wakes where Joel looks"
+type: "question"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./pane-scheduling-brief.svx"
+blockers:
+  - "./build-schedule-events-function-cli.svx"
+created_at: "2026-07-14"
+---
+
+# Build Schedule Visibility
+
+## Question
+
+Pending schedules visible without asking: `joelclaw wake list` is the
+floor (built with the CLI); this question decides + builds the glanceable
+surface — most likely a line or small section on the paper's command
+deck (health strip neighbor: "⏰ 3 scheduled · next 18:00 revive
+video-forensics") fed at build time like the sweep, fail-soft. Composable
+MDSvX component per the standing call.
