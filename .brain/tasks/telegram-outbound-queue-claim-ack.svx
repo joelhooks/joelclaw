@@ -1,0 +1,31 @@
+---
+title: Make Telegram outbound queue recoverable
+status: ready
+privacy: private
+created: 2026-07-15
+blocked_by:
+  - telegram-flow-audit
+---
+
+# Make Telegram outbound queue recoverable
+
+## Why
+
+`packages/gateway/src/daemon.ts` currently reads all of `joelclaw:outbound:messages`, deletes the list, then sends each item. A gateway crash or process kill after `DEL` can lose the entire claimed batch. Delivery auditing exposes the missing terminal receipt but cannot recover the message.
+
+## Build
+
+- Extract the outbound queue drainer from `daemon.ts` behind a small Redis/message-delivery interface.
+- Atomically claim one message into a processing queue.
+- Ack only after the channel adapter returns a confirmed receipt.
+- Requeue abandoned processing items on gateway startup.
+- Apply bounded retries with delay.
+- Move exhausted items to a dead-letter queue with the original `flowId` and last privacy-safe error summary.
+- Emit `channel.delivery.claimed`, `requeued`, `confirmed`, and `dead_lettered` receipts.
+- Add an operator command to inspect/retry dead letters without printing message bodies by default.
+
+## Acceptance
+
+- A crash between claim and Bot API confirmation does not silently lose the message.
+- Duplicate delivery remains possible but is visible under the same deterministic `flowId`.
+- Tests cover crash recovery, retry exhaustion, dead-letter inspection, and ack-after-confirmation ordering.
