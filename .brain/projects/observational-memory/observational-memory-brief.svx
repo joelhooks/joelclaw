@@ -62,6 +62,8 @@ to understand all of the work that we're doing."
 
 - [Research Salience Decay](./research-salience-decay-mechanisms.svx) — survey shipped ([asset](./salience-decay-survey.svx)): the pattern everywhere is rank-decay/blur/validity-close, never deletion; v1 score recommended (14-day half-life recency × repo scope × log-token work), telemetry gap named (deliberate-recall events only, impressions poison the signal). Reflector unblocked.
 
+- [Build Observer Self-Maintenance](./build-observer-self-maintenance.svx) — integrity report + session-scoped pane gardening (protected panes unclosable) + noise-barred self-reflection pages; 69 tests, real dry run found and proposed the stale-pane close; staged wiring awaits next promotion.
+
 - [Build the Reflector](./build-reflector-dreaming-pass.svx) — built from the [spec](./reflector-spec.svx) and the first real dream ran (2026-07-14): 85 pages → 26 rollups, originals archived in-substrate, citations verbatim, receipt page written; recall bench identical before/after; briefing/masthead/Bugle canaries held (archive-aware). Graduated: [Wire the Nightly Dream](./wire-nightly-dream-blur-ladder.svx) (LaunchAgent + week/month ladder guard before any automation).
 
 <!-- one line per closed ticket: gist + link -->

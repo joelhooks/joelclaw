@@ -3,7 +3,7 @@ title: "Build Observer Self-Maintenance: systems-check, pane gardening, self-ref
 type: "question"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
 parent: "./observational-memory-brief.svx"
 blockers: []
@@ -35,3 +35,18 @@ Constraints: deterministic where possible, pi judgment only behind the
 existing schemas; never touch panes outside the observer session; the
 self-page respects the noise bar (no daily empty navel-gazing — write
 only when there's signal).
+
+## Answer (2026-07-14)
+
+Built in `~/Code/joelhooks/joelclaw-observer` as staged machinery. First live run is steering's.
+
+Receipts:
+
+- Pure self-check functions in `.pi/extensions/observer/lib.ts`: `assembleSelfCheckReport`, `assessFileHealth`.
+- Pure pane gardening in `.pi/extensions/observer/lib.ts`: `decideObserverPaneGardening`; protected observer/dispatcher panes are rename-only, never close.
+- Self-reflection noise bar + page builder/validator in `.pi/extensions/observer/lib.ts`: `shouldWriteSelfReflection`, `assembleSelfReflectionObservation`, `validateSelfReflectionObservation`.
+- Supervisor CLI in `.pi/extensions/observer/self-maintenance.ts`; `--dry-run` reads real state without mutation, `--apply` is for the staged tick script only.
+- Staged repo copy of the supervisor script at `bin/observer-tick.sh`, headed as vNext and calling `self_maintenance` before the tick send.
+- Tests added in `test/observer.test.ts` for integrity report assembly, protected-pane gardening, noise bar, and validator.
+- Verification: `bun test` green, 69 pass.
+- Real dry run (read-only) found dispatcher alive on release sha `31f5fc543ed4`, tick/family/dedupe/telemetry/pending state healthy, unpublished backlog `0`, and one warning: `/tmp/observer-context.log` missing. It proposed closing stale pane `w3:pM` and renaming observer/dispatcher labels; no actions were applied.
