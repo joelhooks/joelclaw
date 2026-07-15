@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process"
+import { hostname } from "node:os"
 
 import type { FleetHostExpectation } from "./manifest"
 
@@ -12,11 +13,12 @@ const BASE_SSH_ARGS = [
 ] as const
 
 const REMOTE_FACTS_SCRIPT = [
-  "printf 'hostname='; hostname -s 2>/dev/null || true",
-  "printf 'piVersion='; pi --version 2>/dev/null | head -1 || true",
-  "printf 'modelThinking='; node -e \"const fs=require('fs'); const p=process.env.HOME+'/.pi/agent/settings.json'; try { const s=JSON.parse(fs.readFileSync(p,'utf8')); console.log([s.defaultModel||'',s.thinking||''].join('|')) } catch { console.log('|') }\" 2>/dev/null || true",
-  "printf 'skillsFingerprint='; find \"$HOME/.pi/agent/skills\" -maxdepth 1 -type l -print 2>/dev/null | sort | cksum | awk '{print $1}' || true",
-  "printf 'cliVersion='; joelclaw --version 2>/dev/null | head -1 || true",
+  "export PATH=\"$HOME/.local/bin:$HOME/.pi/agent/bin:$HOME/.bun/bin:/opt/homebrew/bin:$PATH\"",
+  "printf 'hostname='; hostname -s 2>/dev/null || true; printf '\\n'",
+  "printf 'piVersion='; pi --version 2>/dev/null | head -1 || true; printf '\\n'",
+  "printf 'modelThinking='; node -e \"const fs=require('fs'); const p=process.env.HOME+'/.pi/agent/settings.json'; try { const s=JSON.parse(fs.readFileSync(p,'utf8')); console.log([s.defaultModel||'',s.thinking||''].join('|')) } catch { console.log('|') }\" 2>/dev/null || true; printf '\\n'",
+  "printf 'skillsFingerprint='; find \"$HOME/.pi/agent/skills\" -maxdepth 1 -type l -print 2>/dev/null | sort | cksum | awk '{print $1}' || true; printf '\\n'",
+  "printf 'cliVersion='; joelclaw --version 2>/dev/null | head -1 || true; printf '\\n'",
 ].join("; ")
 
 const REMOTE_SATELLITE_FACTS_SCRIPT = `${REMOTE_FACTS_SCRIPT}; printf 'satelliteHealth='; joelclaw satellite health >/dev/null 2>&1 && printf ok || printf failed; printf '\\n'`
@@ -96,9 +98,16 @@ function unavailable(field: string): FleetProbeFailure {
   return { probe: field, code: "unavailable", detail: `${field} was unavailable from the remote host` }
 }
 
-export function probeFleetHost(host: FleetHostExpectation, execute: CommandExecutor = executeSsh): FleetHostProbeResult {
+export function probeFleetHost(
+  host: FleetHostExpectation,
+  execute: CommandExecutor = executeSsh,
+  currentHostname = hostname().split(".")[0],
+): FleetHostProbeResult {
   const remoteScript = host.role === "satellite" ? REMOTE_SATELLITE_FACTS_SCRIPT : REMOTE_FACTS_SCRIPT
-  const result = execute("ssh", [...BASE_SSH_ARGS, "--", host.sshTarget, remoteScript], SSH_COMMAND_TIMEOUT_MS)
+  const isLocalHost = currentHostname === host.expectedHostname
+  const result = isLocalHost
+    ? execute("sh", ["-lc", remoteScript], SSH_COMMAND_TIMEOUT_MS)
+    : execute("ssh", [...BASE_SSH_ARGS, "--", host.sshTarget, remoteScript], SSH_COMMAND_TIMEOUT_MS)
 
   if (!result.ok) {
     const code = result.timedOut ? "timeout" : "ssh_failed"
@@ -108,9 +117,11 @@ export function probeFleetHost(host: FleetHostExpectation, execute: CommandExecu
       role: host.role,
       facts: {},
       failures: [{
-        probe: "ssh",
+        probe: isLocalHost ? "local" : "ssh",
         code,
-        detail: code === "timeout" ? "SSH command timed out" : "SSH command failed", 
+        detail: code === "timeout"
+          ? `${isLocalHost ? "Local" : "SSH"} command timed out`
+          : `${isLocalHost ? "Local" : "SSH"} command failed`,
       }],
       ok: false,
     }

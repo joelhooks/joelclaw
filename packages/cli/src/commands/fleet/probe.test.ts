@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import type { FleetHostExpectation } from "./manifest"
-import { probeFleetHost, SSH_COMMAND_TIMEOUT_MS } from "./probe"
+import { __fleetProbeTestUtils, probeFleetHost, SSH_COMMAND_TIMEOUT_MS } from "./probe"
 
 const host = (overrides: Partial<FleetHostExpectation> = {}): FleetHostExpectation => ({
   alias: "central",
@@ -48,6 +48,19 @@ describe("probeFleetHost", () => {
     expect(call?.args.join(" ")).not.toContain("central-example")
   })
 
+  test("probes the current host directly instead of SSHing into itself", () => {
+    let call: { command: string; args: readonly string[] } | undefined
+    const result = probeFleetHost(host(), (command, args) => {
+      call = { command, args }
+      return { ok: true, stdout: successfulOutput, stderr: "" }
+    }, "central-example")
+
+    expect(result.ok).toBe(true)
+    expect(call?.command).toBe("sh")
+    expect(call?.args[0]).toBe("-lc")
+    expect(call?.args).not.toContain("central-fixture.invalid")
+  })
+
   test("returns a generic SSH failure without exposing the target or credentials", () => {
     const privateTarget = "private-fleet-host.tailnet.example"
     const secretLikeStderr = `Could not resolve hostname ${privateTarget}: token=super-secret password=hunter2`
@@ -80,6 +93,12 @@ describe("probeFleetHost", () => {
       code: "identity_mismatch",
       detail: "expected central-example, observed wrong-example",
     })
+  })
+
+  test("fact script emits one parseable record per line", () => {
+    const script = String.raw`${__fleetProbeTestUtils.REMOTE_FACTS_SCRIPT}`
+    expect(script).toContain("pi --version 2>/dev/null | head -1 || true; printf '\\n'")
+    expect(script).toContain("cliVersion=")
   })
 
   test("returns partial facts and satellite health without failing closed", () => {
