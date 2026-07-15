@@ -1,0 +1,64 @@
+---
+title: Telegram flow audit
+type: task
+status: implemented-not-deployed
+privacy: private
+created: 2026-07-15
+---
+
+# Telegram flow audit
+
+## Goal
+
+Make Telegram message flow explainable from producer through Inngest, Redis queue, gateway routing, and Telegram Bot API confirmation.
+
+## Decisions
+
+- Trace the full path: producer → queue → gateway → Telegram confirmation.
+- Do not store message bodies or previews in telemetry.
+- Store only a SHA-256 content hash, character count, and byte count.
+- Every delivery gets one stable `flowId` across hops.
+- Capture producer name, origin host, gateway host, queue timing, Telegram message IDs, and terminal success or failure.
+- Telegram “delivered” means the Bot API accepted the message. It does not prove Joel read it.
+
+## Scope
+
+- `gateway/send.message` event contract and Redis queue envelope.
+- In-tree `gateway/send.message` producers.
+- Gateway outbound queue drain receipts.
+- Telegram inbound text receipts.
+- Telegram outbound text/media delivery receipts.
+- Agent-response routing attribution where source/reply information exists.
+- Focused tests and operator query documentation.
+
+## Constraints
+
+- Preserve all unrelated dirty work in this heavily modified checkout.
+- Do not commit or push from worker panes.
+- OTEL is the canonical audit store; no ad-hoc second observability database.
+- Telemetry must fail open so an OTEL outage does not block Telegram.
+
+## Acceptance
+
+- A single `flowId` can correlate queue and Telegram confirmation events.
+- Every Telegram Bot API send has a confirmed or failed terminal receipt.
+- Queue receipts identify producer, origin host, gateway host, wait time, content hash, and size without text.
+- Inbound text receipts can be correlated to the outbound reply via Telegram message/reply IDs.
+- Tests cover fingerprinting, queue-envelope propagation, active-request metadata, stream confirmation, retry fallback, and telemetry privacy.
+- Focused tests, formatting checks, and Bun builds pass.
+
+## Implementation receipt
+
+- Added canonical channel fingerprints and audit context in `packages/telemetry/src/channel-audit.ts`.
+- Gateway OTEL now stamps the emitting machine's `systemId` before crossing the network.
+- `joelclaw notify send`, `gateway/send.message`, gateway queue drain, Telegram inbound text, agent replies, streaming replies, and text/media sends preserve `flowId` and terminal Bot API receipts.
+- In-tree tracked `gateway/send.message` producers identify themselves; the concurrent untracked `wiki-edition-build.ts` producer currently falls back to the deterministic Inngest event identity.
+- Telegram terminal receipts bypass info-event shedding while remaining fail-open if the OTEL endpoint itself is unavailable.
+
+## Remaining risks
+
+- The direct outbound Redis queue still performs `LRANGE` then `DEL` before delivery. Audit now exposes missing terminal receipts, but it does not recover an item lost during a gateway crash. Replace this with claim/ack + dead-letter handling separately.
+- Command-menu, callback UI, and pinned-status Bot API writes still use their specialized direct API paths. This slice audits conversational and notification delivery, not every Telegram UI mutation.
+- The checkout has unrelated pre-existing TypeScript failures and substantial concurrent dirty work. Do not commit this slice until it is isolated and reviewed against that work.
+- Runtime deployment and a live Telegram canary are still pending.
+- Default `joelclaw otel search` currently fails against ClickHouse on Flagg. `--adapter typesense-otel` is verified working and documented as the audit-query fallback.

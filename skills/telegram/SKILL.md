@@ -34,6 +34,44 @@ Multi-instance poll ownership (2026-03-05): Telegram long polling now uses a Red
 
 Conflict guard still applies for non-cooperative pollers: `telegram.channel.start_failed` (with `conflict` metadata) + `telegram.channel.retry_scheduled` + `telegram.channel.polling_recovered`.
 
+## Delivery audit
+
+Telegram has three distinct delivery lanes:
+
+1. Human conversation: Telegram update → command queue → Pi session → stream/router → Bot API.
+2. Canonical CLI notification: `joelclaw notify send` → gateway Redis event queue → immediate send or Pi session → Bot API.
+3. Direct system notification: producer → `gateway/send.message` → Redis `joelclaw:outbound:messages` → gateway drain → Bot API.
+
+Both lanes emit privacy-safe OTEL receipts under one `flowId`. Message bodies and previews are not stored. Receipts keep only SHA-256, character count, byte count, producer, origin system, route, queue timing, reply/message IDs, and terminal status.
+
+Canonical actions:
+
+- `telegram.inbound.accepted`
+- `channel.delivery.queued`
+- `channel.delivery.dequeued`
+- `telegram.delivery.attempted`
+- `telegram.delivery.confirmed`
+- `telegram.delivery.failed`
+
+Query the whole lane, then narrow to one flow:
+
+```bash
+joelclaw otel search "telegram.delivery" --hours 24
+joelclaw otel search "channel.delivery" --hours 24
+joelclaw otel search "<flowId>" --hours 24
+```
+
+If the default ClickHouse adapter is unavailable, use the working Typesense mirror explicitly:
+
+```bash
+joelclaw otel search "telegram.delivery" --hours 24 --adapter typesense-otel
+joelclaw otel search "<flowId>" --hours 24 --adapter typesense-otel
+```
+
+`telegram.delivery.confirmed` means Telegram's Bot API accepted the send and returned message ID(s). It does **not** mean Joel read the message.
+
+The queue still uses `LRANGE` then `DEL` before delivery. A queued flow with no dequeue/terminal receipt exposes that gap, but does not recover the lost item. Reliable claim/ack plus a dead-letter queue is separate follow-up work.
+
 ## Capabilities
 
 ### Sending Messages
