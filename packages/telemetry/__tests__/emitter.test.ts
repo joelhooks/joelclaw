@@ -38,7 +38,7 @@ describe("telemetry package", () => {
       message: "request contained private Telegram body",
     });
 
-    expect(summary).toBe("GrammyError:400:Bad Request: can't parse entities");
+    expect(summary).toBe("GrammyError:400");
     expect(summary).not.toContain("private Telegram body");
     expect(summarizeChannelError("private Telegram body")).toBe("channel_delivery_error");
   });

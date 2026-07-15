@@ -46,16 +46,17 @@ export function resolveSystemId(value?: string): string {
 export function summarizeChannelError(error: unknown): string {
   if (!error || typeof error !== "object") return "channel_delivery_error";
   const value = error as Record<string, unknown>;
-  const name = typeof value.name === "string" ? value.name : "ChannelDeliveryError";
-  const code = typeof value.error_code === "number" || typeof value.error_code === "string"
+  const rawName = typeof value.name === "string" ? value.name : "ChannelDeliveryError";
+  const name = /^[A-Za-z0-9_.-]{1,80}$/u.test(rawName) ? rawName : "ChannelDeliveryError";
+  const rawCode = typeof value.error_code === "number" || typeof value.error_code === "string"
     ? String(value.error_code)
     : typeof value.code === "number" || typeof value.code === "string"
       ? String(value.code)
       : undefined;
-  const description = typeof value.description === "string"
-    ? value.description.replace(/\s+/gu, " ").slice(0, 240)
-    : undefined;
-  return [name, code, description].filter(Boolean).join(":") || "channel_delivery_error";
+  const code = rawCode && /^[A-Za-z0-9_.-]{1,80}$/u.test(rawCode) ? rawCode : undefined;
+  // Provider descriptions and Error.message are intentionally excluded. Either
+  // may echo the submitted Telegram body and cross the privacy boundary.
+  return [name, code].filter(Boolean).join(":") || "channel_delivery_error";
 }
 
 export function fingerprintChannelContent(content: string): ChannelContentFingerprint {
