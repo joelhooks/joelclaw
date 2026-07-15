@@ -1,7 +1,7 @@
 ---
 title: Telegram flow audit
 type: task
-status: implemented-not-deployed
+status: deployed-verified
 privacy: private
 created: 2026-07-15
 ---
@@ -52,13 +52,22 @@ Make Telegram message flow explainable from producer through Inngest, Redis queu
 - Added canonical channel fingerprints and audit context in `packages/telemetry/src/channel-audit.ts`.
 - Gateway OTEL now stamps the emitting machine's `systemId` before crossing the network.
 - `joelclaw notify send`, `gateway/send.message`, gateway queue drain, Telegram inbound text, agent replies, streaming replies, and text/media sends preserve `flowId` and terminal Bot API receipts.
-- In-tree tracked `gateway/send.message` producers identify themselves; the concurrent untracked `wiki-edition-build.ts` producer currently falls back to the deterministic Inngest event identity.
+- In-tree tracked `gateway/send.message` producers identify themselves; untagged producers fall back to the deterministic Inngest event identity.
 - Telegram terminal receipts bypass info-event shedding while remaining fail-open if the OTEL endpoint itself is unavailable.
+- Ambiguous transport failures emit `telegram.delivery.unknown` and are not retried, avoiding duplicate visible messages when Telegram may have accepted the original request.
+- Provider descriptions and error messages are excluded from telemetry because they may echo submitted content.
 
 ## Remaining risks
 
 - The direct outbound Redis queue still performs `LRANGE` then `DEL` before delivery. Audit now exposes missing terminal receipts, but it does not recover an item lost during a gateway crash. Replace this with claim/ack + dead-letter handling separately.
 - Command-menu, callback UI, and pinned-status Bot API writes still use their specialized direct API paths. This slice audits conversational and notification delivery, not every Telegram UI mutation.
-- The checkout has unrelated pre-existing TypeScript failures and substantial concurrent dirty work. Do not commit this slice until it is isolated and reviewed against that work.
-- Runtime deployment and a live Telegram canary are still pending.
-- Default `joelclaw otel search` currently fails against ClickHouse on Flagg. `--adapter typesense-otel` is verified working and documented as the audit-query fallback.
+
+## Deployment receipt
+
+- Pushed to `origin/main` through ShitRat-authored logical commits; terminal fix: `f58c0c58911d347ef9a6cb1ede897fb79a40ffbf`.
+- ClickHouse CLI resolution fixed in `ca1badedf6961d6a353381a5d84b2571c9b31638`; normal `joelclaw otel search` now reads `~/.config/system-bus.env` and works on Flagg.
+- Gateway restarted from PID `76156` to `42715` with Telegram healthy and Redis connected.
+- Host system-bus worker restarted from PID `77928` to `40747`, cwd verified as `packages/system-bus`, and Inngest registration returned `Successfully registered` with 148 functions.
+- Immediate canary `notify:8595f232-276d-4de7-8472-8f5705aefd62` recorded queued → attempted → confirmed with Telegram message ID `14484`.
+- Queued Inngest/Redis canary `canary:gateway-send:20260715T1702Z` recorded queued → dequeued (`queueWaitMs=21`) → attempted → confirmed with Telegram message ID `14485`.
+- CLI, gateway, SDK, and system-bus TypeScript checks pass. Focused tests, Biome, Bun builds, `git diff --check`, and Brain check pass.

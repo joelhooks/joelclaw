@@ -1,0 +1,55 @@
+---
+title: Clean the joelclaw working tree and deploy Telegram auditing
+status: complete
+privacy: private
+created: 2026-07-15
+completed: 2026-07-15
+---
+
+# Clean the joelclaw working tree and deploy Telegram auditing
+
+## Goal
+
+Preserve all intentional work in the dirty Flagg checkout, remove generated junk, group changes into logical commits, reconcile the 181 local-only commits with 9 remote-only commits, push safely, deploy the Telegram audit slice, and prove the live path.
+
+## Result
+
+- Backed up original HEAD `c1cf7e36cd55194eefd4121e87767b409b62b47f` to remote branch `backup/flagg-pre-clean-20260715-0915`.
+- Saved tracked and untracked recovery artifacts under `~/.local/state/joelclaw-cleanup-backups/20260715-0915-*` with SHA-256 receipts.
+- Rebasing 181 local-only commits onto the 9 remote commits completed with zero conflicts.
+- Moved 239 `.pi-subagents` artifacts, Python bytecode, and the accidental `pipe` file outside the repo into the cleanup backup directory.
+- Moved nine misplaced `./~/.rhizomatic/outbox/*.json` records into the real `~/.rhizomatic/outbox/` instead of deleting queued state.
+- Added ignore rules for `.pi-subagents`, Python bytecode, `/pipe`, and `/~/`.
+- Captured all intentional dirty work in twelve ShitRat-authored logical commits, then pushed the reconciled 193-commit fast-forward to `origin/main` without force.
+- Added a final ShitRat commit fixing ClickHouse CLI config resolution: `ca1badedf6961d6a353381a5d84b2571c9b31638`.
+- Working tree and `origin/main` are aligned and clean.
+
+## Logical commits
+
+- `b5f7da86` chore(repo): ignore generated runtime debris
+- `48c8506c` fix(fleet): probe the local host without SSH
+- `6627caa6` test(voice): verify call telemetry mutations
+- `9360edf6` fix(content): point custody paths at joelclaw-api
+- `4e8575e3` fix(gateway): restore Slack socket lifecycle module
+- `03423207` feat(telemetry): add privacy-safe channel delivery audits
+- `25604f86` feat(system-bus): audit channel delivery and register runtime events
+- `7e85ab5e` feat(gateway): trace Telegram delivery through Bot API receipts
+- `31b92de2` docs(telegram): teach flow receipt queries
+- `5c4806d6` brain: queue recoverable Telegram delivery follow-up
+- `e9273dcd` fix(telemetry): exclude provider descriptions from receipts
+- `f58c0c58` fix(gateway): avoid ambiguous Telegram delivery retries
+- `ca1baded` fix(cli): resolve ClickHouse from system-bus env
+
+## Verification
+
+- CLI, gateway, SDK, and system-bus TypeScript checks pass.
+- Focused Bun/Vitest/Python tests pass.
+- Biome, `git diff --check`, Brain check, gateway build, system-bus build, and SDK build pass.
+- Gateway restarted from PID `76156` to `42715`; Telegram healthy, Redis connected.
+- Host system-bus worker restarted from PID `77928` to `40747`; 148 functions registered.
+- Immediate Telegram canary confirmed as message `14484`.
+- Inngest → Redis queue → gateway → Telegram canary confirmed as message `14485`, with a 21 ms queue wait.
+
+## Deferred
+
+The outbound Redis list still uses `LRANGE` then `DEL`. Claim/ack recovery and dead-letter handling remain in `telegram-outbound-queue-claim-ack.svx`.
