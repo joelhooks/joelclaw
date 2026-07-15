@@ -56,6 +56,8 @@ dropped.
 
 <!-- one line per closed question: gist + link -->
 
+- [Build Dispatcher Verb Execution](./build-dispatcher-verb-execution.svx) — due signals are a first-class fate: WAKE/SPAWN/REVIVE planned pure, executed via herdr in the family session, idempotent per scheduleId, refusal receipts, too-small fallback; 75 tests; live end-to-end = steering acceptance (running).
+
 - [Build the Schedule (bus side)](./build-schedule-events-function-cli.svx) — `pane/schedule.requested` contract + inngest `step.sleepUntil` function w/ cancellation race + Redis pending registry + `joelclaw wake at|in|list|cancel`; live receipt: real schedule enqueued (200) and cleanly cancelled. Dispatcher execution now READY.
 
 ## Not yet specified
