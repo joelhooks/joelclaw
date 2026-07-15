@@ -3,7 +3,7 @@ title: "Build the Schedule: event contract, inngest sleepUntil function, `joelcl
 type: "question"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
 parent: "./pane-scheduling-brief.svx"
 blockers: []
@@ -25,3 +25,23 @@ past T by more than the runner's natural slop), and `joelclaw wake`
 APIs or a small registry the function maintains). HATEOAS envelopes,
 Effect idioms, tests per repo checklist. The dispatcher's execution of
 the due signal is its own question.
+
+## Answer (2026-07-14)
+
+Built the versioned `pane/schedule.requested` contract, the host-side
+`pane/schedule` Inngest function, Redis-backed pending registry, cancellation
+via `pane/schedule.cancelled`, and `joelclaw wake at|in|list|cancel`. The
+function sleeps with `step.sleepUntil(at)` and emits `pane.schedule.due` with
+the full schedule entry, `firedAt`, and a `late` flag after five minutes.
+Dispatcher execution remains out of scope.
+
+Receipts:
+
+- `bunx tsc --noEmit` — exit 0.
+- Targeted Biome over nine touched TypeScript files — checked 9 files, no fixes.
+- Targeted Bun tests — 9 passed, 0 failed, 14 expectations.
+- Built CLI: `bun build packages/cli/src/cli.ts --compile --outfile /tmp/joelclaw-schedule`.
+- Live dry schedule: event `01KXJ2DSMVM3YN19HYNVA0H73V`, schedule
+  `e56f82d4-d798-4fc0-ac73-1656abd72416`; accepted with status 200.
+- Cleanup cancellation: event `01KXJ2E0CFQHCBWYSR64Q8PNSY`; accepted with
+  status 200 and removed from the pending registry.

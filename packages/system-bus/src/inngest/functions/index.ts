@@ -99,6 +99,7 @@ export { networkStatusUpdate } from "./network-status-update";
 export { o11yTriage } from "./o11y-triage";
 export { observeSessionFunction } from "./observe";
 export { observeSessionNoted } from "./observe-session-noted";
+export { paneSchedule } from "./pane-schedule";
 export { promote } from "./promote";
 export { queueObserver, queueObserverRequested } from "./queue-observer";
 export { reflect } from "./reflect";

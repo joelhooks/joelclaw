@@ -1,7 +1,6 @@
 import { createVideoFunctions } from "joelclaw-video";
 import { echoFizzle } from "../../memory/echo-fizzle";
 import { inngest } from "../client";
-import { webhookSubscriptionDispatchGeneric } from "./webhook-subscription-dispatch-generic";
 import { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 import { adrPitchExecute } from "./adr-pitch-execute";
 import { agentChainRun } from "./agent-chain-run";
@@ -96,6 +95,7 @@ import { nasSoakReview, nasSoakSample } from "./nas-soak";
 import { networkStatusUpdate } from "./network-status-update";
 import { o11yTriage } from "./o11y-triage";
 import { observeSessionNoted } from "./observe-session-noted";
+import { paneSchedule } from "./pane-schedule";
 import { promote } from "./promote";
 import { reflect } from "./reflect";
 import { selfHealingGatewayBridge } from "./self-healing-gateway-bridge";
@@ -142,6 +142,7 @@ import { voiceSmsVettingCheck } from "./voice-sms-vetting-check";
 import { voiceSyntheticCall } from "./voice-synthetic-call";
 import { voiceTelnyxBalance } from "./voice-telnyx-balance";
 import { voiceWorkerCanary } from "./voice-worker-canary";
+import { webhookSubscriptionDispatchGeneric } from "./webhook-subscription-dispatch-generic";
 import { wikiEditionBuild } from "./wiki-edition-build";
 import { xAccountActivityReceived } from "./x-account-activity-notify";
 import { xContentHook } from "./x-content-hook";
@@ -271,6 +272,7 @@ export const hostFunctionDefinitions = [
   wikiEditionBuild,
   sleepModeRequested,
   wakeModeRequested,
+  paneSchedule,
   typesenseVaultSyncQueue,
   typesenseVaultSync,
   typesenseBlogSync,

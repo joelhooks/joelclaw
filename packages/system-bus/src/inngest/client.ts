@@ -1,4 +1,5 @@
 import { EventSchemas, Inngest } from "inngest";
+import type { PaneScheduleEntry } from "../lib/pane-schedule";
 import { gatewayMiddleware } from "./middleware/gateway";
 
 /**
@@ -1183,6 +1184,16 @@ export type Events = {
   };
   "system/wake.requested": {
     data: Record<string, never>;
+  };
+  "pane/schedule.requested": {
+    data: PaneScheduleEntry;
+  };
+  "pane/schedule.cancelled": {
+    data: {
+      scheduleId: string;
+      cancelledBy: string;
+      cancelledAt: string;
+    };
   };
   "adr/pitch.requested": {
     data: Record<string, never>;
