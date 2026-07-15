@@ -24,7 +24,7 @@
     "@joelclaw/queue": "workspace:*",
     "@joelclaw/telemetry": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/core": "^2.5.1",
+    "@opentelemetry/core": "^2.8.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.212.0",
     "convex": "^1.32.0",
     "fast-xml-parser": "^5.3.7",
