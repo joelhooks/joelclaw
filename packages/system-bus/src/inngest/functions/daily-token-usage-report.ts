@@ -355,6 +355,7 @@ export const dailyTokenUsageReport = inngest.createFunction(
       data: {
         channel: "telegram",
         text,
+        audit: { producer: "daily-token-usage-report" },
       },
     });
 

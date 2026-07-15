@@ -13,7 +13,7 @@ const base = {
   target: "pi-worker",
   requestedBy: "test",
   createdAt: "2026-07-14T18:00:00.000Z",
-};
+} as const;
 
 describe("pane schedule contract", () => {
   test("accepts a valid wake entry", () => {

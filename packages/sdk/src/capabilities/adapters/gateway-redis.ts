@@ -1,3 +1,4 @@
+import { createChannelDeliveryAudit, emitGatewayOtel } from "@joelclaw/telemetry"
 import { Effect, ParseResult, Schema } from "effect"
 import { type CapabilityPort, capabilityError } from "../contract"
 
@@ -138,18 +139,26 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
             )
           }
 
+          const eventId = crypto.randomUUID()
+          const audit = createChannelDeliveryAudit(message, {
+            flowId: `notify:${eventId}`,
+            producer: source,
+            eventId,
+            route: `gateway:${normalizedChannel}`,
+          })
           const payload: Record<string, unknown> = {
             prompt: message,
             message,
             priority,
             level: priorityToLevel(priority),
             context: args.context ?? {},
+            audit,
             immediateTelegram: priority === "high" || priority === "urgent",
             ...(args.telegramOnly === true ? { telegramOnly: true } : {}),
           }
 
           const event = {
-            id: crypto.randomUUID(),
+            id: eventId,
             type,
             source,
             payload,
@@ -206,6 +215,23 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
                 `Failed to publish gateway notification: ${String(error)}`,
                 "Check `joelclaw gateway status` and retry."
               ),
+          })
+
+          void emitGatewayOtel({
+            level: "info",
+            source: "cli",
+            systemId: audit.originSystemId,
+            component: "notify",
+            action: "channel.delivery.queued",
+            success: true,
+            critical: true,
+            metadata: {
+              ...audit,
+              channel: normalizedChannel,
+              priority,
+              queuedLists,
+              notifyChannels,
+            },
           })
 
           return {

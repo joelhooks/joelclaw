@@ -639,6 +639,9 @@ importers:
       '@joelclaw/queue':
         specifier: workspace:*
         version: link:../queue
+      '@joelclaw/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
       effect:
         specifier: ^3.19.17
         version: 3.19.17
@@ -676,6 +679,9 @@ importers:
       '@joelclaw/queue':
         specifier: workspace:*
         version: link:../queue
+      '@joelclaw/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.0

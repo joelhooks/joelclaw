@@ -22,6 +22,7 @@
     "@joelclaw/mdx-pipeline": "workspace:^",
     "@joelclaw/memory": "workspace:*",
     "@joelclaw/queue": "workspace:*",
+    "@joelclaw/telemetry": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/core": "^2.5.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.212.0",

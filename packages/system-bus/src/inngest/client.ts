@@ -1,3 +1,4 @@
+import type { ChannelAuditSeed } from "@joelclaw/telemetry";
 import { EventSchemas, Inngest } from "inngest";
 import type { PaneScheduleEntry } from "../lib/pane-schedule";
 import { gatewayMiddleware } from "./middleware/gateway";
@@ -1221,6 +1222,7 @@ export type Events = {
       media_path?: string;
       mime_type?: string;
       caption?: string;
+      audit?: ChannelAuditSeed;
     };
   };
   "gateway/message.processing": {
@@ -1233,6 +1235,29 @@ export type Events = {
       timestamp: number;
     };
   };
+  "wiki/edition.build.requested": {
+    data: {
+      source?: string;
+    };
+  };
+  "wiki/edition.built": {
+    data: {
+      editionId: string | null;
+      state: unknown;
+      written: unknown;
+      loopCount: unknown;
+      observationCount: unknown;
+      sourceRuns: Array<Record<string, unknown>>;
+    };
+  };
+  "mux/asset.created": { data: Record<string, unknown> };
+  "mux/asset.ready": { data: Record<string, unknown> };
+  "mux/asset.errored": { data: Record<string, unknown> };
+  "mux/asset.updated": { data: Record<string, unknown> };
+  "mux/asset.static_rendition.ready": { data: Record<string, unknown> };
+  "mux/upload.created": { data: Record<string, unknown> };
+  "mux/upload.asset_created": { data: Record<string, unknown> };
+  "mux/upload.cancelled": { data: Record<string, unknown> };
   "adr/review.submitted": {
     data: {
       adrSlug: string;

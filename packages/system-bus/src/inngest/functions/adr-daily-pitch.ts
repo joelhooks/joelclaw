@@ -364,6 +364,7 @@ export const adrDailyPitch = inngest.createFunction(
         data: {
           channel: "telegram",
           text,
+          audit: { producer: "adr-daily-pitch" },
           inline_keyboard: [
             [
               { text: "👍 Ship it", callback_data: `pitch:approve:${candidate.number}` },
@@ -440,6 +441,7 @@ export const adrPitchApproved = inngest.createFunction(
       data: {
         channel: "telegram",
         text: `📋 **ADR-${normalized}**\n\n✅ Approved — queued for work`,
+        audit: { producer: "adr-pitch-approved" },
         edit_message_id: messageId,
         remove_keyboard: true,
       },
@@ -470,6 +472,7 @@ export const adrPitchRejected = inngest.createFunction(
       data: {
         channel: "telegram",
         text: `📋 **ADR-${normalized}**\n\n❌ Rejected — cooling off 7 days`,
+        audit: { producer: "adr-pitch-rejected" },
         edit_message_id: messageId,
         remove_keyboard: true,
       },

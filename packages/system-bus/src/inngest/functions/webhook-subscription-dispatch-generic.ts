@@ -20,16 +20,22 @@ const WEBHOOK_EVENT_NAMES = [
   "upload.cancelled",
 ] as const;
 
+type GenericWebhookEvent =
+  `${(typeof WEBHOOK_PROVIDER_NAMES)[number]}/${(typeof WEBHOOK_EVENT_NAMES)[number]}`;
+
 // Add a provider here when its webhook normalizer emits the same event names.
-export const genericWebhookSubscriptionTriggers = WEBHOOK_PROVIDER_NAMES.flatMap((provider) =>
-  WEBHOOK_EVENT_NAMES.map((event) => ({ event: `${provider}/${event}` })),
-);
+export const genericWebhookSubscriptionTriggers: Array<{ event: GenericWebhookEvent }> =
+  WEBHOOK_PROVIDER_NAMES.flatMap((provider) =>
+    WEBHOOK_EVENT_NAMES.map((event) => ({
+      event: `${provider}/${event}` as GenericWebhookEvent,
+    })),
+  );
 
 export type GenericWebhookDependencies = {
   findMatching: typeof findMatchingWebhookSubscriptions;
   claim: typeof claimWebhookDelivery;
   publish: typeof publishWebhookSubscriptionEvent;
-  notify: typeof pushGatewayEvent;
+  notify: (input: Parameters<typeof pushGatewayEvent>[0]) => Promise<unknown>;
 };
 
 const defaultDependencies: GenericWebhookDependencies = {

@@ -558,7 +558,7 @@ type BackupRouterContext = {
           }>
         | {
             name: typeof GATEWAY_SEND_MESSAGE_EVENT;
-            data: { channel?: string; text: string };
+            data: { channel?: string; text: string; audit?: { producer?: string } };
           }
     ) => Promise<{ ids: string[] }>;
   };
@@ -1729,7 +1729,7 @@ export const backupFailureRouter = inngest.createFunction(
           },
         });
         await step.sendEvent("alert-backup-retry-budget-exceeded", {
-          name: GATEWAY_SEND_MESSAGE_EVENT,
+          name: "gateway/send.message" as const,
           data: {
             channel: "telegram",
             text: backupFailureAlertText({
@@ -1739,6 +1739,7 @@ export const backupFailureRouter = inngest.createFunction(
               status: "exhausted",
               eventId: event.id,
             }),
+            audit: { producer: "nas-backup-retry-budget" },
           },
         });
         return {
@@ -1792,7 +1793,7 @@ export const backupFailureRouter = inngest.createFunction(
     });
 
     await step.sendEvent("alert-backup-failure-escalated", {
-      name: GATEWAY_SEND_MESSAGE_EVENT,
+      name: "gateway/send.message" as const,
       data: {
         channel: "telegram",
         text: backupFailureAlertText({
@@ -1802,6 +1803,7 @@ export const backupFailureRouter = inngest.createFunction(
           status: "escalated",
           eventId: event.id,
         }),
+        audit: { producer: "nas-backup-escalation" },
       },
     });
 

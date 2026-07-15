@@ -837,6 +837,7 @@ async function runQueueObserverPass(input: {
       data: {
         channel: "telegram",
         text: applyResult.report.text,
+        audit: { producer: "queue-observer" },
       },
     });
     if (applyResult.report.escalationCount > 0) {

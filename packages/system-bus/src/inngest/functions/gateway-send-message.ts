@@ -1,22 +1,18 @@
 /**
  * gateway/send.message handler
  *
- * Receives outbound message requests from other Inngest functions
- * and pushes them to a Redis outbound queue for the gateway daemon
- * to deliver via its channel interface.
- *
- * The gateway daemon polls `joelclaw:outbound:messages` and sends
- * through the appropriate channel (Telegram, Slack, etc.).
- *
- * This function owns NO channel-specific logic. It's a dumb relay
- * from Inngest event → Redis outbound queue.
+ * Receives outbound message requests from other Inngest functions and pushes
+ * them to the Redis queue consumed by the gateway daemon. The queue envelope
+ * carries a privacy-safe audit context so one flow ID survives every hop.
  */
 
 import Redis from "ioredis";
+import { buildQueuedGatewayMessage } from "../../lib/channel-delivery-audit";
 import { getRedisPort } from "../../lib/redis";
+import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
-const OUTBOUND_QUEUE = "joelclaw:outbound:messages";
+export const OUTBOUND_QUEUE = "joelclaw:outbound:messages";
 
 function getRedis(): Redis {
   return new Redis({ host: "localhost", port: getRedisPort() });
@@ -30,39 +26,43 @@ export const gatewaySendMessage = inngest.createFunction(
   },
   { event: "gateway/send.message" },
   async ({ event, step }) => {
-    const {
-      channel,
-      text,
-      inline_keyboard,
-      edit_message_id,
-      remove_keyboard,
-      media_url,
-      media_path,
-      mime_type,
-      caption,
-    } = event.data;
-
-    await step.run("push-to-outbound-queue", async () => {
+    const queued = await step.run("push-to-outbound-queue", async () => {
       const redis = getRedis();
-      const message = JSON.stringify({
-        channel: channel ?? "telegram",
-        text,
-        inline_keyboard,
-        edit_message_id,
-        remove_keyboard,
-        media_url,
-        media_path,
-        mime_type,
-        caption,
-        ts: new Date().toISOString(),
+      const message = buildQueuedGatewayMessage(event.data, {
+        eventId: event.id,
+        eventTimestampMs: event.ts,
       });
 
-      await redis.rpush(OUTBOUND_QUEUE, message);
-      // Publish notification so gateway can wake up immediately
-      await redis.publish("joelclaw:notify:outbound", "1");
-      await redis.quit();
+      try {
+        const queueDepth = await redis.rpush(OUTBOUND_QUEUE, JSON.stringify(message));
+        await redis.publish("joelclaw:notify:outbound", "1");
+
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "gateway-send-message",
+          action: "channel.delivery.queued",
+          success: true,
+          metadata: {
+            ...message.audit,
+            channel: message.channel,
+            queueDepth,
+            hasKeyboard: Boolean(message.inline_keyboard),
+            editMessage: Boolean(message.edit_message_id),
+            hasMedia: Boolean(message.media_url || message.media_path),
+          },
+        });
+
+        return {
+          channel: message.channel,
+          flowId: message.audit.flowId,
+          queueDepth,
+        };
+      } finally {
+        await redis.quit().catch(() => undefined);
+      }
     });
 
-    return { queued: true, channel: channel ?? "telegram" };
+    return { queued: true, ...queued };
   },
 );

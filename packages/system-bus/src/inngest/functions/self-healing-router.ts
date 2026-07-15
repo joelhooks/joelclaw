@@ -773,6 +773,7 @@ export const selfHealingRouter = inngest.createFunction(
             reason,
             eventId: event.id,
           }),
+          audit: { producer: "self-healing-backup-blocked" },
         },
       });
       return {
@@ -859,6 +860,7 @@ export const selfHealingRouter = inngest.createFunction(
                 : "Route target missing",
               eventId: event.id,
             }),
+            audit: { producer: "self-healing-retry-exhausted" },
           },
         });
         return {
@@ -987,6 +989,7 @@ export const selfHealingRouter = inngest.createFunction(
             reason: decision.reason,
             eventId: event.id,
           }),
+          audit: { producer: "self-healing-escalated" },
         },
       });
       return {
