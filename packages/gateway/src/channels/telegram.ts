@@ -194,6 +194,12 @@ function stripHtmlTags(input: string): string {
     .trim();
 }
 
+function isDefinitiveTelegramRejection(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as Record<string, unknown>).error_code;
+  return code === 400 || code === "400";
+}
+
 // Human-readable labels shown after button press
 const ACTION_LABELS: Record<string, string> = {
   archive: "📦 <b>Archived</b>",
@@ -2071,7 +2077,27 @@ async function sendTelegramMessage(
         throw error;
       }
 
-      console.warn("[gateway:telegram] HTML send failed, trying plain text", { error });
+      if (!isDefinitiveTelegramRejection(error)) {
+        await emitGatewayOtel({
+          level: "error",
+          component: "telegram-channel",
+          action: "telegram.delivery.unknown",
+          success: false,
+          critical: true,
+          error: summarizeChannelError(error),
+          duration_ms: Date.now() - sendStartedAt,
+          metadata: {
+            ...audit,
+            chatId,
+            chunkIndex: i,
+            stage: "html_send",
+            telegramMessageIds,
+          },
+        });
+        throw error;
+      }
+
+      console.warn("[gateway:telegram] HTML send rejected, trying plain text", { error });
       void emitGatewayOtel({
         level: "warn",
         component: "telegram-channel",
@@ -2235,7 +2261,21 @@ async function sendTelegramMedia(
         sent = await bot.api.sendDocument(chatId, file, params);
     }
   } catch (error) {
-    console.error("[gateway:telegram] sendMedia failed, trying as document", { kind, error });
+    if (!isDefinitiveTelegramRejection(error)) {
+      await emitGatewayOtel({
+        level: "error",
+        component: "telegram-channel",
+        action: "telegram.delivery.unknown",
+        success: false,
+        critical: true,
+        error: summarizeChannelError(error),
+        duration_ms: Date.now() - sendStartedAt,
+        metadata: { ...audit, chatId, media: true, kind, stage: "media_send" },
+      });
+      throw error;
+    }
+
+    console.error("[gateway:telegram] sendMedia rejected, trying as document", { kind, error });
     void emitGatewayOtel({
       level: "warn",
       component: "telegram-channel",
@@ -2332,6 +2372,10 @@ export async function sendMedia(
     caption: options?.caption,
   }, options);
 }
+
+export const __telegramTestUtils = {
+  isDefinitiveTelegramRejection,
+};
 
 export async function shutdown(): Promise<void> {
   const instance = getDefaultTelegramChannel();

@@ -65,6 +65,7 @@ type StreamState = {
   toolStatus: string | undefined;
   sendingInitial: boolean; // guards against duplicate initial sends
   initialSendPromise: Promise<void> | undefined; // tracks the first sendMessage flight
+  initialSendError: unknown;
 };
 
 let activeStream: StreamState | undefined;
@@ -99,6 +100,7 @@ export function begin(options: TelegramStreamOptions): void {
     toolStatus: undefined,
     sendingInitial: false,
     initialSendPromise: undefined,
+    initialSendError: undefined,
   };
 
   // Start typing indicator loop immediately
@@ -189,20 +191,40 @@ export async function finish(
     await state.initialSendPromise;
   }
 
-  // If we never sent an initial message, this wasn't really "streaming"
-  // (e.g. very short response) — let the normal send path handle it
-  if (!state.messageId) {
-    cleanup(state);
-    activeStream = undefined;
-    return false;
-  }
-
   const audit = createChannelDeliveryAudit(finalText, {
     ...state.audit,
     producer: state.audit?.producer ?? "gateway-telegram-stream",
     route: state.audit?.route ?? `telegram:${state.chatId}`,
     inReplyToMessageId: state.audit?.inReplyToMessageId ?? state.replyTo,
   });
+
+  if (state.initialSendError) {
+    await emitGatewayOtel({
+      level: "error",
+      component: "telegram-stream",
+      action: "telegram.delivery.unknown",
+      success: false,
+      critical: true,
+      error: summarizeChannelError(state.initialSendError),
+      metadata: {
+        ...audit,
+        chatId: state.chatId,
+        streaming: true,
+        stage: "initial_send",
+      },
+    });
+    cleanup(state);
+    activeStream = undefined;
+    return true;
+  }
+
+  // If we never attempted an initial message, this wasn't really "streaming"
+  // (e.g. a very short response) — let the normal send path handle it.
+  if (!state.messageId) {
+    cleanup(state);
+    activeStream = undefined;
+    return false;
+  }
   const finalizationStartedAt = Date.now();
 
   void emitGatewayOtel({
@@ -442,8 +464,9 @@ function flushEdit(state: StreamState): void {
         console.warn("[telegram-stream] initial send failed", {
           error: err instanceof Error ? err.message : String(err),
         });
-        // Allow retry on failure
-        state.sendingInitial = false;
+        // A network failure is ambiguous: Telegram may have accepted the send.
+        // Record unknown delivery and do not retry the same visible content.
+        state.initialSendError = err;
       });
   } else {
     // Edit existing message — plain text, no parse_mode during streaming
