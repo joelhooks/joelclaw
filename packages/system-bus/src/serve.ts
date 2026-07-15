@@ -32,17 +32,11 @@ const WEBHOOK_SECRETS = [
   { env: "FRONT_APPLICATION_SECRET", secret: "joelclaw-front-app-secret" },
   { env: "TODOIST_CLIENT_SECRET", secret: "todoist_client_secret" },
   { env: "GITHUB_WEBHOOK_SECRET", secret: "github_webhook_secret" },
-  { env: "MUX_WEBHOOK_SECRET", secret: "mux_signing_secret" },
   { env: "TELNYX_PUBLIC_KEY", secret: "telnyx_public_key" },
   { env: "X_CONSUMER_SECRET", secret: "x_consumer_secret" },
   { env: "TYPESENSE_API_KEY", secret: "typesense_api_key" },
-  // Video pipeline: joelclaw-video functions read these from process.env at step time
-  { env: "MUX_TOKEN_ID", secret: "mux_token_id" },
-  { env: "MUX_TOKEN_SECRET", secret: "mux_token_secret" },
-  { env: "JOELCLAW_API_TOKEN", secret: "joelclaw_api_token" },
+  // Thin video client: wzrrd owns upload, processing, and durable cloud state.
   { env: "WZRRD_VIDEO_SERVICE_TOKEN", secret: "wzrrd_video_service_token" },
-  { env: "AWS_ACCESS_KEY_ID", secret: "garage_s3_access_key_id" },
-  { env: "AWS_SECRET_ACCESS_KEY", secret: "garage_s3_secret_access_key" },
 ] as const;
 
 if (SHOULD_LEASE_WEBHOOK_SECRETS) {

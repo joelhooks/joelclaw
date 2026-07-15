@@ -17,6 +17,8 @@ test("worker role function ids are unique across host and cluster", () => {
   expect(repeated).toEqual([]);
 });
 
-test("host role keeps the active function registry during transition", () => {
-  expect(hostFunctionIds.length).toBeGreaterThan(0);
+test("host role registers only the thin joelclaw-video client", () => {
+  expect(hostFunctionIds).toContain("joelclaw-video-publish");
+  expect(hostFunctionIds).not.toContain("joelclaw-video-hello");
+  expect(hostFunctionIds).not.toContain("joelclaw-video-mux-webhook");
 });

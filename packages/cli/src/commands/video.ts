@@ -37,7 +37,7 @@ type TraceMismatch = {
 const QUERY_TIMEOUT_MS = 15_000
 const INNGEST_TIMEOUT_MS = 15_000
 const INNGEST_RUN_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/u
-const SHARE_SLUG = /^[0-9A-Za-z]{10}$/u
+const SHARE_SLUG = /^[0-9A-Za-z_-]{8,128}$/u
 
 function sqlString(value: string): string {
   return `'${value.replace(/\\/gu, "\\\\").replace(/'/gu, "\\'")}'`
@@ -91,7 +91,7 @@ function normalizeLookup(target: string) {
   const input = target.trim()
   const shareSlug = input.startsWith("video:") ? input.slice("video:".length) : input
   if (!SHARE_SLUG.test(shareSlug)) {
-    throw new Error("Video target must be a 10-character alphanumeric share slug or video:<slug> resource ID")
+    throw new Error("Video target must be an 8-128 character wzrrd share slug or video:<slug> resource ID")
   }
   return { input, resourceId: `video:${shareSlug}`, shareSlug }
 }
@@ -357,13 +357,17 @@ const traceCmd = Command.make(
           ],
         },
         mismatch,
-        notes: traces.some((trace) => trace.statusDisagreement)
-          ? ["runTrace GraphQL wins over coarse /v1 REST status during retry backoff."]
-          : [],
+        notes: [
+          "This trace covers the local request→upload→handoff. Cloud encode/transcribe history lives in wzrrd.",
+          ...(traces.some((trace) => trace.statusDisagreement)
+            ? ["runTrace GraphQL wins over coarse /v1 REST status during retry backoff."]
+            : []),
+        ],
       },
       [
         { command: `joelclaw video trace ${shellQuote(lookup.shareSlug)} --hours ${hours} --limit ${limit}`, description: "Repeat this forensic trace" },
         { command: `joelclaw otel search ${shellQuote(lookup.resourceId)} --hours ${hours}`, description: "Inspect raw OTEL events" },
+        { command: `wzrrd video trace ${shellQuote(lookup.shareSlug)}`, description: "Inspect the cloud Workflow trace" },
         ...(runIds[0] ? [{ command: `joelclaw run ${shellQuote(runIds[0])}`, description: "Inspect the first Inngest run" }] : []),
       ],
     ))
