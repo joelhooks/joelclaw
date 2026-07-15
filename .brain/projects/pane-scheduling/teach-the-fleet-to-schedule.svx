@@ -3,7 +3,7 @@ title: "Teach the Fleet to Schedule: 'schedule this' works in every agent sessio
 type: "question"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-14)"
 parent: "./pane-scheduling-brief.svx"
 blockers: []
@@ -29,3 +29,34 @@ unreachable from its machine (honest failure line, never silent). Done
 when the skill + graft are staged, installed on flagg, and a cold agent
 session given "schedule a pane for 6pm to check X" produces the correct
 command.
+
+## Answer (2026-07-14)
+
+Authored `dark-wizard/skills/pane-scheduling/SKILL.md` and the thin,
+auto-discovered `scripts/fleet/pane-scheduling.block.md`. The skill teaches
+the charter vocabulary (WAKE / SPAWN / REVIVE, due signal, late fire), real
+flag contracts, loop-id lookup, list/cancel, and honest failure. The requested
+bare `at 18:00` example was not copied because the real CLI rejects it; the
+skill resolves natural language to an explicit local date plus time instead.
+
+Natural-language map:
+
+| Joel says | Verb | Required flag | Command shape |
+|---|---|---|---|
+| “Wake the observer in 2h with X” | WAKE | `--target` | `joelclaw wake in 2h --verb wake --target observer --prompt 'X'` |
+| “Remind me at 6pm to check X” | SPAWN | `--brief` | `joelclaw wake at '2026-07-15 18:00' --verb spawn --brief /absolute/path/check-x.svx` |
+| “Revive that video loop tomorrow at 9am” | REVIVE | `--loop` | `joelclaw wake at '2026-07-16 09:00' --verb revive --loop <loop-id>` |
+
+Live schedule receipt: `pane/schedule.requested`, schedule
+`da4ada69-0a59-40b5-b169-65116ceea4dd`, verb `spawn`, Inngest event
+`01KXJ320810126Q4YE1N9SXEKY`, status `200`.
+
+Live cancellation receipt: `pane/schedule.cancelled`, same schedule id,
+Inngest event `01KXJ328NCP9E92TG7HED4S47P`, status `200`. Registry readback
+matched the baseline: `beforeCount: 0`, `afterCount: 0`, `clean: true`.
+
+The graft script already expands `scripts/fleet/*.block.md`; no registration
+edit was needed. `bash -n scripts/fleet-graft.sh` passed. Brain validation and
+static graft checks are recorded in the worker DONE receipt.
+
+install + cold-session proof = steering.

@@ -56,6 +56,10 @@ dropped.
 
 <!-- one line per closed question: gist + link -->
 
+- **SPAWN proven live end to end (2026-07-15)**: `joelclaw wake in 2m` → inngest sleepUntil → due signal (late: false, fired 1s after target) → dispatcher fate → fresh-tab fallback → pi booted the brief → "SCHEDULED PANE ALIVE: 05:28:18 UTC". Two deployment lessons on the record: new inngest functions need a bus restart (worker-supervisor child kill), and tab-create returns root_pane where split returns pane (parse fixed, tested). WAKE and REVIVE still await their live proof.
+
+- [Teach the Fleet to Schedule](./teach-the-fleet-to-schedule.svx) — skill + graft staged, installed on flagg, pushed fleet-wide; first cold proof FABRICATED a receipt under tool denial → receipt rule added to skill and block; second cold proof (tools allowed) produced a real registry-verified schedule with a well-designed brief. Blaine/panda get it on next sync.
+
 - [Build Dispatcher Verb Execution](./build-dispatcher-verb-execution.svx) — due signals are a first-class fate: WAKE/SPAWN/REVIVE planned pure, executed via herdr in the family session, idempotent per scheduleId, refusal receipts, too-small fallback; 75 tests; live end-to-end = steering acceptance (running).
 
 - [Build the Schedule (bus side)](./build-schedule-events-function-cli.svx) — `pane/schedule.requested` contract + inngest `step.sleepUntil` function w/ cancellation race + Redis pending registry + `joelclaw wake at|in|list|cancel`; live receipt: real schedule enqueued (200) and cleanly cancelled. Dispatcher execution now READY.
