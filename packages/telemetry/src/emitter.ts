@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveSystemId } from "./channel-audit";
 import type { GatewayOtelInput, TelemetryEmitter } from "./types";
 
 const SYSTEM_BUS_ENV_PATH = join(homedir(), ".config", "system-bus.env");
@@ -94,6 +95,7 @@ function shouldDropDebug(input: GatewayOtelInput): boolean {
 }
 
 function shouldDropByInFlight(input: GatewayOtelInput): boolean {
+  if (input.critical) return false;
   if (inFlight < MAX_IN_FLIGHT) return false;
   return input.level === "debug" || input.level === "info";
 }
@@ -108,6 +110,8 @@ export async function emitGatewayOtel(input: GatewayOtelInput): Promise<void> {
     timestamp: Date.now(),
     level: input.level,
     source: input.source ?? "gateway",
+    sessionId: input.sessionId ?? process.env.SLOG_SESSION_ID?.trim() ?? "unknown",
+    systemId: resolveSystemId(input.systemId),
     component: input.component,
     action: input.action,
     duration_ms: input.duration_ms,
