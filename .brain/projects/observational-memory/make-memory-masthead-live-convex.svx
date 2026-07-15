@@ -41,3 +41,7 @@ Decide and build the attachment path:
 Done when the root masthead updates within a minute of a new observation page
 or tick without rebuilding the wiki, with the static render as fallback, and
 the receipts (ingest path, endpoint, fallback behavior) recorded here.
+
+## Note (2026-07-15)
+
+The live-panes effort ([brief](../../../joelclaw-wiki/.brain/projects/live-panes/live-panes-brief.svx)) is building the bridge→convex event stream this question needs; the masthead attaches to that stream once it exists — same arc, first customer after pane pages.
