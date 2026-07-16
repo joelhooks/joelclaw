@@ -99,7 +99,23 @@ describe("TelegramOutboundPolicy", () => {
       expected: [
         "investigate",
         "infra",
-        "investigate.infrastructure-or-escalation-signal",
+        "investigate.probe-failure-via-operator-lane",
+      ],
+    },
+    {
+      name: "operator immediate notification mentioning failure words",
+      input: candidate({
+        sourceEventType: "notify.message",
+        content:
+          "Digest preview: the fixture worker recovered after a synthetic health check failed once. No fires.",
+        producer: "claude/digest-approval",
+        level: "warn",
+        priority: "high",
+      }),
+      expected: [
+        "deliver",
+        "escalation",
+        "deliver.operator-immediate-notification",
       ],
     },
     {

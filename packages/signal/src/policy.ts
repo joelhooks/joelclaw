@@ -13,6 +13,12 @@ const RECOVERY_PATTERN = /(?:recover(?:ed|y)?|restored|remediated|healthy[-_.]?a
 const VERIFIED_RECOVERY_PATTERN = /(?:verified|proof|readback|health(?:y)?|confirmed)/i;
 const INFRA_PATTERN = /(?:failed?|failure|error|degrad(?:ed|ation)|fatal|incident|outage|infra|health[-_.]?(?:failed|error)|verify[-_.]?voice)/i;
 const ESCALATION_PATTERN = /(?:escalat(?:e|ed|ion)|sos|page[-_.]?operator)/i;
+// The canonical operator lane: `joelclaw notify send` emits notify.message.
+const OPERATOR_NOTIFY_PATTERN = /(?:^|[./_-])notify[-_.]?message(?:$|[./_-])/i;
+// Raw automated probe results must never page directly, even through the
+// operator lane — verify-voice is the chartered anti-pattern.
+const PROBE_FAILURE_PATTERN =
+  /(?:verify[-_.]?voice|probe[-_.]?(?:failed|failure)|(?:health|recall)[-_.]?check[-_.]?failed|watchdog[-_.]?(?:failed|tripped))/i;
 
 function decision(
   candidate: OutboundCandidate,
@@ -60,6 +66,29 @@ export const telegramOutboundPolicy: TelegramOutboundPolicy = (
 
   if (NOISE_PATTERN.test(source)) {
     return decision(candidate, "suppress", "noise", "suppress.routine-machine-noise");
+  }
+
+  // Operator-immediate notifications deliver as written. The message body is
+  // human prose and MUST NOT be keyword-scanned as if it were a machine
+  // signal — an aide's text mentioning "failed" is not an infra event.
+  // Narrow exception: raw automated probe failures stay intercepted.
+  const operatorImmediate = OPERATOR_NOTIFY_PATTERN.test(source)
+    && (candidate.priority === "urgent" || candidate.priority === "high");
+  if (operatorImmediate) {
+    if (PROBE_FAILURE_PATTERN.test(content)) {
+      return decision(
+        candidate,
+        "investigate",
+        "infra",
+        "investigate.probe-failure-via-operator-lane",
+      );
+    }
+    return decision(
+      candidate,
+      "deliver",
+      "escalation",
+      "deliver.operator-immediate-notification",
+    );
   }
 
   if (MEMORY_PATTERN.test(source)) {
