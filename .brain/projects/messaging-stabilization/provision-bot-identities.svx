@@ -1,0 +1,23 @@
+---
+title: "Provision Bot Identities: apps/tokens for Discord, Telegram, Slack"
+type: "step"
+kind: "task"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./messaging-stabilization-brief.svx"
+blockers:
+  - "./research-chat-sdk-fit-gap.svx"
+created_at: "2026-07-16"
+---
+
+# Provision Bot Identities
+
+## Step
+
+Groundwork the build waits on. Resolved when each of the three
+platforms has a working bot identity the Chat SDK can drive —
+reusing existing joelclaw bots where the fit/gap research says that's
+possible, creating apps where not — with tokens stored per house
+secret discipline (0600 state files / gateway env, never in chat or
+commits). HITL: app creation and OAuth clicks are Joel's hands.

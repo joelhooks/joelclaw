@@ -1,0 +1,23 @@
+---
+title: "Build the Reactions Bridge: platform reactions become consumer events (neat-memory grading first)"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./messaging-stabilization-brief.svx"
+blockers:
+  - "./build-outbound-v1.svx"
+created_at: "2026-07-16"
+---
+
+# Build the Reactions Bridge
+
+## Step
+
+Resolved when a reaction (or short reply) on an outbound message
+reaches the owning consumer as an event with the original message's
+correlation id — and the first customer works end to end: reacting to
+a neat-memory DM writes the `outcome` grade into
+`~/.joelclaw/observer-neat-memories.json`, feeding the
+[reactions-teach-taste loop](../recall-consumption/build-neat-memory-dm.svx).

@@ -1,0 +1,24 @@
+---
+title: "Build Outbound v1: Discord/Telegram/Slack delivery on Chat SDK behind contract v2"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./messaging-stabilization-brief.svx"
+blockers:
+  - "./decide-contract-v2.svx"
+  - "./provision-bot-identities.svx"
+created_at: "2026-07-16"
+---
+
+# Build Outbound v1
+
+## Step
+
+Resolved when fleet→Joel delivery rides Chat SDK adapters for the
+three platforms behind contract v2, shadow-running against the old
+path with receipts compared, every send journaled, no silent drops —
+and the neat-memory DM delivers through it as the proof consumer.
+Cutover (retiring old outbound paths) stops for Joel with the shadow
+receipts on the table.

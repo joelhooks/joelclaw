@@ -1,0 +1,31 @@
+---
+title: "Build Inbound v1: dispatcher and operator relay on Chat SDK"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./messaging-stabilization-brief.svx"
+blockers:
+  - "./decide-contract-v2.svx"
+  - "./provision-bot-identities.svx"
+created_at: "2026-07-16"
+---
+
+# Build Inbound v1
+
+## Step
+
+Chartered at full strength per Joel ("we want inbound too … no sense
+fucking around") — built in parallel with outbound, not gated on its
+proof. Resolved when the dispatcher's inbound surface (operator
+messages, commands, interactions) runs on Chat SDK handlers behind
+contract v2 in **shadow**: receiving live traffic alongside the
+existing gateway path, receipts compared, self-originated-message
+rejection verified (the self-wake-loop defense is non-negotiable),
+without acting on anything the old path also acts on (no double
+execution — shadow observes, journals, and proves parity).
+
+The **cutover** — the new path becomes the acting dispatcher and the
+hand-rolled channels start dying — is NOT this step. It stops for Joel
+with shadow receipts on the table.

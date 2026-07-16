@@ -1,0 +1,100 @@
+---
+title: "Chart Messaging Stabilization: fleet messaging on Chat SDK"
+type: "brief"
+status: "active"
+created_at: "2026-07-16"
+privacy: "private"
+---
+
+# Chart Messaging Stabilization
+
+## Finish line
+
+Joel's charter (2026-07-16, verbatim): "might be a good time to
+stabilize our messaging https://github.com/vercel/chat"
+
+Full replatform (Joel, 2026-07-16, superseding the initial
+outbound-first pick: "we want inbound too … no sense fucking around"):
+
+1. **Outbound**: all fleet→Joel delivery (notify send, neat-memory DM,
+   scheduled-pane DMs, digest pushes) rides Chat SDK adapters for
+   **Discord, Telegram, and Slack**, behind an **evolved contract v2**
+   (threads, cards, reactions-in — Joel chose evolve-now over frozen),
+   with every send producing an honest receipt and no silent drops.
+2. **Reactions flow back**: platform reactions/replies to outbound
+   messages reach consumers as events — the neat-memory outcome
+   grading is the first customer.
+3. **Inbound**: the Discord-driven dispatcher, operator relay, and
+   command handling ride the same SDK — chartered now and built in
+   parallel, not gated on outbound proof. The only stop is the
+   **cutover**: flipping the live dispatcher and deleting hand-rolled
+   channels happens with shadow receipts on the table and Joel's
+   explicit go — the dispatcher is the fleet's nervous system and the
+   self-wake-loop lesson stands.
+
+Maintained after: platform API drift is absorbed by SDK updates, not
+hand-patched channel files; the hand-rolled outbound paths in the
+gateway are deleted, not abandoned in place.
+
+## Vocabulary
+
+- **outbound** — fleet→Joel delivery (notifications, DMs, digests).
+- **inbound** — platform→fleet: the dispatcher's nervous system
+  (commands, operator relay). Built in parallel with outbound; only
+  its cutover waits for Joel.
+- **adapter** — a Chat SDK platform module (Discord/Telegram/Slack);
+  the thing we stop hand-rolling.
+- **contract v2** — the evolved notify/message API consumers call:
+  richer than `notify send` (threads, cards, reaction subscription),
+  HATEOAS envelope discipline kept.
+- **shadow run** — new path delivering alongside the old one with
+  receipts compared, before any cutover.
+
+## Notes
+
+- **Reference**: [vercel/chat](https://github.com/vercel/chat) — Chat
+  SDK: one bot logic surface, interchangeable adapters (Discord,
+  Telegram, Slack, WhatsApp, Teams, GitHub, Linear), thread/message
+  model, AI streaming, JSX cards, MIT, very active (559 releases).
+- **What it replaces**: `packages/gateway/src/channels/*` hand-rolled
+  (telegram.ts 2,735 lines, slack.ts 1,598, imessage.ts 592, plus
+  discord-ui/, outbound/, telegram-outbound-policy,
+  error-emission-budget) — the pain receipts that motivated "stabilize".
+- **iMessage stays hand-rolled** (no Chat SDK adapter); its fate is
+  latent.
+- **Convergence with recall-consumption** (2026-07-16): contract v2's
+  reactions-in is the plumbing for
+  [neat-memory reactions-teach-taste](../recall-consumption/build-neat-memory-dm.svx);
+  the in-flight neat-memory v1 ships on today's `notify send` and swaps
+  to contract v2 when it lands.
+- **House rules bind**: Effect idioms, HATEOAS envelopes,
+  `@joelclaw/*` boundaries, no paid APIs for inference (SDK hosting is
+  fine), receipts for every mutation, message-journal discipline kept
+  or consciously replaced.
+- **Execution authorized** for task steps by the charter itself —
+  build work proceeds per step files; inbound cutover and any channel
+  deletion still stop for Joel.
+- **Skills**: `/skill:grill-master`, `/skill:effect`,
+  `/skill:joel-writing-style`.
+
+## Decision ledger
+
+<!-- one line per closed step: gist + link -->
+
+## Latent
+
+- Shadow-run policy and cutover criteria for each platform and for
+  the dispatcher flip.
+- iMessage: custom Chat SDK adapter, keep hand-rolled, or retire the
+  channel.
+- Hosting topology for the bot process (gateway daemon vs own
+  LaunchAgent vs elsewhere) — the fit/gap research feeds this.
+- WhatsApp/Teams/GitHub/Linear adapters come "free" with the SDK —
+  whether any of them earn a joelclaw surface.
+
+## Out of scope
+
+- Inference-model choices for message content (other briefs own their
+  voices).
+- The paper/wiki rendering of messages.
+- Panda-hosted anything (decommissioning).

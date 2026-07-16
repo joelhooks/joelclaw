@@ -1,0 +1,41 @@
+---
+title: "Research Chat SDK Fit/Gap: what the SDK actually gives vs what the gateway actually does"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-16)"
+parent: "./messaging-stabilization-brief.svx"
+blockers: []
+created_at: "2026-07-16"
+---
+
+# Research Chat SDK Fit/Gap
+
+## Step
+
+The contract-v2 decision and the provisioning step both wait on facts
+about [vercel/chat](https://github.com/vercel/chat). Resolved when a
+linked asset answers, with receipts (docs/source links, not vibes):
+
+- **Adapter reality** for Discord, Telegram, Slack: DM support (not
+  just channels), proactive/bot-initiated sends (our whole outbound is
+  unprompted), reaction events in, threads, cards/buttons, streaming;
+  per-adapter feature gaps.
+- **Inbound reality** (full replatform is the finish line): message
+  and mention events, slash commands, button/modal interactions,
+  self-originated-message filtering (the self-wake-loop defense),
+  concurrency controls (burst/queue/debounce) — enough to judge
+  whether the Discord-driven dispatcher and operator relay can ride
+  the SDK without semantic loss.
+- **Hosting model**: what the bot process is (long-running node?
+  serverless-first? Next.js-coupled?), what it needs to run on flagg
+  under a LaunchAgent, webhook vs socket per platform.
+- **Auth/provisioning**: exactly what tokens/apps each of the three
+  platforms needs, and whether existing joelclaw bot identities
+  (current Discord bot, Telegram bot) can be reused in place.
+- **Gateway semantics mapping**: where do telegram-outbound-policy,
+  error-emission-budget, message-journal, channel-health land — SDK
+  equivalents, wrappers we keep, or losses to flag.
+- **Stability**: release cadence vs breaking changes, versioning
+  policy, issue tracker health — is "stabilize on this" true.

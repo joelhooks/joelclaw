@@ -1,0 +1,58 @@
+---
+title: "Task: Chat SDK fit/gap research — vercel/chat vs the joelclaw gateway, both directions"
+type: task-brief
+created: 2026-07-16
+parent: "../projects/messaging-stabilization/research-chat-sdk-fit-gap.svx"
+---
+
+# Chat SDK fit/gap
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. Research only: NO
+commits, NO push, NO installing packages outside a scratch dir, NO
+sending messages on any platform. Set your pi session name to
+"🔬 Chat SDK fit/gap" immediately.
+
+Read first: your claimed step
+(`.brain/projects/messaging-stabilization/research-chat-sdk-fit-gap.svx`
+— its bullet list IS the report outline) and the brief beside it
+(Vocabulary binds you). Then the two sources of truth:
+
+1. **The SDK**: https://github.com/vercel/chat — README, docs site if
+   linked, and the SOURCE of the discord/telegram/slack adapters (read
+   the adapter code for DM support, proactive sends, reaction events,
+   command/interaction handling — docs lie, source doesn't). Check
+   releases/changelog for breaking-change cadence. Clone to a scratch
+   dir if that's easier than web-reading.
+2. **The gateway**: `packages/gateway/src/` — channels/*,
+   daemon.ts's inbound dispatch, operator-relay.ts,
+   telegram-outbound-policy, error-emission-budget, message-journal,
+   channel-health, command-queue, discord-ui/, outbound/. You are
+   mapping SEMANTICS (what guarantees exist today), not documenting
+   code.
+
+## Deliverable
+
+ONE asset:
+`.brain/projects/messaging-stabilization/chat-sdk-fit-gap.svx`
+(`type: "asset"`, `parent: "./research-chat-sdk-fit-gap.svx"`) —
+answering every bullet in the step file, with a fit/gap table per
+adapter (discord/telegram/slack × outbound DM / proactive send /
+reactions-in / threads / cards / commands / mentions / self-message
+filtering / concurrency), a hosting-on-flagg section (process model,
+webhook vs socket, LaunchAgent viability), an auth section (exact
+apps/tokens needed; whether existing joelclaw Discord + Telegram bot
+identities can be reused — find their current setup in the gateway
+config surface WITHOUT printing any token), a gateway-semantics
+mapping (where each hand-rolled guarantee lands), and an honest
+stability verdict. Every claim carries a receipt link (file:line or
+URL). Flag gaps loudly — a "Chat SDK cannot do X" list is the most
+valuable section.
+
+## Step-file edits
+
+Append result gist + asset link to the claimed step, flip status
+closed. Steering writes the ledger line.
+
+## Rules
+
+Work autonomously. Do not commit. Print DONE with the asset path.
