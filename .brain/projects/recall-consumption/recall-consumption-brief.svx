@@ -60,7 +60,7 @@ enough; ingest changes belong to the observational-memory map, not here.
 
 - [Build Observations as a Prime Bugle Source](./build-observations-bugle-source.svx) — read-only `observation-page` adapter live in the wiki pipeline: `Open questions / next actions` → OpenLoopCandidates, `Decisions` → loop-closure evidence, page URL + sessionId provenance on every item, sensitive pages skipped before any projection; receipt build extracted 8 real candidates from 54 observations.
 
-## Not yet specified
+## Latent
 
 - Cross-machine pull: sessions-search rides central Typesense (works
   fleet-wide) but qmd's index is flagg-local — what do blaine agents get,

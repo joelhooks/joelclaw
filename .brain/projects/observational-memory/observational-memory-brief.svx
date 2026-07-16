@@ -81,7 +81,7 @@ to understand all of the work that we're doing."
 
 - **Consumption charted separately (2026-07-13)**: the [recall-consumption map](../recall-consumption/recall-consumption-brief.svx) owns how agents/surfaces USE the distilled layer (briefing push, qmd pull, Bugle editorial — two tickets re-parented there). This map keeps the write loop, page quality, and the reflector.
 
-## Not yet specified
+## Latent
 
 - Substrate tiering as the corpus grows: git repo is the hot substrate today; cold store could tier to NAS/Garage/S3 ("it could be S3, it could be on the NAS in the garage" — Joel, 2026-07-14) with recall surfaces projecting from it. The management/sprawl — "the slop nature of documents as memory" — is the open puzzle; sharpens after the reflector lands.
 

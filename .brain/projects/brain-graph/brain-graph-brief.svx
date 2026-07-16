@@ -65,7 +65,7 @@ This map adjoins [Chart the Joelclaw Personal Wiki](../personal-wiki/personal-wi
 
 - [Build the Brain Page Renderer](./build-brain-page-renderer.svx) — live: registered roots render at brain.joelclaw.com/<root>/<slug> with provenance + real component compilation; theo retro is the first Brain note served (static stopgap redirects); acceptance items 2–4 of this map now demonstrably hold.
 
-## Not yet specified
+## Latent
 
 - The write loop: active observation processing — which streams get observers, where they run per machine, distillation into durable pages, dedup and promotion policy. Follow-on map once the read side is live. Bar set by the accepted vision ADR: distill Typesense + Brain docs + session history into recall that works in every running context.
 - repo@machine distributed querying — inspecting diverged trees across machines through the graph; fleet-drift surfacing as a graph signal.

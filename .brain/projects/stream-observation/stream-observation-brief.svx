@@ -70,7 +70,7 @@ updated only when it resolves.
 
 - [Decide the Gateway Redis Channels Fate](./decide-gateway-redis-channel-fate.svx) — wake-dont-feed: reflex shrinks to a terra:low DISPATCHER pane inside the observer session (classify → wake/notify/drop); context only ever comes from recall; tiny allowlist; prompt-feeding loop retires.
 
-## Not yet specified
+## Latent
 
 - GitHub + Twitter ingress (no webhooks today — pull adapters? new hooks?
   hangs on the ingress research).

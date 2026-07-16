@@ -37,7 +37,7 @@ One morning's paper at daily.joelclaw.com that Joel reads end to end and trusts:
 - [Close Loops When Reality Closes Them](./close-loops-when-reality-closes-them.svx) — the paper is reporting, nothing interactive: shipped state auto-closes on cited receipts (uncited shipped dropped), quiet loops decay 5→stale/14→archived and resurface on evidence, reopens print as corrections, Shipped renders as news after the lead; stale-v0-lead is the pinned regression.
 - [Raise the Front Page to Loopcraft's Visual Structure](./raise-front-page-visual-structure.svx) — superseded by Joel's redirect to fresh-per-run editorial composition: replaced by [Build the Bugle Design System](./build-bugle-design-system.svx) and [Lay Out the Paper Fresh Each Run](./editorial-layout-per-run.svx).
 
-## Not yet specified
+## Latent
 
 - Parametric sweep harness (same capsule × models/prompts/harness-config grid, scored by wikibench) and the paper reporting its own bench trend — graduates once wikibench scores exist.
 - Whether the claim verifier graduates from flag-only to a hard publish gate once calibrated.

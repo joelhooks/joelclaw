@@ -70,7 +70,7 @@ Prior art already in joelclaw: mux webhook provider (above), `packages/system-bu
 - [Port the Deepgram Transcript Flow](./port-deepgram-transcript-flow.svx) — live 2026-07-14, but Cloudflare-native per Joel's mid-build call ("deepgram flow needs to move to cloudflare"): the wzrrd Worker requests nova-3 and receives the token-verified callback; VTT/text in R2, transcript on the watch page, captions attached to the Mux asset as a native text track. Receipts on `wzrrd.sh/v/ejnhot35jD`. No Convex transcript copy (tailnet unreachable from Cloudflare — wzrrd is transcript truth).
 - **E2E receipt (not a ticket):** [manual agent-driven Mux publish run](./docs/e2e-mux-manual-run-2026-07-13.svx) — a 12 s ffmpeg clip went file → direct upload → asset ready → progressive `highest.mp4`, with live webhooks verified through hooks.joelclaw.com into Inngest and four public URLs 200-checked, entirely from agent tools. Surfaced [Make Agent Webhook Streaming Work for Mux Events](./make-agent-webhook-streaming-work-for-mux.svx) (session subscriptions only dispatch github events today).
 
-## Not yet specified
+## Latent
 
 - **Arbitrary pointers beyond a flagg filesystem path** — remote URLs, files on blaine/panda, NAS paths, browser uploads. Phase 1 is flagg-local; the pointer taxonomy sharpens once the pipeline exists.
 - **Transcript display on the watch page** — the pipeline side graduated to [Port the Deepgram Transcript Flow](./port-deepgram-transcript-flow.svx); the render/storage side moved to the wzrrd brief's [design-transcript-flow-to-watch-page](/Users/joel/Code/joelhooks/wzrrd-sh-cli/.brain/projects/personal-video-sharing/design-transcript-flow-to-watch-page.svx).

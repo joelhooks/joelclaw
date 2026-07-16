@@ -47,7 +47,7 @@ driving it.
 - [Draft the Judge Rubric and Failure Taxonomy](./draft-judge-rubric.svx) — signed: 8 dimensions, 13 tags, N/O-excluded means, four hard-fails, bland public calls cap at 2; calibration = three hand-scored real calls.
 - **2026-07-13 — Judge implementation:** host `voice-call-judge` fans out from public and private completion events, dispatches the signed rubric through no-tools pi cheap→escalated tiers, validates quote/hard-fail receipts, writes rich Convex analyses, and exposes a dry-run-first backlog runner. Runtime rollout and corpus mutation remain with steering. Receipt: [build-judge-function](./build-judge-function.svx).
 
-## Not yet specified
+## Latent
 
 - Whether guest/public judge findings ever tune the PRIVATE persona (cross-tier
   learning) or tiers tune independently.
