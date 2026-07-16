@@ -23,6 +23,8 @@ const PROBE_FAILURE_PATTERN =
 // curator judges send-vs-hold itself (Joel's 2026-07-16 product decision:
 // curator DMs on its own beat, no frequency cap). Policy delivers as memory.
 const CURATED_MEMORY_PRODUCER_PATTERN = /^observer[./_-]neat[-_.]?memory$/i;
+// The signal/reminder Inngest function redelivers snoozed items.
+const REMINDER_PRODUCER_PATTERN = /^signal[./_-]reminder$/i;
 
 function decision(
   candidate: OutboundCandidate,
@@ -74,6 +76,13 @@ export const telegramOutboundPolicy: TelegramOutboundPolicy = (
 
   if (CURATED_MEMORY_PRODUCER_PATTERN.test(candidate.producer)) {
     return decision(candidate, "deliver", "memory", "deliver.curated-memory-dm");
+  }
+
+  // A scheduled reminder redelivery is, by definition, something Joel asked to
+  // be re-paged about (he snoozed it). It always delivers — keying on producer
+  // because the outbound-queue drain sends it without a policy sourceEventType.
+  if (REMINDER_PRODUCER_PATTERN.test(candidate.producer)) {
+    return decision(candidate, "deliver", "reminder", "deliver.scheduled-reminder");
   }
 
   // Operator-immediate notifications deliver as written. The message body is

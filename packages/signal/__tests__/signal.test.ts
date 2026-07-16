@@ -119,6 +119,15 @@ describe("TelegramOutboundPolicy", () => {
       ],
     },
     {
+      name: "scheduled reminder redelivery",
+      input: candidate({
+        sourceEventType: "redis-outbound",
+        content: "⏰ you snoozed this earlier — the telegram signal system note",
+        producer: "signal/reminder",
+      }),
+      expected: ["deliver", "reminder", "deliver.scheduled-reminder"],
+    },
+    {
       name: "curated neat-memory DM",
       input: candidate({
         sourceEventType: "notify.message",
