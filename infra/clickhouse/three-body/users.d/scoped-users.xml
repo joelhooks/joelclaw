@@ -1,0 +1,138 @@
+<clickhouse>
+  <!--
+    Prepared access policy for the three-body ClickHouse instance.
+
+    Password values are SHA-256 hashes supplied by docker-compose.override.yml.
+    Flagg reaches these users through the SSH tunnel in infra/clickhouse/flagg/;
+    the ClickHouse server therefore sees a NAS-local source address. Direct
+    credential-bearing HTTP over the LAN is intentionally not allowed.
+  -->
+  <users>
+    <default replace="replace">
+      <password_sha256_hex from_env="CLICKHOUSE_DEFAULT_PASSWORD_SHA256" />
+      <networks>
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+        <ip>192.168.1.163</ip>
+      </networks>
+      <profile>restricted_default</profile>
+      <quota>default</quota>
+      <grants>
+        <query>GRANT SELECT ON system.one</query>
+      </grants>
+    </default>
+
+    <message_journal_migration>
+      <password_sha256_hex from_env="CLICKHOUSE_MESSAGE_JOURNAL_MIGRATION_PASSWORD_SHA256" />
+      <networks>
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+        <ip>192.168.1.163</ip>
+      </networks>
+      <profile>migration_admin</profile>
+      <quota>default</quota>
+      <grants>
+        <query>GRANT CREATE DATABASE ON joelclaw_private.*</query>
+        <query>GRANT CREATE TABLE ON joelclaw_private.*</query>
+        <query>GRANT ALTER TABLE ON joelclaw_private.*</query>
+        <query>GRANT DROP TABLE ON joelclaw_private.*</query>
+        <query>GRANT SELECT, INSERT ON joelclaw_private.*</query>
+      </grants>
+    </message_journal_migration>
+
+    <message_journal_writer>
+      <password_sha256_hex from_env="CLICKHOUSE_MESSAGE_JOURNAL_WRITER_PASSWORD_SHA256" />
+      <networks>
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+        <ip>192.168.1.163</ip>
+      </networks>
+      <profile>insert_only</profile>
+      <quota>default</quota>
+      <grants>
+        <query>GRANT INSERT ON joelclaw_private.message_journal_events</query>
+      </grants>
+    </message_journal_writer>
+
+    <message_journal_reader>
+      <password_sha256_hex from_env="CLICKHOUSE_MESSAGE_JOURNAL_READER_PASSWORD_SHA256" />
+      <networks>
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+        <ip>192.168.1.163</ip>
+      </networks>
+      <profile>read_only</profile>
+      <quota>default</quota>
+      <grants>
+        <query>GRANT SELECT ON joelclaw_private.message_journal_events</query>
+      </grants>
+    </message_journal_reader>
+
+    <!--
+      The system-bus process writes OTEL, performs idempotent schema checks at
+      startup, and runs the daily usage report. This identity is therefore a
+      table-scoped runtime user, not a pure INSERT-only writer.
+    -->
+    <otel_runtime>
+      <password_sha256_hex from_env="CLICKHOUSE_OTEL_RUNTIME_PASSWORD_SHA256" />
+      <networks>
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+        <ip>192.168.1.163</ip>
+      </networks>
+      <profile>otel_runtime</profile>
+      <quota>default</quota>
+      <grants>
+        <query>GRANT CREATE DATABASE ON joelclaw.*</query>
+        <query>GRANT CREATE TABLE ON joelclaw.otel_events</query>
+        <query>GRANT ALTER ADD COLUMN ON joelclaw.otel_events</query>
+        <query>GRANT SELECT, INSERT ON joelclaw.otel_events</query>
+        <query>GRANT SELECT ON system.tables</query>
+      </grants>
+    </otel_runtime>
+
+    <otel_reader>
+      <password_sha256_hex from_env="CLICKHOUSE_OTEL_READER_PASSWORD_SHA256" />
+      <networks>
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+        <ip>192.168.1.163</ip>
+      </networks>
+      <profile>read_only</profile>
+      <quota>default</quota>
+      <grants>
+        <query>GRANT SELECT ON joelclaw.otel_events</query>
+        <query>GRANT SELECT ON system.tables</query>
+      </grants>
+    </otel_reader>
+  </users>
+
+  <profiles>
+    <restricted_default>
+      <readonly>1</readonly>
+      <max_memory_usage>250000000</max_memory_usage>
+      <max_threads>1</max_threads>
+    </restricted_default>
+    <migration_admin>
+      <max_memory_usage>3000000000</max_memory_usage>
+      <max_threads>4</max_threads>
+    </migration_admin>
+    <insert_only>
+      <async_insert>1</async_insert>
+      <wait_for_async_insert>1</wait_for_async_insert>
+      <max_memory_usage>1000000000</max_memory_usage>
+      <max_threads>2</max_threads>
+    </insert_only>
+    <otel_runtime>
+      <async_insert>1</async_insert>
+      <wait_for_async_insert>1</wait_for_async_insert>
+      <max_memory_usage>1500000000</max_memory_usage>
+      <max_threads>2</max_threads>
+    </otel_runtime>
+    <read_only>
+      <readonly>1</readonly>
+      <max_memory_usage>1000000000</max_memory_usage>
+      <max_threads>2</max_threads>
+    </read_only>
+  </profiles>
+</clickhouse>

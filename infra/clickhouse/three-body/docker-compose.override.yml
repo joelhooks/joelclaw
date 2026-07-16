@@ -1,0 +1,5 @@
+services:
+  clickhouse-proof:
+    # Local-only file, mode 0600. It contains password hashes, never plaintext.
+    env_file:
+      - ./clickhouse-password-hashes.env

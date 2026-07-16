@@ -1,0 +1,14 @@
+# Merge this section into ~/.joelclaw/config.toml on Flagg and chmod 0600.
+# Passwords must use the 48-character [A-Za-z0-9_-] format from the runbook.
+# It overrides the worker-oriented CLICKHOUSE_USER from system-bus.env so
+# `joelclaw otel ...` uses a SELECT-only identity.
+[capabilities.otel]
+enabled = true
+adapter = "clickhouse-otel"
+
+[capabilities.otel.adapters.clickhouse-otel]
+url = "http://127.0.0.1:18123"
+database = "joelclaw"
+table = "otel_events"
+username = "otel_reader"
+password = "REPLACE_WITH_OTEL_READER_PASSWORD"
