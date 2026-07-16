@@ -27,6 +27,7 @@ import { logsCmd } from "./commands/logs";
 import { loopCmd } from "./commands/loop";
 import { mailCmd } from "./commands/mail";
 import { memoryCmd } from "./commands/memory";
+import { messagesCmd } from "./commands/messages";
 import { nasCmd } from "./commands/nas";
 import { noteCmd } from "./commands/note";
 import { notifyCmd } from "./commands/notify";
@@ -204,6 +205,8 @@ const root = Command.make("joelclaw", {}, () =>
             skills: "joelclaw skills audit [--deep]",
             email: "joelclaw email {inboxes|inbox|read|archive|archive-bulk}",
             mail: "joelclaw mail {status|register|send|inbox|read|reserve|release|locks|search}",
+            messages:
+              "joelclaw messages {audit --since 24h [--channel <channel>] [--category <category>] [--direction <direction>] [--limit <limit>]|trace <message-id-or-flow-id>}",
             models: "joelclaw models --list [--plain]",
             queue: "joelclaw queue {emit|depth|list|inspect}",
             workload:
@@ -329,6 +332,7 @@ const root = Command.make("joelclaw", {}, () =>
     docsCmd,
     emailCmd,
     mailCmd,
+    messagesCmd,
     callCmd,
     search,
     satelliteCmd,
