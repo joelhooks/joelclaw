@@ -29,3 +29,83 @@ execution — shadow observes, journals, and proves parity).
 The **cutover** — the new path becomes the acting dispatcher and the
 hand-rolled channels start dying — is NOT this step. It stops for Joel
 with shadow receipts on the table.
+
+## Worker result — 2026-07-16
+
+Status stays **open**. The code seam is built and locally proved; steering still
+owns the one-line taps and the live shadow receipts.
+
+### Built
+
+- `packages/message-contract/inbound-events.ts`: version-2 Effect schemas for
+  message, command, interaction, and reaction events. Every event carries
+  platform IDs, raw anchors, audit lineage, a coherent authorization verdict,
+  `shadow: true`, and `canExecute: false`.
+- `packages/gateway/src/chat-sdk-inbound/normalize.ts`: side-effect-bounded
+  normalizers that invoke pinned `vercel/chat` 4.34.0 internals without starting
+  a poller/socket/Gateway listener. Telegram platform writes are stubbed;
+  Discord reply deferral/thread creation is bypassed; Slack reaction
+  normalization may perform the SDK's read-only parent-thread/user lookups.
+- `mirror.ts`, `diff.ts`, and `publish.ts`: fail-open in-process tap, semantic
+  legacy-vs-SDK diff, deterministic Inngest IDs, and observe-only publication
+  under `message/inbound.message|command|interaction|reaction|diff`.
+- Tests use source-shaped Grammy updates, Bolt events, and discord.js objects.
+  They prove self-message and non-Joel rejection, SDK parsing for all four event
+  kinds, no execution permission, semantic diffing, deterministic retry IDs,
+  and partial-publication receipts.
+
+### Exact tap insertion points for steering
+
+These are verified against the current channel source. Put each call inside the
+existing owner callback. Do not register another listener.
+
+1. `packages/gateway/src/channels/telegram.ts:1090` — first statement inside the
+   existing `bot.use(async (ctx, next) => ...)`, before the Joel allowlist check.
+   One `ctx.update` tap can classify message, `/command`, and callback updates;
+   being before the legacy gate is required to prove self/non-Joel rejection.
+2. `packages/gateway/src/channels/slack.ts:705` — in
+   `handleIncomingMessage`, immediately after `parseMessageEvent(rawMessage)`
+   and before bot/subtype/actor filters. Both `app.message` and `app_mention`
+   already converge here.
+3. `packages/gateway/src/channels/slack.ts:937` — in
+   `handleReactionAdded`, immediately after `parseReactionEvent(rawEvent)` and
+   before bot/Joel/emoji filters.
+4. `packages/gateway/src/channels/discord.ts:188` — first statement in
+   `handleMessage`, before `message.author.bot` and the Joel allowlist.
+5. `packages/gateway/src/channels/discord.ts:361` — in
+   `handleSlashInteraction`, after the dependency-presence guard and before the
+   Joel allowlist/deferReply.
+6. `packages/gateway/src/channels/discord.ts:431` — first statement in
+   `handleReaction`, before bot/emoji/thread filters. This will expose the
+   legacy Discord reaction path's missing Joel allowlist as a deliberate diff.
+
+Telegram has no dedicated legacy reaction handler today; do not add a second
+consumer to manufacture one. The live shadow must prove whether the existing
+catch-all middleware receives reaction updates before claiming Telegram
+reaction parity.
+
+### Receipts
+
+- `pnpm --filter @joelclaw/message-contract test` — 8 pass, 0 fail.
+- `pnpm --filter @joelclaw/message-contract check-types` — green.
+- `cd packages/gateway && bun test src/chat-sdk-inbound/inbound.test.ts` —
+  14 pass, 0 fail.
+- Strict targeted gateway `tsc --noEmit` — green.
+- Root `bunx tsc --noEmit` — green.
+- Targeted Biome over the seven owned source/test files — green.
+- Final fresh-context review: **CLEAN**, no blocker/high finding. Residual live
+  risks are Slack read-lookup latency/rate limits, exact raw-object handoff, and
+  Discord guild-mention thread anchoring during shadow.
+- No channel file, `daemon.ts`, or `command-queue.ts` was edited. This inbound
+  worker made no commit, push, gateway restart, channel enable, or live execution.
+
+### Concurrent-worker caveat
+
+While this worker was still running, the outbound worker pushed `94a78ce2` and
+included `packages/message-contract/src/index.ts` plus the inbound schema test,
+both of which import `../inbound-events`. The actual
+`packages/message-contract/inbound-events.ts` remains intentionally uncommitted
+under this task's no-commit rule. Therefore `origin/main` is temporarily
+incomplete until steering commits the inbound slice (or removes those two
+cross-slice imports). Do not mistake the local green checks for a fresh-clone
+receipt until that integration lands.
