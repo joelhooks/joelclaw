@@ -540,6 +540,22 @@ importers:
         specifier: ^4.0.0
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(yaml@2.8.2)
 
+  packages/message-journal:
+    dependencies:
+      '@joelclaw/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
+      effect:
+        specifier: ^3.19.17
+        version: 3.19.17
+    devDependencies:
+      '@types/bun':
+        specifier: latest
+        version: 1.3.14
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
   packages/message-store:
     dependencies:
       '@joelclaw/queue':
@@ -652,6 +668,38 @@ importers:
       '@types/bun':
         specifier: latest
         version: 1.3.10
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
+  packages/signal:
+    dependencies:
+      xstate:
+        specifier: ^5.31.1
+        version: 5.31.1
+    devDependencies:
+      '@types/bun':
+        specifier: latest
+        version: 1.3.14
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
+  packages/source-actions:
+    dependencies:
+      '@joelclaw/email':
+        specifier: workspace:*
+        version: link:../email
+      effect:
+        specifier: ^3.19.17
+        version: 3.19.17
+      xstate:
+        specifier: ^5.24.0
+        version: 5.31.1
+    devDependencies:
+      '@types/bun':
+        specifier: latest
+        version: 1.3.14
       typescript:
         specifier: 5.9.2
         version: 5.9.2
