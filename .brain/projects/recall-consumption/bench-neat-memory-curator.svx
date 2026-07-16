@@ -37,3 +37,36 @@ LaunchAgent default and the losing receipts stay on the page.
 Blocked on the build step only for the judge seam + candidate harness
 it produces; the taste-skill variants (2–3, deliberately different
 personalities of "neat") are authored here.
+
+## Result — 2026-07-16 curator bench worker
+
+Status: open / HITL. Joel still needs to pick the winning taste + judge config.
+No commit, no push, no deploy, no DMs. Bench was dry-run only; `--apply` was never used and `~/.joelclaw/observer-neat-memories.json` was not written.
+
+Changed surfaces:
+
+- `~/Code/joelhooks/joelclaw-observer/skills/neat-memory-taste-warm.md` — warmer/nostalgia/weird-scene variant.
+- `~/Code/joelhooks/joelclaw-observer/skills/neat-memory-taste-strict.md` — stricter signal-only variant.
+- `~/Code/joelhooks/joelclaw-observer/.pi/extensions/observer/neat-memory-bench.ts` — config-driven dry bench over the same 14-day privacy-gated pool; reuses the shipped candidate/state/judgment/message primitives.
+- `~/Code/joelhooks/joelclaw-wiki/static/prototypes/neat-memory-curator/index.html` — static prototype page.
+- `~/Code/joelhooks/joelclaw-wiki/static/prototypes/neat-memory-curator/__data.json` — copied bench data for the page.
+
+Bench receipt:
+
+- JSON: `/tmp/neat-memory-bench.json`
+- Window: 14 days, observations + retros; dream rollups included as observation pages.
+- Privacy gate: production `selectNeatMemoryCandidates`; `privacy: sensitive` and unparseable/missing-frontmatter pages fail closed before judges.
+- Counts: 451 source files scanned; 218 eligible candidates; 217 unsent; 32 candidates shown to judges after per-day cap; 4 days; 5 total judge calls.
+- Judge matrix:
+  - `fable-v1`: 1 call, 1 send / 3 hold.
+  - `fable-warm`: 1 call, 1 send / 3 hold.
+  - `fable-strict`: 1 call, 1 send / 3 hold.
+  - `sol-xhigh-v1`: 1 call, 3 send / 1 hold.
+  - `terra-low-v1`: 1 call, 2 send / 2 hold.
+
+Verification:
+
+- `bun .pi/extensions/observer/neat-memory-bench.ts` — wrote `/tmp/neat-memory-bench.json`, all 5 judge configs returned parseable verdict JSON.
+- `bun test` in `~/Code/joelhooks/joelclaw-observer` — 82 pass, 0 fail.
+
+Steering next step: deploy/publish the static prototype page from `joelclaw-wiki` and hand Joel the URL for the pick.
