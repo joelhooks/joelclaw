@@ -1,0 +1,29 @@
+---
+title: "Run the Shadow Window, then Cutover: diff evidence accumulates, Joel flips the switch"
+type: "step"
+kind: "task"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./messaging-stabilization-brief.svx"
+blockers: []
+created_at: "2026-07-16"
+---
+
+# Run the Shadow Window, then Cutover
+
+## Step
+
+Both directions are live in shadow (first events 2026-07-16 21:23Z).
+Resolved when: (1) the diff stream runs clean for a window Joel accepts
+— the first finding (conversationId semantic mismatch, first diff
+report) plus any successors get reconciled or explained; (2) the
+remaining fit/gap canaries pass supervised: reaction on an exact
+outbound message correlating to its flowId (needs the reactions bridge
+or a manual probe), five-message burst preserving supersession, and a
+kill/restart during ingress proving replay; (3) Joel gives the explicit
+cutover go — the SDK path becomes the acting dispatcher via
+`startChatSdkRuntime({legacyTransportsStopped: true})`, `notify send`
+flips to the compat shim, and hand-rolled channel paths get deleted,
+not abandoned. Until then the shadow just runs; the kill switch is
+CHAT_SDK_INBOUND_SHADOW_ENABLED=0 + restart.

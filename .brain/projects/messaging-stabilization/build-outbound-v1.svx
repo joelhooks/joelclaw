@@ -3,7 +3,7 @@ title: "Build Outbound v1: Discord/Telegram/Slack delivery on Chat SDK behind co
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-16)"
 parent: "./messaging-stabilization-brief.svx"
 blockers:
@@ -106,3 +106,16 @@ thin platform extension or upstream SDK change before declaring cross-platform
 
 No commit, push, daemon edit/restart, channel enable, k8s publish, or old-path
 rewire was performed.
+
+
+## Steering close — 2026-07-16
+
+Live-proven and closed: three contract-v2 sends delivered (Telegram
+7718912466:14541 + :14542 confirmed, Slack 1784236079.731449), journal
+flowId mapping read back, and one real integration gap found+fixed live:
+the signal policy suppressed `message-contract/*` sources — v2 alert
+(operator lane, high/critical) now speaks the policy's `notify.message`
+source, everything else faces the classifier honestly. Gateway wiring:
+shadow taps + exported SLACK_BOT_TOKEN in the start script; two clean
+supervised restarts. Remaining canaries (reaction-on-outbound, burst,
+kill-during-ingress) belong to the shadow-window/cutover step.

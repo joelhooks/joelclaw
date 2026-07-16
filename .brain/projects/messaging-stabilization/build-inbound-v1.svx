@@ -3,7 +3,7 @@ title: "Build Inbound v1: dispatcher and operator relay on Chat SDK"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-16)"
 parent: "./messaging-stabilization-brief.svx"
 blockers:
@@ -109,3 +109,15 @@ under this task's no-commit rule. Therefore `origin/main` is temporarily
 incomplete until steering commits the inbound slice (or removes those two
 cross-slice imports). Do not mistake the local green checks for a fresh-clone
 receipt until that integration lands.
+
+
+## Steering close — 2026-07-16
+
+Live-proven and closed: six taps wired at the worker's verified
+insertion points behind CHAT_SDK_INBOUND_SHADOW_ENABLED=1; first real
+shadow events landed at 21:23Z from Joel's own Telegram button tap —
+`message/inbound.interaction` (actor joel, isBot false, canExecute
+false, sdk vercel/chat@4.34.0, lineage id) + `message/inbound.diff`
+whose FIRST report already caught a conversationId semantic mismatch
+between legacy and SDK. Fail-open proven live too: the initial Slack
+tap construct failure (unexported token) never touched legacy traffic.
