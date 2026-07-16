@@ -2,6 +2,20 @@
 
 Canonical notes for the always-on gateway daemon (`packages/gateway`) and its automated health checks.
 
+## Messaging contract v2 and Chat SDK ownership
+
+Chat SDK is the platform-adapter layer for Telegram, Slack, and Discord. It runs inside the existing gateway process behind joelclaw authorization, routing, signal suppression, durable command queue, journal, receipt, health, and error-budget wrappers. iMessage remains hand-rolled.
+
+- `joelclaw notify send ...` is unchanged for callers. With `CHAT_SDK_ACTING_ENABLED=1`, the compatibility shim maps legacy inputs to a contract-v2 kind and sends through the acting SDK transport.
+- Rich intents use `kind: memory | alert | digest | ask | receipt`; `packages/message-contract/src/routing.ts` owns platform and lane selection.
+- Every rich send returns a `flowId`. Reactions return as `message/reaction.received`; replies use `message/reply.received` when the acting publisher is wired.
+- `CHAT_SDK_INBOUND_SHADOW_ENABLED=1` keeps in-process semantic diff taps on. Shadow events observe only and never enqueue a second Pi turn.
+- Never launch a second Telegram poller, Slack Socket Mode connection, Discord listener, or standalone Chat SDK process. Listener ownership is transferred by `handoverMessagingTransports(...)`.
+- Roll back by setting `CHAT_SDK_ACTING_ENABLED=0` in the existing gateway start environment and running one supervised `joelclaw gateway restart`. Preserve journal, diff, OTEL, and unacked queue evidence.
+- Do not delete legacy channel code until the accepted observation window proves clean diffs, burst semantics, restart replay, reaction `flowId` correlation, and normal daily use.
+
+Canonical agent procedure: `skills/messaging/SKILL.md`. Cutover receipts and exact runbook: `.brain/projects/messaging-stabilization/run-shadow-window-cutover.svx`.
+
 ## Project Threads and public channel replies
 
 Use **Project Threads** in `#brain-joel` as the operator-facing workroom for bounded system objectives that need milestone updates, approvals, canary evidence, or handoffs. Project Threads keep implementation chatter out of incident/public threads.
@@ -597,7 +611,8 @@ Startup logs include `rolePath=...` in the `[identity-inject]` line so role sele
 
 System sessions should treat the gateway as the operator relay, not as another mailbox.
 
-- use `joelclaw notify send ...` for operator-facing progress, status, and reports
+- use `joelclaw notify send ...` for operator-facing progress, status, and reports; the compatibility shim maps it to contract v2 without requiring caller changes
+- use a contract-v2 rich intent only when the producer needs an explicit kind, `flowId`, reaction/reply correlation, or `replyTo`
 - use `joelclaw mail ...` for agent coordination, file reservations, and handoffs
 - relay packets from `system` sessions should include: session handle (when present), current objective, touched surfaces, interesting memory/slog references, desired improvements, blockers, and next move
 - gateway applies ADR-0189 routing policy before anything reaches Joel; low-signal packets may be summarized or suppressed

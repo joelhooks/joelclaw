@@ -70,10 +70,17 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 - Event processing backbone
 
 **@joelclaw/gateway**
-- Multi-channel message routing (Telegram, Slack, Discord, iMessage)
+- Chat SDK adapter layer for Telegram, Slack, and Discord behind joelclaw contract-v2 policy; iMessage remains hand-rolled
+- One embedded Chat SDK runtime and one platform-listener owner; shadow normalization stays in-process
 - Always-on pi session with Redis event bridge
-- Priority queue management
+- Durable command queue remains the only inbound execution path
+- Contract-v2 outbound receipts and wired reaction correlation use `flowId`; reply correlation remains schema-only until its acting publisher lands
 - Sleep mode awareness
+
+**@joelclaw/message-contract**
+- Versioned outbound kinds (`memory`, `alert`, `digest`, `ask`, `receipt`) and one kind-to-route table
+- HATEOAS delivery receipts with platform IDs mapped back to `flowId`
+- Bus schemas for `message/reaction.received` and `message/reply.received`; reaction publication is wired, reply publication is not yet acting
 
 **@joelclaw/restate**
 - Restate worker package for durable DAG/workflow execution
@@ -366,7 +373,11 @@ OTEL Telemetry → Typesense
   ↓
 Gateway Notification (if needed)
   ↓
-Channel Delivery (Telegram, etc.)
+contract v2 kind → centralized route/policy
+  ↓
+Chat SDK adapter delivery (Telegram/Slack/Discord) or legacy iMessage
+  ↓
+receipt + journal mapping (platform message ID ↔ flowId)
 ```
 
 ### Workload Execution Flow

@@ -42,7 +42,7 @@ const client = createJoelclawClient({
 - `status()`
 - `deployWorker(options)`
 - `logWrite({ action, tool, detail, reason? })`
-- `notifySend({ message, channel?, priority?, context?, type?, source?, telegramOnly? })`
+- `notifySend({ message, channel?, priority?, context?, type?, source?, telegramOnly? })` — compatibility surface; the acting gateway maps it to contract v2, while routing remains centralized by message kind
 - `secretsStatus/lease/revoke/audit/env`
 - `otelList/search/stats/emit`
 - `recall(query, options)`
@@ -58,6 +58,8 @@ The SDK exports capability adapters and a runtime entrypoint:
 - adapters: `typesenseOtelAdapter`, `typesenseRecallAdapter`, `scriptedDeployAdapter`, `slogCliAdapter`, `secretsCliAdapter`, `gatewayRedisNotifyAdapter`, `mcpAgentMailAdapter`, `redisSubscriptionsAdapter`, `runbookHealAdapter`
 
 This is the canonical in-process path now used by SDK transport and reused by CLI adapter wrappers.
+
+`notifySend()` remains the simple-text compatibility API. Producers that need an explicit `memory|alert|digest|ask|receipt` kind, `replyTo`, or reaction/reply correlation use contract v2 at the gateway composition root and retain the returned `flowId`. Do not add new platform-routing flags to the SDK method.
 
 ## Error model
 

@@ -43,7 +43,7 @@ joelclaw/
 │   ├── cli/                    # @joelclaw/cli — `joelclaw` command
 │   ├── sdk/                    # @joelclaw/sdk — programmatic wrapper for CLI contracts
 │   ├── system-bus/             # @joelclaw/system-bus — 110+ Inngest functions
-│   ├── gateway/                # @joelclaw/gateway — multi-channel message routing
+│   ├── gateway/                # @joelclaw/gateway — contract-v2 policy + Chat SDK adapters
 │   ├── restate/                # @joelclaw/restate — durable DAG runtime + workers
 │   ├── inference-router/       # @joelclaw/inference-router — model selection catalog
 │   ├── model-fallback/         # @joelclaw/model-fallback — provider fallback chains
@@ -210,10 +210,13 @@ This shells to `pi -p --no-session --no-extensions` — zero config, zero API co
 
 ## Gateway
 
-Always-on pi session with Redis event bridge. Receives messages from Telegram, Slack, Discord, iMessage. Routes through priority queue. Respects sleep mode.
+Always-on pi session with Redis event bridge. Chat SDK is the adapter layer for Telegram, Slack, and Discord behind joelclaw contract-v2 policy; iMessage remains hand-rolled. Inbound work reaches Pi only through the durable command queue. `joelclaw notify send` remains compatible and maps to contract v2 when the Chat SDK acting path owns transport.
 
 - Gateway middleware (`packages/system-bus/src/inngest/middleware/gateway.ts`) auto-injects `gateway` context into Inngest functions.
-- Channel implementations: `packages/gateway/src/channels/types.ts`
+- Contract schemas and routing: `packages/message-contract/`; acting/shadow adapters: `packages/gateway/src/chat-sdk/` and `packages/gateway/src/chat-sdk-inbound/`.
+- Reactions return on the bus as `message/reaction.received` with the original `flowId`.
+- Never start a second Telegram poller, Slack socket, Discord listener, or standalone Chat SDK process; shadow normalization runs inside the current owner.
+- Cutover and rollback runbook: `.brain/projects/messaging-stabilization/run-shadow-window-cutover.svx`.
 
 ## Observability
 
