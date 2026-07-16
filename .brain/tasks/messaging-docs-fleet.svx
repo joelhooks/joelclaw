@@ -1,0 +1,43 @@
+---
+title: "Task: messaging v2 documentation + fleet agent coverage"
+type: task-brief
+created: 2026-07-16
+parent: "../projects/messaging-stabilization/run-shadow-window-cutover.svx"
+---
+
+# Messaging v2: docs + fleet coverage
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. NO commits/pushes in
+joelclaw; dark-wizard commits ARE yours (fleet law: durable config
+commits+pushes same session). Set pi session name to "📚 Messaging docs
++ fleet" immediately.
+
+Read first: messaging-stabilization brief + all closed steps
+(decision ledger), contract v2 decision record, cutover step (flip
+receipts + runbook), chat-sdk-fit-gap asset.
+
+## Deliverables
+
+1. **ADR** in `~/Vault/docs/decisions/` per house numbering/format:
+   the messaging replatform — Chat SDK as adapter layer behind joelclaw
+   policy wrappers, contract v2 (intent kinds/routing table/flowId/
+   reactions-on-bus/replyTo correlation), acting-path cutover with
+   handover+rollback, legacy deletion gated on observation window.
+2. **Repo skill**: `skills/` (canonical dir) gains/updates a messaging
+   skill: how agents send (notify send still works via shim; contract
+   v2 `send()` for rich intents; kinds table; policy lanes — include
+   the alert-vs-memory suppression lesson), how to subscribe to
+   reactions/replies by flowId, shadow/acting flags, cutover runbook
+   pointer.
+3. **Fleet coverage** in `~/Code/joelhooks/dark-wizard`: update
+   TOOLS.md joelclaw line + add a compact graft block or skill so
+   blaine/panda agents know: messages ride contract v2 now, notify
+   send unchanged for callers, reactions land as
+   message/reaction.received with flowId, never start second platform
+   listeners. Run scripts/fleet-graft.sh install; commit+push
+   dark-wizard.
+4. **README/AGENTS touchpoints** in joelclaw where messaging is
+   described stale (grep notify/telegram docs) — fix inline, leave
+   uncommitted for steering.
+
+Print DONE with file paths.
