@@ -172,3 +172,18 @@ The Chat SDK is the acting dispatcher. Step stays open for the
 observation window: burst/ingress-restart/reaction proofs + daily-use
 evidence, then legacy deletion closes the map. Rollback remains
 CHAT_SDK_ACTING_ENABLED=0 + one restart.
+
+
+## ROLLED BACK — 2026-07-16 ~22:55Z (runbook trigger fired)
+
+Post-flip, notify sends through the acting path reported
+`notify.compat_v2.confirmed` but Joel received nothing on Telegram —
+"notify receipt without visible delivery," an explicit rollback
+trigger. Per runbook: CHAT_SDK_ACTING_ENABLED=0, one restart, legacy
+transports restored (telegram+slack healthy), evidence preserved
+(gateway.err, OTEL, journal). Immediate visible legacy delivery
+confirmed post-rollback. Shadow taps remain ON. The cutover go stays
+recorded; re-flip requires root-causing the confirmed-but-invisible
+acting delivery (suspect: SDK telegram send target/thread resolution
+in the shim path vs the alert-lane direct send that worked pre-flip)
+plus a visible-delivery canary added to the runbook's step 3.
