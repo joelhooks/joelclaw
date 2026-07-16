@@ -37,6 +37,8 @@ export interface SecretResolver {
 export interface ChatSdkRuntimeOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly secrets?: SecretResolver;
+  readonly telegramEnabled?: boolean;
+  readonly slackEnabled?: boolean;
   readonly discordEnabled?: boolean;
   readonly logger?: Logger;
 }
@@ -106,9 +108,17 @@ export function createChatSdkRuntime(options: ChatSdkRuntimeOptions = {}): ChatS
   const env = options.env ?? process.env;
   const secrets = options.secrets ?? daemonSecretResolver;
   const runtimeLogger = options.logger ?? logger;
-  const telegramToken = resolveCredential(env, "TELEGRAM_BOT_TOKEN", "telegram_bot_token", secrets);
-  const slackBotToken = resolveCredential(env, "SLACK_BOT_TOKEN", "slack_bot_token", secrets);
-  const slackAppToken = resolveCredential(env, "SLACK_APP_TOKEN", "slack_app_token", secrets);
+  const telegramEnabled = options.telegramEnabled ?? true;
+  const slackEnabled = options.slackEnabled ?? true;
+  const telegramToken = telegramEnabled
+    ? resolveCredential(env, "TELEGRAM_BOT_TOKEN", "telegram_bot_token", secrets)
+    : undefined;
+  const slackBotToken = slackEnabled
+    ? resolveCredential(env, "SLACK_BOT_TOKEN", "slack_bot_token", secrets)
+    : undefined;
+  const slackAppToken = slackEnabled
+    ? resolveCredential(env, "SLACK_APP_TOKEN", "slack_app_token", secrets)
+    : undefined;
 
   // Discord remains disabled when its channel env is blank. Steering can pass
   // discordEnabled only after the channel is deliberately enabled.
@@ -170,6 +180,7 @@ export function createChatSdkRuntime(options: ChatSdkRuntimeOptions = {}): ChatS
   });
 
   let started = false;
+  let initialized = false;
   let discordAbort: AbortController | undefined;
   let discordLoop: Promise<void> | undefined;
 
@@ -202,25 +213,54 @@ export function createChatSdkRuntime(options: ChatSdkRuntimeOptions = {}): ChatS
     },
     async start(): Promise<void> {
       if (started) return;
-      await chat.initialize();
-      started = true;
-      if (adapters.discord) {
-        discordAbort = new AbortController();
-        discordLoop = runDiscordLoop(adapters.discord, discordAbort.signal);
-        void discordLoop.catch((error: unknown) => {
-          if (!discordAbort?.signal.aborted) {
-            runtimeLogger.error("Discord listener stopped unexpectedly", { error: String(error) });
-          }
-        });
+      try {
+        await chat.initialize();
+        initialized = true;
+        started = true;
+        if (adapters.discord) {
+          discordAbort = new AbortController();
+          discordLoop = runDiscordLoop(adapters.discord, discordAbort.signal);
+          void discordLoop.catch((error: unknown) => {
+            if (!discordAbort?.signal.aborted) {
+              runtimeLogger.error("Discord listener stopped unexpectedly", { error: String(error) });
+            }
+          });
+        }
+      } catch (error) {
+        // initialize() can start Telegram before a later adapter fails. Cleanup
+        // failure is ownership uncertainty, not a warning: keep initialized=true
+        // so stop() retries and let handover refuse to restart legacy if proof
+        // still cannot be obtained.
+        const cleanupErrors: unknown[] = [];
+        try {
+          await adapters.telegram?.stopPolling();
+        } catch (cleanupError) {
+          cleanupErrors.push(cleanupError);
+        }
+        try {
+          await chat.shutdown();
+        } catch (cleanupError) {
+          cleanupErrors.push(cleanupError);
+        }
+        started = false;
+        initialized = cleanupErrors.length > 0;
+        if (cleanupErrors.length > 0) {
+          throw new AggregateError(
+            [error, ...cleanupErrors],
+            "Chat SDK startup failed and partial transport cleanup is unproven",
+          );
+        }
+        throw error;
       }
     },
     async stop(): Promise<void> {
-      if (!started) return;
+      if (!started && !initialized) return;
       discordAbort?.abort();
       await discordLoop?.catch(() => undefined);
       await adapters.telegram?.stopPolling();
       await chat.shutdown();
       started = false;
+      initialized = false;
       discordAbort = undefined;
       discordLoop = undefined;
     },
@@ -229,8 +269,10 @@ export function createChatSdkRuntime(options: ChatSdkRuntimeOptions = {}): ChatS
 
 let singleton: ChatSdkRuntime | undefined;
 
-export function getChatSdkRuntime(): ChatSdkRuntime {
-  singleton ??= createChatSdkRuntime();
+export function getChatSdkRuntime(
+  options?: ChatSdkRuntimeOptions,
+): ChatSdkRuntime {
+  singleton ??= createChatSdkRuntime(options);
   return singleton;
 }
 

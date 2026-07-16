@@ -1,4 +1,7 @@
-import type { InboundEvent } from "@joelclaw/message-contract";
+import type {
+  InboundEvent,
+  MessageReactionReceivedEventType,
+} from "@joelclaw/message-contract";
 import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
 import type { InboundDiffReport } from "./diff";
 
@@ -22,9 +25,15 @@ export interface InboundDiffBusEnvelope {
   readonly data: InboundDiffReport;
 }
 
+export type MessageReactionReceivedBusEnvelope =
+  MessageReactionReceivedEventType & { readonly id: string };
+
 export interface InboundBusClient {
   readonly send: (
-    event: InboundBusEnvelope | InboundDiffBusEnvelope,
+    event:
+      | InboundBusEnvelope
+      | InboundDiffBusEnvelope
+      | MessageReactionReceivedBusEnvelope,
   ) => Promise<unknown>;
 }
 

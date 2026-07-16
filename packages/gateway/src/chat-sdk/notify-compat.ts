@@ -8,7 +8,7 @@ export interface NotifySendCompatInput {
   readonly message: string;
   readonly correlationId: string;
   readonly source?: string;
-  readonly priority?: "low" | "normal" | "high" | "critical";
+  readonly priority?: "low" | "normal" | "high" | "urgent" | "critical";
   readonly telegramOnly?: boolean;
   readonly channel?: string;
   readonly kind?: MessageKindType;
@@ -19,9 +19,16 @@ function inferKind(input: NotifySendCompatInput): MessageKindType {
   if (input.kind) return input.kind;
   const source = input.source?.toLowerCase() ?? "";
   if (source.includes("memory")) return "memory";
-  if (source.includes("digest") || input.priority === "low") return "digest";
   if (source.includes("ask") || source.includes("approval")) return "ask";
   if (source.includes("receipt")) return "receipt";
+  if (
+    source.includes("digest") ||
+    input.priority === "low" ||
+    input.priority === "normal" ||
+    input.priority === undefined
+  ) {
+    return "digest";
+  }
   return "alert";
 }
 

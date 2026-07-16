@@ -39,3 +39,123 @@ wrapper → command-queue, notify-send compat shim wired, transport
 ownership transfer honoring the Telegram single-consumer lease;
 (3) canaries: burst supersession, kill/restart replay, reaction
 correlation. The flip itself stays supervised by steering.
+
+## Cutover build + supervised runbook — 2026-07-16
+
+Status stays **open**. The acting path is built behind
+`CHAT_SDK_ACTING_ENABLED=1`; this worker did not set the flag, restart the
+gateway, transfer live transport ownership, delete legacy code, commit, or push.
+
+### What the build now does
+
+- Reconciles the first live diff reports captured at `21:23Z`: contract v2 owns
+  platform-native `conversationId` and `messageId` values (`7718912466` and
+  `14543`). Chat SDK's adapter-qualified handles (`telegram:7718912466` and
+  `7718912466:14543`) remain internal/thread handles. A source-shaped regression
+  test now produces a clean diff.
+- Registers Chat SDK messages, commands, actions, and reactions with one acting
+  dispatcher. The bus copy remains observe-only; only the explicit acting
+  wrapper can enqueue. Telegram/Discord require exact Joel authorization;
+  Slack messages reuse the existing DM/mention/Reply Grant/passive-intel
+  policy. Reactions stay observe-only, durable Chat SDK event IDs execute once,
+  and the daemon-owned `enqueueToGateway` remains the sole Pi-session path.
+- Routes Redis envelopes created by `joelclaw notify send` through the existing
+  contract-v2 mapper and SDK sender under the same acting flag. Old
+  `--channel`/`--telegram-only` flags do not regain routing authority.
+- Exports and tests `handoverMessagingTransports`: release legacy Telegram
+  polling and Slack Socket Mode while retaining their send-only clients, then
+  prepare/start SDK with explicit ownership proof. Startup failure stops any
+  partial SDK runtime and restores only the legacy owners that were stopped.
+  If SDK shutdown is unproven, legacy is deliberately not restarted. Health
+  snapshots/healers become ownership-aware. Discord is deliberately excluded.
+- Correlates an SDK reaction's platform message ID through the journal/Redis
+  flow index and emits `message/reaction.received` carrying the original
+  `flowId`.
+
+### Steering-only cutover sequence
+
+1. **Preflight while legacy still owns transports**
+   - `joelclaw gateway status`
+   - Confirm `CHAT_SDK_ACTING_ENABLED` is absent/`0` in the gateway start env.
+   - Run the focused suite shown in Receipts below.
+   - Confirm the latest `message/inbound.diff` rows have no unexplained fields.
+2. **Arm the flag, do not start a second process**
+   - Put `CHAT_SDK_ACTING_ENABLED=1` in the existing gateway LaunchAgent start
+     env. Keep the exact Chat SDK train pinned at `4.34.0`.
+   - Do not manually start a Telegram poller or Slack socket.
+3. **Supervised flip**
+   - Steering runs `joelclaw gateway restart` once.
+   - On daemon startup, legacy Telegram and Slack start normally, then the
+     flagged composition root invokes `handoverMessagingTransports(...)`:
+     legacy Telegram stop → legacy Slack stop → acting handlers register →
+     `startChatSdkRuntime({ legacyTransportsStopped: true })`.
+   - Require OTEL receipts in order:
+     `chat_sdk.handover.legacy-active`, `.stopping-legacy`, `.legacy-stopped`,
+     `.starting-sdk`, `.sdk-active`.
+4. **Immediate health checks**
+   - `joelclaw gateway status` must report the daemon/session/Redis healthy.
+   - `joelclaw otel search "chat_sdk.handover" --hours 1` must show the ordered
+     successful transitions and no `.failed`.
+   - `joelclaw otel search "telegram.channel.start_failed" --hours 1` must show
+     no new polling conflict/409.
+   - `joelclaw otel search "slack" --hours 1` must show one connected socket,
+     not duplicate delivery/retry evidence.
+5. **Required live canaries before calling the window clean**
+   - **Notify compat:** run one harmless
+     `joelclaw notify send "Chat SDK cutover canary" --priority high --telegram-only`.
+     Require `notify.compat_v2.confirmed`, a contract-v2 `flowId`, and one visible
+     delivery. No gateway model prompt should be created for that event.
+   - **Five-message burst:** send five rapid Joel messages from one transport.
+     Require one queue batch, P1 for Telegram (P0 if the body is a slash
+     command), all five bodies preserved in the batched prompt, and one Pi turn.
+   - **Ingress restart:** while a test message is durable but unacked, steering
+     runs one supervised `joelclaw gateway restart`. Require
+     `queue.replay.completed`, then exactly one prompt and ack for the original
+     stream ID.
+   - **Reaction correlation:** send a contract-v2 canary, record its `flowId`,
+     react to that exact platform message, then read back one
+     `message/reaction.received` event with the same `flowId`, platform, actor,
+     emoji, and add/remove action. If the normal event CLI omits events without
+     subscribers, use a read-only query of Central Inngest's `events` table; do
+     not resend the reaction to manufacture evidence.
+6. **Leave shadow taps on for the accepted observation window**
+   - Keep `CHAT_SDK_INBOUND_SHADOW_ENABLED=1` during the initial acting window.
+   - Any authorization, action, actor, platform-native ID, or single-execution
+     mismatch is a rollback trigger, not an explanation exercise.
+
+### Rollback triggers and exact sequence
+
+Rollback immediately on Telegram 409/poll-owner conflict, duplicate Slack
+payloads, any non-Joel/self event reaching `command-queue`, missing unacked
+replay, duplicate execution, reaction flow mismatch, repeated SDK adapter
+failure, or notify receipt without visible delivery.
+
+1. Set `CHAT_SDK_ACTING_ENABLED=0` in the same gateway start env.
+2. Steering runs `joelclaw gateway restart` once. Graceful shutdown stops the
+   SDK runtime before the replacement daemon starts legacy Telegram/Slack.
+3. Verify `joelclaw gateway status`, `joelclaw gateway test`, Telegram poll
+   ownership, Slack socket state, queue depth, and no new handover activity.
+4. Preserve the journal, diff rows, OTEL, and unacked queue records. Do not
+   delete legacy code or clear Redis to make the dashboard look clean.
+
+Within one running process, the returned ownership handle also exposes the
+same tested emergency order: `await ownership.rollback()` performs SDK stop →
+legacy Telegram restart → legacy Slack restart. Startup failures invoke that
+rollback automatically.
+
+### Build receipts
+
+- Live evidence source: four `message/inbound.diff` rows in Central Inngest
+  Postgres at `2026-07-16T21:23:17Z`–`21:23:42Z`; every row showed the same two
+  adapter-prefix mismatches and no semantic disagreement after canonicalizing
+  platform IDs.
+- Focused gateway suite: 50 pass, 0 fail, including the source-shaped diff,
+  acting-flag gate, duplicate/self/non-Joel rejection, reaction→flow
+  correlation, five-message real command-queue burst, unacked restart replay,
+  notify compat, ordered handover, partial-start cleanup, retryable rollback,
+  and unsafe-stop refusal.
+- `pnpm exec tsc --noEmit -p packages/gateway/tsconfig.json` — green.
+- Targeted Biome over gateway Chat SDK/inbound/Redis/daemon and message-contract
+  — green.
+- `bunx tsc --noEmit` — green.
+- `pi-notes brain check` — 232 pages, green.

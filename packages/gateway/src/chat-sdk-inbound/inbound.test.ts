@@ -109,6 +109,31 @@ const rawTelegramInteraction = {
   },
 };
 
+// Source-shaped reconstruction of the first live diff reports captured from
+// Inngest/Postgres at 2026-07-16T21:23Z. Chat SDK emitted adapter-qualified
+// handles (`telegram:7718912466`, `7718912466:14543`); contract v2 requires
+// the platform-native IDs used by the legacy decision and flow index.
+const capturedTelegramInteraction = {
+  update_id: 1_784_237_017,
+  callback_query: {
+    id: "captured-callback-20260716",
+    from: {
+      id: 7_718_912_466,
+      is_bot: false,
+      first_name: "Joel",
+      username: "joel",
+    },
+    message: {
+      message_id: 14_543,
+      date: 1_784_237_017,
+      chat: { id: 7_718_912_466, type: "private", first_name: "Joel" },
+      text: "Captured cutover action",
+    },
+    chat_instance: "captured-chat-instance",
+    data: "act:f4decc6f-1a37-442c-a0cf-ab8664a57960",
+  },
+};
+
 const rawDiscordMessage = {
   attachments: [],
   author: {
@@ -187,7 +212,8 @@ async function normalizedTelegram(
     | typeof rawTelegramSelfUpdate
     | typeof rawTelegramCommand
     | typeof rawTelegramEscCommand
-    | typeof rawTelegramInteraction,
+    | typeof rawTelegramInteraction
+    | typeof capturedTelegramInteraction,
   kind: RawInboundEnvelope["kind"],
 ): Promise<InboundEvent> {
   const [event] = await normalizeRawInbound(
@@ -454,6 +480,36 @@ describe("observe-only publish and diff", () => {
       parity: true,
       shadow: true,
       sdk: { actualActed: false, wouldAct: true },
+    });
+  });
+
+  test("reconciles the live Telegram adapter-qualified ID mismatch", async () => {
+    const event = await normalizedTelegram(
+      capturedTelegramInteraction,
+      "interaction",
+    );
+    const legacy: LegacyInboundDecision = {
+      kind: "interaction",
+      platform: "telegram",
+      authorizationVerdict: "accepted",
+      policyAction: "invoke",
+      actorId: "7718912466",
+      conversationId: "7718912466",
+      messageId: "14543",
+      acted: true,
+      reason: "legacy middleware admits Joel",
+      actionId: "act:f4decc6f-1a37-442c-a0cf-ab8664a57960",
+      value: "act:f4decc6f-1a37-442c-a0cf-ab8664a57960",
+    };
+
+    expect(event.platformIds).toMatchObject({
+      conversationId: "7718912466",
+      messageId: "14543",
+      threadId: "telegram:7718912466",
+    });
+    expect(diffInboundDecision(legacy, event, now)).toMatchObject({
+      parity: true,
+      mismatches: [],
     });
   });
 

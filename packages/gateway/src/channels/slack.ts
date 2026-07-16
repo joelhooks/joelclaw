@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { type ChannelPermissionPolicy, type ChannelRole, createReplyGrantFromEvent, type ReplyGrant, recordGrantPublicReply, routeSlackMention, type SlackMentionEvent } from "@joelclaw/channel-routing";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
-import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
 import { tapSlackMessage, tapSlackReaction } from "../chat-sdk-inbound/taps";
+import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
 import { type EnqueueFn, getRedisClient, pushGatewayEvent } from "./redis";
 import {
   initialSlackSocketLifecycle,
@@ -703,18 +703,27 @@ function extractThreadTs(message: SlackMessageEvent): string | undefined {
   return message.thread_ts;
 }
 
-async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "mention"): Promise<void> {
+async function handleIncomingMessage(
+  rawMessage: unknown,
+  kind: "message" | "mention",
+  options: {
+    readonly tapShadow?: boolean;
+    readonly chatSdkEventId?: string;
+  } = {},
+): Promise<void> {
   if (!enqueuePrompt) return;
 
   const message = parseMessageEvent(rawMessage);
-  tapSlackMessage(rawMessage, { botUserId, allowedUserId });
+  if (options.tapShadow !== false) {
+    tapSlackMessage(rawMessage, { botUserId, allowedUserId });
+  }
   if (!message?.channel || !message.user || !message.text || !message.ts) return;
   if (message.bot_id) return;
   if (message.subtype && message.subtype !== "thread_broadcast") return;
   if (botUserId && message.user === botUserId) return;
 
   const dedupeKey = `${message.channel}:${message.ts}`;
-  if (!rememberEvent(dedupeKey)) return;
+  if (!options.chatSdkEventId && !rememberEvent(dedupeKey)) return;
 
   const text = kind === "mention" ? stripBotMention(message.text) : message.text.trim();
   if (!text) return;
@@ -815,6 +824,9 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       slackUserId: message.user,
       slackTs: message.ts,
       slackEventKind: kind,
+      ...(options.chatSdkEventId
+        ? { chatSdkEventId: options.chatSdkEventId, chatSdkActing: true }
+        : {}),
     });
 
     void emitGatewayOtel({
@@ -858,6 +870,9 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       passiveIntel: true,
       joelSignal: isAllowedUser,
       importantChannel: isImportantChannel,
+      ...(options.chatSdkEventId
+        ? { chatSdkEventId: options.chatSdkEventId, chatSdkActing: true }
+        : {}),
     };
 
     const queuedEvent = await pushGatewayEvent({
@@ -903,6 +918,18 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
 
     return;
   }
+}
+
+/** Reuse the established Reply Grant/passive-intel policy after SDK normalization. */
+export async function dispatchChatSdkMessagePolicy(
+  rawMessage: unknown,
+  kind: "message" | "mention",
+  chatSdkEventId: string,
+): Promise<void> {
+  await handleIncomingMessage(rawMessage, kind, {
+    tapShadow: false,
+    chatSdkEventId,
+  });
 }
 
 async function maybeAcknowledgeReaction(channelId: string, timestamp: string): Promise<void> {
@@ -1275,14 +1302,14 @@ async function sendSlackChannel(
   text: string,
   options?: SlackSendOptions,
 ): Promise<void> {
-  if (!app || !started) {
-    console.warn("[gateway:slack] app not started, skipping send");
+  if (!app) {
+    console.warn("[gateway:slack] app unavailable, skipping send");
     void emitGatewayOtel({
       level: "warn",
       component: "slack-channel",
       action: "slack.send.skipped",
       success: false,
-      error: "app_not_started",
+      error: "app_unavailable",
     });
     return;
   }
@@ -1417,14 +1444,14 @@ async function sendSlackMedia(
   media: SendMediaPayload,
   options?: SlackSendMediaOptions,
 ): Promise<void> {
-  if (!app || !started) {
-    console.warn("[gateway:slack] app not started, skipping sendMedia");
+  if (!app) {
+    console.warn("[gateway:slack] app unavailable, skipping sendMedia");
     void emitGatewayOtel({
       level: "warn",
       component: "slack-channel",
       action: "slack.send_media.skipped",
       success: false,
-      error: "app_not_started",
+      error: "app_unavailable",
     });
     return;
   }
@@ -1523,6 +1550,25 @@ export async function sendMedia(
 ): Promise<void> {
   const instance = getDefaultSlackChannel();
   await instance.sendMedia(channelOrThread, media, options);
+}
+
+/** Stop Socket Mode ownership while retaining the Web API send client. */
+export async function releaseIngressOwnership(): Promise<void> {
+  if (!app) {
+    started = false;
+    return;
+  }
+  await app.stop();
+  started = false;
+  socketModeReceiver = undefined;
+  socketLifecycle = initialSlackSocketLifecycle();
+  console.log("[gateway:slack] socket ownership released; send client retained");
+  void emitGatewayOtel({
+    level: "info",
+    component: "slack-channel",
+    action: "slack.channel.ingress_released",
+    success: true,
+  });
 }
 
 async function shutdownSlackChannel(): Promise<void> {

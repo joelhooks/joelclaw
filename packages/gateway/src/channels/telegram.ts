@@ -4,7 +4,6 @@ import { mkdir } from "node:fs/promises";
 import { extname } from "node:path";
 import type { FormatConverter } from "@joelclaw/markdown-formatter";
 import { escapeText, TelegramConverter } from "@joelclaw/markdown-formatter";
-import { tapTelegramUpdate } from "../chat-sdk-inbound/taps";
 import {
   type ChannelAuditSeed,
   type ChannelDeliveryAudit,
@@ -23,6 +22,7 @@ import {
   markCallbackTraceDispatched,
   startCallbackTrace,
 } from "../callback-trace";
+import { tapTelegramUpdate } from "../chat-sdk-inbound/taps";
 import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
 import {
   journalMessage,
@@ -2703,14 +2703,14 @@ export async function shutdown(): Promise<void> {
   await instance.stop();
 }
 
-async function shutdownTelegramChannel(): Promise<void> {
+async function stopTelegramIngress(destroyBot: boolean): Promise<void> {
   started = false;
   clearPollLeaseRetryTimer();
   clearPollLeaseRenewTimer();
   stopPolling();
 
   await writePollLeaseStatus("stopped", {
-    reason: "shutdown",
+    reason: destroyBot ? "shutdown" : "chat_sdk_handover",
   });
   await releasePollLease();
   await closePollLeaseClient();
@@ -2722,16 +2722,31 @@ async function shutdownTelegramChannel(): Promise<void> {
   pollLeaseStatusKey = undefined;
   pollLeaseTokenHash = undefined;
 
-  if (bot) {
+  if (destroyBot && bot) {
     bot.stop();
     bot = undefined;
   }
 
-  console.log("[gateway:telegram] stopped");
+  console.log(
+    destroyBot
+      ? "[gateway:telegram] stopped"
+      : "[gateway:telegram] polling ownership released; send client retained",
+  );
   void emitGatewayOtel({
     level: "info",
     component: "telegram-channel",
-    action: "telegram.channel.stopped",
+    action: destroyBot
+      ? "telegram.channel.stopped"
+      : "telegram.channel.ingress_released",
     success: true,
   });
+}
+
+/** Stop polling/lease ownership while retaining the Bot API send client. */
+export async function releaseIngressOwnership(): Promise<void> {
+  await stopTelegramIngress(false);
+}
+
+async function shutdownTelegramChannel(): Promise<void> {
+  await stopTelegramIngress(true);
 }

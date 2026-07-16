@@ -86,6 +86,34 @@ describe("Chat SDK outbound v1", () => {
     expect(runtime.configured).toEqual({ telegram: true, slack: true, discord: false });
   });
 
+  test("keeps partial startup ownership stoppable after cleanup fails", async () => {
+    const runtime = createChatSdkRuntime({
+      env: {},
+      telegramEnabled: false,
+      slackEnabled: false,
+      discordEnabled: false,
+      secrets: { lease: () => undefined },
+    });
+    let shutdownAttempts = 0;
+    const chat = runtime.chat as unknown as {
+      initialize: () => Promise<void>;
+      shutdown: () => Promise<void>;
+    };
+    chat.initialize = async () => {
+      throw new Error("adapter initialize failed");
+    };
+    chat.shutdown = async () => {
+      shutdownAttempts += 1;
+      if (shutdownAttempts === 1) throw new Error("partial cleanup failed");
+    };
+
+    await expect(runtime.start()).rejects.toThrow(
+      "partial transport cleanup is unproven",
+    );
+    await runtime.stop();
+    expect(shutdownAttempts).toBe(2);
+  });
+
   test("refuses transport activation without legacy ownership transfer", async () => {
     await expect(startChatSdkRuntime({ legacyTransportsStopped: false as true })).rejects.toThrow(
       "requires legacy transport shutdown proof",
@@ -162,6 +190,7 @@ describe("Chat SDK outbound v1", () => {
       threadId: "telegram:7",
     });
     expect(await resolvePlatformMessageFlow("telegram", "7:42")).toBe(flowId);
+    expect(await resolvePlatformMessageFlow("telegram", "42", "7")).toBe(flowId);
   });
 
   test("replyTo reuses the parent platform thread", async () => {

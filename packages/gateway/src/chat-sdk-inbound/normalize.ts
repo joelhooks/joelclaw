@@ -572,6 +572,28 @@ function rawAnchors(event: ChatSdkNormalizedInbound): InboundRawAnchors {
   };
 }
 
+/**
+ * Contract v2 exposes platform-native IDs. Chat SDK deliberately prefixes its
+ * internal channel/thread handles (for example `telegram:7718912466`) so one
+ * Chat instance can disambiguate adapters. Those handles belong in threadId;
+ * they must not leak into platformIds or flow correlation keys.
+ */
+function platformNativeId(platform: InboundPlatform, value: string): string {
+  const prefix = `${platform}:`;
+  return value.startsWith(prefix) ? value.slice(prefix.length) : value;
+}
+
+function platformMessageId(
+  event: ChatSdkNormalizedInbound,
+  anchors: InboundRawAnchors,
+): string | null {
+  const candidate = anchors.sourceMessageId ?? event.messageId;
+  if (!candidate) return null;
+
+  const native = platformNativeId(event.platform, candidate);
+  return native.includes(":") ? (native.split(":").at(-1) ?? native) : native;
+}
+
 export function normalizeSdkInboundEvent(
   event: ChatSdkNormalizedInbound,
   envelope: RawInboundEnvelope,
@@ -606,8 +628,8 @@ export function normalizeSdkInboundEvent(
     shadow: true as const,
     actor: normalizeActor(event.actor),
     platformIds: {
-      conversationId: event.conversationId,
-      messageId: event.messageId ?? null,
+      conversationId: platformNativeId(event.platform, event.conversationId),
+      messageId: platformMessageId(event, anchors),
       threadId: event.threadId ?? null,
       actorId: event.actor.id,
       workspaceId: event.workspaceId ?? null,

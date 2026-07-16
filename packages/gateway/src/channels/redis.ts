@@ -9,6 +9,11 @@ import {
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import Redis from "ioredis";
 import {
+  NotifyCompatDeliveryError,
+  routeNotifySendCompat,
+} from "../chat-sdk/notify-acting";
+import { send as sendChatSdk } from "../chat-sdk/outbound";
+import {
   buildSignalDigestPrompt,
   buildSignalRelayGuidance,
   classifyOperatorSignal,
@@ -767,7 +772,7 @@ async function drainEvents(): Promise<void> {
     const raw = await cmd.lrange(EVENT_LIST, 0, -1);
     if (raw.length === 0) return;
 
-    const events: SystemEvent[] = [];
+    let events: SystemEvent[] = [];
     for (const item of raw.reverse()) {
       const event = parseEvent(item);
       if (!event) continue;
@@ -778,6 +783,50 @@ async function drainEvents(): Promise<void> {
 
     pruneSeenIds();
 
+    if (events.length === 0) {
+      await cmd.del(EVENT_LIST);
+      return;
+    }
+
+    const compatHandledIds = new Set<string>();
+    for (const event of events) {
+      try {
+        const result = await routeNotifySendCompat(event, {
+          send: sendChatSdk,
+        });
+        if (!result.handled) continue;
+        compatHandledIds.add(event.id);
+        void emitGatewayOtel({
+          level: "info",
+          component: "redis-channel",
+          action: "notify.compat_v2.confirmed",
+          success: true,
+          metadata: {
+            eventId: event.id,
+            flowId: result.receipt.data.flowId,
+            platform: result.receipt.data.platform,
+            deliveryState: result.receipt.data.deliveryState,
+          },
+        });
+      } catch (error) {
+        if (error instanceof NotifyCompatDeliveryError) {
+          // The SDK may have delivered before a later journal/index failure.
+          // Never create a duplicate by falling through to legacy.
+          compatHandledIds.add(event.id);
+        }
+        void emitGatewayOtel({
+          level: "error",
+          component: "redis-channel",
+          action: "notify.compat_v2.failed",
+          success: false,
+          error: summarizeChannelError(error),
+          metadata: { eventId: event.id },
+        });
+      }
+    }
+    if (compatHandledIds.size > 0) {
+      events = events.filter((event) => !compatHandledIds.has(event.id));
+    }
     if (events.length === 0) {
       await cmd.del(EVENT_LIST);
       return;

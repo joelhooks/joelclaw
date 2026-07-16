@@ -255,14 +255,24 @@ function journalInput(input: {
 export async function resolvePlatformMessageFlow(
   platform: MessagePlatformType,
   platformMessageId: string,
+  conversationId?: string,
 ): Promise<FlowIdType | undefined> {
-  const key = `${platform}:${platformMessageId}`;
-  const cached = flowByPlatformMessage.get(key);
-  if (cached) return cached;
-  const persisted = await redisGet(`joelclaw:message-contract:message:${key}`);
-  if (!persisted) return undefined;
-  flowByPlatformMessage.set(key, persisted as FlowIdType);
-  return persisted as FlowIdType;
+  const candidates = [
+    `${platform}:${platformMessageId}`,
+    ...(conversationId
+      ? [`${platform}:${conversationId}:${platformMessageId}`]
+      : []),
+  ];
+
+  for (const key of candidates) {
+    const cached = flowByPlatformMessage.get(key);
+    if (cached) return cached;
+    const persisted = await redisGet(`joelclaw:message-contract:message:${key}`);
+    if (!persisted) continue;
+    flowByPlatformMessage.set(key, persisted as FlowIdType);
+    return persisted as FlowIdType;
+  }
+  return undefined;
 }
 
 export function createSdkDeliveryAdapters(

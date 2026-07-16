@@ -1,4 +1,11 @@
 export {
+  handoverMessagingTransports,
+  type MessagingTransportHandoverDependencies,
+  type MessagingTransportOwnership,
+  type MessagingTransportOwnershipReceipt,
+  type MessagingTransportOwnershipState,
+} from "./handover";
+export {
   CHAT_SDK_VERSION,
   type ChatSdkAdapters,
   type ChatSdkRuntime,
@@ -10,6 +17,15 @@ export {
   startChatSdkRuntime,
   TELEGRAM_ALLOWED_UPDATES,
 } from "./instance";
+export {
+  isChatSdkActingTransportReady,
+  NotifyCompatDeliveryError,
+  type NotifyCompatGatewayEvent,
+  type NotifyCompatRouteDependencies,
+  type NotifyCompatRouteResult,
+  routeNotifySendCompat,
+  setChatSdkActingTransportReady,
+} from "./notify-acting";
 export {
   mapNotifySendToIntent,
   type NotifySendCompatInput,
