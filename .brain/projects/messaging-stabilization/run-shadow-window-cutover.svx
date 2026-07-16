@@ -159,3 +159,16 @@ rollback automatically.
   — green.
 - `bunx tsc --noEmit` — green.
 - `pi-notes brain check` — 232 pages, green.
+
+
+## FLIPPED — 2026-07-16 22:2xZ (steering, under Joel's recorded go)
+
+All five handover OTEL transitions ordered and successful
+(legacy-active → stopping-legacy → legacy-stopped → starting-sdk →
+sdk-active), zero telegram polling conflicts, both channels healthy
+post-flip. Live outbound proof: `joelclaw notify send` →
+`notify.compat_v2.confirmed` → SDK delivery to Joel's Telegram.
+The Chat SDK is the acting dispatcher. Step stays open for the
+observation window: burst/ingress-restart/reaction proofs + daily-use
+evidence, then legacy deletion closes the map. Rollback remains
+CHAT_SDK_ACTING_ENABLED=0 + one restart.
