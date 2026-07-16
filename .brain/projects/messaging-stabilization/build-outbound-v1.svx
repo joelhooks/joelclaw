@@ -22,3 +22,87 @@ path with receipts compared, every send journaled, no silent drops —
 and the neat-memory DM delivers through it as the proof consumer.
 Cutover (retiring old outbound paths) stops for Joel with the shadow
 receipts on the table.
+
+## Worker result — outbound v1 (2026-07-16)
+
+Status intentionally remains open. The steering session still owns daemon
+wiring, supervised shadow cutover, and any old-path retirement.
+
+Built:
+
+- `@joelclaw/message-contract` contract v2 domain: versioned kinds and routing,
+  branded `flowId`, teaching errors, outbound intent/event schemas, reaction and
+  reply event schemas, and HATEOAS delivery receipts.
+- One exact Chat SDK train at `4.34.0` for `chat`, Telegram, Slack, Discord, and
+  memory state. `instance.ts` composes one Chat instance, Telegram polling with
+  reaction updates, Slack Socket Mode, Discord only when its channel env is
+  deliberately non-blank, Telegram `stopPolling`, Discord abort/restart, and a
+  `startChatSdkRuntime()` seam for steering to wire into `daemon.ts` later.
+- Contract-v2 send path: intent routing, mandatory Telegram signal-policy
+  preflight, adapter DM/thread delivery, requested + terminal journal rows,
+  platform-message-to-flow index, Slack-native reply threading, reply flow anchor
+  reuse, receipt return, and an unwired `notify send` compat mapper.
+- Flag-gated shadow comparison (`CHAT_SDK_OUTBOUND_SHADOW_ENABLED`, default
+  off): SDK send + legacy preview + journaled field diff.
+
+Live canary receipts (one send each; Discord was not sent):
+
+```json
+{
+  "platform": "telegram",
+  "flowId": "flow_v2_377d7c92-3294-46a9-9ed0-dce99b4e5bd9",
+  "platformMessageId": "7718912466:14541",
+  "threadId": "telegram:7718912466",
+  "requestedAt": "2026-07-16T20:07:14.649Z",
+  "confirmedAt": "2026-07-16T20:07:15.342Z",
+  "deliveryState": "confirmed"
+}
+```
+
+```json
+{
+  "platform": "slack",
+  "flowId": "flow_v2_1ceeae0f-5c8b-45ee-af4b-9f1e530b5de8",
+  "platformMessageId": "1784232557.988889",
+  "threadId": "slack:D0AHPM2NPJL:",
+  "requestedAt": "2026-07-16T20:09:17.508Z",
+  "confirmedAt": "2026-07-16T20:09:18.161Z",
+  "deliveryState": "confirmed"
+}
+```
+
+Journal readback: scoped reader credentials were absent in this worker shell, so
+both requested/confirmed pairs exercised the existing fail-open spool at
+`~/.joelclaw/spool/message-journal/`. Readback found two rows per flow; confirmed
+keys were `telegram:7718912466:14541` and `slack:1784232557.988889` with exact
+platform IDs in `metadata_json`.
+
+Verification receipts:
+
+- `bunx tsc --noEmit` — green.
+- `pnpm exec tsc --noEmit -p packages/message-contract/tsconfig.json` — green.
+- `pnpm exec tsc --noEmit -p packages/gateway/tsconfig.json` — green.
+- `bun test packages/message-contract/__tests__ packages/gateway/src/chat-sdk/__tests__/outbound.test.ts`
+  — 17 pass, 0 fail.
+- `pnpm biome check packages/message-contract packages/gateway/src/chat-sdk packages/gateway/package.json`
+  — green.
+- `git diff --check` — green.
+
+Fresh-context review fixes applied: Telegram policy is now mandatory, shadow
+journal IDs parse the SDK composite Telegram ID, shadow compares target, missing
+reply anchors get terminal rows, terminal event timestamps are honest, transport
+activation requires explicit legacy-ownership transfer, schemas reject blank
+identity/time fields, and SDK logs redact payload-shaped metadata.
+
+Fresh-context re-review passed with no blocker/high finding beyond the documented
+SDK reply limitation below.
+
+Cutover stop: Chat SDK 4.34 can encode Slack `thread_ts`, but exposes no native
+Telegram `reply_parameters` or Discord `message_reference` send surface. The
+current v1 preserves the parent flow/conversation and does not falsely claim a
+native message-reference reply on those two platforms. Steering must approve a
+thin platform extension or upstream SDK change before declaring cross-platform
+`replyTo` parity.
+
+No commit, push, daemon edit/restart, channel enable, k8s publish, or old-path
+rewire was performed.
