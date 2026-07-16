@@ -3,7 +3,7 @@ title: "Bench the Curator: judge configs side-by-side so Joel picks taste by fee
 type: "step"
 kind: "prototype"
 interaction: "HITL"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-16)"
 parent: "./recall-consumption-brief.svx"
 blockers:
@@ -37,6 +37,25 @@ LaunchAgent default and the losing receipts stay on the page.
 Blocked on the build step only for the judge seam + candidate harness
 it produces; the taste-skill variants (2–3, deliberately different
 personalities of "neat") are authored here.
+
+## Result — 2026-07-16 (steering, with Joel live)
+
+Closed by Joel's picks, made iteratively against six page versions
+(v1–v6 at /prototypes/neat-memory-curator/): **sol:xhigh with the
+27-line simple prompt** (`skills/neat-memory-simple-prompt.md`) — the
+scaffolded bench prompts, the inlined taste skill, and the 16k voice
+skill all lost to it on real per-day runs with zero meta framing.
+Along the way Joel reshaped the product: DMs are a couple formatted
+paragraphs with emoji, action-biased ("a smol prompt to me"), no
+frequency cap — quality + non-repetition are the only gates, and the
+curator names its own `nextBeat` (2h–48h clamp) scheduled through the
+pane-scheduling inngest machinery; the LaunchAgent demoted to a daily
+dead-man. Production adopted it all (joelclaw-observer through
+`e6cde337`, release promoted). Live receipts: real send envelope ok
+(the curator's first pick under the final config was the memory layer
+reporting its own extraction blind spot), beat `a2dffc7b` self-scheduled
+at the curator's requested 6h. One validator bug caught live: the
+simple prompt's send shape has no `why` — now derived from the dm.
 
 ## Result — 2026-07-16 curator bench worker
 
