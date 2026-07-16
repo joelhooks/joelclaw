@@ -119,6 +119,17 @@ describe("TelegramOutboundPolicy", () => {
       ],
     },
     {
+      name: "curated neat-memory DM",
+      input: candidate({
+        sourceEventType: "notify.message",
+        content: "🧠 remember when the memory layer reported its own blind spot? that error was the good kind",
+        producer: "observer/neat-memory",
+        level: "info",
+        priority: "high",
+      }),
+      expected: ["deliver", "memory", "deliver.curated-memory-dm"],
+    },
+    {
       name: "explicit escalation candidate",
       input: candidate({
         sourceEventType: "talon.sos.escalated",

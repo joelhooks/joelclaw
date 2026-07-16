@@ -19,6 +19,10 @@ const OPERATOR_NOTIFY_PATTERN = /(?:^|[./_-])notify[-_.]?message(?:$|[./_-])/i;
 // operator lane — verify-voice is the chartered anti-pattern.
 const PROBE_FAILURE_PATTERN =
   /(?:verify[-_.]?voice|probe[-_.]?(?:failed|failure)|(?:health|recall)[-_.]?check[-_.]?failed|watchdog[-_.]?(?:failed|tripped))/i;
+// Producers whose output is already quality-gated upstream: the neat-memory
+// curator judges send-vs-hold itself (Joel's 2026-07-16 product decision:
+// curator DMs on its own beat, no frequency cap). Policy delivers as memory.
+const CURATED_MEMORY_PRODUCER_PATTERN = /^observer[./_-]neat[-_.]?memory$/i;
 
 function decision(
   candidate: OutboundCandidate,
@@ -66,6 +70,10 @@ export const telegramOutboundPolicy: TelegramOutboundPolicy = (
 
   if (NOISE_PATTERN.test(source)) {
     return decision(candidate, "suppress", "noise", "suppress.routine-machine-noise");
+  }
+
+  if (CURATED_MEMORY_PRODUCER_PATTERN.test(candidate.producer)) {
+    return decision(candidate, "deliver", "memory", "deliver.curated-memory-dm");
   }
 
   // Operator-immediate notifications deliver as written. The message body is
