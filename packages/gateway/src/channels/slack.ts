@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import { type ChannelPermissionPolicy, type ChannelRole, createReplyGrantFromEvent, type ReplyGrant, recordGrantPublicReply, routeSlackMention, type SlackMentionEvent } from "@joelclaw/channel-routing";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
+import { tapSlackMessage, tapSlackReaction } from "../chat-sdk-inbound/taps";
 import { type EnqueueFn, getRedisClient, pushGatewayEvent } from "./redis";
 import {
   initialSlackSocketLifecycle,
@@ -706,6 +707,7 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
   if (!enqueuePrompt) return;
 
   const message = parseMessageEvent(rawMessage);
+  tapSlackMessage(rawMessage, { botUserId, allowedUserId });
   if (!message?.channel || !message.user || !message.text || !message.ts) return;
   if (message.bot_id) return;
   if (message.subtype && message.subtype !== "thread_broadcast") return;
@@ -938,6 +940,7 @@ async function handleReactionAdded(rawEvent: unknown): Promise<void> {
   if (!enqueuePrompt) return;
 
   const event = parseReactionEvent(rawEvent);
+  tapSlackReaction(rawEvent, { botUserId, allowedUserId });
   if (!event?.user || !event.item?.channel || !event.item.ts || !event.reaction) return;
   if (event.item.type !== "message") return;
   if (botUserId && event.user === botUserId) return;

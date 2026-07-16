@@ -10,6 +10,7 @@
 
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
+import { tapDiscordInteraction, tapDiscordMessage, tapDiscordReaction } from "../chat-sdk-inbound/taps";
 import {
   type ChatInputCommandInteraction,
   Client,
@@ -186,6 +187,7 @@ function maybeRenderRichOutbound(text: string): MessageCreateOptions | undefined
 // ── Message handling ───────────────────────────────────────────────
 
 async function handleMessage(message: Message): Promise<void> {
+  tapDiscordMessage(message, allowedUserId);
   if (message.author.bot) return;
   if (message.author.id !== allowedUserId) {
     console.warn("[gateway:discord] unauthorized user", {
@@ -360,7 +362,7 @@ async function handleThreadMessage(message: Message, text: string): Promise<void
 
 async function handleSlashInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!slashDeps || !enqueuePrompt) return;
-
+  tapDiscordInteraction(interaction, allowedUserId);
   if (interaction.user.id !== allowedUserId) {
     try {
       await interaction.reply({ content: "Unauthorized", ephemeral: true });
@@ -429,6 +431,7 @@ async function handleSlashInteraction(interaction: ChatInputCommandInteraction):
 // ── Reaction handler: ✅ on last message marks thread done ────────
 
 async function handleReaction(reaction: any, user: any): Promise<void> {
+  tapDiscordReaction(reaction, user, allowedUserId);
   if (user.bot) return;
   if (reaction.emoji.name !== "✅") return;
 

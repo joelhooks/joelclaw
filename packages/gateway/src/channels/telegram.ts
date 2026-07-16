@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { extname } from "node:path";
 import type { FormatConverter } from "@joelclaw/markdown-formatter";
 import { escapeText, TelegramConverter } from "@joelclaw/markdown-formatter";
+import { tapTelegramUpdate } from "../chat-sdk-inbound/taps";
 import {
   type ChannelAuditSeed,
   type ChannelDeliveryAudit,
@@ -1088,6 +1089,7 @@ async function startTelegramChannel(
 
   // Only allow Joel
   bot.use(async (ctx, next) => {
+    tapTelegramUpdate(ctx.update, allowedUserId, bot?.botInfo?.id);
     if (ctx.from?.id !== allowedUserId) {
       console.warn("[gateway:telegram] unauthorized user", {
         userId: ctx.from?.id,
