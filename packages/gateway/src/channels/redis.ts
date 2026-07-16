@@ -10,6 +10,7 @@ import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import Redis from "ioredis";
 import {
   NotifyCompatDeliveryError,
+  notifyCompatTelemetry,
   routeNotifySendCompat,
 } from "../chat-sdk/notify-acting";
 import { send as sendChatSdk } from "../chat-sdk/outbound";
@@ -796,16 +797,16 @@ async function drainEvents(): Promise<void> {
         });
         if (!result.handled) continue;
         compatHandledIds.add(event.id);
+        const telemetry = notifyCompatTelemetry(result.disposition);
         void emitGatewayOtel({
-          level: "info",
+          ...telemetry,
           component: "redis-channel",
-          action: "notify.compat_v2.confirmed",
-          success: true,
           metadata: {
             eventId: event.id,
             flowId: result.receipt.data.flowId,
             platform: result.receipt.data.platform,
             deliveryState: result.receipt.data.deliveryState,
+            platformMessageId: result.receipt.data.platformMessageId,
           },
         });
       } catch (error) {

@@ -75,6 +75,7 @@ const DEFAULT_INVESTIGATION_BUDGETS: InvestigationBudgets = {
 const MAX_ACTIVE_INVESTIGATIONS = 500;
 const TELEGRAM_EXPLICIT_DELIVER_EVENT_TYPES = new Set([
   "signal/digest.assembled",
+  "message-contract/operator",
 ]);
 const activeInvestigations = new Map<
   string,
@@ -174,7 +175,9 @@ function explicitDeliverDecision(
   return {
     disposition: "deliver",
     category: "action",
-    reason: "deliver.explicit.signal-digest-assembled",
+    reason: candidate.sourceEventType === "message-contract/operator"
+      ? "deliver.explicit.message-contract-operator-lane"
+      : "deliver.explicit.signal-digest-assembled",
     producer: candidate.producer,
   };
 }

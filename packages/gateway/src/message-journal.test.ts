@@ -32,7 +32,10 @@ describe("gateway message journal fail-open boundary", () => {
       text: "private body",
       transportText: "private body",
       deliveryState: "confirmed",
-    })).resolves.toBeUndefined();
+    })).resolves.toMatchObject({
+      persisted: false,
+      storage: "failed",
+    });
   });
 
   test("restores callback flow lineage after the memory index is cleared", async () => {
@@ -66,7 +69,11 @@ describe("gateway message journal fail-open boundary", () => {
       originSystemId: "test",
       telegramChatId: Number.NaN,
       text: "private body",
-    })).resolves.toBeUndefined();
+    })).resolves.toMatchObject({
+      journalEventId: "construction-failed",
+      persisted: false,
+      storage: "failed",
+    });
     expect(writes).toBe(0);
   });
 

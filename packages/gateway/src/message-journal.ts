@@ -3,6 +3,7 @@ import {
   createJournalEvent,
   type JournalEvent,
   type JournalEventInput,
+  type JournalWriteReceipt,
   journalOutboxLayer,
   MessageJournalWriter,
   type MessageJournalWriterService,
@@ -17,6 +18,13 @@ import { Effect, Layer } from "effect";
 const JOURNAL_WRITE_TIMEOUT = "2 seconds";
 
 type JournalWriteOverride = (row: JournalEvent) => Promise<void>;
+
+export interface JournalPersistenceReceipt {
+  readonly journalEventId: string;
+  readonly persisted: boolean;
+  readonly storage: "writer" | "outbox" | "failed";
+}
+
 type FlowPersistenceOverride = {
   set: (key: string, flowId: string) => Promise<void>;
   get: (key: string) => Promise<string | undefined>;
@@ -53,12 +61,14 @@ function getWriter(): Promise<MessageJournalWriterService> {
   return writerPromise;
 }
 
-async function writeWithTimeout(writer: MessageJournalWriterService, row: JournalEvent): Promise<boolean> {
+async function writeWithTimeout(
+  writer: MessageJournalWriterService,
+  row: JournalEvent,
+): Promise<JournalWriteReceipt | undefined> {
   return Effect.runPromise(
     writer.write(row).pipe(
-      Effect.as(true),
       Effect.timeout(JOURNAL_WRITE_TIMEOUT),
-      Effect.catchAllCause(() => Effect.succeed(false)),
+      Effect.catchAllCause(() => Effect.succeed(undefined)),
     ),
   );
 }
@@ -101,7 +111,9 @@ async function emitTerminalFailure(row: JournalEvent): Promise<void> {
  * Writes exact message text to the private journal without allowing journal
  * availability, credentials, or latency to block Telegram delivery.
  */
-export async function journalMessage(input: JournalEventInput): Promise<void> {
+export async function journalMessage(
+  input: JournalEventInput,
+): Promise<JournalPersistenceReceipt> {
   let row: JournalEvent;
   try {
     row = createJournalEvent(input);
@@ -120,25 +132,51 @@ export async function journalMessage(input: JournalEventInput): Promise<void> {
         errorCode: "JOURNAL_EVENT_INVALID",
       },
     }).catch(() => undefined);
-    return;
+    return {
+      journalEventId: "construction-failed",
+      persisted: false,
+      storage: "failed",
+    };
   }
 
   try {
     if (writeOverride) {
       await writeOverride(row);
-      return;
+      return {
+        journalEventId: row.journal_event_id,
+        persisted: true,
+        storage: "writer",
+      };
     }
 
     const writer = await getWriter();
-    if (await writeWithTimeout(writer, row)) return;
+    const receipt = await writeWithTimeout(writer, row);
+    if (receipt?.written || receipt?.queued) {
+      return {
+        journalEventId: row.journal_event_id,
+        persisted: true,
+        storage: receipt.written ? "writer" : "outbox",
+      };
+    }
   } catch {
     // Missing writer credentials and initialization defects fall back to the
     // private local outbox. The exact body never crosses into OTEL.
   }
 
-  if (!(await enqueueFallback(row))) {
-    void emitTerminalFailure(row);
+  if (await enqueueFallback(row)) {
+    return {
+      journalEventId: row.journal_event_id,
+      persisted: true,
+      storage: "outbox",
+    };
   }
+
+  void emitTerminalFailure(row);
+  return {
+    journalEventId: row.journal_event_id,
+    persisted: false,
+    storage: "failed",
+  };
 }
 
 export async function rememberTelegramMessageFlow(

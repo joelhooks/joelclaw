@@ -83,7 +83,7 @@ gateway, transfer live transport ownership, delete legacy code, commit, or push.
    - Put `CHAT_SDK_ACTING_ENABLED=1` in the existing gateway LaunchAgent start
      env. Keep the exact Chat SDK train pinned at `4.34.0`.
    - Do not manually start a Telegram poller or Slack socket.
-3. **Supervised flip**
+3. **Supervised flip + machine-gated visible-delivery canary**
    - Steering runs `joelclaw gateway restart` once.
    - On daemon startup, legacy Telegram and Slack start normally, then the
      flagged composition root invokes `handoverMessagingTransports(...)`:
@@ -92,6 +92,13 @@ gateway, transfer live transport ownership, delete legacy code, commit, or push.
    - Require OTEL receipts in order:
      `chat_sdk.handover.legacy-active`, `.stopping-legacy`, `.legacy-stopped`,
      `.starting-sdk`, `.sdk-active`.
+   - Then run `bun scripts/messaging-visible-delivery-canary.ts`. Exit `0`
+     requires one fresh `chat-sdk-outbound-v1` confirmed journal row whose
+     Telegram chat/message IDs exactly match its non-empty platform message ID.
+     The script reads ClickHouse when scoped reader credentials exist and the
+     private fail-open journal outbox otherwise. Any non-zero exit **fails the
+     flip and triggers the rollback sequence immediately**. A queued notify
+     envelope or `notify.compat_v2.confirmed` event alone is not proof.
 4. **Immediate health checks**
    - `joelclaw gateway status` must report the daemon/session/Redis healthy.
    - `joelclaw otel search "chat_sdk.handover" --hours 1` must show the ordered
@@ -101,10 +108,10 @@ gateway, transfer live transport ownership, delete legacy code, commit, or push.
    - `joelclaw otel search "slack" --hours 1` must show one connected socket,
      not duplicate delivery/retry evidence.
 5. **Required live canaries before calling the window clean**
-   - **Notify compat:** run one harmless
-     `joelclaw notify send "Chat SDK cutover canary" --priority high --telegram-only`.
-     Require `notify.compat_v2.confirmed`, a contract-v2 `flowId`, and one visible
-     delivery. No gateway model prompt should be created for that event.
+   - **Notify compat:** preserve the machine-gated canary receipt from step 3.
+     Require `notify.compat_v2.confirmed`, a contract-v2 `flowId`, a non-empty
+     platform message ID, and the matching fresh journal event ID. No gateway
+     model prompt should be created for that event.
    - **Five-message burst:** send five rapid Joel messages from one transport.
      Require one queue batch, P1 for Telegram (P0 if the body is a slash
      command), all five bodies preserved in the batched prompt, and one Pi turn.
@@ -187,3 +194,119 @@ recorded; re-flip requires root-causing the confirmed-but-invisible
 acting delivery (suspect: SDK telegram send target/thread resolution
 in the shim path vs the alert-lane direct send that worked pre-flip)
 plus a visible-delivery canary added to the runbook's step 3.
+
+
+## Invisible-delivery fix — 2026-07-16
+
+The acting flag remains off. No gateway restart, flag change, commit, or push was
+performed.
+
+### Root cause
+
+There were two different outcomes hidden behind the same false OTEL action:
+
+1. **The hot-dog memory was digested, not delivered.** Flow
+   `flow_v2_b8fd1334-d486-4c48-b9c6-ba064afee7ad` has a requested row at
+   `22:45:08.123Z`, followed by `message.outbound.digest` at `22:45:08.140Z`.
+   The terminal row has no Telegram chat ID, no Telegram message ID, and
+   `platformMessageId: null`. Contract v2 had already routed `memory` to the
+   operator lane, but `chat-sdk/outbound.ts` only translated high/critical
+   operator messages into the legacy policy's immediate source. Normal-priority
+   operator memories were reclassified into the digest lane.
+2. **The Redis acting shim renamed every handled result “confirmed.”** The exact
+   divergence was the pre-fix `packages/gateway/src/channels/redis.ts:802`:
+   `action: "notify.compat_v2.confirmed"` was unconditional even though line 808
+   read the actual `deliveryState`. That produced the false
+   `notify.compat_v2.confirmed` event at `22:45:08.145Z` for the digested memory.
+   Pre-fix `chat-sdk/outbound.ts:415-422` also collapsed `digest` and `suppress`
+   into `deliveryState: "suppressed"`, erasing the distinction before OTEL saw
+   it.
+3. **A confirmation could outrun journal durability.** Pre-fix
+   `packages/gateway/src/message-journal.ts:56-63` replaced the writer's
+   `{ written, queued }` receipt with `true` via `Effect.as(true)`. A writer that
+   failed both ClickHouse and its outbox still looked successful. Then
+   `chat-sdk/outbound.ts:445-463` awaited a `void` journal call and returned a
+   confirmed receipt. The preserved incident rows did reach the private outbox,
+   but this was a second path to the same lie.
+
+The cutover 🎉 flow is different. Flow
+`flow_v2_19d41a3f-97df-4507-8940-ac90ebe9b0ca` has a requested row at
+`22:25:23.546Z` and a confirmed row at `22:25:23.885Z` with Telegram chat
+`7718912466`, message `14545`, composite platform ID `7718912466:14545`, and
+thread `telegram:7718912466`. The same SDK path had produced visible message
+`14542` earlier; legacy produced `14544` before and `14546` after the window.
+There is no preserved evidence of a target/thread mismatch or Bot API rejection
+for `14545`. The historical journal metadata captured only the normalized
+message/thread IDs, not the bounded raw Bot API response. “Confirmed” therefore
+meant “the adapter returned a Telegram message ID and a row was queued,” not
+“Joel's client visibly rendered it.” Future rows now retain the safe Bot API
+receipt subset (`messageId`, `date`, `chatId`, `chatType`).
+
+### Preserved receipts
+
+The private fail-open outbox held the source rows because scoped journal reader
+credentials were absent from this shell:
+
+- Cutover requested journal event
+  `650a7608bd7087ac00a874095b12811d4163c3347634992f3db597699a02d01f`,
+  file SHA-256
+  `7bff8cc83f3ffbbe688b234eec4732b336c9a20c054eb6f00a3ec58003e2fbd7`.
+- Cutover confirmed journal event
+  `25eff36286779c049c3b6b38c06996d114573843f5a1ba64b49d301d48c1ce54`,
+  file SHA-256
+  `daebbd897dc9352ef023b29e54b22e1fa4518c5f45ab1e6d78224cafe606e2b8`.
+- Hot-dog requested journal event
+  `63e254b183f3c479784efa26dd80530eb514522b96fe3678c8b27d2a4e8a7a26`,
+  file SHA-256
+  `a2b26073b6cb2289ff935ff08181a86ddf51091228792369d02e9dc121cadc22`.
+- Hot-dog digest journal event
+  `71d3e7361221a27ceacac4fa6f898cf3b5098158517df2fc1afb011944da07f1`,
+  file SHA-256
+  `567cab72113b8c2b810c6364d466b184a3a2fe63440964130fed87447e6e2321`.
+- OTEL: `notify.compat_v2.confirmed` at `22:25:23.889Z` (cutover) and
+  `22:45:08.145Z` (hot-dog). Handover emitted both complete five-event sequences
+  at `22:24:41Z-22:24:42Z` and `22:40:51Z-22:40:52Z` with no `.failed` row.
+- `/tmp/joelclaw/gateway.err:34764-34768` is a Slack shadow construction failure
+  because `SLACK_BOT_TOKEN` was absent. Lines `35206-35210` are another Slack
+  shadow construction failure because webhook mode lacked a signing secret or
+  verifier. Neither tap error is on the Telegram outbound path. Lines
+  `35920-35928` show OTEL emit timeouts for `telegram.policy.decided` and the
+  old unconditional `notify.compat_v2.confirmed`; the terminal journal rows
+  remain the stronger evidence.
+
+### Fix
+
+- Contract operator-lane messages now enter one explicit policy deliver seam at
+  any urgency. The hot-dog `memory` shape reaches the Telegram adapter; only the
+  explicit digest lane is digested.
+- Delivery receipts now distinguish `digested` from `suppressed`. The acting shim
+  derives OTEL action, level, and success from the terminal disposition instead
+  of hard-coding confirmed. A confirmed receipt without a non-empty platform
+  message ID is rejected as an ambiguous handled failure.
+- The journal returns a durability receipt. Outbound confirmation requires both
+  a non-empty adapter message ID and a durable confirmed row in ClickHouse or
+  the private outbox. Flow indexing happens only after that row is durable.
+- `scripts/messaging-visible-delivery-canary.ts` sends one post-flip notify event
+  and exits non-zero unless a fresh Chat SDK confirmed journal row matches the
+  returned Telegram chat/message composite ID. Step 3 now makes that script a
+  rollback gate.
+- Removed neat-memory slug `2026-07-16-59ef28c92936` from
+  `~/.joelclaw/observer-neat-memories.json` using an atomic same-directory
+  replace. Readback: one entry removed, three remain, mode `0600`.
+
+### Verification
+
+- `bun test packages/gateway/src` — 173 pass, 0 fail.
+- Focused contract/journal/policy/Chat SDK suite — 57 pass, 0 fail, including
+  source-shaped cutover and hot-dog journal rows plus a hung-subprocess canary
+  timeout regression.
+- `pnpm exec tsc --noEmit -p packages/gateway/tsconfig.json` — green.
+- `pnpm exec tsc --noEmit -p packages/message-contract/tsconfig.json` — green.
+- `bunx tsc --noEmit` — green.
+- Targeted Biome over every touched TypeScript file — green.
+- `pi-notes brain check` — 234 pages, green.
+- `git diff --check` — green.
+- Fresh-context review found one high issue: canary subprocesses were not bounded
+  and the poll deadline began before enqueue completed. Fixed with TERM/KILL
+  command timeouts, a post-enqueue poll deadline, and the timing regression
+  above. No blocker or remaining medium finding.

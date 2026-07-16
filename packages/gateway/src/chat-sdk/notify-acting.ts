@@ -30,13 +30,37 @@ export class NotifyCompatDeliveryError extends Error {
   }
 }
 
+export type NotifyCompatDisposition =
+  | "confirmed"
+  | "digested"
+  | "suppressed"
+  | "failed";
+
 export type NotifyCompatRouteResult =
   | { readonly handled: false }
   | {
       readonly handled: true;
       readonly intent: OutboundIntent;
       readonly receipt: DeliveryReceiptEnvelope;
+      readonly disposition: NotifyCompatDisposition;
     };
+
+export function notifyCompatTelemetry(
+  disposition: NotifyCompatDisposition,
+): {
+  readonly action: `notify.compat_v2.${NotifyCompatDisposition}`;
+  readonly level: "info" | "error";
+  readonly success: boolean;
+  readonly error?: "NOTIFY_COMPAT_DELIVERY_FAILED";
+} {
+  const failed = disposition === "failed";
+  return {
+    action: `notify.compat_v2.${disposition}`,
+    level: failed ? "error" : "info",
+    success: !failed,
+    ...(failed ? { error: "NOTIFY_COMPAT_DELIVERY_FAILED" as const } : {}),
+  };
+}
 
 let transportReady = false;
 
@@ -69,6 +93,21 @@ function priorityFrom(
   if (value === "urgent") return "critical";
   if (value === "low" || value === "normal" || value === "high") return value;
   return undefined;
+}
+
+function terminalDisposition(
+  receipt: DeliveryReceiptEnvelope,
+): NotifyCompatDisposition {
+  const { deliveryState, platformMessageId } = receipt.data;
+  if (deliveryState === "requested") {
+    throw new Error("notify compatibility send returned a non-terminal receipt");
+  }
+  if (deliveryState === "confirmed" && !platformMessageId?.trim()) {
+    throw new Error(
+      "notify compatibility send claimed confirmation without a platform message id",
+    );
+  }
+  return deliveryState;
 }
 
 /**
@@ -113,7 +152,8 @@ export async function routeNotifySendCompat(
   });
   try {
     const receipt = await dependencies.send(intent);
-    return { handled: true, intent, receipt };
+    const disposition = terminalDisposition(receipt);
+    return { handled: true, intent, receipt, disposition };
   } catch (error) {
     // The adapter may have crossed the platform-send boundary before a journal
     // or index failure surfaced. Mark the event handled so the Redis bridge

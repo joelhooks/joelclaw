@@ -19,7 +19,11 @@ import {
 } from "@joelclaw/message-contract";
 import type { JournalEventInput } from "@joelclaw/message-journal";
 import { createChannelDeliveryAudit } from "@joelclaw/telemetry";
-import { journalMessage, rememberTelegramMessageFlow } from "../message-journal";
+import {
+  type JournalPersistenceReceipt,
+  journalMessage,
+  rememberTelegramMessageFlow,
+} from "../message-journal";
 import {
   routeTelegramOutbound,
   telegramConversationReplyExemption,
@@ -45,7 +49,9 @@ export interface OutboundFlowAnchor {
 }
 
 export interface OutboundJournalPort {
-  readonly record: (input: JournalEventInput) => Promise<void>;
+  readonly record: (
+    input: JournalEventInput,
+  ) => Promise<JournalPersistenceReceipt>;
   readonly remember: (anchor: OutboundFlowAnchor) => Promise<void>;
   readonly resolve: (
     flowId: FlowIdType,
@@ -170,12 +176,10 @@ const defaultTelegramPolicy: TelegramPolicyPort = {
       route: `${route.lane}:${route.urgency}:${route.formatting}`,
       ...(Number.isSafeInteger(inReplyToMessageId) ? { inReplyToMessageId } : {}),
     });
-    // The policy's operator-immediate rule keys on the legacy notify.message
-    // source. Contract v2's alert kind IS that lane's successor (operator lane
-    // at high/critical urgency), so it speaks the policy's source language —
-    // otherwise every v2 alert would be suppressed as unrecognized machinery.
-    const operatorImmediate = route.lane === "operator"
-      && (route.urgency === "critical" || route.urgency === "high");
+    // Contract v2 already resolved semantic kind -> lane. The legacy policy
+    // must not demote an operator-lane memory or ask merely because its urgency
+    // is normal. Only the explicit digest lane enters the digest policy path.
+    const operatorImmediate = route.lane === "operator";
     return routeTelegramOutbound({
       chatId,
       content: intent.content,
@@ -183,7 +187,9 @@ const defaultTelegramPolicy: TelegramPolicyPort = {
       contentKind: intent.kind,
       transportText: intent.content,
       policy: {
-        sourceEventType: operatorImmediate ? "notify.message" : `message-contract/${intent.kind}`,
+        sourceEventType: operatorImmediate
+          ? "message-contract/operator"
+          : `message-contract/${intent.kind}`,
         sourceClassification: intent.kind,
         priority: route.urgency === "critical" ? "urgent" : route.urgency,
         level: route.urgency === "critical" ? "error" : "info",
@@ -215,6 +221,7 @@ function journalInput(input: {
   readonly deliveryState: string;
   readonly threadId?: string;
   readonly platformMessageId?: string;
+  readonly platformReceipt?: Record<string, unknown>;
   readonly errorCode?: string;
   readonly replyAnchor?: OutboundFlowAnchor;
 }): JournalEventInput {
@@ -245,10 +252,30 @@ function journalInput(input: {
       contractVersion: input.intent.contractVersion,
       platform: input.route.platform,
       platformMessageId: input.platformMessageId ?? null,
+      platformReceipt: input.platformReceipt ?? null,
       threadId: input.threadId ?? null,
       replyToFlowId: input.intent.replyTo ?? null,
       replyToPlatformMessageId: input.replyAnchor?.platformMessageId ?? null,
     },
+  };
+}
+
+function platformReceiptMetadata(
+  platform: MessagePlatformType,
+  sent: SdkSentMessage,
+): Record<string, unknown> | undefined {
+  if (platform !== "telegram" || !sent.raw || typeof sent.raw !== "object") {
+    return undefined;
+  }
+  const raw = sent.raw as Record<string, unknown>;
+  const chat = raw.chat && typeof raw.chat === "object"
+    ? (raw.chat as Record<string, unknown>)
+    : undefined;
+  return {
+    messageId: typeof raw.message_id === "number" ? raw.message_id : null,
+    date: typeof raw.date === "number" ? raw.date : null,
+    chatId: typeof chat?.id === "number" ? chat.id : null,
+    chatType: typeof chat?.type === "string" ? chat.type : null,
   };
 }
 
@@ -405,6 +432,9 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
         const decision = await policy.route({ chatId, intent, flowId, route, replyAnchor });
         if (decision.disposition !== "deliver") {
           const terminalAt = now().toISOString();
+          const deliveryState = decision.disposition === "digest"
+            ? "digested"
+            : "suppressed";
           await dependencies.journal.record(journalInput({
             intent,
             flowId,
@@ -412,14 +442,14 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
             requestedAt,
             occurredAt: terminalAt,
             eventType: `message.outbound.${decision.disposition}`,
-            deliveryState: "suppressed",
+            deliveryState,
           }));
           return createDeliveryReceipt({
             flowId,
             correlationId: intent.correlationId,
             requestedAt,
             confirmedAt: null,
-            deliveryState: "suppressed",
+            deliveryState,
             platform: route.platform,
             platformMessageId: null,
             threadId: null,
@@ -434,15 +464,18 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
 
       const threadId = replyAnchor ? replyThreadId(replyAnchor) : await adapter.openDM(target);
       const sent = await adapter.postMessage(threadId, intent.content);
+      const platformMessageId = sent.id.trim();
+      if (!platformMessageId) {
+        throw new Error(`${route.platform} adapter returned no platform message id`);
+      }
       const anchor: OutboundFlowAnchor = {
         flowId,
         platform: route.platform,
-        platformMessageId: sent.id,
-        threadId: sent.threadId || threadId,
+        platformMessageId,
+        threadId: sent.threadId.trim() || threadId,
       };
-      await dependencies.journal.remember(anchor);
       const confirmedAt = now().toISOString();
-      await dependencies.journal.record(journalInput({
+      const journalReceipt = await dependencies.journal.record(journalInput({
         intent,
         flowId,
         route,
@@ -452,8 +485,15 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
         deliveryState: "confirmed",
         threadId: anchor.threadId,
         platformMessageId: anchor.platformMessageId,
+        platformReceipt: platformReceiptMetadata(route.platform, sent),
         replyAnchor,
       }));
+      if (!journalReceipt.persisted) {
+        throw new Error(
+          `${route.platform} platform message ${anchor.platformMessageId} was not durably journaled`,
+        );
+      }
+      await dependencies.journal.remember(anchor);
 
       return createDeliveryReceipt({
         flowId,

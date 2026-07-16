@@ -113,6 +113,29 @@ describe("Telegram outbound policy routing", () => {
     });
   });
 
+  test("explicitly delivers contract-v2 operator-lane messages at normal urgency", async () => {
+    const routed = await routeTelegramOutbound(
+      {
+        ...input("message-contract/operator", "A surfaced memory"),
+        policy: {
+          sourceEventType: "message-contract/operator",
+          sourceClassification: "memory",
+          priority: "normal",
+          level: "info",
+        },
+      },
+      noOpDependencies,
+    );
+
+    expect(routed).toMatchObject({
+      disposition: "deliver",
+      decision: {
+        category: "action",
+        reason: "deliver.explicit.message-contract-operator-lane",
+      },
+    });
+  });
+
   test("explicit Joel conversation replies bypass classification", async () => {
     const routed = await routeTelegramOutbound(
       {

@@ -54,8 +54,13 @@ function makeJournal(): OutboundJournalPort & {
   return {
     rows,
     anchors,
-    async record(row): Promise<void> {
+    async record(row) {
       rows.push(row);
+      return {
+        journalEventId: `fixture-${rows.length}`,
+        persisted: true,
+        storage: "writer" as const,
+      };
     },
     async remember(anchor): Promise<void> {
       anchors.set(`${anchor.platform}:${anchor.flowId}`, anchor);
@@ -179,6 +184,130 @@ describe("Chat SDK outbound v1", () => {
       "message.outbound.requested",
       "message.outbound.suppress",
     ]);
+  });
+
+  test("delivers a real notify-memory shape because contract operator lane is authoritative", async () => {
+    const journal = makeJournal();
+    let posts = 0;
+    const send = makeOutboundSender({
+      adapters: {
+        telegram: {
+          openDM: async () => "telegram:7718912466",
+          postMessage: async (threadId) => {
+            posts += 1;
+            return { id: "7718912466:14547", threadId };
+          },
+        },
+      },
+      journal,
+      resolveTarget: () => "7718912466",
+      mintFlowId: () => flow(0),
+    });
+
+    const receipt = await send({
+      ...intent("memory"),
+      content: "The hot-dog propagation demo came back flat twice.",
+      correlationId: "hot-dog-neat-memory",
+    });
+    expect(posts).toBe(1);
+    expect(receipt.data).toMatchObject({
+      deliveryState: "confirmed",
+      platformMessageId: "7718912466:14547",
+    });
+  });
+
+  test("returns digested instead of confirmed when Telegram policy digests", async () => {
+    const journal = makeJournal();
+    const send = makeOutboundSender({
+      adapters: {
+        telegram: {
+          openDM: async () => "telegram:7",
+          postMessage: async (threadId) => ({ id: "7:42", threadId }),
+        },
+      },
+      journal,
+      resolveTarget: () => "7",
+      mintFlowId: () => flow(0),
+      telegramPolicy: { route: async () => ({ disposition: "digest" }) },
+    });
+
+    const receipt = await send(intent("memory"));
+    expect(receipt.data.deliveryState).toBe("digested");
+    expect(receipt.data.platformMessageId).toBeNull();
+    expect(journal.rows.at(-1)).toMatchObject({
+      eventType: "message.outbound.digest",
+      deliveryState: "digested",
+    });
+  });
+
+  test("refuses confirmation when the platform id could not be journaled", async () => {
+    const journal = makeJournal();
+    const failingJournal: OutboundJournalPort = {
+      ...journal,
+      async record(row) {
+        const receipt = await journal.record(row);
+        return row.eventType === "message.outbound.confirmed"
+          ? { ...receipt, persisted: false, storage: "failed" as const }
+          : receipt;
+      },
+    };
+    const send = makeOutboundSender({
+      adapters: {
+        telegram: {
+          openDM: async () => "telegram:7",
+          postMessage: async (threadId) => ({ id: "7:42", threadId }),
+        },
+      },
+      journal: failingJournal,
+      resolveTarget: () => "7",
+      mintFlowId: () => flow(0),
+      telegramPolicy: TELEGRAM_DELIVER_POLICY,
+    });
+
+    await expect(send(intent("alert"))).rejects.toMatchObject({
+      _tag: "MessageDeliveryError",
+    });
+    expect(journal.rows.map((row) => row.eventType)).toEqual([
+      "message.outbound.requested",
+      "message.outbound.confirmed",
+      "message.outbound.failed",
+    ]);
+  });
+
+  test("preserves a bounded Telegram Bot API receipt in journal metadata", async () => {
+    const journal = makeJournal();
+    const send = makeOutboundSender({
+      adapters: {
+        telegram: {
+          openDM: async () => "telegram:7",
+          postMessage: async (threadId) => ({
+            id: "7:42",
+            threadId,
+            raw: {
+              message_id: 42,
+              date: 1_784_240_000,
+              chat: { id: 7, type: "private", username: "must-not-leak" },
+              text: "must-not-duplicate",
+            },
+          }),
+        },
+      },
+      journal,
+      resolveTarget: () => "7",
+      mintFlowId: () => flow(0),
+      telegramPolicy: TELEGRAM_DELIVER_POLICY,
+    });
+
+    await send(intent("alert"));
+    expect(journal.rows.at(-1)?.metadata).toMatchObject({
+      platformReceipt: {
+        messageId: 42,
+        date: 1_784_240_000,
+        chatId: 7,
+        chatType: "private",
+      },
+    });
+    expect(JSON.stringify(journal.rows.at(-1)?.metadata)).not.toContain("must-not");
   });
 
   test("indexes platform message ids back to flow ids", async () => {
@@ -335,6 +464,11 @@ describe("Chat SDK outbound v1", () => {
       const rows: JournalEventInput[] = [];
       await recordShadowComparison(report, async (row) => {
         rows.push(row);
+        return {
+          journalEventId: `shadow-${rows.length}`,
+          persisted: true,
+          storage: "writer",
+        };
       });
       expect(rows[0]?.telegramMessageId).toBe(44);
     }
