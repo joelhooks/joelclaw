@@ -1,0 +1,160 @@
+---
+title: "Telegram Signal System Handoff"
+type: "project"
+status: "active"
+created_at: "2026-07-15"
+privacy: "private"
+tags:
+  - handoff
+  - telegram
+  - gateway
+---
+
+# Telegram Signal System Handoff
+
+## Current objective
+
+Turn Telegram from a noisy system log into a high-signal conversation with Joel, while making every message cheap to explain.
+
+The next session should finish chartering a grill-master working brief. Do not start implementation before Joel confirms the proposed finish line. The charter session itself takes no steps.
+
+## Current evidence
+
+The last 24-hour audit found 77 successful outbound Telegram messages and no delivery failures:
+
+- 60 were obvious system noise or no-action updates.
+- 12 were useful action or project signals.
+- 3 were intentional audit canaries.
+- 2 were duplicate urgent CLI notifications whose exact bodies were unavailable because current telemetry stores hashes only.
+
+The raw `verify-voice FAILED: voice recall tool registered with non-empty observation index` notification is the concrete anti-pattern. A probe result should trigger bounded investigation, not page Joel directly.
+
+Live Flagg gateway state at 2026-07-15 20:30 PDT:
+
+- Gateway healthy in normal mode; Redis connected.
+- Telegram configured, started, healthy, and actively polling for inbound messages.
+- Telegram reports `ownerState: fallback` because the poll lease is disabled; direct polling is active.
+- Gateway PID was `25231`; session `019f687c-3613-7469-b4b4-9b185ac972b4`.
+
+## Settled decisions and invariants
+
+### Telegram content contract
+
+Telegram should carry only:
+
+1. High-quality memories.
+2. Joel-owned actionable items.
+3. Quality reminders.
+4. Verified immediate escalations.
+5. Good-news recovery receipts.
+
+Telegram is an interruption and conversation surface, not an infrastructure log sink.
+
+### Infrastructure lifecycle
+
+- An infrastructure alert triggers investigation, not immediate Telegram delivery.
+- Agent investigation must have bounded time, retries, spend, mutation authority, and scope.
+- Immediate escalation is allowed only when waiting until tomorrow risks customer harm, money loss, security/data loss, a blocked launch/system, or a commitment Joel explicitly made.
+- Immediate escalation also requires verified impact, failed safe recovery, or a concrete Joel-owned decision/access need.
+- Routine recoveries go into a daily digest.
+- User-impacting or nontrivial recovery may produce an immediate verified good-news receipt.
+- A recovery receipt says what broke, what fixed it, proof it is healthy, and any remaining risk.
+
+### Agent work versus Joel work
+
+- Todoist is for Joel's commitments, not agent tasks.
+- Agent-owned work enters the agent runtime and is investigated or executed within limits.
+- Telegram should expose an action only after agents have exhausted what they can safely do without Joel and the remaining step is important enough that Joel would want to see it.
+- `Done` resolves the originating item only when the source adapter has a safe mutation contract. Otherwise use `Acknowledge`; never fake completion.
+- Action/reminder controls should include Done or Acknowledge, Snooze, and Open source as appropriate.
+
+### Memories, reminders, and voice
+
+- At most one high-quality memory should appear in a daily digest.
+- A memory must include its original source, when it happened, why it matters now, and the useful connection to current work, a person, or a commitment.
+- Memory messages use concise text-message-with-a-homie voice, not dashboard or corporate prose.
+- Brain references must use real, exact, HTTP-verified `https://brain.joelclaw.com/...` links. No invented slugs or raw local paths.
+- High-confidence inferred reminders are allowed when supported by concrete source evidence and present relevance.
+- Inferred reminders must not invent deadlines and must offer Dismiss/Snooze/Open source.
+
+### Digest and on-demand use
+
+- Send one compact morning digest only when something qualifies; do not send empty “everything is fine” messages.
+- Digest candidates are one useful memory, important agent wins/recovery receipts, and Joel-owned actions/reminders.
+- Flagg should also answer natural Telegram requests such as “what's up?”, “anything I need to handle?”, and “give me the digest”. No command syntax should be required in Telegram.
+
+### Message journal and debugging
+
+Joel explicitly approved indefinite exact-text retention in ClickHouse. This supersedes the body-free decision in [Telegram flow audit](../tasks/telegram-flow-audit.svx) only for a dedicated private message journal:
+
+- Store exact inbound and outbound Telegram text indefinitely in a dedicated, access-restricted ClickHouse journal.
+- Keep general OTEL events body-free.
+- Link journal rows to `flowId`, Telegram message IDs, direction, producer, classification, reason, timestamps, and delivery/interaction state.
+- The operator CLI domain is `messages`, not `telegram`:
+
+```sh
+joelclaw messages audit --since 24h
+joelclaw messages trace <message-id-or-flow-id>
+```
+
+- Optional filters may include channel, category, and direction.
+- Audit output should explain exact text, source, category, importance, why a message was sent or suppressed, investigation result, delivery confirmation, and button outcomes.
+
+## Proposed finish line awaiting confirmation
+
+- Telegram reliably delivers high-quality memories, Joel-owned actions, quality reminders, verified escalations, and good-news receipts without raw probe noise.
+- Infra signals pass through a bounded investigation lifecycle before escalation or digest receipt.
+- Daily and on-demand digests use the settled content and voice contract.
+- Actions/reminders have working controls tied to the real source of truth.
+- Exact inbound/outbound messages are queryable from the private ClickHouse journal.
+- `joelclaw messages audit` and `joelclaw messages trace` explain any message without raw ClickHouse archaeology.
+- Contract tests and a measured noise-rate guard prevent regression. The initial target proposed to Joel is under 10% non-actionable outbound messages.
+
+Joel has not yet answered the final confirmation question. Confirm or adjust this finish line before creating the grill-master effort.
+
+## Durable artifacts
+
+- [Telegram flow audit](../tasks/telegram-flow-audit.svx) — deployed end-to-end delivery receipts and stable `flowId` correlation.
+- [Make Telegram outbound queue recoverable](../tasks/telegram-outbound-queue-claim-ack.svx) — existing follow-up for claim/ack, retries, recovery, and dead letters.
+
+## Files touched in this handoff
+
+- `.brain/projects/telegram-signal-system-handoff.svx`
+
+No source code was changed during the grilling/handoff turn.
+
+## Commands and verification
+
+- `joelclaw gateway status --json` — gateway healthy; Telegram inbound polling active and healthy on Flagg.
+- Recent `/tmp/joelclaw/gateway.log` and `.err` inspection — direct Telegram polling startup evidence present.
+- `jj status` / repository status — clean `main`, aligned with `origin/main` before writing this handoff.
+- Run `pi-notes brain check` after this note is written.
+
+## Risks and open decisions
+
+- The finish line still needs Joel's explicit confirmation.
+- The exact ClickHouse journal schema, access controls, and retention mechanics are not yet designed.
+- The classifier and investigation state machine need explicit states, budgets, deduplication, cancellation, and escalation transitions. Use XState v5 rather than boolean flags.
+- The first prototype should be touchable in Telegram: a representative digest plus action/reminder controls, driven by fixtures before wiring live mutations.
+- Existing outbound queue crash-loss risk remains documented in [Make Telegram outbound queue recoverable](../tasks/telegram-outbound-queue-claim-ack.svx).
+
+## Next actions
+
+1. Ask Joel to confirm or adjust the proposed finish line.
+2. Use `grill-master` to create `.brain/projects/telegram-signal-system/` with its brief and one file per precise step.
+3. Charter the earliest HITL prototype: send a fixture-backed representative digest in Telegram with memory, recovery receipt, reminder, and controls.
+4. Charter research steps for current message producers/classification paths, ClickHouse journal design, and source-owned action adapters.
+5. Sketch the XState v5 signal lifecycle: detected → classified → investigating → resolved/digest or blocked/impact → escalated → acknowledged/snoozed/done.
+6. Run the grill-master ready scan, launch only ready AFK research workers, then review, commit, push, and stop.
+
+## Skills for the next session
+
+- `grill-master`
+- `grill-me`
+- `prototype`
+- `xstate-v5`
+- `telegram`
+- `gateway`
+- `cli-design`
+- `o11y-logging`
+- `pi-subagents` or `herdr-orchestration` for ready AFK research only
