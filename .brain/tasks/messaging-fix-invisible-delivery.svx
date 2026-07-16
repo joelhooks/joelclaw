@@ -1,0 +1,53 @@
+---
+title: "Task: root-cause + fix the confirmed-but-invisible acting delivery"
+type: task-brief
+created: 2026-07-16
+parent: "../projects/messaging-stabilization/run-shadow-window-cutover.svx"
+---
+
+# Fix confirmed-but-invisible delivery
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. NO commits/pushes, NO
+gateway restarts, NO flag flips — legacy is the acting path and stays
+so. Secrets: lease like siblings, never print. Set pi session name to
+"🔍 Invisible delivery fix" immediately.
+
+## The failure (from the rolled-back window, ~22:20–22:55Z)
+
+With CHAT_SDK_ACTING_ENABLED=1: `joelclaw notify send` envelopes
+returned ok, OTEL emitted `notify.compat_v2.confirmed`, but Joel
+received NOTHING on Telegram — twice (the 🎉 cutover message +
+neat-memory's hot-dog DM). Pre-flip, direct contract-v2 sends via
+`send()` DID reach him (alert 7718912466:14542). So the break is
+specific to the acting notify shim path (`notify-acting.ts` → outbound
+send), not the SDK adapter per se. Steering suspicion: target/thread
+resolution or env differences in the daemon runtime vs the direct-send
+shell (SLACK/TELEGRAM env, SLACK_DEFAULT_CHANNEL_ID, TELEGRAM_USER_ID,
+routing kind mapping, or the policy suppressing while the shim still
+journals confirmed — check whether "confirmed" is written regardless
+of disposition!).
+
+## Deliverables
+
+1. **Root cause with receipts**: preserved evidence — journal rows for
+   the two flows (~22:44 neat-memory, ~22:20 cutover 🎉), OTEL
+   `notify.compat_v2.*` + `chat_sdk.*`, /tmp/joelclaw/gateway.err
+   (incl. two unexplained `[gateway:chat-sdk-shadow] tap error` lines),
+   the Telegram Bot API response captured in journal metadata if any.
+   State the exact line where "confirmed" diverged from reality.
+2. **Fix** in the acting shim/send path so a delivery receipt can only
+   say confirmed when the platform returned a message id that was
+   journaled — and a suppressed/digested/failed disposition is honest
+   in both the envelope and OTEL.
+3. **Visible-delivery canary** added to the runbook flip sequence
+   (step file): a scripted post-flip send that FAILS the flip unless
+   the platform message id comes back and a fresh journal readback
+   matches — no human squinting required.
+4. **Tests** proving confirmed-requires-platform-id and the
+   regression shape from the real journal rows. Gates: tsc + targeted
+   biome + suite green.
+5. Also unburn the hot-dog memory: remove its entry from
+   `~/.joelclaw/observer-neat-memories.json` (atomic, 0600) so the
+   curator can resend it — note it in your receipt.
+
+Append result + receipts to the cutover step. Print DONE.
