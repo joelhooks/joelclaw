@@ -1,0 +1,55 @@
+---
+title: "Task: cutover build — the acting path, mismatch reconciled, tested end to end"
+type: task-brief
+created: 2026-07-16
+parent: "../projects/messaging-stabilization/run-shadow-window-cutover.svx"
+---
+
+# Cutover build + end-to-end proof
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. Joel's cutover go is
+RECORDED on the claimed step — but the FLIP ITSELF IS NOT YOURS: no
+gateway restart, no transport ownership transfer execution, no legacy
+deletion, no commits/pushes. You BUILD and PROVE; steering flips.
+Secrets: lease like siblings, never print. Set your pi session name to
+"⚡ Cutover build" immediately.
+
+Read first: the claimed step (Joel's-go section = your conditions),
+both closed build steps' receipts, the fit/gap asset (§Inbound
+dispatcher reality, §Shadowing, §Required canaries), contract v2
+decision record, and existing code in `packages/gateway/src/chat-sdk/`
++ `chat-sdk-inbound/` + `packages/message-contract/`.
+
+## Deliverables
+
+1. **Reconcile the conversationId mismatch**: pull recent
+   `message/inbound.diff` events off the bus (signing key in
+   `~/.config/system-bus.env`), determine which semantic is right per
+   contract v2, fix normalize or diff or legacy-decision assembly in
+   `taps.ts`, prove with a test using the real captured shapes.
+2. **The acting path** (built, flag-gated OFF —
+   `CHAT_SDK_ACTING_ENABLED`, default absent): SDK normalized events →
+   the existing authorization/policy wrapper semantics →
+   `command-queue` enqueue, honoring priority/supersession exactly as
+   legacy does (read command-queue's contract; no second queue). Wire
+   the notify-send compat shim so `joelclaw notify send` maps onto
+   contract v2 kinds behind the same flag. Transport ownership
+   transfer: implement the sequenced handover (stop legacy telegram
+   polling / slack socket → startChatSdkRuntime) as an exported,
+   TESTED function steering invokes — including rollback (SDK stop →
+   legacy restart).
+3. **End-to-end test suite** (Joel: "test it all end to end"):
+   automated where possible, scripted-supervised where live —
+   (a) burst: five rapid inbound messages preserve queue
+   supersession/priority; (b) kill/restart during ingress: unacked
+   replay proven; (c) outbound reaction correlation: react to a sent
+   flowId, event carries it (manual probe instructions if the bridge
+   isn't wired); (d) full loop dry-run with acting flag ON in a test
+   harness (NOT the live gateway): fake transports, real queue
+   semantics, prove no double-execution and self/non-Joel rejection.
+4. **Cutover runbook** appended to the claimed step: exact supervised
+   sequence for steering (flags, handover call, health checks, rollback
+   triggers), plus your receipts. Leave status open.
+
+Gates: `bunx tsc --noEmit`, targeted biome, all new tests green. Print
+DONE with receipts.
