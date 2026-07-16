@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { JournalEvent } from "@joelclaw/message-journal";
 import { createChannelDeliveryAudit } from "@joelclaw/telemetry";
 import { __redisTestUtils } from "./channels/redis";
+import { __messageJournalTestUtils } from "./message-journal";
 import {
   __telegramOutboundPolicyTestUtils,
   resolveTelegramOutboundPolicyContext,
@@ -36,6 +38,7 @@ function input(
 
 afterEach(() => {
   __telegramOutboundPolicyTestUtils.clearInvestigations();
+  __messageJournalTestUtils.clear();
 });
 
 describe("Telegram outbound policy routing", () => {
@@ -74,20 +77,25 @@ describe("Telegram outbound policy routing", () => {
     expect(queued).toEqual(["digest.memory-candidate"]);
   });
 
-  test("journals suppressed noise with the policy reason", async () => {
-    const journaled: string[] = [];
+  test("journals suppressed noise with the queryable policy reason", async () => {
+    const journaled: JournalEvent[] = [];
+    __messageJournalTestUtils.setWriteOverride(async (row) => {
+      journaled.push(row);
+    });
+
     const routed = await routeTelegramOutbound(
       input("health.probe.ok", "healthy"),
-      {
-        ...noOpDependencies,
-        journalSuppression: async (_input, decision) => {
-          journaled.push(decision.reason);
-        },
-      },
     );
 
     expect(routed.disposition).toBe("suppress");
-    expect(journaled).toEqual(["suppress.routine-machine-noise"]);
+    expect(journaled).toHaveLength(1);
+    expect(journaled[0]).toMatchObject({
+      event_type: "delivery.suppressed",
+      classification: "noise",
+      reason: "suppress.routine-machine-noise",
+      text: "healthy",
+      delivery_state: "suppressed",
+    });
   });
 
   test("explicit Joel conversation replies bypass classification", async () => {
@@ -147,6 +155,16 @@ describe("Telegram outbound policy routing", () => {
         "telegram:42",
       ).exemption,
     ).toMatchObject({ marker: "telegram-policy-exempt:conversation-reply" });
+  });
+
+  test("preserves Redis triage classification and reason for journaling", () => {
+    expect(resolveTelegramOutboundPolicyContext({
+      signalClassification: "immediate",
+      signalReason: "immediate.high-priority",
+    }, "gateway")).toMatchObject({
+      sourceClassification: "immediate",
+      sourceReason: "immediate.high-priority",
+    });
   });
 
   test("maps gateway.notify priority into the immediate policy seam", () => {

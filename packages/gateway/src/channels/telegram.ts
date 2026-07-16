@@ -23,6 +23,11 @@ import {
   startCallbackTrace,
 } from "../callback-trace";
 import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
+import {
+  journalMessage,
+  rememberTelegramMessageFlow,
+  resolveTelegramMessageFlow,
+} from "../message-journal";
 import type { OutboundEnvelope } from "../outbound/envelope";
 import {
   routeTelegramOutbound,
@@ -699,6 +704,35 @@ function emitInboundMessage(message: InboundMessage): void {
     });
 }
 
+async function journalInboundText(input: {
+  text: string;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+  receivedAt: number;
+  audit: ChannelDeliveryAudit;
+}): Promise<void> {
+  await journalMessage({
+    messageKey: `telegram:${input.chatId}:${input.messageId}`,
+    flowId: input.audit.flowId,
+    direction: "inbound",
+    eventType: "message.received",
+    producer: input.audit.producer,
+    originSystemId: input.audit.originSystemId,
+    sourceRef: "telegram.message.text",
+    route: input.audit.route,
+    telegramChatId: input.chatId,
+    telegramMessageId: input.messageId,
+    telegramUpdateId: input.updateId,
+    inReplyToMessageId: input.audit.inReplyToMessageId,
+    occurredAt: new Date(input.receivedAt),
+    text: input.text,
+    transportText: input.text,
+    deliveryState: "received",
+  });
+  await rememberTelegramMessageFlow(input.chatId, input.messageId, input.audit.flowId);
+}
+
 function resolveTargetChatId(target: string): number | undefined {
   const trimmed = target.trim();
   const fromSource = parseChatId(target);
@@ -1161,6 +1195,15 @@ async function startTelegramChannel(
       length: text.length,
     });
 
+    await journalInboundText({
+      text,
+      chatId,
+      messageId,
+      updateId: ctx.update.update_id,
+      receivedAt,
+      audit,
+    });
+
     const prompt = await enrichPromptWithVaultContext(text);
     emitInboundMessage({
       source: "telegram",
@@ -1387,8 +1430,43 @@ async function startTelegramChannel(
     const data = ctx.callbackQuery.data;
     const chatId = ctx.callbackQuery.message?.chat.id;
     const messageId = ctx.callbackQuery.message?.message_id;
+    const callbackQueryId = ctx.callbackQuery.id;
+    const interactionAction = data.split(":", 1)[0] || data;
+    const originalText = ctx.callbackQuery.message && "text" in ctx.callbackQuery.message
+      ? String(ctx.callbackQuery.message.text ?? "")
+      : "";
+    const flowId = await resolveTelegramMessageFlow(chatId, messageId)
+      ?? `telegram-callback:${chatId ?? "unknown"}:${messageId ?? callbackQueryId}`;
+    let interactionOutcome = /(^|:)ignore(?:$|:)/u.test(data)
+      ? "ignored"
+      : /(^|:)(?:s4h|snooze)(?:$|:)/u.test(data)
+        ? "snoozed"
+        : "completed";
 
-    console.log("[gateway:telegram] callback_query", { data, chatId, messageId });
+    await journalMessage({
+      messageKey: `telegram:${chatId ?? 0}:${messageId ?? callbackQueryId}`,
+      flowId,
+      direction: "interaction",
+      eventType: "interaction.received",
+      producer: "telegram-callback",
+      originSystemId: process.env.SLOG_SYSTEM_ID ?? "gateway",
+      sourceRef: "telegram.callback_query",
+      route: "telegram.callback",
+      classification: "interaction",
+      reason: "telegram.callback.received",
+      telegramChatId: chatId ?? 0,
+      telegramMessageId: messageId,
+      callbackQueryId,
+      interactionAction,
+      interactionPayload: data,
+      interactionOutcome: "received",
+      text: originalText,
+      transportText: originalText,
+      deliveryState: "received",
+    });
+
+    try {
+      console.log("[gateway:telegram] callback_query", { data, chatId, messageId });
 
     if (data.startsWith("replygrant:")) {
       const [, actionName, approvalId, ...restParts] = data.split(":");
@@ -1509,6 +1587,7 @@ async function startTelegramChannel(
         }
         throw new Error(`unknown replygrant action: ${actionName}`);
       } catch (error) {
+        interactionOutcome = "failed";
         await ctx.answerCallbackQuery({ text: "Reply Grant failed" }).catch(() => {});
         void emitGatewayOtel({
           level: "error",
@@ -1614,6 +1693,7 @@ async function startTelegramChannel(
           },
         });
       } catch (err) {
+        interactionOutcome = "failed";
         const message = String(err);
         console.error("[gateway:telegram] callback route publish failed", {
           error: message,
@@ -1675,6 +1755,7 @@ async function startTelegramChannel(
 
       completeCallbackTrace(traceId, `accepted callback event and updated message for ${action}`);
     } catch (err) {
+      interactionOutcome = "failed";
       const message = String(err);
       console.error("[gateway:telegram] callback handling failed", { error: message, traceId });
       await answerWithTrace("Action failed");
@@ -1682,6 +1763,32 @@ async function startTelegramChannel(
       if (chatId) {
         await sendCallbackFailureMessage(chatId, route, traceId, message).catch(() => {});
       }
+    }
+    } catch (error) {
+      interactionOutcome = "failed";
+      throw error;
+    } finally {
+      await journalMessage({
+        messageKey: `telegram:${chatId ?? 0}:${messageId ?? callbackQueryId}`,
+        flowId,
+        direction: "interaction",
+        eventType: "interaction.completed",
+        producer: "telegram-callback",
+        originSystemId: process.env.SLOG_SYSTEM_ID ?? "gateway",
+        sourceRef: "telegram.callback_query",
+        route: "telegram.callback",
+        classification: "interaction",
+        reason: `telegram.callback.${interactionOutcome}`,
+        telegramChatId: chatId ?? 0,
+        telegramMessageId: messageId,
+        callbackQueryId,
+        interactionAction,
+        interactionPayload: data,
+        interactionOutcome,
+        text: originalText,
+        transportText: originalText,
+        deliveryState: interactionOutcome === "failed" ? "failed" : "confirmed",
+      });
     }
   });
 
@@ -2011,10 +2118,56 @@ async function sendTelegramMessage(
     };
   }
   const sendStartedAt = Date.now();
+  const journalPolicy = {
+    classification: policy.decision.category,
+    reason: policy.decision.reason,
+    investigationState: policy.lifecycleState ?? policy.disposition,
+    metadata: {
+      policyDisposition: policy.disposition,
+      sourceClassification: mergedOptions?.outboundPolicy?.sourceClassification,
+      sourceReason: mergedOptions?.outboundPolicy?.sourceReason,
+    },
+  };
+  const messageKey = `telegram:${chatId}:${audit.flowId}`;
+
+  await journalMessage({
+    messageKey,
+    flowId: audit.flowId,
+    direction: "outbound",
+    eventType: "outbound.requested",
+    producer: audit.producer,
+    originSystemId: audit.originSystemId,
+    sourceEventId: audit.eventId,
+    route: audit.route,
+    ...journalPolicy,
+    telegramChatId: chatId,
+    inReplyToMessageId: mergedOptions?.replyTo ?? audit.inReplyToMessageId,
+    occurredAt: new Date(audit.requestedAtMs),
+    text,
+    transportText: text,
+    deliveryState: "requested",
+  });
 
   if (!bot) {
     const error = "bot_not_started";
     console.error("[gateway:telegram] bot not started, can't send");
+    await journalMessage({
+      messageKey,
+      flowId: audit.flowId,
+      direction: "outbound",
+      eventType: "delivery.failed",
+      producer: audit.producer,
+      originSystemId: audit.originSystemId,
+      sourceEventId: audit.eventId,
+      route: audit.route,
+      ...journalPolicy,
+      telegramChatId: chatId,
+      inReplyToMessageId: mergedOptions?.replyTo ?? audit.inReplyToMessageId,
+      text,
+      transportText: text,
+      deliveryState: "failed",
+      errorCode: error,
+    });
     await emitGatewayOtel({
       level: "error",
       component: "telegram-channel",
@@ -2089,12 +2242,49 @@ async function sendTelegramMessage(
         ...(mergedOptions?.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
       });
       telegramMessageIds.push(sent.message_id);
+      await rememberTelegramMessageFlow(chatId, sent.message_id, audit.flowId);
+      await journalMessage({
+        messageKey,
+        flowId: audit.flowId,
+        direction: "outbound",
+        eventType: "delivery.confirmed",
+        producer: audit.producer,
+        originSystemId: audit.originSystemId,
+        sourceEventId: audit.eventId,
+        route: audit.route,
+        ...journalPolicy,
+        telegramChatId: chatId,
+        telegramMessageId: sent.message_id,
+        inReplyToMessageId: mergedOptions?.replyTo ?? audit.inReplyToMessageId,
+        chunkIndex: i,
+        text: parseAsHtml ? stripHtmlTags(chunk) : chunk,
+        transportText: chunk,
+        deliveryState: "confirmed",
+      });
       if (isLast && _onOutboundMessageId) {
         _onOutboundMessageId(sent.message_id);
       }
     } catch (error) {
       if (!parseAsHtml) {
         console.error("[gateway:telegram] plain send failed", { error });
+        await journalMessage({
+          messageKey,
+          flowId: audit.flowId,
+          direction: "outbound",
+          eventType: "delivery.failed",
+          producer: audit.producer,
+          originSystemId: audit.originSystemId,
+          sourceEventId: audit.eventId,
+          route: audit.route,
+          ...journalPolicy,
+          telegramChatId: chatId,
+          inReplyToMessageId: mergedOptions?.replyTo ?? audit.inReplyToMessageId,
+          chunkIndex: i,
+          text,
+          transportText: chunk,
+          deliveryState: "failed",
+          errorCode: summarizeChannelError(error),
+        });
         await emitGatewayOtel({
           level: "error",
           component: "telegram-channel",
@@ -2114,6 +2304,24 @@ async function sendTelegramMessage(
       }
 
       if (!isDefinitiveTelegramRejection(error)) {
+        await journalMessage({
+          messageKey,
+          flowId: audit.flowId,
+          direction: "outbound",
+          eventType: "delivery.unknown",
+          producer: audit.producer,
+          originSystemId: audit.originSystemId,
+          sourceEventId: audit.eventId,
+          route: audit.route,
+          ...journalPolicy,
+          telegramChatId: chatId,
+          inReplyToMessageId: mergedOptions?.replyTo ?? audit.inReplyToMessageId,
+          chunkIndex: i,
+          text,
+          transportText: chunk,
+          deliveryState: "unknown",
+          errorCode: summarizeChannelError(error),
+        });
         await emitGatewayOtel({
           level: "error",
           component: "telegram-channel",
@@ -2155,11 +2363,53 @@ async function sendTelegramMessage(
         });
         telegramMessageIds.push(sent.message_id);
         usedFallback = true;
+        await rememberTelegramMessageFlow(chatId, sent.message_id, audit.flowId);
+        const fallbackTransportText = stripHtmlTags(chunk).slice(0, CHUNK_MAX);
+        await journalMessage({
+          messageKey,
+          flowId: audit.flowId,
+          direction: "outbound",
+          eventType: "delivery.confirmed",
+          producer: audit.producer,
+          originSystemId: audit.originSystemId,
+          sourceEventId: audit.eventId,
+          route: audit.route,
+          ...journalPolicy,
+          telegramChatId: chatId,
+          telegramMessageId: sent.message_id,
+          inReplyToMessageId: mergedOptions?.replyTo ?? audit.inReplyToMessageId,
+          chunkIndex: i,
+          attempt: 2,
+          text: fallbackTransportText,
+          transportText: fallbackTransportText,
+          deliveryState: "confirmed",
+          metadata: { ...journalPolicy.metadata, fallback: "plain_text" },
+        });
         if (isLast && _onOutboundMessageId) {
           _onOutboundMessageId(sent.message_id);
         }
       } catch (fallbackError) {
         console.error("[gateway:telegram] send failed completely", { fallbackError });
+        await journalMessage({
+          messageKey,
+          flowId: audit.flowId,
+          direction: "outbound",
+          eventType: "delivery.failed",
+          producer: audit.producer,
+          originSystemId: audit.originSystemId,
+          sourceEventId: audit.eventId,
+          route: audit.route,
+          ...journalPolicy,
+          telegramChatId: chatId,
+          inReplyToMessageId: mergedOptions?.replyTo ?? audit.inReplyToMessageId,
+          chunkIndex: i,
+          attempt: 2,
+          text,
+          transportText: stripHtmlTags(chunk).slice(0, CHUNK_MAX),
+          deliveryState: "failed",
+          errorCode: summarizeChannelError(fallbackError),
+          metadata: { ...journalPolicy.metadata, fallback: "plain_text" },
+        });
         await emitGatewayOtel({
           level: "error",
           component: "telegram-channel",
@@ -2439,6 +2689,11 @@ export async function sendMedia(
 
 export const __telegramTestUtils = {
   isDefinitiveTelegramRejection,
+  journalInboundText,
+  sendTelegramMessage,
+  setBotForTest(value: Bot | undefined): void {
+    bot = value;
+  },
 };
 
 export async function shutdown(): Promise<void> {

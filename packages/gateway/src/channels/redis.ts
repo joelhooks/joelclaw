@@ -669,7 +669,10 @@ function parseChannelAudit(value: unknown): ChannelAuditSeed | undefined {
   };
 }
 
-async function sendImmediateTelegramEscalation(events: SystemEvent[]): Promise<void> {
+async function sendImmediateTelegramEscalation(
+  events: SystemEvent[],
+  triageDecisions: ReadonlyMap<string, { classification: TriageBucket; reason: string }>,
+): Promise<void> {
   if (!TELEGRAM_USER_ID || events.length === 0) return;
 
   const legacyEvents: SystemEvent[] = [];
@@ -699,6 +702,8 @@ async function sendImmediateTelegramEscalation(events: SystemEvent[]): Promise<v
       },
       outboundPolicy: {
         sourceEventType: event.type,
+        sourceClassification: triageDecisions.get(event.id)?.classification,
+        sourceReason: triageDecisions.get(event.id)?.reason,
         ...(signalPriority(payload) ? { priority: signalPriority(payload) } : {}),
         ...(signalLevel(payload) ? { level: signalLevel(payload) } : {}),
       },
@@ -734,6 +739,12 @@ async function sendImmediateTelegramEscalation(events: SystemEvent[]): Promise<v
         },
     outboundPolicy: {
       sourceEventType: onlyEvent?.type ?? "gateway.immediate.batch",
+      sourceClassification: onlyEvent
+        ? triageDecisions.get(onlyEvent.id)?.classification
+        : "immediate",
+      sourceReason: onlyEvent
+        ? triageDecisions.get(onlyEvent.id)?.reason
+        : "immediate.gateway-batch",
       ...(onlyEventPayload && signalPriority(onlyEventPayload)
         ? { priority: signalPriority(onlyEventPayload) }
         : {}),
@@ -785,12 +796,17 @@ async function drainEvents(): Promise<void> {
       ingested: {},
       suppressed: {},
     };
+    const triageDecisions = new Map<
+      string,
+      { classification: TriageBucket; reason: string }
+    >();
 
     const assign = (bucket: TriageBucket, event: SystemEvent, reason: string) => {
       if (bucket === "immediate") immediate.push(event);
       if (bucket === "batched") batched.push(event);
       if (bucket === "ingested") ingested.push(event);
       if (bucket === "suppressed") suppressed.push(event);
+      triageDecisions.set(event.id, { classification: bucket, reason });
       incrementCount(triageReasonCounts[bucket], reason);
     };
 
@@ -877,7 +893,7 @@ async function drainEvents(): Promise<void> {
     const immediateTelegramEvents = actionable.filter(isImmediateTelegramEvent);
     if (immediateTelegramEvents.length > 0) {
       try {
-        await sendImmediateTelegramEscalation(immediateTelegramEvents);
+        await sendImmediateTelegramEscalation(immediateTelegramEvents, triageDecisions);
         void emitGatewayOtel({
           level: "info",
           component: "redis-channel",
@@ -950,6 +966,11 @@ async function drainEvents(): Promise<void> {
     const eventTypes = Array.from(new Set(actionable.map((event) => event.type)));
     const onlyActionable = actionable.length === 1 ? actionable[0] : undefined;
     const eventSources = Array.from(new Set(actionable.map((event) => event.source)));
+    const policySourceEventType = selectPolicySourceEventType(actionable);
+    const policySourceEvent = actionable.find((event) => event.type === policySourceEventType);
+    const sourceTriageDecision = policySourceEvent
+      ? triageDecisions.get(policySourceEvent.id)
+      : undefined;
     const channelAudit: ChannelAuditSeed | undefined = onlyActionable
       ? parseChannelAudit(onlyActionable.payload.audit) ?? {
           flowId: `gateway-event:${onlyActionable.id}`,
@@ -974,7 +995,9 @@ async function drainEvents(): Promise<void> {
       eventIds: actionable.map((event) => event.id),
       eventTypes,
       eventSources,
-      policySourceEventType: selectPolicySourceEventType(actionable),
+      policySourceEventType,
+      signalClassification: sourceTriageDecision?.classification,
+      signalReason: sourceTriageDecision?.reason,
       eventPriorities: actionable
         .map((event) => signalPriority(event.payload))
         .filter((value): value is NonNullable<typeof value> => value !== undefined),

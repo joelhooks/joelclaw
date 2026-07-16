@@ -1,5 +1,6 @@
 // execSync kept for non-pool fallback paths if needed
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -78,6 +79,10 @@ import {
 import { startHeartbeatRunner, TRIPWIRE_PATH } from "./heartbeat";
 import { buildGatewayTurnKnowledgeWrite, sendGatewayTurnKnowledgeWrite } from "./knowledge-turn";
 import { decideIdleGatewayMaintenance } from "./maintenance-policy";
+import {
+  journalMessage,
+  rememberTelegramMessageFlow,
+} from "./message-journal";
 import { normalizeOperatorRelayText } from "./operator-relay";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { type OutboundAttribution, registerChannel, routeResponse } from "./outbound/router";
@@ -2178,34 +2183,55 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
       });
       if (!chatId) return;
 
+      const replyTo = typeof envelope.replyTo === "string"
+        ? Number.parseInt(envelope.replyTo, 10)
+        : envelope.replyTo;
+      const activeMetadata = getActiveRequestMetadata();
+      const activeAudit = getChannelAuditFromMetadata(activeMetadata);
+      const auditSeed: ChannelAuditSeed = {
+        ...activeAudit,
+        ...(!activeAudit?.flowId && context?.source?.startsWith("telegram:") && replyTo
+          ? { flowId: `telegram-inbound:${chatId}:${replyTo}` }
+          : {}),
+        producer: activeAudit?.producer ?? "gateway-agent-response",
+        route: activeAudit?.route ?? context?.source ?? "telegram",
+        inReplyToMessageId: activeAudit?.inReplyToMessageId ?? replyTo,
+      };
+
       if (shouldSuppressDirectOperatorTelegramMessage(envelope.text, context?.source)) {
+        const audit = createChannelDeliveryAudit(envelope.text, auditSeed);
         console.log("[gateway:telegram] outbound operator message suppressed by policy", {
           chatId,
           source: context?.source,
           preview: envelope.text.trim().slice(0, 80),
         });
+        await journalMessage({
+          messageKey: `telegram:${chatId}:${audit.flowId}`,
+          flowId: audit.flowId,
+          direction: "outbound",
+          eventType: "delivery.suppressed",
+          producer: audit.producer,
+          originSystemId: audit.originSystemId,
+          sourceEventId: audit.eventId,
+          route: audit.route,
+          classification: "suppressed",
+          reason: "suppress.direct-operator-knowledge-watchdog",
+          investigationState: "suppressed",
+          telegramChatId: chatId,
+          inReplyToMessageId: replyTo,
+          text: envelope.text,
+          transportText: envelope.text,
+          deliveryState: "suppressed",
+        });
         return;
       }
 
       try {
-        const replyTo = typeof envelope.replyTo === "string"
-          ? Number.parseInt(envelope.replyTo, 10)
-          : envelope.replyTo;
-        const activeMetadata = getActiveRequestMetadata();
-        const activeAudit = getChannelAuditFromMetadata(activeMetadata);
         await sendTelegram(chatId, envelope.text, {
           buttons: envelope.buttons,
           silent: envelope.silent,
           replyTo,
-          audit: {
-            ...activeAudit,
-            ...(!activeAudit?.flowId && context?.source?.startsWith("telegram:") && replyTo
-              ? { flowId: `telegram-inbound:${chatId}:${replyTo}` }
-              : {}),
-            producer: activeAudit?.producer ?? "gateway-agent-response",
-            route: activeAudit?.route ?? context?.source ?? "telegram",
-            inReplyToMessageId: activeAudit?.inReplyToMessageId ?? replyTo,
-          },
+          audit: auditSeed,
           outboundPolicy: resolveTelegramOutboundPolicyContext(activeMetadata, context?.source),
         });
         console.log("[gateway:telegram] message sent successfully", { chatId });
@@ -5016,6 +5042,7 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
               mime_type?: string;
               caption?: string;
               ts?: string;
+              journal_revision?: number;
               audit?: ChannelDeliveryAudit;
             };
 
@@ -5112,10 +5139,70 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
                 const tgBot = getBot();
                 if (!tgBot) throw new Error("telegram_bot_not_available");
                 const editStartedAt = Date.now();
+                const queuedRevision = msg.journal_revision;
+                const fallbackRevision = createHash("sha256")
+                  .update([
+                    audit.eventId ?? audit.flowId,
+                    String(audit.queuedAtMs ?? editStartedAt),
+                    msg.text,
+                  ].join(":"))
+                  .digest()
+                  .readUInt32BE(0);
+                const editRevision = Number.isInteger(queuedRevision)
+                  && queuedRevision !== undefined
+                  && queuedRevision > 0
+                  && queuedRevision <= 4_294_967_295
+                  ? queuedRevision
+                  : Math.max(1, fallbackRevision);
+                await journalMessage({
+                  messageKey: `telegram:${telegramChatId}:${msg.edit_message_id}`,
+                  flowId: audit.flowId,
+                  direction: "outbound",
+                  eventType: "outbound.requested",
+                  producer: audit.producer,
+                  originSystemId: audit.originSystemId,
+                  sourceEventId: audit.eventId,
+                  route: "redis-outbound-edit",
+                  classification: "action",
+                  reason: "deliver.queued-edit",
+                  telegramChatId,
+                  telegramMessageId: msg.edit_message_id,
+                  revision: editRevision,
+                  text: msg.text,
+                  transportText: msg.text,
+                  deliveryState: "requested",
+                  metadata: {
+                    operation: "edit",
+                    revisionSource: queuedRevision ? "sourceEventId" : "legacy-hash",
+                  },
+                });
                 try {
                   await tgBot.api.editMessageText(telegramChatId, msg.edit_message_id, msg.text, {
                     parse_mode: "HTML",
                     reply_markup: msg.remove_keyboard ? { inline_keyboard: [] } : undefined,
+                  });
+                  await rememberTelegramMessageFlow(telegramChatId, msg.edit_message_id, audit.flowId);
+                  await journalMessage({
+                    messageKey: `telegram:${telegramChatId}:${msg.edit_message_id}`,
+                    flowId: audit.flowId,
+                    direction: "outbound",
+                    eventType: "delivery.confirmed",
+                    producer: audit.producer,
+                    originSystemId: audit.originSystemId,
+                    sourceEventId: audit.eventId,
+                    route: "redis-outbound-edit",
+                    classification: "action",
+                    reason: "deliver.queued-edit",
+                    telegramChatId,
+                    telegramMessageId: msg.edit_message_id,
+                    revision: editRevision,
+                    text: msg.text,
+                    transportText: msg.text,
+                    deliveryState: "confirmed",
+                    metadata: {
+                      operation: "edit",
+                      revisionSource: queuedRevision ? "sourceEventId" : "legacy-hash",
+                    },
                   });
                   await emitGatewayOtel({
                     level: "info",
@@ -5132,6 +5219,29 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
                     },
                   });
                 } catch (error) {
+                  await journalMessage({
+                    messageKey: `telegram:${telegramChatId}:${msg.edit_message_id}`,
+                    flowId: audit.flowId,
+                    direction: "outbound",
+                    eventType: "delivery.failed",
+                    producer: audit.producer,
+                    originSystemId: audit.originSystemId,
+                    sourceEventId: audit.eventId,
+                    route: "redis-outbound-edit",
+                    classification: "action",
+                    reason: "deliver.queued-edit",
+                    telegramChatId,
+                    telegramMessageId: msg.edit_message_id,
+                    revision: editRevision,
+                    text: msg.text,
+                    transportText: msg.text,
+                    deliveryState: "failed",
+                    errorCode: summarizeChannelError(error),
+                    metadata: {
+                      operation: "edit",
+                      revisionSource: queuedRevision ? "sourceEventId" : "legacy-hash",
+                    },
+                  });
                   await emitGatewayOtel({
                     level: "error",
                     component: "telegram-channel",

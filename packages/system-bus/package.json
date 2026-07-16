@@ -21,6 +21,7 @@
     "@joelclaw/inference-router": "workspace:*",
     "@joelclaw/mdx-pipeline": "workspace:^",
     "@joelclaw/memory": "workspace:*",
+    "@joelclaw/message-journal": "workspace:*",
     "@joelclaw/queue": "workspace:*",
     "@joelclaw/telemetry": "workspace:*",
     "@opentelemetry/api": "^1.9.0",

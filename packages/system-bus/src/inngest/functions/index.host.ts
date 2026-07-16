@@ -102,6 +102,7 @@ import { selfHealingGatewayBridge } from "./self-healing-gateway-bridge";
 import { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
 import { selfHealingInvestigator } from "./self-healing-investigator";
 import { selfHealingRouter } from "./self-healing-router";
+import { signalReminder } from "./signal-reminder";
 import { skillGarden } from "./skill-garden";
 import { slackBackfillBatch, slackChannelBackfill } from "./slack-backfill";
 import { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
@@ -273,6 +274,7 @@ export const hostFunctionDefinitions = [
   sleepModeRequested,
   wakeModeRequested,
   paneSchedule,
+  signalReminder,
   typesenseVaultSyncQueue,
   typesenseVaultSync,
   typesenseBlogSync,

@@ -21,6 +21,10 @@ import {
 } from "@joelclaw/telemetry";
 import type { Bot } from "grammy";
 import {
+  journalMessage,
+  rememberTelegramMessageFlow,
+} from "./message-journal";
+import {
   routeTelegramOutbound,
   type TelegramOutboundPolicyContext,
   type TelegramOutboundRoute,
@@ -75,6 +79,7 @@ type StreamState = {
   initialSendError: unknown;
   policyPromise: Promise<TelegramOutboundRoute> | undefined;
   policyRoute: TelegramOutboundRoute | undefined;
+  requestedJournaled: boolean;
 };
 
 let activeStream: StreamState | undefined;
@@ -113,6 +118,7 @@ export function begin(options: TelegramStreamOptions): void {
     initialSendError: undefined,
     policyPromise: undefined,
     policyRoute: undefined,
+    requestedJournaled: false,
   };
 
   const exemption = state.outboundPolicy?.exemption;
@@ -219,6 +225,30 @@ export async function finish(
     activeStream = undefined;
     return true;
   }
+  if (!state.requestedJournaled) {
+    const journal = streamJournalContext(state, finalText);
+    await journalMessage({
+      messageKey: journal.messageKey,
+      flowId: journal.audit.flowId,
+      direction: "outbound",
+      eventType: "outbound.requested",
+      producer: journal.audit.producer,
+      originSystemId: journal.audit.originSystemId,
+      sourceEventId: journal.audit.eventId,
+      route: journal.audit.route,
+      classification: journal.classification,
+      reason: journal.reason,
+      investigationState: journal.investigationState,
+      telegramChatId: state.chatId,
+      inReplyToMessageId: state.replyTo ?? journal.audit.inReplyToMessageId,
+      occurredAt: new Date(journal.audit.requestedAtMs),
+      text: finalText,
+      transportText: finalText,
+      deliveryState: "requested",
+      metadata: journal.metadata,
+    });
+    state.requestedJournaled = true;
+  }
   if (state.policyRoute?.disposition === "deliver" && !state.initialSendPromise) {
     // finish() can race the async policy decision. Start the accepted initial
     // send now so the caller does not fall through and duplicate the response.
@@ -307,6 +337,30 @@ export async function finish(
       textLength: finalText.length,
       messageCount: state.sentMessageIds.length,
     });
+    const journal = streamJournalContext(state, finalText);
+    const finalTransportText = truncateForTelegram(toHtml(finalText));
+    await rememberTelegramMessageFlow(state.chatId, state.messageId, journal.audit.flowId);
+    await journalMessage({
+      messageKey: journal.messageKey,
+      flowId: journal.audit.flowId,
+      direction: "outbound",
+      eventType: "delivery.confirmed",
+      producer: journal.audit.producer,
+      originSystemId: journal.audit.originSystemId,
+      sourceEventId: journal.audit.eventId,
+      route: journal.audit.route,
+      classification: journal.classification,
+      reason: journal.reason,
+      investigationState: journal.investigationState,
+      telegramChatId: state.chatId,
+      telegramMessageId: state.messageId,
+      inReplyToMessageId: state.replyTo ?? journal.audit.inReplyToMessageId,
+      revision: 2,
+      text: visibleTextFromHtml(finalTransportText),
+      transportText: finalTransportText,
+      deliveryState: "confirmed",
+      metadata: journal.metadata,
+    });
     await emitGatewayOtel({
       level: "info",
       component: "telegram-stream",
@@ -329,6 +383,29 @@ export async function finish(
     // An initial streamed message is already visible. Treat finalization failure
     // as a terminal partial delivery instead of resending the full response and
     // duplicating content in Telegram.
+    const journal = streamJournalContext(state, finalText);
+    await journalMessage({
+      messageKey: journal.messageKey,
+      flowId: journal.audit.flowId,
+      direction: "outbound",
+      eventType: "delivery.partial",
+      producer: journal.audit.producer,
+      originSystemId: journal.audit.originSystemId,
+      sourceEventId: journal.audit.eventId,
+      route: journal.audit.route,
+      classification: journal.classification,
+      reason: journal.reason,
+      investigationState: journal.investigationState,
+      telegramChatId: state.chatId,
+      telegramMessageId: state.messageId,
+      inReplyToMessageId: state.replyTo ?? journal.audit.inReplyToMessageId,
+      revision: 2,
+      text: state.lastEditedText,
+      transportText: state.lastEditedText,
+      deliveryState: "partial",
+      errorCode: summarizeChannelError(error),
+      metadata: journal.metadata,
+    });
     await emitGatewayOtel({
       level: "error",
       component: "telegram-stream",
@@ -403,6 +480,24 @@ function createStreamAudit(state: StreamState, content: string) {
   });
 }
 
+function streamJournalContext(state: StreamState, content: string) {
+  const audit = createStreamAudit(state, content);
+  const route = state.policyRoute;
+  return {
+    audit,
+    messageKey: `telegram:${state.chatId}:${audit.flowId}`,
+    classification: route?.decision.category ?? "unclassified",
+    reason: route?.decision.reason ?? "",
+    investigationState: route?.lifecycleState ?? route?.disposition ?? "",
+    metadata: {
+      streaming: true,
+      policyDisposition: route?.disposition,
+      sourceClassification: state.outboundPolicy?.sourceClassification,
+      sourceReason: state.outboundPolicy?.sourceReason,
+    },
+  };
+}
+
 function sendTyping(state: StreamState): void {
   state.bot.api.sendChatAction(state.chatId, "typing").catch(() => {
     // non-critical
@@ -428,6 +523,17 @@ function toHtml(markdown: string): string {
     // If conversion fails, return escaped plain text
     return markdown.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
+}
+
+function visibleTextFromHtml(html: string): string {
+  return html
+    .replace(/<[^>]*>/gu, "")
+    .replace(/&nbsp;/gu, " ")
+    .replace(/&amp;/gu, "&")
+    .replace(/&lt;/gu, "<")
+    .replace(/&gt;/gu, ">")
+    .replace(/&quot;/gu, "\"")
+    .replace(/&#39;/gu, "'");
 }
 
 /**
@@ -530,18 +636,63 @@ function flushEdit(state: StreamState): void {
       .sendMessage(state.chatId, displayText, {
         ...(state.replyTo ? { reply_parameters: { message_id: state.replyTo } } : {}),
       })
-      .then((msg) => {
+      .then(async (msg) => {
         state.messageId = msg.message_id;
         state.sentMessageIds.push(msg.message_id);
+        const journal = streamJournalContext(state, state.fullText);
+        await rememberTelegramMessageFlow(state.chatId, msg.message_id, journal.audit.flowId);
+        await journalMessage({
+          messageKey: journal.messageKey,
+          flowId: journal.audit.flowId,
+          direction: "outbound",
+          eventType: "delivery.confirmed",
+          producer: journal.audit.producer,
+          originSystemId: journal.audit.originSystemId,
+          sourceEventId: journal.audit.eventId,
+          route: journal.audit.route,
+          classification: journal.classification,
+          reason: journal.reason,
+          investigationState: journal.investigationState,
+          telegramChatId: state.chatId,
+          telegramMessageId: msg.message_id,
+          inReplyToMessageId: state.replyTo ?? journal.audit.inReplyToMessageId,
+          revision: 1,
+          text: displayText,
+          transportText: displayText,
+          deliveryState: "partial",
+          metadata: journal.metadata,
+        });
         console.log("[telegram-stream] initial message sent", { messageId: msg.message_id });
       })
-      .catch((err) => {
+      .catch(async (err) => {
         console.warn("[telegram-stream] initial send failed", {
           error: err instanceof Error ? err.message : String(err),
         });
         // A network failure is ambiguous: Telegram may have accepted the send.
         // Record unknown delivery and do not retry the same visible content.
         state.initialSendError = err;
+        const journal = streamJournalContext(state, state.fullText);
+        await journalMessage({
+          messageKey: journal.messageKey,
+          flowId: journal.audit.flowId,
+          direction: "outbound",
+          eventType: "delivery.unknown",
+          producer: journal.audit.producer,
+          originSystemId: journal.audit.originSystemId,
+          sourceEventId: journal.audit.eventId,
+          route: journal.audit.route,
+          classification: journal.classification,
+          reason: journal.reason,
+          investigationState: journal.investigationState,
+          telegramChatId: state.chatId,
+          inReplyToMessageId: state.replyTo ?? journal.audit.inReplyToMessageId,
+          revision: 1,
+          text: state.fullText,
+          transportText: displayText,
+          deliveryState: "unknown",
+          errorCode: summarizeChannelError(err),
+          metadata: journal.metadata,
+        });
       });
   } else {
     // Edit existing message — plain text, no parse_mode during streaming
@@ -564,13 +715,60 @@ async function sendOverflowHtmlChunks(
   state: StreamState,
   chunks: string[],
 ): Promise<void> {
-  for (const chunk of chunks) {
+  for (const [index, chunk] of chunks.entries()) {
     try {
       const msg = await state.bot.api.sendMessage(state.chatId, chunk, {
         parse_mode: "HTML" as const,
       });
       state.sentMessageIds.push(msg.message_id);
+      const journal = streamJournalContext(state, chunk);
+      await rememberTelegramMessageFlow(state.chatId, msg.message_id, journal.audit.flowId);
+      await journalMessage({
+        messageKey: journal.messageKey,
+        flowId: journal.audit.flowId,
+        direction: "outbound",
+        eventType: "delivery.confirmed",
+        producer: journal.audit.producer,
+        originSystemId: journal.audit.originSystemId,
+        sourceEventId: journal.audit.eventId,
+        route: journal.audit.route,
+        classification: journal.classification,
+        reason: journal.reason,
+        investigationState: journal.investigationState,
+        telegramChatId: state.chatId,
+        telegramMessageId: msg.message_id,
+        inReplyToMessageId: state.replyTo ?? journal.audit.inReplyToMessageId,
+        chunkIndex: index + 1,
+        revision: 2,
+        text: visibleTextFromHtml(chunk),
+        transportText: chunk,
+        deliveryState: "confirmed",
+        metadata: journal.metadata,
+      });
     } catch (error) {
+      const journal = streamJournalContext(state, chunk);
+      await journalMessage({
+        messageKey: journal.messageKey,
+        flowId: journal.audit.flowId,
+        direction: "outbound",
+        eventType: "delivery.failed",
+        producer: journal.audit.producer,
+        originSystemId: journal.audit.originSystemId,
+        sourceEventId: journal.audit.eventId,
+        route: journal.audit.route,
+        classification: journal.classification,
+        reason: journal.reason,
+        investigationState: journal.investigationState,
+        telegramChatId: state.chatId,
+        inReplyToMessageId: state.replyTo ?? journal.audit.inReplyToMessageId,
+        chunkIndex: index + 1,
+        revision: 2,
+        text: visibleTextFromHtml(chunk),
+        transportText: chunk,
+        deliveryState: "failed",
+        errorCode: summarizeChannelError(error),
+        metadata: journal.metadata,
+      });
       console.warn("[telegram-stream] overflow chunk failed", {
         error: error instanceof Error ? error.message : String(error),
       });

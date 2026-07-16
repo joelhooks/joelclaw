@@ -1,8 +1,4 @@
 import {
-  createJournalEvent,
-  makeJournalOutbox,
-} from "@joelclaw/message-journal";
-import {
   type InvestigationBudgets,
   type OutboundCandidate,
   type PolicyDecision,
@@ -13,8 +9,8 @@ import {
   type ChannelDeliveryAudit,
   emitGatewayOtel,
 } from "@joelclaw/telemetry";
-import { Effect } from "effect";
 import { type ActorRefFrom, createActor } from "xstate";
+import { journalMessage } from "./message-journal";
 
 export const TELEGRAM_SPECIALIZED_UI_SURFACES = [
   "command",
@@ -40,6 +36,8 @@ export type TelegramOutboundExemption =
 
 export type TelegramOutboundPolicyContext = {
   sourceEventType?: string;
+  sourceClassification?: string;
+  sourceReason?: string;
   level?: OutboundCandidate["level"];
   priority?: OutboundCandidate["priority"];
   exemption?: TelegramOutboundExemption;
@@ -120,6 +118,12 @@ export function resolveTelegramOutboundPolicyContext(
   const policySourceEventType = typeof metadata?.policySourceEventType === "string"
     ? metadata.policySourceEventType
     : eventTypes[0];
+  const sourceClassification = typeof metadata?.signalClassification === "string"
+    ? metadata.signalClassification
+    : undefined;
+  const sourceReason = typeof metadata?.signalReason === "string"
+    ? metadata.signalReason
+    : undefined;
   const trustedTelegramChatId = metadata?.telegramChatId;
   const trustedTelegramMessageId = metadata?.telegramMessageId;
   const isTrustedTelegramInbound = metadata?.trustedTelegramInbound === true
@@ -135,6 +139,8 @@ export function resolveTelegramOutboundPolicyContext(
       : source
         ? { sourceEventType: source }
         : {}),
+    ...(sourceClassification ? { sourceClassification } : {}),
+    ...(sourceReason ? { sourceReason } : {}),
     ...(priority ? { priority } : {}),
     ...(level ? { level } : {}),
     ...(isTrustedTelegramInbound
@@ -268,7 +274,7 @@ async function journalSuppression(
   input: RouteInput,
   decision: PolicyDecision,
 ): Promise<void> {
-  const row = createJournalEvent({
+  await journalMessage({
     messageKey: `telegram:${input.chatId}:${input.audit.flowId}`,
     flowId: input.audit.flowId,
     direction: "outbound",
@@ -287,8 +293,12 @@ async function journalSuppression(
     text: input.content,
     transportText: input.transportText ?? input.content,
     deliveryState: "suppressed",
+    metadata: {
+      sourceClassification: input.policy?.sourceClassification,
+      sourceReason: input.policy?.sourceReason,
+      policyDisposition: decision.disposition,
+    },
   });
-  await Effect.runPromise(makeJournalOutbox().enqueue(row));
 }
 
 const defaultDependencies: PolicyRuntimeDependencies = {
