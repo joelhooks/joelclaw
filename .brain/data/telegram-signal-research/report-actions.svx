@@ -1,0 +1,275 @@
+---
+title: "Telegram signal research: actions"
+type: "reference"
+status: "done"
+created_at: "2026-07-15"
+privacy: "private"
+tags:
+  - research
+  - telegram
+---
+
+# DONE — source-owned action adapters + Telegram controls
+
+## Bottom line
+
+Telegram has solid inline-keyboard plumbing, but the generic callback path is **not trustworthy enough for `Done`**.
+
+It currently removes buttons and marks the callback complete when Inngest merely accepts the event, before the source mutation finishes:
+
+- dispatch: `packages/gateway/src/channels/telegram.ts:1621-1637`
+- removes keyboard: `packages/gateway/src/channels/telegram.ts:1641-1644`
+- marks complete: `packages/gateway/src/channels/telegram.ts:1656`
+- actual worker: `packages/system-bus/src/inngest/functions/telegram-callback.ts:47-288`
+
+Worse, the automatic buttons in `packages/gateway/src/outbound/format.ts:8-34` emit actions such as `restart:worker`, `email:archive`, `loop:rerun`, and `memory:approve`. None has a matching in-tree generic handler. `memory:approve` also lacks the proposal ID required by `telegram-callback.ts:9,55-148`.
+
+Those buttons look functional but aren’t. Don’t build source-owned `Done` on that path.
+
+---
+
+## 1. Telegram interaction capability
+
+### Core keyboard sending
+
+`InlineButton` already supports either callback data or a URL:
+
+- `packages/gateway/src/channels/telegram.ts:72-82`
+- Telegram’s 64-byte callback limit is documented at line 74.
+- `sendTelegramMessage()` converts buttons into `inline_keyboard`: `packages/gateway/src/channels/telegram.ts:1968-2007`
+- The keyboard is attached to the final message chunk: `packages/gateway/src/channels/telegram.ts:2048-2051`
+
+Therefore **Open source works today** as a URL button. It needs no callback handler.
+
+Structured outbound envelopes can carry buttons:
+
+- `packages/gateway/src/outbound/envelope.ts:3-15`
+- routing merges explicit and inferred buttons: `packages/gateway/src/outbound/router.ts:145-166`
+- registered Telegram channel sends them: `packages/gateway/src/daemon.ts:2164-2207`
+
+Inngest producers can also send raw keyboards through `gateway/send.message`:
+
+- event contract: `packages/system-bus/src/inngest/client.ts:1214-1228`
+- queue envelope: `packages/system-bus/src/lib/channel-delivery-audit.ts:6-18`
+- Redis delivery: `packages/system-bus/src/inngest/functions/gateway-send-message.ts:20-69`
+- daemon maps `callback_data` back to buttons: `packages/gateway/src/daemon.ts:5145-5154`
+
+### Callback routing
+
+The generic handler is `packages/gateway/src/channels/telegram.ts:1366-1667`.
+
+Routing order:
+
+1. **Reply Grants** handled directly in the Telegram channel: `telegram.ts:1373-1500`.
+2. `pitch:`, `mcq:`, `worktree:`, and `cmd:` are delegated to dedicated Grammy handlers: `telegram.ts:1506-1510`.
+3. Dynamically registered prefixes, currently `restate:`, publish to Redis: `telegram.ts:1515-1595`.
+4. Everything else emits `telegram/callback.received` to Inngest: `telegram.ts:1610-1637`.
+
+The system-bus callback worker only understands:
+
+- memory approve/reject with a proposal ID
+- ADR pitch approve/reject
+- o11y `s4h` snooze
+
+Receipt: `packages/system-bus/src/inngest/functions/telegram-callback.ts:6-10,55-288`.
+
+### Specialized direct API paths
+
+| UI | Builder | Callback handler |
+|---|---|---|
+| Command argument menus | `commands/telegram-handler.ts:199-225` | `commands/telegram-handler.ts:576-637` |
+| Telegram command menu | `commands/telegram-handler.ts:736-778` | `bot.command()` at `:772` |
+| Pinned status | `commands/telegram-handler.ts:385-437` | Direct Bot API edits; no callback |
+| MCQ | `commands/mcq-adapter.ts:167-207` | `:214-279` |
+| Worktree controls | `commands/worktree.ts:235-242` | `:244-344` |
+| ADR pitch controls | `commands/telegram-handler.ts:666-733` | same handler |
+| Reply Grants | buttons in `channels/slack.ts:200-205` | `channels/telegram.ts:1373-1500` |
+| Restate approvals | `restate/src/channels/telegram.ts:43-111` | Redis route/listener at `:120-204` |
+
+The Restate route is the best callback model today. It registers its prefix, performs the real downstream resolution, then publishes a terminal trace result:
+
+- route registration: `packages/restate/src/channels/telegram.ts:120-142`
+- source resolution: `:163-185`
+- terminal callback result: `:185-199`
+- gateway receives trace results: `packages/gateway/src/channels/telegram.ts:537-604`
+
+Unlike the generic Inngest path, it does not claim completion merely because dispatch succeeded.
+
+---
+
+## 2. Source mutation verdicts
+
+“Conditional” means a mutation primitive exists, but the current code lacks the complete inspect → mutate → readback/idempotency contract required for a truthful `Done` button.
+
+| Source | Existing contract | Verdict now |
+|---|---|---|
+| **Todoist** | App-owned `TaskPort`: `packages/system-bus/src/tasks/port.ts:79-94`. Adapter completion: `tasks/adapters/todoist.ts:258-266`. | **Acknowledge today; conditional Done later.** All writes fail closed unless `TODOIST_AUTOMATION_WRITES_ENABLED=true`: `todoist.ts:119-125`. Completion has transient retries but no already-complete handling or readback. |
+| **Brain `.svx` tasks/notes** | Files are indexed by `packages/cli/src/lib/memory-skill-index.ts:135-151`. No task mutation port exists. | **Acknowledge-only.** Do not edit frontmatter from a callback without revision checking, source-control safety, and a receipt. Open-source URL is fine. |
+| **Inngest run** | Effect service at `packages/cli/src/inngest.ts:148`. `cancelRun` mutation at `:287-303`. | **Acknowledge-only for Done.** Cancelling is not completing. A separate explicit `Cancel job` control could be conditional after current-state readback. Sending another event creates more work and is not resolution. |
+| **Things** | Effect `Tasks` service: `packages/things-cloud/src/client.ts:186`. Completion commit: `:481-497`. | **Conditional Done.** Inspect current state, handle history-index conflicts, and read back before confirming. |
+| **Front** | `EmailPort.archive`: `packages/email/src/port/types.ts:90-137`. Adapter sets status to archived: `adapters/front.ts:225-229`. | **Best conditional Done candidate.** Setting a target state is repeat-safe in shape, but wrap it with source-state/readback checks. Only use when Done semantically means archive the conversation. |
+| **Gmail** | Same `EmailPort`; archive removes `INBOX`: `packages/email/src/adapters/gmail.ts:147-149`. | **Conditional Done.** Label removal is target-state-like, but needs account/thread identity and readback. |
+| **Queue item** | `ack()` XACKs, deletes the stream entry, and removes its priority index: `packages/queue/src/store.ts:202-222`. | **Acknowledge-only.** Queue ack is consumer bookkeeping, not proof the originating human action was resolved. Never expose it as Done. |
+| **Memory/ADR proposals** | Specialized approve/reject events in `telegram-callback.ts:55-231`. | Keep **Approve/Reject**, not Done. Current functions also lack explicit idempotency configuration. |
+| **GitHub / Linear** | GitHub is inbound webhook plumbing; no package-level outbound mutation adapter was found. No in-tree Linear writer was found. | **Acknowledge-only** until a project-authorized adapter exists. |
+
+Todoist deserves extra caution: the durable Brain policy explicitly says it contains Joel’s commitments, not agent work: `.brain/areas/personal-task-system.svx:17-23,63-79,90-94`.
+
+---
+
+## 3. Snooze and reminder machinery
+
+### Existing o11y snooze
+
+There is a narrow four-hour snooze:
+
+- callback action: `packages/system-bus/src/inngest/functions/telegram-callback.ts:6-7`
+- records `triage.snoozed` OTEL: `:235-287`
+- o11y triage queries that OTEL window: `packages/system-bus/src/inngest/functions/o11y-triage.ts:388-403`
+- repeated matching events are suppressed: `:760-785`
+
+This is **not a generic reminder scheduler**. It does not schedule re-delivery. It merely suppresses matching o11y alerts for four hours and fails open when the telemetry query fails.
+
+### Durable scheduling primitive
+
+`joelclaw wake at|in` has the right durable shape:
+
+- duration/date parsing and normalized time: `packages/cli/src/commands/sleep.ts:203-226`
+- emits `pane/schedule.requested` and records a Redis registry entry: `:268-316`
+- cancellation command: `:322-350`
+- function-level idempotency and cancellation: `packages/system-bus/src/inngest/functions/pane-schedule.ts:11-18`
+- durable sleep: `pane-schedule.ts:36`
+- pending schedule removed after firing: `:51-53`
+
+But it only supports `wake`, `spawn`, and `revive`, with corresponding required targets. A Telegram action reminder cannot delegate to it unchanged.
+
+The clean extension is a sibling durable function such as `signal/reminder.scheduled`:
+
+- stable reminder/action ID
+- `idempotency` on that ID
+- `cancelOn` matching that ID
+- `step.sleepUntil()`
+- re-read the originating source before re-delivery
+- suppress if already resolved
+- append the outcome to the private message journal
+
+Restate also demonstrates durable escalating reminders in `packages/restate/src/workflows/deploy-gate.ts:46-60,215-259`, but that workflow is deploy-specific.
+
+Dkron is for recurring pipeline schedules, not one-shot per-message snoozes.
+
+---
+
+## 4. Natural Telegram inbound path
+
+A normal `"what’s up?"` message does not need a command.
+
+1. Grammy owns long polling and authorizes Joel in `packages/gateway/src/channels/telegram.ts:1018-1044`.
+2. Plain text enters `bot.on("message:text")`: `telegram.ts:1125`.
+3. It creates audit metadata, enriches Vault context, and enqueues `telegram:<chatId>`: `telegram.ts:1125-1163`.
+4. All channel turns converge at `enqueueToGateway`: `packages/gateway/src/daemon.ts:4562-4598`.
+5. That seam classifies the conversation thread, injects channel context, calls `enqueue()`, then drains.
+6. Durable command queue dispatches into Pi via `sessionRef.prompt()`: `packages/gateway/src/command-queue.ts:890-1070`, specifically `:1048`.
+7. The daemon’s session adapter maps that call to `session.prompt(..., streamingBehavior: "followUp")`: `packages/gateway/src/daemon.ts:1244-1253`.
+8. Assistant deltas stream to Telegram and final output routes back to the active source: `daemon.ts:3790-4066`.
+9. Telegram’s registered outbound handler sends the final envelope: `daemon.ts:2164-2207`.
+
+**Known on-demand digest seam:** `enqueueToGateway` is the cross-channel seam. Keep Telegram transport dumb. Put digest assembly in a package/service or agent tool, then let natural-language intent invoke it. A Telegram-only interception at `message:text` would bury domain logic in the channel adapter.
+
+---
+
+## 5. Recommended `SourceAdapter` contract
+
+Capabilities should be computed from the inspected item, not hard-coded per provider. A Todoist task may exist but still lack mutation authority; a Brain item may have an open URL but no safe resolver.
+
+```ts
+type SourceRef = {
+  kind: "todoist" | "things" | "brain" | "front" | "gmail" | "inngest";
+  id: string;
+  revision?: string;
+};
+
+type SourceCapabilities = {
+  resolve: {
+    supported: boolean;
+    idempotency: "native" | "read-before-write" | "none";
+    button: "Done" | "Acknowledge";
+  };
+  acknowledge: boolean;
+  snooze: {
+    supported: boolean;
+    mode: "source" | "local-reminder" | "none";
+  };
+  openUrl: boolean;
+};
+
+type ActionContext = {
+  actionId: string;
+  actor: "joel";
+  telegramMessageId: number;
+  requestedAt: string;
+};
+
+type MutationReceipt = {
+  outcome: "applied" | "already-applied";
+  sourceId: string;
+  sourceRevision?: string;
+  openUrl?: string;
+  detail: string;
+};
+
+interface SourceAdapter {
+  inspect(ref: SourceRef): Effect.Effect<SourceItem, SourceError>;
+  capabilities(item: SourceItem): SourceCapabilities;
+
+  resolve(
+    item: SourceItem,
+    context: ActionContext,
+  ): Effect.Effect<MutationReceipt, SourceError>;
+
+  acknowledge(
+    item: SourceItem,
+    context: ActionContext,
+  ): Effect.Effect<MutationReceipt, SourceError>;
+
+  snooze(
+    item: SourceItem,
+    until: Date,
+    context: ActionContext,
+  ): Effect.Effect<MutationReceipt, SourceError>;
+
+  openUrl(
+    item: SourceItem,
+  ): Effect.Effect<Option.Option<string>, SourceError>;
+}
+```
+
+Required behavior:
+
+- `acknowledge` updates the signal/message interaction state, never pretends to mutate the source.
+- `resolve` reads first, returns `already-applied` for terminal state, mutates once, then reads back.
+- Retries only happen when the provider operation is proven idempotent.
+- `snooze` uses source-native snooze where available; otherwise creates a durable local reminder.
+- Every operation receives a stable `actionId`.
+- Use opaque callback data such as `act:<uuid>` rather than embedding source IDs. Telegram caps it at 64 bytes.
+- Keep action state in a durable workflow/store; append interaction receipts to ClickHouse.
+- Do not remove buttons or render “Done” until the mutation receipt returns.
+
+### Effect patterns to mimic
+
+- `Tasks extends Effect.Service` with named `Effect.fn` operations: `packages/things-cloud/src/client.ts:186-189,481-497`
+- `Inngest extends Effect.Service`, separating reads, send, and cancellation: `packages/cli/src/inngest.ts:148-167,287-303`
+- Application-owned interfaces with provider adapters: `TaskPort` and `EmailPort`.
+
+Put the heavy adapter registry in a standalone `@joelclaw/*` package. Gateway should remain the thin composition root.
+
+## Sharp next move
+
+First fix callback truth, not button styling:
+
+1. Add opaque action IDs and a durable action registry.
+2. Leave buttons pending until downstream readback succeeds.
+3. Implement one source adapter end-to-end, probably Todoist or Front.
+4. Everything else defaults to `Acknowledge`.
+5. Delete or disable the unsupported automatic buttons in `packages/gateway/src/outbound/format.ts`.
+
+**Repo remained clean. No edits, tests, commits, or pushes.**

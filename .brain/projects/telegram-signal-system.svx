@@ -1,0 +1,160 @@
+---
+title: "Telegram Signal System"
+type: "project"
+status: "active"
+created_at: "2026-07-15"
+privacy: "private"
+tags:
+  - spec
+  - telegram
+  - gateway
+---
+
+# Telegram Signal System
+
+Spec synthesized from [Telegram signal system handoff](telegram-signal-system-handoff.svx), the deployed [Telegram flow audit](../tasks/telegram-flow-audit.svx), and three read-only research passes over the current code (2026-07-15). Source-backed claims carry file:line receipts; agent judgment is marked as recommendation.
+
+## Problem
+
+Telegram is Joel's primary mobile surface, but it behaves like an infrastructure log sink. The 24-hour audit found 77 outbound messages: 60 were system noise or no-action updates, 12 were useful signals, 3 were audit canaries, 2 were duplicate urgent CLI notifications. The concrete anti-pattern: a launchd probe (`infra/launchd/com.joel.verify-voice.plist`, every 1,800s) fails and pages Joel **twice** — a Telnyx call/SMS (`infra/voice-agent/verify-voice.sh:167`) and a raw `verify-voice FAILED: ...` Telegram message via `joelclaw notify send --priority urgent` (`verify-voice.sh:168`) — with zero investigation in between.
+
+The structural cause, confirmed by the producer audit: there is **no outbound classification anywhere**. The `gateway/send.message` contract has no priority or classification field (`packages/system-bus/src/inngest/client.ts:1214-1228`); CLI `--priority high|urgent` maps straight to `immediateTelegram: true` (`packages/sdk/src/capabilities/adapters/gateway-redis.ts:153-157`); and at least eight producers (VIP briefs, content review, Restate deploy gates, Talon SOS, restate-lab approvals) bypass the gateway entirely with their own Bot API clients and no `flowId` or delivery audit.
+
+## Desired outcome
+
+Telegram carries only five message kinds — high-quality memories, Joel-owned actionable items, quality reminders, verified immediate escalations, and good-news recovery receipts — in text-message-with-a-homie voice. Infra signals pass through a bounded investigation lifecycle before anything reaches Joel. Every message is cheap to explain: `joelclaw messages audit --since 24h` and `joelclaw messages trace <id>` answer "why did I get this?" without ClickHouse archaeology.
+
+### Operator workflows
+
+- Joel gets at most one compact morning digest, only when something qualifies. No "everything is fine" messages.
+- Joel asks "what's up?" / "anything I need to handle?" / "give me the digest" in plain language and gets the digest on demand. No command syntax.
+- An action message has working controls: `Done` (only when the source adapter has a safe mutation contract) or `Acknowledge`, plus `Snooze` and `Open source`. Never fake completion.
+- An infra failure wakes an investigation agent with bounded time/retries/spend/mutation-authority/scope. Joel is paged only on verified impact, failed safe recovery, or a concrete Joel-owned decision/access need — per the escalation criteria settled in the handoff.
+- Routine recoveries land in the digest; user-impacting recoveries may produce an immediate verified good-news receipt (what broke, what fixed it, proof of health, remaining risk).
+
+## Implementation decisions
+
+### 1. Classification choke point
+
+Insert a required `TelegramOutboundPolicy` immediately after `resolveSendInput()` in `packages/gateway/src/channels/telegram.ts:1968-1976`, with companion enforcement in `sendTelegramMedia()` and `telegram-stream.ts`. That point has final content, destination, reply context, and audit lineage, and can classify into **deliver / investigate / digest / suppress** before the Bot API call.
+
+This is not airtight until the bypass producers are migrated behind the gateway or explicitly marked as specialized UI (command menus, MCQ, pinned status, worktree controls). **Bot-token custody is the real enforcement boundary**: `packages/system-bus/src/lib/telegram.ts:46-88`, `packages/restate/src/channels/telegram.ts:78-114`, `packages/restate-lab/src/channels/telegram.ts:35-69`, and `infra/talon/src/escalation.rs:367-390` each hold their own Bot API client today. Migration of those producers is in scope; until it completes, the noise-rate guard measures only the governed path.
+
+Known repair, same seam: `gateway.notify(..., { priority: "urgent" })` does not map priority to `fatal`/`immediateTelegram` — that mapping exists only in the CLI and Restate adapters. Producers relayed through the console path lose attribution to the generic `gateway-console-forward`. Both get fixed by requiring a classification + producer identity on the policy input rather than trusting upstream flags.
+
+### 2. Signal lifecycle (XState v5)
+
+One explicit state machine per signal, replacing today's scattered boolean flags (`immediateTelegram`, cooldowns, quiet-hours checks spread across `daemon.ts`):
+
+```
+detected → classified → { investigating | digest-queued | delivered | suppressed }
+investigating → { resolved → digest-queued | recovery-receipt }
+investigating → { blocked | verified-impact } → escalated → delivered
+delivered → { acknowledged | snoozed → (timer) → detected | done }
+```
+
+Investigation carries explicit budgets (time, retries, spend, mutation authority, scope) as machine context, with deduplication (same-signal collapse under a stable signal identity), cancellation, and escalation transitions modeled as events — not flags. XState v5, per the handoff's settled decision.
+
+The existing `classifyOperatorSignal()` (`packages/gateway/src/operator-relay.ts:370-430`, returns `immediate|batched|ingested|suppressed`) is prior art for the classified step but governs only the Redis event relay lane; the new machine subsumes it.
+
+### 3. Actions and controls
+
+The current generic callback path is not trustworthy for `Done`: it removes the keyboard and marks the callback complete when Inngest merely *accepts* the event (`packages/gateway/src/channels/telegram.ts:1621-1656`), before any source mutation runs. The auto-generated buttons in `packages/gateway/src/outbound/format.ts:8-34` (`restart:worker`, `email:archive`, `loop:rerun`, `memory:approve`) have **no matching in-tree handlers** — they look functional and are not. Disable them.
+
+Decisions:
+
+- **Opaque action IDs + durable action registry.** Callback data is `act:<uuid>` (Telegram caps callback data at 64 bytes — `telegram.ts:74`); action state lives in a durable store, and buttons stay pending until a downstream mutation receipt returns. The Restate callback route (`packages/restate/src/channels/telegram.ts:120-199`) is the model: register prefix, resolve at the source, publish a terminal trace result — it never claims completion on dispatch.
+- **`SourceAdapter` contract** (Effect service, in a standalone `@joelclaw/*` package; gateway stays a thin composition root):
+
+```ts
+interface SourceAdapter {
+  inspect(ref: SourceRef): Effect.Effect<SourceItem, SourceError>
+  capabilities(item: SourceItem): SourceCapabilities  // computed per item, not per provider
+  resolve(item, ctx): Effect.Effect<MutationReceipt, SourceError>     // read → mutate once → readback; "already-applied" is a success
+  acknowledge(item, ctx): Effect.Effect<MutationReceipt, SourceError> // updates interaction state only, never touches the source
+  snooze(item, until, ctx): Effect.Effect<MutationReceipt, SourceError>
+  openUrl(item): Effect.Effect<Option.Option<string>, SourceError>
+}
+```
+
+- **Per-source verdicts today** (from the adapter research): Front archive is the best conditional-`Done` candidate (`packages/email/src/adapters/front.ts:225-229`, target-state write); Things is conditional (`packages/things-cloud/src/client.ts:481-497`, needs readback); Todoist is `Acknowledge` until the write gate + readback exist (writes fail closed behind `TODOIST_AUTOMATION_WRITES_ENABLED`, `packages/system-bus/src/tasks/adapters/todoist.ts:119-125`) — and Todoist holds Joel's commitments, not agent work (`.brain/areas/personal-task-system.svx`). Brain notes, Inngest runs, queue items, GitHub/Linear: `Acknowledge`-only. Queue `ack()` is consumer bookkeeping, never `Done`.
+- **Snooze** extends the `pane-schedule` pattern (`packages/system-bus/src/inngest/functions/pane-schedule.ts:11-53`) as a sibling durable function (`signal/reminder.scheduled`): idempotency on the action ID, `cancelOn`, `step.sleepUntil()`, re-inspect the source before re-delivery, suppress if already resolved. The existing o11y `s4h` snooze is suppression-only, not a scheduler (`telegram-callback.ts:235-287`) — do not build on it.
+- **`Open source`** works today as a URL button (`telegram.ts:72-82`), no callback needed. Brain links must be exact, HTTP-200-verified `https://brain.joelclaw.com/...` URLs.
+
+### 4. Digest and on-demand path
+
+Digest assembly is a package/service (or agent tool) invoked from the agent loop — **not** a Telegram-channel interception. The cross-channel seam is `enqueueToGateway` (`packages/gateway/src/daemon.ts:4562-4598`); natural-language requests already flow inbound text → command queue → pi session (`telegram.ts:1125-1163` → `command-queue.ts:890-1070`), so "give me the digest" is agent intent invoking the digest tool, keeping the transport dumb.
+
+Digest content contract (settled): at most one high-quality memory (with original source, when it happened, why it matters now, connection to current work/person/commitment), important agent wins/recovery receipts, Joel-owned actions/reminders. Send only when something qualifies. Inferred reminders need concrete source evidence, present relevance, no invented deadlines, and Dismiss/Snooze/Open source controls.
+
+### 5. Private message journal (ClickHouse)
+
+Joel explicitly approved indefinite exact-text retention in a dedicated, access-restricted ClickHouse journal. This supersedes the body-free rule from [Telegram flow audit](../tasks/telegram-flow-audit.svx) **for the journal only**; general OTEL events stay body-free (SHA-256 + counts, `packages/telemetry/src/channel-audit.ts`).
+
+Current state: ClickHouse runs on three-body (`joelclaw-clickhouse-proof`, `24.12-alpine`, LAN-bound only — `three-body:/volume1/home/joel/clickhouse-proof/docker-compose.yml`; the `k8s/clickhouse.yaml` manifest is a dead phase-one artifact with no live pods). The CLI reaches it through the `clickhouse-otel` capability adapter resolving `~/.config/system-bus.env` (`packages/sdk/src/capabilities/adapters/clickhouse-otel.ts:134-143`), verified live with `joelclaw otel search`.
+
+Decisions:
+
+- **Same instance, dedicated `joelclaw_private` database, dedicated writer.** A new `@joelclaw/message-journal` package owns the typed event schema, ClickHouse writer, query client, and a private `0600` outbox at `~/.joelclaw/spool/message-journal` (mirroring the OTEL outbox pattern). Journal writes are fail-open for delivery, but exact text must reach ClickHouse or the local outbox. Write failures emit body-free `message_journal.write.failed` OTEL receipts.
+- **Never route exact text through `emitGatewayOtel()`** — bodies would leak into OTEL `search_text`, the optional Typesense projection, Convex/Sentry high-severity paths, and the 180-day general table (`packages/system-bus/src/observability/clickhouse-store.ts:142-163`, `store.ts:626-704`).
+- **Append-only lifecycle events, no row mutation, no TTL.** `ReplacingMergeTree(recorded_at)`, partitioned by month, ordered by `(channel, event_date, occurred_at, direction, flow_id, journal_event_id)`, bloom-filter indexes on `flow_id`/`message_key`/`telegram_message_id`, ZSTD on text columns. `journal_event_id` is deterministic (`flowId + direction + eventType + messageId + chunkIndex + attempt + revision + callbackQueryId`) so outbox retries dedupe under `FINAL`; `attempt` and `revision` stay explicit so real retries/edits are not mistaken for duplicates. Rows carry both `text` (user-visible) and `transport_text` (exact Bot API payload), plus classification, reason, investigation state, delivery state, and interaction outcome. Full DDL: [journal research receipt](../data/telegram-signal-research/report-journal.svx).
+- **Explicit migrations with an admin identity** — do not copy the existing lazy `CREATE TABLE IF NOT EXISTS` + `ALTER ... ADD COLUMN` pattern, which already left `otel_events` on the wrong engine (declared `ReplacingMergeTree`, live table still plain `MergeTree`).
+- **Access control that is real, not decorative.** Three scoped identities: migration admin (DDL on `joelclaw_private`), journal writer (`INSERT` only), journal reader (`SELECT` only), all restricted to Flagg/NAS-local addresses. A separate database is fake security while the `default` user keeps `*.*` grants — narrowing `default` is part of this change. ClickHouse never gets exposed on the tailnet; remote operators SSH through Flagg.
+- **Capture anchors** (each records a lifecycle event with `flowId` in scope): inbound raw text *before* Vault enrichment (`packages/gateway/src/channels/telegram.ts:1125-1176`); `delivery.queued` at `gateway-send-message.ts:27-55`; outbound requested/confirmed/failed at the Telegram adapter (`telegram.ts:1968-2166`); streaming initial partial + final text (`telegram-stream.ts:194-511`); queue-drain edits (`daemon.ts:5109-5139`); suppressions with policy reason (`daemon.ts:2176-2184`); button interactions via **one wrapper around the whole callback handler** (`telegram.ts:1366-1667`) rather than per-branch journaling, since `replygrant:*` branches return early.
+- **Propagate classification into the journal.** Per-event triage reasons currently exist briefly in `packages/gateway/src/channels/redis.ts:722-742` and are discarded (only aggregate counts survive) — the classifier's decision and reason become part of the message audit context so `messages audit` can explain suppression.
+
+### 6. Operator CLI
+
+Domain is `messages`, not `telegram` (channel-agnostic by design):
+
+```sh
+joelclaw messages audit --since 24h [--channel telegram] [--category ...] [--direction ...]
+joelclaw messages trace <message-id-or-flow-id>
+```
+
+`@effect/cli` with HATEOAS JSON envelopes, following the existing `joelclaw otel search` command pattern. Audit output explains exact text, source, category, importance, why sent or suppressed, investigation result, delivery confirmation, and button outcomes.
+
+## Testing decisions
+
+- **External behavior first.** The contract under test: given a signal of category X, the system delivers / investigates / digests / suppresses per the content contract, and the journal + OTEL explain the decision.
+- **Highest seams:** the `TelegramOutboundPolicy` classifier (pure decision function — fixture signals in, routing decision out), the XState lifecycle machine (actor tests over budgets/dedup/cancellation/escalation transitions), the `SourceAdapter` contract (per-adapter contract test: inspect → resolve → readback, `already-applied` idempotency), and the journal write/query pair (audit and trace answer correctly for a fixture flow).
+- **Prior art to extend:** the flow-audit test suite (fingerprinting, queue-envelope propagation, telemetry privacy) and existing channel tests (`packages/gateway/src/channels/telegram.test.ts`).
+- **Noise-rate guard:** a measured regression check over journal data — share of non-actionable outbound messages in a window. Proposed initial target: under 10% (awaiting Joel's confirmation). Canaries and Joel-initiated conversation replies are excluded from the denominator.
+- **First prototype is touchable, fixture-driven:** a representative digest in real Telegram (memory + recovery receipt + reminder + controls) backed by fixtures, before any live mutations are wired. Buttons in the prototype use the durable action registry with a fixture adapter, so callback truth is exercised from day one.
+
+## Non-goals
+
+- No changes to specialized Telegram UI surfaces (command menus, MCQ, pinned status, worktree controls) beyond marking them as out-of-contract paths.
+- No general reminder system beyond message-level snooze/reminders.
+- Todoist remains Joel's commitment surface; agent tasks do not flow into it.
+- The outbound queue claim/ack rework stays a separate task: [Make Telegram outbound queue recoverable](../tasks/telegram-outbound-queue-claim-ack.svx). This spec depends on its delivery receipts but does not implement it.
+- No second observability database: the journal links to OTEL by `flowId`; OTEL remains the canonical body-free audit store.
+
+## Source receipts
+
+- [Telegram signal system handoff](telegram-signal-system-handoff.svx) — settled decisions, 24h audit numbers, live gateway state.
+- [Telegram flow audit](../tasks/telegram-flow-audit.svx) — deployed `flowId` correlation, body-free OTEL receipts, terminal Bot API receipts.
+- `skills/telegram/SKILL.md` — three delivery lanes (conversation, `notify send`, `gateway/send.message`).
+- [Producer inventory, choke-point analysis, verify-voice trace](../data/telegram-signal-research/report-producers.svx) — research pass 1.
+- [Callback capability map, mutation verdicts, snooze machinery, inbound seam](../data/telegram-signal-research/report-actions.svx) — research pass 2.
+- [ClickHouse current state, journal DDL, write path, access control](../data/telegram-signal-research/report-journal.svx) — research pass 3 (full DDL lives here).
+
+## Open questions
+
+1. **Finish line confirmation (blocking).** Joel has not yet confirmed the proposed finish line, including the <10% non-actionable target. *Recommendation: accept as written in the handoff; every element is now grounded in code receipts.* Do not start implementation before this answer.
+2. **Bypass-producer migration order.** Eight producers own their own Bot API clients. *Recommendation: migrate Restate deploy-gate and VIP briefs first (highest traffic, action-bearing), leave Talon SOS last — it is the deliberate dead-man escalation path and should keep an independent transport until the investigation lifecycle is proven.*
+3. **verify-voice double-page.** Should the Telnyx call/SMS page survive once probe failures route through investigation? *Recommendation: keep phone escalation only as an outcome of the escalated state, not as a parallel producer-level page.*
+4. **First real `SourceAdapter`.** *Recommendation: Front archive (cleanest target-state semantics) with Todoist second once `TODOIST_AUTOMATION_WRITES_ENABLED` + readback ship.*
+5. **ClickHouse `default` user.** The `default` user has `*.*` grants, making any "restricted" journal database decorative. Narrow `default` and introduce scoped users, or run a second instance? *Recommendation: narrow `default` on the existing instance (smaller operational move), migrating OTEL to scoped users in the same change. If credentials are introduced, pair with secured HTTP or SSH tunnel — current transport is plaintext LAN.*
+
+## Validation plan
+
+1. `bunx tsc --noEmit` and `pnpm biome check packages/ apps/` on every change; CLI rebuild + `joelclaw status` crash test after CLI changes; `publish-system-bus-worker.sh` after system-bus changes.
+2. Fixture digest prototype delivered to real Telegram; Joel touches every control; button state only settles on mutation receipts.
+3. Canary pass: replay a `verify-voice FAILED` fixture and verify it lands in `investigating`, not in Telegram; verify an escalation-qualified fixture pages with a verified-impact message.
+4. `joelclaw messages audit --since 24h` explains every message in the window, including suppressed ones; `messages trace` reconstructs one flow end to end.
+5. Noise-rate guard runs over a real 24-48h window and reports the non-actionable share against the target.
+
+## Tracker mirror plan
+
+None. Brain is canonical. The grill-master effort (`.brain/projects/telegram-signal-system/` with per-step files) is chartered after Joel confirms the finish line, per the handoff's stop rule.

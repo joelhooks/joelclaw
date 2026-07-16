@@ -1,0 +1,539 @@
+---
+title: "Telegram signal research: journal"
+type: "reference"
+status: "done"
+created_at: "2026-07-15"
+privacy: "private"
+tags:
+  - research
+  - telegram
+---
+
+# DONE — ClickHouse message journal research
+
+## 1. Current ClickHouse state
+
+### Live runtime
+
+ClickHouse runs on **three-body**, not Kubernetes.
+
+- Container: `joelclaw-clickhouse-proof`
+- Image: `clickhouse/clickhouse-server:24.12-alpine`
+- Live version: `24.12.6.70`
+- Restart policy: `unless-stopped`
+- HTTP/native ports bound only to the NAS LAN address.
+- Hot data/logs live on NAS NVMe.
+- Backups target NAS HDD.
+
+Receipts:
+
+- `three-body:/volume1/home/joel/clickhouse-proof/docker-compose.yml:3-14`
+- `docs/runbooks/otel-clickhouse-cutover.md:18-31`
+- `k8s/clickhouse.yaml` exists as an old phase-one substrate, but a live Panda query found **no ClickHouse StatefulSet, pod, service, or PVC**.
+
+Current application tables:
+
+| Table | Engine | Rows |
+|---|---|---:|
+| `joelclaw.otel_events` | `MergeTree` | 381,745 |
+| `joelclaw.otel_events_restore` | `MergeTree` | 20,001 |
+
+The live `otel_events` table:
+
+- Partitions by month.
+- Orders by `(source, component, action, timestamp)`.
+- Deletes after 180 days.
+- Is **not idempotency-safe** because it is still plain `MergeTree`.
+
+The code now declares `ReplacingMergeTree(received_at)`, but `CREATE TABLE IF NOT EXISTS` cannot replace the existing engine/order key:
+
+- `packages/system-bus/src/observability/clickhouse-store.ts:77-120`
+- `scripts/backfill-otel-clickhouse.ts:96-121`
+
+### Schema creation and migration
+
+There is no numbered migration system.
+
+The worker lazily:
+
+1. Creates the database/table on first write.
+2. Runs a fixed list of `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+3. Caches schema readiness in process memory.
+
+Receipts:
+
+- Config: `packages/system-bus/src/observability/clickhouse-store.ts:22-31`
+- Creation: `packages/system-bus/src/observability/clickhouse-store.ts:77-108`
+- Column additions: `packages/system-bus/src/observability/clickhouse-store.ts:110-120`
+- Insert: `packages/system-bus/src/observability/clickhouse-store.ts:166-188`
+
+**Recommendation:** do not copy this lazy-admin pattern for the private journal. Apply explicit migrations with an admin identity. Runtime writers should only have `INSERT`.
+
+---
+
+## 2. How workers and CLI reach ClickHouse
+
+### System-bus write path
+
+Flagg currently resolves:
+
+```txt
+OTEL_STORE=clickhouse
+CLICKHOUSE_URL=http://192.168.1.163:8123
+CLICKHOUSE_DATABASE=joelclaw
+CLICKHOUSE_OTEL_TABLE=otel_events
+OTEL_CLICKHOUSE_TTL_DAYS=180
+OTEL_OUTBOX_DIR=~/.joelclaw/spool/otel
+```
+
+The host worker loads `~/.config/system-bus.env`:
+
+- `packages/system-bus/start.sh:46-51`
+- `infra/worker-supervisor/src/main.rs:621-626`
+
+Then `storeOtelEvent()` writes ClickHouse first and queues failures to the local outbox:
+
+- `packages/system-bus/src/observability/store.ts:578-704`
+- `packages/system-bus/src/observability/otel-outbox.ts:46-119`
+- Outbox files are mode `0600`: `otel-outbox.ts:55`
+
+### `joelclaw otel search`
+
+The command flow is:
+
+1. `packages/cli/src/commands/otel.ts:242-310`
+2. `executeCapabilityCommand()` at `packages/cli/src/capabilities/runtime.ts:32`
+3. Default adapter `clickhouse-otel`: `packages/cli/src/capabilities/config.ts:31-33`
+4. Adapter config/query: `packages/sdk/src/capabilities/adapters/clickhouse-otel.ts:134-223`
+5. Search SQL: `clickhouse-otel.ts:394-405`
+
+Configuration precedence:
+
+1. Capability adapter config in `.joelclaw/config.toml`
+2. Process environment
+3. `~/.config/system-bus.env`
+4. `http://localhost:8123` fallback
+
+The env file resolver is here:
+
+- `packages/sdk/src/lib/otel-ingest.ts:6-19`
+- Consumed at `packages/sdk/src/capabilities/adapters/clickhouse-otel.ts:134-143`
+
+Live proof succeeded:
+
+```txt
+joelclaw otel search telegram.delivery --hours 24 --limit 1
+```
+
+It returned 54 matching events using `adapter: clickhouse-otel`.
+
+CLI registration pattern:
+
+- Import: `packages/cli/src/cli.ts:35`
+- Root discovery output: `packages/cli/src/cli.ts:215`
+- Root subcommand registration: `packages/cli/src/cli.ts:345`
+- OTEL family: `packages/cli/src/commands/otel.ts:466-489`
+- HATEOAS envelope helpers: `packages/cli/src/response.ts`
+
+---
+
+## 3. Proposed journal DDL
+
+Append lifecycle events. Do not mutate message rows with `ALTER UPDATE`.
+
+```sql
+CREATE DATABASE IF NOT EXISTS joelclaw_private;
+
+CREATE TABLE IF NOT EXISTS joelclaw_private.message_journal_events
+(
+    schema_version UInt16 DEFAULT 1,
+
+    -- Stable, deterministic identity for one lifecycle transition.
+    journal_event_id String,
+    message_key String,
+    flow_id String,
+
+    channel LowCardinality(String) DEFAULT 'telegram',
+    direction LowCardinality(String),       -- inbound | outbound | interaction
+    event_type LowCardinality(String),      -- message.received, delivery.confirmed, etc.
+    content_kind LowCardinality(String) DEFAULT 'text',
+
+    occurred_at DateTime64(3, 'UTC'),
+    event_date Date MATERIALIZED toDate(occurred_at),
+    recorded_at DateTime64(3, 'UTC') DEFAULT now64(3),
+
+    producer LowCardinality(String),
+    origin_system_id LowCardinality(String),
+    source_event_id Nullable(String),
+    source_ref String DEFAULT '',
+    route String DEFAULT '',
+
+    classification LowCardinality(String) DEFAULT 'unclassified',
+    reason String DEFAULT '',
+    investigation_state LowCardinality(String) DEFAULT '',
+    investigation_result String DEFAULT '',
+
+    telegram_chat_id Int64,
+    telegram_message_id Nullable(Int64),
+    telegram_update_id Nullable(Int64),
+    in_reply_to_message_id Nullable(Int64),
+
+    callback_query_id Nullable(String),
+    interaction_action String DEFAULT '',
+    interaction_payload String DEFAULT '',
+    interaction_outcome LowCardinality(String) DEFAULT '',
+
+    chunk_index Nullable(UInt16),
+    revision UInt32 DEFAULT 1,
+    attempt UInt16 DEFAULT 1,
+
+    -- `text`: canonical user-visible text.
+    -- `transport_text`: exact Bot API payload, including HTML markup when used.
+    text String DEFAULT '' CODEC(ZSTD(3)),
+    transport_text String DEFAULT '' CODEC(ZSTD(3)),
+    content_hash String DEFAULT '',
+    content_chars UInt32 DEFAULT 0,
+    content_bytes UInt32 DEFAULT 0,
+
+    delivery_state LowCardinality(String) DEFAULT '',
+    error_code LowCardinality(String) DEFAULT '',
+    metadata_json String DEFAULT '{}' CODEC(ZSTD(3)),
+
+    INDEX idx_flow flow_id TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX idx_message_key message_key TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX idx_telegram_message
+        ifNull(telegram_message_id, toInt64(-1))
+        TYPE bloom_filter(0.01) GRANULARITY 1
+)
+ENGINE = ReplacingMergeTree(recorded_at)
+PARTITION BY toYYYYMM(occurred_at)
+ORDER BY (
+    channel,
+    event_date,
+    occurred_at,
+    direction,
+    flow_id,
+    journal_event_id
+);
+```
+
+There is deliberately **no TTL**.
+
+### Query shape
+
+Audit:
+
+```sql
+SELECT ...
+FROM joelclaw_private.message_journal_events FINAL
+WHERE channel = 'telegram'
+  AND occurred_at >= now() - INTERVAL 24 HOUR
+ORDER BY occurred_at DESC
+LIMIT 100;
+```
+
+Trace:
+
+1. If lookup is numeric, resolve `telegram_message_id` to `flow_id`.
+2. Query the complete flow ordered ascending.
+3. If one numeric ID exists in multiple chats, return candidates or require `--chat`.
+
+```sql
+SELECT ...
+FROM joelclaw_private.message_journal_events FINAL
+WHERE flow_id = {flowId:String}
+ORDER BY occurred_at, journal_event_id;
+```
+
+Time ordering serves audit directly. Bloom indexes keep indefinite trace queries reasonable. At Telegram’s current volume, projections would be needless duplication.
+
+### Deduplication
+
+- Generate `journal_event_id` deterministically from:
+  `flowId + direction + eventType + messageId + chunkIndex + attempt + revision + callbackQueryId`.
+- Create `occurred_at` once and preserve it in the outbox.
+- Retry the exact same row.
+- Use `ReplacingMergeTree(recorded_at)` and `FINAL` for operator queries.
+- Keep `attempt` and `revision` explicit so a real retry/edit is not mistaken for a duplicate insert.
+
+Do not rely on ordinary `MergeTree` insert deduplication.
+
+---
+
+## 4. Access control: what is real today
+
+Current live restrictions:
+
+- Docker publishes ClickHouse only on the NAS LAN address.
+- The ClickHouse user network allowlist contains only:
+  - localhost
+  - Flagg’s LAN address
+  - three-body’s LAN address
+- `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD` are unset in Flagg’s app config.
+- Queries succeed as `default`.
+- `default` currently has broad `*.*` administration privileges.
+- No ClickHouse roles exist.
+
+Receipts:
+
+- `three-body:/volume1/home/joel/clickhouse-proof/users.d/proof-user.xml:5-11`
+- Live `system.users` and `SHOW GRANTS` queries.
+
+### Recommended restriction
+
+Use the same instance and LAN binding, but create three identities:
+
+| Identity | Rights |
+|---|---|
+| migration admin | DDL on `joelclaw_private` |
+| journal writer | `INSERT` only on the journal table |
+| journal reader | `SELECT` only on the journal table |
+
+Restrict all three to Flagg/NAS-local addresses.
+
+**Important:** a separate database alone is fake security while `default` retains `*.*`. Either:
+
+1. Migrate OTEL to scoped OTEL users and narrow `default`, then add journal users; or
+2. Run the journal in a second ClickHouse instance if narrowing `default` is too risky.
+
+Option 1 is the smaller operational move.
+
+Do not expose ClickHouse on the tailnet. Remote operators should SSH through Flagg instead of widening the host allowlist.
+
+Current HTTP transport is plaintext LAN traffic. If password credentials are introduced, secure HTTP or an SSH tunnel should be part of the same change.
+
+---
+
+## 5. Recommended write path
+
+### Use a dedicated writer
+
+Do **not** put exact text into `emitGatewayOtel()` metadata.
+
+That would leak bodies into:
+
+- OTEL `metadata_json`
+- OTEL `search_text`
+- optional Typesense projection
+- high-severity Convex/Sentry paths
+- the existing 180-day general telemetry table
+
+Receipts:
+
+- Search-text construction: `packages/system-bus/src/observability/clickhouse-store.ts:142-163`
+- Multi-store path: `packages/system-bus/src/observability/store.ts:626-704`
+- Gateway fail-open transport: `packages/telemetry/src/emitter.ts:103-151`
+
+Build a dedicated `@joelclaw/message-journal` package with:
+
+- Typed journal event schema.
+- `MessageJournalWriter` interface.
+- ClickHouse writer.
+- Query client.
+- Separate `0600` outbox under `~/.joelclaw/spool/message-journal`.
+- Body-free `message_journal.write.failed` OTEL receipts.
+
+Writes remain fail-open for Telegram delivery, but an exact-text write should first reach either ClickHouse or the private local outbox.
+
+### Capture anchors
+
+#### Inbound text
+
+Raw Telegram text and `flowId` are together before Vault enrichment:
+
+- `packages/gateway/src/channels/telegram.ts:1125-1176`
+
+Record `message.received` here using raw `text`, not the enriched `prompt`.
+
+#### Queued system messages
+
+`gateway/send.message` has exact text and the stable audit envelope before Redis:
+
+- `packages/system-bus/src/inngest/functions/gateway-send-message.ts:27-55`
+- `packages/system-bus/src/lib/channel-delivery-audit.ts:26-56`
+
+Record `delivery.queued` here.
+
+#### Normal outbound text
+
+Logical text, `flowId`, rendered chunks, errors, and Telegram IDs are all available here:
+
+- Entry/audit: `packages/gateway/src/channels/telegram.ts:1968-1977`
+- HTML payload send: `telegram.ts:2048-2057`
+- Plain fallback: `telegram.ts:2115-2123`
+- Terminal confirmation: `telegram.ts:2150-2166`
+
+Store:
+
+- Logical text once at `outbound.requested`.
+- Exact payload/user-visible chunk and returned Telegram ID at `delivery.confirmed`.
+- `failed` or `unknown` state at existing catch boundaries.
+
+#### Streaming responses
+
+Streaming bypasses the normal sender:
+
+- Final logical text/audit: `packages/gateway/src/telegram-stream.ts:194-299`
+- Initial partial send: `telegram-stream.ts:445-467`
+- Final edit: `telegram-stream.ts:247-255`
+- Overflow chunks: `telegram-stream.ts:488-511`
+
+Store the initial visible partial, final visible text, and partial state if finalization fails. Intermediate throttle edits do not need journal rows unless the stream ends partially.
+
+#### Outbound edits and queue drain
+
+- Queue drain: `packages/gateway/src/daemon.ts:4993-5078`
+- Telegram edit: `daemon.ts:5109-5139`
+- Normal queued send: `daemon.ts:5159-5160`
+
+#### Suppression
+
+Capture suppressed exact text and policy reason before returning:
+
+- `packages/gateway/src/daemon.ts:2176-2184`
+
+#### Button interactions
+
+- Callback entry: `packages/gateway/src/channels/telegram.ts:1366-1371`
+- General callback result helper: `telegram.ts:1547-1553`
+
+Record:
+
+1. `interaction.received`
+2. callback data/action
+3. source Telegram message ID
+4. resolved original `flowId`
+5. terminal `completed`, `failed`, `ignored`, `snoozed`, etc.
+
+Special `replygrant:*` branches return before the general trace helper. The implementation needs one wrapper around the entire callback handler, not scattered journaling in every branch.
+
+### Current classification gap
+
+Per-event triage reasons exist briefly:
+
+- `packages/gateway/src/channels/redis.ts:722-742`
+
+But they are discarded and only aggregate counts survive:
+
+- `packages/gateway/src/channels/redis.ts:757-766`
+
+`classification` and `reason` therefore need explicit propagation into the message audit/journal context.
+
+---
+
+## 6. CLI command skeleton
+
+Follow `otel.ts` for capability execution and `video.ts` for a domain-specific trace, but keep query logic in `@joelclaw/message-journal`.
+
+```ts
+import { Args, Command, Options } from "@effect/cli"
+import { Console, Effect } from "effect"
+import {
+  auditMessages,
+  traceMessage,
+} from "@joelclaw/message-journal"
+import { respond, respondError } from "../response"
+
+const sinceOpt = Options.text("since").pipe(
+  Options.withDefault("24h"),
+  Options.withDescription("Lookback duration, for example 24h or 7d"),
+)
+
+const limitOpt = Options.integer("limit").pipe(
+  Options.withDefault(100),
+  Options.withDescription("Maximum journal events"),
+)
+
+const auditCmd = Command.make(
+  "audit",
+  {
+    since: sinceOpt,
+    channel: Options.optional(Options.text("channel")),
+    category: Options.optional(Options.text("category")),
+    direction: Options.optional(Options.text("direction")),
+    limit: limitOpt,
+  },
+  (args) =>
+    Effect.gen(function* () {
+      const result = yield* Effect.tryPromise({
+        try: () => auditMessages(args),
+        catch: (error) => new Error(String(error)),
+      }).pipe(Effect.either)
+
+      if (result._tag === "Left") {
+        yield* Console.log(respondError(
+          "messages audit",
+          result.left.message,
+          "MESSAGE_JOURNAL_QUERY_FAILED",
+          "Check ClickHouse journal access and retry.",
+          [{ command: "joelclaw messages audit --since 1h", description: "Retry a smaller window" }],
+        ))
+        return
+      }
+
+      yield* Console.log(respond(
+        "messages audit",
+        result.right,
+        [{
+          command: "joelclaw messages trace <message-id-or-flow-id>",
+          description: "Trace one message lifecycle",
+        }],
+      ))
+    }),
+).pipe(Command.withDescription("Audit recent private channel messages"))
+
+const lookupArg = Args.text({ name: "message-id-or-flow-id" })
+
+const traceCmd = Command.make(
+  "trace",
+  { lookup: lookupArg },
+  ({ lookup }) =>
+    Effect.tryPromise(() => traceMessage(lookup)).pipe(
+      Effect.flatMap((result) =>
+        Console.log(respond(
+          "messages trace",
+          result,
+          [{
+            command: `joelclaw otel search "${result.flowId}" --hours 24`,
+            description: "Correlate body-free OTEL delivery receipts",
+          }],
+        ))
+      ),
+      Effect.catchAll((error) =>
+        Console.log(respondError(
+          "messages trace",
+          String(error),
+          "MESSAGE_TRACE_FAILED",
+          "Check the ID, journal access, or use messages audit to locate it.",
+          [{ command: "joelclaw messages audit --since 24h", description: "Find recent message IDs" }],
+        ))
+      ),
+    ),
+).pipe(Command.withDescription("Trace one message, delivery, and button lifecycle"))
+
+export const messagesCmd = Command.make("messages", {}).pipe(
+  Command.withDescription("Private message journal"),
+  Command.withSubcommands([auditCmd, traceCmd]),
+)
+```
+
+Also add:
+
+- Import in `packages/cli/src/cli.ts`
+- `messages` to root command discovery JSON.
+- `messagesCmd` to root `Command.withSubcommands`.
+- Focused command tests for duration parsing, SQL escaping, pagination, ambiguous Telegram IDs, `FINAL`, and body output boundaries.
+
+---
+
+## Bottom line
+
+- Same ClickHouse instance is fine.
+- A separate database is useful but not secure until `default` loses wildcard access.
+- Use a dedicated journal writer and outbox.
+- Never route exact text through OTEL.
+- Capture raw inbound text before enrichment and outbound text at the Telegram adapter, including streaming and callbacks.
+- Use append-only lifecycle events with deterministic IDs and `ReplacingMergeTree`.
+- No TTL.
+
+Read-only work only. No files changed, committed, or pushed. `main` remains aligned with `origin/main`.

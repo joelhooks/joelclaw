@@ -1,0 +1,208 @@
+---
+title: "Telegram signal research: producers"
+type: "reference"
+status: "done"
+created_at: "2026-07-15"
+privacy: "private"
+tags:
+  - research
+  - telegram
+---
+
+# DONE — Telegram outbound producer audit
+
+Current in-tree source only. No files changed, no tests run, no commit.
+
+## 1. `gateway/send.message` producers
+
+Every event goes through:
+
+`gateway/send.message` → `packages/system-bus/src/inngest/functions/gateway-send-message.ts:22-65` → `joelclaw:outbound:messages` → `packages/gateway/src/daemon.ts:4993-5160` → Telegram adapter.
+
+The event contract at `packages/system-bus/src/inngest/client.ts:1214-1228` has **no priority, importance, urgency, or classification field**.
+
+| Producer | File:line | Content | Attribution |
+|---|---|---|---|
+| Daily token usage report | `packages/system-bus/src/inngest/functions/daily-token-usage-report.ts:353-359` | Scheduled usage/cost report | Explicit: `daily-token-usage-report` |
+| NAS retry budget exhausted | `packages/system-bus/src/inngest/functions/nas-backup.ts:1731-1743` | Infra failure escalation | Explicit: `nas-backup-retry-budget` |
+| NAS escalation | `packages/system-bus/src/inngest/functions/nas-backup.ts:1795-1807` | Infra failure escalation | Explicit: `nas-backup-escalation` |
+| ADR daily pitch | `packages/system-bus/src/inngest/functions/adr-daily-pitch.ts:362-379` | Joel action with buttons | Explicit: `adr-daily-pitch` |
+| ADR approved edit | `packages/system-bus/src/inngest/functions/adr-daily-pitch.ts:439-448` | Action receipt/message edit | Explicit: `adr-pitch-approved` |
+| ADR rejected edit | `packages/system-bus/src/inngest/functions/adr-daily-pitch.ts:470-479` | Action receipt/message edit | Explicit: `adr-pitch-rejected` |
+| Queue observer report | `packages/system-bus/src/inngest/functions/queue-observer.ts:834-842` | Queue remediation/escalation report | Explicit: `queue-observer` |
+| Wiki morning receipt | `packages/system-bus/src/inngest/functions/wiki-edition-build.ts:221-224` | Routine success receipt | **Generic:** `gateway/send.message` |
+| Wiki failed/blocked receipt | `packages/system-bus/src/inngest/functions/wiki-edition-build.ts:227-235` | Build failure/blockage | **Generic:** `gateway/send.message` |
+| Self-healing backup blocked | `packages/system-bus/src/inngest/functions/self-healing-router.ts:763-778` | Safety escalation | Explicit: `self-healing-backup-blocked` |
+| Self-healing retry exhausted | `packages/system-bus/src/inngest/functions/self-healing-router.ts:847-865` | Retry/route failure | Explicit: `self-healing-retry-exhausted` |
+| Self-healing escalated | `packages/system-bus/src/inngest/functions/self-healing-router.ts:979-994` | Verified escalation candidate | Explicit: `self-healing-escalated` |
+
+`buildQueuedGatewayMessage()` at `packages/system-bus/src/lib/channel-delivery-audit.ts:24-59` adds `flowId`, timestamps, host identity, and content fingerprint. Missing producer names collapse to `gateway/send.message`.
+
+## 2. `joelclaw notify send`
+
+### Runtime callers
+
+| Producer | File:line | Content | Priority | Attribution |
+|---|---|---|---|---|
+| Voice verification | `infra/voice-agent/verify-voice.sh:168` | Raw probe failure | `urgent` | `cli/notify` |
+| SMS campaign vetting | `infra/voice-agent/sms-campaign-vetting-check.sh:25,55,60` | Campaign failure/success | `normal` | `cli/notify` |
+| Satellite health/repair | `packages/cli/src/commands/satellite.ts:67-128` | Infra repair request | Default `high` | Explicit: `satellite-health` |
+| Contact-enrichment DAG | `packages/restate/src/trigger-dag.ts:345-355` | Completion receipt | `normal` | `cli/notify` |
+| SDK public entrypoint | `packages/sdk/src/client.ts:319-365` | Arbitrary caller-supplied notification | Caller supplied | Source or `cli/notify` |
+
+The actual adapter is `packages/sdk/src/capabilities/adapters/gateway-redis.ts:129-231`.
+
+It maps:
+
+- `low|normal` → `level: info`
+- `high` → `level: warn`, `immediateTelegram: true`
+- `urgent` → `level: fatal`, `immediateTelegram: true`
+- `--telegram-only` → remove from the later agent-prompt lane after direct delivery
+
+It creates a real audit at `gateway-redis.ts:143-148` with `flowId: notify:<UUID>` and `producer: source`.
+
+### Protocol-equivalent Restate producer
+
+`packages/restate/src/otel.ts:82-143` writes the same Redis event shape without using the CLI.
+
+| Caller | File:line | Content | Priority | Attribution |
+|---|---|---|---|---|
+| DAG planning failure | `packages/restate/src/workflows/dag-orchestrator.ts:578-586` | Infra/workflow failure | `high` | Event source `restate/dag`; no audit seed |
+| DAG execution failure | `packages/restate/src/workflows/dag-orchestrator.ts:707-725` | Infra/workflow failure | `high` | Same |
+| DAG completion | `packages/restate/src/workflows/dag-orchestrator.ts:787-808` | Routine completion | `normal` | Same |
+
+The gateway reconstructs attribution from `event.source` for immediate delivery, but the original event lacks a `ChannelDeliveryAudit`.
+
+## 3. Gateway conversational and direct producers
+
+| Producer/path | File:line | Content | Attribution |
+|---|---|---|---|
+| Streamed Telegram agent reply | `packages/gateway/src/daemon.ts:1637-1660`; `packages/gateway/src/telegram-stream.ts:455-503` | Agent reply to Joel | Explicit: `gateway-agent-response` |
+| Non-stream agent reply | `packages/gateway/src/daemon.ts:2163-2208` | Agent reply to Joel | Explicit: `gateway-agent-response` |
+| Console/background relay | `packages/gateway/src/daemon.ts:2022-2146` | Agent-generated system response | Explicit generic: `gateway-console-forward` |
+| Redis immediate event | `packages/gateway/src/channels/redis.ts:619-669,810-849` | Fatal/high notification | Event source or supplied audit |
+| Outbound message queue | `packages/gateway/src/daemon.ts:4993-5160` | System message/media/edit | Supplied audit; fallback `legacy-outbound-queue` |
+| Old media queue | `packages/gateway/src/daemon.ts:4874-4892` | Satellite/system media | **Unknown producer** |
+| Supersession notice | `packages/gateway/src/daemon.ts:386-394` | Conversation lifecycle | **Unknown producer** |
+| Guardrail checkpoint | `packages/gateway/src/daemon.ts:492-526` | Tool-budget/safety progress | **Unknown producer** |
+| Context overflow alert | `packages/gateway/src/daemon.ts:1377-1395` | Gateway infra alert | **Unknown producer** |
+| Model failure alert | `packages/gateway/src/daemon.ts:1762-1775` | Provider/model failure | **Unknown producer** |
+| Session pressure alert | `packages/gateway/src/daemon.ts:2723-2751` | Gateway infra alert | Currently disabled by `daemon.ts:1521-1523` |
+| Channel health alert/recovery | `packages/gateway/src/daemon.ts:3331-3347` | Infra alert/recovery | **Unknown producer** |
+| Session recycle/rotation | `packages/gateway/src/daemon.ts:4231-4240,4332-4340` | Routine lifecycle | Recycle disabled; rotation quiet-hours gated; unknown attribution |
+| Fallback activation notice | `packages/gateway/src/daemon.ts:4837-4845` | Model fallback alert | Cooldown/quiet-hours gated; unknown attribution |
+| Callback timeout/failure | `packages/gateway/src/channels/telegram.ts:216-244` | Operator UI failure | Explicit: `telegram-callback-timeout/failure` |
+
+The ordinary text adapter is `packages/gateway/src/channels/telegram.ts:1968-2167`. It creates a delivery audit and terminal receipt, but defaults an unseeded producer to `unknown`.
+
+## 4. Other direct Bot API producers
+
+These bypass the gateway message queue and outbound relay classifier entirely.
+
+| Producer | File:line | Content | Attribution |
+|---|---|---|---|
+| VIP morning email brief | `packages/system-bus/src/inngest/functions/vip-morning-brief.ts:478-500` | Scheduled VIP/action brief | None |
+| VIP email received | `packages/system-bus/src/inngest/functions/vip-email-received.ts:1761-1785` | Immediate VIP email brief | None |
+| Content review completion | `packages/system-bus/src/inngest/functions/content-review.ts:1546-1598` | Good-news content receipt | None |
+| Restate deploy gate request | `packages/restate/src/workflows/deploy-gate.ts:208-223` | Joel-owned approval | None |
+| Restate deploy reminders | `packages/restate/src/workflows/deploy-gate.ts:240-250` | Escalating reminders | None |
+| Restate deploy outcome | `packages/restate/src/workflows/deploy-gate.ts:355-369` | Deployment receipt | None |
+| Talon SOS | `infra/talon/src/escalation.rs:230-269,321-404` | Critical infra escalation after failed recovery | None |
+| Restate lab approval | `packages/restate-lab/src/workflows/approval.ts:117,164,222` | Lab approval/reminders/outcome | None |
+
+Direct implementations:
+
+- `packages/system-bus/src/lib/telegram.ts:46-88`
+- `packages/restate/src/channels/telegram.ts:78-114`
+- `packages/restate-lab/src/channels/telegram.ts:35-69`
+- `infra/talon/src/escalation.rs:367-390`
+
+These have local success/error handling, but no `ChannelDeliveryAudit`, common `flowId`, or canonical Telegram terminal receipt.
+
+## 5. Existing direct-immediate event producers
+
+These explicitly set `immediateTelegram: true` or `level: fatal`, so they can page Telegram without waiting for an agent response:
+
+| Producer | File:line | Content |
+|---|---|---|
+| CLI/SDK high or urgent notification | `packages/sdk/src/capabilities/adapters/gateway-redis.ts:153-157` | Arbitrary operator notification |
+| Restate high/urgent notification | `packages/restate/src/otel.ts:105-123` | DAG failure |
+| Gateway health failure | `packages/system-bus/src/inngest/functions/check-gateway-health.ts:725` | Infra alert |
+| OTEL error-rate alert | `packages/system-bus/src/inngest/functions/check-system-health.ts:1665` | Infra alert |
+| Memory write-gate drift | `packages/system-bus/src/inngest/functions/check-system-health.ts:1705` | Probe/drift alert |
+| Fatal system health | `packages/system-bus/src/inngest/functions/check-system-health.ts:1873` | Infra alert |
+| O11y triage | `packages/system-bus/src/inngest/functions/o11y-triage.ts:861-887` | Investigated escalation |
+| Slack mention approval | `packages/gateway/src/channels/slack.ts:181` | Joel-owned approval |
+| Slack Reply Grant receipt | `packages/gateway/src/channels/slack.ts:1369` | Action receipt |
+
+Other `gateway.notify()` and `pushGatewayEvent()` producers first pass `classifyOperatorSignal()` and usually become a batched/immediate agent prompt. Their eventual Telegram output is attributed generically as `gateway-console-forward`, so the original producer is usually lost.
+
+## 6. Specialized Bot API writes — out of conversational scope
+
+| Surface | File:line | Operations | Attribution |
+|---|---|---|---|
+| Slash commands/results | `packages/gateway/src/commands/telegram-handler.ts:148-220,440-521` | `sendMessage` | None |
+| Pinned gateway status | `telegram-handler.ts:385-437` | send, pin, edit | None |
+| Bot command menu | `telegram-handler.ts:754-767` | `setMyCommands` | None |
+| Command/callback acknowledgements | `telegram-handler.ts:576-736` | callback answers/failure text | None |
+| Worktree UI | `packages/gateway/src/commands/worktree.ts:29-57,244-345` | callback answers/results | None |
+| MCQ UI | `packages/gateway/src/commands/mcq-adapter.ts:232-415` | question, custom prompt, edits | None |
+| Reply Grant UI | `packages/gateway/src/channels/telegram.ts:1370-1655` | callback answers, keyboard/text edits | UI mutations none |
+| Restate callbacks | `packages/restate/src/channels/telegram.ts:117-197` | callback routing, keyboard removal | None |
+| Typing indicators | `telegram.ts:1995,2221`; `telegram-stream.ts:360` | `sendChatAction` | Non-visible |
+
+## 7. Existing classification and priority logic
+
+| Path | Current policy |
+|---|---|
+| `gateway/send.message` | **None.** Every valid event is queued for its requested channel. |
+| CLI notify | `low/normal/high/urgent`; high/urgent force immediate Telegram. |
+| Restate notify | Same priority mapping, but no audit envelope. |
+| Redis event relay | `classifyOperatorSignal()` returns `immediate`, `batched`, `ingested`, or `suppressed` at `packages/gateway/src/operator-relay.ts:370-430`. |
+| Immediate Telegram test | `system.fatal`, `payload.immediateTelegram`, or `payload.level === "fatal"` at `packages/gateway/src/channels/redis.ts:488-502`. |
+| Console forwarding | Only rejects heartbeat, tiny `<80` character output, and echo text at `packages/gateway/src/daemon.ts:321-334`. |
+| Direct daemon notices | Separate cooldown, quiet-hours, mute, and state-transition rules. No shared classifier. |
+| Talon | Critical-duration threshold, cooldown, then cloud/local recovery agents before SOS at `infra/talon/src/escalation.rs:180-269`. |
+| Restate deploy gate | Fixed reminder escalation tiers, not the Telegram content contract. |
+| `channel-message-classify.ts` | Inbound channel intelligence only. It does **not** govern outbound Telegram. |
+| Message-store P0–P3 | Inbound agent queue priority only. It does **not** govern outbound Telegram. |
+
+One sharp bug: `gateway.notify(..., { priority: "urgent" })` does **not** map priority to `fatal` or `immediateTelegram`. That mapping exists only in the CLI and Restate adapters.
+
+## 8. Recommended choke point
+
+Put a required `TelegramOutboundPolicy` immediately after `resolveSendInput()` in `packages/gateway/src/channels/telegram.ts:1968-1976`, with companion enforcement for `sendTelegramMedia()` and `telegram-stream.ts`. It has final content, destination, reply context, and audit lineage, so it can classify into deliver, investigate, digest, or suppress before the Bot API call.
+
+That is not absolute until the direct system-bus, Restate, Talon, command, MCQ, and streaming Bot API calls are moved behind it or explicitly marked as specialized UI. **Bot-token custody is the real enforcement boundary:** if other processes retain the token, no in-process gateway classifier can truthfully guarantee “nothing reaches Telegram unclassified.”
+
+## 9. `verify-voice FAILED` trace
+
+1. LaunchAgent runs at boot and every 1,800 seconds:  
+   `infra/launchd/com.joel.verify-voice.plist:9,22-25`
+2. Recall probe fails:  
+   `infra/voice-agent/verify-voice.sh:159`
+3. Script emits **two separate alerts**:
+   - Telnyx call/SMS: `verify-voice.sh:167`
+   - Telegram candidate: `verify-voice.sh:168`
+4. `joelclaw notify send ... --priority urgent` parses at:  
+   `packages/cli/src/commands/notify.ts:74-124`
+5. Redis adapter creates:
+   - `source: cli/notify`
+   - `producer: cli/notify`
+   - `level: fatal`
+   - `immediateTelegram: true`
+   - `flowId: notify:<UUID>`  
+   `packages/sdk/src/capabilities/adapters/gateway-redis.ts:129-157`
+6. It writes `joelclaw:events:gateway` and publishes `joelclaw:notify:gateway`:  
+   `gateway-redis.ts:198-205`
+7. Gateway classifies it immediate and selects the direct Telegram branch:  
+   `packages/gateway/src/channels/redis.ts:741,810-849`
+8. Because the payload has no `telegramMessage`, it becomes the legacy wrapper:
+
+   `Immediate Escalation → notify.message (cli/notify) → verify-voice FAILED: ...`
+
+   Formatting/send: `packages/gateway/src/channels/redis.ts:619-669`
+9. Canonical Telegram adapter calls Bot API and records terminal delivery:  
+   `packages/gateway/src/channels/telegram.ts:1968-2167`, API call at `:2048`
+
+The adjacent `notification/call.requested` at `verify-voice.sh:167` goes through `telnyx-notify.ts` to phone/SMS, not Telegram. So one failed probe deliberately creates two independent pages.
