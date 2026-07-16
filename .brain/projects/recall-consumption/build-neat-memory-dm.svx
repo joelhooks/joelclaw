@@ -1,0 +1,79 @@
+---
+title: "Build the Neat-Memory DM: observer occasionally sends Joel a memory worth smiling at"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-16)"
+parent: "./recall-consumption-brief.svx"
+blockers: []
+created_at: "2026-07-16"
+---
+
+# Build the Neat-Memory DM
+
+## Step
+
+Joel's ask (2026-07-16, verbatim): "we have joelclaw messages and the
+ability to send messages, it'd be cool if 'neat/awesome memories' got
+sent occasionally from the observer/gardner."
+
+A push surface: the observer family occasionally DMs Joel one memory
+from the distilled layer that's genuinely neat — a delight, not a
+digest. Resolved when a daily check runs from the observer's home
+(joelclaw-observer, LaunchAgent), most days sends nothing, and when it
+does send, the DM reads like a friend saying "remember this?" with a
+working link.
+
+Design decisions (steering, 2026-07-16):
+
+- **Cadence**: one LaunchAgent check per day; at most ONE DM per day,
+  and only when a candidate clears the quality bar — silence is the
+  default. "Occasionally" means the bar does the pacing, not a schedule.
+- **Candidates**: observation pages in
+  `dark-wizard/.brain/observations/` from the last 7 days.
+  `privacy: sensitive` pages are excluded before any model sees them —
+  fails closed on missing/unparseable frontmatter.
+- **Neatness is pi judgment behind a versioned schema** (house
+  pattern): score + one-line "why it's neat" in Joel's plain voice;
+  threshold gates the send. No send on judge failure — fail silent to
+  the DM channel, loud to the log.
+- **Dedupe forever**: sent slugs recorded in
+  `~/.joelclaw/observer-neat-memories.json` (0600); a page DMs once,
+  ever.
+- **Delivery**: `joelclaw notify send --priority low` with the one-liner
+  plus the canonical URL `https://brain.joelclaw.com/user/observations/<slug>`
+  — only if that exact URL returns HTTP 200 at send time; otherwise the
+  DM carries the page path instead of a dead link.
+- **Receipts**: every run logs candidates seen / judged / sent to its
+  own log; the send envelope must be ok before the dedupe entry is
+  written.
+
+## Amendment — grilling (Joel, 2026-07-16)
+
+Four calls that supersede parts of the design above:
+
+1. **"Neat" is four flavors, all in**: delight/surprise ("ha, I forgot
+   about that"), milestones & wins, useful resurfacing (still
+   actionable / about to matter again), and system self-awareness (the
+   fleet noticing its own interesting behavior). The judgment carries a
+   `flavor` tag; the DM can be any of them.
+2. **Corpus widens**: observations + dream rollups + retros (retros
+   live outside the observations dir — privacy gate handles each source
+   explicitly, fails closed per source).
+3. **Pacing is the curator's judgment, not a rule** (supersedes the
+   fixed ≥8 threshold as the pacing mechanism): the smartest available
+   agent decides send/hold given candidates + send history. Joel
+   authorized API spend for Fable via `claude -p` for this specific use
+   case; `gpt-5.6-sol:xhigh` via pi is the other serious config. The
+   real artifact is the curator's **taste skill** — a versioned file
+   defining what Joel finds neat, which the judge reads before judging.
+   Judge configs (model × skill) must be **benchable** so Joel can see
+   and feel what he likes → graduated to
+   [Bench the Curator](./bench-neat-memory-curator.svx). Max 1 DM/day
+   stays as a dumb safety cap under whatever the curator decides.
+4. **Reactions teach taste**: each sent entry records an `outcome`
+   (null until graded); graded sends accumulate as worked/didn't
+   examples the taste skill cites — the skill is living, not static.
+   V1 builds the schema; reaction-capture plumbing is its own later
+   step.

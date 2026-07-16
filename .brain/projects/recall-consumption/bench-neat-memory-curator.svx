@@ -1,0 +1,39 @@
+---
+title: "Bench the Curator: judge configs side-by-side so Joel picks taste by feel"
+type: "step"
+kind: "prototype"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./recall-consumption-brief.svx"
+blockers:
+  - "./build-neat-memory-dm.svx"
+created_at: "2026-07-16"
+---
+
+# Bench the Curator
+
+## Step
+
+From the neat-memory grilling (Joel, 2026-07-16): "i'd like the
+smartest agent we have to decide … the question would be what the skill
+is for that agent IMO … maybe we benchmark this too so I can see and
+feel what I like."
+
+Resolved when Joel has looked at a prototype page (wiki, like the
+loop-language variants page) showing, for the SAME candidate pool
+(a real recent window of observations + rollups + retros), what each
+judge config would have done — config = model × taste-skill variant:
+
+- Fable via `claude -p` (API spend authorized for this use case)
+- `gpt-5.6-sol:xhigh` via pi
+- a cheap baseline (terra:low or DeepSeek-local) for contrast
+
+Per config, per day of the window: send or hold, which memory, which
+flavor, and the actual DM line it would have written — the feel is in
+the line, not the score. Joel picks; the winning config ships as the
+LaunchAgent default and the losing receipts stay on the page.
+
+Blocked on the build step only for the judge seam + candidate harness
+it produces; the taste-skill variants (2–3, deliberately different
+personalities of "neat") are authored here.
