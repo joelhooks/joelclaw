@@ -25,6 +25,7 @@ const DEDUP_KEY_PREFIX = "joelclaw:gateway:dedup:";
 const CONSUMER_GROUP = "gateway-session";
 const CONSUMER_NAME = "daemon";
 const DEDUP_WINDOW_SECONDS = 30;
+const CHAT_SDK_EVENT_DEDUP_WINDOW_SECONDS = 24 * 60 * 60;
 const AGING_PROMOTION_MS = 5 * 60 * 1000;
 const P3_AUTO_ACK_MS = 60 * 1000;
 const P3_COALESCE_MS = 60 * 1000;
@@ -198,9 +199,27 @@ export async function persist(msg: {
 
   // Check dedup before queuing
   const { normalizedBody, strippedInjectedContext } = normalizePromptForDedup(msg.prompt);
-  const dedupHash = hashDedupKey(msg.source, msg.prompt);
+  const chatSdkEventId = typeof msg.metadata?.chatSdkEventId === "string"
+    ? msg.metadata.chatSdkEventId.trim()
+    : "";
+  const dedupHash = chatSdkEventId
+    ? createHash("sha256")
+        .update(msg.source)
+        .update("\nchat-sdk-event:")
+        .update(chatSdkEventId)
+        .digest("hex")
+    : hashDedupKey(msg.source, msg.prompt);
   const dedupKey = `${DEDUP_KEY_PREFIX}${dedupHash}`;
-  const dedupResult = await redis.set(dedupKey, "1", "EX", DEDUP_WINDOW_SECONDS, "NX");
+  const dedupWindowSeconds = chatSdkEventId
+    ? CHAT_SDK_EVENT_DEDUP_WINDOW_SECONDS
+    : DEDUP_WINDOW_SECONDS;
+  const dedupResult = await redis.set(
+    dedupKey,
+    "1",
+    "EX",
+    dedupWindowSeconds,
+    "NX",
+  );
 
   if (dedupResult !== "OK") {
     emitMessageStoreTelemetry("message.dedup_dropped", "debug", {
@@ -209,7 +228,7 @@ export async function persist(msg: {
       priority,
       priority_label: priorityName(priority),
       dedup_layer: "message-store",
-      dedup_window_seconds: DEDUP_WINDOW_SECONDS,
+      dedup_window_seconds: dedupWindowSeconds,
       dedup_hash_prefix: dedupHash.slice(0, 12),
       prompt_length: msg.prompt.length,
       normalized_length: normalizedBody.length,
@@ -218,7 +237,7 @@ export async function persist(msg: {
 
     console.log("[gateway:store] dropped duplicate inbound message", {
       source: msg.source,
-      dedupWindowSeconds: DEDUP_WINDOW_SECONDS,
+      dedupWindowSeconds,
       dedupHashPrefix: dedupHash.slice(0, 12),
       strippedInjectedContext,
     });
@@ -226,16 +245,26 @@ export async function persist(msg: {
   }
 
   // Persist to queue with gateway-specific payload
-  const result = await queuePersist({
-    payload: {
-      source: msg.source,
-      prompt: msg.prompt,
-    },
-    priority: priority as QueuePriority,
-    metadata: msg.metadata,
-  });
+  let result: Awaited<ReturnType<typeof queuePersist>>;
+  try {
+    result = await queuePersist({
+      payload: {
+        source: msg.source,
+        prompt: msg.prompt,
+      },
+      priority: priority as QueuePriority,
+      metadata: msg.metadata,
+    });
+  } catch (error) {
+    // A dedup claim is only valid after durable queue persistence succeeds.
+    // Releasing it lets the same Chat SDK event retry after transient Redis
+    // failures without becoming a same-process silent drop.
+    await redis.del(dedupKey).catch(() => undefined);
+    throw error;
+  }
 
   if (!result) {
+    await redis.del(dedupKey).catch(() => undefined);
     return null;
   }
 
