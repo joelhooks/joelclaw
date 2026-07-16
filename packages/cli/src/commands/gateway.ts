@@ -720,6 +720,16 @@ const GATEWAY_CHANNEL_CONFIGS: Record<GatewayChannelName, GatewayChannelConfig> 
         enabled: 'export DISCORD_ALLOWED_USER_ID="$(lease_secret_or_empty discord_allowed_user_id)"',
         disabled: 'export DISCORD_ALLOWED_USER_ID=""',
       },
+      {
+        variable: "DISCORD_APPLICATION_ID",
+        enabled: 'export DISCORD_APPLICATION_ID="$(lease_secret_or_empty discord_application_id)"',
+        disabled: 'export DISCORD_APPLICATION_ID=""',
+      },
+      {
+        variable: "DISCORD_PUBLIC_KEY",
+        enabled: 'export DISCORD_PUBLIC_KEY="$(lease_secret_or_empty discord_public_key)"',
+        disabled: 'export DISCORD_PUBLIC_KEY=""',
+      },
     ],
   },
   imessage: {

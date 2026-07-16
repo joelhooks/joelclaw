@@ -13,6 +13,8 @@ created_at: "2026-07-16"
 
 # Provision Bot Identities
 
+> **Joel hands required:** In the Slack app config, open **Event Subscriptions → Subscribe to bot events** and confirm both `reaction_added` and `reaction_removed` are present. The installed bot token proves `reactions:read` is granted, but Slack exposes no event-subscription readback through that token. If either event is added, reinstall the app when Slack prompts.
+
 ## Step
 
 Groundwork the build waits on. Resolved when each of the three
@@ -35,3 +37,37 @@ REUSE existing identities; no new apps needed:
 - **Slack**: bot + app tokens already leased, Socket Mode live and
   healthy; verify `reaction_added`/`reaction_removed` event
   subscriptions and `reactions:read` scope in the app config.
+
+## Provisioning receipt — 2026-07-16
+
+No token values were printed, logged, or persisted outside the local secrets daemon. API responses were reduced to the non-secret identity/config fields below before reporting.
+
+### Discord
+
+- **Identity confirmed:** application **ShitRat**, application id `1475676080630403102`.
+- `GET /api/v10/oauth2/applications/@me` returned the `GATEWAY_MESSAGE_CONTENT_LIMITED` application flag. Message Content is enabled for this bot's current unverified/limited tier; it is not absent.
+- Stored the API-returned application id and public key in the local secrets daemon as `discord_application_id` and `discord_public_key`. A readback comparison confirmed both stored values match the Discord API response.
+- Added `DISCORD_APPLICATION_ID` and `DISCORD_PUBLIC_KEY` to the Discord channel assignments in `packages/cli/src/commands/gateway.ts`. The enabled form leases the two names above; the disabled form blanks them.
+- Added matching blank exports to `~/.joelclaw/scripts/gateway-start.sh` because Discord remains intentionally disabled. No runtime restart or channel enable was performed.
+- **Build/cutover remains:** after the adapter canary is ready, re-enable through `joelclaw gateway channel enable discord --restart`; do not hand-edit the runtime values.
+
+### Telegram
+
+- **Identity confirmed:** **Panda**, bot username `@JoelClawPandaBot`, bot id `8552511308`.
+- `getWebhookInfo` reports no webhook URL and zero pending updates: the bot is in polling mode with no webhook conflict.
+- No new secret/config item was needed. The existing `telegram_bot_token` lease remains the identity source.
+- **Build remains:** polling must include `message_reaction` in `allowed_updates`. The current poller starts at `packages/gateway/src/channels/telegram.ts:1804` with `bot.start({ onStart: ... })` and sets no `allowed_updates`, so this belongs in the adapter/poller build step rather than provisioning.
+
+### Slack
+
+- **Identity confirmed:** bot user **joelclaw**, user id `U0AGRUMQXPF`, bot id `B0AGZ046SP6`, workspace **egghead.io** (`T030CS0QL`).
+- The `auth.test` response's `x-oauth-scopes` header includes `reactions:read` (and `reactions:write`). No scope change is required.
+- Slack bot-token APIs do not expose the app's configured Event Subscriptions. There is no `slack_*` app-configuration token in the local secrets daemon, so `reaction_added`/`reaction_removed` subscription presence could not be confirmed honestly by API.
+- **Joel hands:** use **Slack app config → Event Subscriptions → Subscribe to bot events** and confirm both `reaction_added` and `reaction_removed`; if changed, reinstall when prompted. OAuth scope is already proven, so the UI check is only for subscriptions.
+- **Build remains:** `packages/gateway/src/channels/slack.ts:1199` currently registers only `reaction_added`; the Chat SDK build must normalize both add and remove events.
+
+### Status
+
+Open only for the Slack Event Subscriptions UI confirmation above. Identity reuse, Discord value storage, Telegram polling-mode proof, and Slack scope proof are complete.
+
+Operational mutation receipt: `system/log.written` event `01KXP7CZG69QHKJW4EH58RV4DX`.
