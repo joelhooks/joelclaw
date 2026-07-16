@@ -1,7 +1,7 @@
 ---
 title: "Build the messages CLI commands"
 type: "task"
-status: "blocked"
+status: "ready"
 created_at: "2026-07-15"
 privacy: "private"
 blocked_by:
