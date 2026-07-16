@@ -81,6 +81,8 @@ gateway are deleted, not abandoned in place.
 
 <!-- one line per closed step: gist + link -->
 
+- [Decide Contract v2](./decide-contract-v2.svx) — grilled: producers declare intent kinds (memory|alert|digest|ask|receipt) and never touch routing (one versioned table owns kind→platform/lane, absorbing the SDK's explicit-platform requirement); every send mints a flowId with reactions/replies returning as Inngest bus events; conversations are replyTo correlation (no thread objects — platform-native anchoring); inbound publishes to the bus observe-only while command-queue stays the sole execution path; `notify send` becomes a compat shim during migration. The neat-memory low-vs-high lane scar was the motivating case.
+
 - [Research Chat SDK Fit/Gap](./research-chat-sdk-fit-gap.svx) — [asset](./chat-sdk-fit-gap.svx), source-pinned to `vercel/chat@80def3a`: adopt as the platform-adapter layer BEHIND joelclaw authorization/policy/queue/journal/health wrappers — it replaces transport mechanics, not gateway semantics; all three adapters are beta with recent silent-loss fixes, so pin exact versions and shadow before any cutover; all three bot identities REUSE (Discord app exists but is currently disabled in gateway config; Telegram + Slack live and healthy); topology = embed ONE Chat instance in the existing gateway process (a second process would fight Telegram polling and split Slack Socket Mode); inbound shadow must mirror events in-process, never duplicate listeners; five required cutover canaries enumerated in the asset.
 
 ## Latent

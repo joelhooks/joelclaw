@@ -3,8 +3,8 @@ title: "Decide Contract v2: the evolved message API consumers call"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+assignee: "claude steering + Joel (flagg, herdr wB grilling, 2026-07-16)"
 parent: "./messaging-stabilization-brief.svx"
 blockers:
   - "./research-chat-sdk-fit-gap.svx"
@@ -25,3 +25,48 @@ discipline, migration story for every existing `notify send` caller
 inbound handlers, and what "receipt" means per platform. Grilling with
 the fit/gap asset on the table; lands as a decision record the build
 steps can implement without another decision.
+
+## Decision record (grilled with Joel, 2026-07-16)
+
+The motivating scar, cited in every question: the neat-memory DM had
+to switch from `--priority low` to `--priority high --telegram-only`
+because "low" silently routed into the gateway agent prompt where
+policy suppressed it — producers were reverse-engineering delivery
+lanes from flags.
+
+1. **Producers declare intent kinds, never routing.** A send is
+   `{kind, content, correlationId, replyTo?}` where
+   `kind: memory | alert | digest | ask | receipt` (versioned enum,
+   extensible). ONE versioned routing table owns
+   kind → (platform, lane, urgency, formatting profile). Platform
+   explicitness — required by the SDK's `AMBIGUOUS_USER_ID` throw on
+   `openDM` — lives inside the routing table, not in producer code.
+   Changing where memories land is a table edit.
+2. **Return path: Inngest events by flowId.** Every send mints a
+   `flowId`; the journal maps platform message id → flowId (populated
+   from the SDK send result, per the fit/gap). Reactions and short
+   replies become bus events (`message/reaction.received`,
+   `message/reply.received`) carrying `{flowId, platform, emoji|text,
+   actor, at}`. Producers subscribe with ordinary Inngest functions —
+   the neat-memory outcome bridge is one such function, no bespoke
+   plumbing.
+3. **Conversations are replyTo correlation, not thread objects.** A
+   send may carry `replyTo: <flowId>`; the adapter anchors it
+   platform-natively (Discord reply/thread, Telegram reply, Slack
+   thread_ts). Joel's replies come back as events with the parent
+   flowId. Thread lifecycle never leaks into producer code; identical
+   semantics on all three platforms.
+4. **Inbound publishes to the bus, executes through command-queue
+   only.** After the authorization/policy wrapper, every normalized
+   inbound event (message, command, interaction) is ALSO published to
+   the bus observe-only — replayable, surfaceable, and the substrate
+   the replatform's shadow-diffing needs — while `command-queue`
+   remains the sole path into the pi session (no double execution).
+5. **Standing details** (defaults, stated not grilled): `joelclaw
+   notify send` becomes a thin compat shim mapping priority/channel
+   flags onto kinds during migration, deprecated after cutover;
+   receipts are HATEOAS envelopes carrying flowId, requested/confirmed
+   timestamps, delivery state, and platform message id, backed by the
+   existing journal fail-open discipline; the routing table, kind enum,
+   and event schemas are versioned artifacts in the joelclaw domain
+   layer per house rules.
