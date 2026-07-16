@@ -8,7 +8,13 @@ import {
   MessageUrgency,
 } from "./kinds";
 
-export const DeliveryState = Schema.Literal("requested", "confirmed", "failed", "suppressed");
+export const DeliveryState = Schema.Literal(
+  "requested",
+  "confirmed",
+  "failed",
+  "suppressed",
+  "digested",
+);
 export type DeliveryState = typeof DeliveryState.Type;
 
 const UtcTimestamp = Schema.String.pipe(
