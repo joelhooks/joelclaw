@@ -73,6 +73,9 @@ const DEFAULT_INVESTIGATION_BUDGETS: InvestigationBudgets = {
 };
 
 const MAX_ACTIVE_INVESTIGATIONS = 500;
+const TELEGRAM_EXPLICIT_DELIVER_EVENT_TYPES = new Set([
+  "signal/digest.assembled",
+]);
 const activeInvestigations = new Map<
   string,
   { actor: ActorRefFrom<typeof signalLifecycleMachine>; startedAt: number }
@@ -159,6 +162,21 @@ export function specializedTelegramApi<T>(
 ): T {
   void telegramSpecializedUiExemption(surface);
   return api;
+}
+
+function explicitDeliverDecision(
+  candidate: OutboundCandidate,
+): PolicyDecision | undefined {
+  if (!TELEGRAM_EXPLICIT_DELIVER_EVENT_TYPES.has(candidate.sourceEventType)) {
+    return undefined;
+  }
+
+  return {
+    disposition: "deliver",
+    category: "action",
+    reason: "deliver.explicit.signal-digest-assembled",
+    producer: candidate.producer,
+  };
 }
 
 function exemptionDecision(
@@ -316,7 +334,7 @@ export async function routeTelegramOutbound(
     || (exemption?.kind === "conversation-reply" && exemption.chatId === input.chatId);
   const decision = exemption && exemptionMatchesTarget
     ? exemptionDecision(input, exemption)
-    : telegramOutboundPolicy(candidate);
+    : explicitDeliverDecision(candidate) ?? telegramOutboundPolicy(candidate);
 
   let lifecycleState: string | undefined;
   try {

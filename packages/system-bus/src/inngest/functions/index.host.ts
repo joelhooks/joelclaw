@@ -93,6 +93,7 @@ import {
 } from "./nas-backup";
 import { nasSoakReview, nasSoakSample } from "./nas-soak";
 import { networkStatusUpdate } from "./network-status-update";
+import { noiseRateGuard } from "./noise-rate-guard";
 import { o11yTriage } from "./o11y-triage";
 import { observeSessionNoted } from "./observe-session-noted";
 import { paneSchedule } from "./pane-schedule";
@@ -250,6 +251,7 @@ export const hostFunctionDefinitions = [
   checkSystemHealth,
   checkSystemHealthSignalsSchedule,
   networkStatusUpdate,
+  noiseRateGuard,
   checkVaultSync,
   checkGranola,
   granolaCheckCron,

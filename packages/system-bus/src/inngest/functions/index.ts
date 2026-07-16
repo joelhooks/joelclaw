@@ -96,6 +96,13 @@ export {
 } from "./nas-backup";
 export { nasSoakReview, nasSoakSample } from "./nas-soak";
 export { networkStatusUpdate } from "./network-status-update";
+export {
+  buildNoiseRateDigestItem,
+  computeNoiseRate,
+  createNoiseRateGuardFunction,
+  noiseRateGuard,
+  TELEGRAM_SIGNAL_CONTENT_KINDS,
+} from "./noise-rate-guard";
 export { o11yTriage } from "./o11y-triage";
 export { observeSessionFunction } from "./observe";
 export { observeSessionNoted } from "./observe-session-noted";

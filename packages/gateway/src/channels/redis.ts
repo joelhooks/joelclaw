@@ -712,47 +712,51 @@ async function sendImmediateTelegramEscalation(
 
   if (legacyEvents.length === 0) return;
 
-  const lines = [
-    "## Immediate Escalation",
-    "",
-    ...legacyEvents.slice(0, 5).map((event) => {
-      const prompt = typeof event.payload.prompt === "string" ? event.payload.prompt : "";
-      const detail = prompt ? `\n${prompt}` : "";
-      return `- ${event.type} (${event.source})${detail}`;
-    }),
-  ];
+  // The visible text is the message itself — attribution (producer, event
+  // type, flowId) travels in the audit and journal, never as a preface.
+  for (const event of legacyEvents.slice(0, 5)) {
+    const payload = event.payload as Record<string, unknown>;
+    const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
+    const message = typeof payload.message === "string" ? payload.message.trim() : "";
+    const text = prompt
+      || message
+      || `${event.source} raised ${event.type} without message text — joelclaw messages trace gateway-event:${event.id}`;
 
-  const onlyEvent = legacyEvents.length === 1 ? legacyEvents[0] : undefined;
-  const onlyEventPayload = onlyEvent?.payload as Record<string, unknown> | undefined;
-  await sendTelegram(TELEGRAM_USER_ID, lines.join("\n"), {
-    audit: onlyEvent
-      ? parseChannelAudit(onlyEventPayload?.audit) ?? {
-          flowId: `gateway-event:${onlyEvent.id}`,
-          producer: onlyEvent.source,
-          eventId: onlyEvent.id,
-          requestedAtMs: onlyEvent.ts,
-          route: "redis-immediate",
-        }
-      : {
+    await sendTelegram(TELEGRAM_USER_ID, text, {
+      audit: parseChannelAudit(payload.audit) ?? {
+        flowId: `gateway-event:${event.id}`,
+        producer: event.source,
+        eventId: event.id,
+        requestedAtMs: event.ts,
+        route: "redis-immediate",
+      },
+      outboundPolicy: {
+        sourceEventType: event.type,
+        sourceClassification: triageDecisions.get(event.id)?.classification,
+        sourceReason: triageDecisions.get(event.id)?.reason,
+        ...(signalPriority(payload) ? { priority: signalPriority(payload) } : {}),
+        ...(signalLevel(payload) ? { level: signalLevel(payload) } : {}),
+      },
+    });
+  }
+
+  if (legacyEvents.length > 5) {
+    await sendTelegram(
+      TELEGRAM_USER_ID,
+      `${legacyEvents.length - 5} more urgent events landed in the same window — joelclaw messages audit --since 1h`,
+      {
+        audit: {
           producer: "gateway-immediate-batch",
           route: "redis-immediate",
         },
-    outboundPolicy: {
-      sourceEventType: onlyEvent?.type ?? "gateway.immediate.batch",
-      sourceClassification: onlyEvent
-        ? triageDecisions.get(onlyEvent.id)?.classification
-        : "immediate",
-      sourceReason: onlyEvent
-        ? triageDecisions.get(onlyEvent.id)?.reason
-        : "immediate.gateway-batch",
-      ...(onlyEventPayload && signalPriority(onlyEventPayload)
-        ? { priority: signalPriority(onlyEventPayload) }
-        : {}),
-      ...(onlyEventPayload && signalLevel(onlyEventPayload)
-        ? { level: signalLevel(onlyEventPayload) }
-        : {}),
-    },
-  });
+        outboundPolicy: {
+          sourceEventType: "gateway.immediate.batch",
+          sourceClassification: "immediate",
+          sourceReason: "immediate.gateway-batch-overflow",
+        },
+      },
+    );
+  }
 }
 
 async function drainEvents(): Promise<void> {

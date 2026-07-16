@@ -17,6 +17,7 @@ import {
 } from "@joelclaw/telemetry";
 import { getModel } from "@mariozechner/pi-ai";
 import { calculateContextTokens, createAgentSession, DefaultResourceLoader, getLastAssistantUsage, type LoadExtensionsResult, SessionManager } from "@mariozechner/pi-coding-agent";
+import type { Bot } from "grammy";
 import {
   completeOperatorTrace,
   failOperatorTrace,
@@ -65,6 +66,13 @@ import { defaultGatewayConfig, loadGatewayConfig, providerForModel } from "./com
 import { getActiveDiscordMcqAdapter, registerDiscordMcqAdapter } from "./commands/discord-mcq-adapter";
 import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
+import {
+  composeFixtureDigestPrototype,
+  type GatewayDigestPrototype,
+  makeDigestAgentExtension,
+  makeLiveRedisActionRegistryClient,
+  registerDigestCallbackRoute,
+} from "./digest-gateway";
 import { injectChannelContext } from "./formatting";
 import {
   buildDeployVerificationPlan,
@@ -1029,9 +1037,12 @@ console.log("[gateway] session", {
   entries: sessionManager.getEntries().length,
 });
 
+let digestPrototype: GatewayDigestPrototype | undefined;
+
 const resourceLoader = new DefaultResourceLoader({
   cwd: GATEWAY_CWD,
   agentDir: AGENT_DIR,
+  extensionFactories: [makeDigestAgentExtension(() => digestPrototype)],
   extensionsOverride: withChannelMcqOverride,
 });
 await resourceLoader.reload();
@@ -3398,6 +3409,20 @@ async function maybeNotifyChannelHealth(): Promise<void> {
   }
 }
 
+async function configureGatewayTelegramBot(bot: Bot): Promise<void> {
+  const chatId = TELEGRAM_USER_ID;
+  if (!chatId) throw new Error("telegram not configured");
+
+  registerDigestCallbackRoute(bot, () => digestPrototype);
+  await initializeTelegramCommandHandler({
+    bot,
+    enqueue: enqueueToGateway,
+    redis: redisClient,
+    chatId,
+    getStatusSnapshot: getGatewayStatusSnapshot,
+  });
+}
+
 async function restartGatewayChannel(channel: GatewayChannelId, reason: string): Promise<void> {
   switch (channel) {
     case "telegram": {
@@ -3406,15 +3431,7 @@ async function restartGatewayChannel(channel: GatewayChannelId, reason: string):
       }
       await shutdownTelegram();
       await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, enqueueToGateway, {
-        configureBot: async (bot) => {
-          await initializeTelegramCommandHandler({
-            bot,
-            enqueue: enqueueToGateway,
-            redis: redisClient,
-            chatId: TELEGRAM_USER_ID,
-            getStatusSnapshot: getGatewayStatusSnapshot,
-          });
-        },
+        configureBot: configureGatewayTelegramBot,
         abortCurrentTurn: async () => {
           await session.abort();
         },
@@ -4654,16 +4671,41 @@ const initializeMessageStore = async (client: NonNullable<ReturnType<typeof getR
   await trimOld();
 };
 
+const liveDigestRedisClient = makeLiveRedisActionRegistryClient(getRedisClient);
+const initializeGatewayRedisServices = async (
+  client: NonNullable<ReturnType<typeof getRedisClient>>,
+): Promise<void> => {
+  await initializeMessageStore(client);
+  if (digestPrototype) return;
+
+  try {
+    digestPrototype = await composeFixtureDigestPrototype(liveDigestRedisClient);
+    console.log("[gateway:digest] fixture prototype ready", {
+      kind: digestPrototype.result.kind,
+      controlCount: digestPrototype.result.kind === "ready"
+        ? digestPrototype.result.controls.flat().length
+        : 0,
+      actionRegistryDurability: "redis",
+      fixtureSourceDurability: "process-local",
+    });
+  } catch (error) {
+    console.error("[gateway:digest] fixture prototype unavailable", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
 await startRedisChannel(enqueueToGateway, {
-  onRecovered: initializeMessageStore,
+  onRecovered: initializeGatewayRedisServices,
 });
 
 const redisClient = getRedisClient();
 await maybeRefreshChannelHealthMuteState(true);
 if (redisClient) {
-  await initializeMessageStore(redisClient);
+  await initializeGatewayRedisServices(redisClient);
 } else {
   console.warn("[gateway:store] redis command client unavailable; durable replay skipped until recovery");
+  console.warn("[gateway:digest] fixture prototype will initialize after Redis recovery");
 }
 
 // ── Discord channel ────────────────────────────────────
@@ -4768,15 +4810,7 @@ if (IMESSAGE_ALLOWED_SENDER) {
 // ── Telegram channel ───────────────────────────────────
 if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
   await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, enqueueToGateway, {
-    configureBot: async (bot) => {
-      await initializeTelegramCommandHandler({
-        bot,
-        enqueue: enqueueToGateway,
-        redis: redisClient,
-        chatId: TELEGRAM_USER_ID,
-        getStatusSnapshot: getGatewayStatusSnapshot,
-      });
-    },
+    configureBot: configureGatewayTelegramBot,
     abortCurrentTurn: async () => {
       await session.abort();
     },

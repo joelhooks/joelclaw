@@ -98,6 +98,21 @@ describe("Telegram outbound policy routing", () => {
     });
   });
 
+  test("explicitly delivers assembled digests without a specialized UI exemption", async () => {
+    const routed = await routeTelegramOutbound(
+      input("signal/digest.assembled", "Qualified digest"),
+      noOpDependencies,
+    );
+
+    expect(routed).toMatchObject({
+      disposition: "deliver",
+      decision: {
+        category: "action",
+        reason: "deliver.explicit.signal-digest-assembled",
+      },
+    });
+  });
+
   test("explicit Joel conversation replies bypass classification", async () => {
     const routed = await routeTelegramOutbound(
       {
