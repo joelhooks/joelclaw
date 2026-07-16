@@ -170,6 +170,12 @@ const defaultTelegramPolicy: TelegramPolicyPort = {
       route: `${route.lane}:${route.urgency}:${route.formatting}`,
       ...(Number.isSafeInteger(inReplyToMessageId) ? { inReplyToMessageId } : {}),
     });
+    // The policy's operator-immediate rule keys on the legacy notify.message
+    // source. Contract v2's alert kind IS that lane's successor (operator lane
+    // at high/critical urgency), so it speaks the policy's source language —
+    // otherwise every v2 alert would be suppressed as unrecognized machinery.
+    const operatorImmediate = route.lane === "operator"
+      && (route.urgency === "critical" || route.urgency === "high");
     return routeTelegramOutbound({
       chatId,
       content: intent.content,
@@ -177,7 +183,7 @@ const defaultTelegramPolicy: TelegramPolicyPort = {
       contentKind: intent.kind,
       transportText: intent.content,
       policy: {
-        sourceEventType: `message-contract/${intent.kind}`,
+        sourceEventType: operatorImmediate ? "notify.message" : `message-contract/${intent.kind}`,
         sourceClassification: intent.kind,
         priority: route.urgency === "critical" ? "urgent" : route.urgency,
         level: route.urgency === "critical" ? "error" : "info",
