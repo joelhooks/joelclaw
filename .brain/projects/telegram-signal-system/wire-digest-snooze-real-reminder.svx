@@ -1,0 +1,95 @@
+---
+title: "Wire the digest Snooze button to the real reminder"
+type: "task"
+status: "ready"
+created_at: "2026-07-16"
+privacy: "private"
+tags:
+  - telegram-signal-system
+---
+
+# Wire the digest Snooze button to the real reminder
+
+Joel approved (2026-07-16, live phone test): the digest's `Snooze 4h`
+button must schedule a REAL reminder that DMs him back, not a fixture
+no-op. Today the fixture adapter declares `snooze: { supported: false }`
+so the button is dead. The `signal/reminder` Inngest function is already
+built and deployed — this task connects the button to it.
+
+Do not commit. Owner dirs below only.
+
+## Read first (contracts already exist)
+
+- `packages/system-bus/src/inngest/functions/signal-reminder.ts` — the
+  deployed reminder function. Event: `signal/reminder.scheduled` with
+  `{ actionId (act: prefix), remindAt (ISO+tz), delivery: { text,
+  channel?, audit? } }`. It sleeps until `remindAt`, loads the action
+  record from `joelclaw:source-actions:registry:v1`, re-inspects the
+  source, then either suppresses (source resolved) or redelivers the
+  text via `gateway/send.message` with NO controls. `inspectSource`
+  currently only handles `kind: "front"` — everything else throws.
+- `packages/source-actions/src/adapters/fixture.ts` — the current
+  digest adapter; `snooze.supported = false`.
+- `packages/source-actions/src/types.ts` — the `SourceAdapter` contract.
+- `packages/gateway/src/digest-gateway.ts` — `composeFixtureDigestPrototype`
+  builds the prototype the gateway sends + the callback route resolves.
+- `packages/gateway/src/lib/inngest-event.ts` (`loadGatewayInngestEventConfig`)
+  and its use in `channels/telegram.ts:~417-433` — how the gateway
+  POSTs an Inngest event (INNGEST_EVENT_KEY + INNGEST_URL/8288). Reuse
+  this exact helper; do NOT hand-roll fetch.
+
+## Build
+
+You own: `packages/source-actions/`, `packages/gateway/src/digest-gateway.ts`
+(+ its test), and `packages/system-bus/src/inngest/functions/signal-reminder.ts`
+(inspector only). Do not touch other gateway files.
+
+1. **Memory-source inspector.** In `signal-reminder.ts`, add an
+   `inspectSource` case for the digest memory's source kind. A curated
+   memory has no mutable "resolved" state — it should always return
+   `state: "open"` (so a snoozed memory always redelivers) with the
+   memory title and its brain openUrl as revision. Pick the honest
+   source kind: reuse `brain` (memory pages are brain notes) and add
+   `inspectBrainSource` that returns `state: "open"` without a network
+   call, or if a 200-check is cheap, verify the brain URL. Keep it
+   NonRetriable-safe. Add a unit test.
+
+2. **Reminder-capable adapter.** In `packages/source-actions/`, add a
+   real adapter (or a reminder-capable variant of the digest adapter)
+   whose:
+   - `capabilities(item)` returns `snooze: { supported: true, mode:
+     "local-reminder" }` for the memory/reminder items; `resolve`/
+     `acknowledge` stay honest (memory has no mutable source → `Done`
+     is Acknowledge-only, returns an `already-applied`/acknowledged
+     receipt, never fakes a source mutation).
+   - `snooze(item, until, ctx)` emits `signal/reminder.scheduled` via
+     an injected `emitReminder(event)` port (so it stays testable and
+     source-actions keeps NO gateway/inngest dependency). Payload:
+     `actionId: ctx.actionId`, `remindAt: until.toISOString()`,
+     `delivery.text` = a short homie-voice reminder line derived from
+     the item, `delivery.channel: "telegram"`. Returns a real
+     `MutationReceipt` (`outcome: "applied"`) only after the emit
+     resolves.
+   - The action registry record it writes MUST carry a `sourceRef` the
+     reminder inspector accepts (kind `brain`, id = memory slug).
+   - Contract tests: snooze emits exactly one well-formed event; the
+     emitted `remindAt` respects the requested duration; Done is
+     acknowledge-only.
+
+3. **Gateway composition.** In `digest-gateway.ts`, wire the real
+   adapter's `emitReminder` port to the gateway Inngest event helper
+   (`loadGatewayInngestEventConfig`), and compose the digest prototype
+   with the reminder-capable adapter so the buttons the gateway SENDS
+   and the callback route RESOLVES both use it. Keep `Open memory
+   source` as a URL button (no callback). Update the digest-gateway
+   test.
+
+## Acceptance
+
+- `bunx tsc --noEmit`, `pnpm biome check` on owned dirs, and
+  `bun test packages/source-actions packages/gateway packages/system-bus/src/inngest/functions/signal-reminder.test.ts` all pass.
+- Snooze capability is `supported: true` in the composed prototype.
+- A unit test proves snooze emits a valid `signal/reminder.scheduled`.
+- Print a DONE summary: the emit port shape, the source kind chosen for
+  memory inspection, and exactly what the steering session must do to
+  fire a live short-delay (~90s) reminder for Joel's phone test.

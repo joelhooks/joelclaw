@@ -1,18 +1,26 @@
 import {
-  buildFixtureDigestPrototype,
   createFixtureDigestInput,
   DIGEST_AGENT_TOOL,
   type DigestActionOutcome,
+  type DigestControl,
+  type DigestInput,
+  type DigestLinkVerifier,
   type DigestResult,
   type DigestTelegramButton,
   type FixtureDigestPrototype,
+  makeDigestService,
   makeFetchDigestLinkVerifier,
   runDigestAgentTool,
 } from "@joelclaw/digest";
 import {
   ACTION_CALLBACK_PREFIX,
+  type BrainReminderSourceAdapter,
+  type EmitReminder,
+  makeBrainReminderSourceAdapter,
+  makeFixtureSourceAdapter,
   makeRedisActionRegistry,
   type RedisActionRegistryClient,
+  type SignalReminderScheduledEvent,
 } from "@joelclaw/source-actions";
 import type {
   ExtensionAPI,
@@ -28,13 +36,57 @@ import {
   markCallbackTraceDispatched,
   startCallbackTrace,
 } from "./callback-trace";
+import { loadGatewayInngestEventConfig } from "./lib/inngest-event";
 import {
   journalMessage,
   resolveTelegramMessageFlow,
 } from "./message-journal";
 
-export type GatewayDigestPrototype = FixtureDigestPrototype;
+const DIGEST_MEMORY_SLUG = "telegram-signal-system";
+const DIGEST_MEMORY_TITLE = "Telegram Signal System";
+const DIGEST_MEMORY_OPEN_URL =
+  "https://brain.joelclaw.com/joelclaw/projects/telegram-signal-system";
+
+export type GatewayDigestPrototype = FixtureDigestPrototype & {
+  reminderAdapter: BrainReminderSourceAdapter;
+  controlsByActionId: Map<string, readonly (readonly DigestControl[])[]>;
+};
 export type DigestPrototypeAccessor = () => GatewayDigestPrototype | undefined;
+
+function createGatewayDigestInput(
+  reminderAdapter: BrainReminderSourceAdapter,
+  requestedAt?: string,
+): DigestInput {
+  const fixtureInput = createFixtureDigestInput(requestedAt);
+  return {
+    ...fixtureInput,
+    candidates: fixtureInput.candidates.map((candidate) => {
+      if (candidate.kind === "memory") {
+        return {
+          ...candidate,
+          sourceRef: reminderAdapter.sourceRef,
+          sourceUrl: DIGEST_MEMORY_OPEN_URL,
+        };
+      }
+      if (candidate.kind === "reminder") {
+        return { ...candidate, sourceRef: reminderAdapter.sourceRef };
+      }
+      return candidate;
+    }),
+  };
+}
+
+function rememberDigestControls(
+  prototype: GatewayDigestPrototype,
+  result: DigestResult,
+): void {
+  if (result.kind !== "ready") return;
+  for (const control of result.controls.flat()) {
+    if (control.kind === "action") {
+      prototype.controlsByActionId.set(control.actionId, result.controls);
+    }
+  }
+}
 
 type DigestToolInput = {
   trigger?: "on-demand" | "scheduled";
@@ -78,28 +130,91 @@ export function makeLiveRedisActionRegistryClient(
   };
 }
 
+type GatewayReminderEmitterOptions = {
+  loadConfig?: typeof loadGatewayInngestEventConfig;
+  fetchFn?: typeof fetch;
+};
+
+export function makeGatewayReminderEmitter(
+  options: GatewayReminderEmitterOptions = {},
+): EmitReminder {
+  const loadConfig = options.loadConfig ?? loadGatewayInngestEventConfig;
+  const fetchFn = options.fetchFn ?? fetch;
+
+  return async (event: SignalReminderScheduledEvent): Promise<void> => {
+    const config = loadConfig();
+    if (!config) throw new Error("missing INNGEST_EVENT_KEY");
+
+    const response = await fetchFn(config.eventApi, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+    });
+    if (!response.ok) {
+      throw new Error(`signal reminder event dispatch failed with ${response.status}`);
+    }
+  };
+}
+
 export async function composeFixtureDigestPrototype(
   redis: RedisActionRegistryClient,
-): Promise<FixtureDigestPrototype> {
-  const registry = makeRedisActionRegistry(redis);
-  return Effect.runPromise(
-    buildFixtureDigestPrototype(registry, {
-      verifyLink: makeFetchDigestLinkVerifier(),
-    }),
+  options: {
+    emitReminder?: EmitReminder;
+    now?: () => Date;
+    verifyLink?: DigestLinkVerifier;
+    snoozeMs?: number;
+  } = {},
+): Promise<GatewayDigestPrototype> {
+  const registry = makeRedisActionRegistry(
+    redis,
+    options.now ? { now: options.now } : {},
   );
+  const adapter = makeFixtureSourceAdapter();
+  const reminderAdapter = makeBrainReminderSourceAdapter({
+    slug: DIGEST_MEMORY_SLUG,
+    title: DIGEST_MEMORY_TITLE,
+    openUrl: DIGEST_MEMORY_OPEN_URL,
+    emitReminder: options.emitReminder ?? makeGatewayReminderEmitter(),
+  });
+  const input = createGatewayDigestInput(
+    reminderAdapter,
+    options.now?.().toISOString(),
+  );
+  const service = makeDigestService({
+    actionRegistry: registry,
+    adapters: { fixture: adapter, brain: reminderAdapter },
+    verifyLink: options.verifyLink ?? makeFetchDigestLinkVerifier(),
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.snoozeMs ? { snoozeMs: options.snoozeMs } : {}),
+  });
+  const result = await Effect.runPromise(service.assemble(input));
+  const prototype: GatewayDigestPrototype = {
+    adapter,
+    reminderAdapter,
+    controlsByActionId: new Map(),
+    service,
+    result,
+  };
+  rememberDigestControls(prototype, result);
+  return prototype;
 }
 
 export async function executeDigestAgentTool(
-  prototype: FixtureDigestPrototype,
+  prototype: GatewayDigestPrototype,
   input: DigestToolInput,
 ): Promise<DigestResult> {
-  const fixtureInput = createFixtureDigestInput(new Date().toISOString());
-  return Effect.runPromise(
+  const digestInput = createGatewayDigestInput(
+    prototype.reminderAdapter,
+    new Date().toISOString(),
+  );
+  const result = await Effect.runPromise(
     runDigestAgentTool(prototype.service, {
-      ...fixtureInput,
+      ...digestInput,
       trigger: isDigestTrigger(input.trigger) ? input.trigger : "on-demand",
     }),
   );
+  rememberDigestControls(prototype, result);
+  return result;
 }
 
 export function makeDigestAgentExtension(
@@ -150,7 +265,7 @@ export function makeDigestAgentExtension(
 }
 
 export async function handleDigestActionCallback(
-  prototype: FixtureDigestPrototype,
+  prototype: GatewayDigestPrototype,
   input: { actionId: string; telegramMessageId: number },
   io: DigestCallbackIo,
 ): Promise<DigestCallbackResult> {
@@ -160,9 +275,8 @@ export async function handleDigestActionCallback(
     const outcome = await Effect.runPromise(
       prototype.service.handleAction(input),
     );
-    const controls = prototype.result.kind === "ready"
-      ? prototype.result.controls
-      : [];
+    const controls = prototype.controlsByActionId.get(input.actionId)
+      ?? (prototype.result.kind === "ready" ? prototype.result.controls : []);
     const refreshed = await Effect.runPromise(
       prototype.service.refreshControls(controls),
     );

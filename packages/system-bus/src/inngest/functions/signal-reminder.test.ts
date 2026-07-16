@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { InngestTestEngine } from "@inngest/test";
 import {
   createSignalReminderFunction,
+  inspectBrainSource,
   parseSignalReminderActionRecord,
   parseSignalReminderScheduledData,
   type SignalReminderDependencies,
@@ -117,6 +118,26 @@ describe("signal reminder", () => {
     });
     expect((redelivery?.[1] as any)?.data.inline_keyboard).toBeUndefined();
     expect(outcomes).toEqual([expect.objectContaining({ actionId, outcome: "redelivered" })]);
+  });
+
+  test("keeps curated Brain memories open without a network call", () => {
+    const openUrl = "https://brain.joelclaw.com/joelclaw/projects/telegram-signal-system";
+
+    expect(inspectBrainSource({
+      kind: "brain",
+      id: "telegram-signal-system",
+      revision: openUrl,
+    })).toEqual({
+      ref: {
+        kind: "brain",
+        id: "telegram-signal-system",
+        revision: openUrl,
+      },
+      state: "open",
+      title: "Telegram Signal System",
+      revision: openUrl,
+      openUrl,
+    });
   });
 
   test("reads the canonical source-actions registry wire record", () => {

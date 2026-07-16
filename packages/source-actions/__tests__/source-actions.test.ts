@@ -12,9 +12,11 @@ import {
   type ActionContext,
   createActionId,
   FIXTURE_SOURCE_REFS,
+  makeBrainReminderSourceAdapter,
   makeFixtureSourceAdapter,
   makeFrontSourceAdapter,
   makeRedisActionRegistry,
+  type SignalReminderScheduledEvent,
   type SourceAdapter,
   type SourceRef,
   TELEGRAM_CALLBACK_DATA_MAX_BYTES,
@@ -186,6 +188,104 @@ describe("fixture capability shapes", () => {
     expect(firstAcknowledge.outcome).toBe("applied");
     expect(secondAcknowledge.outcome).toBe("already-applied");
     expect(adapter.wasAcknowledged(context.actionId)).toBe(true);
+  });
+});
+
+describe("Brain memory reminder adapter", () => {
+  test("emits one well-formed reminder for the requested duration", async () => {
+    const emitted: SignalReminderScheduledEvent[] = [];
+    const adapter = makeBrainReminderSourceAdapter({
+      slug: "telegram-signal-system",
+      title: "Telegram signal system working brief",
+      openUrl: "https://brain.joelclaw.com/joelclaw/projects/telegram-signal-system",
+      emitReminder: async (event) => {
+        emitted.push(event);
+      },
+    });
+    const item = await Effect.runPromise(adapter.inspect(adapter.sourceRef));
+    const requestedAt = new Date(context.requestedAt);
+    const until = new Date(requestedAt.getTime() + 4 * 60 * 60 * 1_000);
+
+    expect(adapter.capabilities(item)).toMatchObject({
+      resolve: { supported: false, button: "Acknowledge" },
+      acknowledge: true,
+      snooze: { supported: true, mode: "local-reminder" },
+    });
+
+    const first = await Effect.runPromise(adapter.snooze(item, until, context));
+    const second = await Effect.runPromise(adapter.snooze(item, until, context));
+
+    expect(first.outcome).toBe("applied");
+    expect(second.outcome).toBe("already-applied");
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toEqual({
+      name: "signal/reminder.scheduled",
+      data: {
+        actionId: context.actionId,
+        remindAt: "2026-07-15T16:00:00.000Z",
+        delivery: {
+          text: "Yo — Telegram signal system working brief is back on your radar.",
+          channel: "telegram",
+        },
+      },
+    });
+    expect(Date.parse(emitted[0]?.data.remindAt ?? "") - requestedAt.getTime()).toBe(
+      4 * 60 * 60 * 1_000,
+    );
+    expect(adapter.sourceRef).toEqual({
+      kind: "brain",
+      id: "telegram-signal-system",
+      revision: "https://brain.joelclaw.com/joelclaw/projects/telegram-signal-system",
+    });
+  });
+
+  test("keeps Done acknowledge-only and never fakes a Brain mutation", async () => {
+    const adapter = makeBrainReminderSourceAdapter({
+      slug: "telegram-signal-system",
+      title: "Telegram signal system working brief",
+      openUrl: "https://brain.joelclaw.com/joelclaw/projects/telegram-signal-system",
+      emitReminder: async () => undefined,
+    });
+    const item = await Effect.runPromise(adapter.inspect(adapter.sourceRef));
+
+    const first = await Effect.runPromise(adapter.acknowledge(item, context));
+    const second = await Effect.runPromise(adapter.acknowledge(item, context));
+    const resolveResult = await Effect.runPromise(
+      Effect.either(adapter.resolve(item, context)),
+    );
+
+    expect(first).toMatchObject({ outcome: "applied", detail: "Memory interaction acknowledged" });
+    expect(second.outcome).toBe("already-applied");
+    expect(adapter.wasAcknowledged(context.actionId)).toBe(true);
+    expect(Either.isLeft(resolveResult)).toBe(true);
+    if (Either.isLeft(resolveResult)) {
+      expect(resolveResult.left).toMatchObject({ _tag: "SourceError", operation: "resolve" });
+    }
+  });
+
+  test("does not return an applied receipt when reminder emission fails", async () => {
+    const adapter = makeBrainReminderSourceAdapter({
+      slug: "telegram-signal-system",
+      title: "Telegram signal system working brief",
+      openUrl: "https://brain.joelclaw.com/joelclaw/projects/telegram-signal-system",
+      emitReminder: async () => {
+        throw new Error("Inngest unavailable");
+      },
+    });
+    const item = await Effect.runPromise(adapter.inspect(adapter.sourceRef));
+    const result = await Effect.runPromise(
+      Effect.either(adapter.snooze(item, new Date("2026-07-15T16:00:00.000Z"), context)),
+    );
+
+    expect(Either.isLeft(result)).toBe(true);
+    if (Either.isLeft(result)) {
+      expect(result.left).toMatchObject({
+        _tag: "SourceError",
+        operation: "snooze",
+        message: "Failed to schedule the memory reminder",
+      });
+    }
+    expect(adapter.scheduledReminder(context.actionId)).toBeUndefined();
   });
 });
 

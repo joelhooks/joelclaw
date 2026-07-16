@@ -137,6 +137,20 @@ async function loadAction(actionId: string): Promise<ActionRecord> {
   return parseSignalReminderActionRecord(raw, actionId);
 }
 
+export function inspectBrainSource(ref: SourceRef): ReminderSourceSnapshot {
+  const title = ref.id
+    .split(/[-_/]+/u)
+    .filter(Boolean)
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join(" ");
+  return {
+    ref,
+    state: "open",
+    title: title || ref.id,
+    ...(ref.revision ? { revision: ref.revision, openUrl: ref.revision } : {}),
+  };
+}
+
 async function inspectFrontSource(ref: SourceRef): Promise<ReminderSourceSnapshot> {
   const token = process.env.FRONT_API_TOKEN?.trim();
   if (!token) throw new Error("FRONT_API_TOKEN missing; cannot inspect reminder source");
@@ -155,6 +169,8 @@ async function inspectFrontSource(ref: SourceRef): Promise<ReminderSourceSnapsho
 
 async function inspectSource(ref: SourceRef): Promise<ReminderSourceSnapshot> {
   switch (ref.kind) {
+    case "brain":
+      return inspectBrainSource(ref);
     case "front":
       return inspectFrontSource(ref);
     default:

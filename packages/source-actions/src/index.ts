@@ -1,4 +1,11 @@
 export {
+  type BrainReminderSourceAdapter,
+  type BrainReminderSourceAdapterOptions,
+  type EmitReminder,
+  makeBrainReminderSourceAdapter,
+  type SignalReminderScheduledEvent,
+} from "./adapters/brain-reminder";
+export {
   FIXTURE_SOURCE_REFS,
   type FixtureSourceAdapter,
   makeFixtureSourceAdapter,

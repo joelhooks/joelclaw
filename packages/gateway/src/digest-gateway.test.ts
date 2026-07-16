@@ -3,16 +3,20 @@ import {
   DigestError,
   type DigestInput,
   type DigestService,
-  type FixtureDigestPrototype,
 } from "@joelclaw/digest";
-import type {
-  ActionRecord,
-  MutationReceipt,
+import {
+  ACTION_REGISTRY_KEY,
+  type ActionRecord,
+  type MutationReceipt,
+  type SignalReminderScheduledEvent,
 } from "@joelclaw/source-actions";
 import { Effect } from "effect";
 import {
+  composeFixtureDigestPrototype,
   executeDigestAgentTool,
+  type GatewayDigestPrototype,
   handleDigestActionCallback,
+  makeGatewayReminderEmitter,
   makeLiveRedisActionRegistryClient,
 } from "./digest-gateway";
 
@@ -31,9 +35,17 @@ const receipt: MutationReceipt = {
   detail: "fixture resolved",
 };
 
-function prototypeWithService(service: DigestService): FixtureDigestPrototype {
+function prototypeWithService(service: DigestService): GatewayDigestPrototype {
   return {
-    adapter: {} as FixtureDigestPrototype["adapter"],
+    adapter: {} as GatewayDigestPrototype["adapter"],
+    reminderAdapter: {
+      sourceRef: {
+        kind: "brain",
+        id: "telegram-signal-system",
+        revision: "https://brain.joelclaw.com/joelclaw/projects/telegram-signal-system",
+      },
+    } as GatewayDigestPrototype["reminderAdapter"],
+    controlsByActionId: new Map(),
     service,
     result: {
       kind: "ready",
@@ -100,6 +112,169 @@ describe("digest Redis action registry", () => {
   });
 });
 
+class MockRedis {
+  private readonly hashes = new Map<string, Map<string, string>>();
+
+  async hget(key: string, field: string): Promise<string | null> {
+    return this.hashes.get(key)?.get(field) ?? null;
+  }
+
+  async hset(key: string, field: string, value: string): Promise<number> {
+    const hash = this.hashes.get(key) ?? new Map<string, string>();
+    hash.set(field, value);
+    this.hashes.set(key, hash);
+    return 1;
+  }
+
+  async get(): Promise<string | null> {
+    return null;
+  }
+
+  async set(): Promise<"OK"> {
+    return "OK";
+  }
+
+  async eval(): Promise<number> {
+    return 1;
+  }
+}
+
+describe("digest reminder composition", () => {
+  test("posts the exact reminder event through the gateway Inngest endpoint", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const emit = makeGatewayReminderEmitter({
+      loadConfig: () => ({
+        eventKey: "redacted",
+        inngestUrl: "http://inngest.test",
+        eventApi: "http://inngest.test/e/redacted",
+      }),
+      fetchFn: (async (url, init) => {
+        requests.push({ url: String(url), init });
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch,
+    });
+    const event: SignalReminderScheduledEvent = {
+      name: "signal/reminder.scheduled",
+      data: {
+        actionId: "act:00000000-0000-4000-8000-000000000001",
+        remindAt: "2026-07-16T15:00:00.000Z",
+        delivery: { text: "Yo — reminder.", channel: "telegram" },
+      },
+    };
+
+    await emit(event);
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe("http://inngest.test/e/redacted");
+    expect(requests[0]?.init).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+    });
+  });
+
+  test("composes Snooze with a Brain source record and keeps memory open as a URL", async () => {
+    const redis = new MockRedis();
+    const emitted: SignalReminderScheduledEvent[] = [];
+    const now = new Date("2026-07-16T12:00:00.000Z");
+    const prototype = await composeFixtureDigestPrototype(redis, {
+      now: () => now,
+      verifyLink: () => Effect.succeed(true),
+      emitReminder: async (event) => {
+        emitted.push(event);
+      },
+    });
+    if (prototype.result.kind !== "ready") throw new Error("expected ready digest");
+
+    const item = await Effect.runPromise(
+      prototype.reminderAdapter.inspect(prototype.reminderAdapter.sourceRef),
+    );
+    expect(prototype.reminderAdapter.capabilities(item).snooze).toEqual({
+      supported: true,
+      mode: "local-reminder",
+    });
+
+    const snooze = prototype.result.controls.flat().find(
+      (control) => control.kind === "action" && control.operation === "snooze",
+    );
+    if (!snooze || snooze.kind !== "action") throw new Error("missing Snooze control");
+    expect(snooze.sourceRef).toEqual({
+      kind: "brain",
+      id: "telegram-signal-system",
+      revision: "https://brain.joelclaw.com/joelclaw/projects/telegram-signal-system",
+    });
+    const record = JSON.parse(
+      (await redis.hget(ACTION_REGISTRY_KEY, snooze.actionId)) ?? "null",
+    ) as ActionRecord;
+    expect(record.sourceRef).toEqual(snooze.sourceRef);
+
+    const openMemory = prototype.result.payload.buttons.flat().find(
+      (button) => button.text === "Open memory source",
+    );
+    expect(openMemory).toEqual({
+      text: "Open memory source",
+      url: "https://brain.joelclaw.com/joelclaw/projects/telegram-signal-system",
+    });
+    expect(openMemory?.action).toBeUndefined();
+    expect(emitted).toHaveLength(0);
+
+    const callback = await handleDigestActionCallback(
+      prototype,
+      { actionId: snooze.actionId, telegramMessageId: 42 },
+      {
+        answerWorking: async () => undefined,
+        editKeyboard: async () => undefined,
+        reportFailure: async (message) => {
+          throw new Error(message);
+        },
+      },
+    );
+    expect(callback.status).toBe("applied");
+    expect(emitted).toEqual([{
+      name: "signal/reminder.scheduled",
+      data: {
+        actionId: snooze.actionId,
+        remindAt: "2026-07-16T16:00:00.000Z",
+        delivery: {
+          text: "Yo — Telegram Signal System is back on your radar.",
+          channel: "telegram",
+        },
+      },
+    }]);
+
+    const sent = await executeDigestAgentTool(prototype, { trigger: "scheduled" });
+    if (sent.kind !== "ready") throw new Error("expected sent digest");
+    const sentSnooze = sent.controls.flat().find(
+      (control) => control.kind === "action" && control.operation === "snooze",
+    );
+    if (!sentSnooze || sentSnooze.kind !== "action") {
+      throw new Error("missing sent Snooze control");
+    }
+    expect(sentSnooze.actionId).not.toBe(snooze.actionId);
+    expect(prototype.controlsByActionId.get(sentSnooze.actionId)).toBe(sent.controls);
+
+    const edited: unknown[] = [];
+    await handleDigestActionCallback(
+      prototype,
+      { actionId: sentSnooze.actionId, telegramMessageId: 43 },
+      {
+        answerWorking: async () => undefined,
+        editKeyboard: async (buttons) => {
+          edited.push(buttons);
+        },
+        reportFailure: async (message) => {
+          throw new Error(message);
+        },
+      },
+    );
+    const editedActions = (edited[0] as Array<Array<{ action?: string }>>)
+      .flat()
+      .flatMap((button) => button.action ? [button.action] : []);
+    expect(editedActions).toContain(sentSnooze.actionId);
+    expect(editedActions).not.toContain(snooze.actionId);
+  });
+});
+
 describe("digest agent tool", () => {
   test("loads fixture candidates and calls the service without sending", async () => {
     let assembled: DigestInput | undefined;
@@ -119,6 +294,15 @@ describe("digest agent tool", () => {
     expect(result.kind).toBe("empty");
     expect(assembled?.trigger).toBe("scheduled");
     expect(assembled?.candidates.length).toBeGreaterThan(0);
+    expect(
+      assembled?.candidates.find((candidate) => candidate.kind === "reminder")?.sourceRef,
+    ).toEqual(prototype.reminderAdapter.sourceRef);
+    expect(
+      assembled?.candidates.find((candidate) => candidate.kind === "memory"),
+    ).toMatchObject({
+      sourceRef: prototype.reminderAdapter.sourceRef,
+      sourceUrl: "https://brain.joelclaw.com/joelclaw/projects/telegram-signal-system",
+    });
   });
 });
 
