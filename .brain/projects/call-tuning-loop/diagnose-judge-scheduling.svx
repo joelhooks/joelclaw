@@ -1,0 +1,33 @@
+---
+title: "Diagnose Judge Scheduling — Runs Never Spawn"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./call-tuning-loop-brief.svx"
+blockers: []
+created_at: "2026-07-16"
+---
+
+# Diagnose Judge Scheduling — Runs Never Spawn
+
+## Step
+
+voice-call-judge is registered (worker detail + PUT sync "Successfully
+registered, modified: False") yet spawns zero runs on any of its three
+triggers, while sibling functions (backups, memory/run.captured) schedule
+normally. 60+ voice/call.judge.requested events emitted across 2026-07-13 and
+-16 produced nothing; no analyses persisted under callTelemetry custody.
+Receipts: probe event accepted (ids:1) against a health-OK server with no
+resulting run; GQL ConnectionRefused observed minutes earlier (server
+flapping); judge opts carry `idempotency: "event.data.room"` — prime suspect:
+per-room dedupe silently suppressing every re-drive, compounded by the
+original 7/13 batch possibly dying in a flap window. Diagnose from the
+Inngest server's own view (localhost:8288 UI/API: function state
+paused/archived?, event history, skipped/dedupe counts), decide whether
+idempotency-by-room is even right for a judge (re-judging a room after prompt
+changes is a FEATURE — likely replace with idempotency on event id or drop
+it), fix, and prove: one re-driven event → one completed run → one analysis
+row readable via callTelemetry:sessionDetail. Blocks the retro build and the
+A/B (both need judged receipts).
