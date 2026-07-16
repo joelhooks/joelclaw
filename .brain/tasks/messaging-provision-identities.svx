@@ -1,0 +1,59 @@
+---
+title: "Task: provision bot identities — Discord/Telegram/Slack reuse, zero portal clicks if the APIs allow"
+type: task-brief
+created: 2026-07-16
+parent: "../projects/messaging-stabilization/provision-bot-identities.svx"
+---
+
+# Provision bot identities
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. SECRETS DISCIPLINE IS
+ABSOLUTE: lease tokens via the local secrets daemon exactly the way
+existing code does (`~/Code/joelhooks/pi-discord-threads` leases
+`discord_bot_token`; `packages/gateway/src/channels/slack.ts:1072` and
+the gateway start script lease the Slack/Telegram ones) — NEVER print,
+echo, log, or persist a token value; pipe API responses through a
+parser that extracts only the non-secret fields you need. NO commits,
+NO push. Set your pi session name to "🔑 Bot identities" immediately.
+
+Read first: your claimed step
+(`.brain/projects/messaging-stabilization/provision-bot-identities.svx`
+— its per-platform bullets are the spec) and the fit/gap asset's Auth
+section (`chat-sdk-fit-gap.svx`).
+
+## Deliverables
+
+1. **Discord**: lease `discord_bot_token`, call
+   `GET https://discord.com/api/v10/oauth2/applications/@me` (Bot
+   auth), extract `id` (application id) and `verify_key` (public key)
+   — both non-secret. Verify the flags field shows Message Content
+   intent enabled (the pi-discord-threads rig requires it, so expect
+   yes). Store `DISCORD_APPLICATION_ID` and `DISCORD_PUBLIC_KEY` in
+   the gateway config surface the way its siblings are stored (find
+   the idiom at `packages/cli/src/commands/gateway.ts` ~709-729 and
+   `~/.joelclaw/scripts/gateway-start.sh` — if the surface is
+   secrets-daemon-backed, add them there; they are not secret but
+   consistency wins).
+2. **Telegram**: lease the bot token, call `getMe` (verify identity
+   resolves) and `getWebhookInfo` (confirm polling mode / no webhook
+   conflict). Record in your receipt that `message_reaction` must be
+   in `allowed_updates` at poll time — a build-step concern, not a
+   config item; say where the current poller sets its updates.
+3. **Slack**: using the already-leased bot token, call `auth.test`
+   (identity) and check granted scopes via the
+   `x-oauth-scopes`-style response headers on a probe call
+   (`auth.test` returns them) — verify `reactions:read` is present
+   and note whether `reaction_added`/`reaction_removed` event
+   subscriptions can be confirmed via API; if scope or subscription
+   can't be verified without the app-config UI, record EXACTLY what
+   Joel must check there — honest fallback, no silent skip.
+4. **Receipt** appended to the claimed step file: per platform —
+   identity confirmed (bot name/id fine to print), what was stored
+   where (names/paths only), what remains for the build steps, and
+   any genuine Joel-hands item left. Flip status closed if nothing
+   requires Joel; otherwise leave open with the Joel-item at top.
+
+## Rules
+
+Work autonomously. Do not commit. Print DONE with receipts (no secret
+values anywhere in output — this transcript is a publication surface).

@@ -2,9 +2,9 @@
 title: "Provision Bot Identities: apps/tokens for Discord, Telegram, Slack"
 type: "step"
 kind: "task"
-interaction: "HITL"
+interaction: "AFK"
 status: "open"
-assignee: ""
+assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-16)"
 parent: "./messaging-stabilization-brief.svx"
 blockers:
   - "./research-chat-sdk-fit-gap.svx"
