@@ -20,6 +20,11 @@ import {
   summarizeChannelError,
 } from "@joelclaw/telemetry";
 import type { Bot } from "grammy";
+import {
+  routeTelegramOutbound,
+  type TelegramOutboundPolicyContext,
+  type TelegramOutboundRoute,
+} from "./telegram-outbound-policy";
 
 const converter = new TelegramConverter();
 
@@ -38,6 +43,7 @@ export type TelegramStreamOptions = {
   bot: Bot;
   replyTo?: number;
   audit?: ChannelAuditSeed;
+  outboundPolicy?: TelegramOutboundPolicyContext;
 };
 
 type StreamState = {
@@ -45,6 +51,7 @@ type StreamState = {
   bot: Bot;
   replyTo?: number;
   audit?: ChannelAuditSeed;
+  outboundPolicy?: TelegramOutboundPolicyContext;
 
   // Typing indicator
   typingTimer: ReturnType<typeof setInterval> | undefined;
@@ -66,6 +73,8 @@ type StreamState = {
   sendingInitial: boolean; // guards against duplicate initial sends
   initialSendPromise: Promise<void> | undefined; // tracks the first sendMessage flight
   initialSendError: unknown;
+  policyPromise: Promise<TelegramOutboundRoute> | undefined;
+  policyRoute: TelegramOutboundRoute | undefined;
 };
 
 let activeStream: StreamState | undefined;
@@ -88,6 +97,7 @@ export function begin(options: TelegramStreamOptions): void {
     bot: options.bot,
     replyTo: options.replyTo,
     audit: options.audit,
+    outboundPolicy: options.outboundPolicy,
     typingTimer: undefined,
     messageId: undefined,
     sentMessageIds: [],
@@ -101,11 +111,19 @@ export function begin(options: TelegramStreamOptions): void {
     sendingInitial: false,
     initialSendPromise: undefined,
     initialSendError: undefined,
+    policyPromise: undefined,
+    policyRoute: undefined,
   };
 
-  // Start typing indicator loop immediately
-  sendTyping(state);
-  state.typingTimer = setInterval(() => sendTyping(state), TYPING_INTERVAL_MS);
+  const exemption = state.outboundPolicy?.exemption;
+  const canUseBotApiBeforeFinalPolicy = exemption?.kind === "specialized-ui"
+    || (exemption?.kind === "conversation-reply" && exemption.chatId === state.chatId);
+  if (canUseBotApiBeforeFinalPolicy) {
+    // Specialized UI and a verified same-chat conversation may stream before
+    // final-text classification. Governed output waits for finish().
+    sendTyping(state);
+    state.typingTimer = setInterval(() => sendTyping(state), TYPING_INTERVAL_MS);
+  }
 
   activeStream = state;
   lastStreamConfig = options;
@@ -185,18 +203,38 @@ export async function finish(
     return false;
   }
 
+  if (!state.policyPromise) {
+    const audit = createStreamAudit(state, finalText);
+    state.policyPromise = routeTelegramOutbound({
+      chatId: state.chatId,
+      content: finalText,
+      audit,
+      transportText: finalText,
+      policy: state.outboundPolicy,
+    });
+  }
+  state.policyRoute = await state.policyPromise;
+  if (state.policyRoute.disposition !== "deliver") {
+    cleanup(state);
+    activeStream = undefined;
+    return true;
+  }
+  if (state.policyRoute?.disposition === "deliver" && !state.initialSendPromise) {
+    // finish() can race the async policy decision. Start the accepted initial
+    // send now so the caller does not fall through and duplicate the response.
+    state.fullText = finalText;
+    state.finished = false;
+    flushEdit(state);
+    state.finished = true;
+  }
+
   // Wait for the initial send to complete if it's in flight.
   // This handles the race where finish() fires before sendMessage resolves.
   if (state.initialSendPromise) {
     await state.initialSendPromise;
   }
 
-  const audit = createChannelDeliveryAudit(finalText, {
-    ...state.audit,
-    producer: state.audit?.producer ?? "gateway-telegram-stream",
-    route: state.audit?.route ?? `telegram:${state.chatId}`,
-    inReplyToMessageId: state.audit?.inReplyToMessageId ?? state.replyTo,
-  });
+  const audit = createStreamAudit(state, finalText);
 
   if (state.initialSendError) {
     await emitGatewayOtel({
@@ -356,6 +394,15 @@ export function getActiveChatId(): number | undefined {
 
 // ── Internal helpers ───────────────────────────────────
 
+function createStreamAudit(state: StreamState, content: string) {
+  return createChannelDeliveryAudit(content, {
+    ...state.audit,
+    producer: state.audit?.producer ?? "gateway-telegram-stream",
+    route: state.audit?.route ?? `telegram:${state.chatId}`,
+    inReplyToMessageId: state.audit?.inReplyToMessageId ?? state.replyTo,
+  });
+}
+
 function sendTyping(state: StreamState): void {
   state.bot.api.sendChatAction(state.chatId, "typing").catch(() => {
     // non-critical
@@ -432,6 +479,41 @@ function flushEdit(state: StreamState): void {
 
   const displayText = buildDisplayText(state);
 
+  if (!state.messageId) {
+    // First message — only send if we have enough text
+    if (state.fullText.length < MIN_FIRST_SEND && !state.toolStatus) return;
+
+    if (!state.policyPromise) {
+      // Governed streams wait for finish() so classification sees the final
+      // response. Only explicit UI/conversation exemptions may send partials.
+      if (!state.outboundPolicy?.exemption) return;
+      const audit = createStreamAudit(state, state.fullText);
+      state.policyPromise = routeTelegramOutbound({
+        chatId: state.chatId,
+        content: state.fullText,
+        audit,
+        transportText: displayText,
+        policy: state.outboundPolicy,
+      }).then((route) => {
+        state.policyRoute = route;
+        if (route.disposition === "deliver" && !state.finished) {
+          flushEdit(state);
+        } else if (route.disposition !== "deliver") {
+          stopTyping(state);
+        }
+        return route;
+      });
+      return;
+    }
+
+    // Policy is still resolving, or it routed the signal away from Telegram.
+    if (!state.policyRoute || state.policyRoute.disposition !== "deliver") return;
+
+    // Guard against duplicate initial sends (async race)
+    if (state.sendingInitial) return;
+    state.sendingInitial = true;
+  }
+
   // Skip if nothing changed
   if (displayText === state.lastEditedText) return;
 
@@ -439,13 +521,6 @@ function flushEdit(state: StreamState): void {
   state.lastEditAt = Date.now();
 
   if (!state.messageId) {
-    // First message — only send if we have enough text
-    if (state.fullText.length < MIN_FIRST_SEND && !state.toolStatus) return;
-
-    // Guard against duplicate initial sends (async race)
-    if (state.sendingInitial) return;
-    state.sendingInitial = true;
-
     // Stop typing indicator once we start showing text
     stopTyping(state);
 

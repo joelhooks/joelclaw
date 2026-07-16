@@ -1,4 +1,5 @@
 import type { Bot } from "grammy";
+import { specializedTelegramApi } from "../telegram-outbound-policy";
 
 type McqQuestion = {
   id: string;
@@ -212,6 +213,7 @@ export function getActiveMcqAdapter(): McqAdapterRuntime | undefined {
 }
 
 export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime {
+  const api = specializedTelegramApi(bot.api, "mcq");
   const pendingQuestions = new Map<string, PendingQuestion>();
   const pendingFreeText = new Map<number, PendingFreeText>();
   let activeCalls = 0;
@@ -253,7 +255,7 @@ export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime 
       pending.cancelAutoSelectTimer();
       pendingFreeText.set(pending.chatId, { questionId });
       try {
-        await bot.api.sendMessage(pending.chatId, "Reply with your custom answer.", {
+        await api.sendMessage(pending.chatId, "Reply with your custom answer.", {
           reply_parameters: { message_id: pending.messageId },
         });
       } catch (error) {
@@ -308,7 +310,7 @@ export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime 
     let messageId = 0;
 
     try {
-      const message = await bot.api.sendMessage(targetChatId, formatQuestionHtml(question), {
+      const message = await api.sendMessage(targetChatId, formatQuestionHtml(question), {
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: buildKeyboard(question, callbackQuestionId) },
       });
@@ -372,7 +374,7 @@ export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime 
     });
 
     try {
-      await bot.api.editMessageText(
+      await api.editMessageText(
         targetChatId,
         messageId,
         selectedHtml(question.question, question.context, answer, autoSelectedOptionNumber),
@@ -408,7 +410,7 @@ export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime 
       try {
         if (params.title?.trim()) {
           try {
-            await bot.api.sendMessage(targetChatId, `<b>${escapeHtml(params.title.trim())}</b>`, {
+            await api.sendMessage(targetChatId, `<b>${escapeHtml(params.title.trim())}</b>`, {
               parse_mode: "HTML",
             });
           } catch (error) {

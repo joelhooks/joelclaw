@@ -1,4 +1,5 @@
 import type { ChannelAuditSeed } from "@joelclaw/telemetry";
+import type { TelegramOutboundPolicyContext } from "../telegram-outbound-policy";
 
 /** Consumer channels — bidirectional messaging platforms */
 export type ChannelPlatform = "telegram" | "slack" | "discord" | "imessage";
@@ -19,6 +20,7 @@ export interface SendOptions {
   noPreview?: boolean;
   media?: SendMediaPayload;
   audit?: ChannelAuditSeed;
+  outboundPolicy?: TelegramOutboundPolicyContext;
 }
 
 export interface InboundMessage {

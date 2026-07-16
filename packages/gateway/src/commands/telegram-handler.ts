@@ -11,6 +11,7 @@ import {
 } from "../callback-trace";
 import { injectChannelContext } from "../formatting";
 import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
+import { specializedTelegramApi } from "../telegram-outbound-policy";
 import { BUILTIN_COMMANDS } from "./builtins";
 import {
   ALLOWED_MODELS,
@@ -58,6 +59,14 @@ type CommandHandlerInit = {
 
 const PINNED_STATUS_KEY = "joelclaw:gateway:pinned_message_id";
 const CALLBACK_PREFIX = "cmd:";
+
+function commandApi(bot: Bot) {
+  return specializedTelegramApi(bot.api, "command");
+}
+
+function pinnedStatusApi(bot: Bot) {
+  return specializedTelegramApi(bot.api, "pinned-status");
+}
 const MAX_LIGHT_RESPONSE_CHARS = 3900;
 const DOWNSTREAM_AGENT_TRACE_TIMEOUT_MS = 120_000;
 
@@ -145,7 +154,7 @@ function pickMenuArg(command: CommandDefinition): CommandArgDefinition | undefin
 }
 
 async function sendHtml(bot: Bot, chatId: number, html: string): Promise<void> {
-  await bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+  await commandApi(bot).sendMessage(chatId, html, { parse_mode: "HTML" });
 }
 
 async function sendTraceTimeoutMessage(
@@ -216,7 +225,7 @@ async function renderArgsMenu(bot: Bot, chatId: number, command: CommandDefiniti
     rows.push(row);
   }
 
-  await bot.api.sendMessage(chatId, escapeHtml(title), {
+  await commandApi(bot).sendMessage(chatId, escapeHtml(title), {
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: rows },
   });
@@ -386,7 +395,8 @@ async function resolvePinnedMessageId(ctx: CommandHandlerInit): Promise<number> 
   const stored = await getPinnedMessageId(ctx.redis);
   if (stored) return stored;
 
-  const chat = await ctx.bot.api.getChat(ctx.chatId);
+  const api = pinnedStatusApi(ctx.bot);
+  const chat = await api.getChat(ctx.chatId);
   const pinnedMessageId = "pinned_message" in chat ? chat.pinned_message?.message_id : undefined;
 
   if (pinnedMessageId) {
@@ -395,10 +405,10 @@ async function resolvePinnedMessageId(ctx: CommandHandlerInit): Promise<number> 
   }
 
   const snapshot = await ctx.getStatusSnapshot();
-  const message = await ctx.bot.api.sendMessage(ctx.chatId, buildPinnedStatusHtml(snapshot), {
+  const message = await api.sendMessage(ctx.chatId, buildPinnedStatusHtml(snapshot), {
     parse_mode: "HTML",
   });
-  await ctx.bot.api.pinChatMessage(ctx.chatId, message.message_id, {
+  await api.pinChatMessage(ctx.chatId, message.message_id, {
     disable_notification: true,
   });
   await setPinnedMessageId(ctx.redis, message.message_id);
@@ -411,9 +421,10 @@ export async function updatePinnedStatus(): Promise<void> {
   const snapshot = await pinnedStatusContext.getStatusSnapshot();
   const html = buildPinnedStatusHtml(snapshot);
   const messageId = await resolvePinnedMessageId(pinnedStatusContext);
+  const api = pinnedStatusApi(pinnedStatusContext.bot);
 
   try {
-    await pinnedStatusContext.bot.api.editMessageText(
+    await api.editMessageText(
       pinnedStatusContext.chatId,
       messageId,
       html,
@@ -428,7 +439,7 @@ export async function updatePinnedStatus(): Promise<void> {
     }
 
     const newMessageId = await resolvePinnedMessageId(pinnedStatusContext);
-    await pinnedStatusContext.bot.api.editMessageText(
+    await api.editMessageText(
       pinnedStatusContext.chatId,
       newMessageId,
       html,
@@ -461,7 +472,7 @@ async function executeCommand(
       return;
     }
 
-    await init.bot.api.sendMessage(chatId, result.html, {
+    await commandApi(init.bot).sendMessage(chatId, result.html, {
       parse_mode: "HTML",
       reply_markup: result.replyMarkup,
     });

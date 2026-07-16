@@ -10,6 +10,7 @@ import {
   startCallbackTrace,
 } from "../callback-trace";
 import type { InlineButton } from "../channels/telegram";
+import { specializedTelegramApi } from "../telegram-outbound-policy";
 import {
   type CommandDefinition,
   defineChatCommand,
@@ -19,6 +20,10 @@ const MONOREPO_ROOT = path.resolve(os.homedir(), "Code/joelhooks/joelclaw");
 const WORKTREE_ROOT = "/tmp/joelclaw-worktrees";
 const WORKTREE_CALLBACK_PREFIX = "worktree:";
 const MAX_DIFF_CHARS = 3500;
+
+function worktreeApi(bot: Bot) {
+  return specializedTelegramApi(bot.api, "worktree");
+}
 
 function escapeHtml(text: string): string {
   return text
@@ -33,7 +38,7 @@ function truncate(text: string, maxChars = MAX_DIFF_CHARS): string {
 }
 
 async function sendCallbackTimeoutMessage(bot: Bot, chatId: number, route: string, traceId: string): Promise<void> {
-  await bot.api.sendMessage(
+  await worktreeApi(bot).sendMessage(
     chatId,
     [
       "⚠️ <b>Callback timed out</b>",
@@ -45,7 +50,7 @@ async function sendCallbackTimeoutMessage(bot: Bot, chatId: number, route: strin
 }
 
 async function sendCallbackFailureMessage(bot: Bot, chatId: number, route: string, traceId: string, error: string): Promise<void> {
-  await bot.api.sendMessage(
+  await worktreeApi(bot).sendMessage(
     chatId,
     [
       "❌ <b>Callback failed</b>",
@@ -290,7 +295,7 @@ export function registerWorktreeCallbackHandler(bot: Bot, fallbackChatId: number
         const truncated = truncate(body);
         const suffix = body.length > MAX_DIFF_CHARS ? "\n\n<i>(truncated)</i>" : "";
 
-        await bot.api.sendMessage(
+        await worktreeApi(bot).sendMessage(
           chatId,
           `<b>Diff: ${escapeHtml(taskId)}</b>\n<pre>${escapeHtml(truncated)}</pre>${suffix}`,
           { parse_mode: "HTML" },
@@ -303,7 +308,7 @@ export function registerWorktreeCallbackHandler(bot: Bot, fallbackChatId: number
         markCallbackTraceDispatched(traceId, `merging ${taskId}`);
         const result = await mergeWorktree(taskId);
         const status = result.success ? "✅" : "❌";
-        await bot.api.sendMessage(chatId, `${status} ${escapeHtml(result.message)}`, {
+        await worktreeApi(bot).sendMessage(chatId, `${status} ${escapeHtml(result.message)}`, {
           parse_mode: "HTML",
         });
         if (result.success) {
@@ -317,14 +322,14 @@ export function registerWorktreeCallbackHandler(bot: Bot, fallbackChatId: number
       if (action === "discard") {
         markCallbackTraceDispatched(traceId, `discarding ${taskId}`);
         await discardWorktree(taskId);
-        await bot.api.sendMessage(chatId, `🗑️ Discarded <code>${escapeHtml(taskId)}</code>`, {
+        await worktreeApi(bot).sendMessage(chatId, `🗑️ Discarded <code>${escapeHtml(taskId)}</code>`, {
           parse_mode: "HTML",
         });
         completeCallbackTrace(traceId, `discarded ${taskId}`);
         return;
       }
 
-      await bot.api.sendMessage(chatId, `<b>Unknown worktree action</b>: <code>${escapeHtml(action)}</code>`, {
+      await worktreeApi(bot).sendMessage(chatId, `<b>Unknown worktree action</b>: <code>${escapeHtml(action)}</code>`, {
         parse_mode: "HTML",
       });
       failCallbackTrace(traceId, `unknown worktree action: ${action}`, "callback action rejected");
@@ -337,7 +342,7 @@ export function registerWorktreeCallbackHandler(bot: Bot, fallbackChatId: number
         traceId,
       });
       failCallbackTrace(traceId, message, `worktree ${action} failed for ${taskId}`);
-      await bot.api.sendMessage(chatId, `<b>Worktree action failed</b>\n<code>${escapeHtml(message)}</code>`, {
+      await worktreeApi(bot).sendMessage(chatId, `<b>Worktree action failed</b>\n<code>${escapeHtml(message)}</code>`, {
         parse_mode: "HTML",
       });
       await sendCallbackFailureMessage(bot, chatId, `worktree:${action}`, traceId, message).catch(() => {});

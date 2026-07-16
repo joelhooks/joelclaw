@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Bot } from "grammy";
+import { telegramConversationReplyExemption } from "./telegram-outbound-policy";
 import { begin, finish, pushDelta, turnEnd } from "./telegram-stream";
 
 const originalFetch = globalThis.fetch;
@@ -31,10 +32,14 @@ function fakeBot(options?: {
   initialSendError?: unknown;
   finalEditError?: unknown;
   onSendAttempt?: () => void;
+  onChatAction?: () => void;
 }): Bot {
   return {
     api: {
-      sendChatAction: async () => true,
+      sendChatAction: async () => {
+        options?.onChatAction?.();
+        return true;
+      },
       sendMessage: async () => {
         options?.onSendAttempt?.();
         if (options?.initialSendError) throw options.initialSendError;
@@ -60,6 +65,7 @@ describe("Telegram stream delivery audit", () => {
         originSystemId: "flagg",
         requestedAtMs: 1_000,
       },
+      outboundPolicy: { exemption: telegramConversationReplyExemption(1) },
     });
     pushDelta("hello from the gateway");
 
@@ -78,6 +84,32 @@ describe("Telegram stream delivery audit", () => {
     expect(JSON.stringify(confirmed?.metadata)).not.toContain("hello from the gateway");
   });
 
+  test("classifies governed streams from the final response before sending", async () => {
+    let sendAttempts = 0;
+    let chatActions = 0;
+    begin({
+      chatId: 1,
+      bot: fakeBot({
+        onSendAttempt: () => { sendAttempts += 1; },
+        onChatAction: () => { chatActions += 1; },
+      }),
+      audit: {
+        flowId: "recovery-flow",
+        producer: "recovery-worker",
+      },
+      outboundPolicy: {
+        sourceEventType: "service.recovered",
+        priority: "urgent",
+      },
+    });
+    pushDelta("starting recovery");
+
+    expect(chatActions).toBe(0);
+    expect(sendAttempts).toBe(0);
+    expect(await finish("verified health confirmed after recovery")).toBe(true);
+    expect(sendAttempts).toBe(1);
+  });
+
   test("records unknown initial delivery without retrying ambiguous network errors", async () => {
     let sendAttempts = 0;
     begin({
@@ -94,6 +126,7 @@ describe("Telegram stream delivery audit", () => {
         flowId: "telegram-inbound:1:42",
         producer: "telegram-user",
       },
+      outboundPolicy: { exemption: telegramConversationReplyExemption(1) },
     });
     pushDelta("private response body");
 
@@ -117,6 +150,7 @@ describe("Telegram stream delivery audit", () => {
         flowId: "telegram-inbound:1:42",
         producer: "telegram-user",
       },
+      outboundPolicy: { exemption: telegramConversationReplyExemption(1) },
     });
     pushDelta("private response body");
 

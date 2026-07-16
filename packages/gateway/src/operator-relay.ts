@@ -276,6 +276,7 @@ function isDegradationOrErrorEvent(event: OperatorRelayEvent): boolean {
   const level = normalizeText(payload.level).toLowerCase();
   if (level === "error" || level === "fatal") return true;
   if (payload.immediateTelegram === true) return true;
+  if (payload.priority === "high" || payload.priority === "urgent") return true;
 
   const type = event.type.toLowerCase();
   return type.includes("degraded")

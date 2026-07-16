@@ -86,6 +86,7 @@ import {
   evaluateSessionPressureAlert,
   getInitialSessionPressureAlertState,
 } from "./session-pressure";
+import { resolveTelegramOutboundPolicyContext } from "./telegram-outbound-policy";
 import * as telegramStream from "./telegram-stream";
 import {
   getFallbackWatchdogGraceRemainingMs,
@@ -1642,7 +1643,8 @@ onPrompt(() => {
       const replyTo = replyToAnchor && /^-?\d+$/.test(replyToAnchor)
         ? Number.parseInt(replyToAnchor, 10)
         : undefined;
-      const activeAudit = getChannelAuditFromMetadata(getActiveRequestMetadata());
+      const activeMetadata = getActiveRequestMetadata();
+      const activeAudit = getChannelAuditFromMetadata(activeMetadata);
       telegramStream.begin({
         chatId,
         bot,
@@ -1657,6 +1659,7 @@ onPrompt(() => {
           inReplyToMessageId: activeAudit?.inReplyToMessageId ?? replyTo,
           requestedAtMs: activeAudit?.requestedAtMs ?? now,
         },
+        outboundPolicy: resolveTelegramOutboundPolicyContext(activeMetadata, source),
       });
     }
   }
@@ -2118,17 +2121,19 @@ registerChannel("console", {
       const replyTo = typeof relayEnvelope.replyTo === "string"
         ? Number.parseInt(relayEnvelope.replyTo, 10)
         : relayEnvelope.replyTo;
-      const activeAudit = getChannelAuditFromMetadata(getActiveRequestMetadata());
+      const activeMetadata = getActiveRequestMetadata();
+      const activeAudit = getChannelAuditFromMetadata(activeMetadata);
       await sendTelegram(TELEGRAM_USER_ID, relayEnvelope.text, {
         buttons: relayEnvelope.buttons,
         silent: relayEnvelope.silent,
         replyTo,
         audit: {
           ...activeAudit,
-          producer: activeAudit?.producer ?? "gateway-console-forward",
+          producer: activeAudit?.producer ?? source ?? "gateway-console-forward",
           route: activeAudit?.route ?? source ?? "console",
           inReplyToMessageId: activeAudit?.inReplyToMessageId ?? replyTo,
         },
+        outboundPolicy: resolveTelegramOutboundPolicyContext(activeMetadata, source),
       });
       void emitGatewayOtel({
         level: "info",
@@ -2186,7 +2191,8 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
         const replyTo = typeof envelope.replyTo === "string"
           ? Number.parseInt(envelope.replyTo, 10)
           : envelope.replyTo;
-        const activeAudit = getChannelAuditFromMetadata(getActiveRequestMetadata());
+        const activeMetadata = getActiveRequestMetadata();
+        const activeAudit = getChannelAuditFromMetadata(activeMetadata);
         await sendTelegram(chatId, envelope.text, {
           buttons: envelope.buttons,
           silent: envelope.silent,
@@ -2200,6 +2206,7 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
             route: activeAudit?.route ?? context?.source ?? "telegram",
             inReplyToMessageId: activeAudit?.inReplyToMessageId ?? replyTo,
           },
+          outboundPolicy: resolveTelegramOutboundPolicyContext(activeMetadata, context?.source),
         });
         console.log("[gateway:telegram] message sent successfully", { chatId });
       } catch (error) {

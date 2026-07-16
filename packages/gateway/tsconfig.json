@@ -5,7 +5,14 @@
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@joelclaw/message-journal": ["../message-journal/src/index.ts"],
+      "@joelclaw/signal": ["../signal/src/index.ts"],
+      "effect": ["../message-journal/node_modules/effect"],
+      "xstate": ["../signal/node_modules/xstate"]
+    }
   },
   "include": ["src"]
 }

@@ -56,6 +56,20 @@ describe("classifyOperatorSignal", () => {
     expect(decision.correlationKeys).toContain("conversation:cnv_123");
   });
 
+  test("maps high and urgent gateway.notify priority into the policy seam", () => {
+    for (const priority of ["high", "urgent"] as const) {
+      const decision = classifyOperatorSignal(
+        makeEvent({
+          type: "notify.message",
+          source: "inngest/fixture",
+          payload: { priority, message: "Needs classification" },
+        }),
+      );
+      expect(decision.bucket).toBe("immediate");
+      expect(decision.reason).toBe("immediate.interactive-or-error");
+    }
+  });
+
   test("treats actionable Joel Slack intel as immediate signal", () => {
     const decision = classifyOperatorSignal(
       makeEvent({

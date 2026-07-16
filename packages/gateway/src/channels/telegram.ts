@@ -24,6 +24,11 @@ import {
 } from "../callback-trace";
 import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
 import type { OutboundEnvelope } from "../outbound/envelope";
+import {
+  routeTelegramOutbound,
+  type TelegramOutboundPolicyContext,
+  type TelegramOutboundRoute,
+} from "../telegram-outbound-policy";
 import type { EnqueueFn } from "./redis";
 import type {
   Channel,
@@ -81,14 +86,23 @@ export interface RichSendOptions {
   silent?: boolean;            // disable_notification
   noPreview?: boolean;         // disable_web_page_preview
   audit?: ChannelAuditSeed;
+  outboundPolicy?: TelegramOutboundPolicyContext;
 }
 
-export type TelegramDeliveryReceipt = {
-  status: "confirmed";
-  audit: ChannelDeliveryAudit;
-  telegramMessageIds: number[];
-  usedFallback: boolean;
-};
+export type TelegramDeliveryReceipt =
+  | {
+      status: "confirmed";
+      audit: ChannelDeliveryAudit;
+      telegramMessageIds: number[];
+      usedFallback: boolean;
+    }
+  | {
+      status: "routed";
+      audit: ChannelDeliveryAudit;
+      telegramMessageIds: [];
+      usedFallback: false;
+      policy: TelegramOutboundRoute;
+    };
 
 export type TelegramStartOptions = {
   configureBot?: (bot: Bot) => void | Promise<void>;
@@ -723,6 +737,7 @@ function mapOutboundFromSendOptions(target: string, text: string, options?: Send
     ...(options?.silent !== undefined ? { silent: options.silent } : {}),
     ...(options?.noPreview !== undefined ? { noPreview: options.noPreview } : {}),
     ...(options?.audit ? { audit: options.audit } : {}),
+    ...(options?.outboundPolicy ? { outboundPolicy: options.outboundPolicy } : {}),
   };
 
   const payload = options?.format ? { text, format: options.format } : text;
@@ -785,7 +800,11 @@ export class TelegramChannel implements Channel {
       ? Number.parseInt(options.replyTo, 10)
       : undefined;
 
-    await sendTelegramMedia(chatId, media, { replyTo, audit: options?.audit });
+    await sendTelegramMedia(chatId, media, {
+      replyTo,
+      audit: options?.audit,
+      outboundPolicy: options?.outboundPolicy,
+    });
   }
 }
 
@@ -1159,6 +1178,7 @@ async function startTelegramChannel(
       telegramMessageId: messageId,
       telegramFlowId: audit.flowId,
       channelAudit: audit,
+      trustedTelegramInbound: true,
     });
 
     await emitGatewayOtel({
@@ -1185,7 +1205,7 @@ async function startTelegramChannel(
     if (!largest) {
       enqueuePrompt!(`telegram:${chatId}`,
         `[User sent a photo${caption ? `: ${caption}` : ""} — no photo data]`,
-        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
       return;
     }
 
@@ -1193,7 +1213,7 @@ async function startTelegramChannel(
     if (!result) {
       enqueuePrompt!(`telegram:${chatId}`,
         `[User sent a photo${caption ? `: ${caption}` : ""} — download failed]`,
-        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
       return;
     }
 
@@ -1216,7 +1236,7 @@ async function startTelegramChannel(
 
     enqueuePrompt!(`telegram:${chatId}`,
       `[User sent a photo${caption ? `: ${caption}` : ""} — processing via vision pipeline, file: ${result.localPath}]`,
-      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
   });
 
   // Voice messages → download + transcription pipeline (ADR-0042)
@@ -1228,7 +1248,7 @@ async function startTelegramChannel(
     if (!result) {
       enqueuePrompt!(`telegram:${chatId}`,
         "[User sent a voice message — download failed]",
-        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
       return;
     }
 
@@ -1249,7 +1269,7 @@ async function startTelegramChannel(
 
     enqueuePrompt!(`telegram:${chatId}`,
       `[User sent a voice message — transcribing, file: ${result.localPath}]`,
-      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
   });
 
   // Audio files (music, recordings) → download + pipeline
@@ -1262,7 +1282,7 @@ async function startTelegramChannel(
     if (!result) {
       enqueuePrompt!(`telegram:${chatId}`,
         `[User sent an audio file${caption ? `: ${caption}` : ""} — download failed]`,
-        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
       return;
     }
 
@@ -1286,7 +1306,7 @@ async function startTelegramChannel(
 
     enqueuePrompt!(`telegram:${chatId}`,
       `[User sent an audio file${audio.title ? ` "${audio.title}"` : ""}${caption ? `: ${caption}` : ""} — processing, file: ${result.localPath}]`,
-      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
   });
 
   // Video messages → download + pipeline
@@ -1299,7 +1319,7 @@ async function startTelegramChannel(
     if (!result) {
       enqueuePrompt!(`telegram:${chatId}`,
         `[User sent a video${caption ? `: ${caption}` : ""} — download failed]`,
-        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
       return;
     }
 
@@ -1323,7 +1343,7 @@ async function startTelegramChannel(
 
     enqueuePrompt!(`telegram:${chatId}`,
       `[User sent a video${caption ? `: ${caption}` : ""} — processing, file: ${result.localPath}]`,
-      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
   });
 
   // Documents (PDF, files, etc.) → download + pipeline
@@ -1336,7 +1356,7 @@ async function startTelegramChannel(
     if (!result) {
       enqueuePrompt!(`telegram:${chatId}`,
         `[User sent a document "${doc.file_name ?? "file"}"${caption ? `: ${caption}` : ""} — download failed]`,
-        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
       return;
     }
 
@@ -1358,7 +1378,7 @@ async function startTelegramChannel(
 
     enqueuePrompt!(`telegram:${chatId}`,
       `[User sent a document "${doc.file_name ?? "file"}"${caption ? `: ${caption}` : ""} — processing, file: ${result.localPath}]`,
-      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id, trustedTelegramInbound: true });
   });
 
   // Callback query handler — inline keyboard button presses (ADR-0070)
@@ -1974,6 +1994,22 @@ async function sendTelegramMessage(
   const text = sendInput.text;
   const mergedOptions = sendInput.options;
   const audit = createChannelDeliveryAudit(text, mergedOptions?.audit);
+  const policy = await routeTelegramOutbound({
+    chatId,
+    content: text,
+    audit,
+    transportText: text,
+    policy: mergedOptions?.outboundPolicy,
+  });
+  if (policy.disposition !== "deliver") {
+    return {
+      status: "routed",
+      audit,
+      telegramMessageIds: [],
+      usedFallback: false,
+      policy,
+    };
+  }
   const sendStartedAt = Date.now();
 
   if (!bot) {
@@ -2176,26 +2212,17 @@ async function sendTelegramMessage(
 async function sendTelegramMedia(
   chatId: number,
   media: SendMediaPayload,
-  options?: { caption?: string; replyTo?: number; asVoice?: boolean; audit?: ChannelAuditSeed },
+  options?: {
+    caption?: string;
+    replyTo?: number;
+    asVoice?: boolean;
+    audit?: ChannelAuditSeed;
+    outboundPolicy?: TelegramOutboundPolicyContext;
+  },
 ): Promise<TelegramDeliveryReceipt> {
   const caption = media.caption ?? options?.caption ?? "";
   const audit = createChannelDeliveryAudit(caption, options?.audit);
   const sendStartedAt = Date.now();
-
-  if (!bot) {
-    const error = "bot_not_started";
-    console.error("[gateway:telegram] bot not started, can't send media");
-    await emitGatewayOtel({
-      level: "error",
-      component: "telegram-channel",
-      action: "telegram.delivery.failed",
-      success: false,
-      error,
-      metadata: { ...audit, chatId, media: true, stage: "preflight" },
-    });
-    throw new Error(error);
-  }
-
   const source = media.path ?? media.url;
   if (!source) {
     const error = "media_source_missing";
@@ -2213,6 +2240,37 @@ async function sendTelegramMedia(
 
   const mimeType = media.mimeType || (media.path ? mimeFromExt(extname(media.path) || ".bin") : "application/octet-stream");
   const kind = mediaKindFromMimeType(mimeType, media.path);
+  const policy = await routeTelegramOutbound({
+    chatId,
+    content: caption || `[${kind} media]`,
+    audit,
+    contentKind: kind,
+    transportText: caption,
+    policy: options?.outboundPolicy,
+  });
+  if (policy.disposition !== "deliver") {
+    return {
+      status: "routed",
+      audit,
+      telegramMessageIds: [],
+      usedFallback: false,
+      policy,
+    };
+  }
+
+  if (!bot) {
+    const error = "bot_not_started";
+    console.error("[gateway:telegram] bot not started, can't send media");
+    await emitGatewayOtel({
+      level: "error",
+      component: "telegram-channel",
+      action: "telegram.delivery.failed",
+      success: false,
+      error,
+      metadata: { ...audit, chatId, media: true, stage: "preflight" },
+    });
+    throw new Error(error);
+  }
   const sendAsVoice = options?.asVoice ?? mimeType === "audio/ogg";
   const action = kind === "photo" ? "upload_photo"
     : kind === "video" ? "upload_video"
@@ -2363,7 +2421,13 @@ export async function send(
 export async function sendMedia(
   chatId: number,
   filePath: string,
-  options?: { caption?: string; replyTo?: number; asVoice?: boolean; audit?: ChannelAuditSeed },
+  options?: {
+    caption?: string;
+    replyTo?: number;
+    asVoice?: boolean;
+    audit?: ChannelAuditSeed;
+    outboundPolicy?: TelegramOutboundPolicyContext;
+  },
 ): Promise<TelegramDeliveryReceipt> {
   const mimeType = mimeFromExt(extname(filePath) || ".bin");
   return sendTelegramMedia(chatId, {

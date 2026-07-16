@@ -485,12 +485,65 @@ function parseEvent(raw: string): SystemEvent | undefined {
   }
 }
 
+function signalPriority(
+  payload: Record<string, unknown>,
+): "low" | "normal" | "high" | "urgent" | undefined {
+  const value = payload.priority;
+  return value === "low" || value === "normal" || value === "high" || value === "urgent"
+    ? value
+    : undefined;
+}
+
+function signalLevel(
+  payload: Record<string, unknown>,
+): "debug" | "info" | "warn" | "error" | "fatal" | undefined {
+  const value = payload.level;
+  return value === "debug" || value === "info" || value === "warn" || value === "error" || value === "fatal"
+    ? value
+    : undefined;
+}
+
+const SIGNAL_PRIORITY_RANK = {
+  low: 0,
+  normal: 1,
+  high: 2,
+  urgent: 3,
+} as const;
+
+const SIGNAL_LEVEL_RANK = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+  fatal: 4,
+} as const;
+
+function policyEventRank(event: SystemEvent): number {
+  const priority = signalPriority(event.payload);
+  const level = signalLevel(event.payload);
+  const relayScore = classifyOperatorSignal(event).score;
+  return (priority ? SIGNAL_PRIORITY_RANK[priority] * 100 : 0)
+    + (level ? SIGNAL_LEVEL_RANK[level] * 10 : 0)
+    + relayScore;
+}
+
+function selectPolicySourceEventType(events: SystemEvent[]): string | undefined {
+  return [...events]
+    .sort((left, right) => {
+      const rankDifference = policyEventRank(right) - policyEventRank(left);
+      return rankDifference !== 0 ? rankDifference : left.type.localeCompare(right.type);
+    })[0]?.type;
+}
+
 function isImmediateTelegramEvent(event: SystemEvent): boolean {
   const payload = event.payload as Record<string, unknown>;
+  const priority = signalPriority(payload);
   return (
     event.type === "system.fatal" ||
     payload.immediateTelegram === true ||
-    payload.level === "fatal"
+    payload.level === "fatal" ||
+    priority === "high" ||
+    priority === "urgent"
   );
 }
 
@@ -644,6 +697,11 @@ async function sendImmediateTelegramEscalation(events: SystemEvent[]): Promise<v
         requestedAtMs: event.ts,
         route: "redis-immediate",
       },
+      outboundPolicy: {
+        sourceEventType: event.type,
+        ...(signalPriority(payload) ? { priority: signalPriority(payload) } : {}),
+        ...(signalLevel(payload) ? { level: signalLevel(payload) } : {}),
+      },
     });
   }
 
@@ -674,6 +732,15 @@ async function sendImmediateTelegramEscalation(events: SystemEvent[]): Promise<v
           producer: "gateway-immediate-batch",
           route: "redis-immediate",
         },
+    outboundPolicy: {
+      sourceEventType: onlyEvent?.type ?? "gateway.immediate.batch",
+      ...(onlyEventPayload && signalPriority(onlyEventPayload)
+        ? { priority: signalPriority(onlyEventPayload) }
+        : {}),
+      ...(onlyEventPayload && signalLevel(onlyEventPayload)
+        ? { level: signalLevel(onlyEventPayload) }
+        : {}),
+    },
   });
 }
 
@@ -881,14 +948,39 @@ async function drainEvents(): Promise<void> {
     const hasHumanMessageEvent = actionable.some((event) => isHumanInboundMessageEvent(event));
     const backgroundOnly = !hasInteractiveEvent && !hasHumanMessageEvent;
     const eventTypes = Array.from(new Set(actionable.map((event) => event.type)));
-    const channelAudit = actionable.length === 1
-      ? parseChannelAudit(actionable[0]?.payload.audit)
-      : undefined;
+    const onlyActionable = actionable.length === 1 ? actionable[0] : undefined;
+    const eventSources = Array.from(new Set(actionable.map((event) => event.source)));
+    const channelAudit: ChannelAuditSeed | undefined = onlyActionable
+      ? parseChannelAudit(onlyActionable.payload.audit) ?? {
+          flowId: `gateway-event:${onlyActionable.id}`,
+          producer: onlyActionable.source,
+          eventId: onlyActionable.id,
+          requestedAtMs: onlyActionable.ts,
+          route: "redis-prompt",
+        }
+      : actionable[0]
+        ? {
+            flowId: `gateway-event-batch:${actionable[0].id}:${actionable.length}`,
+            producer: eventSources.length === 1
+              ? eventSources[0]
+              : `gateway-event-batch:${eventSources.join(",")}`,
+            requestedAtMs: Math.min(...actionable.map((event) => event.ts)),
+            route: "redis-prompt-batch",
+          }
+        : undefined;
 
     await enqueuePrompt(source, prompt, {
       eventCount: actionable.length,
       eventIds: actionable.map((event) => event.id),
       eventTypes,
+      eventSources,
+      policySourceEventType: selectPolicySourceEventType(actionable),
+      eventPriorities: actionable
+        .map((event) => signalPriority(event.payload))
+        .filter((value): value is NonNullable<typeof value> => value !== undefined),
+      eventLevels: actionable
+        .map((event) => signalLevel(event.payload))
+        .filter((value): value is NonNullable<typeof value> => value !== undefined),
       originSession,
       backgroundOnly,
       sourceKind: getSourceKind(source),
@@ -1192,6 +1284,11 @@ export async function flushBatchDigest(): Promise<number> {
   });
   return events.length;
 }
+
+export const __redisTestUtils = {
+  isImmediateTelegramEvent,
+  selectPolicySourceEventType,
+};
 
 /** Is the Redis channel healthy and connected? */
 export function isHealthy(): boolean {
