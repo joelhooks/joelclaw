@@ -1,0 +1,17 @@
+---
+title: "Build the noise-rate guard"
+type: "task"
+status: "blocked"
+created_at: "2026-07-15"
+privacy: "private"
+blocked_by:
+  - journal-capture-anchors
+tags:
+  - telegram-signal-system
+---
+
+# Build the noise-rate guard
+
+Measured regression check over journal data: share of non-actionable outbound Telegram messages in a rolling window, target <10% (confirmed). Canaries and Joel-initiated conversation replies excluded from the denominator. Runs scheduled (Inngest cron); a breach produces a digest item (an agent-owned investigation), never an immediate page. Plus contract tests pinning the five-kinds content contract.
+
+Acceptance: guard computes correctly over fixture journal data; breach path lands in digest; measured over a real 24-48h window post-deploy.

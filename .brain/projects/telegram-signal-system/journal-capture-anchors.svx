@@ -1,0 +1,18 @@
+---
+title: "Add journal capture anchors in the gateway"
+type: "task"
+status: "blocked"
+created_at: "2026-07-15"
+privacy: "private"
+blocked_by:
+  - build-message-journal-package
+  - wire-outbound-policy-into-gateway
+tags:
+  - telegram-signal-system
+---
+
+# Add journal capture anchors in the gateway
+
+Wire `MessageJournalWriter` at the anchors mapped in the journal research receipt (§5): inbound raw text before Vault enrichment (`telegram.ts:1125-1176`), `delivery.queued` in `gateway-send-message.ts`, outbound requested/confirmed/failed at the adapter, streaming initial+final (`telegram-stream.ts`), queue-drain edits, suppressions with policy reason, and one wrapper around the whole callback handler (`telegram.ts:1366-1667`) for interactions. Propagate classification+reason from the policy decision into every journal row (today they die in `redis.ts:722-766`).
+
+Acceptance: one real message produces a complete journal lifecycle; a suppressed fixture is queryable with its reason; journal failure never blocks delivery (fail-open test).

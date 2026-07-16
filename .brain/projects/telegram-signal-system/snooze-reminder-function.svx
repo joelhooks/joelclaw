@@ -1,0 +1,17 @@
+---
+title: "Build the snooze reminder function"
+type: "task"
+status: "blocked"
+created_at: "2026-07-15"
+privacy: "private"
+blocked_by:
+  - build-action-registry-source-adapters
+tags:
+  - telegram-signal-system
+---
+
+# Build the snooze reminder function
+
+`signal/reminder.scheduled` durable Inngest function, sibling of `pane-schedule.ts`: idempotency on the action ID, `cancelOn` matching it, `step.sleepUntil()`, re-inspect the source before re-delivery, suppress if already resolved, journal the outcome. Snooze buttons delegate here when the source has no native snooze.
+
+Acceptance: snooze → resolve-at-source → timer fires → suppressed (no re-page); snooze → timer fires → re-delivered; cancel works.

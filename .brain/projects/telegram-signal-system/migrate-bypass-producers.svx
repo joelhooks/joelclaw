@@ -1,0 +1,38 @@
+---
+title: "Migrate system-bus bypass producers"
+type: "task"
+status: "ready"
+created_at: "2026-07-15"
+privacy: "private"
+tags:
+  - telegram-signal-system
+---
+
+# Migrate system-bus bypass producers
+
+You own exactly these files (plus their tests). Do not touch `packages/gateway`, Restate, or Talon. Do not commit.
+
+- `packages/system-bus/src/inngest/functions/vip-morning-brief.ts:478-500`
+- `packages/system-bus/src/inngest/functions/vip-email-received.ts:1761-1785`
+- `packages/system-bus/src/inngest/functions/content-review.ts:1546-1598`
+- `packages/system-bus/src/lib/telegram.ts` (the direct Bot API helper these use)
+
+## Read first
+
+- Spec § "Classification choke point" (bot-token custody is the enforcement boundary): `.brain/projects/telegram-signal-system.svx`
+- Producer research §4 (direct Bot API producers): `.brain/data/telegram-signal-research/report-producers.svx`
+- The governed path: `packages/system-bus/src/inngest/functions/gateway-send-message.ts`, `packages/system-bus/src/lib/channel-delivery-audit.ts` (`buildQueuedGatewayMessage()` — flowId, host identity, fingerprint)
+- Button support through the queue: event contract `packages/system-bus/src/inngest/client.ts:1214-1228`, daemon mapping `packages/gateway/src/daemon.ts:5145-5154` (read only)
+
+## Build
+
+1. Re-route the three producers through `gateway/send.message` with explicit producer attribution (`vip-morning-brief`, `vip-email-received`, `content-review`) and their existing inline keyboards carried through the queue contract.
+2. Preserve current message content and button behavior exactly — this is a transport migration, not a rewrite.
+3. Remove (or reduce to a deprecation shim with a loud comment) the direct Bot API sends in the migrated call sites. If `packages/system-bus/src/lib/telegram.ts` has no remaining callers, delete it; if others remain (list them), leave it and say so in the DONE summary.
+4. Tests: each migrated producer emits a `gateway/send.message` event with correct producer attribution and keyboard payload (assert on the event, mock Inngest send).
+
+## Acceptance
+
+- `bunx tsc --noEmit`, `pnpm biome check packages/`, focused tests pass.
+- No `TELEGRAM_BOT_TOKEN` usage remains in the three migrated functions.
+- Print a DONE summary: per-producer before/after path, remaining direct-Bot-API callers in system-bus (if any).

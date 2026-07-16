@@ -1,0 +1,17 @@
+---
+title: "Wire the outbound policy into the gateway"
+type: "task"
+status: "blocked"
+created_at: "2026-07-15"
+privacy: "private"
+blocked_by:
+  - build-signal-lifecycle-machine
+tags:
+  - telegram-signal-system
+---
+
+# Wire the outbound policy into the gateway
+
+Insert `TelegramOutboundPolicy` (from `@joelclaw/signal`) after `resolveSendInput()` in `packages/gateway/src/channels/telegram.ts:1968-1976`, with companion enforcement in `sendTelegramMedia()` and `telegram-stream.ts`. Route decisions: deliver / investigate (spawn lifecycle actor) / digest (queue) / suppress (journal with reason). Fix `gateway.notify()` priority mapping and `gateway-console-forward` attribution loss at the same seam. Serialized: only one worker in `packages/gateway` at a time.
+
+Acceptance: verify-voice fixture replay lands in investigating, not Telegram; specialized UI paths (commands, MCQ, pinned status, worktree) are explicitly exempted with a marker; existing channel tests still pass.

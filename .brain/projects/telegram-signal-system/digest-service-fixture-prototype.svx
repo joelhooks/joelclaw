@@ -1,0 +1,18 @@
+---
+title: "Build the digest service and fixture prototype"
+type: "task"
+status: "blocked"
+created_at: "2026-07-15"
+privacy: "private"
+blocked_by:
+  - build-action-registry-source-adapters
+  - wire-outbound-policy-into-gateway
+tags:
+  - telegram-signal-system
+---
+
+# Build the digest service and fixture prototype
+
+Digest assembly as a service/agent tool invoked from the agent loop (seam: `enqueueToGateway`, `daemon.ts:4562-4598`) — never a channel interception. Content contract: ≤1 high-quality memory (source, when, why-now, connection), agent wins/recovery receipts, Joel-owned actions/reminders; homie voice; send only when something qualifies; Brain links must 200-check. Then the touchable prototype: fixture-backed digest to real Telegram with memory + recovery receipt + reminder + working controls via the fixture adapter and durable action registry — buttons settle only on mutation receipts.
+
+Acceptance: Joel touches every control on his phone; empty-digest day sends nothing; natural-language "give me the digest" invokes it.

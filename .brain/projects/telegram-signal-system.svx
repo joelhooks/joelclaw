@@ -139,9 +139,13 @@ joelclaw messages trace <message-id-or-flow-id>
 - [Callback capability map, mutation verdicts, snooze machinery, inbound seam](../data/telegram-signal-research/report-actions.svx) — research pass 2.
 - [ClickHouse current state, journal DDL, write path, access control](../data/telegram-signal-research/report-journal.svx) — research pass 3 (full DDL lives here).
 
+## Decision log
+
+- **2026-07-15 (evening): Joel confirmed the finish line** — including the <10% non-actionable target — and adopted all open-question recommendations below. Build authorized. The effort charter lives in [telegram-signal-system/](telegram-signal-system/brief.svx).
+
 ## Open questions
 
-1. **Finish line confirmation (blocking).** Joel has not yet confirmed the proposed finish line, including the <10% non-actionable target. *Recommendation: accept as written in the handoff; every element is now grounded in code receipts.* Do not start implementation before this answer.
+1. **Finish line confirmation.** ~~Blocking~~ **Resolved 2026-07-15**: confirmed as written.
 2. **Bypass-producer migration order.** Eight producers own their own Bot API clients. *Recommendation: migrate Restate deploy-gate and VIP briefs first (highest traffic, action-bearing), leave Talon SOS last — it is the deliberate dead-man escalation path and should keep an independent transport until the investigation lifecycle is proven.*
 3. **verify-voice double-page.** Should the Telnyx call/SMS page survive once probe failures route through investigation? *Recommendation: keep phone escalation only as an outcome of the escalated state, not as a parallel producer-level page.*
 4. **First real `SourceAdapter`.** *Recommendation: Front archive (cleanest target-state semantics) with Todoist second once `TODOIST_AUTOMATION_WRITES_ENABLED` + readback ship.*

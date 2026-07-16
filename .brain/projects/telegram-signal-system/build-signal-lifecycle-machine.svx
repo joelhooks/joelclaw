@@ -1,0 +1,37 @@
+---
+title: "Build the signal lifecycle machine"
+type: "task"
+status: "ready"
+created_at: "2026-07-15"
+privacy: "private"
+tags:
+  - telegram-signal-system
+---
+
+# Build the signal lifecycle machine
+
+You own `packages/signal/` (new). Do not edit any other package. Do not commit.
+
+## Read first
+
+- Spec §§ "Classification choke point" + "Signal lifecycle (XState v5)": `.brain/projects/telegram-signal-system.svx`
+- Producer/classification research: `.brain/data/telegram-signal-research/report-producers.svx`
+- `skills/` — check for an xstate skill; follow it if present
+- Prior art to subsume (read, don't edit): `packages/gateway/src/operator-relay.ts:370-430` (`classifyOperatorSignal`)
+- Repo conventions: `AGENTS.md`, `.claude/CLAUDE.md`
+
+## Build
+
+`@joelclaw/signal` — pure domain logic, no gateway wiring (that's a later serialized step):
+
+1. **`TelegramOutboundPolicy`** — a pure decision function: `(candidate: OutboundCandidate) => PolicyDecision` where the decision is `deliver | investigate | digest | suppress` plus category (`memory | action | reminder | escalation | recovery-receipt | infra | noise`), reason string, and producer identity. Candidate carries content, producer, level/priority, source event type, and audit lineage. Unclassifiable input → `investigate` with reason, never silent `deliver`.
+2. **XState v5 signal lifecycle machine** — states: `detected → classified → { investigating | digestQueued | delivered | suppressed }`; `investigating → { resolved → digestQueued | recoveryReceipt }`; `investigating → { blocked | verifiedImpact } → escalated → delivered`; `delivered → { acknowledged | snoozed → (timer) → detected | done }`. Investigation budgets (time, retries, spend, mutation authority, scope) live in machine context; dedup (same-signal collapse under stable signal identity), cancellation, and escalation are events — no boolean flags.
+3. **Escalation gate** — encode the settled criteria as an explicit guard: immediate escalation requires (waiting-risks: customer harm | money loss | security/data loss | blocked launch/system | explicit Joel commitment) AND (verified impact | failed safe recovery | concrete Joel-owned decision/access need).
+4. **Tests** — actor tests over every transition; budget-exhaustion paths; dedup collapse; the `verify-voice FAILED` fixture must land in `investigating`, never `delivered`; an escalation-qualified fixture must reach `escalated` only through the gate.
+
+xstate v5 as a dependency is expected; add it to this package only.
+
+## Acceptance
+
+- `bunx tsc --noEmit`, `pnpm biome check packages/`, `bun test packages/signal` pass.
+- Print a DONE summary: state chart (text form), policy decision table, exported API downstream gateway wiring will consume.

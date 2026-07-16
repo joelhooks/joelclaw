@@ -1,0 +1,36 @@
+---
+title: "Build the action registry and source adapters"
+type: "task"
+status: "ready"
+created_at: "2026-07-15"
+privacy: "private"
+tags:
+  - telegram-signal-system
+---
+
+# Build the action registry and source adapters
+
+You own `packages/source-actions/` (new). Do not edit any other package. Do not commit.
+
+## Read first
+
+- Spec § "Actions and controls": `.brain/projects/telegram-signal-system.svx`
+- Full research receipt (verdicts, contract sketch, callback-truth failure): `.brain/data/telegram-signal-research/report-actions.svx`
+- Effect service patterns to mimic: `packages/things-cloud/src/client.ts:186-189`, `packages/cli/src/inngest.ts:148-167`
+- Ports to build on (read, don't edit): `packages/email/src/port/types.ts` (`EmailPort`), `packages/system-bus/src/tasks/port.ts` (`TaskPort`)
+- Repo conventions: `AGENTS.md`, `.claude/CLAUDE.md`
+
+## Build
+
+`@joelclaw/source-actions`:
+
+1. **`SourceAdapter` contract** — exactly the spec's interface: `inspect`, `capabilities` (computed per inspected item, not per provider), `resolve` (read → mutate once → readback; `already-applied` is success), `acknowledge` (interaction state only, never touches the source), `snooze`, `openUrl`. Typed errors via Effect.
+2. **Durable action registry** — opaque `act:<uuid>` action IDs (Telegram callback data caps at 64 bytes); registry maps action ID → `SourceRef` + allowed operations + state (`pending | applied | already-applied | failed | expired`). Persist in Redis (follow an existing Redis-backed store pattern in-tree). Buttons must be renderable as pending until a `MutationReceipt` arrives — the registry exposes that state machine.
+3. **Fixture adapter** — a fully in-memory adapter exercising every capability shape (safe-Done item, Acknowledge-only item, snoozable item, URL-only item). This powers the digest prototype.
+4. **Front adapter** — first real adapter (adopted recommendation): wraps `EmailPort.archive` with inspect → target-state check → archive → readback. `Done` only when the item semantically means "archive this conversation"; otherwise capabilities return `Acknowledge`.
+5. **Tests** — contract test suite that any adapter must pass (run it against fixture + Front-with-mocked-port): idempotent resolve, `already-applied` on second call, no source mutation from `acknowledge`, capability computation, registry state transitions, 64-byte callback data bound.
+
+## Acceptance
+
+- `bunx tsc --noEmit`, `pnpm biome check packages/`, `bun test packages/source-actions` pass.
+- Print a DONE summary: adapter contract surface, registry API, what gateway callback wiring (later step) must call.

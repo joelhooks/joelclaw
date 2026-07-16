@@ -1,0 +1,17 @@
+---
+title: "Narrow ClickHouse access control"
+type: "task"
+status: "blocked"
+created_at: "2026-07-15"
+privacy: "private"
+blocked_by:
+  - build-message-journal-package
+tags:
+  - telegram-signal-system
+---
+
+# Narrow ClickHouse access control
+
+Adopted recommendation: narrow `default` on the existing three-body instance; scoped identities (migration admin / journal writer INSERT-only / journal reader SELECT-only), OTEL migrated to scoped users in the same change; Flagg/NAS-local address allowlists; never tailnet-exposed. Credentials arriving means secured HTTP or SSH tunnel in the same change (transport is plaintext LAN today). This step touches live infra on three-body — prepare `users.d` XML + runbook + rollback first, apply with Joel-visible receipts, verify OTEL writes and `joelclaw otel search` still work before and after.
+
+Acceptance: `default` has no `*.*`; each identity does exactly its job; existing OTEL pipeline unbroken; runbook committed.

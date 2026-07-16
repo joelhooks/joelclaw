@@ -1,0 +1,50 @@
+---
+title: "Telegram Signal System — Working Brief"
+type: "project"
+status: "active"
+created_at: "2026-07-15"
+privacy: "private"
+tags:
+  - brief
+  - telegram
+---
+
+# Telegram Signal System — working brief
+
+Finish line confirmed by Joel 2026-07-15 (all recommendations adopted). Canonical spec: [telegram-signal-system](../telegram-signal-system.svx). Research receipts: [.brain/data/telegram-signal-research/](../../data/telegram-signal-research/report-producers.svx).
+
+## Finish line
+
+1. Telegram delivers only the five contract kinds (memories, Joel-owned actions, quality reminders, verified escalations, good-news receipts) — no raw probe noise.
+2. Infra signals pass through a bounded XState v5 investigation lifecycle before escalation or digest.
+3. Daily and on-demand digests follow the content and voice contract.
+4. Actions/reminders have truthful controls tied to real sources (`Done` only with a safe mutation contract).
+5. Exact inbound/outbound text queryable from the private ClickHouse journal.
+6. `joelclaw messages audit` / `trace` explain any message without ClickHouse archaeology.
+7. Contract tests + a measured noise-rate guard under 10% non-actionable.
+
+## Steps
+
+Wave 1 (ready, parallel, no file overlap):
+
+- [Build the message-journal package](build-message-journal-package.svx)
+- [Build the signal lifecycle machine](build-signal-lifecycle-machine.svx)
+- [Build the action registry and source adapters](build-action-registry-source-adapters.svx)
+- [Migrate system-bus bypass producers](migrate-bypass-producers.svx)
+
+Wave 2+ (blocked, in dependency order):
+
+- [Wire the outbound policy into the gateway](wire-outbound-policy-into-gateway.svx)
+- [Add journal capture anchors in the gateway](journal-capture-anchors.svx)
+- [Build the messages CLI commands](cli-messages-commands.svx)
+- [Build the digest service and fixture prototype](digest-service-fixture-prototype.svx)
+- [Build the snooze reminder function](snooze-reminder-function.svx)
+- [Narrow ClickHouse access control](clickhouse-access-control.svx)
+- [Build the noise-rate guard](noise-rate-guard.svx)
+
+## Operating rules
+
+- Workers build in their owned directories only, never commit; the steering session reviews, integrates, and commits via ShitRat to `main`.
+- Every step validates: `bunx tsc --noEmit`, `pnpm biome check packages/ apps/`, focused tests.
+- Gateway wiring steps are serialized (one worker at a time touches `packages/gateway`).
+- Talon SOS keeps its independent transport until the investigation lifecycle is proven (adopted recommendation).

@@ -1,0 +1,37 @@
+---
+title: "Build the message-journal package"
+type: "task"
+status: "ready"
+created_at: "2026-07-15"
+privacy: "private"
+tags:
+  - telegram-signal-system
+---
+
+# Build the message-journal package
+
+You own `packages/message-journal/` (new). Do not edit any other package. Do not commit.
+
+## Read first
+
+- Spec § "Private message journal": `.brain/projects/telegram-signal-system.svx`
+- Full research receipt (DDL, dedup, write-path, leak paths): `.brain/data/telegram-signal-research/report-journal.svx`
+- Repo conventions: `AGENTS.md` (hexagonal architecture, `@joelclaw/*` imports), `.claude/CLAUDE.md` (validation)
+- Outbox prior art: `packages/system-bus/src/observability/otel-outbox.ts`
+- Config resolution prior art: `packages/sdk/src/capabilities/adapters/clickhouse-otel.ts:134-143`
+
+## Build
+
+`@joelclaw/message-journal`, Effect services throughout, mirroring an existing small package's build/tsconfig/workspace wiring:
+
+1. **Typed journal event schema** — the lifecycle-event shape from the receipt: deterministic `journal_event_id` (`flowId + direction + eventType + messageId + chunkIndex + attempt + revision + callbackQueryId`), `message_key`, `flow_id`, channel/direction/event_type, `occurred_at` created once and preserved, producer/origin, classification + reason + investigation state, Telegram IDs, interaction fields, `text` + `transport_text`, hash/counts, delivery state.
+2. **Explicit migrations** — numbered SQL files (the `joelclaw_private` database + `message_journal_events` DDL verbatim from the receipt: `ReplacingMergeTree(recorded_at)`, month partitions, bloom indexes, ZSTD, **no TTL**) plus a migration runner that requires an explicit admin identity (env-provided). Do NOT copy the lazy `CREATE TABLE IF NOT EXISTS` runtime-admin pattern.
+3. **`MessageJournalWriter`** — INSERT-only ClickHouse writer; on failure, append the exact row to a `0600` outbox at `~/.joelclaw/spool/message-journal` and emit a body-free `message_journal.write.failed` OTEL receipt. Outbox replay retries identical rows (dedupe via ReplacingMergeTree). Fail-open: a journal failure never blocks delivery.
+4. **Query client** — `auditMessages({since, channel?, category?, direction?, limit})` and `traceMessage(lookup)` using `FINAL`; numeric lookup resolves `telegram_message_id → flow_id` with ambiguous-ID candidates.
+5. **Tests** — deterministic ID generation, outbox write/replay round-trip, SQL escaping, duration parsing, ambiguous-ID handling. Mock the ClickHouse HTTP boundary; do not require a live server.
+
+## Acceptance
+
+- `bunx tsc --noEmit` and `pnpm biome check packages/` pass; focused tests pass with `bun test packages/message-journal`.
+- No exact text can reach any OTEL emission path (grep-provable: the package never imports `emitGatewayOtel` with body fields).
+- Print a DONE summary: files created, test results, any interface decisions downstream steps need.
