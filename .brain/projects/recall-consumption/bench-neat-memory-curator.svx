@@ -4,7 +4,7 @@ type: "step"
 kind: "prototype"
 interaction: "HITL"
 status: "open"
-assignee: ""
+assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-16)"
 parent: "./recall-consumption-brief.svx"
 blockers:
   - "./build-neat-memory-dm.svx"

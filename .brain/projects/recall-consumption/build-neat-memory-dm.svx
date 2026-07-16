@@ -3,7 +3,7 @@ title: "Build the Neat-Memory DM: observer occasionally sends Joel a memory wort
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-16)"
 parent: "./recall-consumption-brief.svx"
 blockers: []
@@ -77,3 +77,392 @@ Four calls that supersede parts of the design above:
    examples the taste skill cites — the skill is living, not static.
    V1 builds the schema; reaction-capture plumbing is its own later
    step.
+
+
+## Result — 2026-07-16 neat-memory DM worker
+
+Status: closed. Implementation staged in `~/Code/joelhooks/joelclaw-observer`; no commit, no push, no LaunchAgent install.
+
+Changed surfaces:
+
+- `.pi/extensions/observer/lib.ts` — pure candidate/state/judge/message/decision primitives, v2 flavor schema, source-aware candidates, state schema with `outcome`, `judgeConfig`, `flavor`.
+- `.pi/extensions/observer/neat-memory.ts` — dry-run/apply CLI, pluggable judge command seam, taste-skill read, source scan, URL 200 check, send-after-ok state write.
+- `bin/neat-memory.sh` — staged launchd-safe supervisor wrapper.
+- `skills/neat-memory-taste.md` — versioned taste definition for the four flavors and DM line guidance.
+- `test/observer.test.ts` — selection/privacy, dedupe, one/day cap, baseline score gate, message assembly, judge schema tests.
+
+Verification:
+
+- `bun test` — 82 pass, 0 fail.
+- Dry-run: `/tmp/neat-memory-dry-run.json`.
+- Apply proof send: `/tmp/neat-memory-apply.json`.
+- State file: `~/.joelclaw/observer-neat-memories.json` mode checked by writer path (0600 atomic write).
+
+### Full dry-run JSON
+
+```json
+{
+  "ok": true,
+  "dryRun": true,
+  "apply": false,
+  "generatedAt": "2026-07-16T15:55:36.764Z",
+  "observationsDir": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations",
+  "retrosDir": "/Users/joel/Code/joelhooks/dark-wizard/.brain/resources/retros",
+  "statePath": "/Users/joel/.joelclaw/observer-neat-memories.json",
+  "promptVersion": "observer/neat-memory-judge-v2",
+  "judgeConfig": {
+    "commandTemplate": "pi -p --model {{model}} --no-tools --no-skills --no-context-files --no-extensions --no-session {{prompt}}",
+    "model": "openai-codex/gpt-5.6-terra:low",
+    "tasteSkillPath": "/Users/joel/Code/joelhooks/joelclaw-observer/skills/neat-memory-taste.md",
+    "minScore": 8,
+    "maxCandidates": 24
+  },
+  "counts": {
+    "candidates": 201,
+    "unsent": 24,
+    "judged": 1
+  },
+  "candidates": [
+    {
+      "slug": "2026-07-16-4ea9948e6ffa",
+      "source": "observations",
+      "title": "Focused digest review traced bot restart and live Redis indirection",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-4ea9948e6ffa.svx",
+      "mtimeMs": 1784215712749.717
+    },
+    {
+      "slug": "2026-07-16-a5e04316ec32",
+      "source": "observations",
+      "title": "Digest callback resilience was rechecked across Telegram and Redis replacement",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-a5e04316ec32.svx",
+      "mtimeMs": 1784215699772.9778
+    },
+    {
+      "slug": "2026-07-16-7ffc8da95a64",
+      "source": "observations",
+      "title": "Digest gateway gained an agent tool and receipt-driven Telegram controls",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-7ffc8da95a64.svx",
+      "mtimeMs": 1784215687008.9924
+    },
+    {
+      "slug": "2026-07-16-786f825a7a34",
+      "source": "observations",
+      "title": "Telegram signal finale converged digest wiring and noise guard on main",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-786f825a7a34.svx",
+      "mtimeMs": 1784215674322.0442
+    },
+    {
+      "slug": "2026-07-16-da6bdf1ff839",
+      "source": "observations",
+      "title": "Digest re-review verified link checks and control receipt behavior",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-da6bdf1ff839.svx",
+      "mtimeMs": 1784213944740.6326
+    },
+    {
+      "slug": "2026-07-16-857c947caed3",
+      "source": "observations",
+      "title": "Course Builder provisioning is duplicated across application boundaries",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-857c947caed3.svx",
+      "mtimeMs": 1784213930115.1123
+    },
+    {
+      "slug": "2026-07-16-bb73c6709310",
+      "source": "observations",
+      "title": "Agent-usage volume cliff recovered to its normal band",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-bb73c6709310.svx",
+      "mtimeMs": 1784212103949.5466
+    },
+    {
+      "slug": "2026-07-16-2c0e806da508",
+      "source": "observations",
+      "title": "System-bus volume spike recovered to its normal band",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-2c0e806da508.svx",
+      "mtimeMs": 1784210177897.4072
+    },
+    {
+      "slug": "2026-07-16-cf0742dfbbbe",
+      "source": "observations",
+      "title": "System-bus volume cliff recovered to its normal band",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-cf0742dfbbbe.svx",
+      "mtimeMs": 1784210163949.737
+    },
+    {
+      "slug": "2026-07-16-e1bfc77dc8d9",
+      "source": "observations",
+      "title": "System-bus event volume spiked above its warning threshold",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-e1bfc77dc8d9.svx",
+      "mtimeMs": 1784206763676.7449
+    },
+    {
+      "slug": "2026-07-16-6f21156d5196",
+      "source": "observations",
+      "title": "System-bus event volume fell below its critical low threshold",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-6f21156d5196.svx",
+      "mtimeMs": 1784186764246.8635
+    },
+    {
+      "slug": "2026-07-16-8103c637dd92",
+      "source": "observations",
+      "title": "Agent-usage event volume fell below its critical low threshold",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-8103c637dd92.svx",
+      "mtimeMs": 1784186748872.633
+    },
+    {
+      "slug": "2026-07-16-f2834a3dad67",
+      "source": "observations",
+      "title": "Gateway error-rate alert recovered below its dynamic threshold",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-f2834a3dad67.svx",
+      "mtimeMs": 1784183303336.6545
+    },
+    {
+      "slug": "2026-07-16-508bfded0ceb",
+      "source": "observations",
+      "title": "Kit API cannot create the custom-field recipient condition",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-508bfded0ceb.svx",
+      "mtimeMs": 1784181555353.3298
+    },
+    {
+      "slug": "2026-07-16-392394a4e8a8",
+      "source": "observations",
+      "title": "Telegram outbound policy landed while ClickHouse lockdown stayed staged",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-392394a4e8a8.svx",
+      "mtimeMs": 1784181533606.838
+    },
+    {
+      "slug": "2026-07-16-f79a6813d002",
+      "source": "observations",
+      "title": "Gateway error rate crossed its hourly threshold",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-f79a6813d002.svx",
+      "mtimeMs": 1784179717880.43
+    },
+    {
+      "slug": "2026-07-16-7c51a7880dc7",
+      "source": "observations",
+      "title": "Quiet qualifying epoch had no extractable content",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-7c51a7880dc7.svx",
+      "mtimeMs": 1784179690235.6072
+    },
+    {
+      "slug": "2026-07-16-8c1a26768212",
+      "source": "observations",
+      "title": "Message journal outbox crash recovery is lease-safe",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-8c1a26768212.svx",
+      "mtimeMs": 1784179680031.7393
+    },
+    {
+      "slug": "2026-07-16-09813ad02ed5",
+      "source": "observations",
+      "title": "Source action claims now have bounded atomic ownership",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-09813ad02ed5.svx",
+      "mtimeMs": 1784179664477.7385
+    },
+    {
+      "slug": "2026-07-16-2b5678dfcc74",
+      "source": "observations",
+      "title": "Qualifying epoch had no extractable content",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-2b5678dfcc74.svx",
+      "mtimeMs": 1784179652572.78
+    },
+    {
+      "slug": "2026-07-16-ea19c101dc54",
+      "source": "observations",
+      "title": "Messages CLI remains blocked on the workspace lockfile",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-ea19c101dc54.svx",
+      "mtimeMs": 1784179641289.3132
+    },
+    {
+      "slug": "2026-07-16-5368fe15a78d",
+      "source": "observations",
+      "title": "Outbound-policy review identified four send-boundary risks",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-5368fe15a78d.svx",
+      "mtimeMs": 1784179616164.6797
+    },
+    {
+      "slug": "2026-07-16-d1619ccea5c7",
+      "source": "observations",
+      "title": "Gateway re-review caught an unbound conversation exemption",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-d1619ccea5c7.svx",
+      "mtimeMs": 1784179591997.801
+    },
+    {
+      "slug": "2026-07-16-2cd3ea44f30f",
+      "source": "observations",
+      "title": "Telegram conversation exemptions must be bound to the outbound chat",
+      "privacy": "private",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-2cd3ea44f30f.svx",
+      "mtimeMs": 1784179580770.8918
+    }
+  ],
+  "judgeReceipt": {
+    "ok": true,
+    "slug": "2026-07-16-786f825a7a34",
+    "judgment": {
+      "score": 8,
+      "why": "the first touchable Telegram digest landed on main, fully checked, without actually pinging you",
+      "flavor": "milestone-win"
+    },
+    "raw": "{\"slug\":\"2026-07-16-786f825a7a34\",\"score\":8,\"flavor\":\"milestone-win\",\"why\":\"the first touchable Telegram digest landed on main, fully checked, without actually pinging you\"}\n",
+    "model": "openai-codex/gpt-5.6-terra:low",
+    "config": {
+      "commandTemplate": "pi -p --model {{model}} --no-tools --no-skills --no-context-files --no-extensions --no-session {{prompt}}",
+      "model": "openai-codex/gpt-5.6-terra:low",
+      "tasteSkillPath": "/Users/joel/Code/joelhooks/joelclaw-observer/skills/neat-memory-taste.md",
+      "minScore": 8,
+      "maxCandidates": 24
+    }
+  },
+  "linkReceipts": {
+    "2026-07-16-786f825a7a34": {
+      "link": "https://brain.joelclaw.com/user/observations/2026-07-16-786f825a7a34",
+      "canonicalUrl": "https://brain.joelclaw.com/user/observations/2026-07-16-786f825a7a34",
+      "status": 200
+    }
+  },
+  "decision": {
+    "action": "send",
+    "candidate": {
+      "slug": "2026-07-16-786f825a7a34",
+      "path": "/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/2026-07-16-786f825a7a34.svx",
+      "title": "Telegram signal finale converged digest wiring and noise guard on main",
+      "privacy": "private",
+      "mtimeMs": 1784215674322.0442,
+      "body": "# Telegram signal finale converged digest wiring and noise guard on main\n\n## Observations\n\nThe finale orchestration integrated gateway digest wiring and the scheduled noise-rate guard. A final root TypeScript check passed, and 138 targeted tests across gateway, digest, and system-bus passed. The orchestrator verified digest action callback routing, agent-tool registration, Redis-backed action controls, and noise-guard wiring.\n\nA rebase encountered conflicts in Brain task statuses. They were resolved by preserving `done` for the digest prototype and `built-awaiting-deploy` for the noise guard. Main was pushed with the finale commits. A send-nothing operator script then composed and printed the exact fixture digest payload for Joel's review; no live Telegram message was sent.\n\n## Decisions\n\n- Keep the first touchable digest reviewable without sending it live.\n- Preserve status truth during union reconciliation rather than accepting either conflict side wholesale.\n- Treat successful typecheck and focused test suites as merge evidence, while live delivery remains separately gated.\n\n## Open questions / next actions\n\n- Obtain Joel's approval of the printed digest payload.\n- Run live acceptance for the noise guard and digest delivery only after explicit approval.",
+      "excerpt": "# Telegram signal finale converged digest wiring and noise guard on main ## Observations The finale orchestration integrated gateway digest wiring and the scheduled noise-rate guard. A final root TypeScript check passed, and 138 targeted tests across gateway, digest, and system-bus passed. The orchestrator verified digest action callback routing, agent-tool registration, Redis-backed action controls, and noise-guard wiring. A rebase encountered conflicts in Brain task statuses. They were resolved by preserving `done` for the digest prototype and `built-awaiting-deploy` for the noise guard. Main was pushed with the finale commits. A send-nothing operator script then composed and printed the exact fixture digest payload for Joel's review; no live Telegram message was sent. ## Decisions - Keep the first touchable digest reviewable without sending it live. - Preserve status truth during union reconciliation rather than accepting either conflict side wholesale. - Treat successful typecheck and focused test suites as merge evidence, while live delivery remains separately gated. ## Open questions / next actions - Obtain Joel's approval of the printed digest payload. - Run live acceptance for the noise guard and digest delivery only after explicit approval.",
+      "source": "observations"
+    },
+    "judgment": {
+      "score": 8,
+      "why": "the first touchable Telegram digest landed on main, fully checked, without actually pinging you",
+      "flavor": "milestone-win"
+    },
+    "message": "Remember this one? Telegram signal finale converged digest wiring and noise guard on main \u2014 the first touchable Telegram digest landed on main, fully checked, without actually pinging you\nhttps://brain.joelclaw.com/user/observations/2026-07-16-786f825a7a34"
+  }
+}
+```
+
+### Apply proof send envelope
+
+```json
+{
+  "ok": true,
+  "code": 0,
+  "stdout": "{\n  \"ok\": true,\n  \"command\": \"joelclaw notify send\",\n  \"result\": {\n    \"backend\": \"gateway-redis\",\n    \"eventId\": \"61a01367-2c63-4e17-a5e3-c8e30844322c\",\n    \"eventType\": \"notify.message\",\n    \"channel\": \"gateway\",\n    \"deliveredTo\": [\n      \"gateway\"\n    ],\n    \"priority\": \"low\",\n    \"queuedLists\": [\n      \"joelclaw:events:gateway\"\n    ],\n    \"notifyChannels\": [\n      \"joelclaw:notify:gateway\"\n    ],\n    \"payload\": {\n      \"prompt\": \"Remember this one? Telegram signal finale converged digest wiring and noise guard on main \u2014 the first touchable Telegram digest landed on main, but we kept it reviewable without blasting it live\\nhttps://brain.joelclaw.com/user/observations/2026-07-16-786f825a7a34\",\n      \"message\": \"Remember this one? Telegram signal finale converged digest wiring and noise guard on main \u2014 the first touchable Telegram digest landed on main, but we kept it reviewable without blasting it live\\nhttps://brain.joelclaw.com/user/observations/2026-07-16-786f825a7a34\",\n      \"priority\": \"low\",\n      \"level\": \"info\",\n      \"context\": {},\n      \"audit\": {\n        \"schemaVersion\": 1,\n        \"flowId\": \"notify:61a01367-2c63-4e17-a5e3-c8e30844322c\",\n        \"producer\": \"observer/neat-memory\",\n        \"originSystemId\": \"flagg\",\n        \"requestedAtMs\": 1784217361008,\n        \"eventId\": \"61a01367-2c63-4e17-a5e3-c8e30844322c\",\n        \"route\": \"gateway:gateway\",\n        \"contentHash\": \"60097cb334e3c73d19e99db2f7cece28ce5fcf53bb89b9296305bfe07a4af4e1\",\n        \"contentChars\": 263,\n        \"contentBytes\": 265\n      },\n      \"immediateTelegram\": false\n    }\n  },\n  \"next_actions\": [\n    {\n      \"command\": \"joelclaw gateway events\",\n      \"description\": \"Confirm notification event entered gateway queue\"\n    },\n    {\n      \"command\": \"joelclaw gateway status\",\n      \"description\": \"Verify gateway session is healthy\"\n    },\n    {\n      \"command\": \"joelclaw notify send \\\"<message>\\\" --priority urgent --telegram-only\",\n      \"description\": \"Send immediate escalation to Telegram\"\n    }\n  ]\n}\n",
+  "stderr": "",
+  "parsed": {
+    "ok": true,
+    "command": "joelclaw notify send",
+    "result": {
+      "backend": "gateway-redis",
+      "eventId": "61a01367-2c63-4e17-a5e3-c8e30844322c",
+      "eventType": "notify.message",
+      "channel": "gateway",
+      "deliveredTo": [
+        "gateway"
+      ],
+      "priority": "low",
+      "queuedLists": [
+        "joelclaw:events:gateway"
+      ],
+      "notifyChannels": [
+        "joelclaw:notify:gateway"
+      ],
+      "payload": {
+        "prompt": "Remember this one? Telegram signal finale converged digest wiring and noise guard on main \u2014 the first touchable Telegram digest landed on main, but we kept it reviewable without blasting it live\nhttps://brain.joelclaw.com/user/observations/2026-07-16-786f825a7a34",
+        "message": "Remember this one? Telegram signal finale converged digest wiring and noise guard on main \u2014 the first touchable Telegram digest landed on main, but we kept it reviewable without blasting it live\nhttps://brain.joelclaw.com/user/observations/2026-07-16-786f825a7a34",
+        "priority": "low",
+        "level": "info",
+        "context": {},
+        "audit": {
+          "schemaVersion": 1,
+          "flowId": "notify:61a01367-2c63-4e17-a5e3-c8e30844322c",
+          "producer": "observer/neat-memory",
+          "originSystemId": "flagg",
+          "requestedAtMs": 1784217361008,
+          "eventId": "61a01367-2c63-4e17-a5e3-c8e30844322c",
+          "route": "gateway:gateway",
+          "contentHash": "60097cb334e3c73d19e99db2f7cece28ce5fcf53bb89b9296305bfe07a4af4e1",
+          "contentChars": 263,
+          "contentBytes": 265
+        },
+        "immediateTelegram": false
+      }
+    },
+    "next_actions": [
+      {
+        "command": "joelclaw gateway events",
+        "description": "Confirm notification event entered gateway queue"
+      },
+      {
+        "command": "joelclaw gateway status",
+        "description": "Verify gateway session is healthy"
+      },
+      {
+        "command": "joelclaw notify send \"<message>\" --priority urgent --telegram-only",
+        "description": "Send immediate escalation to Telegram"
+      }
+    ]
+  }
+}
+```
+
+### Resulting state file
+
+```json
+{
+  "version": 1,
+  "sent": [
+    {
+      "slug": "2026-07-16-786f825a7a34",
+      "sentAt": "2026-07-16T15:55:55.600Z",
+      "promptVersion": "observer/neat-memory-judge-v2",
+      "score": 8,
+      "flavor": "milestone-win",
+      "judgeConfig": {
+        "commandTemplate": "pi -p --model {{model}} --no-tools --no-skills --no-context-files --no-extensions --no-session {{prompt}}",
+        "model": "openai-codex/gpt-5.6-terra:low",
+        "tasteSkillPath": "/Users/joel/Code/joelhooks/joelclaw-observer/skills/neat-memory-taste.md",
+        "minScore": 8,
+        "maxCandidates": 24
+      },
+      "outcome": null
+    }
+  ]
+}
+```
+
+### Working-copy receipt
+
+```text
+Working copy changes:
+A .brain/tasks/neat-memory-dm.svx
+M .pi/extensions/observer/lib.ts
+A .pi/extensions/observer/neat-memory.ts
+A bin/neat-memory.sh
+A skills/neat-memory-taste.md
+M test/observer.test.ts
+Working copy  (@) : uystuvkz 8f955401 (no description set)
+Parent commit (@-): xzrtrmox 34a50564 fix: fresh-tab fallback parses tab_created shape — pane split returns result.pane, tab create returns result.root_pane; the live acceptance spawn created its tab then died on the shape gap. Both shapes tested
+```

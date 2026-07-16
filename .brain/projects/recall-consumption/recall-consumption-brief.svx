@@ -57,6 +57,8 @@ enough; ingest changes belong to the observational-memory map, not here.
 
 ## Decision ledger
 
+- [Build the Neat-Memory DM](./build-neat-memory-dm.svx) — the gardener's occasional delight DM is live (LaunchAgent com.joelclaw.observer-neat-memory, daily 16:15, silence default): four-flavor taste skill, pluggable judge seam, observations+rollups+retros with per-source privacy fail-closed, dedupe-forever with `outcome` field awaiting the reactions bridge; 82 tests, live proof send receipted (milestone-win, score 8). Graduated: [Bench the Curator](./bench-neat-memory-curator.svx).
+
 - [Bench Recall Quality](./bench-recall-quality.svx) — consumption leg shipped with five held-out canonical-page queries outside Brain roots; July baseline: sessions-search 1/5 (MRR 0.20), qmd hybrid 3/5 (MRR 0.34), paper index 0/5 (MRR 0.00). The zeroes stay visible as coverage failures.
 
 - [Bench Recall Quality (brainbench consumption leg)](./bench-recall-quality.svx) — baseline shipped: known-answer fixtures scored across all three pull surfaces; rerun cadence as corpus grows.
