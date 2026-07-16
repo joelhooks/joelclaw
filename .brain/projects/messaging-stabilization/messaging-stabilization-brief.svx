@@ -81,14 +81,18 @@ gateway are deleted, not abandoned in place.
 
 <!-- one line per closed step: gist + link -->
 
+- [Research Chat SDK Fit/Gap](./research-chat-sdk-fit-gap.svx) — [asset](./chat-sdk-fit-gap.svx), source-pinned to `vercel/chat@80def3a`: adopt as the platform-adapter layer BEHIND joelclaw authorization/policy/queue/journal/health wrappers — it replaces transport mechanics, not gateway semantics; all three adapters are beta with recent silent-loss fixes, so pin exact versions and shadow before any cutover; all three bot identities REUSE (Discord app exists but is currently disabled in gateway config; Telegram + Slack live and healthy); topology = embed ONE Chat instance in the existing gateway process (a second process would fight Telegram polling and split Slack Socket Mode); inbound shadow must mirror events in-process, never duplicate listeners; five required cutover canaries enumerated in the asset.
+
 ## Latent
 
-- Shadow-run policy and cutover criteria for each platform and for
-  the dispatcher flip.
+- Shadow-run policy: the asset's five canaries + in-process mirroring
+  rule are the floor; per-platform cutover criteria still need
+  numbers (how many shadow days/events count as proof).
 - iMessage: custom Chat SDK adapter, keep hand-rolled, or retire the
   channel.
-- Hosting topology for the bot process (gateway daemon vs own
-  LaunchAgent vs elsewhere) — the fit/gap research feeds this.
+- Version-bump policy after adoption: adapters ship behavior changes
+  in minors — who watches the changelog, and what re-proof does a
+  bump require.
 - WhatsApp/Teams/GitHub/Linear adapters come "free" with the SDK —
   whether any of them earn a joelclaw surface.
 

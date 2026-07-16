@@ -16,8 +16,22 @@ created_at: "2026-07-16"
 ## Step
 
 Groundwork the build waits on. Resolved when each of the three
-platforms has a working bot identity the Chat SDK can drive —
-reusing existing joelclaw bots where the fit/gap research says that's
-possible, creating apps where not — with tokens stored per house
-secret discipline (0600 state files / gateway env, never in chat or
-commits). HITL: app creation and OAuth clicks are Joel's hands.
+platforms has a working bot identity the Chat SDK can drive, tokens
+stored per house secret discipline (0600 state files / gateway env,
+never in chat or commits).
+
+Sharpened by the [fit/gap asset](./chat-sdk-fit-gap.svx) — all three
+REUSE existing identities; no new apps needed:
+
+- **Discord**: identity exists but the gateway start script currently
+  blanks it (channel disabled). Needs `DISCORD_PUBLIC_KEY` +
+  `DISCORD_APPLICATION_ID` added to the secret/config surface, the
+  Gateway intents verified in the app portal (Guilds, messages, DMs,
+  reactions, MessageContent), and re-enablement. Portal clicks are
+  Joel's hands.
+- **Telegram**: bot token already leased by the LaunchAgent; polling
+  needs no new secret — but the poll consumer must include
+  `message_reaction` in allowed updates or reactions-in never fires.
+- **Slack**: bot + app tokens already leased, Socket Mode live and
+  healthy; verify `reaction_added`/`reaction_removed` event
+  subscriptions and `reactions:read` scope in the app config.

@@ -3,7 +3,7 @@ title: "Research Chat SDK Fit/Gap: what the SDK actually gives vs what the gatew
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-16)"
 parent: "./messaging-stabilization-brief.svx"
 blockers: []
@@ -39,3 +39,14 @@ linked asset answers, with receipts (docs/source links, not vibes):
   equivalents, wrappers we keep, or losses to flag.
 - **Stability**: release cadence vs breaking changes, versioning
   policy, issue tracker health — is "stabilize on this" true.
+
+## Result
+
+Closed 2026-07-16. Chat SDK is a strong platform-adapter layer, not a
+drop-in gateway replacement: adopt behind joelclaw authorization, policy,
+durable queue, journal, health, and receipt wrappers; pin exact versions and
+shadow every platform before cutover. The three target adapters are still beta
+and have shipped recent delivery/concurrency fixes, so deleting hand-rolled
+ingress now would be fake stabilization.
+
+Asset: [Chat SDK fit/gap](./chat-sdk-fit-gap.svx)
