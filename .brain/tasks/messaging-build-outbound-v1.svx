@@ -1,0 +1,68 @@
+---
+title: "Task: outbound v1 — Chat SDK delivery behind contract v2, shadow-compared"
+type: task-brief
+created: 2026-07-16
+parent: "../projects/messaging-stabilization/build-outbound-v1.svx"
+---
+
+# Outbound v1
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. NO commits, NO push,
+NO gateway restart, NO channel enables (Discord stays disabled), NO
+deleting or rewiring any existing send path — the old outbound keeps
+working untouched. Secrets: lease via the daemon like siblings; never
+print values. Set your pi session name to "📤 Outbound v1" immediately.
+
+Read first, in order — they are the spec and they bind you:
+1. [Contract v2 decision record](.brain/projects/messaging-stabilization/decide-contract-v2.svx)
+2. [Fit/gap asset](.brain/projects/messaging-stabilization/chat-sdk-fit-gap.svx)
+   — §Hosting (embed ONE Chat instance in the gateway process),
+   §Auth (identities all provisioned; `discord_application_id`/
+   `discord_public_key` now in the secrets daemon), §Gateway-semantics
+   mapping (what you wrap, what you keep), §Required canaries.
+3. Repo law: `.claude/CLAUDE.md` + AGENTS.md hexagonal rules.
+
+## Partition (an inbound worker runs in parallel — respect this)
+
+YOU OWN: `packages/message-contract/` (create it: kinds enum, routing
+table, flowId, receipt envelope, outbound event schemas — versioned,
+Effect Schema per house idiom), `packages/gateway/src/chat-sdk/`
+(create it: `instance.ts` — the single Chat instance + pinned
+adapters; `outbound.ts` — contract v2 send path; `shadow.ts` — the
+comparison harness), and your tests. DO NOT edit
+`packages/gateway/src/channels/*`, `daemon.ts`, or anything under
+`packages/message-contract/inbound*` (the inbound worker creates
+those). If integration into daemon.ts is needed, write the wiring as
+an exported function the steering session applies later, and say so.
+
+## Deliverables
+
+1. **Contract v2 domain** (`@joelclaw/message-contract`): kind enum
+   (memory|alert|digest|ask|receipt), versioned routing table
+   kind→(platform, lane, urgency, formatting), flowId minting, HATEOAS
+   receipt envelope, `message/reaction.received` +
+   `message/reply.received` event schemas. Teaching errors.
+2. **Chat SDK composition**: pin `chat` + adapter + state packages to
+   ONE exact version (latest synchronized train); `instance.ts` builds
+   the Chat instance with telegram (polling, `message_reaction` in
+   allowed updates) + slack (socket mode) + discord (constructed but
+   only activated when the channel env is non-blank — it's disabled).
+   Lifecycle per fit/gap: Telegram stopPolling and Discord listener
+   abort owned by the wrapper.
+3. **Send path**: `send(intent)` → routing table → adapter →
+   journal row with platform message id → flowId mapping → receipt
+   envelope. `notify send` compat shim mapping (do not wire it in —
+   provide it as a module + tests).
+4. **Shadow harness** (`shadow.ts`, flag-gated, default OFF): given a
+   test intent, send via SDK path AND record what the legacy path
+   would have produced (journal comparison), emit a diff report. One
+   REAL proof send per live platform (Telegram, Slack) is authorized —
+   mark the message as a canary, journal it, paste the receipt with
+   platform message ids. Discord: build, don't send.
+5. **Tests + gates**: repo idiom; `bunx tsc --noEmit` green; targeted
+   biome green. Do NOT run the k8s publish script.
+
+## Step-file edits
+
+Append result + receipts to the claimed step, leave status open —
+steering closes after supervised canaries. Print DONE with receipts.

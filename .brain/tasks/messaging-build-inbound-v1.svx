@@ -1,0 +1,71 @@
+---
+title: "Task: inbound v1 — SDK-normalized events shadow-mirrored to the bus, command-queue untouched"
+type: task-brief
+created: 2026-07-16
+parent: "../projects/messaging-stabilization/build-inbound-v1.svx"
+---
+
+# Inbound v1
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. NO commits, NO push,
+NO gateway restart, NO channel enables, and ABSOLUTELY NO execution
+from the new path — `command-queue` fed by the legacy channels remains
+the only thing that acts; everything you build observes, normalizes,
+publishes, and diffs. The self-wake-loop defense is non-negotiable:
+self-originated and non-Joel events must be provably rejected in your
+shadow path too. Set your pi session name to "📥 Inbound v1"
+immediately.
+
+Read first, in order — they bind you:
+1. [Contract v2 decision record](.brain/projects/messaging-stabilization/decide-contract-v2.svx)
+   — decision 4 is your charter: inbound publishes to the bus
+   observe-only.
+2. [Fit/gap asset](.brain/projects/messaging-stabilization/chat-sdk-fit-gap.svx)
+   — §Inbound dispatcher reality (the 4-stage landing), §Shadowing
+   rule (mirror events IN-PROCESS from the current owner; never start
+   a second poll/socket/gateway consumer), §"cannot do X" items 1, 2, 9.
+3. Repo law: `.claude/CLAUDE.md` + AGENTS.md.
+
+## Partition (an outbound worker runs in parallel — respect this)
+
+YOU OWN: `packages/message-contract/inbound-events.ts` (+ its tests) —
+inbound event schemas only; `packages/gateway/src/chat-sdk-inbound/`
+(create it: `mirror.ts` — the in-process tap contract, `normalize.ts`
+— raw platform event → SDK normalization → contract v2 inbound event,
+`diff.ts` — legacy-vs-SDK comparison, `publish.ts` — observe-only bus
+publishing with a distinct event name namespace `message/inbound.*`).
+DO NOT edit `packages/gateway/src/channels/*`, `daemon.ts`,
+`command-queue.ts`, or anything else under `packages/message-contract/`
+(the outbound worker creates that package's core — if it doesn't exist
+yet when you need types, define your schemas standalone in your file
+with a TODO-integrate note rather than blocking or creating the
+package skeleton yourself; coordinate through file boundaries, not
+edits).
+
+## Deliverables
+
+1. **Inbound event schemas**: normalized message / command /
+   interaction / reaction shapes with platform ids, raw anchor ids,
+   audit lineage, and authorization verdict — versioned, Effect Schema.
+2. **The tap contract** (`mirror.ts`): a function the existing channel
+   handlers will call with their raw platform events (steering wires
+   the one-line taps later — you provide the seam + the exact
+   file:line insertion points as a written list, verified against
+   current source).
+3. **Normalization**: raw event → the SDK's normalization logic →
+   contract v2 inbound event. Self-message and non-Joel rejection
+   verified with tests using REAL event shapes captured from the
+   channels' source (read the handlers; fake fixtures shaped like
+   flat approximations are the twice-burned bug class — model the
+   actual envelopes).
+4. **Observe-only publish + diff**: bus events under
+   `message/inbound.*` marked `shadow: true`; `diff.ts` compares what
+   legacy dispatch decided vs what the SDK path would have decided,
+   emitting a structured report (the cutover evidence).
+5. **Tests + gates**: `bunx tsc --noEmit` green; targeted biome green.
+
+## Step-file edits
+
+Append result + receipts to the claimed step, leave status open —
+steering wires the taps and runs the live shadow. Print DONE with
+receipts.
