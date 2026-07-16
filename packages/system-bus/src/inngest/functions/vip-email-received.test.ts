@@ -1,6 +1,48 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
+import type { GatewaySendMessageData } from "../../lib/channel-delivery-audit";
+import {
+  __vipEmailReceivedTestUtils,
+  sendVipEmailReceivedToGateway,
+} from "./vip-email-received";
 
-import { __vipEmailReceivedTestUtils } from "./vip-email-received";
+type GatewayMessageEvent = {
+  name: "gateway/send.message";
+  data: GatewaySendMessageData;
+};
+
+describe("vip-email-received delivery", () => {
+  test("queues the message and keyboard with producer attribution", async () => {
+    const calls: Array<[string, GatewayMessageEvent]> = [];
+    const sendEvent = mock(async (stepId: string, event: GatewayMessageEvent) => {
+      calls.push([stepId, event]);
+      return { ids: ["mock-event-id"] };
+    });
+    const inlineKeyboard = [
+      [{ text: "Open VIP email", callback_data: "vip:open:cnv_456" }],
+    ];
+
+    await sendVipEmailReceivedToGateway(
+      sendEvent,
+      "<b>VIP email brief</b>",
+      inlineKeyboard,
+    );
+
+    expect(calls).toEqual([
+      [
+        "notify-vip-summary",
+        {
+          name: "gateway/send.message",
+          data: {
+            channel: "telegram",
+            text: "<b>VIP email brief</b>",
+            audit: { producer: "vip-email-received" },
+            inline_keyboard: inlineKeyboard,
+          },
+        },
+      ],
+    ]);
+  });
+});
 
 describe("vip-email-received prompt budgeting", () => {
   test("clipPromptText truncates oversized excerpts with an ellipsis", () => {

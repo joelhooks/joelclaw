@@ -1,6 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi, type FunctionReference } from "convex/server";
 import { NonRetriableError } from "inngest";
+import type { GatewaySendMessageData } from "../../lib/channel-delivery-audit";
 import { infer } from "../../lib/inference";
 import { revalidateContentCache } from "../../lib/revalidate";
 import { inngest } from "../client";
@@ -212,6 +213,27 @@ function assertNoRewriteMetaCommentary(rewrittenContent: string): void {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+type GatewayMessageSender = (
+  stepId: string,
+  event: { name: "gateway/send.message"; data: GatewaySendMessageData },
+) => Promise<unknown>;
+
+export function sendContentReviewToGateway(
+  sendEvent: GatewayMessageSender,
+  text: string,
+  inlineKeyboard?: GatewaySendMessageData["inline_keyboard"],
+): Promise<unknown> {
+  return sendEvent("notify-operator-telegram", {
+    name: "gateway/send.message",
+    data: {
+      channel: "telegram",
+      text,
+      audit: { producer: "content-review" },
+      inline_keyboard: inlineKeyboard,
+    },
+  });
 }
 
 function getConvexClient(): ConvexHttpClient {
@@ -1543,61 +1565,18 @@ export const contentReviewApply = inngest.createFunction(
       return { notified: true };
     });
 
-    await step.run("notify-operator-telegram", async () => {
-      const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-      const TELEGRAM_CHAT_ID = process.env.TELEGRAM_USER_ID;
+    const messageHtml = [
+      "✅ <b>Feedback applied</b>",
+      "",
+      `<a href="https://joelclaw.com/${contentSlug}">${contentSlug}</a>`,
+      "",
+      `${feedbackStatusResult.appliedUpdated} applied · ${feedbackStatusResult.failedUpdated} failed`,
+    ].join("\n");
 
-      if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-        return { sent: false, reason: "telegram-not-configured" };
-      }
-
-      const messageHtml = [
-        "✅ <b>Feedback applied</b>",
-        "",
-        `<a href="https://joelclaw.com/${contentSlug}">${contentSlug}</a>`,
-        "",
-        `${feedbackStatusResult.appliedUpdated} applied · ${feedbackStatusResult.failedUpdated} failed`,
-      ].join("\n");
-
-      try {
-        const response = await fetch(
-          `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: TELEGRAM_CHAT_ID,
-              text: messageHtml,
-              parse_mode: "HTML",
-              disable_web_page_preview: false,
-            }),
-          },
-        );
-
-        if (!response.ok) {
-          const responseBody = await response.text().catch(() => "");
-          console.error("[content-review] failed to send telegram notification", {
-            contentType,
-            contentSlug,
-            status: response.status,
-            statusText: response.statusText,
-            body: responseBody,
-          });
-
-          return { sent: false, reason: "telegram-send-failed", status: response.status };
-        }
-
-        return { sent: true };
-      } catch (error) {
-        console.error("[content-review] failed to send telegram notification", {
-          contentType,
-          contentSlug,
-          error: formatError(error),
-        });
-
-        return { sent: false, reason: "telegram-send-failed" };
-      }
-    });
+    await sendContentReviewToGateway(
+      (stepId, messageEvent) => step.sendEvent(stepId, messageEvent),
+      messageHtml,
+    );
 
     return {
       status: "completed",

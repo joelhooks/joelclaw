@@ -1,9 +1,6 @@
+import type { GatewaySendMessageData } from "../../lib/channel-delivery-audit";
 import { infer } from "../../lib/inference";
-import {
-  sendTelegramDirect,
-  stripOperatorRelayRules,
-  toTelegramHtml,
-} from "../../lib/telegram";
+import { stripOperatorRelayRules, toTelegramHtml } from "../../lib/telegram";
 import {
   EMAIL_THREADS_COLLECTION,
   ensureEmailThreadsCollection,
@@ -293,6 +290,27 @@ function buildBriefUserPrompt(classified: ClassifiedThreads): string {
   ].join("\n");
 }
 
+type GatewayMessageSender = (
+  stepId: string,
+  event: { name: "gateway/send.message"; data: GatewaySendMessageData },
+) => Promise<unknown>;
+
+export function sendVipMorningBriefToGateway(
+  sendEvent: GatewayMessageSender,
+  text: string,
+  inlineKeyboard?: GatewaySendMessageData["inline_keyboard"],
+): Promise<unknown> {
+  return sendEvent("notify-telegram", {
+    name: "gateway/send.message",
+    data: {
+      channel: "telegram",
+      text,
+      audit: { producer: "vip-morning-brief" },
+      inline_keyboard: inlineKeyboard,
+    },
+  });
+}
+
 function buildGatewayPrompt(briefText: string): string {
   return [
     "Operator relay rules:",
@@ -475,28 +493,10 @@ export const vipEmailBrief = inngest.createFunction(
       stripOperatorRelayRules(gatewayPrompt) || generated.briefText || EMPTY_BRIEF,
     );
 
-    const notifyResult = await step.run("notify-telegram", async () => {
-      const telegramResult = await sendTelegramDirect(telegramBriefHtml, {
-        disablePreview: false,
-      });
-
-      if (!telegramResult.ok) {
-        console.error("[vip-email-brief] failed to send direct telegram brief", {
-          error: telegramResult.error,
-        });
-      }
-
-      if (!telegramResult.ok) {
-        throw new Error(
-          `VIP email brief delivery failed: telegram=${telegramResult.error ?? "unknown"}`,
-        );
-      }
-
-      return {
-        telegramDelivered: telegramResult.ok,
-        telegramError: telegramResult.error,
-      };
-    });
+    await sendVipMorningBriefToGateway(
+      (stepId, messageEvent) => step.sendEvent(stepId, messageEvent),
+      telegramBriefHtml,
+    );
 
     return {
       status: "briefed",
@@ -506,8 +506,7 @@ export const vipEmailBrief = inngest.createFunction(
       staleCount: classified.stale.length,
       skippedCount: classified.skippedCount,
       mode: generated.mode,
-      telegramDelivered: notifyResult.telegramDelivered,
-      telegramError: notifyResult.telegramError,
+      telegramQueued: true,
       ...(generated.error ? { generationError: generated.error } : {}),
     };
   }
