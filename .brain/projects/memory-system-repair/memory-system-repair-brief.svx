@@ -1,7 +1,7 @@
 ---
 title: "Memory System Repair: fixing the wobbly bits"
 type: "brief"
-status: "active"
+status: "done"
 created_at: "2026-07-17"
 privacy: "private"
 ---
@@ -86,7 +86,12 @@ and the taste bench in one grilling.
   tick; same commit. First real promotion executed 18:14Z: release
   `2e768c2b → 7b5fe928` with receipt — the dream-cap fix is live for the
   06:10 dream.
-- [Drain the Capture Outbox](./drain-capture-outbox.svx) — implementation ready, deployment open: fixed the three writer fallbacks, replaced lossy concurrent log rewrites, dispositioned 14,853 files into 167 safe replay requests, and built a dry-run-first replay tool. Steering still owes the gateway restart, supervised canary, live drain, and observer alarm deployment.
+- [Drain the Capture Outbox](./drain-capture-outbox.svx) — done:
+  gateway bounced, two pipeline bugs the drain itself exposed were fixed
+  and deployed (empty-run indexing `6877dab1`, step-output size
+  `c963c47e`), full drain 167/167 (123 indexed / 44 covered / 0
+  failed), alarm live in observer release `01b81cba`. Raw deletion
+  pends a check-in.
 - The five judgment calls — all resolved in one live grilling (Joel,
   2026-07-17):
   [legacy retirement](./decide-legacy-memory-retirement.svx) — retarget

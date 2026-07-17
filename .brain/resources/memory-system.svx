@@ -2,6 +2,7 @@
 title: "The memory system: map + health"
 type: "resource"
 created_at: "2026-07-17"
+updated_at: "2026-07-17"
 privacy: "private"
 ---
 
@@ -11,238 +12,217 @@ privacy: "private"
 
 Your machine watches everything you and your agents do, writes the good
 parts down as pages in the Brain, and a picky curator texts you the best
-bits — then records which emoji you react with. The plumbing for that
-whole loop moved one real reaction end to end on 2026-07-17. Whether the
-grades actually make the curator *better* is unproven — one 👍 is a
-smoke test, not a verdict.
+bits — then records which emoji you react with. The whole loop runs, and
+as of the evening of 2026-07-17 the mess around it is gone: the morning
+review found eight problems, and by end of day all eight were fixed,
+decided, or retired with receipts.
 
-Around the healthy core, three things need attention soon: the nightly
-condenser has a blind spot that starts mattering around 2026-07-18, the
-graph builder would leak sensitive page titles if anyone rebuilds it, and
-**71 GB of failed capture uploads** are quietly piling up in a retry
-folder. And there's clutter: four old memory systems are dead but still
-plugged in — one of them still answers `joelclaw recall` with data from
-May as if it were today. The fix list at the bottom is ordered by blast
-radius; the top two are one-sitting jobs.
+What changed in one day: the nightly condenser's blind spot is fixed and
+deployed, the graph rebuild can no longer leak sensitive titles, the
+71 GB pile of failed capture uploads is drained (every recoverable byte
+verified into the index, an alarm now watches the folder), four dead
+memory systems got a funeral instead of a haunting, and retros — the
+"lessons learned" the curator always wanted to read — finally have a
+writer. What's genuinely open is one honest question: whether your
+emoji grades make the curator *smarter*. The bench says one grade
+teaches nothing measurable. Keep reacting; ~20–30 grades with both 👍
+and 👎 is the dataset that settles it.
 
-
-that captures, condenses, stores, curates, delivers, or grades durable
-knowledge for you and your agents — mapped in plain words, then graded.
-Verdicts are `working` (does its job, receipts prove it), `wobbly` (exists
-but degraded or fragile), `gap` (missing, or exists and nothing consumes
-it). Every claim here traces to one of four survey assets with full
-receipts; links at the bottom. Four pi workers surveyed the live system in
-parallel; nothing on this page is from memory.
+This page covers everything that captures, condenses, stores, curates,
+delivers, or grades durable knowledge for you and your agents. Verdicts
+are `working` (does its job, receipts prove it), `wobbly` (exists but
+degraded or fragile), `retired` (deliberately shut down, data archived),
+`parked` (stopped, restartable, nothing deleted). Claims trace to the
+four morning survey assets plus the repair and cleanup effort ledgers;
+links at the bottom.
 
 ## The loop in one breath
 
 Everything you and your agents do on flagg becomes raw session capture.
 The observer distills that into observation pages in the Brain. Dreams
 condense aging pages into rollups. The neat-memory curator reads the
-Brain, judges what's worth your attention, and DMs you the best of it on
-its own schedule. You react with an emoji, and that grade flows back into
-the judge's history for the next beat. The wiki renders the whole Brain at
-brain.joelclaw.com. That's the core loop — capture → condense → store →
-curate → deliver → grade — and as of today every stage runs, with the
-grading loop proven end to end by your own 👍.
+Brain (observations + retros), judges what's worth your attention, and
+DMs you the best of it on its own schedule. You react with an emoji, and
+that grade flows back into the judge's history for the next beat. The
+wiki renders the whole Brain at brain.joelclaw.com. Capture → condense →
+store → curate → deliver → grade: every stage runs, and every stage now
+has exactly one implementation — the retirements killed the shadow
+copies.
 
-## Capture — working
+## Capture — working, hardened today
 
-Sessions on flagg stream into `~/.joelclaw/runs-dev/` and the observer
-tick (every 30 minutes, LaunchAgent `com.joelclaw.observer-tick`) walks
-new activity windows, distills them on Terra subagents, and writes
-schema-v1 observation pages to the user Brain
-(`dark-wizard/.brain/observations/`). The substrate is genuinely growing:
-652 top-level pages plus 85 archived, with fresh pages minutes old at
-survey time and pending-publish at 0. All three observer LaunchAgents
-(tick, dream, neat-memory) report status 0.
+Sessions stream into `~/.joelclaw/runs-dev/` and the observer tick
+(every 30 minutes) distills activity windows into schema-v1 observation
+pages (652 live + 85 archived at the morning survey). Three fixes
+landed in the pipeline today, all deployed and receipted:
 
-Two caveats. The kind taxonomy is messy — 42 pages missing `kind`, nine
-different kind strings — which makes grouping noisier than it should be.
-And the dev checkout had drifted ahead of the deployed release during the
-review (details under Delivery).
+- **Dead-fallback writers fixed.** The embedded gateway Pi session had
+  been POSTing captures to a dead `localhost:3000` fallback (the
+  LaunchAgent never exported `JOELCLAW_CENTRAL_URL`); all three writer
+  defaults now point at the real worker, and their logs are append-only
+  so concurrent sessions can't erase each other's evidence.
+- **Empty runs index their metadata.** Valid-but-empty payloads used to
+  vanish (202 accepted, nothing written), which stalled replay
+  verification. They now upsert the same `runs_dev` row with
+  `turn_count: 0` (joelclaw `6877dab1`).
+- **Large runs can't blow the pipeline.** The indexing function used to
+  pass whole transcripts through Inngest step outputs, which are
+  size-capped — a 4.2 MB replay killed it. Steps now reread from disk
+  and return counts and hashes only (`c963c47e`); the same 4.2 MB run
+  then indexed clean (570 turns, SHA verified).
 
-## Condense (dreams) — wobbly
+**The outbox is drained.** The retry folder that had silently
+accumulated 14,853 files / 71.4 GB since 06-08 was analyzed
+(read-only), collapsed to 179 logical capture groups (14,591 files were
+strict prefixes of later bodies), and replayed through a
+dry-run-first, checkpointed, SHA-verified tool: **167 replay requests →
+123 indexed + 44 covered by existing captures, 0 failed.** The raw
+source files still sit in the outbox pending a deletion check-in — but
+an alarm now watches the folder from the observer's self-maintenance
+tick (warning at 25 files / 256 MiB / 60 min, critical at 100 files /
+1 GiB / 6 h; observer release `01b81cba`), so a silent 71 GB pile-up is
+structurally impossible now.
 
-The dream machinery is real and proven: the supervised 2026-07-14 run
-condensed 85 aged pages into 26 rollups at 0.81 compression, archived the
-originals, and left a receipt page. But the unattended nightly run has
-written nothing since — `eligiblePages: 0` every night. The survey settled
-why: it's not the cap, it's corpus youth. Under the live rule (plain pages
-need 7 days), a scan of all 652 pages found zero eligible anywhere — the
-oldest current page is from 2026-07-11. The wave comes when the corpus
-ages in.
+## Condense (dreams) — fixed, deployed, first real night pending
 
-The real risk is still coded in: the dream reads `files.slice(0, cap)` —
-the first 200 pages by sorted filename — *before* checking eligibility,
-and the log has said `capped:true` daily since 07-15. Once pages past the
-first 200 age in, the dream won't see them until earlier names condense.
-That deserves a fix before the ~07-18 eligibility wave.
+The starvation bug is dead: eligibility is now computed over the whole
+corpus and the cap bounds the night's work instead of blinding it
+(observer `461eddc8`, 87 tests). Promoted to release the same day via
+the new receipt-checked promotion script — in time for the corpus's
+first eligibility wave (~07-18, dream fires 06:10). Verdict moves to
+`working` when the first unattended dream writes rollups; the machinery
+itself is proven (the supervised 07-14 run condensed 85 pages into 26
+rollups at 0.81 compression).
 
-## Retros — gap
+Release drift, the disease that let old curator code run in production,
+also got its cure: `bin/promote-release.sh` (clean-tree gate, smoke
+checks, dry-run receipt, log) plus a release-drift warning in the
+self-maintenance tick. Three receipted promotions ran today.
 
-The curator reads `dark-wizard/.brain/resources/retros/` as a first-class
-candidate source, but nothing writes there as part of any pipeline. Two
-retro files exist, both hand-made. If retros are supposed to be memory,
-they're currently a manual side door, not a stage.
+## Retros — writer built and live
 
-## Store + render — working, with edges
+The gap is closed. `joelclaw retro <brief-path>` fires
+`memory/retro.requested`; the `memory-retro-writer` function reads the
+closed brief and its steps' Result sections, enforces the noise bar
+(fewer than three steps and no decision ledger → skip with a warning;
+the retro must say what changed durable behavior, not re-narrate the
+ledger), condenses via pi, and atomically writes one `.svx` into the
+retros store the curator already reads (joelclaw `8f127255`, 7 tests).
+Agent hooks and steering sessions call the one-liner at effort close.
+The curator's best source finally flows.
 
-The Brain is `.svx` trees governed by one registry
-(`dark-wizard/brain-roots.json`). Four roots are registered — `user`
-(1,121 pages), `joelclaw` (261), `observer` (23, registered today as part
-of this review), `wiki` (67) — and the renderer prerenders each page at
-`brain.joelclaw.com/<root>/<slug>/` with privacy exclusions applied
-(excluded sections plus `privacy: sensitive` never render). The pipeline
-from file to URL is clean, compile failures are page-scoped, and fleet
-sync through dark-wizard is healthy.
+## Store + render — working
 
-The edges: flagg has **31** `.brain` trees; 27 are orphans the wiki can't
-see. That's not automatically wrong — but there's no gate proving each
-orphan is intentionally local versus forgotten. And the `.svx` law's
-enforcement is narrow: only joelclaw-wiki runs the checker in lint, and 11
-`.md` files sit outside any ratchet, including one unratcheted straggler
-in joelclaw's own tree that currently fails its check.
+Four registered Brain roots (`user`, `joelclaw`, `observer`, `wiki`)
+render at brain.joelclaw.com with privacy exclusions applied. Known
+edges, unchanged priority: 27 orphan `.brain` trees on flagg await
+per-tree onboarding judgment, and the `.svx` ratchet only runs in
+joelclaw-wiki's lint.
 
-## The graph — wobbly, one sharp edge
+## The graph — safe to rebuild
 
-The Brain Graph projection (932 nodes / 805 edges) is five days stale — it
-predates the observer root and a week of writes — and its rebuild is a
-separate manual script that the normal wiki build never runs. The sharp
-edge: **`graph-builder.ts` has no privacy boundary.** It ingests every
-`.svx` including sensitive pages, and the neighborhood/backlink UI prints
-node labels without filtering. The live graph only has zero sensitive
-nodes because it's stale. Rebuild it today and hundreds of sensitive
-titles leak into page-side rendering. Fix the boundary before anyone
-refreshes the graph.
+The sharp edge is gone: a shared `isExcludedBrainPage` boundary runs at
+build time plus read-path stripping, and `graph:build` is now part of
+the normal wiki build (wiki `bc05d5b`). First safe rebuild: 3,082 nodes,
+0 sensitive, 0 excluded. The graph refreshes with every build instead of
+rotting as a stale manual artifact.
 
 ## Curate — working
 
-The neat-memory curator is the newest organ and it's healthy. Candidates
-come from observations + retros (7-day lookback, public/private only,
-dedupe-forever against sent state). The judge is sol:xhigh behind the
-27-line simple prompt (`observer/neat-memory-simple-v1`) — no meta
-framing, only `history` and `candidates` substitutions, send bar at
-score ≥ 8, silence encouraged. It paces itself: the judge names its own
-`nextBeat` (clamped 2h–48h), the shell schedules it via `joelclaw wake`
-with receipt-checked envelopes, and the daily 16:15 LaunchAgent is only a
-dead-man that revives a dead chain. The chain is provably alive: beats
-fired 04:19 → 10:19 → 16:20 today, self-scheduling 6h/6h/12h, next
-pending for 04:20 tomorrow.
+The neat-memory curator paces itself (judge-named beats, 2h–48h clamp,
+dead-man LaunchAgent as revival only), draws from observations + retros,
+sends at score ≥ 8, and dedupes forever against sent state. The beat
+chain stayed alive through the whole repair day. Its source pool got
+strictly better today: retros now flow, and the retired stores can no
+longer masquerade as candidates.
 
-## Deliver — wobbly, honestly
+## Deliver — wobbly, unchanged by design
 
-Your DMs arrive over the legacy notify path today, and that path works.
-The rebuilt Chat SDK acting path — the one that caused the 07-16
-confirmed-but-invisible incident — is fixed at the source (confirmation
-now structurally requires a platform message id plus journal readback) but
-sits dark behind `CHAT_SDK_ACTING_ENABLED=0` pending the supervised
-re-flip with the visible-delivery canary. Wobbly means exactly that:
-delivery has two truths, and the fixed one is source-verified rather than
-production-verified.
+DMs ride the legacy notify path, which works. The rebuilt Chat SDK
+acting path stays dark behind its flag pending the supervised re-flip
+with the visible-delivery canary — owned by the messaging-stabilization
+effort, deliberately out of scope for the memory repairs. Wobbly means:
+two truths, the fixed one source-verified but not production-verified.
 
-One live find from this review: the deployed release checkout was running
-*old* curator code — still sending DMs `--priority low` without
-`--telegram-only`, because the priority-high commit was never promoted.
-The promotion happened mid-review (release now at `af7b5437`), so the
-16:20 beat's DM rode the old lane; check whether you actually saw the
-"milestone-win" DM from 16:20Z. Release promotion is manual and just
-proved it can drift silently — it wants a receipt-checked script.
+## Grade — plumbing proven; learning honestly unproven
 
-## Grade — plumbing works; learning unproven
+The full pipe is real: your reaction flows poller → bus → flowId bridge
+→ grading consumer → atomic outcome write → judge's `{{history}}` next
+beat. Your 👍 graded `2026-07-17-248a3715344a` to `worked` end to end.
+The learning question got a real bench instead of vibes: 15 paired
+sol:xhigh runs over identical candidate pools — real history vs
+outcomes-nulled vs flipped-negative — produced **identical picks and
+scores**. One grade teaches nothing measurable. The decisive rerun
+needs ~20–30 graded sends with both polarities; the
+[soul-principles](/joelclaw/projects/soul-principles/soul-principles-brief/)
+seed slate will generate exactly that graded volume as a side effect.
 
-Telegram reactions flow: poller (reaction updates enabled) → shadow tap →
-`message/inbound.reaction` on the bus → the bridge correlates platform
-message to flowId → `message/reaction.received` → the grading consumer
-maps 👍 ❤️ 🔥 💯 to `worked` and 👎 💩 to `did-not-work`, then atomically
-writes the outcome into the curator's state file. Your real reaction
-graded `2026-07-17-248a3715344a` to `outcome: "worked"`, and the judge's
-prompt builder includes outcomes in the history it sends to sol:xhigh. So
-the pipe is real and the grades reach the judge's eyes. And now it's
-benched, not just doubted: 15 paired judge runs over identical candidates
-— real history vs outcomes-nulled vs the one grade flipped negative —
-produced identical picks and scores.
-[The bench](/joelclaw/projects/memory-system-repair/taste-learning-bench/)
-says one grade teaches nothing measurable; a decisive rerun needs
-~20–30 graded sends with both 👍 and 👎 represented. Keep reacting —
-that's the dataset.
+## The funerals — four retirements, all receipted
 
-Residual softness: today's state entries lack `flowId`, so grading can
-fall back to a two-minute timestamp match. Safe while sends are sparse;
-worth tightening as volume grows.
+- **Legacy recall stack — retired.** `joelclaw recall` and voice recall
+  now answer from the Brain/observation stores (19 tests). The stale
+  `memory_observations` index (28,050 docs, 99.26% stale) was archived
+  to NAS (238 MB, SHA-verified receipt) and dropped from live
+  Typesense. The reflect/promote/proposal/batch-review zombie functions
+  and the MEM/FRIC suites protecting them are deleted — one migration,
+  −6,306 lines (joelclaw `a673d5c1`).
+- **System log — retired with a 21-gun salute.** It froze on 06-22 and
+  nobody noticed for 25 days: a ritual, not a system. Panda's copy
+  (3,981 lines, the real history) is snapshotted to NAS with a SHA
+  receipt; the `slog` write path, system-logger function, and its
+  sync/backup/PDS hooks are removed. Runtime evidence is OTel events;
+  durable receipts are Brain `.svx` — the jobs it pretended to do,
+  done by the things that actually do them.
+- **Chorus / rhizomatic — parked.** Session-start briefing injection
+  removed from claude/codex/pi configs, the 13-mutation outbox
+  snapshotted byte-for-byte before discard, and the service stopped and
+  disabled (verified: launchd can't find it, disabled map shows it,
+  port 4821 dead). Nothing deleted; the un-park path is documented. If
+  claim-graph ideas return, they return as a Brain-owned projection.
+- **Claude auto-memory — demoted to pointer index.** All 18 topic pages
+  dispositioned: 5 facts that lived nowhere durable migrated to Brain
+  `.svx` (fleet-synced), 13 duplicates receipted, 3 stale claims
+  flagged rather than blindly migrated, topic pages deleted. MEMORY.md
+  is now a binding rule plus one-line pointers into the Brain — useful
+  recall real estate, zero shadow content.
 
-## The periphery — eleven more stores, graded
-
-**Working (4):**
-
-- **Memory pulse** — the wiki's read-only status projection over the core
-  loop; live JSON fresh at survey time, sensitive pages filtered.
-- **Typesense + pdf-brain** — 662 books, 241,939 active chunks, NAS
-  artifacts current; a research corpus, deliberately not operator memory.
-- **Voice work recall** — stateless adapter over the session archive; 12
-  tests green; fails closed on sensitive content.
-- **Voice transcripts** — private/public/guest split enforced at write
-  time; public speech never enters the memory pipeline.
-
-**Wobbly (4):**
-
-- **Claude auto-memory** — a live shadow source. It duplicates operator
-  truths that belong in the Brain, and it wrote a fresh topic page on
-  07-17, *after* your 07-16 Brain-only instruction. Kill it or make it a
-  read-only pointer into the Brain.
-- **Chorus / rhizomatic claims** — the service runs and session identity
-  is fresh, but the semantic layer is June canary residue: zero
-  preferences, zero tasks, newest durable claims from 06-18, and 13
-  mutations stuck in its outbox. Decide: canary or real substrate.
-- **Run capture archive** — the raw episodic substrate is fresh and
-  indexed, but **the outbox holds 14,798 failed POSTs totaling 71.38 GB**
-  accumulating since 06-08, and at least one live gateway session still
-  posts to a 404 route. That's not a retry buffer anymore.
-- **MEM/FRIC suites** — the old memory path's acceptance tests are no
-  longer 23-red (49 pass / 1 timeout today) but they protect the legacy
-  pipeline, not the core loop, and they leak real 401s from live Inngest.
-
-**Gap (3):**
-
-- **`memory_observations`** — the legacy recall index: 28,050 documents,
-  **99.26% stale**, newest observation 2026-05-31, and `joelclaw recall`
-  still answers from it as if current. A competing memory that stopped
-  learning six weeks ago.
-- **Legacy `MEMORY.md` promotion path** — reflect/promote/review functions
-  still registered against a curated file that doesn't exist on flagg. A
-  zombie: code without a substrate.
-- **System log** — `~/Vault/system/system-log.jsonl` is absent on flagg;
-  `slog` silently reads a stale panda copy (newest row 06-22) while panda
-  is being decommissioned. The receipt ledger has split brain.
+The fleet knows: 24 skills plus AGENTS/SYSTEM docs were swept the same
+day so no standing surface describes the retired machinery as live
+(joelclaw `4476d007`, dark-wizard pushed, grafts refreshed).
 
 ## What deserves work next
 
-In rough order of blast radius:
+The morning's eight-item fix list is complete. What's genuinely open:
 
-1. **Graph privacy boundary** — before anyone rebuilds `graph.json`.
-2. **Dream cap fix** — before the corpus ages into eligibility (~07-18).
-3. **Drain + repair the 71 GB capture outbox** — find the 404 route,
-   replay safely, add a size/age alarm.
-4. **One legacy-memory retirement** — `memory_observations`, the MEMORY.md
-   zombie, generic voice recall, and MEM/FRIC as a single explicit
-   migration, not five separate corpses.
-5. **System log home** — move it to flagg or declare panda's archival.
-6. **Claude auto-memory + Chorus decisions** — each is one sitting.
-7. **Release promotion script** — receipt-checked, so deploy drift can't
-   recur.
-8. **Retro writer** — make retros a real stage or stop pretending.
+1. **Outbox source deletion** — the 71 GB of raw files is fully
+   dispositioned (indexed/covered/redundant with SHA receipts) but not
+   yet deleted; that's a deliberate check-in, not an oversight.
+2. **Grade volume** — react to DMs; the taste bench reruns at ~20–30
+   grades with both polarities.
+3. **First unattended dream** (~07-18 06:10) — confirms the cap fix in
+   the wild.
+4. **Chat SDK acting re-flip** — messaging-stabilization owns it.
+5. **[Soul principles](/joelclaw/projects/soul-principles/soul-principles-brief/)**
+   — the chartered next chapter: an earned, capped constitution
+   injected into steering surfaces, seeded from this system's receipts
+   and graded through the taste gate.
 
 ## How this page stays honest
 
-This page is a snapshot from the 2026-07-17 review, built by four parallel
-survey workers reading the live system — the provenance commit stamp below
-tells you how stale it is. When the memory system changes materially
-(cutover re-flip, legacy retirement, graph fix), regenerate it from a
-fresh survey rather than patching sentences: the effort brief and its four
-survey assets are the template. Full receipts live there:
+This page was regenerated on the evening of 2026-07-17 after the repair
+and cleanup efforts landed — per its own rule: fresh verdicts, not
+patched sentences. When the memory system changes materially again
+(acting re-flip, soul launch, orphan onboarding), regenerate from a
+fresh survey. Receipts:
 
-- [Effort brief](/joelclaw/projects/memory-system-review/memory-system-review-brief/)
-- [Capture & condense survey](/joelclaw/projects/memory-system-review/capture-condense-survey/)
-- [Brain stores survey](/joelclaw/projects/memory-system-review/brain-stores-survey/)
-- [Curation & delivery survey](/joelclaw/projects/memory-system-review/curation-delivery-survey/)
-- [Periphery survey](/joelclaw/projects/memory-system-review/periphery-survey/)
+- [Review brief](/joelclaw/projects/memory-system-review/memory-system-review-brief/)
+  and its four survey assets
+  ([capture/condense](/joelclaw/projects/memory-system-review/capture-condense-survey/),
+  [brain stores](/joelclaw/projects/memory-system-review/brain-stores-survey/),
+  [curation/delivery](/joelclaw/projects/memory-system-review/curation-delivery-survey/),
+  [periphery](/joelclaw/projects/memory-system-review/periphery-survey/))
+- [Repair brief](/joelclaw/projects/memory-system-repair/memory-system-repair-brief/)
+  (graph boundary, dream cap, promotion script, outbox drain, taste
+  bench)
+- [Cleanup brief](/joelclaw/projects/memory-system-cleanup/memory-system-cleanup-brief/)
+  (retirements, Chorus, auto-memory, retro writer, fleet sweep)

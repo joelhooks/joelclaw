@@ -3,7 +3,8 @@ title: "Drain the Capture Outbox: fix the 404 route, disposition 71 GB, add an a
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "in_progress"
+status: "closed"
+closed_at: "2026-07-17"
 assignee: "pi worker (flagg, herdr pane wB:p2P, 2026-07-17)"
 parent: "./memory-system-repair-brief.svx"
 blockers: []
@@ -156,3 +157,17 @@ passes 88 tests. Release promotion is still outstanding.
 - `packages/pi-extensions` package-local `tsc` remains red on pre-existing
   `inngest-monitor` Bun type/module errors; the root gate passed and none of
   those files were touched.
+
+### Steering completion receipts (2026-07-17, closes the step)
+
+- Gateway restarted; capture writers live on `:3111`.
+- Canary receipts: first canary exposed the empty-run indexing gap
+  (fixed `6877dab1`), full drain exposed the step-output size limit on
+  large runs (fixed `c963c47e`); both fixes deployed via worker restart.
+- Full drain complete: **167/167 dispositioned — 123 indexed, 44
+  covered, 0 failed** (checkpoint tally over
+  `~/.joelclaw/capture-outbox-replay-checkpoint.jsonl`).
+- Outbox alarm promoted to observer release `01b81cba` (receipt-checked
+  promotion, 20:57Z).
+- Raw source deletion remains a deliberate check-in with Joel; the
+  alarm will warn until dispositioned.

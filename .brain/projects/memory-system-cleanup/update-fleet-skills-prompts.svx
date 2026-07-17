@@ -3,7 +3,8 @@ title: "Update Fleet Skills and Prompts: no standing rule references the dead"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-17"
 assignee: ""
 parent: "./memory-system-cleanup-brief.svx"
 blockers:
@@ -96,3 +97,9 @@ joelclaw:
 
 No commit or push was made. This step remains open for steering to review,
 commit/push the two repos, and run the final fleet drift report.
+
+### Steering receipts (2026-07-17)
+
+Committed joelclaw `4476d007` (24 skills + AGENTS.md + SYSTEM.md) and
+dark-wizard `f885b69` (pushed to origin). `fleet-graft.sh install` ran
+clean with balanced markers. blaine/panda pick up on next dw-sync.
