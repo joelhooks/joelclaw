@@ -68,10 +68,34 @@ describe("message contract v2", () => {
         platform: "telegram",
         emoji: "👍",
         action: "added",
+        added: true,
+        rawEventId: "777932597",
+        platformMessageId: "14562",
+        correlationSource: "gateway-acting",
         actor: { id: "joel" },
         at: "2026-07-16T20:00:00.000Z",
       },
     });
     expect(event.data.flowId).toBe(flowId);
+  });
+
+  test("accepts legacy notify flow references during the return-path migration", () => {
+    const event = Schema.decodeUnknownSync(MessageReactionReceivedEvent)({
+      name: "message/reaction.received",
+      data: {
+        contractVersion: 2,
+        flowId: "notify:7c1924bc-b192-42da-b145-64dedfa2fe94",
+        platform: "telegram",
+        emoji: "👏",
+        action: "added",
+        added: true,
+        rawEventId: "777932597",
+        platformMessageId: "14562",
+        correlationSource: "redis-legacy-telegram",
+        actor: { id: "joel" },
+        at: "2026-07-17T03:26:18.905Z",
+      },
+    });
+    expect(event.data.flowId).toStartWith("notify:");
   });
 });

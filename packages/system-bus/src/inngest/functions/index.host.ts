@@ -83,6 +83,10 @@ import { proposalTriage } from "./memory/proposal-triage";
 import { memoryRunCaptured } from "./memory/run-captured";
 import { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 import {
+  messageReactionBridge,
+  neatMemoryReactionGrade,
+} from "./message-reactions";
+import {
   backupFailureRouter,
   backupRedis,
   backupTypesense,
@@ -230,6 +234,8 @@ export const hostFunctionDefinitions = [
   vercelDeployCanceled,
   meetingAnalyze,
   meetingTranscriptIndex,
+  messageReactionBridge,
+  neatMemoryReactionGrade,
   granolaBackfill,
   friction,
   frictionFix,

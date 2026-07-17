@@ -755,6 +755,12 @@ importers:
       '@joelclaw/memory':
         specifier: workspace:*
         version: link:../memory
+      '@joelclaw/message-contract':
+        specifier: workspace:*
+        version: link:../message-contract
+      '@joelclaw/message-journal':
+        specifier: workspace:*
+        version: link:../message-journal
       '@joelclaw/queue':
         specifier: workspace:*
         version: link:../queue
@@ -773,6 +779,9 @@ importers:
       convex:
         specifier: ^1.32.0
         version: 1.32.0(react@19.2.4)
+      effect:
+        specifier: ^3.19.17
+        version: 3.19.17
       fast-xml-parser:
         specifier: ^5.3.7
         version: 5.3.7

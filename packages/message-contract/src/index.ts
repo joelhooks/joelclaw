@@ -44,10 +44,14 @@ export {
   MESSAGE_REACTION_RECEIVED,
   MESSAGE_REPLY_RECEIVED,
   MessageActor,
+  MessageFlowReference,
+  type MessageFlowReference as MessageFlowReferenceType,
   MessageReactionReceivedEvent,
   type MessageReactionReceivedEvent as MessageReactionReceivedEventType,
   MessageReplyReceivedEvent,
   type MessageReplyReceivedEvent as MessageReplyReceivedEventType,
+  ReactionCorrelationSource,
+  type ReactionCorrelationSource as ReactionCorrelationSourceType,
 } from "./events";
 export { FlowId, type FlowId as FlowIdType, mintFlowId } from "./flow-id";
 export {

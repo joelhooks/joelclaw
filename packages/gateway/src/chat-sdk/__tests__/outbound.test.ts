@@ -481,7 +481,7 @@ describe("Chat SDK outbound v1", () => {
       contractVersion: 2,
       kind: "memory",
       content: "memory ready",
-      correlationId: "legacy-1",
+      correlationId: "neat-memory:legacy-1",
     });
   });
 

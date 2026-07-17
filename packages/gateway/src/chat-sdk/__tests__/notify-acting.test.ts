@@ -89,7 +89,7 @@ describe("notify send contract-v2 acting route", () => {
         contractVersion: 2,
         kind: "alert",
         content: "Cutover receipt",
-        correlationId: "notify-event-1",
+        correlationId: "cli/notify:notify-event-1",
       },
     ]);
   });
@@ -145,7 +145,7 @@ describe("notify send contract-v2 acting route", () => {
         contractVersion: 2,
         kind: "alert",
         content: "Cutover receipt",
-        correlationId: "notify-event-1",
+        correlationId: "cli/notify:notify-event-1",
       },
     ]);
   });

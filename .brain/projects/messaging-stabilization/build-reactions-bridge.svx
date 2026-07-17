@@ -3,7 +3,7 @@ title: "Build the Reactions Bridge: platform reactions become consumer events (n
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-17)"
 parent: "./messaging-stabilization-brief.svx"
 blockers:
@@ -21,3 +21,60 @@ correlation id — and the first customer works end to end: reacting to
 a neat-memory DM writes the `outcome` grade into
 `~/.joelclaw/observer-neat-memories.json`, feeding the
 [reactions-teach-taste loop](../recall-consumption/build-neat-memory-dm.svx).
+
+## Answer (2026-07-17)
+
+Built two host-worker functions: `message/reaction-bridge` correlates the
+nested observe-only inbound reaction through the contract Redis index, the
+legacy Telegram flow index, or the durable message journal; then it emits the
+transition-safe `message/reaction.received` contract. The
+`message/neat-memory-reaction-grade` consumer accepts only Joel-authorized
+added reactions, maps `👍 ❤️ 🔥 💯` to `worked` and `👎 💩` to
+`did-not-work`, verifies `observer/neat-memory` ownership from the journal,
+and atomically replaces the matching 0600 state file. Timestamp fallback is
+limited to one unambiguous candidate inside two minutes; explicit flow/slug
+matches win.
+
+The return-path contract now explicitly accepts both `flow_v2_*` and the
+legacy `notify:*` IDs that still exist on messages already sent during the
+migration. The acting gateway and the bus bridge use the same deterministic
+event identity, so an acting-path publication and a shadow-bridge publication
+dedupe instead of grading twice. Notify compatibility now preserves its source
+in the outbound correlation ID for future flow-v2 neat-memory rows. Per the
+task stop rule, these gateway source changes were not activated with a gateway
+restart.
+
+Receipts:
+
+- Root `bunx tsc --noEmit` — exit 0. Targeted system-bus, gateway, and
+  message-contract typechecks also passed.
+- Targeted Biome over the 40 relevant contract/gateway/system-bus files — no
+  fixes required.
+- Relevant suites — 78 passed, 0 failed, 182 expectations. The reaction tests
+  execute the real nested event through `InngestTestEngine`, cover rejected
+  actors, Redis and journal correlation, canonical and legacy envelopes,
+  emoji mapping, legacy state migration, ambiguous matching, 0600 atomic
+  replacement, and idempotence.
+- Fresh-context review after fixes: clean enough for supervised registration
+  and the real-event redrive.
+- Supervised host-worker bounce only: PID `83853` → `43669`; live cwd remained
+  `packages/system-bus`; `PUT /api/inngest` returned `Successfully registered`;
+  health reported 152 functions with both new IDs. Gateway was not restarted.
+- Real Telegram update `rawEventId=777932597`, platform message `14562`, was
+  redriven without flattening its original nested payload. Inbound event
+  `01KXQ4ET7TBCZAZCJA30QFT3EK` completed bridge run
+  `01KXQ4ET8F334EAMM6RFXDA0HD` and correlated to legacy flow
+  `notify:7c1924bc-b192-42da-b145-64dedfa2fe94`.
+- That run emitted real `message/reaction.received` event
+  `01KXQ4ETEFYRQ7069Q1RFD0F98`. Grade run
+  `01KXQ4ETGFXZEKE547W7PVAHZD` completed and correctly ignored `👏` as
+  `emoji-unmapped`; the state file remained mode 0600 with no fabricated
+  outcome.
+
+Live taste-loop proof remains deliberately human-shaped: steering runs the real
+curator beat with
+`NEAT_MEMORY_TRIGGER=beat bash ~/.joelclaw/observer-release/bin/neat-memory.sh`.
+If its receipt says `action: send`, Joel reacts to that exact DM with one of the
+configured grade emoji. Then inspect the matching entry in
+`~/.joelclaw/observer-neat-memories.json`; its `outcome` must change. Do not
+send a fake `--source observer/neat-memory` canary.

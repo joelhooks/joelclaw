@@ -1,3 +1,7 @@
+import type {
+  InboundReactionEventType,
+  MessageReactionReceivedEventType,
+} from "@joelclaw/message-contract";
 import type { ChannelAuditSeed } from "@joelclaw/telemetry";
 import { EventSchemas, Inngest } from "inngest";
 import type { PaneScheduleEntry } from "../lib/pane-schedule";
@@ -1195,6 +1199,12 @@ export type Events = {
       cancelledBy: string;
       cancelledAt: string;
     };
+  };
+  "message/inbound.reaction": {
+    data: InboundReactionEventType;
+  };
+  "message/reaction.received": {
+    data: MessageReactionReceivedEventType["data"];
   };
   "adr/pitch.requested": {
     data: Record<string, never>;

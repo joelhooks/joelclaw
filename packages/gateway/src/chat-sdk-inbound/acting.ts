@@ -134,6 +134,14 @@ function reactionEvent(
   flowId: FlowIdType,
 ): MessageReactionReceivedBusEnvelope {
   const displayName = event.actor.displayName?.trim();
+  const rawEventId = event.audit.rawEventId
+    ?? event.rawAnchors.transportEventId
+    ?? event.eventId;
+  const platformMessageId = event.platformIds.messageId
+    ?? event.rawAnchors.sourceMessageId;
+  if (!platformMessageId) {
+    throw new Error("Correlated reaction has no platform message id");
+  }
   return {
     id: `${event.eventId}:flow:${flowId}`,
     name: MESSAGE_REACTION_RECEIVED,
@@ -143,6 +151,10 @@ function reactionEvent(
       platform: event.platform,
       emoji: event.rawEmoji || event.emoji,
       action: event.added ? "added" : "removed",
+      added: event.added,
+      rawEventId,
+      platformMessageId,
+      correlationSource: "gateway-acting",
       actor: {
         id: event.actor.platformUserId,
         ...(displayName ? { displayName } : {}),

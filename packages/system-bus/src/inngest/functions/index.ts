@@ -86,6 +86,12 @@ export { proposalTriage } from "./memory/proposal-triage";
 export { memoryRunCaptured } from "./memory/run-captured";
 export { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 export {
+  createMessageReactionBridgeFunction,
+  createNeatMemoryReactionGradeFunction,
+  messageReactionBridge,
+  neatMemoryReactionGrade,
+} from "./message-reactions";
+export {
   backupFailureRouter,
   backupRedis,
   backupTypesense,

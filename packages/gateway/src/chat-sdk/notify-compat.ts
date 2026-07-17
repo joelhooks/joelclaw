@@ -41,7 +41,9 @@ export function mapNotifySendToIntent(input: NotifySendCompatInput): OutboundInt
     contractVersion: MESSAGE_CONTRACT_VERSION,
     kind: inferKind(input),
     content: input.message,
-    correlationId: input.correlationId,
+    correlationId: input.source
+      ? `${input.source}:${input.correlationId}`
+      : input.correlationId,
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
   };
   return intent;
