@@ -158,10 +158,14 @@ maps 👍 ❤️ 🔥 💯 to `worked` and 👎 💩 to `did-not-work`, then ato
 writes the outcome into the curator's state file. Your real reaction
 graded `2026-07-17-248a3715344a` to `outcome: "worked"`, and the judge's
 prompt builder includes outcomes in the history it sends to sol:xhigh. So
-the pipe is real and the grades reach the judge's eyes. What's NOT shown:
-that any of it changes the judge's picks. One reaction is a smoke test;
-"the curator learns your taste" stays an open claim until there's enough
-graded history to see selection actually shift.
+the pipe is real and the grades reach the judge's eyes. And now it's
+benched, not just doubted: 15 paired judge runs over identical candidates
+— real history vs outcomes-nulled vs the one grade flipped negative —
+produced identical picks and scores.
+[The bench](/joelclaw/projects/memory-system-repair/taste-learning-bench/)
+says one grade teaches nothing measurable; a decisive rerun needs
+~20–30 graded sends with both 👍 and 👎 represented. Keep reacting —
+that's the dataset.
 
 Residual softness: today's state entries lack `flowId`, so grading can
 fall back to a two-minute timestamp match. Safe while sends are sparse;

@@ -1,223 +1,143 @@
 ---
 name: memory-system
 displayName: Memory System
-description: "Operate and extend the joelclaw agent memory system — observation pipeline, write gates, vector store, retrieval, reflection, and nightly maintenance. Use when working on memory functions, debugging recall, tuning observation quality, or evolving the memory architecture."
-version: 0.1.0
+description: "Debug, maintain, and use the joelclaw memory system — observer capture/dreams, Brain .svx stores, neat-memory curation, Telegram delivery, reaction grading, wiki rendering. Load whenever work touches the memory system, the curator, dreams, observations, grading, or a memory surface misbehaves."
+version: 1.0.0
 author: joel
 tags:
   - memory
-  - system-bus
-  - typesense
-  - recall
-  - reflection
+  - observer
+  - brain
+  - neat-memory
+  - wiki
 ---
 
 # Memory System
 
-Operational reference for the joelclaw memory pipeline (session signal → durable recall → curated MEMORY.md).
+The joelclaw memory system in one breath: sessions on flagg stream into
+raw capture → the observer distills observation pages into the Brain →
+dreams condense aging pages into rollups → the neat-memory curator judges
+candidates and DMs Joel the best → Joel's emoji reaction grades the send →
+grades feed the judge's history. The wiki renders every registered Brain
+at `brain.joelclaw.com/<root>/<slug>/`.
 
-## When to use
+**The living map with per-subsystem health verdicts:**
+https://brain.joelclaw.com/joelclaw/resources/memory-system/ — read it
+before deep debugging; regenerate it (fresh survey, not sentence patches)
+after material changes. Effort trails:
+`.brain/projects/memory-system-review/` (survey assets = the receipts)
+and `.brain/projects/memory-system-repair/` (fixes + open decisions).
 
-Use this skill when working on memory capture, write gates, Typesense-backed recall, reflection/promote flows, or nightly maintenance.
+> **v1.0 rewrite (2026-07-17).** Versions ≤0.1.0 of this skill described
+> the legacy stack — `memory_observations`, write gates, reflect/promote
+> to `MEMORY.md`, `joelclaw recall`. That stack is a zombie (stale since
+> May, retirement chartered). Do NOT follow old copies of this skill from
+> other checkouts; do not write `memory/observation.submitted` events.
 
-## Canonical flow
+## Where everything lives
 
-```text
-sessions → observe → write-gate → store → decay/rank → retrieve → inject
-    ↑                                                              ↓
-    └──── nightly maintenance (dedup + stale pruning + stats) ─────┘
-                       ↓
-               observe → reflect → propose → triage → MEMORY.md
-```
-
-**Guiding filter:** “will this fact still be true and useful next month?”
-
-## 1) Write gate states (allow / hold / discard)
-
-| State | Persist | Default retrieval | Rules |
-|---|---|---|---|
-| `allow` | yes | yes | Durable, reusable facts (constraints, architecture truths, operational fixes, explicit user rules). |
-| `hold` | yes | no (unless explicitly requested) | Ambiguous/contextual signal worth keeping but not auto-injecting. |
-| `discard` | no | no | Noise, tool traces, instruction artifacts, ephemeral chatter. |
-
-Rules to enforce:
-- Very short/low-information observations (e.g. <12 chars) → `discard`.
-- Instruction-edit artifacts/raw tool traces (`<toolCall>`, command dumps, “replace X with Y”) → `discard`.
-- Facts with ADR IDs, concrete file paths, or explicit runnable commands bias toward `allow`.
-- If gate annotation parsing fails, mark `write_gate_fallback=true` and track drift (high fallback rate is a health smell).
-
-## 2) Vector store schema (Typesense only)
-
-**Backend:** `memory_observations` in Typesense. Qdrant is retired (per slog, 2026-02-28).
-
-Minimum operational fields:
-- Identity/source: `id`, `session_id`, `source`, `timestamp`, `updated_at`
-- Content: `observation`, `observation_type`, `embedding`
-- Write gate: `write_verdict`, `write_confidence`, `write_reason`, `write_gate_version`, `write_gate_fallback`
-- Taxonomy: `category_id`, `category_confidence`, `category_source`, `taxonomy_version`
-- Ranking/lifecycle: `merged_count`, `recall_count`, `retrieval_priority`, `stale`, `stale_tagged_at`, `last_used_at`, `superseded_by`, `supersedes`
-
-## 3) Category taxonomy (7 categories)
-
-Use taxonomy v1 IDs:
-1. `jc:preferences`
-2. `jc:rules-conventions`
-3. `jc:system-architecture`
-4. `jc:operations`
-5. `jc:memory-system`
-6. `jc:projects`
-7. `jc:people-relationships`
-
-## 4) Retrieval pipeline
-
-1. **Query rewrite** (fast model, hard timeout, fail-open to original query).
-2. **Hybrid search** (keyword + vector over `memory_observations`).
-3. **Time decay** ranking:
-   `final_score = raw_score × exp(-0.01 × days_since_created)`
-   - stale memories get extra downweight.
-4. **Cap** results before injection (protect context budget).
-5. **Budget profile**:
-   - `lean`: 2–3 hits, no rewrite, low-latency checks
-   - `balanced`: 5–7 hits, default interactive mode
-   - `deep`: 10–15 hits, complex debugging/research
-   - `auto`: choose profile from query complexity/context
-
-## 5) Reflection cycle
-
-`observe → reflect → propose → triage (3 tiers) → promote to MEMORY.md`
-
-Triage tiers:
-- **Tier 1 auto-action:** auto-promote / auto-reject / auto-merge using deterministic rules.
-- **Tier 2 LLM batch review:** batch adjudication for undecided proposals.
-- **Tier 3 human review:** only ambiguous/risky proposals; then promote/edit/reject.
-
-Goal: keep `MEMORY.md` small, durable, and high-signal.
-
-## 6) Nightly maintenance
-
-Run idempotent maintenance to keep recall quality high:
-1. **Dedup sweep** (semantic similarity merge; maintain supersession chain).
-2. **Stale pruning** (mark old never-recalled observations stale; prune very old stale records conservatively).
-3. **Stats emission** (observation count, merges, stale volume, category distribution).
-
-## 7) ADR map (read before changing architecture)
-
-- **ADR-0021** — memory system foundation.
-- **ADR-0068** — auto-triage pipeline.
-- **ADR-0077** — next phase (reflection + maintenance).
-- **ADR-0082** — Typesense as memory backend (Qdrant replaced).
-- **ADR-0094 → ADR-0100** — proposed evolution (write gate governance, taxonomy/budgets, forward triggers, graph/dual-search roadmap).
-
-## 8) Writing observations (mandatory at session end)
-
-**Every session that produces a durable pattern, operational fix, or architectural insight MUST write observations before closing.**
-
-```bash
-joelclaw send "memory/observation.submitted" -d '{
-  "observation": "<what was learned — concrete, reusable, future-tense useful>",
-  "category": "jc:operations",
-  "source": "pi-session",
-  "tags": ["stripe", "payout"]
-}'
-```
-
-Use one `send` call per distinct observation. Batch is fine — fire them in a loop.
-
-### Category cheatsheet
-
-| Category | Use for |
+| Surface | Location |
 |---|---|
-| `jc:operations` | How things work, API quirks, CLI patterns, operational fixes |
-| `jc:rules-conventions` | Conventions, SOPs, team/project rules |
-| `jc:system-architecture` | Topology, wiring, how components connect |
-| `jc:projects` | Per-project facts, payout rates, product catalogs |
-| `jc:preferences` | Joel's explicit preferences |
-| `jc:people-relationships` | People, contacts, roles |
-| `jc:memory-system` | Memory system itself |
+| Observer dev repo | `~/Code/joelhooks/joelclaw-observer` (branchless, detached HEAD by design) |
+| Observer release (what actually runs) | `~/.joelclaw/observer-release` |
+| Promotion (the ONLY way to deploy observer) | `bin/promote-release.sh` — clean-tree gate, smoke checks, receipts to `/tmp/observer-release-promotion.log`; `--dry-run` first if unsure |
+| Observation pages | `~/Code/joelhooks/dark-wizard/.brain/observations/` (condensed originals under `archive/YYYY-MM/`) |
+| Retros (curator input; no pipeline writer yet) | `~/Code/joelhooks/dark-wizard/.brain/resources/retros/` |
+| Curator state (0600, atomic writes only) | `~/.joelclaw/observer-neat-memories.json` |
+| Observer cursor / session / family / pending | `~/.joelclaw/observer-*.json` |
+| Dispatch rules (what wakes the observer) | `<observer repo>/dispatch-rules.json` — dispatcher re-reads per classify; no restart needed |
+| Logs | `/tmp/observer-{tick,dream,neat-memory,self-maintenance,release-promotion}.log` |
+| LaunchAgents | `com.joelclaw.observer-tick` (every 30 min), `com.joelclaw.observer-dream` (06:10), `com.joelclaw.observer-neat-memory` (16:15 — dead-man revive only) |
+| Message journal fail-open spool | `~/.joelclaw/spool/message-journal/` |
+| Run-capture outbox (watch its size) | `~/.joelclaw/outbox/` |
+| Brain root registry | `~/Code/joelhooks/dark-wizard/brain-roots.json` |
+| Wiki repo + build | `~/Code/joelhooks/joelclaw-wiki`; `bun run build` (includes `graph:build`; retry once on transient exit 1); 200-check exact URLs before sharing |
+| Bus (Inngest) | `localhost:8288`, signing key in `~/.config/system-bus.env` |
 
-### What makes a good observation
+## Debug recipes (symptom → first moves)
 
-- **Concrete**: "Stripe Report Run requires explicit `payment_metadata[product]` column in `columns` param or it returns blank" — not "Stripe has metadata"
-- **Reusable**: will this still be true next month?
-- **Actionable**: an agent reading this cold should know what to do differently
-- Not a transcript: no "the user asked me to", no raw tool output, no "I discovered that"
+**"The curator went silent."** `joelclaw wake list --json` — is a
+`neat-memory-beat` pending? Chain alive → read
+`/tmp/observer-neat-memory.log` for the last verdict (holds are normal;
+"beat pending; dead-man exits" means the daily LaunchAgent correctly
+deferred). Chain dead → the 16:15 dead-man revives it, or run
+`NEAT_MEMORY_TRIGGER=beat bash ~/.joelclaw/observer-release/bin/neat-memory.sh`.
+Last output: `/tmp/observer-neat-memory-last.json` (can be stale — check
+log lines first). Cancel pending beats (`joelclaw wake cancel <id>`)
+before manual runs or you'll double-schedule.
 
-### What to skip
+**"A DM never arrived."** Messaging rides the canonical Chat SDK path
+(since 2026-07-17). Machine-check visible delivery from the joelclaw
+repo: `bun scripts/messaging-visible-delivery-canary.ts` — exit 0 requires
+a confirmed journal row whose Telegram platform id matches. A
+`notify.compat_v2.confirmed` OTEL event alone is NOT proof. Journal rows:
+`~/.joelclaw/spool/message-journal/` (`origin_system_id` is a
+`source:eventId` composite). Deeper: `skills/messaging/SKILL.md`.
 
-- Instruction artifacts, tool traces, ephemeral command outputs
-- Facts already in skills or ADRs (skills are the durable home; observations are for recall/search)
-- Anything under 12 chars — the write gate discards it
+**"A reaction didn't grade."** The pipe: `message/inbound.reaction` →
+`message/reaction-bridge` → `message/reaction.received` →
+`message/neat-memory-reaction-grade` → state-file `outcome`. Verify:
+`jq --arg slug "<slug>" '.sent[] | select(.slug == $slug) | {slug, outcome}' ~/.joelclaw/observer-neat-memories.json`.
+Mapping: 👍 ❤️ 🔥 💯 → `worked`; 👎 💩 → `did-not-work`; others ignored;
+only Joel's reactions count. Entries without `flowId` fall back to a
+two-minute timestamp match — safe only while sends are sparse.
 
-## 9) Operations commands (slog + recall)
+**"The dream did nothing."** Read `/tmp/observer-dream.log`. Since the
+2026-07-17 fix, `pagesRead` is the whole corpus and `capped:true` means
+eligible work exceeded the nightly cap (fine, remainder waits) — not
+blindness. `eligiblePages: 0` usually means the corpus is younger than
+`minAgeDays` (7 for plain pages; rollups re-blur at 30/90 days). That is
+patience, not breakage.
 
-```bash
-# Record memory-system changes
-slog write --action configure --tool memory-system --detail "<what changed>" --reason "<why>"
+**"A Brain page isn't on the wiki."** In order: root registered in
+`brain-roots.json`? File is `.svx` (the law — `.md` is dead to the
+renderer)? Excluded (sections `captures`/`compaction-dumps`/`people`/
+`private-family-health`, or `privacy: sensitive`)? Raw `{...}` in prose
+outside code spans breaks the page at prerender — backtick-escape braces.
+Then build on flagg and 200-check the exact URL. Relative `.svx` links
+and `[[root/slug]]` wikilinks both compile to page URLs.
 
-# Inspect recent operational history
-slog tail --count 50
+**"Is the observer even running?"** `launchctl list | grep joelclaw` —
+tick/dream/neat-memory should show status 0. The self-maintenance check
+(inside each tick) surfaces warnings in `/tmp/observer-tick.log`,
+including release-drift (dev HEAD ≠ release HEAD).
 
-# Default recall
-joelclaw recall "<query>" --budget balanced --limit 7
+**"Session capture / Typesense runs index is stale"** (ADR-0243): raw
+truth is `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/*.jsonl`; derived indexes
+are `runs_dev`/`run_chunks_dev` via `memory/run.captured`. Verify raw vs
+index timestamps separately; check Inngest queue health; backfill with
+`bun scripts/backfill-run-typesense.ts --since <iso> --limit 0 --sleep-ms 250`
+— never by flooding Inngest with replay events.
 
-# Deep recall for hard debugging
-joelclaw recall "<query>" --budget deep --limit 10
+## Usage (getting things in and out)
 
-# Inspect memory-system category specifically
-joelclaw recall "<query>" --category jc:memory-system --limit 10
+- **Write memory**: `.svx` pages into a registered `.brain` tree —
+  frontmatter `title` + `privacy` (`public`/`private` render; `sensitive`
+  never renders and never reaches the curator). MDSvX-escape literal
+  braces. All `.brain` prose is `.svx`, always.
+- **Reach the curator**: candidates = observation + retro pages modified
+  in the last 7 days with `privacy: public|private`, a title, and a
+  non-empty body. Dedupe is forever — a sent slug never resends.
+- **Teach the curator**: react to its DMs. The taste bench (2026-07-17)
+  proved one grade changes nothing measurable; ~20–30 graded sends with
+  both polarities is the dataset that could. Every 👍/👎 counts.
+- **Query**: session archive via `joelclaw sessions search`; books via
+  `joelclaw docs search`. AVOID `joelclaw recall` — legacy index, stale
+  since May, answers as if current.
 
-# Include held memories when needed
-joelclaw recall "<query>" --include-hold --raw
-```
+## Known zombies (don't build on these)
 
-## 9a) `joelclaw inngest memory-health` interpretation
+The `memory_observations` Typesense index, the `MEMORY.md`
+reflect/propose/promote functions, generic voice `recall`, and the
+MEM/FRIC suites. One retirement migration is chartered:
+`.brain/projects/memory-system-repair/decide-legacy-memory-retirement.svx`.
+Claude auto-memory and Chorus claims have kill-or-keep decisions chartered
+in the same effort.
 
-`memory-health` uses recent/current-window observations when any were written in the lookback. Do not fail the system on a tiny current-window category-confidence sample: fewer than 25 known-confidence observations is reported as evidence but treated as too small to gate. Stale RUNNING memory runs that started before the current worker are stale SDK ghosts, not live backlog.
+## Doctor
 
-## 9b) Runs archive derived-index recovery (ADR-0243)
-
-Raw Pi/Claude/Codex Run capture and searchable Typesense indexes are separate layers:
-
-- source of truth: `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/<run-id>.jsonl` plus `.metadata.json`
-- derived indexes: `runs_dev`, `run_chunks_dev`
-- Inngest function: `memory/run.captured`
-
-When Typesense is stale but raw blobs still arrive:
-
-1. Verify raw capture and latest Typesense timestamp separately.
-2. Check Inngest queue health. `joelclaw runs --count 5 --hours 1 --compact` should return quickly.
-3. If Inngest GQL hangs and logs show stale queue leases, log first, restart `inngest-0`, wait Ready, then force worker sync:
-
-```bash
-kubectl -n joelclaw delete pod inngest-0 --grace-period=30
-kubectl -n joelclaw wait --for=condition=Ready pod/inngest-0 --timeout=180s
-curl -fsS -X PUT http://127.0.0.1:3111/api/inngest
-```
-
-4. Backfill missing raw blobs into Typesense with the controlled script, not by flooding Inngest with thousands of replay events:
-
-```bash
-TYPESENSE_API_KEY=$(secrets lease typesense_api_key) \
-  bun scripts/backfill-run-typesense.ts \
-  --since <iso-or-ms> \
-  --machine dark-wizard \
-  --runtime pi \
-  --limit 0 \
-  --sleep-ms 250
-```
-
-## 9) Canonical code paths
-
-- Observe: `packages/system-bus/src/inngest/functions/observe.ts`
-- Write gate: `packages/system-bus/src/memory/write-gate.ts`
-- Taxonomy: `packages/system-bus/src/memory/taxonomy-v1.ts`
-- Recall adapter: `packages/cli/src/capabilities/adapters/typesense-recall.ts`
-- Reflect/propose: `packages/system-bus/src/inngest/functions/reflect.ts`, `promote.ts`
-- Nightly maintenance: `packages/system-bus/src/inngest/functions/memory/nightly-maintenance.ts`
-
-## 10) Non-negotiables
-
-- Memory stores **patterns**, not transcript noise.
-- No silent failure paths: emit telemetry on every transition.
-- Keep retrieval bounded; never flood context windows.
-- Keep `MEMORY.md` curated; do not auto-append raw observations.
+`joelclaw memory doctor` is chartered
+(`.brain/projects/memory-system-repair/build-memory-doctor.svx`):
+deterministic health checks with a JSON envelope — beat pending, state
+freshness, outbox size/age, release drift, dream log, journal spool,
+LaunchAgent status. Until it ships, the recipes above are the doctor.

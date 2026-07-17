@@ -1,0 +1,95 @@
+---
+title: "Asset: taste learning bench"
+type: "asset"
+parent: "./bench-taste-learning.svx"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Taste learning bench
+
+## Verdict
+
+No meaningful selection delta showed up: real history, nulled outcomes, and the synthetic negative flip all picked the same two memories at the same 4:1 split, with no holds and only wording/score noise.
+
+## Method
+
+- Repo: `/Users/joel/Code/joelhooks/joelclaw-observer`
+- Script: `.pi/extensions/observer/neat-memory-taste-bench.ts`
+- Production state was read-only from `~/.joelclaw/observer-neat-memories.json`.
+- Candidate sources matched production:
+  - `/Users/joel/Code/joelhooks/dark-wizard/.brain/observations`
+  - `/Users/joel/Code/joelhooks/dark-wizard/.brain/resources/retros`
+- Prompt file matched production: `skills/neat-memory-simple-prompt.md`.
+- Judge command matched production sandboxing: `pi -p --model openai-codex/gpt-5.6-sol:xhigh --no-tools --no-skills --no-context-files --no-extensions --no-session`.
+- Prompt substitution matched `.pi/extensions/observer/neat-memory.ts`: `history` is the last 20 sent entries with `slug`, `sentAt`, `flavor`, and `outcome`; `candidates` are compact excerpts capped at 900 chars.
+- Identical pool across arms: 120 unsent candidates from 356 current candidates.
+- Repetitions: 5 per arm, 15 judge calls total.
+
+## Arms
+
+| Arm | History treatment | Graded entries visible |
+| --- | --- | ---: |
+| A | Real history as-is | 1 |
+| B | Same history, every `outcome` set to null | 0 |
+| C | Same history, every graded `outcome` set to `did-not-work` | 1 synthetic negative |
+
+The one real graded entry was `2026-07-17-248a3715344a`, originally `worked`.
+
+## Per-arm summary
+
+| Arm | Pick counts | Holds | Score range |
+| --- | --- | ---: | --- |
+| A real | `2026-07-17-ae745b3c48db` 4, `2026-07-17-90865e930125` 1 | 0 | 9.0-9.2 |
+| B outcomes null | `2026-07-17-ae745b3c48db` 4, `2026-07-17-90865e930125` 1 | 0 | 9.1-9.2 |
+| C flipped negative | `2026-07-17-ae745b3c48db` 4, `2026-07-17-90865e930125` 1 | 0 | 9.0-9.2 |
+
+Selected candidates:
+
+| Slug | Title |
+| --- | --- |
+| `2026-07-17-ae745b3c48db` | Wiki graph surfaces now enforce the Brain privacy boundary |
+| `2026-07-17-90865e930125` | ShitRat push proved bot-authored local commit transport and tightened token boundaries |
+
+## Run-level table
+
+| Arm | Rep | Pick | Score | Flavor | Wording note |
+| --- | ---: | --- | ---: | --- | --- |
+| A real | 1 | `2026-07-17-ae745b3c48db` | 9.0 | system-self-awareness | privacy boundary across graph surfaces |
+| A real | 2 | `2026-07-17-ae745b3c48db` | 9.0 | milestone-win | privacy boundary covers graph surface |
+| A real | 3 | `2026-07-17-90865e930125` | 9.2 | milestone-win | ShitRat push smoke proved bot commit transport |
+| A real | 4 | `2026-07-17-ae745b3c48db` | 9.2 | milestone-win | privacy boundary applied everywhere |
+| A real | 5 | `2026-07-17-ae745b3c48db` | 9.1 | milestone-win | graph crossed privacy-boundary line |
+| B nulled | 1 | `2026-07-17-ae745b3c48db` | 9.2 | milestone-win | same privacy boundary framing |
+| B nulled | 2 | `2026-07-17-ae745b3c48db` | 9.2 | milestone-win | privacy boundary is real, not just policy |
+| B nulled | 3 | `2026-07-17-ae745b3c48db` | 9.2 | milestone-win | enforced across graph surface |
+| B nulled | 4 | `2026-07-17-90865e930125` | 9.1 | milestone-win | ShitRat push crossed important line |
+| B nulled | 5 | `2026-07-17-ae745b3c48db` | 9.2 | milestone-win | privacy pass is green |
+| C flipped | 1 | `2026-07-17-ae745b3c48db` | 9.2 | milestone-win | graph surfaces obey same Brain privacy rules |
+| C flipped | 2 | `2026-07-17-ae745b3c48db` | 9.2 | milestone-win | privacy is not page-only anymore |
+| C flipped | 3 | `2026-07-17-90865e930125` | 9.2 | milestone-win | ShitRat pushed a real bot-authored commit |
+| C flipped | 4 | `2026-07-17-ae745b3c48db` | 9.2 | milestone-win | same privacy boundary framing |
+| C flipped | 5 | `2026-07-17-ae745b3c48db` | 9.0 | system-self-awareness | privacy not page-only anymore |
+
+## Selection delta
+
+- Pick delta: none beyond sampling noise. Each arm chose the wiki privacy-boundary memory 4 times and the ShitRat push memory once.
+- Score delta: not meaningful. Scores stayed between 9.0 and 9.2 in every arm.
+- Hold delta: none. Every run selected a send-worthy memory.
+- Wording delta: not meaningful. A/B/C all talked about the same value axes: graph privacy enforcement or bot-authored commit transport.
+
+## What would make the rerun decisive
+
+Rerun after at least 20-30 graded sends, with both positive and negative examples. The useful minimum is roughly 10 `worked` and 10 `did-not-work` outcomes across repeated themes, so the judge can learn a taste boundary instead of seeing one lonely thumbs-up. Better: 30-50 graded sends with clusters like ops wins, self-reflection, support cleanup, prompt gardening, and stale/noisy memories represented on both sides.
+
+The next bench should keep the same paired A/B/C shape, but add a stricter pass: candidate pools that contain near-neighbors of previously graded memories. That is where learning should show up if it exists.
+
+## Receipts
+
+- Summary JSON: `/tmp/taste-learning-bench-2026-07-17T18-04-48-883Z/summary.json`
+- Captured stdout copy: `/tmp/taste-learning-bench-run.stdout.json`
+- Candidate pool: `/tmp/taste-learning-bench-2026-07-17T18-04-48-883Z/candidate-pool.json`
+- Real history snapshot: `/tmp/taste-learning-bench-2026-07-17T18-04-48-883Z/history-real.json`
+- Raw judge outputs: `/tmp/taste-learning-bench-2026-07-17T18-04-48-883Z/{A-real,B-outcomes-null,C-graded-flipped-negative}-rep-*.raw.txt`
+- Parsed verdict JSON: `/tmp/taste-learning-bench-2026-07-17T18-04-48-883Z/{A-real,B-outcomes-null,C-graded-flipped-negative}-rep-*.json`
+- Prompt captures: `/tmp/taste-learning-bench-2026-07-17T18-04-48-883Z/{A-real,B-outcomes-null,C-graded-flipped-negative}-rep-*.prompt.txt`

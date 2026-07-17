@@ -3,7 +3,8 @@ title: "Bench Taste Learning: do grades actually change the picks?"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-17"
 assignee: "pi worker (flagg, herdr pane wB:p2S, 2026-07-17)"
 parent: "./memory-system-repair-brief.svx"
 blockers: []
@@ -28,3 +29,11 @@ production state; judge runs are sandboxed (`--no-session`, no sends, no
 state writes). Evidence base:
 [curation-delivery survey](../memory-system-review/curation-delivery-survey.svx)
 "Do grades get consumed?".
+
+## Result (2026-07-17)
+
+Verdict: no meaningful selection delta showed up — real history, nulled outcomes, and synthetic negative history all picked the same two memories at the same 4:1 split, with no holds and only wording/score noise.
+
+Asset: [taste-learning-bench](./taste-learning-bench.svx)
+
+Decisive rerun threshold: wait for at least 20-30 graded sends with both positive and negative examples; useful minimum is roughly 10 `worked` and 10 `did-not-work` outcomes across repeated themes, with 30-50 total grades better.

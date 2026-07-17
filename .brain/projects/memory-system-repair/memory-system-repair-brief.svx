@@ -83,8 +83,16 @@ and the taste bench in one grilling.
 - [Build the Observer Release Promotion Script](./build-release-promotion-script.svx)
   — done: `bin/promote-release.sh` (clean-tree gate, smoke checks,
   dry-run receipt, log) + release-drift warning in the self-maintenance
-  tick; same commit. First real promotion will carry the dream-cap fix
-  before the 06:10 dream.
+  tick; same commit. First real promotion executed 18:14Z: release
+  `2e768c2b → 7b5fe928` with receipt — the dream-cap fix is live for the
+  06:10 dream.
+- [Drain the Capture Outbox](./drain-capture-outbox.svx) — implementation ready, deployment open: fixed the three writer fallbacks, replaced lossy concurrent log rewrites, dispositioned 14,853 files into 167 safe replay requests, and built a dry-run-first replay tool. Steering still owes the gateway restart, supervised canary, live drain, and observer alarm deployment.
+- [Bench Taste Learning](./bench-taste-learning.svx) — done, honest null:
+  15 sol:xhigh runs over identical pools (real / nulled / flipped-negative
+  history) picked the same memories at the same split. One grade teaches
+  nothing measurable. Decisive rerun needs ~20–30 graded sends with both
+  polarities; stricter follow-up = near-neighbor candidate pools.
+  [Asset](./taste-learning-bench.svx).
 
 ## Latent
 
