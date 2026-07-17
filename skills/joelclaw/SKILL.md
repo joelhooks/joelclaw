@@ -96,13 +96,9 @@ joelclaw logs server -n 50 --grep error    # Filtered server errors
 joelclaw logs worker --grep "observe"      # Grep worker logs
 ```
 
-### Structured Log Writes
+### Durable receipts and telemetry
 
-```bash
-joelclaw log write --action configure --tool cli --detail "updated capability adapter config" --reason "ADR-0169 phase 1"
-```
-
-`log` writes canonical structured entries (slog backend). `logs` remains runtime log read/analyze.
+The legacy `joelclaw log write` / `slog` JSONL journal is retired. Emit/query structured runtime telemetry with `joelclaw otel`; record durable decisions and change receipts in Brain `.svx`. `joelclaw logs` remains the runtime log read/analyze surface.
 
 ### Secrets
 
@@ -237,11 +233,13 @@ Failure handling:
   - Re-run the same 3-step smoke
 - If Inngest API is unreachable (`localhost:8288`), recover local control-plane first (Colima/Talos), then retry validation.
 
-### Semantic Recall
+### Brain-backed Recall
 
 ```bash
-joelclaw recall "query about past context"  # Search semantic memory
+joelclaw recall "query about past context"  # Search disposable Brain + observation projections
 ```
+
+Brain `.svx` pages remain canonical. The Typesense `observations` and `brain_graph_nodes` collections are rebuildable projections, not a second memory store.
 
 ### Discovery
 
@@ -474,7 +472,8 @@ See the [sync-system-bus skill](../sync-system-bus/SKILL.md) for the full deploy
 | k8s manifests | `k8s/` |
 | Deploy script | `k8s/publish-system-bus-worker.sh` |
 | ADRs | `~/Vault/docs/decisions/` |
-| System log | `~/Vault/system/system-log.jsonl` |
+| Telemetry | `joelclaw otel` (`otel_events` in Typesense/ClickHouse) |
+| Durable receipts | Brain `.svx` in the relevant registered root |
 | Loop attempt output | `/tmp/agent-loop/{loopId}/{storyId}-{attempt}.out` |
 
 ## Building the CLI

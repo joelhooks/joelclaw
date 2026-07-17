@@ -157,7 +157,7 @@ joelclaw workload run <plan.json>      # Redis queue → Restate DAG runtime
 joelclaw workload dispatch <plan.json> # Stage handoff contract
 joelclaw workload sandboxes list|cleanup|janitor
 joelclaw discover <url> [-c context]   # Capture discovery
-joelclaw recall <query>                # Semantic memory search
+joelclaw recall <query>                # Search disposable Brain + observation projections
 joelclaw inngest status|restart-worker # Inngest management
 ```
 

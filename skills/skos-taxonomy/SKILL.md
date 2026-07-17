@@ -303,7 +303,7 @@ Run these checks before shipping taxonomy changes:
 Recommended operational probes:
 
 - `joelclaw otel search "concept_ids|primary_concept_id|taxonomy_version" --hours 24`
-- `joelclaw recall "<query>" --category <mapped-category>`
+- `joelclaw recall "<query>"` for broad Brain/observation retrieval; the retired memory category taxonomy no longer filters recall projections
 - `joelclaw docs search "<query>" --concept <concept-uri>`
 
 ## Governance Workflow

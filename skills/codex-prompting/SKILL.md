@@ -55,7 +55,7 @@ The job is to produce a high-signal Codex request that gets directly executed wi
 - Orchestrated by `packages/system-bus` and durable `Inngest` functions.
 - Event bridge and notifications flow through Redis, gateway, and Telegram.
 - Observability is required: OTEL -> Typesense (`otel_events`) -> Convex/UI surfaces.
-- CLI-first operations are expected; prefer `joelclaw`, `slog`, and skill commands instead of direct daemon/db/process pokes.
+- CLI-first operations are expected; prefer `joelclaw` and skill commands instead of direct daemon/db/process pokes. Runtime telemetry goes through `joelclaw otel`; durable receipts go to Brain `.svx`.
 
 ## Always-follow execution contract (from OpenAI Codex prompting guide)
 

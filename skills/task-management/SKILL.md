@@ -37,7 +37,7 @@ Rules:
 
 - Default action home is **`Joel's Tasks`**.
 - `Questions for Joel` is for actual decisions only, not a dumping ground.
-- The old `Agent Work` project is archived. Machine bookkeeping, infra follow-ups, memory review, and system chores do not belong in Todoist.
+- The old `Agent Work` project is archived. Machine bookkeeping, infra follow-ups, legacy memory-review chores, and system chores do not belong in Todoist.
 - System-bus Todoist mutations are disabled by default. `TODOIST_AUTOMATION_WRITES_ENABLED=true` is an emergency compatibility override, not normal operation.
 - Agents may mutate Todoist through explicit `todoist-cli` commands when Joel asks to capture, schedule, move, complete, or delete a personal task.
 - If the agent can do the work now, **do it instead of tasking it**.
@@ -49,7 +49,7 @@ Good human-facing tasks:
 
 Bad human-facing tasks:
 - "Investigate gateway retry chatter"
-- "Review memory proposal p-20260306-030"
+- "Review legacy memory proposal p-20260306-030" (historical retired workflow)
 - "Build log query tool for LiveKit integration" when the agent can already do the work
 
 ## Todoist Adapter

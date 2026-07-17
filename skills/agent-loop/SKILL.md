@@ -160,15 +160,16 @@ Default: codex for implementation, claude for review. Override per-story via `to
 - Docker must be running for Inngest server (`open -a OrbStack`)
 - Large tool output uses claim-check pattern (written to `/tmp/agent-loop/{loopId}/`)
 
-## Logging
+## Telemetry and receipts
 
-Every story attempt is logged via slog:
+Story attempts must be visible through loop status, Inngest runs/events, and canonical OTel. Query with:
 
 ```bash
-slog write --action "story-pass" --tool "agent-loop" --detail "Story title (ID) passed on attempt N" --reason "details"
+joelclaw loop status <loop-id> -v
+joelclaw otel search "story-pass|story-retry|story-skip|build-complete" --hours 24
 ```
 
-Actions: `story-pass`, `story-retry`, `story-skip`, `build-complete`
+The former `slog` write path is retired. Capture only durable loop decisions or behavior changes in Brain `.svx`; do not recreate an append-only journal.
 
 ## Source Files
 

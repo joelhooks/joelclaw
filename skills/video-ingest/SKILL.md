@@ -102,8 +102,8 @@ Open http://localhost:8288 in browser — shows functions, events, runs with per
 # Check if vault note was created
 ls -la ~/Vault/Resources/videos/*SLUG*
 
-# Check system log for pipeline entries
-tail -10 ~/Vault/system/system-log.jsonl | grep -i video
+# Check canonical telemetry for pipeline entries
+joelclaw otel search "video|transcript|summarize" --hours 24
 ```
 
 ## Batch Ingest
@@ -150,7 +150,8 @@ joelclaw send content/summarize.requested -d '{"vaultPath":"/Users/joel/Vault/Re
 | Video + metadata | NAS: `/volume1/home/joel/video/YYYY/SLUG/` |
 | Vault note | `~/Vault/Resources/videos/SLUG.md` |
 | Daily note link | `~/Vault/Daily/YYYY-MM-DD.md` under `## Videos` |
-| System log entry | `~/Vault/system/system-log.jsonl` |
+| Runtime telemetry | `joelclaw otel` (`otel_events` in Typesense/ClickHouse) |
+| Durable source receipt | Vault note plus the originating Inngest event/run |
 
 ## Troubleshooting
 

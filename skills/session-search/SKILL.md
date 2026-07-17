@@ -182,4 +182,4 @@ With `--source both`, the raw side uses `local` when the current hostname matche
 - Do not print secrets.
 - Do not copy raw session files unless Joel asks; return pointers and snippets first.
 - Use bounded search output. No full transcript dumps.
-- If you change indexing, services, config, or this skill, write a slog entry and commit.
+- If you change indexing, services, config, or this skill, emit the relevant OTel event, capture any durable decision/receipt in Brain `.svx`, and commit when the current workflow authorizes it.

@@ -87,7 +87,7 @@ granola meeting <meeting_id>
 granola meeting <meeting_id> --transcript
 ```
 
-### 5. Pull memory context
+### 5. Pull Brain-backed recall context
 
 ```bash
 joelclaw recall "<person name> <company> <project>" --limit 20 --min-score 0.25
@@ -132,7 +132,7 @@ Each section must indicate provenance:
 
 - `Verified from Front thread`
 - `Verified from Granola meeting`
-- `Inferred from memory/event context`
+- `Inferred from Brain-backed recall/event context`
 
 Never present inferred content as verified.
 
@@ -207,7 +207,7 @@ joelclaw email read --id <cnv_id>
 granola meetings --range this_month
 granola meeting <meeting_id> --transcript
 
-# 4) Memory context
+# 4) Brain-backed recall context
 joelclaw recall "<person name>" --limit 20
 
 # 5) Event timeline

@@ -41,15 +41,11 @@ Stored in agent-secrets (do not hardcode):
 - All API actions (comments, reviews, PRs) show as `joelclawgithub[bot]`
 - Has read/write access to: contents, issues, PRs, actions, deployments, environments, secrets, packages, workflows, checks, statuses, hooks, projects
 
-## Logging
+## Receipts
 
-Log all GitHub write operations with slog:
+Use the verified GitHub URL, identifier, commit SHA, or API response as the write receipt. Emit canonical OTel when the calling workflow supports it, and capture durable decisions in Brain `.svx`. The former `slog` journal is retired; do not recreate it.
 
-```bash
-slog write --action "ACTION" --tool "github-bot" --detail "what was done" --reason "why"
-```
-
-Actions: `create-pr`, `push-commit`, `create-issue`, `merge-pr`, `create-release`, `update-workflow`, etc.
+Relevant actions include `create-pr`, `push-commit`, `create-issue`, `merge-pr`, `create-release`, and `update-workflow`.
 
 ## Pagination
 

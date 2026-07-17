@@ -84,7 +84,7 @@ When a system prompt governs content that will be published in Joel's name:
 
 1. **Factual descriptions of the system are always safe.** "The pipeline does X" — verifiable, no attribution problem.
 2. **Opinions, beliefs, philosophy must come from Joel.** Source them from conversations, vault notes, past writing, or flag as TODO.
-3. **No fake temporal claims.** If you don't know the timeframe, look it up in git/slog/ADRs. Never guess.
+3. **No fake temporal claims.** If you don't know the timeframe, look it up in git history, OTel events, Brain receipts, or ADRs. Never guess.
 4. **No invented anecdotes.** Don't create "I tried X and here's what happened" stories.
 5. **Endings are abrupt, not forced.** No "In conclusion..." — stop when the idea is done. Joel's style.
 6. **Strategic profanity is texture, not shock.** Use it where it serves the point.

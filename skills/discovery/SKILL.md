@@ -93,7 +93,7 @@ Don't wait. Joel flagged something and moved on — match that energy.
 4. **Write** — vault note to `~/Vault/Resources/discoveries/{Title}.md` (normal path) or a unique `{Title} {fingerprint}.md` degraded fallback
    - If pi note generation times out or errors, the function writes a source-grounded degraded fallback note (`captureStatus: degraded`, `needs-review`) and still forwards `discovery/captured` with `captureStatus: degraded`. This keeps `/cool` capture durable instead of losing the find behind a model stall.
 5. **Sync** — fires `discovery/captured` event which syncs to joelclaw.com/cool/
-6. **Log** — `slog write --action noted --tool discovery`
+6. **Observe** — emit/query canonical OTel for pipeline behavior; the discovery note and `discovery/captured` event are the durable receipts. The former `slog` write path is retired.
 
 ## X/Twitter URL Enrichment
 

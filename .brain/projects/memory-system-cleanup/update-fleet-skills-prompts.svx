@@ -30,3 +30,69 @@ are committed and pushed in their repos, `fleet-graft.sh install` run so
 graft blocks refresh, and a `dw-sync` drift report comes back clean.
 Steering commits; ShitRat rules apply for any GitHub-bound pushes.
 Serialized behind the retirement and Chorus steps — document what IS.
+
+## Result (worker sweep, 2026-07-17)
+
+The live standing surfaces now describe the post-retirement system:
+
+- `joelclaw recall` searches disposable `observations` and
+  `brain_graph_nodes` projections; Brain `.svx` remains canonical.
+- `memory_observations`, reflect/promote/proposal/batch-review, and the
+  MEM/FRIC suites are retired.
+- The system-log JSONL / `slog` path is retired. Runtime evidence uses
+  OTel in Typesense/ClickHouse; durable receipts use Brain `.svx`.
+- Chorus/Rhizomatic is parked with no briefing injection or live claims;
+  service stop still needs steering sudo.
+- Claude auto-memory is a pointer index only.
+- Retros are hook-fired Inngest event + condenser work in progress.
+
+### Files changed
+
+Dark Wizard:
+
+- `~/Code/joelhooks/dark-wizard/skills/joel-writing-style/SKILL.md` — replaces `slog` as temporal evidence with git, OTel, Brain receipts, and ADRs.
+
+joelclaw:
+
+- `AGENTS.md` — labels `joelclaw recall` as Brain/observation projection search.
+- `SYSTEM.md` — replaces the live slog contract and old memory-store semantics with OTel, Brain receipts, pointer-only auto-memory, and parked Chorus truth.
+- `skills/add-skill/SKILL.md` — replaces slog steps with source-control and Brain receipts.
+- `skills/agent-loop/SKILL.md` — routes loop evidence to status/Inngest/OTel instead of slog.
+- `skills/cli-design/SKILL.md` — removes slog as a current reference CLI.
+- `skills/codex-prompting/SKILL.md` — routes runtime evidence to OTel and durable receipts to Brain.
+- `skills/contacts/SKILL.md` — describes enrichment recall as Brain-backed instead of a legacy memory store.
+- `skills/daily-summary/SKILL.md` — replaces memory-observation/slog report sources with Brain/observation activity and OTel.
+- `skills/discovery/SKILL.md` — makes the note/event the receipt and OTel the runtime evidence.
+- `skills/github-bot/SKILL.md` — uses verified GitHub identifiers and Brain/OTel receipts instead of slog.
+- `skills/joelclaw/SKILL.md` — removes live log-write guidance and documents Brain-backed recall.
+- `skills/loop-diagnosis/SKILL.md` — routes failure/watchdog evidence to Inngest/OTel/Brain.
+- `skills/memory-system/SKILL.md` — records the completed retirement, current recall semantics, parked Chorus, pointer-only auto-memory, and retro-writer status.
+- `skills/person-dossier/SKILL.md` — names recall evidence as Brain-backed.
+- `skills/recall/SKILL.md` — replaces dead daily-memory, MEMORY.md, slog, and proposal-queue sources with recall projections, sessions, Brain, OTel, and live runtime state.
+- `skills/session-search/SKILL.md` — replaces slog receipts with OTel plus Brain/source-control receipts.
+- `skills/signal-friction-scan/SKILL.md` — removes slog availability from creation/failure rules.
+- `skills/skos-taxonomy/SKILL.md` — removes the retired recall category-filter guidance.
+- `skills/sync-system-bus/SKILL.md` — replaces deploy slog writes with rollout evidence, OTel, and Brain receipts.
+- `skills/system-architecture/SKILL.md` — marks Chorus routes/services historical and parked, replaces `memory_observations`, system-log, and old recall topology with current boundaries.
+- `skills/system-prompt/SKILL.md` — replaces slog as temporal evidence with git, OTel, Brain receipts, and ADRs.
+- `skills/task-management/SKILL.md` — marks memory-review/proposal Todoist examples as legacy.
+- `skills/video-ingest/SKILL.md` — replaces system-log checks/outputs with OTel and Inngest/Vault receipts.
+- `.brain/projects/memory-system-cleanup/update-fleet-skills-prompts.svx` — records this sweep and its handoff receipts.
+
+### Verification
+
+- `scripts/fleet-graft.sh install` completed successfully; all reported
+  graft blocks and identity blocks returned `ok`.
+- Marker audit: balanced start/end markers and no duplicate starts in
+  `~/.claude/CLAUDE.md`, dark-wizard `.pi/APPEND_SYSTEM.md`, dark-wizard
+  `.codex/AGENTS.md`, and `~/.config/opencode/AGENTS.md`.
+- `~/.claude/skills/**/SKILL.md` (following symlinks): no live dead
+  commands for slog/system-log, old MEMORY.md, or memory-review queues.
+- Dark Wizard `scripts/fleet/`, `TOOLS.md`, `STACK.md`, and skills: no
+  remaining target terms except references explicitly marked retired.
+- joelclaw `AGENTS.md`, `SYSTEM.md`, and skills: remaining target terms
+  are current `joelclaw recall` guidance or explicitly historical/
+  retired/parked statements.
+
+No commit or push was made. This step remains open for steering to review,
+commit/push the two repos, and run the final fleet drift report.

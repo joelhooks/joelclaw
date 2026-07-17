@@ -28,11 +28,12 @@ after material changes. Effort trails:
 `.brain/projects/memory-system-review/` (survey assets = the receipts)
 and `.brain/projects/memory-system-repair/` (fixes + open decisions).
 
-> **v1.0 rewrite (2026-07-17).** Versions ≤0.1.0 of this skill described
-> the legacy stack — `memory_observations`, write gates, reflect/promote
-> to `MEMORY.md`, `joelclaw recall`. That stack is a zombie (stale since
-> May, retirement chartered). Do NOT follow old copies of this skill from
-> other checkouts; do not write `memory/observation.submitted` events.
+> **Memory retirement (2026-07-17).** Versions ≤0.1.0 of this skill described
+> the retired stack — `memory_observations`, write gates, and reflect/promote
+> into `MEMORY.md`. That collection was archived to NAS and dropped; its
+> functions and MEM/FRIC suites were deleted. `joelclaw recall` kept its
+> command name but now reads disposable Brain/observation projections. Do NOT
+> follow old copies of this skill or write `memory/observation.submitted` events.
 
 ## Where everything lives
 
@@ -42,7 +43,7 @@ and `.brain/projects/memory-system-repair/` (fixes + open decisions).
 | Observer release (what actually runs) | `~/.joelclaw/observer-release` |
 | Promotion (the ONLY way to deploy observer) | `bin/promote-release.sh` — clean-tree gate, smoke checks, receipts to `/tmp/observer-release-promotion.log`; `--dry-run` first if unsure |
 | Observation pages | `~/Code/joelhooks/dark-wizard/.brain/observations/` (condensed originals under `archive/YYYY-MM/`) |
-| Retros (curator input; no pipeline writer yet) | `~/Code/joelhooks/dark-wizard/.brain/resources/retros/` |
+| Retros (curator input; hook-fired Inngest event + condenser is being built) | `~/Code/joelhooks/dark-wizard/.brain/resources/retros/` |
 | Curator state (0600, atomic writes only) | `~/.joelclaw/observer-neat-memories.json` |
 | Observer cursor / session / family / pending | `~/.joelclaw/observer-*.json` |
 | Dispatch rules (what wakes the observer) | `<observer repo>/dispatch-rules.json` — dispatcher re-reads per classify; no restart needed |
@@ -121,18 +122,23 @@ index timestamps separately; check Inngest queue health; backfill with
 - **Teach the curator**: react to its DMs. The taste bench (2026-07-17)
   proved one grade changes nothing measurable; ~20–30 graded sends with
   both polarities is the dataset that could. Every 👍/👎 counts.
-- **Query**: session archive via `joelclaw sessions search`; books via
-  `joelclaw docs search`. AVOID `joelclaw recall` — legacy index, stale
-  since May, answers as if current.
+- **Query**: use Brain-backed `joelclaw recall` for broad retrieval,
+  `joelclaw sessions search` for captured session history, and
+  `joelclaw docs search` for books. Recall's Typesense collections are
+  disposable projections; read the source Brain `.svx` before making a
+  durable claim.
 
-## Known zombies (don't build on these)
+## Retired and parked surfaces (don't build on these)
 
-The `memory_observations` Typesense index, the `MEMORY.md`
-reflect/propose/promote functions, generic voice `recall`, and the
-MEM/FRIC suites. One retirement migration is chartered:
-`.brain/projects/memory-system-repair/decide-legacy-memory-retirement.svx`.
-Claude auto-memory and Chorus claims have kill-or-keep decisions chartered
-in the same effort.
+- `memory_observations`, reflect/promote/proposal/batch-review functions,
+  and the MEM/FRIC suites are retired and deleted from the live stack.
+- The system-log JSONL / `slog` path is retired. Telemetry is OTel in
+  Typesense/ClickHouse; durable receipts are Brain `.svx`.
+- Claude auto-memory is a pointer index only: `MEMORY.md` may point into
+  `~/.brain`, but must not grow topic pages or hold content.
+- Chorus/Rhizomatic is parked: no session briefing injection and no real
+  claims. Service shutdown still needs the steering sudo step. If claim
+  graphs return, they return as a Brain-owned projection.
 
 ## Doctor
 

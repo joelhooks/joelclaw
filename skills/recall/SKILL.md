@@ -29,59 +29,52 @@ Phrases that indicate a recall is needed (case-insensitive):
 
 Search these sources **in parallel** where possible, with timeouts on each:
 
-### 1. Today's Daily Log (fastest, most likely)
+### 1. Brain-backed recall (fastest broad cut)
 ```bash
-# Always check first — most "from earlier" references are same-day
-cat ~/.joelclaw/workspace/memory/$(date +%Y-%m-%d).md
+joelclaw recall "<keywords>" --limit 10
+```
+`joelclaw recall` queries disposable `observations` and `brain_graph_nodes` projections. Brain `.svx` is canonical; the retired `memory_observations` collection is not a source.
+
+### 2. Session transcripts
+```bash
+joelclaw sessions search "<keywords>" --source both --limit 10 --extract
+```
+Use raw local/SSH fallback when the derived Typesense session index is stale.
+
+### 3. Brain notes
+```bash
+rg -l -i "<keywords>" ~/.brain --glob '*.svx' | head -20
+```
+Read the strongest matching pages, not the whole Brain.
+
+### 4. Vault notes
+```bash
+timeout 5 grep -ri "<keywords>" ~/Vault/ --include="*.md" -l | head -10
 ```
 
-### 2. Recent Daily Logs (if today's doesn't have it)
+### 5. Runtime telemetry and events
 ```bash
-# Yesterday and day before
-cat ~/.joelclaw/workspace/memory/$(date -v-1d +%Y-%m-%d).md
-cat ~/.joelclaw/workspace/memory/$(date -v-2d +%Y-%m-%d).md
+joelclaw otel search "<keywords>" --hours 24
+joelclaw events --hours 24 --count 100
 ```
+The former `slog`/system-log JSONL journal is retired.
 
-### 3. Curated Memory
+### 6. Processed media
 ```bash
-cat ~/.joelclaw/workspace/MEMORY.md
-```
-Search for keywords from the vague reference.
-
-### 4. Session Transcripts
-Use the `session_context` tool to search recent sessions:
-```
-sessions(limit: 10)  # find recent session IDs
-session_context(session_id: "...", query: "what was discussed about <topic>")
-```
-
-### 5. Vault Notes
-```bash
-# Keyword search across Vault
-grep -ri "<keywords>" ~/Vault/ --include="*.md" -l | head -10
-```
-
-### 6. System Log
-```bash
-slog tail --count 20  # recent infrastructure changes
-```
-
-### 7. Processed Media
-```bash
-# Check for images/audio that were processed
 ls /tmp/joelclaw-media/ 2>/dev/null
 ```
 
-### 8. Redis State
+### 7. Active runtime state (only when the reference is about live work)
 ```bash
-# Memory proposals, loop state, etc.
-redis-cli LRANGE memory:review:pending 0 -1 2>/dev/null
+joelclaw loop list
+joelclaw runs --count 20 --hours 24
 ```
+Do not query retired memory-proposal Redis queues.
 
 ## Workflow
 
 1. **Extract keywords** from the vague reference. "Those photos from earlier" → keywords: photos, images, media, telegram.
-2. **Fan out** across sources 1-8 above. Use `timeout 5` on any command that might hang.
+2. **Fan out** across the relevant sources above. Use `timeout 5` on any command that might hang.
 3. **Synthesize** — combine findings into a coherent summary of what was found.
 4. **Present context** — show Joel what you found, then continue with the original task.
 5. **If nothing found** — say so honestly. Don't fabricate. Ask Joel to clarify.

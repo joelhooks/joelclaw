@@ -17,7 +17,10 @@ tags:
 
 This skill is the **single source of truth** for joelclaw system wiring.
 
-Freshness note — 2026-07-10: the old Panda-centric mental model is migration debt. Current responsibility lanes:
+Freshness notes:
+
+- **2026-07-17 memory retirement:** `memory_observations` and the system-log JSONL/`slog` path are retired. `joelclaw recall` now queries disposable Brain/observation projections. Chorus/Rhizomatic is parked with no briefing injection or live claims; service stop still needs steering sudo. Claude auto-memory is a pointer index, not a content store.
+- **2026-07-10 topology:** the old Panda-centric mental model is migration debt. Current responsibility lanes:
 
 - **Central**: Flagg/Mac Studio. It is authoritative for agent-mail and Run capture ingress; verify each remaining service family during migration.
 - **Relay**: Panda account-bound leftovers and explicit decommission blockers.
@@ -72,7 +75,7 @@ This document is grounded in direct reads of:
 - `scripts/joelclaw-capture-session.ts`
 - `scripts/joelclaw-capture-codex-session.js`
 - ADRs in `~/Vault/docs/decisions/` (required + topology-adjacent)
-- last 50 lines of `~/Vault/system/system-log.jsonl`
+- canonical OTel events plus durable Brain `.svx` receipts (the former system-log JSONL is archived and retired)
 
 ### Related docs verified
 - `docs/architecture.md` — Restate/Firecracker runtime + workload execution flow
@@ -89,7 +92,7 @@ This refresh folds in work from:
 - Inngest SDK hardening + connect-mode recovery (`d7dd7788`, `6c5d2a8e`)
 - Talon paging/debounce hardening (`c03edc5c`, `1f086cfb`, `d26351cf`)
 - satellite rig setup for Blaine/Flagg (`bc5738f3`, `9cc02f6e`)
-- Rhizomatic/Chorus network canary (`6bebf5b1`, `docs/prd-rhizomatic-network-canary.md`)
+- historical Rhizomatic/Chorus network canary (`6bebf5b1`, `docs/prd-rhizomatic-network-canary.md`), parked by the 2026-07-17 decision
 
 ---
 
@@ -172,10 +175,10 @@ Mac Studio "Flagg" (host macOS; target Central host)
 │  ├─ com.joelclaw.central.compose
 │  ├─ com.joelclaw.central.health
 │  └─ com.joelclaw.central.nas-mounts
-├─ Chorus/Rhizomatic canary
-│  ├─ com.joelclaw.chorus-rhizomatic
-│  ├─ endpoint: 127.0.0.1:4821/mcp on Flagg
-│  └─ Blaine/Panda clients tunnel local 127.0.0.1:7331 -> Flagg 127.0.0.1:4821
+├─ Chorus/Rhizomatic (parked historical canary)
+│  ├─ no session briefing injection and no live claims
+│  ├─ com.joelclaw.chorus-rhizomatic may remain loaded only until steering completes the sudo stop
+│  └─ old 4821/7331 endpoints are historical troubleshooting context, not active dependencies
 └─ NAS "three-body" proof path
    ├─ /Volumes/nas-nvme -> three-body:/volume2/data
    └─ /Volumes/three-body -> three-body:/volume1/joelclaw
@@ -240,7 +243,7 @@ These labels are part of the Flagg Central shadow/cutover scaffold. They are not
 | `com.joelclaw.central.compose` | system LaunchDaemon | starts the shadow Central Compose stack | Redis, Typesense, Inngest, Restate, MinIO bound to `127.0.0.1` by default |
 | `com.joelclaw.central.health` | system LaunchDaemon | bounded health + recovery state machine | `health.sh` can invoke `recover.sh --all` after repeated degraded passes |
 | `com.joelclaw.central.nas-mounts` | system LaunchDaemon | mounts/verifies Flagg NAS tiers | `/Volumes/nas-nvme`, `/Volumes/three-body` |
-| `com.joelclaw.chorus-rhizomatic` | system LaunchDaemon | Flagg-hosted upstream Chorus HTTP MCP server for Rhizomatic canary | `127.0.0.1:4821/mcp`; remote clients tunnel local `127.0.0.1:7331` |
+| `com.joelclaw.chorus-rhizomatic` | system LaunchDaemon | **Parked historical canary**; no briefing injection or live claims; stop pending steering sudo | Old endpoint `127.0.0.1:4821/mcp`; old satellite tunnel `127.0.0.1:7331` |
 
 Flagg reboot acceptance rule: Central is not eligible for cutover until `infra/central/scripts/reboot-proof.sh` passes from another machine after hard reboot with no GUI login.
 
@@ -497,8 +500,8 @@ From index comments + function lists:
 | 3018 | gateway daemon | gateway websocket stream port | local |
 | 9999 | talon | Talon health endpoint | local `127.0.0.1` |
 | 8765 | agent-mail HTTP service | MCP agent-mail API | local `127.0.0.1` |
-| 4821 | Flagg `com.joelclaw.chorus-rhizomatic` | upstream Chorus HTTP MCP server | Flagg-local `127.0.0.1:4821/mcp` |
-| 7331 | satellite tunnel to Flagg Chorus | local tunnel endpoint for `pi-rhizomatic` clients on Blaine/Panda | local `127.0.0.1:7331/mcp` -> Flagg `127.0.0.1:4821/mcp` |
+| 4821 | Flagg `com.joelclaw.chorus-rhizomatic` | parked historical Chorus service; not a live memory dependency | Stop pending steering sudo |
+| 7331 | historical satellite tunnel to Flagg Chorus | parked; not a live client route | Old path: local `127.0.0.1:7331/mcp` -> Flagg `127.0.0.1:4821/mcp` |
 | 15000 | `com.joel.kube-operator-access` | Talos API | stable local talosctl endpoint |
 | 16443 | `com.joel.kube-operator-access` | Kubernetes API | stable local kubectl endpoint |
 
@@ -534,7 +537,7 @@ From index comments + function lists:
 
 From observability code:
 - `otel_events` collection (canonical telemetry event store)
-- `memory_observations` collection (vector-aware memory index; schema validated at startup)
+- `observations` and `brain_graph_nodes` collections (disposable projections for Brain-backed recall; rebuildable from canonical Brain/observation sources)
 - `runs_dev` and `run_chunks_dev` for ADR-0243 captured Runs
 - `machines_dev` for Machine/App Password token-hash lookup
 - docs-api also points at `http://typesense:8108` for docs search/index surfaces.
@@ -617,17 +620,18 @@ Degradation contract (ADR-0187):
   - MTU `1500` is the proved safe Gate 5 state; jumbo `9000` caused an NFS blackhole and is follow-up work.
 - `CENTRAL_REQUIRE_NAS=1` should only be set after mount proof passes.
 
-## Rhizomatic / Chorus canary store
+## Rhizomatic / Chorus (parked historical canary)
 
-- Flagg service: `com.joelclaw.chorus-rhizomatic`
-- Upstream checkout: `/Users/Shared/joelclaw/upstream/rhizomatic`
-- Store: `/Users/Shared/joelclaw/services/rhizomatic/chorus-memory.jsonl`
-- Endpoint: `127.0.0.1:4821/mcp` on Flagg.
-- Blaine/Panda clients use SSH tunnel `127.0.0.1:7331` -> Flagg `127.0.0.1:4821`.
+- Decision: parked on 2026-07-17. It does not inject session briefings and no real claims may land.
+- The Brain is the only memory substrate. Any future claim graph must be a Brain-owned projection.
+- Historical artifacts remain at the old Flagg service/checkout/store paths only for cleanup and provenance.
+- `com.joelclaw.chorus-rhizomatic` shutdown still requires the steering sudo step; a loaded process does not make it an active dependency.
+- Old `4821`/`7331` endpoints and tunnels are not live routing guidance.
 
-## Vault
+## Vault and durable receipts
 - Obsidian vault at `/Users/joel/Vault`
-- system log file: `/Users/joel/Vault/system/system-log.jsonl`
+- Durable project/system receipts belong in Brain `.svx`.
+- The former `/Users/joel/Vault/system/system-log.jsonl` journal is archived and retired; runtime telemetry is canonical OTel in Typesense/ClickHouse.
 
 ---
 
@@ -638,7 +642,7 @@ Degradation contract (ADR-0187):
 - Live Central URL for capture hooks today: `https://panda.tail7af24.ts.net`.
 - Satellites post Run capture to `/api/runs` on that URL and may use `JOELCLAW_TYPESENSE_URL=http://panda:8108` for direct search/admin helpers.
 - Flagg shadow services bind to `127.0.0.1` by default and must not be exposed over Tailscale/LAN until cutover planning says so.
-- Rhizomatic/Chorus is the exception: the Flagg-local service stays bound to `127.0.0.1:4821`, and remote clients reach it through explicit SSH tunnels on `127.0.0.1:7331`.
+- There is no live Rhizomatic/Chorus routing exception. The old Flagg service and satellite tunnels are parked historical cleanup surfaces.
 
 ## Caddy reverse proxy routes (from `~/.local/caddy/Caddyfile`)
 
@@ -691,7 +695,7 @@ Primary command tree root: `packages/cli/src/cli.ts`.
 | `docs *` | docs-api REST API (`/search`, `/docs/*`, `/chunks/*`, `/concepts*`) |
 | `restate cron *` | Dkron REST API via direct `--base-url` or short-lived `kubectl port-forward` to `svc/dkron-svc` |
 | `otel *` | Typesense `otel_events` via capability adapter |
-| `recall *` | Typesense recall adapter |
+| `recall *` | disposable Typesense `observations` + `brain_graph_nodes` projections; Brain `.svx` remains canonical |
 | `sessions *` | Central `run_chunks_dev` / raw Pi session JSONL via local/SSH bridge |
 | `satellite *` | thin-Machine local probes + optional Central gateway repair request over SSH |
 | `mail *` | Agent-mail MCP HTTP (`127.0.0.1:8765`) via CLI adapter wrappers |
@@ -1017,18 +1021,14 @@ sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \
   ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
 ```
 
-## Rhizomatic / Chorus canary
+## Rhizomatic / Chorus parked-state check
 
 ```bash
-# On Flagg
+# Historical cleanup only: confirm whether the parked service still awaits steering sudo.
 launchctl print system/com.joelclaw.chorus-rhizomatic | rg "state =|pid =|last exit code"
-RHIZOMATIC_BACKEND=chorus-http RHIZOMATIC_SERVICE_URL=http://127.0.0.1:4821/mcp \
-  pi-rhizomatic health
-
-# On tunneled clients
-RHIZOMATIC_BACKEND=chorus-http RHIZOMATIC_SERVICE_URL=http://127.0.0.1:7331/mcp \
-  pi-rhizomatic health
 ```
+
+Do not health-check or restart Chorus as a live memory substrate. There is no session briefing injection and no real claims may land.
 
 ## Networking
 
@@ -1102,7 +1102,7 @@ Update this skill **in the same change** whenever any of these change:
    - `/api/runs`, `memory/run.captured`, capture hook scripts, Machine auth, Run blob paths, `runs_dev`, `run_chunks_dev`, `machines_dev`
 11. Flagg Central scaffold changes
    - `infra/central/*`, Central LaunchDaemon templates, NAS proof scripts, shadow Compose services, reboot proof, Gate 5 status
-12. Rhizomatic / Chorus canary topology
-   - `com.joelclaw.chorus-rhizomatic`, tunnel ports, store path, package adapter backend, network canary receipts
+12. Rhizomatic / Chorus parked-state cleanup
+   - service stop state, removal of obsolete tunnels/injection, and preservation of historical receipts; never restore live claims without a new Brain-owned decision
 
 If any item above changed and this skill was not updated, this skill is stale and non-canonical.

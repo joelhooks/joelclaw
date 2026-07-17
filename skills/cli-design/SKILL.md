@@ -1,7 +1,7 @@
 ---
 name: cli-design
 displayName: CLI Design
-description: "Design and build agent-first CLIs with HATEOAS JSON responses, context-protecting output, and self-documenting command trees. Use when creating new CLI tools, adding commands to existing CLIs (joelclaw, slog), or reviewing CLI design for agent-friendliness. Triggers on 'build a CLI', 'add a command', 'CLI design', 'agent-friendly output', or any task involving command-line tool creation."
+description: "Design and build agent-first CLIs with HATEOAS JSON responses, context-protecting output, and self-documenting command trees. Use when creating new CLI tools, adding commands to existing CLIs such as joelclaw, or reviewing CLI design for agent-friendliness. Triggers on 'build a CLI', 'add a command', 'CLI design', 'agent-friendly output', or any task involving command-line tool creation."
 version: 1.1.0
 author: Joel Hooks
 tags: [joelclaw, cli, agentic, ux, json]
@@ -220,9 +220,9 @@ Every command uses this exact shape:
 ### Reference implementations
 
 - `joelclaw` — `~/Code/joelhooks/joelclaw/packages/cli/` (Effect CLI, operational surface)
-- `slog` — system log CLI (same envelope patterns)
+- `joelclaw otel` — structured telemetry commands using the same response envelope
 
-Use these as the current envelope source-of-truth.
+Use these as the current envelope source-of-truth. The former `slog` system-log CLI is retired.
 
 ## Implementation
 

@@ -88,7 +88,7 @@ These are joelclaw's foundational rules. They govern every decision.
 
 5. **Skills are institutional memory.** Canonical source is `joelclaw/skills/` in the repo, git-tracked. When operational reality changes, update the relevant skill immediately. Stale skills produce stale agent work.
 
-6. **Memory captures patterns, not noise.** Every session should leave the system smarter. Durable patterns go in skills. Semantic search via `joelclaw recall`. Transient context stays ephemeral.
+6. **Memory captures patterns, not noise.** Every session should leave the system smarter. Durable patterns and receipts go in Brain `.svx` or the owning skill. `joelclaw recall` searches disposable Brain/observation projections; it is not a second content store. Transient context stays ephemeral.
 
 6a. **pi-rag is system-prior session memory.** When an answer depends on prior session/conversation context — "above", "earlier", "that thread", "last time", gateway recovery, failed loops, stale-vs-active signals, handoffs — use `pi-rag` before relying on compacted context or vague recollection. Canonical sequence: `rag_search_sessions` (with project/thread/person hints; rerank on) → `rag_get_session` → `rag_get_structure` → `rag_tree_search` → bounded `rag_get_content` → `rag_summarize_node` only when useful. Typesense is the default joelclaw provider; libSQL/pdf-brain/local providers may participate on satellite machines. Never dump full sessions unless explicitly required.
 
@@ -103,47 +103,22 @@ These are joelclaw's foundational rules. They govern every decision.
 These are `joelclaw` CLI commands. Each defines an interface contract with ports and adapters — configurable in `.joelclaw/` with sensible defaults.
 
 - **`joelclaw otel`** — Emit and query structured telemetry. Every pipeline step must be observable. Search events, aggregate stats, check for silent failures.
-- **`joelclaw recall`** — Semantic search across agent memory. Find past decisions, debugging insights, operational patterns. The system gets smarter when you feed it.
+- **`joelclaw recall`** — Search disposable `observations` and `brain_graph_nodes` projections. Brain `.svx` remains canonical; verify important claims against source pages.
 - **`joelclaw vault`** — Read/search/list vault content and run ADR hygiene checks (`vault adr list|collisions|audit`) as the canonical decision inventory interface.
 - **`joelclaw mail`** — Send and receive messages between agents. Register identity, reserve files to prevent edit conflicts, release when done. Always include paths and task context. Protocol details live in `skills/clawmail/SKILL.md`.
 - **`joelclaw secrets`** — Lease credentials with TTL and audit trail. Never hardcode tokens or keys. Every lease is logged.
 - **`joelclaw deploy`** — Trigger explicit, logged, verifiable deployments. No magic — every deploy is scripted and auditable.
 - **`joelclaw notify`** — Push alerts, progress packets, and reports to the gateway for operator delivery. Use this for operator-facing relay; use `joelclaw mail` for agent coordination.
 - **`joelclaw heal`** — Detect and fix system issues autonomously. All fixes must be revertable (git commits) and the operator must be notified.
-- **`joelclaw log`** — Write structured entries to the system log. Log deploys, config changes, debug findings, service restarts. Bias toward logging. See **Slog Usage** below for the required provenance contract.
+- **Telemetry and receipts** — The legacy `joelclaw log write` / `slog` JSONL journal is retired. Runtime telemetry is canonical OTel in Typesense/ClickHouse. Durable decisions, behavior changes, and operator receipts belong in Brain `.svx`. Do not recreate an append-only system journal.
 
-## Slog Usage (ADR-0233)
+## Memory substrate boundaries (2026-07-17)
 
-Every slog entry **must** have provenance — no anonymous writes. Two fields are required:
-
-- **`sessionId`** — the session that produced this entry. Use your session handle (e.g. `SleepyMagpie`), codex task ID, `gateway`, `system-bus`, `manual`, etc.
-- **`systemId`** — the machine that produced this entry: `panda`, `restate-worker`, `vercel`, etc.
-
-### CLI
-
-```bash
-# Explicit flags (preferred)
-slog write --session SleepyMagpie --system panda --action configure --tool redis --detail "bumped maxmemory to 2gb"
-
-# Env var fallback (set once per shell/harness)
-export SLOG_SESSION_ID=SleepyMagpie
-export SLOG_SYSTEM_ID=panda
-slog write --action configure --tool redis --detail "bumped maxmemory to 2gb"
-```
-
-### Via joelclaw CLI
-
-```bash
-joelclaw log write --sessionId SleepyMagpie --systemId panda --action configure --tool redis --detail "bumped maxmemory to 2gb"
-```
-
-### Rules
-
-- If neither `--session` flag nor `SLOG_SESSION_ID` env var is set, **slog errors** — this is intentional.
-- Same for `--system` / `SLOG_SYSTEM_ID`.
-- Gateway daemon should set `SLOG_SESSION_ID=gateway` and `SLOG_SYSTEM_ID=panda` in its environment.
-- System-bus worker should set `SLOG_SESSION_ID=system-bus` and `SLOG_SYSTEM_ID=panda` (or pod name).
-- Interactive pi sessions: use your session handle as sessionId.
+- `memory_observations`, reflect/promote/proposal/batch-review functions, and MEM/FRIC suites are retired.
+- `joelclaw recall` keeps the familiar command but reads disposable Brain/observation projections.
+- Chorus/Rhizomatic is parked: no session briefing injection, no live claims, and service stop pending steering sudo.
+- Claude auto-memory is a pointer index only. `MEMORY.md` may point into `~/.brain`; durable content belongs in Brain `.svx`.
+- Retros use a hook-fired Inngest event plus condenser; that writer is still being built.
 
 ## Non-Negotiable
 
@@ -164,7 +139,7 @@ Reference documentation lives in `docs/` in the joelclaw repo (`~/Code/joelhooks
 - **Gateway**: docs/gateway.md — channels, routing, formatting, role boundaries, daemon
 - **Web (joelclaw.com)**: docs/web.md — Next.js 16, content, Convex, publishing, static shells
 - **Deployment**: docs/deploy.md — Vercel, k8s worker, CLI binary, Convex, validation gates
-- **Observability**: docs/observability.md — slog, OTEL, Inngest runs, Langfuse, telemetry
+- **Observability**: docs/observability.md — OTel, Inngest runs, and telemetry (legacy slog/Langfuse references are historical until that doc is refreshed)
 - **Prompt architecture**: docs/prompt-architecture.md — composition chain, stability tiers, SKOS, skill retrieval
 - **ADRs**: `~/Vault/docs/decisions/` — 165+ architecture decision records
 

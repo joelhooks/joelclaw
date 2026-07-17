@@ -48,21 +48,21 @@ Count: new ADRs, status changes, grooming activity.
 ### 7. Discoveries
 Check for discovery/noted events in recent Inngest runs.
 
-### 8. Memory observations
+### 8. Brain / observation activity
 ```bash
-joelclaw otel search "observe" --hours 24
+joelclaw otel search "memory.observe|observations" --hours 24
 ```
 
 ### 9. Worker deploys
-Check slog for deploy actions today:
+Query canonical OTel for deploy actions today:
 ```bash
-slog tail --count 20 | grep -i deploy
+joelclaw otel search "deploy" --hours 24
 ```
 
-### 10. System changes
-Check slog for configure/install actions:
+### 10. Durable system changes
+Use OTel for runtime configure/install evidence, then check relevant Brain `.svx` receipts and source-control history for durable changes:
 ```bash
-slog tail --count 20
+joelclaw otel search "configure|install" --hours 24
 ```
 
 ## Output Format
@@ -73,7 +73,7 @@ Concise, structured. Group by category:
 - **Inngest** — run stats, failure rate
 - **Agents** — codex sessions, pi sessions
 - **ADRs** — new, groomed, status changes
-- **Knowledge** — discoveries, memory observations
+- **Knowledge** — discoveries, Brain/observation activity
 - **K8s** — cluster health, new pods
 
 For Telegram: use HTML tags, keep mobile-friendly.

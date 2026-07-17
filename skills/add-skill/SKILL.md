@@ -78,11 +78,9 @@ ln -sf ~/Code/joelhooks/joelclaw/skills/<skill-name> ~/.agents/skills/<skill-nam
 ln -sf ~/Code/joelhooks/joelclaw/skills/<skill-name> ~/.claude/skills/<skill-name>
 ```
 
-### 5. Slog it
+### 5. Record the receipt
 
-```bash
-slog write --action configure --tool skills --detail "created <skill-name> skill: <what it does>" --reason "<why>"
-```
+The skill file and source-control diff are the primary receipt. Capture any durable workflow decision in the relevant Brain `.svx`; use canonical OTel only for runtime behavior. The former `slog` journal is retired.
 
 ### 6. Commit
 
@@ -127,7 +125,7 @@ ls -l ~/.agents/skills/<skill-name> ~/.pi/agent/skills/<skill-name>
 
 1. Edit the SKILL.md (or references) in the repo copy
 2. Symlinks mean all consumers see the change immediately
-3. Slog the change
+3. Update the relevant Brain decision/receipt when the change alters durable workflow behavior
 4. Commit
 
 ## Codex Desktop Metadata (optional)

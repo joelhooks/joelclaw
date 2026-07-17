@@ -221,11 +221,11 @@ When creating:
 - Run validation commands or explain why no validation exists.
 - Inspect `git status --short` first and preserve unrelated user work.
 
-For a new joelclaw skill, follow `add-skill`: create under `~/Code/joelhooks/joelclaw/skills/<name>`, keep frontmatter `name` matching the directory, symlink only where needed, slog if available, and commit only if Joel asks or the current workflow requires it.
+For a new joelclaw skill, follow `add-skill`: create under `~/Code/joelhooks/joelclaw/skills/<name>`, keep frontmatter `name` matching the directory, symlink only where needed, record durable workflow decisions in Brain `.svx`, and commit only if Joel asks or the current workflow requires it.
 
 ## Failure Handling
 
 - If `joelclaw sessions signals` emits huge output or times out after useful JSON, use the emitted counts/clusters and say it timed out.
-- If `slog` is unavailable, say so and continue.
+- Do not depend on the retired `slog` journal. Use OTel for runtime evidence and Brain `.svx` for durable receipts.
 - If local machine session capture is thin, search Typesense or the relevant remote machine via `session-search`.
 - If evidence is thin, say the evidence is thin. Do not fabricate patterns.

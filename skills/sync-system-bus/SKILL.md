@@ -109,11 +109,9 @@ joelclaw refresh
 joelclaw status
 ```
 
-### Log
+### Receipt
 
-```bash
-slog write --action deploy --tool system-bus-worker --detail "deployed ${IMAGE}" --reason "sync worker changes"
-```
+Verify the rollout and keep the image/digest plus command output as the deploy receipt. Runtime deploy telemetry belongs in canonical OTel; durable behavior/config changes belong in the relevant Brain `.svx`. The former `slog` journal is retired.
 
 ## Talon Rebuild (Adding Secrets / Changing Worker Supervision)
 

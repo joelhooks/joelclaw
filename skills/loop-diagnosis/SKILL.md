@@ -79,14 +79,14 @@ agent/loop.started
 ## Observability Patterns
 
 ### Passive: Failure Events
-Every loop function should emit failure events via `onFailure` handlers (being added by harden loop). These fire `agent/loop.function.failed` which gets logged to slog.
+Every loop function should emit failure events via `onFailure` handlers. These fire `agent/loop.function.failed` and must be visible through canonical OTel/Inngest event surfaces.
 
 ### Active: Watchdog (Future)
 A periodic Inngest function (`system/loop-watchdog`) that:
 1. Scans all loops in Redis with pending stories
 2. Checks if any events were emitted in the last 10 minutes
 3. If not → auto-runs diagnose + fix
-4. Logs to slog + daily log
+4. Emits OTel and writes a durable Brain receipt only when behavior or operator action changed
 
 ### Manual: The Diagnostic Session
 When an agent needs to debug loops manually, follow this sequence:
