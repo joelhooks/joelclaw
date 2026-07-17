@@ -1,0 +1,60 @@
+---
+title: "Task: reactions bridge — Joel's emoji grades the curator"
+type: task-brief
+created: 2026-07-17
+parent: "../projects/messaging-stabilization/build-reactions-bridge.svx"
+---
+
+# Reactions bridge
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. NO commits/pushes, NO
+gateway restart. You MAY restart the system-bus worker to register a
+new inngest function IF that's how siblings deploy (find the pattern —
+pane-schedule registration in this repo's history did a supervised
+worker-process bounce; do the same, note it in receipts). Set pi
+session name to "🔗 Reactions bridge" immediately.
+
+## What exists (all live, receipts on the messaging-stabilization steps)
+
+- Telegram reactions flow: poller requests message_reaction; shadow tap
+  publishes `message/inbound.reaction` to the bus. A REAL event from
+  Joel exists (raw_event_id 777932597, ~03:26Z 2026-07-17) — use it as
+  your fixture shape; never fake flat envelopes.
+- Journal + Redis flow index map platform message id → flowId
+  (`joelclaw:message-contract:message:<platform>:<id>` keys;
+  `resolvePlatformMessageFlow` in chat-sdk/outbound.ts).
+- Neat-memory state `~/.joelclaw/observer-neat-memories.json` has
+  `outcome: null | "worked" | "did-not-work"` per sent entry
+  (lib.ts migrate/record functions in joelclaw-observer).
+
+## Deliverables
+
+1. **Inngest function** (packages/system-bus, house idioms) on
+   `message/inbound.reaction`: correlate platform message id → flowId
+   via the Redis index (fail-soft to journal); emit
+   `message/reaction.received` carrying flowId + platform + actor +
+   emoji + added. Idempotent per raw event id.
+2. **Neat-memory grading consumer**: when the flowId's journal row
+   traces to source observer/neat-memory (or the correlationId
+   pattern), map emoji→outcome (👍❤️🔥💯 → worked; 👎💩 →
+   did-not-work; others ignored) and write the outcome into the state
+   file's matching entry. The state file lives on FLAGG — if the
+   system-bus worker can't touch flagg's filesystem directly, route the
+   write through a gateway event the flagg daemon handles (find how
+   pane.schedule.due executes on flagg and mirror that pattern). Never
+   corrupt the file: atomic 0600 writes via the observer repo's
+   writeJsonAtomic idiom (reimplement locally, don't cross-import).
+3. **Tests** with the real event shape + correlation + emoji mapping +
+   idempotence. Gates: tsc, targeted biome, suites green.
+4. **Live proof**: send a real neat-memory-style canary DM through
+   `joelclaw notify send --source observer/neat-memory`... NO — do not
+   fake the curator's source. Instead: instruct steering in your DONE
+   message exactly how to run the live proof (curator sends a real DM
+   on its next beat or a steering-triggered run; Joel reacts; state
+   shows outcome). If the bus already carries Joel's 03:26 reaction and
+   it correlates to a real flowId, process it for real and show the
+   result.
+
+Append result + receipts to the claimed step, flip status closed if
+the pipeline is proven at least to `message/reaction.received` with
+real data. Print DONE.

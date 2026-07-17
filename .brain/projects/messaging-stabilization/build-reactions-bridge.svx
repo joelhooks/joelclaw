@@ -4,7 +4,7 @@ type: "step"
 kind: "task"
 interaction: "AFK"
 status: "open"
-assignee: ""
+assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-17)"
 parent: "./messaging-stabilization-brief.svx"
 blockers:
   - "./build-outbound-v1.svx"
