@@ -26,3 +26,224 @@ Evidence base:
 [periphery survey](../memory-system-review/periphery-survey.svx)
 "Rhizomatic / Chorus claims" + flag #2, and the
 [decision](../memory-system-repair/decide-chorus-fate.svx).
+
+## Result
+
+Worker-side parking completed on Flagg on 2026-07-17. The service stop is
+still pending because the task reserves `launchctl bootout` for steering.
+Do not mark this step closed until steering runs the stop commands and records
+the down-state receipt.
+
+### Located surfaces
+
+| Surface | Live location and receipt |
+| --- | --- |
+| Chorus service | System LaunchDaemon `com.joelclaw.chorus-rhizomatic`; `/Library/LaunchDaemons/com.joelclaw.chorus-rhizomatic.plist`; PID `54115` at inspection time; `launchctl print` state `running`; TCP `127.0.0.1:4821` accepted a connection. |
+| Service checkout | `/Users/Shared/joelclaw/upstream/rhizomatic`, upstream `mbilokonsky/rhizomatic`, revision `1472439f27249d98e3f66362c465ab1eef0200bc`; launchd working directory `apps/chorus`. |
+| Start command | `/bin/bash /Users/Shared/joelclaw/src/joelclaw/infra/central/scripts/start-chorus-rhizomatic.sh`; the script executes `apps/chorus/node_modules/.bin/tsx src/mcp-http.ts`. |
+| Durable store | `/Users/Shared/joelclaw/services/rhizomatic/chorus-memory.jsonl`, as verified by the periphery survey. The current `joel` account cannot stat the protected `joelclaw` service directory, so this pass did not read or alter the store. |
+| Claude injection | `~/.claude/settings.json`: Rhizomatic `SessionStart` and `Stop` command groups pointed at `~/.config/rhizomatic/hooks/claude-{session-start,stop}.sh`. |
+| Codex injection | `~/.codex/hooks.json`: Rhizomatic `SessionStart` and `Stop` command groups pointed at `~/.config/rhizomatic/hooks/codex-{session-start,stop}.sh`. |
+| Pi injection | `~/.pi/agent/settings.json` loaded `../../Code/joelhooks/pi-rhizomatic`; `extensions/pi-rhizomatic.ts` injects `<RhizomaticBriefing>` from `before_agent_start` and writes begin/end session mutations. |
+| Outbox | `~/.rhizomatic/outbox/`; 13 JSON mutation files at snapshot time. |
+| Legacy daemon | `/Library/LaunchDaemons/com.joelclaw.rhizomatic.plist` exists but `launchctl` reports it unloaded and disabled. Leave it disabled; it is not the live Chorus service. |
+
+### Outbox snapshot
+
+Created
+`.brain/data/memory-system-cleanup/chorus-outbox-snapshot-2026-07-17.json`.
+It contains the sorted file listing, per-file size/mtime/SHA-256, readable
+UTF-8 contents, and a lossless base64 copy of every source byte.
+
+- File count: `13`
+- Manifest SHA-256 over sorted `filename + NUL + bytes + NUL` entries:
+  `475ca35e957a319bab87dd9dffb77b63e80041e4767eaf7b68e85e06a378e1a6`
+- Snapshot file SHA-256:
+  `0d5c254a3fb48c8e823dcf23130c52b3523cd6348a384c2c42a85f652fc71b61`
+- Verification: all 13 base64 payloads decode to the UTF-8 payload, every
+  decoded payload matches its recorded SHA-256, and every payload still
+  matches the live source file byte-for-byte.
+- The 13 source files remain in the outbox. Nothing was drained, replayed,
+  promoted, moved, or deleted.
+
+### Briefing injection parked
+
+Executed machine-local edits:
+
+1. Removed the Rhizomatic `SessionStart` and `Stop` groups from
+   `~/.claude/settings.json`. Preserved the JoelClaw Run-capture `Stop` hook
+   and `dcg` `PreToolUse` hook.
+2. Removed the Rhizomatic `SessionStart` and `Stop` groups from
+   `~/.codex/hooks.json`. Preserved the JoelClaw Run-capture `Stop` hook and
+   `dcg` `PreToolUse` hook.
+3. Removed `../../Code/joelhooks/pi-rhizomatic` from the Pi package list in
+   `~/.pi/agent/settings.json`.
+
+All three files are ordinary user-owned files, not symlinks. A targeted search
+found no corresponding Rhizomatic hook/package source in `dark-wizard`; these
+are Flagg machine-local edits and need no dark-wizard commit. The hook scripts,
+Rhizomatic config, package checkout, outbox, and service files remain intact.
+Fresh Claude, Codex, and Pi processes will not inject the briefing. Pi processes
+that were already running when settings changed keep the extension loaded until
+they exit.
+
+This idempotent command reproduces the parking edits without disturbing other
+hooks:
+
+```bash
+python3 <<'PY'
+import json
+from pathlib import Path
+
+for path in (Path.home() / ".claude/settings.json", Path.home() / ".codex/hooks.json"):
+    data = json.loads(path.read_text())
+    hooks = data.get("hooks", {})
+    for event in ("SessionStart", "Stop"):
+        groups = hooks.get(event, [])
+        kept = [
+            group
+            for group in groups
+            if not any(
+                "rhizomatic" in str(hook.get("command", "")).lower()
+                for hook in group.get("hooks", [])
+                if isinstance(hook, dict)
+            )
+        ]
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event, None)
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+path = Path.home() / ".pi/agent/settings.json"
+data = json.loads(path.read_text())
+data["packages"] = [
+    package
+    for package in data.get("packages", [])
+    if package != "../../Code/joelhooks/pi-rhizomatic"
+]
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+```
+
+### Steering-only service stop
+
+Run exactly this from an administrator account. The first command prevents a
+future load; the second stops and unloads the current KeepAlive daemon.
+
+```bash
+sudo launchctl disable system/com.joelclaw.chorus-rhizomatic
+sudo launchctl bootout system /Library/LaunchDaemons/com.joelclaw.chorus-rhizomatic.plist
+
+# Required down-state receipts:
+! launchctl print system/com.joelclaw.chorus-rhizomatic
+launchctl print-disabled system | grep 'com.joelclaw.chorus-rhizomatic'
+! nc -z 127.0.0.1 4821
+```
+
+Expected receipts: `launchctl print` cannot find the service, the disabled map
+shows `=> disabled`, and the port probe fails. Do not boot out or modify the
+already-disabled legacy label as part of this step.
+
+### Un-park path
+
+The service restart path is:
+
+```bash
+sudo launchctl enable system/com.joelclaw.chorus-rhizomatic
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.joelclaw.chorus-rhizomatic.plist
+sudo launchctl kickstart -k system/com.joelclaw.chorus-rhizomatic
+launchctl print system/com.joelclaw.chorus-rhizomatic
+nc -zv 127.0.0.1 4821
+```
+
+Only restore automatic runtime injection after explicitly deciding to revive
+Chorus. The parked wrapper scripts remain under `~/.config/rhizomatic/hooks/`.
+This exact command restores their hook references and the Pi package:
+
+```bash
+python3 <<'PY'
+import json
+from pathlib import Path
+
+def add_group(groups, group):
+    command = group["hooks"][0]["command"]
+    if not any(
+        hook.get("command") == command
+        for existing in groups
+        for hook in existing.get("hooks", [])
+        if isinstance(hook, dict)
+    ):
+        groups.append(group)
+
+claude = Path.home() / ".claude/settings.json"
+data = json.loads(claude.read_text())
+hooks = data.setdefault("hooks", {})
+add_group(hooks.setdefault("Stop", []), {
+    "matcher": "",
+    "hooks": [{
+        "type": "command",
+        "command": "bash '/Users/joel/.config/rhizomatic/hooks/claude-stop.sh'",
+        "timeout": 10000,
+    }],
+})
+add_group(hooks.setdefault("SessionStart", []), {
+    "matcher": "*",
+    "hooks": [{
+        "type": "command",
+        "command": "bash '/Users/joel/.config/rhizomatic/hooks/claude-session-start.sh'",
+        "timeout": 10000,
+    }],
+})
+claude.write_text(json.dumps(data, indent=2) + "\n")
+
+codex = Path.home() / ".codex/hooks.json"
+data = json.loads(codex.read_text())
+hooks = data.setdefault("hooks", {})
+add_group(hooks.setdefault("Stop", []), {
+    "hooks": [{
+        "type": "command",
+        "command": "bash '/Users/joel/.config/rhizomatic/hooks/codex-stop.sh'",
+        "timeout": 10000,
+    }],
+})
+add_group(hooks.setdefault("SessionStart", []), {
+    "hooks": [{
+        "type": "command",
+        "command": "bash '/Users/joel/.config/rhizomatic/hooks/codex-session-start.sh'",
+        "timeout": 10000,
+    }],
+})
+codex.write_text(json.dumps(data, indent=2) + "\n")
+
+pi = Path.home() / ".pi/agent/settings.json"
+data = json.loads(pi.read_text())
+package = "../../Code/joelhooks/pi-rhizomatic"
+packages = data.setdefault("packages", [])
+if package not in packages:
+    marker = "git:github.com/joelhooks/pi-ast-grep@main"
+    packages.insert(packages.index(marker) if marker in packages else len(packages), package)
+pi.write_text(json.dumps(data, indent=2) + "\n")
+PY
+```
+
+Start fresh Claude, Codex, and Pi processes after restoring the configuration.
+Never drain the parked snapshot/outbox as part of un-parking without a new,
+explicit promotion decision.
+
+### Validation receipts
+
+- JSON parsing passed for all three edited runtime settings files.
+- Targeted searches found no `rhizomatic` or `chorus` reference in those three
+  active settings files.
+- The non-Rhizomatic Run-capture and `dcg` hooks remain present.
+- Snapshot verification passed for 13/13 files, and the live outbox still held
+  the same 13 source files afterward.
+- The service was deliberately left running for steering: `launchctl print`
+  still reported `state = running`, and TCP port 4821 still accepted a
+  connection.
+- `pi-notes brain check` inspected 290 pages, then failed only on four
+  pre-existing untracked `.brain/tasks/*.md` support files, including the task
+  wrapper for this step. No target `.svx` or snapshot error was reported. Those
+  task wrappers were not renamed or modified in this pass because they belong
+  to the parent cleanup orchestration.

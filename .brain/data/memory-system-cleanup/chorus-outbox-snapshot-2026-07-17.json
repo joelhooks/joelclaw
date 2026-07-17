@@ -1,0 +1,142 @@
+{
+  "snapshotVersion": 1,
+  "capturedAt": "2026-07-17T20:16:55.523055+00:00",
+  "sourceDirectory": "/Users/joel/.rhizomatic/outbox",
+  "fileCount": 13,
+  "fileListing": [
+    "0adc44b4-f6c2-4e5f-8da9-ff374d464991.json",
+    "13674153-3034-48a8-8278-d19eb82a9e4a.json",
+    "3cb2e2b0-7e1b-4687-b798-1bc05cf96b7f.json",
+    "3ebbc141-7f74-432a-adb4-b41ab781f268.json",
+    "528b9718-09c6-4904-9b86-1a9edbb6a586.json",
+    "5da3f4d0-8543-4355-b712-e8f9bd8af48a.json",
+    "6cb0cf8d-080e-4ec8-90c7-943b3f6c5a63.json",
+    "7d187b5e-de3d-4c0c-a7a7-9088d9377b8b.json",
+    "99d0094e-6def-4f4e-8d65-b0a51c4a482b.json",
+    "a5540bab-bb59-4de4-bdc6-acdc3fa5790a.json",
+    "b6656dfb-aa7d-4ab7-89ce-c28597b0e688.json",
+    "c01c620c-499d-403d-92bf-e7ef022d4933.json",
+    "c99212bf-9bb9-4627-b3e7-190abc3d788f.json"
+  ],
+  "manifestSha256": "475ca35e957a319bab87dd9dffb77b63e80041e4767eaf7b68e85e06a378e1a6",
+  "encodingNote": "contentsUtf8 preserves readable source text; contentsBase64 is the lossless byte-for-byte copy used for independent hash verification.",
+  "files": [
+    {
+      "name": "0adc44b4-f6c2-4e5f-8da9-ff374d464991.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/0adc44b4-f6c2-4e5f-8da9-ff374d464991.json",
+      "sizeBytes": 470,
+      "modifiedAt": "2026-07-15T16:26:57.415297+00:00",
+      "sha256": "2fab577e8e23ff85afabf31384f436bcc3e93f5378396ab5283cd01db4352cd4",
+      "contentsUtf8": "{\n  \"id\": \"0adc44b4-f6c2-4e5f-8da9-ff374d464991\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019f5c74-72fb-7787-a88d-5b87f4a23c16\",\n    \"cwd\": \"/Users/joel/.joelclaw/gateway\",\n    \"surface\": \"pi\",\n    \"purpose\": \"Automatic Pi session start\",\n    \"idempotencyKey\": \"pi:019f5c74-72fb-7787-a88d-5b87f4a23c16:session-start\"\n  },\n  \"createdAt\": \"2026-07-13T17:10:59.114Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICIwYWRjNDRiNC1mNmMyLTRlNWYtOGRhOS1mZjM3NGQ0NjQ5OTEiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAicGkiLAogICAgInJ1bnRpbWVTZXNzaW9uSWQiOiAicGk6MDE5ZjVjNzQtNzJmYi03Nzg3LWE4OGQtNWI4N2Y0YTIzYzE2IiwKICAgICJjd2QiOiAiL1VzZXJzL2pvZWwvLmpvZWxjbGF3L2dhdGV3YXkiLAogICAgInN1cmZhY2UiOiAicGkiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIFBpIHNlc3Npb24gc3RhcnQiLAogICAgImlkZW1wb3RlbmN5S2V5IjogInBpOjAxOWY1Yzc0LTcyZmItNzc4Ny1hODhkLTViODdmNGEyM2MxNjpzZXNzaW9uLXN0YXJ0IgogIH0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTA3LTEzVDE3OjEwOjU5LjExNFoiLAogICJhdHRlbXB0cyI6IDAsCiAgImxhc3RFcnJvciI6ICJDaG9ydXMgSFRUUCA0MDQiCn0="
+    },
+    {
+      "name": "13674153-3034-48a8-8278-d19eb82a9e4a.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/13674153-3034-48a8-8278-d19eb82a9e4a.json",
+      "sizeBytes": 452,
+      "modifiedAt": "2026-06-14T18:55:32.169971+00:00",
+      "sha256": "b5f5242f278017497ca82dc6c787fd931928ae2991e6ef51d69267430fa1fc85",
+      "contentsUtf8": "{\n  \"id\": \"13674153-3034-48a8-8278-d19eb82a9e4a\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019ec6e4-31c7-71df-b72c-35d7c2a18887\",\n    \"cwd\": \"/Users/joel\",\n    \"surface\": \"pi\",\n    \"purpose\": \"Automatic Pi session start\",\n    \"idempotencyKey\": \"pi:019ec6e4-31c7-71df-b72c-35d7c2a18887:session-start\"\n  },\n  \"createdAt\": \"2026-06-14T18:55:32.169Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICIxMzY3NDE1My0zMDM0LTQ4YTgtODI3OC1kMTllYjgyYTllNGEiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAicGkiLAogICAgInJ1bnRpbWVTZXNzaW9uSWQiOiAicGk6MDE5ZWM2ZTQtMzFjNy03MWRmLWI3MmMtMzVkN2MyYTE4ODg3IiwKICAgICJjd2QiOiAiL1VzZXJzL2pvZWwiLAogICAgInN1cmZhY2UiOiAicGkiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIFBpIHNlc3Npb24gc3RhcnQiLAogICAgImlkZW1wb3RlbmN5S2V5IjogInBpOjAxOWVjNmU0LTMxYzctNzFkZi1iNzJjLTM1ZDdjMmExODg4NzpzZXNzaW9uLXN0YXJ0IgogIH0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTA2LTE0VDE4OjU1OjMyLjE2OVoiLAogICJhdHRlbXB0cyI6IDAsCiAgImxhc3RFcnJvciI6ICJDaG9ydXMgSFRUUCA0MDQiCn0="
+    },
+    {
+      "name": "3cb2e2b0-7e1b-4687-b798-1bc05cf96b7f.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/3cb2e2b0-7e1b-4687-b798-1bc05cf96b7f.json",
+      "sizeBytes": 406,
+      "modifiedAt": "2026-07-12T16:09:56.915831+00:00",
+      "sha256": "785629fc82063a241cedef285210cd5863ed35d38a397a971c733922dc17e1fe",
+      "contentsUtf8": "{\n  \"id\": \"3cb2e2b0-7e1b-4687-b798-1bc05cf96b7f\",\n  \"primitive\": \"end-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019f530d-ccbc-74a0-ba60-c97292154b23\",\n    \"summary\": \"Automatic Pi session shutdown\",\n    \"idempotencyKey\": \"pi:019f530d-ccbc-74a0-ba60-c97292154b23:session-shutdown\"\n  },\n  \"createdAt\": \"2026-07-12T16:09:56.915Z\",\n  \"attempts\": 0,\n  \"lastError\": \"fetch failed\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICIzY2IyZTJiMC03ZTFiLTQ2ODctYjc5OC0xYmMwNWNmOTZiN2YiLAogICJwcmltaXRpdmUiOiAiZW5kLXNlc3Npb24iLAogICJpbnB1dCI6IHsKICAgICJydW50aW1lIjogInBpIiwKICAgICJydW50aW1lU2Vzc2lvbklkIjogInBpOjAxOWY1MzBkLWNjYmMtNzRhMC1iYTYwLWM5NzI5MjE1NGIyMyIsCiAgICAic3VtbWFyeSI6ICJBdXRvbWF0aWMgUGkgc2Vzc2lvbiBzaHV0ZG93biIsCiAgICAiaWRlbXBvdGVuY3lLZXkiOiAicGk6MDE5ZjUzMGQtY2NiYy03NGEwLWJhNjAtYzk3MjkyMTU0YjIzOnNlc3Npb24tc2h1dGRvd24iCiAgfSwKICAiY3JlYXRlZEF0IjogIjIwMjYtMDctMTJUMTY6MDk6NTYuOTE1WiIsCiAgImF0dGVtcHRzIjogMCwKICAibGFzdEVycm9yIjogImZldGNoIGZhaWxlZCIKfQ=="
+    },
+    {
+      "name": "3ebbc141-7f74-432a-adb4-b41ab781f268.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/3ebbc141-7f74-432a-adb4-b41ab781f268.json",
+      "sizeBytes": 470,
+      "modifiedAt": "2026-07-15T16:26:57.415431+00:00",
+      "sha256": "8542943bbbbf79012ecd00ad66d5eae5e099d6349206b14d8f89831b0363509b",
+      "contentsUtf8": "{\n  \"id\": \"3ebbc141-7f74-432a-adb4-b41ab781f268\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019f5c74-72fb-7787-a88d-5b87f4a23c16\",\n    \"cwd\": \"/Users/joel/.joelclaw/gateway\",\n    \"surface\": \"pi\",\n    \"purpose\": \"Automatic Pi session start\",\n    \"idempotencyKey\": \"pi:019f5c74-72fb-7787-a88d-5b87f4a23c16:session-start\"\n  },\n  \"createdAt\": \"2026-07-13T17:22:01.493Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICIzZWJiYzE0MS03Zjc0LTQzMmEtYWRiNC1iNDFhYjc4MWYyNjgiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAicGkiLAogICAgInJ1bnRpbWVTZXNzaW9uSWQiOiAicGk6MDE5ZjVjNzQtNzJmYi03Nzg3LWE4OGQtNWI4N2Y0YTIzYzE2IiwKICAgICJjd2QiOiAiL1VzZXJzL2pvZWwvLmpvZWxjbGF3L2dhdGV3YXkiLAogICAgInN1cmZhY2UiOiAicGkiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIFBpIHNlc3Npb24gc3RhcnQiLAogICAgImlkZW1wb3RlbmN5S2V5IjogInBpOjAxOWY1Yzc0LTcyZmItNzc4Ny1hODhkLTViODdmNGEyM2MxNjpzZXNzaW9uLXN0YXJ0IgogIH0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTA3LTEzVDE3OjIyOjAxLjQ5M1oiLAogICJhdHRlbXB0cyI6IDAsCiAgImxhc3RFcnJvciI6ICJDaG9ydXMgSFRUUCA0MDQiCn0="
+    },
+    {
+      "name": "528b9718-09c6-4904-9b86-1a9edbb6a586.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/528b9718-09c6-4904-9b86-1a9edbb6a586.json",
+      "sizeBytes": 535,
+      "modifiedAt": "2026-07-16T14:20:45.882163+00:00",
+      "sha256": "b985ae157a449b218a3041d5b7b6b4c1a9067545debb878ca44d67a9bffaafe6",
+      "contentsUtf8": "{\n  \"id\": \"528b9718-09c6-4904-9b86-1a9edbb6a586\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"claude\",\n    \"runtimeSessionId\": \"claude:8402643a-a90b-4c4c-8762-b56a2606a13e\",\n    \"cwd\": \"/Users/joel/Code/badass-courses/course-builder\",\n    \"model\": \"claude-fable-5\",\n    \"surface\": \"claude\",\n    \"purpose\": \"Automatic claude session start\",\n    \"idempotencyKey\": \"claude:8402643a-a90b-4c4c-8762-b56a2606a13e:session-start\"\n  },\n  \"createdAt\": \"2026-07-16T14:20:45.882Z\",\n  \"attempts\": 0,\n  \"lastError\": \"fetch failed\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICI1MjhiOTcxOC0wOWM2LTQ5MDQtOWI4Ni0xYTllZGJiNmE1ODYiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAiY2xhdWRlIiwKICAgICJydW50aW1lU2Vzc2lvbklkIjogImNsYXVkZTo4NDAyNjQzYS1hOTBiLTRjNGMtODc2Mi1iNTZhMjYwNmExM2UiLAogICAgImN3ZCI6ICIvVXNlcnMvam9lbC9Db2RlL2JhZGFzcy1jb3Vyc2VzL2NvdXJzZS1idWlsZGVyIiwKICAgICJtb2RlbCI6ICJjbGF1ZGUtZmFibGUtNSIsCiAgICAic3VyZmFjZSI6ICJjbGF1ZGUiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIGNsYXVkZSBzZXNzaW9uIHN0YXJ0IiwKICAgICJpZGVtcG90ZW5jeUtleSI6ICJjbGF1ZGU6ODQwMjY0M2EtYTkwYi00YzRjLTg3NjItYjU2YTI2MDZhMTNlOnNlc3Npb24tc3RhcnQiCiAgfSwKICAiY3JlYXRlZEF0IjogIjIwMjYtMDctMTZUMTQ6MjA6NDUuODgyWiIsCiAgImF0dGVtcHRzIjogMCwKICAibGFzdEVycm9yIjogImZldGNoIGZhaWxlZCIKfQ=="
+    },
+    {
+      "name": "5da3f4d0-8543-4355-b712-e8f9bd8af48a.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/5da3f4d0-8543-4355-b712-e8f9bd8af48a.json",
+      "sizeBytes": 470,
+      "modifiedAt": "2026-07-15T16:26:57.415554+00:00",
+      "sha256": "d08d8cb145a19399aa2c2a0f1260ab9536abd1c4c7ffa79ac3406ac36b616b8d",
+      "contentsUtf8": "{\n  \"id\": \"5da3f4d0-8543-4355-b712-e8f9bd8af48a\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019f5c74-72fb-7787-a88d-5b87f4a23c16\",\n    \"cwd\": \"/Users/joel/.joelclaw/gateway\",\n    \"surface\": \"pi\",\n    \"purpose\": \"Automatic Pi session start\",\n    \"idempotencyKey\": \"pi:019f5c74-72fb-7787-a88d-5b87f4a23c16:session-start\"\n  },\n  \"createdAt\": \"2026-07-13T17:09:36.004Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICI1ZGEzZjRkMC04NTQzLTQzNTUtYjcxMi1lOGY5YmQ4YWY0OGEiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAicGkiLAogICAgInJ1bnRpbWVTZXNzaW9uSWQiOiAicGk6MDE5ZjVjNzQtNzJmYi03Nzg3LWE4OGQtNWI4N2Y0YTIzYzE2IiwKICAgICJjd2QiOiAiL1VzZXJzL2pvZWwvLmpvZWxjbGF3L2dhdGV3YXkiLAogICAgInN1cmZhY2UiOiAicGkiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIFBpIHNlc3Npb24gc3RhcnQiLAogICAgImlkZW1wb3RlbmN5S2V5IjogInBpOjAxOWY1Yzc0LTcyZmItNzc4Ny1hODhkLTViODdmNGEyM2MxNjpzZXNzaW9uLXN0YXJ0IgogIH0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTA3LTEzVDE3OjA5OjM2LjAwNFoiLAogICJhdHRlbXB0cyI6IDAsCiAgImxhc3RFcnJvciI6ICJDaG9ydXMgSFRUUCA0MDQiCn0="
+    },
+    {
+      "name": "6cb0cf8d-080e-4ec8-90c7-943b3f6c5a63.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/6cb0cf8d-080e-4ec8-90c7-943b3f6c5a63.json",
+      "sizeBytes": 470,
+      "modifiedAt": "2026-07-15T16:26:57.415681+00:00",
+      "sha256": "54e71a265730984d5197388d628815b8e561ce771749e380b56002e55afba1ee",
+      "contentsUtf8": "{\n  \"id\": \"6cb0cf8d-080e-4ec8-90c7-943b3f6c5a63\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019f5e2c-2bfb-702e-80f6-90ab0fec43e6\",\n    \"cwd\": \"/Users/joel/.joelclaw/gateway\",\n    \"surface\": \"pi\",\n    \"purpose\": \"Automatic Pi session start\",\n    \"idempotencyKey\": \"pi:019f5e2c-2bfb-702e-80f6-90ab0fec43e6:session-start\"\n  },\n  \"createdAt\": \"2026-07-14T01:09:59.202Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICI2Y2IwY2Y4ZC0wODBlLTRlYzgtOTBjNy05NDNiM2Y2YzVhNjMiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAicGkiLAogICAgInJ1bnRpbWVTZXNzaW9uSWQiOiAicGk6MDE5ZjVlMmMtMmJmYi03MDJlLTgwZjYtOTBhYjBmZWM0M2U2IiwKICAgICJjd2QiOiAiL1VzZXJzL2pvZWwvLmpvZWxjbGF3L2dhdGV3YXkiLAogICAgInN1cmZhY2UiOiAicGkiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIFBpIHNlc3Npb24gc3RhcnQiLAogICAgImlkZW1wb3RlbmN5S2V5IjogInBpOjAxOWY1ZTJjLTJiZmItNzAyZS04MGY2LTkwYWIwZmVjNDNlNjpzZXNzaW9uLXN0YXJ0IgogIH0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTA3LTE0VDAxOjA5OjU5LjIwMloiLAogICJhdHRlbXB0cyI6IDAsCiAgImxhc3RFcnJvciI6ICJDaG9ydXMgSFRUUCA0MDQiCn0="
+    },
+    {
+      "name": "7d187b5e-de3d-4c0c-a7a7-9088d9377b8b.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/7d187b5e-de3d-4c0c-a7a7-9088d9377b8b.json",
+      "sizeBytes": 470,
+      "modifiedAt": "2026-07-15T16:26:57.415803+00:00",
+      "sha256": "848ac0335dd91297fb0efd010c289d1a737588e550111c5a9c14dbe3fb7583b5",
+      "contentsUtf8": "{\n  \"id\": \"7d187b5e-de3d-4c0c-a7a7-9088d9377b8b\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019f5fe4-10dd-704b-835d-1da3b4d14638\",\n    \"cwd\": \"/Users/joel/.joelclaw/gateway\",\n    \"surface\": \"pi\",\n    \"purpose\": \"Automatic Pi session start\",\n    \"idempotencyKey\": \"pi:019f5fe4-10dd-704b-835d-1da3b4d14638:session-start\"\n  },\n  \"createdAt\": \"2026-07-14T09:10:31.881Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICI3ZDE4N2I1ZS1kZTNkLTRjMGMtYTdhNy05MDg4ZDkzNzdiOGIiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAicGkiLAogICAgInJ1bnRpbWVTZXNzaW9uSWQiOiAicGk6MDE5ZjVmZTQtMTBkZC03MDRiLTgzNWQtMWRhM2I0ZDE0NjM4IiwKICAgICJjd2QiOiAiL1VzZXJzL2pvZWwvLmpvZWxjbGF3L2dhdGV3YXkiLAogICAgInN1cmZhY2UiOiAicGkiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIFBpIHNlc3Npb24gc3RhcnQiLAogICAgImlkZW1wb3RlbmN5S2V5IjogInBpOjAxOWY1ZmU0LTEwZGQtNzA0Yi04MzVkLTFkYTNiNGQxNDYzODpzZXNzaW9uLXN0YXJ0IgogIH0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTA3LTE0VDA5OjEwOjMxLjg4MVoiLAogICJhdHRlbXB0cyI6IDAsCiAgImxhc3RFcnJvciI6ICJDaG9ydXMgSFRUUCA0MDQiCn0="
+    },
+    {
+      "name": "99d0094e-6def-4f4e-8d65-b0a51c4a482b.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/99d0094e-6def-4f4e-8d65-b0a51c4a482b.json",
+      "sizeBytes": 470,
+      "modifiedAt": "2026-07-15T16:26:57.415924+00:00",
+      "sha256": "05ff9ca48eccebf7a7c79521e3d1e65faadf241826a1e399849a5069f224a1f8",
+      "contentsUtf8": "{\n  \"id\": \"99d0094e-6def-4f4e-8d65-b0a51c4a482b\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019f619c-0e8a-7543-85e5-58b6da0ce9eb\",\n    \"cwd\": \"/Users/joel/.joelclaw/gateway\",\n    \"surface\": \"pi\",\n    \"purpose\": \"Automatic Pi session start\",\n    \"idempotencyKey\": \"pi:019f619c-0e8a-7543-85e5-58b6da0ce9eb:session-start\"\n  },\n  \"createdAt\": \"2026-07-14T21:16:36.651Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICI5OWQwMDk0ZS02ZGVmLTRmNGUtOGQ2NS1iMGE1MWM0YTQ4MmIiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAicGkiLAogICAgInJ1bnRpbWVTZXNzaW9uSWQiOiAicGk6MDE5ZjYxOWMtMGU4YS03NTQzLTg1ZTUtNThiNmRhMGNlOWViIiwKICAgICJjd2QiOiAiL1VzZXJzL2pvZWwvLmpvZWxjbGF3L2dhdGV3YXkiLAogICAgInN1cmZhY2UiOiAicGkiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIFBpIHNlc3Npb24gc3RhcnQiLAogICAgImlkZW1wb3RlbmN5S2V5IjogInBpOjAxOWY2MTljLTBlOGEtNzU0My04NWU1LTU4YjZkYTBjZTllYjpzZXNzaW9uLXN0YXJ0IgogIH0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTA3LTE0VDIxOjE2OjM2LjY1MVoiLAogICJhdHRlbXB0cyI6IDAsCiAgImxhc3RFcnJvciI6ICJDaG9ydXMgSFRUUCA0MDQiCn0="
+    },
+    {
+      "name": "a5540bab-bb59-4de4-bdc6-acdc3fa5790a.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/a5540bab-bb59-4de4-bdc6-acdc3fa5790a.json",
+      "sizeBytes": 470,
+      "modifiedAt": "2026-07-15T16:26:57.416054+00:00",
+      "sha256": "8284258a608ebd0275756e7c254ec67dcf4fb1b989811f21a773cd045dad87ff",
+      "contentsUtf8": "{\n  \"id\": \"a5540bab-bb59-4de4-bdc6-acdc3fa5790a\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019f6354-04da-779c-8720-dc9878e50571\",\n    \"cwd\": \"/Users/joel/.joelclaw/gateway\",\n    \"surface\": \"pi\",\n    \"purpose\": \"Automatic Pi session start\",\n    \"idempotencyKey\": \"pi:019f6354-04da-779c-8720-dc9878e50571:session-start\"\n  },\n  \"createdAt\": \"2026-07-15T01:11:37.359Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICJhNTU0MGJhYi1iYjU5LTRkZTQtYmRjNi1hY2RjM2ZhNTc5MGEiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAicGkiLAogICAgInJ1bnRpbWVTZXNzaW9uSWQiOiAicGk6MDE5ZjYzNTQtMDRkYS03NzljLTg3MjAtZGM5ODc4ZTUwNTcxIiwKICAgICJjd2QiOiAiL1VzZXJzL2pvZWwvLmpvZWxjbGF3L2dhdGV3YXkiLAogICAgInN1cmZhY2UiOiAicGkiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIFBpIHNlc3Npb24gc3RhcnQiLAogICAgImlkZW1wb3RlbmN5S2V5IjogInBpOjAxOWY2MzU0LTA0ZGEtNzc5Yy04NzIwLWRjOTg3OGU1MDU3MTpzZXNzaW9uLXN0YXJ0IgogIH0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTA3LTE1VDAxOjExOjM3LjM1OVoiLAogICJhdHRlbXB0cyI6IDAsCiAgImxhc3RFcnJvciI6ICJDaG9ydXMgSFRUUCA0MDQiCn0="
+    },
+    {
+      "name": "b6656dfb-aa7d-4ab7-89ce-c28597b0e688.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/b6656dfb-aa7d-4ab7-89ce-c28597b0e688.json",
+      "sizeBytes": 470,
+      "modifiedAt": "2026-07-15T16:26:57.416171+00:00",
+      "sha256": "6c55909751cbd0af3d456b1e413a4ea920091449500852fe8cdd87aadf571c59",
+      "contentsUtf8": "{\n  \"id\": \"b6656dfb-aa7d-4ab7-89ce-c28597b0e688\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019f619c-0e8a-7543-85e5-58b6da0ce9eb\",\n    \"cwd\": \"/Users/joel/.joelclaw/gateway\",\n    \"surface\": \"pi\",\n    \"purpose\": \"Automatic Pi session start\",\n    \"idempotencyKey\": \"pi:019f619c-0e8a-7543-85e5-58b6da0ce9eb:session-start\"\n  },\n  \"createdAt\": \"2026-07-14T17:11:09.472Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICJiNjY1NmRmYi1hYTdkLTRhYjctODljZS1jMjg1OTdiMGU2ODgiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAicGkiLAogICAgInJ1bnRpbWVTZXNzaW9uSWQiOiAicGk6MDE5ZjYxOWMtMGU4YS03NTQzLTg1ZTUtNThiNmRhMGNlOWViIiwKICAgICJjd2QiOiAiL1VzZXJzL2pvZWwvLmpvZWxjbGF3L2dhdGV3YXkiLAogICAgInN1cmZhY2UiOiAicGkiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIFBpIHNlc3Npb24gc3RhcnQiLAogICAgImlkZW1wb3RlbmN5S2V5IjogInBpOjAxOWY2MTljLTBlOGEtNzU0My04NWU1LTU4YjZkYTBjZTllYjpzZXNzaW9uLXN0YXJ0IgogIH0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTA3LTE0VDE3OjExOjA5LjQ3MloiLAogICJhdHRlbXB0cyI6IDAsCiAgImxhc3RFcnJvciI6ICJDaG9ydXMgSFRUUCA0MDQiCn0="
+    },
+    {
+      "name": "c01c620c-499d-403d-92bf-e7ef022d4933.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/c01c620c-499d-403d-92bf-e7ef022d4933.json",
+      "sizeBytes": 470,
+      "modifiedAt": "2026-07-15T16:26:57.416289+00:00",
+      "sha256": "637fb69d08dd0e7cda62948bbeb7e8687f5b0a8b2b855912c45b68f88c8bf5c2",
+      "contentsUtf8": "{\n  \"id\": \"c01c620c-499d-403d-92bf-e7ef022d4933\",\n  \"primitive\": \"begin-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019f650b-ef1e-761f-a46d-3722620b6f8d\",\n    \"cwd\": \"/Users/joel/.joelclaw/gateway\",\n    \"surface\": \"pi\",\n    \"purpose\": \"Automatic Pi session start\",\n    \"idempotencyKey\": \"pi:019f650b-ef1e-761f-a46d-3722620b6f8d:session-start\"\n  },\n  \"createdAt\": \"2026-07-15T09:12:08.555Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICJjMDFjNjIwYy00OTlkLTQwM2QtOTJiZi1lN2VmMDIyZDQ5MzMiLAogICJwcmltaXRpdmUiOiAiYmVnaW4tc2Vzc2lvbiIsCiAgImlucHV0IjogewogICAgInJ1bnRpbWUiOiAicGkiLAogICAgInJ1bnRpbWVTZXNzaW9uSWQiOiAicGk6MDE5ZjY1MGItZWYxZS03NjFmLWE0NmQtMzcyMjYyMGI2ZjhkIiwKICAgICJjd2QiOiAiL1VzZXJzL2pvZWwvLmpvZWxjbGF3L2dhdGV3YXkiLAogICAgInN1cmZhY2UiOiAicGkiLAogICAgInB1cnBvc2UiOiAiQXV0b21hdGljIFBpIHNlc3Npb24gc3RhcnQiLAogICAgImlkZW1wb3RlbmN5S2V5IjogInBpOjAxOWY2NTBiLWVmMWUtNzYxZi1hNDZkLTM3MjI2MjBiNmY4ZDpzZXNzaW9uLXN0YXJ0IgogIH0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTA3LTE1VDA5OjEyOjA4LjU1NVoiLAogICJhdHRlbXB0cyI6IDAsCiAgImxhc3RFcnJvciI6ICJDaG9ydXMgSFRUUCA0MDQiCn0="
+    },
+    {
+      "name": "c99212bf-9bb9-4627-b3e7-190abc3d788f.json",
+      "sourcePath": "/Users/joel/.rhizomatic/outbox/c99212bf-9bb9-4627-b3e7-190abc3d788f.json",
+      "sizeBytes": 409,
+      "modifiedAt": "2026-06-14T18:55:19.799771+00:00",
+      "sha256": "cca52fb5f12d5a91379f80d49d7c84f4dd97d147caad7a84f4c5dbc1d0c41c32",
+      "contentsUtf8": "{\n  \"id\": \"c99212bf-9bb9-4627-b3e7-190abc3d788f\",\n  \"primitive\": \"end-session\",\n  \"input\": {\n    \"runtime\": \"pi\",\n    \"runtimeSessionId\": \"pi:019ec6e4-31c7-71df-b72c-35d7c2a18887\",\n    \"summary\": \"Automatic Pi session shutdown\",\n    \"idempotencyKey\": \"pi:019ec6e4-31c7-71df-b72c-35d7c2a18887:session-shutdown\"\n  },\n  \"createdAt\": \"2026-06-14T18:55:19.799Z\",\n  \"attempts\": 0,\n  \"lastError\": \"Chorus HTTP 404\"\n}",
+      "contentsBase64": "ewogICJpZCI6ICJjOTkyMTJiZi05YmI5LTQ2MjctYjNlNy0xOTBhYmMzZDc4OGYiLAogICJwcmltaXRpdmUiOiAiZW5kLXNlc3Npb24iLAogICJpbnB1dCI6IHsKICAgICJydW50aW1lIjogInBpIiwKICAgICJydW50aW1lU2Vzc2lvbklkIjogInBpOjAxOWVjNmU0LTMxYzctNzFkZi1iNzJjLTM1ZDdjMmExODg4NyIsCiAgICAic3VtbWFyeSI6ICJBdXRvbWF0aWMgUGkgc2Vzc2lvbiBzaHV0ZG93biIsCiAgICAiaWRlbXBvdGVuY3lLZXkiOiAicGk6MDE5ZWM2ZTQtMzFjNy03MWRmLWI3MmMtMzVkN2MyYTE4ODg3OnNlc3Npb24tc2h1dGRvd24iCiAgfSwKICAiY3JlYXRlZEF0IjogIjIwMjYtMDYtMTRUMTg6NTU6MTkuNzk5WiIsCiAgImF0dGVtcHRzIjogMCwKICAibGFzdEVycm9yIjogIkNob3J1cyBIVFRQIDQwNCIKfQ=="
+    }
+  ]
+}
