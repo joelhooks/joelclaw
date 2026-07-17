@@ -1,0 +1,152 @@
+---
+title: "Memory system periphery survey"
+type: "asset"
+parent: "./survey-periphery.svx"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Memory system periphery survey
+
+This is the lighter map around the core observer → Brain → curator → Telegram → grading loop. It grades whether each store works at its own stated job. It does not treat every cache or cursor as durable knowledge.
+
+## Claude auto-memory — `wobbly`
+
+**Stores.** Claude Code keeps a project-local index plus topic pages under `~/.claude/projects/-Users-joel/memory/`. On 2026-07-17 it held 19 Markdown files: `MEMORY.md` plus 18 topic pages about host identity, topology, people, workflow rules, and recent feedback.
+
+**Writes.** Claude Code's auto-memory feature writes these pages. No joelclaw writer or Brain-sync bridge was found.
+
+**Reads.** Claude Code injects the project memory into later Claude sessions. Pi, Codex, the Brain renderer, and the observer do not read it.
+
+**Overlap.** It directly duplicates operator truths that belong in `~/.brain` or a project `.brain`. Its own `MEMORY.md` says “Durable operator memory lives in the Brain … not here,” yet `concept-references-arent-proposals.md` was written on 2026-07-17, after Joel's 2026-07-16 instruction. That makes it a fresh, working shadow source with no provenance or sync contract.
+
+**Verdict: `wobbly`. Receipt:** `~/.claude/projects/-Users-joel/memory/MEMORY.md` was modified `2026-07-17 08:23:48`; `concept-references-arent-proposals.md` was created six seconds earlier and contains a durable behavior rule despite the index's Brain-only instruction.
+
+## Rhizomatic / Chorus claims — `wobbly`
+
+**Stores.** The active Flagg service keeps signed CRDT deltas in `/Users/Shared/joelclaw/services/rhizomatic/chorus-memory.jsonl`. The model supports beliefs, preferences, tasks, session identities and summaries, trust edits, retractions, decisions, messages, contested claims, and topic discovery.
+
+**Writes.** `pi-rhizomatic/src/hooks.ts` calls `begin-session` and `end-session` automatically. Explicit `rhizomatic_remember`, revise/recast/retract, trust, decision, and message tools can add more deltas. The old cross-runtime canaries wrote most of the visible non-session claims.
+
+**Reads.** Session start calls `briefing`; Pi exposes native read tools such as `briefing`, `recall`, `topics`, `search`, `inbox`, `explain`, and `as-of`. `apps/chorus/src/briefing.ts` computes the injected preferences, tasks, sessions, topics, contested claims, and distrust lens from surviving deltas.
+
+**Overlap.** It is a second durable truth model beside the Brain. There is no writer from observer/Brain into Chorus and no curator that promotes Chorus claims into Brain pages. Session identity is fresh, but the semantic layer is almost entirely canary residue. If real claims start landing there, Brain and Chorus can disagree without a reconciliation owner.
+
+**Verdict: `wobbly`. Receipt:** a live `rhizomatic_briefing` call on 2026-07-17 returned current Pi session starts but zero preferences, zero open tasks, zero contested claims, and topics whose newest durable claim was the Daily SHITRAT canary set from 2026-06-18. `launchctl print system/com.joelclaw.chorus-rhizomatic` reported the service running. Thirteen queued mutation files also remain in `~/.rhizomatic/outbox/`.
+
+## Wiki memory pulse — `working`
+
+**Stores.** This is a projection, not another source of truth. `joelclaw-wiki/src/lib/server/memory-pulse.ts` reads non-sensitive observer `.svx` pages, edition receipts, `/tmp/observer-tick.log`, `~/.joelclaw/observer-dispatcher-decisions.jsonl`, and `observer-cursor.json`. It writes a build receipt at `build/memory-pulse.json`.
+
+**Writes.** Wiki build/request code generates the JSON snapshot. Observer and dispatcher processes write the inputs.
+
+**Reads.** The paper's home page server load and `MemoryPulse.svelte` consume it. `/memory-pulse.json` exposes the same compact projection for future live attachment.
+
+**Overlap.** It is a read-only status surface over the core loop. It filters `sensitive`/`secret` pages before title projection and does not create competing memory.
+
+**Verdict: `working`. Receipt:** `https://brain.joelclaw.com/memory-pulse.json` returned HTTP 200 with `generatedAt=2026-07-17T16:28:50.754Z`, `pagesTotal=483`, `lastTickAt=2026-07-17T16:26:33Z`, and `sessionsTracked=812`. The focused privacy/index unit test in `src/lib/server/memory-pulse.test.ts` passed.
+
+## Typesense + PDF Brain — `working`
+
+**Stores.** Typesense holds 662 document records, 17,101 v1 chunks, and 241,939 active v2 chunks. Full extracted Markdown, metadata, and chunk JSONL live under `/Volumes/three-body/docs-artifacts/{docId}/` on the NAS mounted from `192.168.1.163:/volume1/joelclaw`.
+
+**Writes.** The system-bus `docs-ingest`, reindex, backlog, enrichment, and janitor functions build artifacts and update `docs`, `docs_chunks`, and `docs_chunks_v2`.
+
+**Reads.** `joelclaw docs search/context/markdown/summary`, `apps/docs-api`, and the `apps/web/app/api/docs` proxy read the corpus. The preferred interactive path is the CLI; the Funnel path is the public/programmatic adapter.
+
+**Overlap.** This is a source corpus for research, not autobiographical/operator memory. It can supply evidence to Brain pages but should not be promoted as a claim without source citations.
+
+**Verdict: `working`. Receipt:** `joelclaw docs status` selected `docs_chunks_v2`, reported the NAS artifact directory available, and `joelclaw docs search "distributed consensus" --limit 1` returned a hit from 74 matches. `https://joels-mac-studio.tail7af24.ts.net:10000/api/docs/health` returned HTTP 200 with docs-api `0.2.0` and Typesense status 200. The NAS contained 642 document directories; the newest artifact was written 2026-07-15.
+
+## Voice work recall — `working`
+
+**Stores.** `infra/voice-agent/voice_recall.py` stores nothing. It queries `joelclaw sessions search`, which reads the Run/session archive and its Typesense index.
+
+**Writes.** None. The function only formats recall for speech.
+
+**Reads.** LiveKit exposes it as the `recall_work` tool in `infra/voice-agent/main.py`. It asks for 25 session hits, keeps the newest two or three inside a bounded day window, strips URLs and markup, caps each gist, and fails closed on `privacy: sensitive` unless the caller is positively verified as Joel.
+
+**Overlap.** It is a delivery adapter for captured Runs. It does not consult the Brain directly. The separate generic voice `recall` tool still calls `joelclaw recall` against the stale `memory_observations` store, so the two voice tools can answer from different eras.
+
+**Verdict: `working`. Receipt:** the current worktree's `infra/voice-agent/.venv/bin/python -m pytest -q tests/test_voice_recall.py` passed all 12 tests. The current uncommitted sibling edits add `observations`/`decisions` fallback text and raise the candidate limit from 10 to 25; this survey did not modify, commit, or deploy them.
+
+## MEM / FRIC acceptance suites — `wobbly`
+
+**Stores.** These tests store no knowledge. They are executable invariants for the older memory path.
+
+**Writes.** Test fixtures create temporary `MEMORY.md`/`AGENTS.md` files, mock Todoist and inference, and exercise Inngest test engines.
+
+**Reads.** They inspect event schemas; observe idempotency, backfill suppression, and trace filtering; reflection compression and deterministic proposals; promotion, rejection, expiry, and Todoist review bridges; heartbeat pruning; and friction-to-task behavior.
+
+**Overlap.** The suites protect observe → Typesense/Redis → reflect → proposal → `MEMORY.md`, not the current observer → Brain core loop. Their historical permanent redness meant regressions could hide inside an already-ignored red suite. Today the “~23 failing” description is stale, but the harness still leaks into live services and its main target file does not exist.
+
+**Verdict: `wobbly`. Receipt:** running all 11 `MEM`/`FRIC`-named files on 2026-07-17 produced 49 passes and one failure: `MEM-FRICTION-1` timed out after 5 seconds. Nominally passing observe/heartbeat tests also printed real `401 Event key not found` errors from Inngest. That is much better than 23 red tests, but not a hermetic confidence gate.
+
+## Typesense `memory_observations` — `gap`
+
+**Stores.** The legacy vector index holds extracted observations plus write-gate, taxonomy, ranking, merge, staleness, and recall metadata.
+
+**Writes.** `observe.ts`, `observe-session-noted.ts`, `joelclaw memory write`, and maintenance functions are the intended writers.
+
+**Reads.** `joelclaw recall`, search, context prefetch, echo-fizzle, friction analysis, memory health, and the generic voice `recall` tool query it.
+
+**Overlap.** It is the old general-purpose memory substrate and directly competes with observer-authored Brain pages. It is still wired into readers, but new memory is no longer arriving. That lets stale extracted observations answer as if they were current while the Brain grows elsewhere.
+
+**Verdict: `gap`. Receipt:** `joelclaw inngest memory-health` reported 28,050 documents, 27,842 stale (`99.26%`), zero observations in the current 24-hour window, zero memory OTEL events in that window, and overall `ok:false`. The newest indexed observation was from 2026-05-31. A live `joelclaw recall "memory system review"` returned a top hit from 2026-02-21.
+
+## Legacy curated `~/.joelclaw/workspace/MEMORY.md` — `gap`
+
+**Stores.** The older reflect/proposal/promotion path expects a curated Markdown file with sections such as Joel, Hard Rules, System Architecture, Patterns, and Conventions. Redis holds pending proposal/review state around it.
+
+**Writes.** `reflect.ts` stages proposals; proposal triage, batch review, Todoist completion, and `promote.ts` approve/reject and append to `MEMORY.md`.
+
+**Reads.** Reflection, friction analysis, batch review, proposal triage, and voice startup context read the file. The worker still registers reflect, promote, proposal-triage, and batch-review functions.
+
+**Overlap.** This is exactly the durable operator-memory job now assigned to Brain `.svx`. Keeping live code pointed at a missing Markdown source creates a zombie path: tests and functions exist, but there is no canonical file and no bridge to Brain.
+
+**Verdict: `gap`. Receipt:** both `~/.joelclaw/workspace/MEMORY.md` and `REVIEW.md` were absent on Flagg. A Redis scan found only `memory:adr-evidence:daily`, and recent OTEL searches showed repeated `batch-review.skipped` rather than promotions.
+
+## Run/session archive and capture state — `wobbly`
+
+**Stores.** Raw Pi/Claude/Codex Run JSONL plus metadata live under `~/.joelclaw/runs-dev/joel/YYYY-MM/`. Typesense derives `runs_dev` and `run_chunks_dev`. `session-state.json` and `codex-session-state.json` track offsets. Failed POST bodies accumulate in `~/.joelclaw/outbox/`.
+
+**Writes.** The Pi memory-capture extension plus Claude and Codex hooks POST deltas to `/api/runs`; `packages/memory/src/nas.ts` writes raw blobs; `memory/run.captured` derives the indexes.
+
+**Reads.** `joelclaw sessions search/chunks/extract/inspect`, whole-conversation search, voice work recall, and observer capture/condense consumers query raw or derived forms.
+
+**Overlap.** This is the raw episodic substrate under the core loop, not curated memory. The source/derived split is sound, but capture routing is split: many writes and indexes are current while at least one active gateway session still posts to a 404 route.
+
+**Verdict: `wobbly`. Receipt:** Typesense was fresh at the survey time (`runs_dev=63,282`, `run_chunks_dev=565,488`, latest indexed Run at 2026-07-17 10:00 PDT), and local capture logs showed successful writes seconds apart. But the same log recorded a `POST 404 ... outboxed` failure at 10:00:42, while the outbox held 14,798 files totaling 71.38 GB, with entries dating back to 2026-06-08. Raw storage held 130,740 Run JSONL files plus matching metadata.
+
+## Voice transcript archive — `working`
+
+**Stores.** `~/.joelclaw/workspace/memory/voice/` holds raw private, public, and guest call transcript Markdown. It contained 31 files during the survey.
+
+**Writes.** `infra/voice-agent/main.py` writes private Joel calls to the root, public calls to `voice/public`, and guest calls to `voice/guests`. Private calls emit `voice/call.completed` for debrief/observation extraction. Public calls intentionally emit only `voice/public-call.completed` and never enter the memory pipeline.
+
+**Reads.** Voice-call judge/backfill tooling, NAS backup, and specific Brain research efforts use the files. They are raw evidence, not automatic operator truth.
+
+**Overlap.** Private calls can feed the core observation path. Public/guest material is deliberately quarantined, which prevents untrusted speech from becoming durable memory.
+
+**Verdict: `working`. Receipt:** `infra/voice-agent/main.py` documents and enforces the split in `_save_call_transcript` and `_save_public_transcript`; 31 transcript files were present, with the newest written 2026-07-13 20:37 PDT. `packages/system-bus/src/inngest/functions/nas-backup.ts` includes the workspace memory root.
+
+## Vault system log + PDS mirror — `gap`
+
+**Stores.** The declared operational journal is `~/Vault/system/system-log.jsonl`; `system-logger.ts` also best-effort mirrors entries into AT Protocol records. Typesense sync and NAS backup expect the JSONL file.
+
+**Writes.** `slog write`, pipeline completion events, and `system/log.written` feed the journal; `system-logger.ts` appends and then calls `pdsWriteSystemLog`.
+
+**Reads.** `slog tail`, system health, self-healing playbooks, Typesense full sync, and NAS backup read it.
+
+**Overlap.** This should be a receipt ledger beside Brain, not a competing memory store. On Flagg, however, the local declared path is absent while the CLI silently reads a stale Panda copy. That is Central/Relay split-brain, and the PDS mirror has no demonstrated memory reader here.
+
+**Verdict: `gap`. Receipt:** `/Users/joel/Vault/system/system-log.jsonl` did not exist on Flagg. `slog tail --count 1` reported its source as `panda:~/Vault/system/system-log.jsonl`, whose newest row was dated 2026-06-22. `system-logger.ts` still defaults `systemId` to `panda`.
+
+## Flag for its own effort
+
+1. **Kill or bridge Claude auto-memory.** Either disable topic-page writes or make Claude's memory surface a read-only pointer/index into Brain. Do not keep a self-contradicting shadow source.
+2. **Decide whether Chorus is a canary or a real memory substrate.** If canary, stop injecting noisy session briefings and drain its outbox. If real, define Brain ownership, promotion, conflict, and provenance rules first.
+3. **Retire or migrate the legacy observation stack.** `memory_observations`, reflect/proposal/promotion, missing `MEMORY.md`, generic voice recall, and MEM/FRIC tests should become one explicit migration rather than five zombie interfaces.
+4. **Repair and drain Run capture outboxes.** A 71.38 GB queue is not a harmless retry buffer. Find the gateway session still using the 404 route, dedupe/replay safely, and add a hard size/age alarm.
+5. **Move the system log to Flagg or declare Panda's copy archival.** Fix `slog`, system-logger defaults, Typesense sync, NAS backup, and the PDS read story together.
+6. **Commit/deploy or discard the voice-recall sibling edits.** The current worktree behavior is tested, but an uncommitted recall contract is not durable truth.

@@ -3,8 +3,9 @@ title: "Write the Memory System Page: map + verdicts as MDSvX"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "claude (flagg, herdr pane wB:p5, 2026-07-17)"
 parent: "./memory-system-review-brief.svx"
 blockers:
   - "./survey-capture-condense.svx"
@@ -26,3 +27,17 @@ the Fabrication Rule is the correctness bar). Written joel-writing-style,
 talks TO Joel, sentence-case headlines. States its own maintenance path.
 Periphery gets its own lighter section. No secrets, no sensitive-flagged
 content, no raw private excerpts.
+
+## Result (2026-07-17)
+
+Written: `.brain/resources/memory-system.svx` (renders at
+`/joelclaw/resources/memory-system/`). Structure: the loop in one breath →
+per-stage verdicts (capture working, dreams wobbly, retros gap, store+render
+working-with-edges, graph wobbly with the sensitive-leak edge, curate
+working, deliver wobbly, grade working-and-proven) → eleven periphery
+stores grouped by verdict → an eight-item "what deserves work next" list
+ordered by blast radius → a maintenance section that says regenerate from a
+fresh survey, don't patch sentences. All claims trace to the four survey
+assets, linked at the bottom as receipts. Steering executed this step under
+the brief's execution authorization (second step this session — noted, per
+the one-step norm).

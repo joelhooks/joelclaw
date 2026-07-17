@@ -3,11 +3,12 @@ title: "Survey the Periphery: every other store of durable knowledge"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker (flagg, herdr pane wB:p2J, 2026-07-17)"
 parent: "./memory-system-review-brief.svx"
 blockers: []
 created_at: "2026-07-17"
+closed_at: "2026-07-17"
 ---
 
 # Survey the periphery
@@ -29,3 +30,23 @@ For each: what it stores, who writes it, who reads it, whether it overlaps or
 contradicts the core loop, and a verdict (working / wobbly / gap) with one
 receipt each. Produce an asset `periphery-survey.svx`. Depth: map-and-grade,
 not deep-dive — flag anything that deserves its own effort. Read-only.
+
+## Result (2026-07-17)
+
+Asset: [Memory system periphery survey](./periphery-survey.svx)
+
+- Claude auto-memory — `wobbly`
+- Rhizomatic / Chorus claims — `wobbly`
+- Wiki memory pulse — `working`
+- Typesense + PDF Brain — `working`
+- Voice work recall — `working`
+- MEM / FRIC acceptance suites — `wobbly`
+- Typesense `memory_observations` — `gap`
+- Legacy curated `~/.joelclaw/workspace/MEMORY.md` — `gap`
+- Run/session archive and capture state — `wobbly`
+- Voice transcript archive — `working`
+- Vault system log + PDS mirror — `gap`
+
+The asset includes one live receipt per verdict and six follow-up efforts. The
+largest immediate operational risk is the Run capture outbox: 14,798 files,
+71.38 GB, and current 404 writes mixed with successful captures.

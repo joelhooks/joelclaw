@@ -1,7 +1,7 @@
 ---
 title: "Memory System Review: the whole loop, mapped and graded"
 type: "brief"
-status: "active"
+status: "done"
 created_at: "2026-07-17"
 privacy: "private"
 ---
@@ -74,6 +74,20 @@ as a proper MDSvX Brain page rendered by the wiki (2026-07-17).
   path dark); taste loop PROVEN closed: Joel's real 👍 graded
   `2026-07-17-248a3715344a` → `outcome: "worked"`, and outcomes feed
   `{{history}}` on the next beat.
+- [Survey the Periphery](./survey-periphery.svx) — 11 stores graded: 4
+  working (memory-pulse, pdf-brain, voice work-recall, voice transcripts),
+  4 wobbly (Claude auto-memory shadow source, Chorus canary residue,
+  run-capture archive with a 71.38 GB outbox since 06-08, MEM/FRIC
+  harness), 3 gaps (memory_observations 99.26% stale, zombie MEMORY.md
+  promotion path, flagg system log reading a stale panda copy). Six flags
+  for their own efforts.
+- [Write the Memory System Page](./write-memory-system-page.svx) — done:
+  `.brain/resources/memory-system.svx`, map + verdicts + eight-item fix
+  list ordered by blast radius; all claims trace to the survey assets.
+- [Publish, Verify, DM](./publish-verify-dm.svx) — done: live at
+  `https://brain.joelclaw.com/joelclaw/resources/memory-system/` (200),
+  observer root's 23 pages live too (two brace-escape fixes required,
+  observer `2e768c2b`); link DM'd. Effort complete.
 
 ## Latent
 

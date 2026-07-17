@@ -3,8 +3,9 @@ title: "Publish, Verify, DM: the page live at its canonical URL"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "claude (flagg, herdr pane wB:p5, 2026-07-17)"
 parent: "./memory-system-review-brief.svx"
 blockers:
   - "./register-observer-brain-root.svx"
@@ -22,3 +23,15 @@ transient exit 1) picks up the page,
 200 (exact URL check, never share unverified), and Joel gets the link via
 `joelclaw notify send`. Close the brief (`status: "done"`) if this is the
 last open step.
+
+## Result (2026-07-17)
+
+Published. First build failed for a real (not transient) reason: two
+newly-registered observer brain pages carried unescaped `{...}` in prose,
+and `observer/tasks/tick-summary-render` threw `severity is not defined`
+at prerender. Fixed both files (observer `2e768c2b`, promoted to release),
+rebuilt clean (exit 0). Verified 200 on the exact URLs:
+`/joelclaw/resources/memory-system/`, `/observer/tasks/neat-memory-beat/`
+(observer root's first live page), and the periphery survey. Link DM'd to
+Joel. Note: the page rendered from the working tree; its provenance commit
+stamp fills in on the next build after this commit.
