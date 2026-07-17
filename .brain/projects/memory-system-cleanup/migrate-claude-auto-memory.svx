@@ -3,8 +3,9 @@ title: "Migrate Claude Auto-Memory to a Pointer Index"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "in_progress"
-assignee: "pi worker (flagg, herdr right column, 2026-07-17)"
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "pi worker (flagg, wB:p2X) + steering (wB:p5)"
 parent: "./memory-system-cleanup-brief.svx"
 blockers: []
 created_at: "2026-07-17"
@@ -27,3 +28,85 @@ commit (steering commits). Evidence base:
 [periphery survey](../memory-system-review/periphery-survey.svx)
 "Claude auto-memory" and the
 [decision](../memory-system-repair/decide-claude-auto-memory.svx).
+
+## Result (2026-07-17)
+
+Every topic page was reviewed against the system Brain, repo Brain pages, the
+fleet Claude graft, and current read-only receipts. Five Brain resource notes
+were created. `MEMORY.md` is now a binding rule plus one-line Brain pointers.
+No topic page was deleted; steering owns deletion after review.
+
+### Disposition table
+
+| Topic page | Disposition | Receipt and action |
+| --- | --- | --- |
+| `concept-references-arent-proposals.md` | `migrate` | The periphery survey only named the shadow page; no Brain page contained the behavior rule. Migrated to `~/.brain/resources/concept-reference-collaboration.svx`. |
+| `daily-joelclaw-wiki-topology.md` | `duplicate` | Publication topology and the 2026-07-12 domain move already live in `~/.claude/CLAUDE.md:73-84`, `scripts/fleet/wiki-aware.block.md`, `.brain/projects/brain-graph/rename-daily-to-brain-domain.svx:26,34`, and `.brain/projects/bugle-redesign/bugle-redesign-brief.svx:26`. **Stale claim flagged:** the topic says the wiki repo has no Git remote; a 2026-07-17 read-only `git remote -v` showed `origin git@github.com:joelhooks/joelclaw-wiki.git` for fetch and push. That claim was not migrated. |
+| `herdr-host-accent-colors.md` | `duplicate` | **Contradiction flagged:** the topic's orange-on-Flagg accent is stale. Current Brain says the fleet-rendered theme is Nord on Flagg and Catppuccin on Blaine (`~/.brain/projects/herdr-sidebar/herdr-sidebar-brief.svx:47-50`), and generated `~/.config/herdr/config.toml` says `theme.name = "nord"` with no accent override. The callsign socket behavior is already described in `~/Code/joelhooks/joelclaw-wiki/.brain/projects/live-panes/herdr-focus-findings.svx:89-96`. Nothing migrated. |
+| `herdr-naming-discipline.md` | `duplicate` | Fleet binding already lives in `~/.claude/CLAUDE.md:58-71` and `scripts/fleet/herdr-aware.block.md`, including the workspace/tab/pane/agent sizing rules and right-column layout. |
+| `herdr-over-headless-dispatch.md` | `duplicate` | Fleet binding already lives in `~/.claude/CLAUDE.md:67-71`; the tool catalog also names Pi workers as the default fan-out worker (`~/.claude/CLAUDE.md:129-134`). |
+| `herdr-wake-loop-standalone-repo.md` | `duplicate` | Extraction and source-of-truth facts already live in `~/.brain/observations/archive/2026-07/2026-07-12-flagg-pi-herdr-pings-extraction-move.svx:20-27` and `~/.brain/observations/2026-07-12-rollup-joelhooks-herdr-pings-private.svx`. |
+| `joel-household-people.md` | `migrate` | The Joel-only network boundary already lives in `.brain/projects/personal-wiki/define-privacy-access-publication-boundaries.svx:18-21,48-51`, but Kristina's and Hannah's relationship facts did not exist in Brain. Migrated those facts to `~/.brain/resources/joel-household-context.svx`. |
+| `joelclaw-nas-mount-contract.md` | `duplicate` | LAN-IP mounts and durability receipts live in `.brain/resources/flagg-three-body-lan-nas-contract-2026-06-17.svx:20-39,107-120`; the serial-only NFS hashing hazard lives in `~/.brain/projects/panda-decommission-pdf-brain.svx:64-70`. **Brain contradiction flagged:** the older NAS note says `joelclaw-runtime` is authoritative (`...flagg-three-body...svx:120`), while `.brain/projects/voice-workroom-handoff.svx:56` and this topic say `~/Code/joelhooks/joelclaw` is deployed and `joelclaw-runtime` is the secondary branch. No checkout-authority claim was migrated or resolved here. |
+| `k8s-lives-on-panda.md` | `duplicate` | The exact incident and placement already live in `.brain/tasks/daily-operating-paper-fix-health-check-machine-awareness.svx:26-48`, `~/.brain/observations/2026-07-14-00dfdbe5475b.svx:28-38`, and `~/.claude/CLAUDE.md:88-112`. |
+| `panda-decommission-goal.md` | `duplicate` | The standing goal, completed migrations, remaining webhook dependency, deletion gate, and `4fb6ee5` follow-up already live in `~/.brain/projects/panda-decommission-pdf-brain.svx:14-26,43-51,85-100`. |
+| `pdf-brain-access-topology.md` | `duplicate` | Current Flagg Typesense/docs-api/NAS topology, counts, Funnel path, and CLI flow already live in `~/.brain/projects/panda-decommission-pdf-brain.svx:20-26` and related sections. |
+| `pi-notes-repo-extension-conflict.md` | `migrate` | No Brain page held this exact package-realpath failure and fix. Migrated to `~/.brain/resources/pi-package-repo-extension-dedup.svx`; a 2026-07-17 read-only settings check confirmed the live package source is still `../../Code/joelhooks/pi-notes`. |
+| `scope-branding-marks-tightly.md` | `duplicate` | The decorative-mark overindexing receipt and one-site boundary already live in `~/.brain/resources/retros/grill-master-evolution-2026-07.svx:42-49` and `~/.brain/projects/grill-master/lakoff-deep-audit.svx:36-40`. |
+| `short-wake-loop-ceilings.md` | `migrate` | The 3600-to-600-second correction already lives in `~/.brain/observations/2026-07-14-e3fe38e256e3.svx:27`. The companion fact about persistent shell cwd drift lived nowhere else, so that fact alone was migrated to `~/.brain/resources/agent-command-working-directory-discipline.svx`. |
+| `stale-flagg-tailnet-node.md` | `duplicate` | The stale node, both addresses, and verification rule already live in `~/.claude/CLAUDE.md:1-7,88-112` and `~/.brain/resources/tailnet-topology.svx:85-115,147-152`. |
+| `tailscale-funnel-bare-port-footgun.md` | `duplicate` | The exact bare-port failure, explicit `--https=<port>` rule, and accidental `Vite /@fs` exposure already live in `~/.brain/projects/panda-decommission-pdf-brain.svx:92-98`. |
+| `this-machine-is-flagg.md` | `duplicate` | Machine identity, local hostname, tailnet identity, no-self-SSH rule, and concurrent-session warning are bound at `~/.claude/CLAUDE.md:1-7` and restated in its machine-identity graft at lines 88-112. |
+| `wzrrd-recorder-blaine-deploys.md` | `migrate` | No Brain page held the standing deploy rule. Migrated to `~/.brain/resources/wzrrd-recorder-deployment-contract.svx`; a 2026-07-17 read-only receipt confirmed `scripts/deploy-blaine.sh` exists and path commit `2abd149` names the standing rule. |
+
+### New Brain resources
+
+- `~/.brain/resources/agent-command-working-directory-discipline.svx`
+- `~/.brain/resources/concept-reference-collaboration.svx`
+- `~/.brain/resources/joel-household-context.svx`
+- `~/.brain/resources/pi-package-repo-extension-dedup.svx`
+- `~/.brain/resources/wzrrd-recorder-deployment-contract.svx`
+
+### Pointer index
+
+`~/.claude/projects/-Users-joel/memory/MEMORY.md` now starts with the
+binding rule and points only to seven relevant Brain resource notes: the five
+new resources plus `operator-network-context.svx` and `tailnet-topology.svx`.
+
+### Verification
+
+- Disposition/index assertion: **18** topic files, **18** table rows, **7**
+  one-line Brain pointers; no topic-page links remain in `MEMORY.md`.
+- `dark-wizard/scripts/check-brain-svx.sh .`: **pass**.
+- `git diff --check` on the step file and all five new resources: **pass**.
+- System Brain `pi-notes brain check` reached 1,179 pages, then stopped on the
+  unrelated existing support file
+  `.brain/projects/jc-slack-context/fixture-context-pack-v1.json`.
+- Joelclaw `pi-notes brain check` reached 290 pages, then stopped on the four
+  existing `.brain/tasks/*.md` briefs, including the attached task brief. Those
+  files were present before this worker and are outside this cleanup step.
+
+### Steering cleanup commands
+
+These commands were intentionally **not** run:
+
+```sh
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/concept-references-arent-proposals.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/daily-joelclaw-wiki-topology.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/herdr-host-accent-colors.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/herdr-naming-discipline.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/herdr-over-headless-dispatch.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/herdr-wake-loop-standalone-repo.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/joel-household-people.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/joelclaw-nas-mount-contract.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/k8s-lives-on-panda.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/panda-decommission-goal.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/pdf-brain-access-topology.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/pi-notes-repo-extension-conflict.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/scope-branding-marks-tightly.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/short-wake-loop-ceilings.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/stale-flagg-tailnet-node.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/tailscale-funnel-bare-port-footgun.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/this-machine-is-flagg.md
+rm -- /Users/joel/.claude/projects/-Users-joel/memory/wzrrd-recorder-blaine-deploys.md
+```
