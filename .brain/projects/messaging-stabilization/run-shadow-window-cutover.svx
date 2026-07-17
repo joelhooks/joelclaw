@@ -393,3 +393,38 @@ is missing. Local checks are green because the helper remains present and
 uncommitted in this worktree. Steering must include the helper and remaining
 formatting files in its reviewed promotion; do not mistake current `origin/main`
 for a self-contained build.
+
+## Re-flip attempt #2 (2026-07-17 ~17:40Z) — rolled back, new evidence
+
+Joel called "chatsdk canonical asap"; steering ran the runbook. Preflight
+green (gateway healthy, chat-sdk suites 58/0). Flag armed, one kickstart.
+All five handover receipts ordered and successful at 17:40:19–20Z. The
+machine-gated visible-delivery canary then FAILED (exit 1: event
+`4f109541` produced no fresh confirmed journal row in 30s). Rollback per
+runbook: flag 0, one kickstart, gateway healthy on legacy at 17:44Z;
+legacy probe DM sent after (`61162338`, envelope ok).
+
+Root-cause evidence gathered before rollback:
+
+1. **The canary is structurally blind here.** Its ClickHouse read path
+   requires `MESSAGE_JOURNAL_READER_USER/PASSWORD` (absent — the CLI
+   errors `MESSAGE_JOURNAL_CONFIG_MISSING`) and silently returns nothing.
+   Its outbox fallback (`~/.joelclaw/spool/message-journal/`) was empty.
+   The gateway start env has NO journal/ClickHouse variables, so where
+   the acting daemon's journal writer actually lands rows is unverified.
+2. **Worse than blind: the canary's event was never processed.** OTEL for
+   the acting window shows exactly ONE `notify.compat_v2.confirmed`
+   (17:40:48Z — some other flow, BEFORE the canary send) and zero
+   journal/outbound/telegram events for `4f109541`. The rollback daemon
+   reported "no messages to replay", so the acting daemon consumed the
+   canary event without confirming or delivering it — smells like the
+   invisible-delivery family, new location, possibly a notify-queue stall
+   after the first acting send.
+3. Open decisive question for Joel: what did Telegram actually receive
+   17:40–17:45Z — the 17:40:48 message? the canary text? Neither?
+
+Before attempt #3: (a) answer the delivery question from Joel's phone,
+(b) give the canary a working evidence channel (provision the scoped
+journal reader creds, or make the gateway's journal storage explicit and
+readable), (c) explain the consumed-but-unconfirmed canary event with
+code in hand — a queue-stall hypothesis needs proof, not vibes.
