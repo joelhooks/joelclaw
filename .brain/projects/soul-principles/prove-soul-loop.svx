@@ -1,0 +1,28 @@
+---
+title: "Prove the Loop: seeds graded in, soul live on steering surfaces"
+type: "step"
+kind: "task"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./soul-principles-brief.svx"
+blockers:
+  - "./draft-seed-slate.svx"
+  - "./wire-soul-taste-gate.svx"
+created_at: "2026-07-17"
+---
+
+# Prove the loop
+
+## Step
+
+Resolved when: seed slate proposals have flowed through the gate one
+per beat until the slate is exhausted or Joel calls it; at least one
+admission, one rejection, and (if cap pressure occurred) one
+displacement exist in the graded history; the soul block renders the
+admitted principles on every steering surface fleet-wide (verify on
+flagg + blaine); and a receipt in this file shows a fresh steering
+session whose context contains the soul block. Closing this step closes
+the brief. Bonus receipt: rerun the taste bench with the new graded
+volume and record whether the "curator learns" claim now has evidence
+(the repair effort's bench said ~20–30 grades with both polarities).

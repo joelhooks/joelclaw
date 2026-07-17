@@ -1,0 +1,27 @@
+---
+title: "Build the Weekly Soul Pass: propose diffs, challenge stale"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./soul-principles-brief.svx"
+blockers:
+  - "./wire-soul-taste-gate.svx"
+created_at: "2026-07-17"
+---
+
+# Build the weekly soul pass
+
+## Step
+
+Resolved when a scheduled weekly pass (Inngest, alongside the existing
+dream/maintenance functions) mines graded memories, retros, closed
+briefs' decision ledgers, and incident receipts since the last pass and
+emits AT MOST 1–2 gate proposals, each with receipts; challenges stale
+principles (last-validated beyond threshold, or contradicted by a newer
+receipt) by proposing retirement — auto-flag mandatory, auto-retire
+forbidden; and updates last-validated dates for principles it found
+fresh supporting evidence for (a validation touch is logged, not
+gated). Receipts: first two real passes produce sane proposals or an
+honest "nothing earned it this week."

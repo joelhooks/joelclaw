@@ -1,0 +1,26 @@
+---
+title: "Wire the Gate: soul proposals ride the neat-memory beat"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./soul-principles-brief.svx"
+blockers:
+  - "./build-soul-store-graft.svx"
+created_at: "2026-07-17"
+---
+
+# Wire the gate for soul proposals
+
+## Step
+
+Resolved when a soul proposal (kinds: admit / amend / retire, plus the
+at-cap composite admit+displace) can ride the existing neat-memory
+Telegram DM beat, Joel's reaction grades it, and an approved grade
+mechanically applies the diff to `principles.svx` + re-renders +
+re-grafts, while a rejection records the outcome in the same graded
+history the curator and taste bench read. Symmetric gate invariants
+(brief decision 3): the machinery only proposes; no code path edits the
+soul without a recorded human grade; at cap, admit requires a named
+displacement in the same proposal. One proposal per beat.

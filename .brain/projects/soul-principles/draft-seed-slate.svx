@@ -1,0 +1,25 @@
+---
+title: "Draft the Seed Slate: mine existing receipts for candidate principles"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./soul-principles-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Draft the seed slate
+
+## Step
+
+Resolved when a slate of 20–30 candidate principles exists as
+`.brain/data/soul-principles/seed-slate-2026-07.svx`, each entry: one
+sentence, a why, ≥2 receipt links (incidents, decision ledgers, retros,
+graded memories, survey findings), and a proposed-by note. Mining
+ground: the memory-system review/repair/cleanup ledgers, observation
+corpus, campaign-launch-gates doctrine, fleet-sync doctrine, and any
+retros. Every candidate must pass the three tests (survives context
+change / changes behavior / earned). The slate is INPUT to the gate —
+nothing on it is a principle until graded in.

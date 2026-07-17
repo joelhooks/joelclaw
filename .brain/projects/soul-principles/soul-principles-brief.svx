@@ -1,0 +1,98 @@
+---
+title: "Soul Principles: an earned, capped constitution injected into steering"
+type: "brief"
+status: "chartered"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Soul principles
+
+Joel's ask (2026-07-17, grilled live during memory-system-cleanup):
+append our best, most interesting memories — "principles level shit" —
+to the system prompt and update them periodically. The soul is the
+distilled layer above facts: how this system behaves and why, earned
+from receipts, injected where judgment happens.
+
+## Finish line
+
+- `~/.brain/resources/soul/principles.svx` (dark-wizard, fleet-synced)
+  holds the soul: a hard-capped set (~20) of principles, each one
+  sentence + a why + receipt links + a last-validated date.
+- A `soul` marker block rendered from that note ships via
+  `fleet-graft.sh` into the STEERING surfaces only (Claude/codex/pi
+  steering-session prompt files fleet-wide). Workers get nothing by
+  default — briefs quote the specific principle they need.
+- Admission, amendment, and retirement all flow through the taste gate:
+  proposals ride the neat-memory Telegram DM beat, Joel's reaction
+  decides, grades land in the same outcome history the curator reads.
+  Nothing enters or leaves ungraded; the machinery may only PROPOSE.
+- At cap, admission requires displacement: "admit A, retire B, why A
+  earns the slot" — one approved trade, never an append.
+- A periodic (weekly) dream pass mines graded memories, retros, closed
+  briefs' decision ledgers, and incident receipts; proposes at most 1–2
+  diffs per pass; flags stale principles (nothing validated recently, or
+  contradicted) for retirement — auto-flag mandatory, auto-retire
+  forbidden.
+- The seed slate has been graded through the gate: the first principles
+  are live in the soul block on every steering surface, with receipts.
+
+## Vocabulary
+
+- **principle** — passes three tests: survives context change (facts
+  stay in the Brain), changes agent behavior, and is earned (≥2 real
+  receipts: incidents, graded memories, retros, decisions).
+- **soul block** — the graft marker block rendered from principles.svx.
+- **taste gate** — the existing neat-memory DM + reaction-grading loop.
+- **displacement** — the at-cap trade: one in, one out, one approval.
+- **seed slate** — the initial candidate principles mined from existing
+  receipts, admitted one per beat through the gate like any proposal.
+
+## Decisions of record (Joel, 2026-07-17)
+
+1. **Steering-only injection** — "we need lean little rats gnawing at
+   the seams": workers stay lean; the soul pays off where judgment
+   calls happen. Voice/ShitRat subset is a separate later charter.
+2. **Seed through the gate** — the corpus is rich (652 observation
+   pages, decision ledgers, surveys); draft a seed slate from existing
+   receipts, but every seed is graded in via DM, one per beat. This
+   also feeds the taste bench the graded volume (~20–30, both
+   polarities) its null result said it needs.
+3. **Symmetric gate + displacement** — nothing enters or leaves without
+   Joel's reaction; at cap every admission names its displacement. A
+   soul the machinery can silently edit isn't a soul; append-only lists
+   in this system's history all rotted (memory_observations, outbox,
+   auto-memory).
+
+## Notes
+
+- Composition of already-shipped parts: dreams (extraction), taste loop
+  (curation — proven end-to-end 2026-07-17), fleet graft (injection),
+  Brain (storage). New code is only the weekly pass + soul block
+  renderer + gate wiring for admit/amend/retire proposal kinds.
+- Guard: the soul is guidance, not persona. ShitRat's identity/voice is
+  a different surface; principles here are operating judgment.
+- Execution starts after memory-system-cleanup lands (shared surfaces:
+  curator prompt, graft pipeline, dream runner).
+
+## Decision ledger
+
+- [Draft the Seed Slate](./draft-seed-slate.svx) — open.
+- [Build the Soul Store and Graft Renderer](./build-soul-store-graft.svx) — open.
+- [Wire the Gate for Soul Proposals](./wire-soul-taste-gate.svx) — open.
+- [Build the Weekly Dream Pass](./build-weekly-soul-pass.svx) — open.
+- [Prove the Loop](./prove-soul-loop.svx) — open; closes the brief.
+
+## Latent
+
+- Voice/ShitRat soul subset (token-starved surface, hand-picked few).
+- Should worker briefs get a mechanical "quote a principle" helper
+  (e.g. `soul quote <slug>`) so steering can cite without paraphrase?
+- Once retros flow (memory-system-cleanup builds the writer), the
+  weekly pass gets its richest ore — revisit cadence then.
+
+## Out of scope
+
+- Persona/identity design for ShitRat or any agent character.
+- Changing what workers receive by default.
+- Any auto-editing of injected prompt content outside the graft flow.
