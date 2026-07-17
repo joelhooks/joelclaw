@@ -1,0 +1,29 @@
+---
+title: "Survey Capture & Condense: observations, rollups, dreams, retros"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p2F, 2026-07-17)"
+parent: "./memory-system-review-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Survey capture & condense
+
+## Step
+
+Map and grade the observer's memory-making pipeline: how raw activity becomes
+observations, how observations become rollups, how aging pages get condensed
+(dreams), how retros get written, and what keeps the pipeline alive
+(self-maintenance tick, LaunchAgents, beats). Territory: the
+`~/Code/joelhooks/joelclaw-observer` repo, the deployed release checkout, the
+LaunchAgents that drive it, its logs and state files, and the
+`stream-observation` / `observational-memory` efforts in joelclaw's `.brain`.
+Produce an asset `capture-condense-survey.svx` with: a plain-words map of each
+stage (what writes, what reads, where state lives), a verdict per stage
+(working / wobbly / gap) with receipts (paths, log lines with dates, state
+counts), and the three most load-bearing risks. Must confirm or kill the
+latent concern: the dream's 200-page read cap shadowing aging pages
+(eligiblePages 0 since 07-14).

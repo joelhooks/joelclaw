@@ -1,0 +1,33 @@
+---
+title: "Survey Curation & Delivery: neat-memory, beats, Telegram, grading"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p2H, 2026-07-17)"
+parent: "./memory-system-review-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Survey curation & delivery
+
+## Step
+
+Map and grade how stored memory reaches Joel and learns from him: the
+neat-memory curator (judge config, the 27-line simple prompt, candidate pool,
+state file `~/.joelclaw/observer-neat-memories.json`), its self-scheduled
+beats (`joelclaw wake`, dead-man LaunchAgent), delivery through messaging
+contract v2 (gateway Chat SDK shim, telegram outbound policy, formatting),
+and the grading return path (telegram reactions → bus →
+`message/reaction-bridge` → outcome written into curator state). Territory:
+`joelclaw-observer` (`.pi/extensions/observer/lib.ts`,
+`skills/neat-memory-simple-prompt.md`, `bin/neat-memory.sh`), joelclaw
+(`packages/message-contract`, `packages/gateway/src/chat-sdk*`,
+`packages/system-bus/.../message-reactions.ts`), state files, logs, and the
+messaging-stabilization + recall-consumption effort trails. Produce an asset
+`curation-delivery-survey.svx` with: the end-to-end path in plain words, a
+verdict per hop with receipts, an explicit answer to "does the judge actually
+SEE graded outcomes on its next beat, or are grades recorded and never
+consumed?", and the three most load-bearing risks. Read-only — do NOT run the
+curator, send DMs, or touch the state file.

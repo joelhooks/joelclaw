@@ -1,0 +1,24 @@
+---
+title: "Publish, Verify, DM: the page live at its canonical URL"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./memory-system-review-brief.svx"
+blockers:
+  - "./register-observer-brain-root.svx"
+  - "./write-memory-system-page.svx"
+created_at: "2026-07-17"
+---
+
+# Publish, verify, DM
+
+## Step
+
+Resolved when the wiki build on flagg (`bun run build`, retry once on
+transient exit 1) picks up the page,
+`https://brain.joelclaw.com/joelclaw/resources/memory-system/` returns HTTP
+200 (exact URL check, never share unverified), and Joel gets the link via
+`joelclaw notify send`. Close the brief (`status: "done"`) if this is the
+last open step.

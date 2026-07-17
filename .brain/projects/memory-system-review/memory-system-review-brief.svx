@@ -1,0 +1,77 @@
+---
+title: "Memory System Review: the whole loop, mapped and graded"
+type: "brief"
+status: "active"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Memory system review
+
+Joel asked for a holistic review of the entire joelclaw memory system, delivered
+as a proper MDSvX Brain page rendered by the wiki (2026-07-17).
+
+## Finish line
+
+- `https://brain.joelclaw.com/joelclaw/resources/memory-system/` returns HTTP
+  200 and renders an MDSvX page that is both a **map** (how memory flows:
+  capture → condense → store → curate → deliver → grade) and a **health
+  review** (a verdict per subsystem: working / wobbly / gap, every claim
+  carrying a receipt — a file path, log line, state entry, or commit).
+- joelclaw-observer's `.brain` is registered in
+  `dark-wizard/brain-roots.json` and its pages render on the wiki.
+- The page is written in joel-writing-style (ELI5 but technical, talks TO
+  Joel), and states its own maintenance path: when the memory system changes
+  materially, the page regenerates from a fresh survey — the wiki's provenance
+  commit stamp shows staleness at a glance.
+
+## Vocabulary
+
+- **memory system** — everything that captures, condenses, stores, curates,
+  delivers, or grades durable knowledge for Joel and his agents.
+- **core loop** — observer capture/rollups/dreams/retros → Brain `.svx` stores
+  → neat-memory curation → Telegram delivery → reaction grading.
+- **periphery** — memory stores outside the core loop (Claude auto-memory,
+  rhizome claims, memory-pulse, Typesense/pdf-brain, voice recall, …): mapped
+  and graded lighter, not deep-dived.
+- **subsystem** — one reviewable unit of the memory system with its own
+  verdict.
+- **verdict** — one of `working` (does its job, receipts prove it), `wobbly`
+  (exists but degraded, misconfigured, or unproven), `gap` (should exist and
+  doesn't, or exists and nothing consumes it).
+
+## Notes
+
+- Execution is authorized: workers survey read-only; the steering session
+  edits `brain-roots.json`, writes the page, runs the wiki build on flagg,
+  200-checks, and DMs the link.
+- Skills every session should consult: `joel-writing-style` (the page's
+  voice), `herdr-orchestration` (fan-out mechanics), wiki law
+  `joelclaw-wiki/AGENTS.md` (Fabrication Rule, privacy exclusions).
+- Joel's calls (2026-07-17): page = map + health verdicts; scope = core loop
+  deep + periphery mapped; home = `joelclaw` root, and register the observer
+  brain as a wiki root in the same effort.
+- Deviation from the default worker contract: survey workers edit ONLY their
+  step file and asset file — the steering session owns this brief (four
+  concurrent writers on one file is how briefs get clobbered).
+
+## Decision ledger
+
+- [Register the Observer Brain as a Wiki Root](./register-observer-brain-root.svx)
+  — done: `observer` root in brain-roots.json (dark-wizard `e03b805`), 23
+  pages catalog cleanly; live on next wiki build.
+
+## Latent
+
+- Should the wiki page regenerate on a schedule (observer tick? dream
+  pipeline?) instead of on-demand — and what would keep its verdicts honest?
+- The observer dream's 200-page read cap may be shadowing aging pages
+  (eligiblePages 0 daily since 07-14) — flagged during the messaging arc;
+  survey-capture-condense should confirm or kill this.
+
+## Out of scope
+
+- Fixing what the review finds. Verdicts and receipts end this effort; each
+  `wobbly`/`gap` that deserves work gets its own step or effort afterward.
+- The Brain Graph build-out (`brain-graph` effort owns it); this page only
+  reports its current state.

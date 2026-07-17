@@ -1,0 +1,65 @@
+---
+title: "Task: survey curation & delivery (neat-memory → Telegram → grading)"
+type: "task-brief"
+created: "2026-07-17"
+parent: "../projects/memory-system-review/survey-curation-delivery.svx"
+---
+
+# Survey curation & delivery — worker instructions
+
+You are a research worker on flagg. Set your pi session name to
+"🔬 Survey: curation & delivery" immediately. READ-ONLY: do NOT run the
+curator, do NOT send messages, do NOT restart daemons, do NOT write the
+state file. Reading state/logs is fine. Work autonomously, do not commit,
+print a DONE summary when finished.
+
+Your step file (already claimed for you):
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/survey-curation-delivery.svx`
+Read it and the brief it points at first. Verdicts are exactly `working` /
+`wobbly` / `gap`.
+
+## Territory (the end-to-end path, hop by hop)
+
+1. Candidate pool + judge: `~/Code/joelhooks/joelclaw-observer`
+   `.pi/extensions/observer/lib.ts` (neat-memory functions),
+   `skills/neat-memory-simple-prompt.md` (the 27-line prompt),
+   `bin/neat-memory.sh` (beat guard, scheduling). Judge = sol:xhigh via
+   `pi -p`. Prompt version `observer/neat-memory-simple-v1`.
+2. State: `~/.joelclaw/observer-neat-memories.json` (0600) — sent entries,
+   outcomes. Current fact to verify: slug `2026-07-17-248a3715344a` sent
+   04:19Z; has its `outcome` been graded yet?
+3. Beats: `joelclaw wake list --json` (pending beat
+   af0e49ff-9f35-4c12-815e-cbe87214b5f9 ~6h after 04:19Z), dead-man
+   LaunchAgent (16:15 daily), logs /tmp/observer-neat-memory.log.
+4. Delivery: joelclaw `packages/gateway/src/chat-sdk/outbound.ts`
+   (telegram policy: CURATED_MEMORY_PRODUCER_PATTERN), notify path,
+   formatting (`src/telegram-markdown.ts`), the 2026-07-17
+   confirmed-but-invisible incident + fix (journal readback; see
+   `.brain/projects/messaging-stabilization/run-shadow-window-cutover.svx`).
+   Current flags in `~/.joelclaw/scripts/gateway-start.sh` (SHADOW=1,
+   ACTING=0 — legacy path delivers today).
+5. Grading return: telegram reactions (allowed_updates includes
+   message_reaction) → shadow tap → bus `message/inbound.reaction` →
+   `packages/system-bus/src/inngest/functions/message-reactions.ts`
+   (bridge → `message/reaction.received` → neat-memory grade consumer →
+   state write). Its step trail:
+   `.brain/projects/messaging-stabilization/build-reactions-bridge.svx`.
+6. THE question the step demands answered explicitly: on the curator's next
+   beat, does the judge prompt's `{{history}}` actually include graded
+   `outcome` values — i.e. is the taste loop closed, or are grades recorded
+   and never consumed? Quote the code that builds `{{history}}`.
+
+## Deliverables (file edits only)
+
+1. Asset:
+   `~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/curation-delivery-survey.svx`
+   (`type: "asset"`, `parent: "./survey-curation-delivery.svx"`, `title`,
+   `created_at: "2026-07-17"`, `privacy: "private"`). Body: the path in plain
+   words hop by hop, verdict per hop with receipts, the explicit
+   grades-consumed answer with quoted code, three load-bearing risks.
+2. Step file: `## Result (2026-07-17)` + verdicts, link asset, flip
+   `status: "closed"`, add `closed_at`.
+3. Do NOT edit the brief or other steps.
+
+DONE summary: one line per hop `<hop>: <verdict> — <reason>`, the
+grades-consumed answer, then risks.

@@ -1,0 +1,28 @@
+---
+title: "Write the Memory System Page: map + verdicts as MDSvX"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./memory-system-review-brief.svx"
+blockers:
+  - "./survey-capture-condense.svx"
+  - "./survey-brain-stores.svx"
+  - "./survey-curation-delivery.svx"
+  - "./survey-periphery.svx"
+created_at: "2026-07-17"
+---
+
+# Write the memory system page
+
+## Step
+
+Resolved when `~/Code/joelhooks/joelclaw/.brain/resources/memory-system.svx`
+exists: one MDSvX page synthesizing the four survey assets into the map
+(capture → condense → store → curate → deliver → grade, plain words, exact
+names) and the health review (verdict per subsystem, every claim receipted —
+the Fabrication Rule is the correctness bar). Written joel-writing-style,
+talks TO Joel, sentence-case headlines. States its own maintenance path.
+Periphery gets its own lighter section. No secrets, no sensitive-flagged
+content, no raw private excerpts.

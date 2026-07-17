@@ -1,0 +1,60 @@
+---
+title: "Task: survey the periphery (every other memory store)"
+type: "task-brief"
+created: "2026-07-17"
+parent: "../projects/memory-system-review/survey-periphery.svx"
+---
+
+# Survey the periphery — worker instructions
+
+You are a research worker on flagg. Set your pi session name to
+"🔬 Survey: memory periphery" immediately. READ-ONLY. Work autonomously, do
+not commit, print a DONE summary when finished.
+
+Your step file (already claimed for you):
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/survey-periphery.svx`
+Read it and the brief it points at first. Verdicts are exactly `working` /
+`wobbly` / `gap`. Depth: map-and-grade, NOT deep-dive — one receipt per
+verdict is enough; flag anything deserving its own effort.
+
+## Stores to hunt (plus anything else you find)
+
+- Claude auto-memory: `~/.claude/projects/-Users-joel/memory/` — what's in
+  it, freshness, and the tension with Joel's 2026-07-16 instruction that
+  durable operator memory belongs in the Brain (`.svx`), not there.
+- Rhizome/briefing claims: session starts show a "Rhizomatic briefing"
+  (topics/claims/contested/distrusted, sessions list). Find the
+  implementation — grep joelclaw for `rhizom`/`briefing`/`claims` (packages,
+  hooks, state dirs). What writes claims, what reads them, is anyone?
+- memory-pulse: `joelclaw-wiki/src/routes/memory-pulse.json` — what feeds
+  it, what consumes it, is it fresh?
+- Typesense + pdf-brain: book index in flagg Typesense, full text on the NAS
+  (192.168.1.163), public API via Funnel :10000, CLI flow. Alive?
+- Voice recall: `~/Code/joelhooks/joelclaw/infra/voice-agent/voice_recall.py`
+  (+ its test) — note it has uncommitted sibling edits right now; describe
+  what it recalls from where.
+- Memory-friction suites: the chronically failing ~23 system-bus tests
+  (MEM/FRIC names) — `cd ~/Code/joelhooks/joelclaw/packages/system-bus &&
+  grep -rn "MEM\|FRIC" src --include="*.test.ts" -l` — what invariants were
+  they supposed to protect, and what does their permanent redness mean?
+- Anything else that persists knowledge for Joel/agents: session summaries,
+  `~/.joelclaw/*` state files, observation stores, secrets store is OUT of
+  scope (credentials, not knowledge).
+
+For each store: what it stores, who writes, who reads, overlap/contradiction
+with the core loop (observer → Brain → curator → Telegram → grading), verdict
++ one receipt.
+
+## Deliverables (file edits only)
+
+1. Asset:
+   `~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/periphery-survey.svx`
+   (`type: "asset"`, `parent: "./survey-periphery.svx"`, `title`,
+   `created_at: "2026-07-17"`, `privacy: "private"`). Body: one section per
+   store (stores/writes/reads/overlap/verdict+receipt), then a short "flag
+   for its own effort" list.
+2. Step file: `## Result (2026-07-17)` + verdicts, link asset, flip
+   `status: "closed"`, add `closed_at`.
+3. Do NOT edit the brief or other steps.
+
+DONE summary: one line per store `<store>: <verdict> — <reason>`, then flags.

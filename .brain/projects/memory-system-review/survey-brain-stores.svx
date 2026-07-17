@@ -1,0 +1,28 @@
+---
+title: "Survey Brain Stores: .svx trees, registry, wiki rendering, graph, sync"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p2G, 2026-07-17)"
+parent: "./memory-system-review-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Survey brain stores
+
+## Step
+
+Map and grade where durable memory RESTS and how it renders: every `.brain`
+tree on this machine (registered and not), the `.svx` law and its lint
+ratchet (`dark-wizard/scripts/check-brain-svx.sh`, per-repo baselines), the
+brain-root registry (`dark-wizard/brain-roots.json`) versus reality, the
+wiki's brain-page renderer (`joelclaw-wiki/src/routes/[root]/[...slug]/` +
+`src/lib/brain/catalog.ts`, privacy exclusions), the Brain Graph effort's
+actual state, and fleet sync (dark-wizard as transport, `~/.brain` symlink).
+Produce an asset `brain-stores-survey.svx` with: the inventory (every `.brain`
+tree found, registered or orphaned, page counts, `.md` stragglers vs the
+ratchet), how a page travels from file to `brain.joelclaw.com/<root>/<slug>/`,
+a verdict per piece (working / wobbly / gap) with receipts, and the three most
+load-bearing risks. Read-only everywhere.

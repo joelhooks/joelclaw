@@ -1,0 +1,54 @@
+---
+title: "Task: survey capture & condense (observer pipeline)"
+type: "task-brief"
+created: "2026-07-17"
+parent: "../projects/memory-system-review/survey-capture-condense.svx"
+---
+
+# Survey capture & condense — worker instructions
+
+You are a research worker on flagg. Set your pi session name to
+"🔬 Survey: capture & condense" immediately. READ-ONLY on the system: run no
+scripts that mutate state, send nothing, restart nothing. Work autonomously,
+do not commit, print a DONE summary when finished.
+
+Your step file (already claimed for you):
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/survey-capture-condense.svx`
+Read it and the brief it points at first. The brief's Vocabulary binds you —
+verdicts are exactly `working` / `wobbly` / `gap`.
+
+## Territory (start here, follow the receipts)
+
+- Repo `~/Code/joelhooks/joelclaw-observer` — dev checkout. Deployed release:
+  `~/.joelclaw/observer-release` (compare HEADs; drift is a finding).
+- `launchctl list | grep -i observ` and `ls ~/Library/LaunchAgents | grep -i
+  "observ\|dream\|joelclaw"` — what actually runs, on what schedule. Read the
+  plists.
+- Logs: `/tmp/observer-*.log` and whatever the plists point at. State: look
+  for observation/rollup/dream state files (repo README/bin scripts name
+  them).
+- Dreams/condensing: find the dream script + its page-eligibility logic.
+  CONFIRM OR KILL: a 200-page read cap shadowing aging pages (eligiblePages 0
+  daily since 2026-07-14). Quote the exact log lines and the cap in code.
+- Retros + self-maintenance tick (com.joelclaw.observer-tick, tick v4): what
+  does a tick actually do, when did it last run, did it succeed?
+- Effort trails for intent: `~/Code/joelhooks/joelclaw/.brain/projects/`
+  `stream-observation/` and `observational-memory/`.
+
+## Deliverables (file edits only)
+
+1. Asset:
+   `~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/capture-condense-survey.svx`
+   with frontmatter `type: "asset"`, `parent: "./survey-capture-condense.svx"`,
+   `title`, `created_at: "2026-07-17"`, `privacy: "private"`. Body: the
+   plain-words map of each stage (what writes, what reads, where state
+   lives), a verdict per stage with receipts (exact paths, dated log lines,
+   state counts), and the three most load-bearing risks. Plain prose, short
+   sentences, no slop; every claim carries its receipt.
+2. In your step file: fill `## Result (2026-07-17)` with a 5–10 line summary
+   + the per-stage verdict list, link the asset, flip `status: "closed"` and
+   add `closed_at: "2026-07-17"`.
+3. Do NOT edit the brief — steering owns it. Do NOT touch other steps.
+
+DONE summary format: one line per stage `<stage>: <verdict> — <one-clause
+reason>`, then the three risks.

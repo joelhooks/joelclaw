@@ -1,0 +1,36 @@
+---
+title: "Register the Observer Brain as a Wiki Root"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "claude (flagg, herdr pane wB:p5, 2026-07-17)"
+parent: "./memory-system-review-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Register the observer brain as a wiki root
+
+## Step
+
+Resolved when `joelclaw-observer`'s `.brain` is an entry in
+`dark-wizard/brain-roots.json` (name `observer`, following the registry's
+stated onboarding model: one entry, crawls audit but never define), the
+dark-wizard change is committed and pushed (fleet rule), and a local wiki
+build proves observer pages appear in the catalog without breaking anything
+(privacy exclusions still apply). Joel's call, 2026-07-17.
+
+## Result (2026-07-17)
+
+Registered. `dark-wizard/brain-roots.json` now carries an `observer` entry
+(repo `joelhooks/joelclaw-observer`, brainPath `.brain`), committed and
+pushed as dark-wizard `e03b805`. Pre-flight: the observer brain is 23
+committed `.svx` files (tasks + index; areas/projects/resources/archives
+present, no `.md` stragglers, no sensitive sections). Catalog proof: running
+the wiki's `loadBrainPages()` against the updated registry yields
+`{"user":695,"joelclaw":259,"observer":23,"wiki":67}` with observer keys like
+`observer/tasks/neat-memory-beat` — no errors, existing roots unchanged. The
+pages go live on the next wiki build ([Publish, Verify,
+DM](./publish-verify-dm.svx) owns that).

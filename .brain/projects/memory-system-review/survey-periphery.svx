@@ -1,0 +1,31 @@
+---
+title: "Survey the Periphery: every other store of durable knowledge"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p2J, 2026-07-17)"
+parent: "./memory-system-review-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Survey the periphery
+
+## Step
+
+Inventory and lightly grade every memory store OUTSIDE the core loop: Claude's
+file-based auto-memory (`~/.claude/projects/-Users-joel/memory/` — note
+Joel's 2026-07-16 instruction that durable operator memory belongs in the
+Brain, not there), the rhizome/briefing claims system (find it — session
+starts show "Rhizomatic briefing" with topics/claims/contested/distrusted),
+the wiki's `memory-pulse.json` surface (what feeds it, who reads it),
+Typesense + pdf-brain (book index on flagg, full text on the NAS), voice
+recall (`joelclaw/infra/voice-agent/voice_recall.py`), the system-bus
+memory-friction suites (the ~23 chronically failing MEM/FRIC tests — what
+are they supposed to protect?), and anything else found that persists
+knowledge for Joel or agents (session summaries, observation stores, etc.).
+For each: what it stores, who writes it, who reads it, whether it overlaps or
+contradicts the core loop, and a verdict (working / wobbly / gap) with one
+receipt each. Produce an asset `periphery-survey.svx`. Depth: map-and-grade,
+not deep-dive — flag anything that deserves its own effort. Read-only.

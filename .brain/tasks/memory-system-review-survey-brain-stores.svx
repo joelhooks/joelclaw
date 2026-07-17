@@ -1,0 +1,55 @@
+---
+title: "Task: survey brain stores (.svx trees, registry, wiki, graph, sync)"
+type: "task-brief"
+created: "2026-07-17"
+parent: "../projects/memory-system-review/survey-brain-stores.svx"
+---
+
+# Survey brain stores — worker instructions
+
+You are a research worker on flagg. Set your pi session name to
+"🔬 Survey: brain stores" immediately. READ-ONLY everywhere: no builds, no
+registry edits, no commits. Work autonomously, do not commit, print a DONE
+summary when finished.
+
+Your step file (already claimed for you):
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/survey-brain-stores.svx`
+Read it and the brief it points at first. Verdicts are exactly `working` /
+`wobbly` / `gap`.
+
+## Territory
+
+- Inventory: `find ~/Code/joelhooks -maxdepth 3 -name .brain -type d
+  -not -path "*/node_modules/*"` plus `~/.brain` (check what it symlinks to).
+  For each tree: page counts (`.svx` vs `.md`), sections, notable content.
+- The law + ratchet: `~/Code/joelhooks/dark-wizard/scripts/check-brain-svx.sh`
+  and per-repo `.brain/.svx-lint-baseline` files — which repos enforce it in
+  lint, which trees have `.md` stragglers.
+- Registry vs reality: `~/Code/joelhooks/dark-wizard/brain-roots.json` (3
+  roots today) vs the trees you found — orphans are findings, not errors.
+  NOTE: a sibling session is registering `joelclaw-observer` as a root right
+  now; treat that as in-flight, don't do it yourself.
+- Renderer: `~/Code/joelhooks/joelclaw-wiki/src/lib/brain/catalog.ts` and
+  `src/routes/[root]/[...slug]/+page.server.ts` — how a file becomes
+  `brain.joelclaw.com/<root>/<slug>/`, privacy exclusions (excluded sections
+  + `privacy: sensitive`), components compilation (`.brain/components/**`).
+- Graph: `~/Code/joelhooks/joelclaw/.brain/projects/brain-graph/` effort state
+  + `joelclaw-wiki/src/lib/services/graph-builder.ts` + the live /graph
+  route — built from what, how fresh?
+- Sync: dark-wizard as transport (`scripts/dw-sync.sh`), last sync times,
+  divergence right now (`git -C ~/Code/joelhooks/dark-wizard status/log`).
+
+## Deliverables (file edits only)
+
+1. Asset:
+   `~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/brain-stores-survey.svx`
+   (`type: "asset"`, `parent: "./survey-brain-stores.svx"`, `title`,
+   `created_at: "2026-07-17"`, `privacy: "private"`). Body: the inventory
+   table (tree, registered?, .svx/.md counts, renders?), the file→URL travel
+   path in plain words, verdict per piece with receipts, three load-bearing
+   risks.
+2. Step file: `## Result (2026-07-17)` summary + verdicts, link the asset,
+   flip `status: "closed"`, add `closed_at`.
+3. Do NOT edit the brief or other steps.
+
+DONE summary: one line per piece `<piece>: <verdict> — <reason>`, then risks.
