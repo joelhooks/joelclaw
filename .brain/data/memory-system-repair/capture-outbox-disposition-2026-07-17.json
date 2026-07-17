@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-17T18:25:05.686Z",
+  "readOnly": true,
+  "source": "/Users/joel/.joelclaw/outbox",
+  "rootCause": {
+    "writer": "embedded gateway Pi memory-capture extension",
+    "sessionId": "019f6f5c-10e9-74aa-8a46-ea3ecb012894",
+    "deadTarget": "http://localhost:3000/api/runs",
+    "liveTarget": "http://127.0.0.1:3111/api/runs",
+    "cause": "gateway startup omitted JOELCLAW_CENTRAL_URL, so the Pi extension used its dead localhost:3000 fallback",
+    "bounce": "after applying the code change, restart the gateway and reload/restart existing Pi sessions that imported the old extension"
+  },
+  "snapshot": {
+    "files": 14853,
+    "bytes": 71389656348,
+    "oldestMtimeMs": 1780944894399.397,
+    "newestMtimeMs": 1784312201734.9153,
+    "growthSinceBriefFiles": 55,
+    "briefFiles": 14798,
+    "briefBytes": 71380000000
+  },
+  "byRuntime": {
+    "claude-code": {
+      "files": 1,
+      "bytes": 373748
+    },
+    "codex": {
+      "files": 38,
+      "bytes": 24797605
+    },
+    "pi": {
+      "files": 14814,
+      "bytes": 71364484995
+    }
+  },
+  "byAge": {
+    "1_6h": {
+      "files": 86,
+      "bytes": 22870101
+    },
+    "1_7d": {
+      "files": 362,
+      "bytes": 151541854
+    },
+    "6_24h": {
+      "files": 289,
+      "bytes": 638938603
+    },
+    "7_30d": {
+      "files": 9777,
+      "bytes": 44491049413
+    },
+    "gte_30d": {
+      "files": 4308,
+      "bytes": 26079705575
+    },
+    "lt_1h": {
+      "files": 31,
+      "bytes": 5550802
+    }
+  },
+  "byTargetRoute": {
+    "http://flagg.tail7af24.ts.net:3111/api/runs (hook-configured)": {
+      "files": 38,
+      "bytes": 24797605
+    },
+    "http://localhost:3000/api/runs (proven gateway fallback)": {
+      "files": 104,
+      "bytes": 27706434
+    },
+    "unknown (target URL was not serialized)": {
+      "files": 14711,
+      "bytes": 71337152309
+    }
+  },
+  "byObservedFailure": {
+    "404": {
+      "files": 3,
+      "bytes": 983152
+    },
+    "500": {
+      "files": 7,
+      "bytes": 4763351
+    },
+    "network": {
+      "files": 31,
+      "bytes": 20034254
+    },
+    "unattributed": {
+      "files": 14812,
+      "bytes": 71363875591
+    }
+  },
+  "outboxDedupe": {
+    "logicalGroups": 179,
+    "representatives": 179,
+    "redundantStrictPrefixes": 14591,
+    "redundantExactCopies": 83,
+    "invalid": 0
+  },
+  "archiveOverlapByGroup": {
+    "suffix": {
+      "groups": 120,
+      "files": 14612,
+      "bytes": 70763833655,
+      "representative_source_bytes": 234262281,
+      "replay_jsonl_bytes": 178720626
+    },
+    "full": {
+      "groups": 47,
+      "files": 228,
+      "bytes": 625108224,
+      "representative_source_bytes": 62031122,
+      "replay_jsonl_bytes": 58942198
+    },
+    "covered": {
+      "groups": 12,
+      "files": 13,
+      "bytes": 714469,
+      "representative_source_bytes": 704847,
+      "replay_jsonl_bytes": 0
+    }
+  },
+  "finalDisposition": {
+    "alreadyCapturedWholeGroups": {
+      "groups": 12,
+      "files": 13,
+      "bytes": 714469,
+      "representative_source_bytes": 704847,
+      "replay_jsonl_bytes": 0
+    },
+    "replayableSuffixGroups": {
+      "groups": 120,
+      "files": 14612,
+      "bytes": 70763833655,
+      "representative_source_bytes": 234262281,
+      "replay_jsonl_bytes": 178720626
+    },
+    "replayableFullGroups": {
+      "groups": 47,
+      "files": 228,
+      "bytes": 625108224,
+      "representative_source_bytes": 62031122,
+      "replay_jsonl_bytes": 58942198
+    },
+    "replayRequests": 167,
+    "replayJsonlBytes": 237662824,
+    "redundantOrCoveredFiles": 14686
+  },
+  "definitions": {
+    "alreadyCaptured": "the representative JSONL is a prefix of a captured sibling with the same runtime, conversation_id, and parent_run_id; the whole outbox group is covered",
+    "suffixReplay": "a captured sibling is the longest strict prefix; replay only the uncaptured suffix and reparent to that captured run",
+    "fullReplay": "no captured sibling covers any prefix; replay the representative unchanged",
+    "redundant": "same logical group and a later representative JSONL strictly covers or exactly equals this outbox JSONL",
+    "targetLimit": "capture outbox payloads do not persist destination URL; only gateway fallback and log/hook-correlated routes are attributable"
+  },
+  "artifacts": {
+    "reviewedPlan": "/tmp/capture-outbox-plan.json",
+    "planReceipt": "/tmp/capture-outbox-plan-receipt.json",
+    "replayScript": "scripts/replay-capture-outbox.ts",
+    "observerPatch": ".brain/data/memory-system-repair/capture-outbox-observer.patch"
+  }
+}

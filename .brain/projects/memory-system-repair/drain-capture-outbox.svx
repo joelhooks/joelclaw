@@ -3,7 +3,7 @@ title: "Drain the Capture Outbox: fix the 404 route, disposition 71 GB, add an a
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "in_progress"
 assignee: "pi worker (flagg, herdr pane wB:p2P, 2026-07-17)"
 parent: "./memory-system-repair-brief.svx"
 blockers: []
@@ -28,3 +28,131 @@ Analysis and the replay PLAN come first; execution of the drain follows
 steering review of that plan. Evidence:
 [periphery survey](../memory-system-review/periphery-survey.svx)
 "Run/session archive and capture state" + flag #4.
+
+## Result (2026-07-17)
+
+Implementation and the reviewed replay plan are ready. The live gateway restart, supervised replay canary, backlog drain, and observer alarm deployment still belong to steering; this step stays open until those receipts exist.
+
+### Root cause and fix
+
+The 10:00:42 PDT failure was the embedded **gateway Pi session**, not Claude
+or Codex. `~/.joelclaw/capture.log` named session
+`019f6f5c-10e9-74aa-8a46-ea3ecb012894`; its source transcript is
+`~/.joelclaw/sessions/gateway/2026-07-17T09-15-32-458Z_019f6f5c-10e9-74aa-8a46-ea3ecb012894.jsonl`.
+The gateway LaunchAgent/start script did not export `JOELCLAW_CENTRAL_URL`,
+and process readback confirmed it was absent. The Pi extension therefore used
+its dead `http://localhost:3000` fallback. Read-only probes returned 404 from
+`http://localhost:3000/api/runs/health` and 200 from the actual worker at
+`http://127.0.0.1:3111/api/runs/health`. Other Pi sessions inherited a good
+`:3111` URL, which explains successful captures seconds apart.
+
+Fixed all three writer defaults to `http://127.0.0.1:3111`:
+
+- `packages/pi-extensions/memory-capture/index.ts`
+- `scripts/joelclaw-capture-session.ts`
+- `scripts/joelclaw-capture-codex-session.js`
+
+Their log writers now use append-only `appendFileSync`; the old read-whole-log
+then rewrite pattern lost evidence when concurrent sessions wrote the same log.
+
+**Steering bounce:** after applying/committing this patch, run
+`joelclaw gateway restart` so the embedded gateway Pi reloads the extension.
+Existing interactive Pi sessions that loaded the old extension need a Pi
+restart or extension reload. Claude/Codex launch their capture scripts per Stop
+hook, so the code fallback changes apply on the next hook invocation; their
+current hook configs already inject the working Flagg `:3111` URL. The worker
+does not need a restart for this client-only fix.
+
+### Read-only disposition
+
+Snapshot at `2026-07-17T18:25:05.686Z`:
+
+- **14,853 files, 71,389,656,348 bytes**; the queue grew by 55 files during
+  this task, from the brief's 14,798.
+- Runtime: Pi 14,814 / 71,364,484,995 bytes; Codex 38 / 24,797,605 bytes;
+  Claude Code 1 / 373,748 bytes.
+- Age: 4,308 files are at least 30 days old; 9,777 are 7–30 days; 362 are
+  1–7 days; 289 are 6–24 hours; 86 are 1–6 hours; 31 are under one hour.
+- Target attribution is necessarily partial because payloads do not persist
+  the destination URL: 104 files / 27,706,434 bytes are proven gateway
+  `localhost:3000` failures; 38 / 24,797,605 bytes map to the hook-configured
+  Flagg `:3111` target; 14,711 / 71,337,152,309 bytes are historical/unknown.
+- All 14,853 payloads parsed as valid. They collapse to **179 logical capture
+  groups** because failed writers did not advance their byte offset: 14,591
+  files are strict prefixes of a later body and 83 are exact duplicates.
+- Raw archive + Typesense comparison found 12 groups (13 files) fully captured
+  elsewhere; 120 groups have a captured prefix and need only the suffix; 47
+  groups are fully uncovered.
+- Safe replay disposition: **167 requests, 237,662,824 JSONL bytes** after
+  prefix trimming. The other **14,686 files** are redundant or already
+  covered. Nothing was moved, replayed, rewritten, or deleted.
+
+Machine-readable receipt:
+`.brain/data/memory-system-repair/capture-outbox-disposition-2026-07-17.json`.
+The reviewed plan is `/tmp/capture-outbox-plan.json`; it contains no transcript
+text, only paths, hashes, sizes, grouping, and disposition.
+
+### Replay plan — built, not executed
+
+`scripts/replay-capture-outbox.ts` is dry-run/plan mode by default. It:
+
+1. validates every body and groups by runtime + conversation + parent run;
+2. keeps only maximal deltas, skipping exact copies and strict prefixes;
+3. checks `runs_dev` plus raw `jsonl_path` siblings before each replay;
+4. skips captured supersets and deterministically trims captured prefixes,
+   reparenting the suffix to the captured run;
+5. binds every reviewed catalog row to the live realpath, mtime, size, envelope,
+   source-body SHA, and JSONL SHA before any query or POST;
+6. verifies every raw captured sibling against its indexed `jsonl_sha256`
+   before using it to cover or trim a prefix;
+7. uses `run_id + source-body SHA + replay-JSONL SHA` as the dedupe key;
+8. writes an append-only `inflight → accepted → indexed` checkpoint and never
+   automatically resends an inflight, accepted, or failed item that has not
+   indexed; failed retries require `--retry-failed-run <run-id>` after review;
+9. stops on SHA conflict, non-2xx, missing index confirmation, SIGINT/SIGTERM,
+   or the kill file `~/.joelclaw/capture-outbox.STOP`;
+10. paginates captured-sibling search, rate-limits to one request/second, 25
+   per batch, 30 seconds between batches, 64 MiB per file, and 256 MiB per
+   batch by default;
+11. never imports deletion/move operations. Source cleanup remains a separate,
+   steering-approved phase after raw + Typesense + event receipts agree.
+
+First supervised canary after the gateway bounce:
+
+```bash
+bun scripts/replay-capture-outbox.ts \
+  --run --execute \
+  --catalog /tmp/capture-outbox-plan.json \
+  --max-files 5 \
+  --max-batch-bytes 10485760 \
+  --batch-size 5 \
+  --rate-ms 1000
+```
+
+Review `/tmp/capture-outbox-replay-receipt.json` and the append-only
+`~/.joelclaw/capture-outbox-replay-checkpoint.jsonl` before raising the batch.
+Do not delete source files after HTTP 202; wait for the script's exact
+Typesense SHA readback.
+
+### Alarm implementation
+
+The alarm is committed in the sibling `joelclaw-observer` repo at `01b81cba`.
+Its scheduled self-maintenance runner already reads Flagg state and turns
+warnings into the observer noise bar. It counts/stats filenames only; it never
+reads payload bodies. Warning thresholds: 25 files, 256 MiB, or oldest age 60
+minutes. The warning carries a `critical` detail bit at 100 files, 1 GiB, or six
+hours. Missing/empty is green; unreadable is warning. The focused observer suite
+passes 88 tests. Release promotion is still outstanding.
+
+### Gates and receipts
+
+- `bunx tsc --noEmit` from the joelclaw root: pass.
+- `bun test scripts/lib/capture-outbox-replay.test.ts`: 9 pass, 0 fail.
+- Fixture plan: two growing payloads collapsed to one representative; no POST.
+- Real read-only plan: 14,853 → 179 representatives → 167 replay requests;
+  no POST, move, replay, deletion, or daemon restart.
+- Observer temp-copy test `alarms on capture outbox count, bytes, or oldest
+  age`: 1 pass, 0 fail.
+- `packages/pi-extensions` package-local `tsc` remains red on pre-existing
+  `inngest-monitor` Bun type/module errors; the root gate passed and none of
+  those files were touched.

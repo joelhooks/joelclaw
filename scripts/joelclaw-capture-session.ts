@@ -22,6 +22,7 @@
  *   - Noop (nothing new since last capture) is a silent exit 0.
  */
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -50,9 +51,8 @@ interface SessionState {
   turn_count: number;
 }
 
-const CENTRAL_URL = process.env.JOELCLAW_CENTRAL_URL ?? "http://localhost:3000";
-const AUTH_PATH =
-  process.env.JOELCLAW_AUTH_PATH ?? join(homedir(), ".joelclaw", "auth.json");
+const CENTRAL_URL = process.env.JOELCLAW_CENTRAL_URL ?? "http://127.0.0.1:3111";
+const AUTH_PATH = process.env.JOELCLAW_AUTH_PATH ?? join(homedir(), ".joelclaw", "auth.json");
 const STATE_PATH = join(homedir(), ".joelclaw", "session-state.json");
 const OUTBOX_DIR = join(homedir(), ".joelclaw", "outbox");
 const LOG_PATH = join(homedir(), ".joelclaw", "capture.log");
@@ -62,8 +62,7 @@ function log(message: string) {
   const line = `[${new Date().toISOString()}] ${message}\n`;
   try {
     mkdirSync(dirname(LOG_PATH), { recursive: true });
-    const existing = existsSync(LOG_PATH) ? readFileSync(LOG_PATH, "utf8") : "";
-    writeFileSync(LOG_PATH, existing + line);
+    appendFileSync(LOG_PATH, line, { mode: 0o600 });
   } catch {
     // can't log; don't crash
   }
@@ -83,10 +82,7 @@ function loadAuth(): AuthFile | null {
 function loadAllState(): Record<string, SessionState> {
   try {
     if (!existsSync(STATE_PATH)) return {};
-    return JSON.parse(readFileSync(STATE_PATH, "utf8")) as Record<
-      string,
-      SessionState
-    >;
+    return JSON.parse(readFileSync(STATE_PATH, "utf8")) as Record<string, SessionState>;
   } catch {
     return {};
   }
@@ -207,11 +203,7 @@ async function main() {
   const body: Record<string, unknown> = {
     run_id: runId,
     agent_runtime: RUNTIME,
-    tags: [
-      "captured",
-      `basename:${basename(transcriptPath)}`,
-      `session:${sessionId}`,
-    ],
+    tags: ["captured", `basename:${basename(transcriptPath)}`, `session:${sessionId}`],
     started_at: Date.now(),
     conversation_id: sessionId,
     jsonl: delta,
@@ -233,7 +225,7 @@ async function main() {
       const errText = await res.text();
       const outbox = writeToOutbox(runId, body);
       log(
-        `POST failed ${res.status} for session=${sessionId}; outboxed to ${outbox}: ${errText.slice(0, 200)}`
+        `POST failed ${res.status} for session=${sessionId}; outboxed to ${outbox}: ${errText.slice(0, 200)}`,
       );
       process.exit(0); // outbox drained later; don't block
     }
@@ -246,14 +238,12 @@ async function main() {
     };
     saveAllState(allState);
     log(
-      `captured run_id=${resp.run_id} session=${sessionId} delta_bytes=${delta.length} turns=${turnCount}`
+      `captured run_id=${resp.run_id} session=${sessionId} delta_bytes=${delta.length} turns=${turnCount}`,
     );
     process.exit(0);
   } catch (err) {
     const outbox = writeToOutbox(runId, body);
-    log(
-      `network error for session=${sessionId}; outboxed to ${outbox}: ${(err as Error).message}`
-    );
+    log(`network error for session=${sessionId}; outboxed to ${outbox}: ${(err as Error).message}`);
     process.exit(0);
   }
 }

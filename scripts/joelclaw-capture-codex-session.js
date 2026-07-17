@@ -19,6 +19,7 @@
  */
 const { randomUUID } = require("node:crypto");
 const {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -28,7 +29,7 @@ const {
 const { homedir, hostname } = require("node:os");
 const { basename, dirname, join } = require("node:path");
 
-const CENTRAL_URL = process.env.JOELCLAW_CENTRAL_URL || "http://panda:3000";
+const CENTRAL_URL = process.env.JOELCLAW_CENTRAL_URL || "http://127.0.0.1:3111";
 const AUTH_PATH = process.env.JOELCLAW_AUTH_PATH || join(homedir(), ".joelclaw", "auth.json");
 const STATE_PATH = join(homedir(), ".joelclaw", "codex-session-state.json");
 const OUTBOX_DIR = join(homedir(), ".joelclaw", "outbox");
@@ -42,8 +43,7 @@ function respond(extra = {}) {
 function log(message) {
   try {
     mkdirSync(dirname(LOG_PATH), { recursive: true });
-    const existing = existsSync(LOG_PATH) ? readFileSync(LOG_PATH, "utf8") : "";
-    writeFileSync(LOG_PATH, `${existing}[${new Date().toISOString()}] ${message}\n`);
+    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${message}\n`, { mode: 0o600 });
   } catch {
     // Never break Codex over logging.
   }
@@ -196,7 +196,9 @@ async function main() {
     if (!res.ok) {
       const text = await res.text();
       const outbox = writeToOutbox(runId, body);
-      log(`POST failed status=${res.status} session=${sessionId}; outboxed=${outbox}; ${text.slice(0, 200)}`);
+      log(
+        `POST failed status=${res.status} session=${sessionId}; outboxed=${outbox}; ${text.slice(0, 200)}`,
+      );
       respond();
       return;
     }
@@ -212,7 +214,9 @@ async function main() {
       session_id: sessionId,
     };
     saveJson(STATE_PATH, allState);
-    log(`captured run=${acceptedRunId} session=${sessionId} delta=${delta.length}B lines=${lineCount}`);
+    log(
+      `captured run=${acceptedRunId} session=${sessionId} delta=${delta.length}B lines=${lineCount}`,
+    );
     respond();
   } catch (err) {
     const outbox = writeToOutbox(runId, body);

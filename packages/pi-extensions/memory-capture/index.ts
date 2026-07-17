@@ -17,6 +17,7 @@
  */
 import { randomUUID } from "node:crypto";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -27,9 +28,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
-const CENTRAL_URL = process.env.JOELCLAW_CENTRAL_URL ?? "http://localhost:3000";
-const AUTH_PATH =
-  process.env.JOELCLAW_AUTH_PATH ?? join(homedir(), ".joelclaw", "auth.json");
+const CENTRAL_URL = process.env.JOELCLAW_CENTRAL_URL ?? "http://127.0.0.1:3111";
+const AUTH_PATH = process.env.JOELCLAW_AUTH_PATH ?? join(homedir(), ".joelclaw", "auth.json");
 const STATE_PATH = join(homedir(), ".joelclaw", "session-state.json");
 const OUTBOX_DIR = join(homedir(), ".joelclaw", "outbox");
 const LOG_PATH = join(homedir(), ".joelclaw", "capture.log");
@@ -53,8 +53,7 @@ function log(message: string) {
   try {
     mkdirSync(dirname(LOG_PATH), { recursive: true });
     const line = `[${new Date().toISOString()}] [pi] ${message}\n`;
-    const existing = existsSync(LOG_PATH) ? readFileSync(LOG_PATH, "utf8") : "";
-    writeFileSync(LOG_PATH, existing + line);
+    appendFileSync(LOG_PATH, line, { mode: 0o600 });
   } catch {
     // swallow; never break pi
   }
@@ -73,10 +72,7 @@ function loadAuth(): AuthFile | null {
 function loadAllState(): Record<string, SessionState> {
   try {
     if (!existsSync(STATE_PATH)) return {};
-    return JSON.parse(readFileSync(STATE_PATH, "utf8")) as Record<
-      string,
-      SessionState
-    >;
+    return JSON.parse(readFileSync(STATE_PATH, "utf8")) as Record<string, SessionState>;
   } catch {
     return {};
   }
@@ -204,7 +200,7 @@ async function captureDeltaUnsafe(params: {
       const errText = await res.text();
       writeToOutbox(runId, body);
       log(
-        `POST ${res.status} session=${sessionId}; outboxed run=${runId}: ${errText.slice(0, 160)}`
+        `POST ${res.status} session=${sessionId}; outboxed run=${runId}: ${errText.slice(0, 160)}`,
       );
       return;
     }
@@ -217,7 +213,7 @@ async function captureDeltaUnsafe(params: {
     };
     saveAllState(all);
     log(
-      `captured run=${resp.run_id} session=${sessionId} delta=${delta.length}B turns=${assistantTurns} trigger=${trigger}`
+      `captured run=${resp.run_id} session=${sessionId} delta=${delta.length}B turns=${assistantTurns} trigger=${trigger}`,
     );
   } catch (err) {
     writeToOutbox(runId, body);
