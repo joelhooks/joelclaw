@@ -31,7 +31,6 @@ export { checkEmail } from "./check-email";
 export { checkGatewayHealth } from "./check-gateway-health";
 export { checkGranola, granolaCheckCron } from "./check-granola";
 export { checkLoops } from "./check-loops";
-export { checkMemoryReview } from "./check-memory-review";
 export { checkSessions } from "./check-sessions";
 export {
   checkSystemHealth,
@@ -83,10 +82,8 @@ export { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
 export { meetingAnalyze } from "./meeting-analyze";
 export { meetingTranscriptIndex } from "./meeting-transcript-index";
 export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
-export { batchReview } from "./memory/batch-review";
 export { memoryEmbed } from "./memory/embed";
 export { nightlyMaintenance } from "./memory/nightly-maintenance";
-export { proposalTriage } from "./memory/proposal-triage";
 export { memoryRunCaptured } from "./memory/run-captured";
 export { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 export {
@@ -117,9 +114,7 @@ export { o11yTriage } from "./o11y-triage";
 export { observeSessionFunction } from "./observe";
 export { observeSessionNoted } from "./observe-session-noted";
 export { paneSchedule } from "./pane-schedule";
-export { promote } from "./promote";
 export { queueObserver, queueObserverRequested } from "./queue-observer";
-export { reflect } from "./reflect";
 export { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
 export { signalReminder } from "./signal-reminder";
 export { slackBackfillBatch, slackChannelBackfill } from "./slack-backfill";
@@ -129,11 +124,9 @@ export { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions
 export { summarize, summarizeLegacyAlias } from "./summarize";
 export { swarmAgentExec } from "./swarm-agent-exec";
 export { swarmOrchestrator } from "./swarm-orchestrator";
-export { systemLogger } from "./system-logger";
 export { taskTriage } from "./task-triage";
 export { telegramCallbackReceived } from "./telegram-callback";
 export { telnyxNotify } from "./telnyx-notify";
-export { todoistMemoryReviewBridge } from "./todoist-memory-review-bridge";
 export {
   todoistCommentAdded,
   todoistTaskCompleted,

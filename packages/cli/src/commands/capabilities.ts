@@ -56,8 +56,8 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
   {
     id: "operator-signals",
     category: "operations",
-    goal: "Lease credentials, write structured logs, and notify gateway in one deterministic flow.",
-    prerequisites: ["Capability adapters configured (secrets, log, notify)"],
+    goal: "Lease credentials and notify the gateway in one deterministic flow.",
+    prerequisites: ["Capability adapters configured (secrets, notify)"],
     commands: [
       { command: "secrets status", description: "Confirm secrets backend daemon is healthy" },
       {
@@ -66,18 +66,6 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
         params: {
           name: { description: "Secret name", required: true },
           ttl: { description: "Lease duration", value: "15m", default: "15m" },
-        },
-      },
-      {
-        command: "log write --action <action> --tool <tool> --detail <detail> [--reason <reason>] [--session <session>] [--system <system>]",
-        description: "Record the operational mutation in canonical slog (flags or SLOG_* env required)",
-        params: {
-          action: { description: "Mutation verb", required: true, value: "configure" },
-          tool: { description: "Component name", required: true, value: "cli" },
-          detail: { description: "What changed", required: true, value: "updated capability adapter config" },
-          reason: { description: "Why the change was made", value: "phase-1 capability rollout" },
-          session: { description: "slog provenance sessionId (or set SLOG_SESSION_ID)", value: "gateway" },
-          system: { description: "slog provenance systemId (or set SLOG_SYSTEM_ID)", value: "panda" },
         },
       },
       {
@@ -93,7 +81,6 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
     ],
     verification: [
       "Lease response includes credential value",
-      "Log write acknowledged by slog backend",
       "Notify event appears in gateway queue/stream",
     ],
   },

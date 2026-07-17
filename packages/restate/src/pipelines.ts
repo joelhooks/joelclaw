@@ -127,14 +127,6 @@ export const buildTypesenseFullSyncPipeline = (): DagNodeInput[] => [
     },
   },
   {
-    id: "slog-index",
-    task: "index system log into Typesense",
-    handler: "shell",
-    config: {
-      command: buildTier1RunnerCommand("typesense-system-log-sync"),
-    },
-  },
-  {
     id: "knowledge-sync",
     task: "index ADRs and skills into system knowledge",
     handler: "shell",
@@ -146,7 +138,7 @@ export const buildTypesenseFullSyncPipeline = (): DagNodeInput[] => [
     id: "summarize",
     task: "summarize full sync results",
     handler: "infer",
-    dependsOn: ["vault-index", "blog-index", "slog-index", "knowledge-sync"],
+    dependsOn: ["vault-index", "blog-index", "knowledge-sync"],
     config: {
       prompt: [
         "You are summarizing a Typesense full sync run.",

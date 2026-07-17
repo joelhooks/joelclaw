@@ -94,7 +94,6 @@ async function seedNetwork(): Promise<void> {
     { name: "gateway-tripwire", status: "running", description: "Gateway watchdog (auto-restart on failure)" },
     { name: "caddy", status: "running", description: "HTTPS reverse proxy with Tailscale certs" },
     { name: "colima", status: "running", description: "Container runtime (VZ framework → Talos k8s)" },
-    { name: "vault-log-sync", status: "running", description: "system-log.jsonl → Obsidian markdown notes" },
     { name: "content-sync-watcher", status: "running", description: "Vault content → web deploy trigger" },
     { name: "typesense-portforward", status: "running", description: "kubectl port-forward for Typesense :8108" },
   ];
@@ -116,8 +115,8 @@ async function seedNetwork(): Promise<void> {
     { layer: 4, label: "Orchestration", description: "Talos k8s cluster, launchd daemons, Helm releases" },
     { layer: 3, label: "Services", description: "Inngest, Redis, Typesense, PDS, LiveKit (k8s pods)" },
     { layer: 2, label: "Pipelines", description: "Video ingest, transcription, content sync, friction fix" },
-    { layer: 1, label: "Memory", description: "Observations, contentResources (Convex), MEMORY.md" },
-    { layer: 0, label: "Data", description: "Obsidian Vault, system-log.jsonl, 64 TB NAS archive" },
+    { layer: 1, label: "Memory", description: "Brain .svx pages, observation pages, and disposable search projections" },
+    { layer: 0, label: "Data", description: "Brain repositories, Obsidian Vault sources, and the 64 TB NAS archive" },
   ];
 
   for (const node of nodes) {

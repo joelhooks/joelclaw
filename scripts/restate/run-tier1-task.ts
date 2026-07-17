@@ -6,7 +6,6 @@ import {
 import { runSubscriptionCheckFeeds } from "../../packages/system-bus/src/inngest/functions/subscriptions";
 import {
   indexBlogPosts,
-  indexSystemLog,
   indexVaultNotes,
   runTypesenseFullSync,
   syncSystemKnowledge,
@@ -46,9 +45,6 @@ async function run() {
 
     case "typesense-blog-sync":
       return indexBlogPosts();
-
-    case "typesense-system-log-sync":
-      return indexSystemLog();
 
     case "typesense-system-knowledge-sync":
       return syncSystemKnowledge();

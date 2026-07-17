@@ -101,20 +101,16 @@ export const recallCmd = Command.make(
             description: "Get more results",
           },
           {
-            command: `joelclaw search "${query}"`,
-            description: "Search all collections (vault, blog, slog too)",
+            command: `joelclaw sessions search "${query}"`,
+            description: "Search the observation-page projection directly",
           },
           {
             command: `joelclaw recall "${query}" --raw`,
-            description: "Raw observations for injection",
+            description: "Raw Brain and observation text for injection",
           },
           {
             command: `joelclaw recall "${query}" --budget deep --limit 10`,
             description: "Run deeper retrieval for difficult queries",
-          },
-          {
-            command: `joelclaw recall "${query}" --category jc:memory-system --limit 10`,
-            description: "Constrain retrieval to a specific memory category",
           },
         ])
       )

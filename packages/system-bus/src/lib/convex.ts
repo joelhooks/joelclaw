@@ -109,23 +109,6 @@ export async function pushMemoryObservation(obs: {
   );
 }
 
-/** Push a system log entry to Convex */
-export async function pushSystemLogEntry(entry: {
-  entryId: string;
-  action: string;
-  tool: string;
-  detail: string;
-  reason?: string;
-  timestamp: number;
-}) {
-  await pushContentResource(
-    `slog:${entry.entryId}`,
-    "system_log",
-    entry,
-    [entry.action, entry.tool, entry.detail, entry.reason].filter(Boolean).join(" ")
-  );
-}
-
 /** Push a notification to Convex dashboard */
 export async function pushNotification(
   type: string,

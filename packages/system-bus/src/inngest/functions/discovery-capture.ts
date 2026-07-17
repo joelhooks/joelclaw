@@ -182,7 +182,7 @@ export const __discoveryCaptureTestUtils = {
  *
  * Receives a URL and/or context. Does all the heavy lifting:
  * clone repos, extract articles, generate a compelling title,
- * decide tags/relevance, write vault note in Joel's voice, and slog.
+ * decide tags/relevance, write the vault note, and emit OTEL receipts.
  */
 export const discoveryCapture = inngest.createFunction(
   {
@@ -348,7 +348,7 @@ export const discoveryCapture = inngest.createFunction(
             }
           });
 
-          // Step 3: Verify + slog
+          // Step 3: Verify the captured note and resolve its canonical routing.
           const resolved = await step.run("resolve-note", async () => {
             const exists = await Bun.file(result.vaultPath).exists();
             if (!exists) {
@@ -390,7 +390,6 @@ export const discoveryCapture = inngest.createFunction(
               routing,
             });
 
-            await $`slog write --session system-bus --system panda --action noted --tool discovery --detail "${resolvedTitle}" --reason "vault:Resources/discoveries/${result.noteName}.md"`.quiet();
             return {
               title: resolvedTitle,
               slug,

@@ -439,7 +439,6 @@ app.get("/", (c) =>
       "content/updated": "Vault content changed → sync ADRs + discoveries to website",
       "typesense/vault-sync.requested": "Queue request for debounced/targeted vault re-index",
       "discovery/noted": "Investigate interesting find → vault note in Resources/discoveries/",
-      "system/log.written": "Write canonical log entry",
       "media/received": "Process media from channels → vision/transcribe → notify gateway",
       "todoist/*": "Todoist webhook events (comment.added, task.completed, task.created)",
       "front/*": "Front webhook events (message.received, message.sent, assignee.changed)",

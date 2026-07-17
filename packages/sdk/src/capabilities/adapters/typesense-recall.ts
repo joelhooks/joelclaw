@@ -1,8 +1,8 @@
 // ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
-// ADR-0082: Migrated from Qdrant+embed.py (Qdrant fully retired 2026-02-22) to Typesense with built-in auto-embedding.
+// ADR-0082: Migrated from Qdrant to Typesense.
+// Legacy retirement (2026-07-17): recall now reads the disposable Brain + observation projections.
 // ADR-0077 Workstream 1/2: query rewrite + trust pass + usage-signal-aware ranking.
 
-import { embed } from "@joelclaw/inference-router"
 import { Effect, ParseResult, Schema } from "effect"
 import { createOtelEventPayload, ingestOtelPayload } from "../../lib/otel-ingest"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../lib/typesense-auth"
@@ -13,7 +13,8 @@ const MAX_INJECT = 10
 const DECAY_CONSTANT = 0.01
 const STALENESS_DAYS = 90
 const MIN_OBSERVATION_CHARS = 12
-const RECALL_EMBED_DIMS = 384
+const OBSERVATIONS_COLLECTION = "observations"
+const BRAIN_COLLECTION = "brain_graph_nodes"
 // ADR-0192: Bumped default from 2s to 6s. Pi cold-start on M4 Pro is ~3-4s,
 // so 2s guaranteed timeout on every first invocation. 6s gives enough headroom
 // for cold start + Haiku inference while the circuit breaker catches persistent failures.
@@ -328,8 +329,13 @@ interface TypesenseHit {
     category_confidence?: number | string
     category_source?: string
     taxonomy_version?: string
+    privacy?: string
+    path?: string
+    url?: string
+    title?: string
+    repo?: string
   }
-  highlights?: Array<{ field: string; snippet?: string }>
+  highlights?: Array<{ field: string; snippet?: string; snippets?: string[]; value?: string; values?: string[] }>
   text_match_info?: { score?: number | string }
   hybrid_search_info?: { rank_fusion_score?: number | string }
 }
@@ -955,119 +961,190 @@ async function runRewriteQuery(query: string): Promise<RewrittenQuery> {
   return runRewriteQueryWith(query)
 }
 
-function formatRecallVectorQuery(embedding: number[], fetchLimit: number): string {
-  const vector = embedding.map((value) => Number.isFinite(value) ? Number(value.toFixed(8)) : 0)
-  return `embedding:([${vector.join(",")}], k:${fetchLimit}, alpha:0.7)`
-}
-
 function buildRecallSearchParams(input: {
   query: string
+  queryBy: string
   fetchLimit: number
   filterBy?: string
-  vectorQuery?: string
+  sortBy?: string
 }): URLSearchParams {
   const params = new URLSearchParams({
     q: input.query,
-    query_by: "observation",
+    query_by: input.queryBy,
     per_page: String(input.fetchLimit),
-    exclude_fields: "embedding",
   })
-  if (input.vectorQuery) {
-    params.set("vector_query", input.vectorQuery)
-  }
-  if (input.filterBy) {
-    params.set("filter_by", input.filterBy)
-  }
+  if (input.filterBy) params.set("filter_by", input.filterBy)
+  if (input.sortBy) params.set("sort_by", input.sortBy)
   return params
 }
 
-async function recallVectorQuery(query: string, fetchLimit: number): Promise<string | undefined> {
-  try {
-    const result = await embed(query, {
-      priority: "query",
-      dimensions: RECALL_EMBED_DIMS,
-    })
-    return formatRecallVectorQuery(result.embedding, fetchLimit)
-  } catch {
-    // Fail open: recall must still work as keyword search when Ollama or the
-    // embedding lane is unavailable. Silent recall failures are worse than a
-    // temporary downgrade from hybrid to text search.
-    return undefined
+type ObservationProjectionDocument = {
+  id: string
+  sessionId?: string
+  started_at?: number
+  privacy?: string
+  gist?: string
+  observations?: string[]
+  decisions?: string[]
+  open_questions?: string[]
+  url?: string
+}
+
+type BrainProjectionDocument = {
+  id: string
+  title?: string
+  label?: string
+  kind?: string
+  root?: string
+  repo?: string
+  path?: string
+  body?: string
+}
+
+type ProjectionHit<T> = {
+  document?: T
+  highlights?: TypesenseHit["highlights"]
+  text_match_info?: TypesenseHit["text_match_info"]
+  hybrid_search_info?: TypesenseHit["hybrid_search_info"]
+}
+
+type ProjectionResult<T> = {
+  found?: number
+  hits?: Array<ProjectionHit<T>>
+  error?: string
+  code?: number
+}
+
+function compactText(parts: Array<string | undefined>, maxChars = 1_500): string {
+  const text = [...new Set(parts.map((part) => part?.replace(/<[^>]+>/gu, "").replace(/\s+/gu, " ").trim()).filter(Boolean) as string[])]
+    .join("\n")
+  return text.length > maxChars ? `${text.slice(0, maxChars - 3).trimEnd()}...` : text
+}
+
+function highlightedText(hit: ProjectionHit<unknown>): string | undefined {
+  for (const highlight of hit.highlights ?? []) {
+    const value = highlight.snippet
+      ?? highlight.snippets?.[0]
+      ?? highlight.value
+      ?? highlight.values?.[0]
+    if (value?.trim()) return value
+  }
+  return undefined
+}
+
+function normalizeObservationHit(hit: ProjectionHit<ObservationProjectionDocument>): TypesenseHit | null {
+  const doc = hit.document
+  if (!doc?.id) return null
+  const observation = compactText([
+    highlightedText(hit),
+    doc.gist,
+    ...(doc.observations ?? []),
+    ...(doc.decisions ?? []),
+    ...(doc.open_questions ?? []),
+  ])
+  if (!observation) return null
+  return {
+    document: {
+      id: doc.id,
+      session_id: doc.sessionId,
+      timestamp: typeof doc.started_at === "number" ? Math.floor(doc.started_at / 1_000) : undefined,
+      observation_type: "observation-page",
+      observation,
+      source: doc.url ?? `${OBSERVATIONS_COLLECTION}:${doc.id}`,
+      privacy: doc.privacy,
+      url: doc.url,
+    },
+    highlights: hit.highlights,
+    text_match_info: hit.text_match_info,
+    hybrid_search_info: hit.hybrid_search_info,
   }
 }
 
-function isVectorSearchError(message: string): boolean {
-  return /vector field|vector_query|auto-embedding|embedding field|do not use `query_by`/iu.test(message)
+function normalizeBrainHit(hit: ProjectionHit<BrainProjectionDocument>): TypesenseHit | null {
+  const doc = hit.document
+  if (!doc?.id) return null
+  const title = doc.title ?? doc.label ?? doc.path ?? doc.id
+  const observation = compactText([title, highlightedText(hit), doc.body], 1_500)
+  if (!observation) return null
+  return {
+    document: {
+      id: doc.id,
+      observation_type: doc.kind ?? "brain-page",
+      observation,
+      source: doc.path ? `${doc.repo ?? doc.root ?? "brain"}:${doc.path}` : BRAIN_COLLECTION,
+      category_id: doc.root,
+      path: doc.path,
+      title,
+      repo: doc.repo,
+    },
+    highlights: hit.highlights,
+    text_match_info: hit.text_match_info,
+    hybrid_search_info: hit.hybrid_search_info,
+  }
 }
 
-/** Hybrid semantic+keyword search over memory_observations; text-only fallback when embeddings are unavailable. */
+/** Full-text recall over the disposable observation and Brain graph projections. */
 async function searchTypesense(
   query: string,
   limit: number,
   apiKey: string,
-  options?: { fetchMultiplier?: number; filterBy?: string },
+  options?: { fetchMultiplier?: number },
 ): Promise<{ hits: TypesenseHit[]; found: number }> {
   const bounded = Math.min(Math.max(limit, 1), MAX_INJECT)
   const fetchMultiplier = options?.fetchMultiplier && Number.isFinite(options.fetchMultiplier)
     ? Math.max(1, options.fetchMultiplier)
     : 3
   const fetchLimit = Math.min(Math.max(Math.ceil(bounded * fetchMultiplier), bounded + 4), 60)
-  const vectorQuery = await recallVectorQuery(query, fetchLimit)
+  const searches = [
+    {
+      collection: OBSERVATIONS_COLLECTION,
+      ...Object.fromEntries(buildRecallSearchParams({
+        query,
+        queryBy: "gist,observations,decisions,open_questions",
+        fetchLimit,
+        sortBy: "_text_match:desc,started_at:desc",
+      }).entries()),
+    },
+    {
+      collection: BRAIN_COLLECTION,
+      ...Object.fromEntries(buildRecallSearchParams({
+        query,
+        queryBy: "title,label,body",
+        fetchLimit,
+        filterBy: "kind:=brain-page",
+      }).entries()),
+    },
+  ]
 
-  async function runSearch(params: URLSearchParams): Promise<{ hits: TypesenseHit[]; found: number }> {
-    const search = Object.fromEntries(params.entries())
-    const resp = await fetch(
-      `${TYPESENSE_URL}/multi_search`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-TYPESENSE-API-KEY": apiKey,
-        },
-        body: JSON.stringify({
-          searches: [
-            {
-              collection: "memory_observations",
-              ...search,
-            },
-          ],
-        }),
-      }
-    )
-
-    if (!resp.ok) {
-      const text = await resp.text()
-      throw new Error(`Typesense search failed (${resp.status}): ${text}`)
-    }
-
-    const data = await resp.json() as {
-      results?: Array<{ found?: number; hits?: TypesenseHit[]; error?: string; code?: number }>
-    }
-    const first = data.results?.[0]
-    if (!first) return { hits: [], found: 0 }
-    if (first.error) {
-      throw new Error(`Typesense search failed (${first.code ?? 400}): ${first.error}`)
-    }
-    return { hits: first.hits ?? [], found: first.found ?? 0 }
+  const response = await fetch(`${TYPESENSE_URL}/multi_search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-TYPESENSE-API-KEY": apiKey,
+    },
+    body: JSON.stringify({ searches }),
+  })
+  if (!response.ok) {
+    throw new Error(`Typesense search failed (${response.status}): ${await response.text()}`)
   }
 
-  const params = buildRecallSearchParams({
-    query,
-    fetchLimit,
-    filterBy: options?.filterBy,
-    vectorQuery,
-  })
+  const data = await response.json() as {
+    results?: [ProjectionResult<ObservationProjectionDocument>?, ProjectionResult<BrainProjectionDocument>?]
+  }
+  const observationResult = data.results?.[0]
+  const brainResult = data.results?.[1]
+  for (const result of [observationResult, brainResult]) {
+    if (result?.error) throw new Error(`Typesense search failed (${result.code ?? 400}): ${result.error}`)
+  }
 
-  try {
-    return await runSearch(params)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (!vectorQuery || !isVectorSearchError(message)) throw error
-    return await runSearch(buildRecallSearchParams({
-      query,
-      fetchLimit,
-      filterBy: options?.filterBy,
-    }))
+  const hits = [
+    ...(observationResult?.hits ?? []).map(normalizeObservationHit),
+    ...(brainResult?.hits ?? []).map(normalizeBrainHit),
+  ].filter((hit): hit is TypesenseHit => hit !== null)
+
+  return {
+    hits,
+    found: (observationResult?.found ?? 0) + (brainResult?.found ?? 0),
   }
 }
 
@@ -1135,7 +1212,9 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
     const startedAt = Date.now()
     const budgetPlan = resolveBudgetPlan(args.budget, args.query)
     const resolvedCategory = normalizeCategoryFilter(args.category)
-    const categoryFilterBy = resolvedCategory ? `category_id:=${resolvedCategory}` : undefined
+    // Category flags remain accepted for CLI compatibility, but the new projections
+    // do not share the legacy taxonomy schema. Do not turn a valid recall into a 400.
+    const categoryFilterBy: string | undefined = undefined
     const rewrite = yield* Effect.promise(() => runRewriteQueryWith(args.query, {
       rewriteEnabled: budgetPlan.rewriteEnabled,
     }))
@@ -1168,28 +1247,13 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
         },
       }))
 
-      let categoryFilterApplied = Boolean(categoryFilterBy)
-      let categoryFilterReason = categoryFilterBy ? "applied" : "none"
+      const categoryFilterApplied = false
+      const categoryFilterReason = resolvedCategory ? "unsupported_on_brain_projection" : "none"
 
       const result = yield* Effect.tryPromise({
-        try: async () => {
-          try {
-            return await searchTypesense(rewrite.rewrittenQuery, args.limit, apiKey, {
-              fetchMultiplier: budgetPlan.fetchMultiplier,
-              filterBy: categoryFilterBy,
-            })
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
-            if (categoryFilterBy && /filter field named `category_id`/iu.test(message)) {
-              categoryFilterApplied = false
-              categoryFilterReason = "schema_missing_fallback"
-              return await searchTypesense(rewrite.rewrittenQuery, args.limit, apiKey, {
-                fetchMultiplier: budgetPlan.fetchMultiplier,
-              })
-            }
-            throw error
-          }
-        },
+        try: () => searchTypesense(rewrite.rewrittenQuery, args.limit, apiKey, {
+          fetchMultiplier: budgetPlan.fetchMultiplier,
+        }),
         catch: (error) => (error instanceof Error ? error : new Error(String(error))),
       })
 
@@ -1295,6 +1359,11 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
             categoryConfidence: asFiniteNumber(h.document.category_confidence, 0),
             categorySource: h.document.category_source || "unknown",
             taxonomyVersion: h.document.taxonomy_version || "unknown",
+            privacy: h.document.privacy || "private",
+            path: h.document.path,
+            url: h.document.url,
+            title: h.document.title,
+            repo: h.document.repo,
             session: h.document.session_id || "unknown",
             timestamp: toIsoTimestamp(h.document.timestamp) || "unknown",
             recallCount: asFiniteNumber(h.document.recall_count, 0),
@@ -1392,7 +1461,8 @@ export const __recallTestUtils = {
   trustPassFilter,
   runRewriteQueryWith,
   buildRecallSearchParams,
-  formatRecallVectorQuery,
+  normalizeObservationHit,
+  normalizeBrainHit,
   // ADR-0192 testing exports
   detectRewriteSkipReason,
   get rewriteCircuit() { return rewriteCircuit },

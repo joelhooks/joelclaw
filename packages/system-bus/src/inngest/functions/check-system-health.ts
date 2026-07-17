@@ -1207,90 +1207,6 @@ export const checkSystemHealth = inngest.createFunction(
       )
       : [];
 
-    const agentSecretsLogPlan = runCoreChecks
-      ? await withTiming(stepDurationsMs, "core.slog-agent-secrets-health", async () =>
-        step.run("slog-agent-secrets-health", async () => {
-          const service = services.find((item) => item.name === "Agent Secrets");
-          if (!service) return { skipped: true, reason: "service-missing" };
-
-          const redis = new Redis({
-            host: "localhost",
-            port: 6379,
-            lazyConnect: true,
-            connectTimeout: 3000,
-          });
-          redis.on("error", () => {});
-
-          try {
-            if (!service.ok) {
-              const shouldLog = await redis.set(
-                "health:agent-secrets:down:logged",
-                String(Date.now()),
-                "EX",
-                3600,
-                "NX"
-              );
-              if (!shouldLog) return { logged: false, reason: "cooldown" };
-
-              return {
-                logged: true,
-                state: "down",
-                logEvent: {
-                  id: "slog-agent-secrets-down",
-                  payload: {
-                    name: "system/log.written",
-                    data: {
-                      action: "degraded",
-                      tool: "agent-secrets",
-                      detail: `Agent Secrets daemon unavailable: ${service.detail ?? "unknown"}`,
-                      reason: "check/system-health",
-                    },
-                  },
-                },
-              };
-            }
-
-            const shouldLogRecovery = await redis.set(
-              "health:agent-secrets:up:logged",
-              String(Date.now()),
-              "EX",
-              3600,
-              "NX"
-            );
-            await redis.del("health:agent-secrets:down:logged");
-            if (!shouldLogRecovery) return { logged: false, state: "up", reason: "cooldown" };
-
-            return {
-              logged: true,
-              state: "up",
-              logEvent: {
-                id: "slog-agent-secrets-up",
-                payload: {
-                  name: "system/log.written",
-                  data: {
-                    action: "recovered",
-                    tool: "agent-secrets",
-                    detail: "Agent Secrets daemon healthy",
-                    reason: "check/system-health",
-                  },
-                },
-              },
-            };
-          } catch (error) {
-            return { logged: false, error: String(error) };
-          } finally {
-            redis.disconnect();
-          }
-        })
-      )
-      : null;
-
-    if (agentSecretsLogPlan && "logEvent" in agentSecretsLogPlan && agentSecretsLogPlan.logEvent) {
-      await withTiming(stepDurationsMs, "core.slog-agent-secrets-health-dispatch", async () =>
-        step.sendEvent(agentSecretsLogPlan.logEvent.id, agentSecretsLogPlan.logEvent.payload)
-      );
-    }
-
     let otelErrorRate: OtelErrorRateSummary | null = null;
     let writeGateDrift: WriteGateDriftSummary | null = null;
     let agentDispatchCanary: AgentDispatchCanaryHealthResult | null = null;
@@ -1379,7 +1295,7 @@ export const checkSystemHealth = inngest.createFunction(
             kill: [],
             defer: [],
             notify: ["joelclaw gateway events", "joelclaw otel list --hours 1"],
-            links: ["/Users/joel/Vault/system/system-log.jsonl"],
+            links: [],
           },
         },
       );

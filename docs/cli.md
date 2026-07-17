@@ -82,18 +82,11 @@ Semantics:
 3. kickstart Talon + run `talon --check` when server/k8s checks fail
 4. re-collect status and return before/after snapshots
 
-## Inngest memory probes
+## Brain and observation recall
 
-```bash
-joelclaw inngest memory-e2e [--wait-ms 90000] [--poll-ms 1500]
-joelclaw inngest memory-health [--hours 24]
-```
+`joelclaw recall <query>` queries the disposable `observations` and `brain_graph_nodes` Typesense projections. It preserves the existing recall result envelope, including `hits[].observation`, so voice and other callers do not need a coordinated cutover. Brain `.svx` files remain canonical; Typesense is rebuildable.
 
-Semantics:
-
-- `memory-e2e` sends a `memory/session.ended` marker, waits for observe → Typesense propagation, verifies direct keyword search against `memory_observations.observation`, then runs `joelclaw recall` for retrieval coverage.
-- `memory_observations.embedding` is a raw float vector field, not a Typesense auto-embedding field; the CLI must not use `query_by=embedding` or empty auto-embedding syntax. Recall and `joelclaw search --semantic --collection memory_observations` generate a 384-d query embedding via `@joelclaw/inference-router`, send it through Typesense `vector_query` (never `query_by`), and fall back to `query_by=observation` text search when embedding is unavailable. Collections without an explicit semantic vector field stay keyword-only even when `--semantic` is passed.
-- `memory-health` is a broad health snapshot. During live reboot/export work, high-churn failures can reflect transient worker reachability, so inspect recent failed run traces before treating the whole memory store as bad. Its category gates use current-window observations when any were written in the window, while still reporting corpus-wide category coverage as advisory; tiny current-window confidence samples under 25 observations are reported but do not fail the gate. Stale RUNNING memory runs that started before the current worker are reported as `staleSdkActiveMemoryRuns` but excluded from the live backlog gate.
+The legacy `memory_observations` health/e2e probes are retired with that collection. Use `joelclaw observations index` to rebuild observation pages and the Brain graph index owner to rebuild `brain_graph_nodes`.
 
 ## Inngest Connect WebSocket auth probe
 

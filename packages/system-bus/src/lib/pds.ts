@@ -1,8 +1,7 @@
 /**
  * PDS client — thin XRPC wrapper for writing records to the AT Proto PDS.
  *
- * Used for dual-write: after slog/memory/observe writes to their primary stores,
- * they also write a typed record to the PDS for portable, federated access.
+ * Used for selected portable records after their primary writes complete.
  *
  * ADR-0004: AT Protocol as bedrock
  * ADR-0044: Private-first PDS with Bento bridge
@@ -189,22 +188,6 @@ export async function pdsWriteRecord(
     console.error("PDS write error:", error instanceof Error ? error.message : error);
     return null;
   }
-}
-
-/**
- * Write a system log entry to the PDS.
- * Maps 1:1 to dev.joelclaw.system.log lexicon.
- */
-export async function pdsWriteSystemLog(entry: {
-  timestamp: string;
-  action: string;
-  tool: string;
-  detail: string;
-  reason?: string;
-  sessionId?: string;
-  systemId?: string;
-}): Promise<{ uri: string; cid: string } | null> {
-  return pdsWriteRecord("dev.joelclaw.system.log", entry);
 }
 
 /**

@@ -251,7 +251,6 @@ When operational reality changes, update the relevant skill immediately.
 
 `~/Vault` (Obsidian, PARA method) is the knowledge base:
 - `docs/decisions/` — Architecture Decision Records (ADR-0001 through ADR-0157+)
-- `system/system-log.jsonl` — structured system log (`slog` CLI)
 - `Resources/` — contacts, discoveries, video notes
 - `Projects/` — active project notes
 
@@ -267,12 +266,9 @@ When operational reality changes, update the relevant skill immediately.
 | 0156 | Graceful worker restart | Accepted |
 | 0157 | Agent lifecycle CLI | Proposed |
 
-## Logging System Changes
+## Recording System Changes
 
-Any install, config change, or ops mutation → `slog write`:
-```bash
-slog write --action configure --tool <tool> --detail "<what changed>" --reason "<why>"
-```
+Use canonical OTEL events and durable Brain receipts. The legacy `slog` JSONL journal is retired.
 
 ## Git Workflow
 

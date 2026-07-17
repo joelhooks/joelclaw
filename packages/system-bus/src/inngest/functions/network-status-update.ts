@@ -40,7 +40,6 @@ const DEFAULT_DAEMON_DESCRIPTIONS: Record<string, string> = {
   "gateway-tripwire": "Gateway watchdog (auto-restart on failure)",
   caddy: "HTTPS reverse proxy with Tailscale certs",
   colima: "Container runtime (VZ framework → Talos k8s)",
-  "vault-log-sync": "system-log.jsonl → Obsidian markdown notes",
   "content-sync-watcher": "Vault content → web deploy trigger",
   "typesense-portforward": "kubectl port-forward for Typesense :8108",
 };

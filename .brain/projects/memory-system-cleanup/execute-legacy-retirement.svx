@@ -31,3 +31,99 @@ archive+drop, then unregister/delete. Deletion of live data only after
 snapshot receipts exist. Gates: `bunx tsc --noEmit`, worker restart +
 `joelclaw functions` showing the zombies gone, `joelclaw recall`
 returning Brain-backed results.
+
+## Result
+
+Local build completed on flagg on 2026-07-17. Nothing was committed,
+pushed, deployed, restarted, dropped, copied from panda, or written to
+the NAS.
+
+### Recall retarget
+
+- `joelclaw recall` now fan-outs to Typesense `observations` and
+  `brain_graph_nodes`, then normalizes both into the existing recall
+  envelope. `hits[].observation` remains intact for voice and other
+  callers.
+- The generic voice `recall` tool follows that CLI path and filters
+  `privacy: sensitive` hits unless the caller is positively verified as
+  Joel.
+- Source smoke test:
+  `JOELCLAW_RECALL_OTEL=0 JOELCLAW_RECALL_REWRITE=0 bun packages/cli/src/cli.ts recall "legacy memory retirement" --limit 3`
+  returned one current observation page plus Brain pages. The top hit was
+  the 2026-07-17 retirement decision observation.
+
+### Archive tooling
+
+- Added `scripts/archive-memory-observations.ts`. Dry-run is default;
+  `--execute` streams the full collection to a timestamped JSONL under
+  `/Volumes/three-body/backups/typesense/retired-memory-observations/`,
+  verifies the exported line count against the collection count, and
+  writes an adjacent JSON receipt with byte count and SHA-256. It never
+  drops the collection.
+- Dry-run found exactly **28,050** documents and confirmed the NAS root
+  was available.
+- Added `scripts/snapshot-panda-system-log.sh`. It copies panda's JSONL
+  to `/Volumes/three-body/backups/slog/archive/` through a temporary
+  local file, refuses an empty copy, installs atomically, and writes an
+  adjacent count/byte/SHA-256 receipt. It was syntax-checked but not run.
+
+### Zombie removal
+
+- Unregistered and deleted `memory/reflect`,
+  `memory/review-promote`, `memory/proposal-triage`, and
+  `memory/batch-review`, plus their prompt modules.
+- Removed the dead Todoist/check-memory-review bridge registrations and
+  sources.
+- Deleted the ten MEM/FRIC acceptance files identified by the survey.
+- Local registry imports reported 149 host functions and 14 cluster
+  functions, with no retired IDs present.
+
+### System-log removal
+
+- Removed `joelclaw log write` and the SDK `slog-cli` capability.
+- Deleted `system-logger.ts` and removed its registration/event surface.
+- Removed direct `slog write` subprocesses from discovery, video,
+  transcript, and summarize flows.
+- Removed JSONL → Typesense/Convex sync, Restate full-sync node, monthly
+  NAS copy hook, PDS mirror helper, stale health/self-healing links, and
+  active AGENTS/CLAUDE path references.
+- Historical `system_log` search/correlation data remains readable; this
+  migration does not drop that collection.
+
+### Gates
+
+- PASS: `bunx tsc --noEmit`.
+- PASS: 19 recall adapter/CLI tests.
+- PASS: focused Biome check over every changed file in `packages/` and
+  `apps/`, plus the new TypeScript archive script.
+- PASS: `bash -n scripts/snapshot-panda-system-log.sh` and
+  `python3 -m py_compile infra/voice-agent/main.py`.
+- PASS: `git diff --check`.
+- BASELINE FAIL: required full
+  `pnpm biome check packages/ apps/` still reports 59 pre-existing
+  import-order errors in unrelated web/world-restate files. None are in
+  this migration's changed-file set; they were not auto-fixed.
+- BASELINE FAIL: `pi-notes brain check` rejects four pre-existing
+  `.brain/tasks/*.md` support files, including the attached task brief.
+  This step's edited `.svx` page is not one of the reported failures.
+
+### Steering commands
+
+Run in this order after reviewing the diff:
+
+```bash
+# 1. Export 28,050 legacy observations and inspect the printed receipt.
+bun scripts/archive-memory-observations.ts --execute
+
+# 2. Snapshot panda's frozen system log and inspect its receipt.
+./scripts/snapshot-panda-system-log.sh
+
+# 3. Only after both receipts verify, drop the legacy observation collection.
+key="$(secrets lease typesense_api_key)" && curl -fS -X DELETE 'http://localhost:8108/collections/memory_observations' -H "X-TYPESENSE-API-KEY: $key"
+
+# 4. Rebuild the CLI, restart/register the worker, and verify retirement.
+bun build packages/cli/src/cli.ts --compile --outfile ~/.bun/bin/joelclaw
+joelclaw inngest restart-worker --register
+joelclaw functions
+joelclaw recall "legacy memory retirement" --limit 3
+```

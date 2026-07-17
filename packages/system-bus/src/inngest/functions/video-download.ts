@@ -109,12 +109,7 @@ export const videoDownload = inngest.createFunction(
       return destDir;
     });
 
-    // Step 3: Log download completion
-    await step.run("log-download", async () => {
-      await $`slog write --action download --tool video-download --detail "${download.title} from ${download.channel} (${download.duration})" --reason "video download via inngest"`.quiet();
-    });
-
-    // Step 4: Emit events — trigger transcript processing
+    // Step 3: Emit events — trigger transcript processing
     await step.sendEvent("emit-events", [
       {
         name: "pipeline/video.downloaded",

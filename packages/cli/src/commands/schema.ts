@@ -32,11 +32,6 @@ export const schemaCmd = Command.make(
           example: `joelclaw send content/summarize.requested -d '{"vaultPath":"/Users/joel/Vault/Resources/videos/some-note.md"}'`,
           aliases: ["content/summarize"],
         },
-        "system/log": {
-          description: "Write a canonical system log entry",
-          data: { action: "string (required)", tool: "string (required)", detail: "string (required)", reason: "string (optional)" },
-          example: `joelclaw send system/log -d '{"action":"test","tool":"cli","detail":"joelclaw test"}'`,
-        },
         "agent/loop.start": {
           description: "Start a durable coding loop from a PRD",
           data: { loopId: "string", project: "string (abs path)", prdPath: "string (relative)" },
@@ -46,7 +41,6 @@ export const schemaCmd = Command.make(
 
       yield* Console.log(respond("schema", events, [
         { command: `joelclaw send pipeline/video.requested --url "https://youtube.com/watch?v=XXXX"`, description: "Download a video" },
-        { command: `joelclaw send system/log -d '{"action":"test","tool":"cli","detail":"joelclaw test"}'`, description: "Send a test log event" },
         { command: `joelclaw functions`, description: "See registered functions and their triggers" },
       ]))
     })

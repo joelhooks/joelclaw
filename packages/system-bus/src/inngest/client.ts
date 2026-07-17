@@ -916,14 +916,6 @@ export type Events = {
   };
 
   // --- System ---
-  "system/log.written": {
-    data: {
-      action: string;
-      tool: string;
-      detail: string;
-      reason?: string;
-    };
-  };
   "system/health.check": {
     data: {
       component?: string;

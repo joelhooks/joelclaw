@@ -882,12 +882,14 @@ class JoelclawVoiceAgent(Agent):
 
     @function_tool
     async def recall(self, query: str) -> str:
-        """Search long-term memory (Typesense) for past observations, decisions, and context.
+        """Search Brain and observation projections for past decisions and context.
         Use when Joel references something from earlier or you need historical context."""
         raw = await asyncio.to_thread(_run, ["joelclaw", "recall", query], 10)
         try:
             data = json.loads(raw)
             hits = data.get("result", {}).get("hits", [])
+            if self._caller_verified is not True:
+                hits = [h for h in hits if h.get("privacy") != "sensitive"]
             if not hits:
                 return "No matching memories found."
             lines = []

@@ -36,7 +36,6 @@ export const DEFAULT_CAPABILITY_CONFIG: Record<string, Omit<ResolvedCapabilityCo
   deploy: { enabled: true, adapter: "scripted-deploy", adapters: {} },
   notify: { enabled: true, adapter: "gateway-redis", adapters: {} },
   heal: { enabled: true, adapter: "runbook-heal", adapters: {} },
-  log: { enabled: true, adapter: "slog-cli", adapters: {} },
   subscribe: { enabled: true, adapter: "redis-subscriptions", adapters: {} },
 }
 

@@ -19,14 +19,6 @@ type RunRow = {
   error?: string
 }
 
-type SlogEntry = {
-  timestamp?: string
-  action?: string
-  tool?: string
-  detail?: string
-  reason?: string
-}
-
 type OTelFacetCount = {
   value?: string
   count?: number
@@ -229,12 +221,6 @@ function isPodHealthy(pod: PodRow): boolean {
   return Number.isFinite(ready) && Number.isFinite(total) && total > 0 && ready >= total
 }
 
-function isEntryWithinHours(entry: SlogEntry, sinceMs: number): boolean {
-  if (!entry.timestamp) return false
-  const ts = Date.parse(entry.timestamp)
-  return Number.isFinite(ts) && ts >= sinceMs
-}
-
 function extractFacetCount(facets: OTelFacet[] | undefined, field: string, value: string): number {
   if (!facets) return 0
   const facet = facets.find((item) => item.field_name === field)
@@ -333,22 +319,6 @@ export const summaryCmd = Command.make(
         .filter((pod) => parseHoursFromAge(pod.age) <= hours)
         .map((pod) => pod.name)
 
-      const slogExec = runCommand(["slog", "tail", "--count", "20"])
-      const slogPayload = parseEnvelopeResult<{ entries?: SlogEntry[] }>(slogExec.stdout)
-      const allSlogEntries = Array.isArray(slogPayload?.entries) ? slogPayload.entries : []
-      const slogEntries = allSlogEntries.filter((entry) => isEntryWithinHours(entry, sinceMs))
-
-      const deploys = slogEntries
-        .filter((entry) => (entry.action ?? "").toLowerCase() === "deploy" || /deploy/i.test(entry.detail ?? ""))
-        .map((entry) => `${entry.timestamp ?? "unknown"} ${entry.tool ?? "system"}: ${entry.detail ?? ""}`)
-
-      const configChanges = slogEntries
-        .filter((entry) => {
-          const action = (entry.action ?? "").toLowerCase()
-          return action === "configure" || action === "install" || action === "fix"
-        })
-        .map((entry) => `${entry.timestamp ?? "unknown"} ${entry.tool ?? "system"}: ${entry.detail ?? ""}`)
-
       const adrsExec = runCommand([
         "git",
         "log",
@@ -379,12 +349,6 @@ export const summaryCmd = Command.make(
       }))
 
       const discoveriesFromRuns = runs.filter((run) => /discover|discovery|noted/i.test(run.functionName ?? "")).length
-      const discoveriesFromSlog = slogEntries.filter((entry) => {
-        return (entry.action ?? "").toLowerCase() === "noted" && /discovery/i.test(entry.tool ?? "")
-      }).length
-
-      const codexSessionsFromSlog = slogEntries.filter((entry) => /codex/i.test(`${entry.tool ?? ""} ${entry.detail ?? ""}`)).length
-      const piSessionsFromSlog = slogEntries.filter((entry) => /\bpi\b/i.test(`${entry.tool ?? ""} ${entry.detail ?? ""}`)).length
 
       const codexFromOtel = extractFacetCount(otelStatsPayload.facets, "source", "codex")
       const gatewayFromOtel = extractFacetCount(otelStatsPayload.facets, "source", "gateway")
@@ -403,9 +367,9 @@ export const summaryCmd = Command.make(
           ],
         },
         infrastructure: {
-          deploys,
+          deploys: [],
           new_services: newPods,
-          config_changes: configChanges,
+          config_changes: [],
         },
         inngest: {
           total_runs: runs.length,
@@ -415,8 +379,8 @@ export const summaryCmd = Command.make(
           failures: failedDetails,
         },
         agents: {
-          codex_sessions: codexSessionsFromSlog > 0 ? codexSessionsFromSlog : (codexFromOtel > 0 ? 1 : 0),
-          pi_sessions: piSessionsFromSlog > 0 ? piSessionsFromSlog : (gatewayFromOtel > 0 ? 1 : 0),
+          codex_sessions: codexFromOtel > 0 ? 1 : 0,
+          pi_sessions: gatewayFromOtel > 0 ? 1 : 0,
         },
         adrs: {
           new: adrNewCount,
@@ -424,7 +388,7 @@ export const summaryCmd = Command.make(
           status_changes: adrStatusChanges,
         },
         knowledge: {
-          discoveries: Math.max(discoveriesFromRuns, discoveriesFromSlog),
+          discoveries: discoveriesFromRuns,
           memory_observations: memoryObservations,
         },
         k8s: {

@@ -6,7 +6,7 @@
  * - content/updated, discovery/captured, system/adr.sync.requested -> queue vault re-index
  * - typesense/vault-sync.requested -> perform vault re-index (targeted when paths provided)
  * - vercel/deploy.succeeded -> re-index blog posts
- * - cron daily 3am -> full re-index of vault + slog
+ * - cron daily 3am -> full re-index of vault, blog, and system knowledge
  *
  * Uses auto-embedding (ts/all-MiniLM-L12-v2) — no external API calls.
  */
@@ -20,7 +20,6 @@ import { inngest } from "../client";
 
 const VAULT_PATH = process.env.VAULT_PATH || join(process.env.HOME || "/Users/joel", "Vault");
 const BLOG_PATH = join(process.env.HOME || "/Users/joel", "Code/joelhooks/joelclaw/apps/web/content");
-const SLOG_PATH = join(VAULT_PATH, "system/system-log.jsonl");
 
 const TYPESENSE_VAULT_QUEUE_KEY = '"typesense-vault-sync"';
 
@@ -307,95 +306,6 @@ export async function indexBlogPosts(): Promise<{ success: number; errors: numbe
   return typesense.bulkImport("blog_posts", docs);
 }
 
-// ── Slog indexing ───────────────────────────────────────────────────
-
-export async function indexSystemLog(): Promise<{ success: number; errors: number }> {
-  // Ensure collection has provenance fields (ADR-0233)
-  await ensureSystemLogSchema();
-
-  const docs: Record<string, unknown>[] = [];
-  try {
-    const lines = readFileSync(SLOG_PATH, "utf-8").trim().split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      try {
-        const e = JSON.parse(lines[i]!);
-        const doc: Record<string, unknown> = {
-          id: String(i),
-          sessionId: e.sessionId || "unknown",
-          systemId: e.systemId || "unknown",
-          action: e.action || "",
-          tool: e.tool || "",
-          detail: e.detail || "",
-          reason: e.reason || "",
-        };
-        if (e.timestamp) {
-          try {
-            doc.timestamp = Math.floor(new Date(e.timestamp).getTime() / 1000);
-          } catch {}
-        }
-        docs.push(doc);
-      } catch {}
-    }
-  } catch {}
-
-  if (docs.length === 0) return { success: 0, errors: 0 };
-  const result = await typesense.bulkImport("system_log", docs);
-
-  // Dual-write to Convex
-  for (const doc of docs) {
-    const entryId = String(doc.id);
-    const action = String(doc.action || "");
-    const tool = String(doc.tool || "");
-    const detail = String(doc.detail || "");
-    const reason = doc.reason ? String(doc.reason) : undefined;
-    const timestamp = Number(doc.timestamp || 0);
-
-    await pushContentResource(
-      `slog:${entryId}`,
-      "system_log",
-      { entryId, action, tool, detail, reason, timestamp },
-      [action, tool, detail, reason].filter(Boolean).join(" ")
-    ).catch(() => {});
-  }
-
-  return result;
-}
-
-/**
- * Ensure the system_log collection has sessionId + systemId fields (ADR-0233).
- * Typesense supports adding new fields to existing collections via PATCH.
- */
-async function ensureSystemLogSchema(): Promise<void> {
-  try {
-    const resp = await typesense.typesenseRequest("/collections/system_log", { method: "GET" });
-    if (!resp.ok) return; // collection doesn't exist yet, will be created on import
-
-    const schema = (await resp.json()) as { fields?: Array<{ name: string }> };
-    const existingFields = new Set((schema.fields ?? []).map((f) => f.name));
-
-    const newFields: Array<Record<string, unknown>> = [];
-    if (!existingFields.has("sessionId")) {
-      newFields.push({ name: "sessionId", type: "string", facet: true, optional: true });
-    }
-    if (!existingFields.has("systemId")) {
-      newFields.push({ name: "systemId", type: "string", facet: true, optional: true });
-    }
-
-    if (newFields.length === 0) return;
-
-    const patch = await typesense.typesenseRequest("/collections/system_log", {
-      method: "PATCH",
-      body: JSON.stringify({ fields: newFields }),
-    });
-    if (!patch.ok) {
-      const text = await patch.text();
-      console.warn(`[system_log] schema patch failed (${patch.status}): ${text}`);
-    }
-  } catch (err) {
-    console.warn(`[system_log] schema check failed: ${err}`);
-  }
-}
-
 // ── Inngest functions ───────────────────────────────────────────────
 
 // ── System Knowledge sync (ADR-0199) ───────────────────────────────
@@ -496,10 +406,9 @@ export async function syncSystemKnowledge(): Promise<{ adrs: number; skills: num
 export async function runTypesenseFullSync() {
   const vault = await indexVaultNotes();
   const blog = await indexBlogPosts();
-  const slog = await indexSystemLog();
   const knowledge = await syncSystemKnowledge();
 
-  return { vault, blog, slog, knowledge };
+  return { vault, blog, knowledge };
 }
 
 export const typesenseVaultSyncQueue = inngest.createFunction(
@@ -613,7 +522,7 @@ export const typesenseFullSync = inngest.createFunction(
     const result = await step.run("run-typesense-full-sync", runTypesenseFullSync);
 
     console.log(
-      `[typesense-full-sync] trigger=${event.name} vault=${result.vault.count} blog=${result.blog.success} slog=${result.slog.success} knowledge=${result.knowledge.adrs}+${result.knowledge.skills}`,
+      `[typesense-full-sync] trigger=${event.name} vault=${result.vault.count} blog=${result.blog.success} knowledge=${result.knowledge.adrs}+${result.knowledge.skills}`,
     );
     return { ...result, trigger: event.name };
   }

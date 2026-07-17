@@ -50,7 +50,7 @@ After system-bus changes:
 | Skills (canonical) | `skills/` |
 | k8s manifests | `k8s/` |
 | ADRs | `~/Vault/docs/decisions/` |
-| System log | `~/Vault/system/system-log.jsonl` |
+| Operational telemetry | Typesense/ClickHouse `otel_events`; durable decisions and receipts live in Brain `.svx` pages |
 
 ## Don't
 

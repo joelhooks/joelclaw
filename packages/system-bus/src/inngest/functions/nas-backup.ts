@@ -70,8 +70,6 @@ const OTEL_EXPORT_ROOT = `${NAS_HDD_ROOT}/otel`;
 
 const MEMORY_LOG_ROOT = `${HOME_DIR}/.joelclaw/workspace/memory`;
 const MEMORY_LOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/logs`;
-const SLOG_PATH = `${HOME_DIR}/Vault/system/system-log.jsonl`;
-const SLOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/slog`;
 const NAS_BACKUP_QUEUE_ROOT = process.env.NAS_BACKUP_QUEUE_ROOT?.trim() || "/tmp/joelclaw/nas-queue";
 const JOELCLAW_REPO_ROOT = process.env.JOELCLAW_REPO_ROOT?.trim() || "/Users/joel/Code/joelhooks/joelclaw";
 const AGENT_SESSION_BACKUP_SCRIPT = `${JOELCLAW_REPO_ROOT}/scripts/agent-session-audit-backup.ts`;
@@ -651,11 +649,8 @@ function createBackupOnFailureHandler(
           "Verify NAS mount via `stat /Volumes/three-body`",
           "Validate SSH access to configured NAS host",
         ],
-        notify: ["joelclaw system logs and OTEL"],
-        links: [
-          `${homeDir}/Vault/system/system-log.jsonl`,
-          `${homeDir}/.joelclaw/system-bus.config.json`,
-        ],
+        notify: ["joelclaw OTEL"],
+        links: [`${homeDir}/.joelclaw/system-bus.config.json`],
       } as SelfHealingPlaybook,
       context: {
         runContext: flowContext,
@@ -2058,11 +2053,9 @@ export const rotateLogs = inngest.createFunction(
         await step.run("check-nas-mount", ensureNasMounted);
 
         const monthStamp = await step.run("resolve-month-stamp", async () => getMonthStamp());
-        const slogDestinationPath = `${SLOG_BACKUP_ROOT}/system-log-${monthStamp}.jsonl`;
 
         await step.run("prepare-log-dirs", async () => {
           await ensureDir(MEMORY_LOG_BACKUP_ROOT);
-          await ensureDir(SLOG_BACKUP_ROOT);
         });
 
         const oldLogFiles = await step.run("list-old-memory-logs", async () =>
@@ -2079,21 +2072,12 @@ export const rotateLogs = inngest.createFunction(
           return moved;
         });
 
-        await step.run("copy-current-slog", async () => {
-          await runShell(
-            `cp ${SLOG_PATH} ${slogDestinationPath}`,
-            $`cp ${SLOG_PATH} ${slogDestinationPath}`.quiet().nothrow()
-          );
-        });
-
         metadata.month = monthStamp;
         metadata.movedLogs = movedLogs;
-        metadata.slogDestinationPath = slogDestinationPath;
 
         return {
           month: monthStamp,
           movedLogs,
-          slogDestinationPath,
         };
       }
     );

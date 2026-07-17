@@ -673,10 +673,8 @@ date: ${today}
       await Bun.write(dailyPath, content);
     });
 
-    // Step 5: Log + cleanup + emit
-    await step.run("log-and-cleanup", async () => {
-      await $`slog write --action transcribe --tool transcript-process --detail "${title} (${source})" --reason "transcript processing via inngest"`.quiet();
-
+    // Step 5: Cleanup temporary files.
+    await step.run("cleanup", async () => {
       // Cleanup tmp dir if we created one
       if (tmpDir) {
         await $`rm -rf ${tmpDir}`.quiet();

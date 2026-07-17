@@ -22,7 +22,6 @@ import { healCmd } from "./commands/heal";
 import { inngestCmd } from "./commands/inngest";
 import { jobsCmd } from "./commands/jobs";
 import { knowledgeCmd } from "./commands/knowledge";
-import { logCmd } from "./commands/log";
 import { logsCmd } from "./commands/logs";
 import { loopCmd } from "./commands/loop";
 import { mailCmd } from "./commands/mail";
@@ -169,7 +168,6 @@ const root = Command.make("joelclaw", {}, () =>
               "joelclaw deploy worker [--restart] [--execute] [--wait-ms 1500] [--force]",
             heal: "joelclaw heal {list|run}",
             logs: "joelclaw logs [worker|errors|server|analyze] [-n lines] [--grep text]",
-            log: "joelclaw log write --action <action> --tool <tool> --detail <detail> [--reason <reason>] [--session <session>|env:SLOG_SESSION_ID] [--system <system>|env:SLOG_SYSTEM_ID]",
             loop: "joelclaw loop {start|status|list|cancel|restart|nuke}",
             watch: "joelclaw watch [LOOP_ID] [-i 15]",
             discover: "joelclaw discover <url> [-c context]",
@@ -271,11 +269,6 @@ const root = Command.make("joelclaw", {}, () =>
           },
           {
             command:
-              'SLOG_SESSION_ID=gateway SLOG_SYSTEM_ID=panda joelclaw log write --action checkpoint --tool cli --detail "manual checkpoint"',
-            description: "Write structured system log entry with provenance env fallback",
-          },
-          {
-            command:
               'joelclaw notify send "System check complete" --priority normal',
             description: "Send canonical gateway notification",
           },
@@ -312,7 +305,6 @@ const root = Command.make("joelclaw", {}, () =>
     deployCmd,
     healCmd,
     logsCmd,
-    logCmd,
     secretsCmd,
     notifyCmd,
     schemaCmd,

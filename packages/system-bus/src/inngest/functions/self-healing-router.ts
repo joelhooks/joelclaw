@@ -288,7 +288,7 @@ function normalizeSelfHealingContext(raw: Record<string, unknown>): {
     kill: Array.isArray(playbook.kill) ? playbook.kill : [],
     defer: Array.isArray(playbook.defer) ? playbook.defer : [],
     notify: Array.isArray(playbook.notify) ? playbook.notify : ["joelclaw otel search --hours 1"],
-    links: Array.isArray(playbook.links) ? playbook.links : ["/Users/joel/Vault/system/system-log.jsonl"],
+    links: Array.isArray(playbook.links) ? playbook.links : [],
   };
 
   return {

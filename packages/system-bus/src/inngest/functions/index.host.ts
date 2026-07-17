@@ -77,10 +77,8 @@ import { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
 import { meetingAnalyze } from "./meeting-analyze";
 import { meetingTranscriptIndex } from "./meeting-transcript-index";
 import { adrEvidenceCapture } from "./memory/adr-evidence-capture";
-import { batchReview } from "./memory/batch-review";
 import { memoryEmbed } from "./memory/embed";
 import { nightlyMaintenance } from "./memory/nightly-maintenance";
-import { proposalTriage } from "./memory/proposal-triage";
 import { memoryRunCaptured } from "./memory/run-captured";
 import { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 import {
@@ -102,8 +100,6 @@ import { noiseRateGuard } from "./noise-rate-guard";
 import { o11yTriage } from "./o11y-triage";
 import { observeSessionNoted } from "./observe-session-noted";
 import { paneSchedule } from "./pane-schedule";
-import { promote } from "./promote";
-import { reflect } from "./reflect";
 import { selfHealingGatewayBridge } from "./self-healing-gateway-bridge";
 import { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
 import { selfHealingInvestigator } from "./self-healing-investigator";
@@ -115,7 +111,6 @@ import { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 import { storyPipeline } from "./story-pipeline";
 import { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions";
 import { summarize, summarizeLegacyAlias } from "./summarize";
-import { systemLogger } from "./system-logger";
 import { taskTriage } from "./task-triage";
 import { telegramCallbackReceived } from "./telegram-callback";
 import { telnyxNotify } from "./telnyx-notify";
@@ -182,8 +177,6 @@ export const hostFunctionDefinitions = [
   transcriptIndexWeb,
   summarize,
   summarizeLegacyAlias,
-  systemLogger,
-  reflect,
   contentSync,
   contentVerify,
   contentPrune,
@@ -197,7 +190,6 @@ export const hostFunctionDefinitions = [
   xContentHook,
   xDiscoveryHook,
   xAccountActivityReceived,
-  promote,
   embedText,
   backfillObserve,
   heartbeatCron,
@@ -247,8 +239,6 @@ export const hostFunctionDefinitions = [
   frontMessageSent,
   frontAssigneeChanged,
   telnyxNotify,
-  proposalTriage,
-  batchReview,
   nightlyMaintenance,
   weeklyMaintenanceSummary,
   adrEvidenceCapture,

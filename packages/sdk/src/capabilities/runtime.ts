@@ -6,7 +6,6 @@ import { runbookHealAdapter } from "./adapters/heal-runbook"
 import { mcpAgentMailAdapter } from "./adapters/mcp-agent-mail"
 import { redisSubscriptionsAdapter } from "./adapters/redis-subscriptions"
 import { secretsCliAdapter } from "./adapters/secrets-cli"
-import { slogCliAdapter } from "./adapters/slog-cli"
 import { typesenseOtelAdapter } from "./adapters/typesense-otel"
 import { typesenseRecallAdapter } from "./adapters/typesense-recall"
 import { type CapabilityContext, type CapabilityError, capabilityError } from "./contract"
@@ -20,7 +19,6 @@ function resolveOtelAdapter() {
 const capabilityRegistry = {
   deploy: scriptedDeployAdapter,
   heal: runbookHealAdapter,
-  log: slogCliAdapter,
   mail: mcpAgentMailAdapter,
   notify: gatewayRedisNotifyAdapter,
   otel: resolveOtelAdapter(),

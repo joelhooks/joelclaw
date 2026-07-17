@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { __recallTestUtils } from "./recall"
 
-const { buildRecallSearchParams, formatRecallVectorQuery, runRewriteQueryWith, trustPassFilter } = __recallTestUtils
+const { buildRecallSearchParams, normalizeBrainHit, normalizeObservationHit, runRewriteQueryWith, trustPassFilter } = __recallTestUtils
 
 beforeEach(() => {
   __recallTestUtils.resetCircuit()
@@ -93,25 +93,63 @@ describe("recall rewrite", () => {
   })
 })
 
-describe("recall Typesense query", () => {
-  test("does not put raw embedding fields in query_by", () => {
-    const vectorQuery = formatRecallVectorQuery([0.1, -0.2, Number.NaN], 7)
+describe("recall Typesense projections", () => {
+  test("builds collection-specific full-text params without legacy vectors", () => {
     const params = buildRecallSearchParams({
       query: "memory probe marker",
+      queryBy: "gist,observations,decisions,open_questions",
       fetchLimit: 7,
-      vectorQuery,
+      sortBy: "_text_match:desc,started_at:desc",
     })
 
-    expect(params.get("query_by")).toBe("observation")
-    expect(params.get("query_by")).not.toContain("embedding")
-    expect(params.get("vector_query")).toBe("embedding:([0.1,-0.2,0], k:7, alpha:0.7)")
+    expect(params.get("query_by")).toBe("gist,observations,decisions,open_questions")
+    expect(params.get("sort_by")).toBe("_text_match:desc,started_at:desc")
+    expect(params.has("vector_query")).toBe(false)
   })
 
-  test("falls back to text-only params when no query vector is available", () => {
-    const params = buildRecallSearchParams({ query: "memory probe marker", fetchLimit: 5 })
+  test("normalizes observation pages into the legacy hit envelope", () => {
+    const hit = normalizeObservationHit({
+      document: {
+        id: "obs-1",
+        sessionId: "session-1",
+        started_at: 1_700_000_000_000,
+        privacy: "sensitive",
+        gist: "Memory cleanup",
+        decisions: ["Retire the stale index"],
+        url: "https://brain.joelclaw.com/user/observations/obs-1/",
+      },
+    })
 
-    expect(params.get("query_by")).toBe("observation")
-    expect(params.has("vector_query")).toBe(false)
+    expect(hit?.document).toMatchObject({
+      id: "obs-1",
+      session_id: "session-1",
+      timestamp: 1_700_000_000,
+      observation_type: "observation-page",
+      privacy: "sensitive",
+    })
+    expect(hit?.document.observation).toContain("Retire the stale index")
+  })
+
+  test("normalizes Brain pages with provenance and bounded content", () => {
+    const hit = normalizeBrainHit({
+      document: {
+        id: "brain-1",
+        title: "Memory retirement",
+        kind: "brain-page",
+        root: "joelclaw",
+        repo: "joelhooks/joelclaw",
+        path: ".brain/projects/memory-retirement.svx",
+        body: "x".repeat(2_000),
+      },
+    })
+
+    expect(hit?.document).toMatchObject({
+      id: "brain-1",
+      observation_type: "brain-page",
+      category_id: "joelclaw",
+      path: ".brain/projects/memory-retirement.svx",
+    })
+    expect(hit?.document.observation.length).toBeLessThanOrEqual(1_500)
   })
 })
 

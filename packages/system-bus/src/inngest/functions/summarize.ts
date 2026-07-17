@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import { infer } from "../../lib/inference";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import { inngest } from "../client";
@@ -89,14 +88,7 @@ Return ONLY the full updated markdown and do not include extra explanations.`;
       await Bun.write(vaultPath, `${updated}\n`);
     });
 
-    // Log + emit
-    await step.run("log-and-emit", async () => {
-      execSync(
-        `slog write --action summarize --tool content-summarize --detail "${title.replace(/"/g, "\\\"")}" --reason "content/summarize event via inngest"`,
-        { stdio: "ignore" },
-      );
-    });
-
+    // Emit completion for downstream consumers.
     await step.sendEvent("log-and-emit", {
       name: "content/summarized",
       data: { vaultPath, title },
