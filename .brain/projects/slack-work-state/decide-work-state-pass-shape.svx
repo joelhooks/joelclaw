@@ -3,8 +3,9 @@ title: "Decide the Work-State Pass Shape"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "claude (flagg, herdr pane w1A:p1, 2026-07-17)"
 parent: "./slack-work-state-brief.svx"
 blockers: ["./verify-slack-ingress-coverage.svx"]
 created_at: "2026-07-17"
@@ -32,6 +33,16 @@ With ingress facts in hand, grill Joel to settle the pass:
 - **Authorization**: the resolution states whether the build step is
   authorized and what its done-condition is.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-17)
 
-<!-- added at resolution -->
+Grilled with Joel this session; all calls his.
+
+- **Trigger**: dedicated Inngest cron function on the system-bus worker, hourly. Not the observer tick, not a curator-style self-rescheduling beat.
+- **Input**: the **live sweep is the candidate source** — one bounded `conversations.history` read per allowlisted channel per run (board semantics, root reactions authoritative). The ingested `channel_messages` feed is a prefilter/hint between runs, never the boundary of what exists (Matt's CMS-token root proved the feed can hole). Feed repairs are non-blocking.
+- **Scope**: #cc-matt-p (C0211NSK3TP) + #brain-joel at launch; the allowlist is config, growth is a config change plus a decision note.
+- **Request definition**: a thread root authored by a human other than Joel (bots excluded) — in cc-matt-p that is exactly Matt's roots; Joel's own roots are never findings.
+- **Thresholds** (config-tunable starting values): untagged > 4 hours → finding; `:shitrat:` without ✅ > 7 days → stale finding.
+- **Emission**: one observation page per run that has findings (items: permalink, author, work-state, age, thresholds crossed, provenance). Dispatcher wake fires only when an item's state/threshold is NEW since last notify — the pass keeps a small notified-state file as notification hygiene, never truth (Slack stays canonical). Dispatcher classifies per wake-dont-feed; default route joelclaw notify DM.
+- **Observability** (launch gate): per-stage OTEL receipts (component `work-state-pass`) + one funnel command showing the last run (channels scanned, roots seen, findings, pages, wakes). Enable requires the seeded scenario (untagged root + stale started) to produce page + wake end-to-end, asserted live — verify runs, not registration (Inngest dead-binding lesson).
+- **Feed repairs**: reaction-tap webhook-mode bug and ingress reconciliation are chartered as steps in [stream-observation](../stream-observation/stream-observation-brief.svx), referencing [the coverage asset](./slack-ingress-coverage-2026-07-17.svx); this effort does not block on them.
+- **Authorization**: [Build the Work-State Pass](./build-work-state-pass.svx) is authorized with this resolution as its spec (Joel, 2026-07-17).

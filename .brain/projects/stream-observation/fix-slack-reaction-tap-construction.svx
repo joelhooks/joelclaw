@@ -1,0 +1,41 @@
+---
+title: "Fix the Slack Reaction Tap's Webhook-Mode Construction"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./stream-observation-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Fix the Slack Reaction Tap's Webhook-Mode Construction
+
+## Step
+
+Found by [slack-work-state ingress research](../slack-work-state/slack-ingress-coverage-2026-07-17.svx)
+(2026-07-17): the Chat SDK shadow tap constructs the Slack raw normalizer
+with only `{ botToken }` (`packages/gateway/src/chat-sdk-inbound/taps.ts:49-55`),
+so `@chat-adapter/slack` defaults to webhook mode, refuses construction
+without a signing secret, and Slack lands in `disabledPlatforms` at boot —
+every Slack shadow event is silently skipped. The reactions bridge
+(f26064c3) is Telegram-proven only: 3 Telegram receipts, 0 Slack.
+
+Smallest safe change (from the asset): construct the normalizer in Socket
+Mode with the `slack_app_token` the legacy Slack owner already leases —
+thread the token into the tap, do not invent a webhook verifier. Then run
+one real Joel reaction canary and require a `message/inbound.reaction`
+receipt. Note: runtime registers `reaction_added` only, not
+`reaction_removed` (Joel enabled both in Slack admin 2026-07-16).
+
+Resolved when: a live Joel reaction on a Slack message produces a
+`message/inbound.reaction` event with a receipt, and no
+`chat-sdk-shadow tap error, phase: construct` appears at gateway start.
+Downstream consumers key inbound-root reactions by
+`platformIds.conversationId + platformIds.messageId` — never a fabricated
+`flowId` (see the asset's semantic-boundary note).
+
+## Result (YYYY-MM-DD)
+
+<!-- added at resolution -->

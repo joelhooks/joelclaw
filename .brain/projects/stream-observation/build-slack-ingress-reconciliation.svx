@@ -1,0 +1,39 @@
+---
+title: "Build Bounded Slack Ingress Reconciliation for Allowlisted Channels"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./stream-observation-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Build Bounded Slack Ingress Reconciliation for Allowlisted Channels
+
+## Step
+
+Found by [slack-work-state ingress research](../slack-work-state/slack-ingress-coverage-2026-07-17.svx)
+(2026-07-17): Socket Mode ingress is edge-triggered with no catch-up, and
+holes are proven — Matt's 2026-07-17 CMS-token root (C0211NSK3TP ts
+1784281556.387689) has no forward, ingest, or failure receipt while its
+later thread reply landed and 13 other cc-matt-p messages indexed the same
+day. One missed event stays missing forever; `channel_messages` cannot be
+treated as complete for any allowlisted channel until this exists.
+
+Build the smallest reliability change from the asset: a bounded read-only
+reconciliation for allowlisted channels — fetch roots since the last
+observed Slack ts per channel, emit `channel/message.received` only for
+missing documents, with receipts. Also worth fixing while in there: the
+stored `timestamp` is gateway ingestion time, not Slack message ts (the
+Slack ts survives only as `thread_id` on replies) — reconciled docs should
+carry honest Slack timestamps or a documented field.
+
+Resolved when: a deliberately-skipped test message is healed into
+`channel_messages` by the next reconciliation run with a receipt, and
+Matt's CMS-token root itself is present in the collection.
+
+## Result (YYYY-MM-DD)
+
+<!-- added at resolution -->

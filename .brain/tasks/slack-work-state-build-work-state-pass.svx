@@ -1,0 +1,25 @@
+---
+title: "Worker task: build the work-state pass"
+type: "task"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Worker task: build the work-state pass
+
+You are a worker on [Slack Work-State: Reactions as Truth, Observed](../projects/slack-work-state/slack-work-state-brief.svx).
+Your step (claimed for you): [Build the Work-State Pass](../projects/slack-work-state/build-work-state-pass.svx).
+The spec is the Result section of [Decide the Work-State Pass Shape](../projects/slack-work-state/decide-work-state-pass-shape.svx) — read the brief, the step, the resolution, and the [ingress coverage asset](../projects/slack-work-state/slack-ingress-coverage-2026-07-17.svx) in full before writing code. The resolution's calls are law; do not relitigate them.
+
+Repo: `~/Code/joelhooks/joelclaw` (do NOT commit). Implementation guidance, not law:
+
+- Hourly dedicated Inngest cron function in `packages/system-bus` (study existing functions for idiom; recall the dead-binding failure mode — the enable check is runs, not registration).
+- Live sweep per allowlisted channel: `conversations.history` roots + root reactions, work-state per the convention (untagged / `shitrat` started / `white_check_mark` shipped, Joel = U030BJ3CK). jc-slack (`~/Code/joelhooks/jc-slack`, commit 4bcc1e6) has this exact classification in `src/board-pack.ts` — port the semantics or shell to `board`; lease `slack_user_token` the way jc-slack's reader does. Requests = non-Joel human roots; bots excluded.
+- Config: channel allowlist (C0211NSK3TP + brain-joel's ID — resolve it), thresholds 4h/7d, all tunable without code.
+- Feed as prefilter only: optional; the live sweep is the candidate source. Never let `channel_messages` bound what exists.
+- Observation page per run with findings: follow the observer's existing page-writing discipline (study `~/.joelclaw/observer-release/` and the observational-memory machinery; `.svx`, provenance, redaction rules apply — channel content is third-party).
+- Wake on state change only: notified-state file (e.g. `~/.joelclaw/work-state-pass.json` — hygiene, not truth); route per wake-dont-feed (study stream-observation's decide-gateway-redis-channel-fate resolution); default `joelclaw notify` DM.
+- Observability: OTEL receipts component `work-state-pass` per stage; one funnel command (joelclaw CLI or script) showing last run: channels scanned, roots seen, findings, pages, wakes.
+- Seeded scenario: prove untagged-root and stale-started findings produce page + wake end-to-end. You may register and run the function to prove it; assert behavior, then report. Do not spam: if the live channels produce real findings during testing, that is fine (they are real), but throttle to one wake.
+
+Then edit the STEP file: `## Result (2026-07-17)` with what was built, config locations, funnel command, seeded-scenario receipts; flip status closed + closed_at; one ledger line on the brief. Work autonomously, do not commit, print a DONE summary.
