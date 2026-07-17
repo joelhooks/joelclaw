@@ -3,8 +3,9 @@ title: "Decide Legacy Memory Retirement: one migration, not five corpses"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "claude (flagg, herdr pane wB:p5, grilling with Joel)"
 parent: "./memory-system-repair-brief.svx"
 blockers: []
 created_at: "2026-07-17"
@@ -25,3 +26,22 @@ the zombie Inngest functions unregister; what happens to the suites; and
 what's the deprecation order so nothing user-facing breaks mid-swap.
 Evidence: [periphery survey](../memory-system-review/periphery-survey.svx)
 flags #3, with per-store receipts in its sections.
+
+## Decision (Joel, 2026-07-17, grilled live)
+
+One migration, one PR, one rollback point:
+
+1. **Retarget `joelclaw recall`** to the Brain/observation stores — the
+   command name is good muscle memory and voice already uses the verb.
+   The generic voice `recall` tool follows the same retarget.
+2. **Archive `memory_observations` to NAS** as a snapshot, then drop it
+   from the live Typesense index. Archive-before-delete per the standing
+   verify-data-elsewhere rule.
+3. **Unregister the zombie Inngest functions** (reflect/promote/proposal
+   pointed at the nonexistent `~/.joelclaw/workspace/MEMORY.md`).
+4. **Delete the MEM/FRIC suites** with the machinery they protect.
+
+Deprecation order: retarget recall first (user-facing surface never
+breaks), then archive+drop the index, then unregister functions and
+delete suites. Execution deserves its own step/effort; this decision is
+final.

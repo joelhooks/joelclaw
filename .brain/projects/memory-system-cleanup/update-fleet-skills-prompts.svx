@@ -1,0 +1,32 @@
+---
+title: "Update Fleet Skills and Prompts: no standing rule references the dead"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./memory-system-cleanup-brief.svx"
+blockers:
+  - "./execute-legacy-retirement.svx"
+  - "./park-chorus.svx"
+created_at: "2026-07-17"
+---
+
+# Update fleet skills and prompts
+
+## Step
+
+Resolved when a sweep of `~/Code/joelhooks/dark-wizard` (fleet graft
+blocks in `scripts/fleet/`, `TOOLS.md`, `STACK.md`, skills) plus the
+fleet-relevant skills in `~/.claude/skills/` and joelclaw repo docs
+(`CLAUDE.md` key-paths table, `AGENTS.md`, `skills/`) finds no live
+reference to: the system log as a working surface
+(`~/Vault/system/system-log.jsonl`, `slog`), `memory_observations` /
+old `joelclaw recall` semantics, Chorus/rhizomatic briefings as a live
+injection, or Claude auto-memory as a content store. Each reference is
+updated to the new reality (recall = Brain-backed; retros = hook-fired
+Inngest event; MEMORY.md = pointer index) or marked historical. Changes
+are committed and pushed in their repos, `fleet-graft.sh install` run so
+graft blocks refresh, and a `dw-sync` drift report comes back clean.
+Steering commits; ShitRat rules apply for any GitHub-bound pushes.
+Serialized behind the retirement and Chorus steps — document what IS.

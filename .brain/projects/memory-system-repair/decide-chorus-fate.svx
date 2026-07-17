@@ -3,8 +3,9 @@ title: "Decide Chorus's Fate: canary or real substrate"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "claude (flagg, herdr pane wB:p5, grilling with Joel)"
 parent: "./memory-system-repair-brief.svx"
 blockers: []
 created_at: "2026-07-17"
@@ -24,3 +25,21 @@ rules BEFORE letting real claims land, so Brain and Chorus can't disagree
 without an owner. Evidence:
 [periphery survey](../memory-system-review/periphery-survey.svx)
 "Rhizomatic / Chorus claims" + flag #2.
+
+## Decision (Joel, 2026-07-17, grilled live)
+
+**Quiet the canary. Park it.**
+
+1. Stop the session-start briefing injection (live evidence at decision
+   time: the grilling session's own briefing carried zero preferences,
+   zero tasks, and month-stale June topics — a month of runtime produced
+   nothing useful).
+2. Drain or discard the 13-mutation outbox — nothing in it becomes a
+   live claim.
+3. Park the service; no real claims land, so no ownership/promotion/
+   provenance rules are owed.
+
+The Brain remains the only substrate. If claim-graph ideas return, they
+return as a Brain-owned projection under the
+[brain-graph](../brain-graph/brain-graph-brief.svx) effort, not as a
+parallel store.

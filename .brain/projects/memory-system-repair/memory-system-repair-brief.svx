@@ -87,6 +87,23 @@ and the taste bench in one grilling.
   `2e768c2b → 7b5fe928` with receipt — the dream-cap fix is live for the
   06:10 dream.
 - [Drain the Capture Outbox](./drain-capture-outbox.svx) — implementation ready, deployment open: fixed the three writer fallbacks, replaced lossy concurrent log rewrites, dispositioned 14,853 files into 167 safe replay requests, and built a dry-run-first replay tool. Steering still owes the gateway restart, supervised canary, live drain, and observer alarm deployment.
+- The five judgment calls — all resolved in one live grilling (Joel,
+  2026-07-17):
+  [legacy retirement](./decide-legacy-memory-retirement.svx) — retarget
+  `joelclaw recall` to the Brain, archive `memory_observations` to NAS
+  then drop it, unregister zombies, delete MEM/FRIC; one PR.
+  [Claude auto-memory](./decide-claude-auto-memory.svx) — pointer index:
+  migrate facts to Brain `.svx`, MEMORY.md becomes binding rule +
+  pointers.
+  [Chorus](./decide-chorus-fate.svx) — quiet the canary, park it; Brain
+  stays the only substrate.
+  [system log](./decide-system-log-home.svx) — retire it (froze 06-22,
+  nobody noticed for 25 days); snapshot panda's copy to NAS; OTel +
+  observer + Brain already cover the job.
+  [retro writer](./decide-retro-writer.svx) — real writer: agent hooks
+  send `memory/retro.requested`-style Inngest events with pointers; a
+  condenser function writes the retro `.svx`.
+  Execution of each is charter-ready follow-up work.
 - [Bench Taste Learning](./bench-taste-learning.svx) — done, honest null:
   15 sol:xhigh runs over identical pools (real / nulled / flipped-negative
   history) picked the same memories at the same split. One grade teaches

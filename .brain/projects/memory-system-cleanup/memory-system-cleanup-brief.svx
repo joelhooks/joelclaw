@@ -1,0 +1,104 @@
+---
+title: "Memory System Cleanup: execute the five decisions, propagate to the fleet"
+type: "brief"
+status: "active"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Memory system cleanup
+
+Sequel to [Memory System Repair](../memory-system-repair/memory-system-repair-brief.svx):
+the five judgment calls Joel resolved in the 2026-07-17 grilling become
+execution, plus a full fleet skill/prompt update so no standing rule,
+skill, or graft block references the retired machinery. Joel chartered
+and authorized execution in one breath ("charter and execute cleanup and
+full fleet skill/prompt update", 2026-07-17).
+
+## Finish line
+
+- The legacy memory stack is retired as ONE migration with receipts:
+  `joelclaw recall` (and the voice recall tool) answer from the
+  Brain/observation stores; `memory_observations` is snapshotted to NAS
+  and dropped from live Typesense; the reflect/promote/proposal zombie
+  functions are unregistered; the MEM/FRIC suites are deleted. The
+  system log retires in the same migration: panda's JSONL snapshotted to
+  NAS, the slog write path / system-logger / sync + backup + PDS-mirror
+  hooks removed.
+- Chorus is parked: no briefing injection at session start, the
+  13-mutation outbox is preserved-then-discarded (file snapshot before
+  discard), the service is stopped with a receipt.
+- Claude auto-memory is a pointer index: non-duplicated facts from the
+  18 topic pages live as Brain `.svx`; `MEMORY.md` is a binding rule +
+  one-line pointers; topic pages deleted.
+- The retro writer exists: claude/codex/pi hooks can send an Inngest
+  event with pointers; a condenser function writes a retro `.svx` where
+  the curator reads; the noise bar from the decision is enforced.
+- The fleet is coherent: dark-wizard graft blocks, skills, TOOLS.md, and
+  repo CLAUDE.md content mention none of the retired surfaces as live;
+  changes are committed, pushed, and grafted (`fleet-graft.sh install`),
+  so blaine/panda pick them up on next sync.
+- The [memory system page](../../resources/memory-system.svx) is
+  regenerated from post-cleanup reality (this also satisfies the repair
+  brief's page-regeneration finish line), rebuilt on the wiki, 200-checked,
+  and the link DM'd.
+
+## Vocabulary
+
+- **retired** — code paths removed or unregistered, data snapshotted to
+  NAS before any deletion, receipts in the step file.
+- **parked** — service stopped and disabled, nothing deleted, restart
+  path documented.
+- **pointer index** — `MEMORY.md` carries a binding rule plus one-line
+  pointers to Brain pages; no content lives there.
+- **fleet coherent** — a grep for the retired surface across dark-wizard
+  fleet content and skills finds only historical/archival mentions.
+
+## Notes
+
+- Decisions of record (all closed 2026-07-17):
+  [legacy retirement](../memory-system-repair/decide-legacy-memory-retirement.svx),
+  [system log](../memory-system-repair/decide-system-log-home.svx),
+  [Chorus](../memory-system-repair/decide-chorus-fate.svx),
+  [auto-memory](../memory-system-repair/decide-claude-auto-memory.svx),
+  [retro writer](../memory-system-repair/decide-retro-writer.svx).
+  Workers cite these and the review's
+  [periphery survey](../memory-system-review/periphery-survey.svx); no
+  re-deciding.
+- Execution authorization (Joel, 2026-07-17): build + deploy on flagg;
+  steering reviews, commits, deploys with receipts. Raw-data deletion
+  only after NAS snapshot receipts exist; no force-push; panda touched
+  read-only except the snapshot copy.
+- Concurrency: the repair effort's outbox drain continues in parallel;
+  both efforts touch `packages/system-bus` — steering serializes commits.
+  Workers edit only their own step file and named outputs.
+- Skills: `herdr-orchestration` (fan-out), `flagg-workloads` (worker
+  restart mechanics), wiki law `joelclaw-wiki/AGENTS.md` (page regen).
+
+## Decision ledger
+
+- [Execute the Legacy + System-Log Retirement](./execute-legacy-retirement.svx) — open.
+- [Park Chorus](./park-chorus.svx) — open.
+- [Migrate Claude Auto-Memory to a Pointer Index](./migrate-claude-auto-memory.svx) — open.
+- [Build the Retro Writer](./build-retro-writer.svx) — open; serialize
+  behind the retirement migration (same repo surface).
+- [Update Fleet Skills and Prompts](./update-fleet-skills-prompts.svx) —
+  open; serialize behind the retirement landing (document what IS, not
+  what will be).
+- [Regenerate the Memory System Page](./regen-memory-page.svx) — open;
+  last, after everything above.
+
+## Latent
+
+- The NAS snapshot of `memory_observations` may deserve a tiny restore
+  script next to it, so "archived" stays honestly restorable.
+- If auto-memory migration surfaces facts that contradict current Brain
+  pages, that's curation work, not migration work — flag, don't guess.
+
+## Out of scope
+
+- The outbox drain and empty-run indexing fix — the
+  [repair effort](../memory-system-repair/drain-capture-outbox.svx) owns
+  them.
+- Brain Graph build-out; registering more orphan `.brain` trees.
+- Any new memory features beyond the retro writer decision.

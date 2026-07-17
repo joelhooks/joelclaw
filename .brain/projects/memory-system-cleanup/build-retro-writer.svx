@@ -1,0 +1,31 @@
+---
+title: "Build the Retro Writer: hooks → Inngest event → condenser"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./memory-system-cleanup-brief.svx"
+blockers:
+  - "./execute-legacy-retirement.svx"
+created_at: "2026-07-17"
+---
+
+# Build the retro writer
+
+## Step
+
+Resolved when: (1) an Inngest event (e.g. `memory/retro.requested`)
+carrying pointers (brief path, session id, repo) triggers a condenser
+function that reads the closed brief + its steps' Result sections and
+writes one retro `.svx` into the retros store the curator reads
+(`dark-wizard/.brain/resources/retros/`); (2) claude/codex/pi hooks can
+fire that event on demand (hook wiring documented; at minimum a
+one-liner CLI/script an agent can call at effort close); (3) the noise
+bar from the [decision](../memory-system-repair/decide-retro-writer.svx)
+is enforced: retros only for efforts with real decisions or multi-step
+work, and the output must say what changed durable behavior, not
+re-narrate the ledger; (4) one real retro exists as proof — generated
+from the closed
+[memory-system-review brief](../memory-system-review/memory-system-review-brief.svx).
+Serialized behind the retirement migration (same repo surface).

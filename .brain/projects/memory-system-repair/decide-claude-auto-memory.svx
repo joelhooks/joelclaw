@@ -3,8 +3,9 @@ title: "Decide Claude Auto-Memory: kill it or make it a pointer"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "claude (flagg, herdr pane wB:p5, grilling with Joel)"
 parent: "./memory-system-repair-brief.svx"
 blockers: []
 created_at: "2026-07-17"
@@ -25,3 +26,21 @@ bind future Claude sessions mechanically (instruction text where the
 memory feature reads it), not aspirationally. Evidence:
 [periphery survey](../memory-system-review/periphery-survey.svx)
 "Claude auto-memory".
+
+## Decision (Joel, 2026-07-17, grilled live)
+
+**Pointer index.** Auto-memory stops being a content store and becomes a
+map into the Brain:
+
+1. Migrate the non-duplicated facts from the 18 topic pages into Brain
+   `.svx` notes, then delete the topic pages.
+2. Rewrite `MEMORY.md` as: (a) a binding rule at the top — no new topic
+   pages, durable facts go to Brain `.svx`, only pointers live here —
+   and (b) one-line pointers to the relevant Brain pages below.
+3. The rule binds mechanically because `MEMORY.md` is loaded into every
+   Claude session's context; that's the one surface the memory feature
+   is guaranteed to read before writing.
+
+Rationale: the index loads for free every session — useful recall real
+estate. Kill-without-pointers makes sessions blinder for no gain; the
+migration is identical either way.

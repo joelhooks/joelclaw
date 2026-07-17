@@ -1,0 +1,32 @@
+---
+title: "Regenerate the Memory System Page from post-cleanup reality"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./memory-system-cleanup-brief.svx"
+blockers:
+  - "./execute-legacy-retirement.svx"
+  - "./park-chorus.svx"
+  - "./migrate-claude-auto-memory.svx"
+  - "./build-retro-writer.svx"
+  - "./update-fleet-skills-prompts.svx"
+created_at: "2026-07-17"
+---
+
+# Regenerate the memory system page
+
+## Step
+
+Resolved when `.brain/resources/memory-system.svx` is regenerated from
+fresh post-cleanup verdicts (per its own maintenance rule: fresh survey,
+not patched sentences — periphery stores that were wobbly/gap should now
+read retired/parked/working with receipts), the outbox-drain outcome
+from the repair effort is reflected, the wiki build on flagg passes,
+`https://brain.joelclaw.com/joelclaw/resources/memory-system/` returns
+HTTP 200, and the link is DM'd via `joelclaw notify send`. Closing this
+step also satisfies the
+[repair brief](../memory-system-repair/memory-system-repair-brief.svx)
+page-regeneration finish line — note it there. Close both briefs if
+their remaining steps are done.

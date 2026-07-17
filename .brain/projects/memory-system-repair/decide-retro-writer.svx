@@ -3,8 +3,9 @@ title: "Decide the Retro Writer: real stage or dropped pretense"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "claude (flagg, herdr pane wB:p5, grilling with Joel)"
 parent: "./memory-system-repair-brief.svx"
 blockers: []
 created_at: "2026-07-17"
@@ -24,3 +25,26 @@ the trigger, the template, and the noise bar so retros don't become
 rollup duplicates. Evidence:
 [capture-condense survey](../memory-system-review/capture-condense-survey.svx)
 "Stage: retros".
+
+## Decision (Joel, 2026-07-17, grilled live)
+
+**Real writer, hook-driven and event-shaped.**
+
+1. **Trigger:** claude/codex/pi hooks fire a retro when we want/need one
+   (session close, effort close, or on demand) — not a polite ask to
+   sessions (proven 0% compliance: 2 hand-made files ever) and not an
+   observer-side watcher.
+2. **Transport:** the hook sends an Inngest event (e.g.
+   `memory/retro.requested`) carrying pointers — brief path, session id,
+   repo — not content.
+3. **Writer:** an Inngest function condenses the closed brief + its
+   steps' Result sections (the decision ledger is already ~90% of a
+   retro) into one `.svx` in the retros store the curator reads.
+   Steering sessions may still hand-write when there's voice-worthy
+   nuance; the condenser is the floor.
+4. **Noise bar:** retros only for efforts with real decisions or
+   multi-step work; the retro must say what changed durable behavior,
+   not re-narrate the ledger (the anti-rollup-duplicate test).
+
+Execution (hook wiring + Inngest function + template) deserves its own
+step or effort.

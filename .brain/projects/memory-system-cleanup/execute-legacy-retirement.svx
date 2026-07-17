@@ -1,0 +1,33 @@
+---
+title: "Execute the Legacy + System-Log Retirement: one migration, receipts everywhere"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "in_progress"
+assignee: "pi worker (flagg, herdr right column, 2026-07-17)"
+parent: "./memory-system-cleanup-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Execute the legacy + system-log retirement
+
+## Step
+
+Resolved when, in one reviewed migration on flagg: (1) `joelclaw recall`
+and the generic voice recall tool answer from the Brain/observation
+stores (Typesense observation/Brain collections), not
+`memory_observations`; (2) `memory_observations` (28,050 docs) is
+exported to NAS with a checksum receipt and dropped from live Typesense;
+(3) the reflect/promote/proposal functions pointed at the nonexistent
+`~/.joelclaw/workspace/MEMORY.md` are unregistered; (4) the MEM/FRIC
+suites are deleted with the machinery they protect; (5) the system log
+retires: panda's `~/Vault/system/system-log.jsonl` snapshotted to NAS
+(history through 2026-06-22), then the slog write path,
+`system-logger.ts` (with its `systemId: panda` default), the JSONL
+Typesense sync + NAS backup hooks, and the PDS mirror write are removed.
+Deprecation order per the decision: retarget recall first, then
+archive+drop, then unregister/delete. Deletion of live data only after
+snapshot receipts exist. Gates: `bunx tsc --noEmit`, worker restart +
+`joelclaw functions` showing the zombies gone, `joelclaw recall`
+returning Brain-backed results.

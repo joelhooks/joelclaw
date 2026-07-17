@@ -1,0 +1,29 @@
+---
+title: "Migrate Claude Auto-Memory to a Pointer Index"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "in_progress"
+assignee: "pi worker (flagg, herdr right column, 2026-07-17)"
+parent: "./memory-system-cleanup-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Migrate Claude auto-memory to a pointer index
+
+## Step
+
+Resolved when: (1) every non-duplicated fact in the 18 topic pages under
+`~/.claude/projects/-Users-joel/memory/` lives as a Brain `.svx` note
+(operator facts → `~/.brain/resources/`, converted to `.svx` per the
+Brain law; facts already covered by Brain pages or fleet CLAUDE.md are
+dropped as duplicates, with a per-page disposition list in this file);
+(2) the topic pages are deleted; (3) `MEMORY.md` is rewritten as a
+binding rule at the top (no new topic pages; durable facts go to Brain
+`.svx`; only pointers live here) followed by one-line pointers to the
+relevant Brain pages; (4) `~/.brain` changes are ready for dark-wizard
+commit (steering commits). Evidence base:
+[periphery survey](../memory-system-review/periphery-survey.svx)
+"Claude auto-memory" and the
+[decision](../memory-system-repair/decide-claude-auto-memory.svx).

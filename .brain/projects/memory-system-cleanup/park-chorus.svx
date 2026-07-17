@@ -1,0 +1,28 @@
+---
+title: "Park Chorus: stop the injection, preserve the outbox, stop the service"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "in_progress"
+assignee: "pi worker (flagg, herdr right column, 2026-07-17)"
+parent: "./memory-system-cleanup-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Park Chorus
+
+## Step
+
+Resolved when: (1) session starts no longer inject the "Rhizomatic
+briefing" (find the hook/injection point — evidence: the 2026-07-17
+grilling session received one with zero preferences, zero tasks,
+June-stale topics); (2) the 13-mutation outbox is snapshotted to a file
+(NAS or `.brain/data/`) before being discarded — nothing becomes a live
+claim; (3) the Chorus/rhizome service is stopped and disabled
+(launchd/daemon receipt showing it down), with the restart path
+documented in this file; (4) nothing is deleted — parked, not razed.
+Evidence base:
+[periphery survey](../memory-system-review/periphery-survey.svx)
+"Rhizomatic / Chorus claims" + flag #2, and the
+[decision](../memory-system-repair/decide-chorus-fate.svx).
