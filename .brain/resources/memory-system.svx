@@ -11,8 +11,10 @@ privacy: "private"
 
 Your machine watches everything you and your agents do, writes the good
 parts down as pages in the Brain, and a picky curator texts you the best
-bits — then learns from which emoji you react with. **That whole loop
-works today**, proven end to end with your own 👍.
+bits — then records which emoji you react with. The plumbing for that
+whole loop moved one real reaction end to end on 2026-07-17. Whether the
+grades actually make the curator *better* is unproven — one 👍 is a
+smoke test, not a verdict.
 
 Around the healthy core, three things need attention soon: the nightly
 condenser has a blind spot that starts mattering around 2026-07-18, the
@@ -147,17 +149,19 @@ The promotion happened mid-review (release now at `af7b5437`), so the
 "milestone-win" DM from 16:20Z. Release promotion is manual and just
 proved it can drift silently — it wants a receipt-checked script.
 
-## Grade — working, proven with your thumb
+## Grade — plumbing works; learning unproven
 
 Telegram reactions flow: poller (reaction updates enabled) → shadow tap →
 `message/inbound.reaction` on the bus → the bridge correlates platform
 message to flowId → `message/reaction.received` → the grading consumer
 maps 👍 ❤️ 🔥 💯 to `worked` and 👎 💩 to `did-not-work`, then atomically
-writes the outcome into the curator's state file. This is not
-theoretical: your real reaction graded `2026-07-17-248a3715344a` to
-`outcome: "worked"`, and the judge's prompt builder provably includes
-outcomes in the history it sends to sol:xhigh. The taste loop is closed —
-your emoji teaches the curator.
+writes the outcome into the curator's state file. Your real reaction
+graded `2026-07-17-248a3715344a` to `outcome: "worked"`, and the judge's
+prompt builder includes outcomes in the history it sends to sol:xhigh. So
+the pipe is real and the grades reach the judge's eyes. What's NOT shown:
+that any of it changes the judge's picks. One reaction is a smoke test;
+"the curator learns your taste" stays an open claim until there's enough
+graded history to see selection actually shift.
 
 Residual softness: today's state entries lack `flowId`, so grading can
 fall back to a two-minute timestamp match. Safe while sends are sparse;
