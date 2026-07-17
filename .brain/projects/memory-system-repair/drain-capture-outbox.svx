@@ -171,3 +171,14 @@ passes 88 tests. Release promotion is still outstanding.
   promotion, 20:57Z).
 - Raw source deletion remains a deliberate check-in with Joel; the
   alarm will warn until dispositioned.
+
+### Final deletion receipt (Joel ran the rm, 2026-07-17 ~21:06Z)
+
+- Wave 1: 14,853 cataloged files (71.39 GB) deleted via manifest bound
+  to the SHA-verified disposition; 33 uncataloged post-snapshot
+  arrivals deliberately excluded.
+- Wave 2: the 33 stragglers re-planned through the replay tool — 7
+  representatives, ALL already covered by verified captures
+  (replayBytes: 0) — then deleted via their own manifest.
+- End state: `~/.joelclaw/outbox/` contains 0 files. The observer
+  alarm (release `01b81cba`) watches it from here.
