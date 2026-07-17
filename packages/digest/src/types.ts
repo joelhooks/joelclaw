@@ -90,7 +90,7 @@ export type DigestTelegramButton = {
 
 export type DigestTelegramPayload = {
   text: string;
-  format: "plain";
+  format: "html";
   buttons: DigestTelegramButton[][];
   policy: {
     sourceEventType: "signal/digest.assembled";

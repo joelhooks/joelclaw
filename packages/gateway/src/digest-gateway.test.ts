@@ -51,7 +51,7 @@ function prototypeWithService(service: DigestService): GatewayDigestPrototype {
       kind: "ready",
       payload: {
         text: "Fixture digest",
-        format: "plain",
+        format: "html",
         buttons: [[
           { text: "✅ Done", action: "act:test" },
           { text: "Open memory source", url: "https://example.com/source" },

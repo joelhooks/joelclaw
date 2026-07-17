@@ -110,44 +110,56 @@ function ownedCandidateRejection(
   return undefined;
 }
 
+// Telegram HTML allows &, <, > only as entities. Escape every dynamic value
+// before it goes into a bold/italic span.
+function esc(value: string): string {
+  return value.trim().replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+// A muted footer line: "· source — when". Italic so it recedes under the lead.
+function footer(...parts: (string | undefined)[]): string | undefined {
+  const kept = parts.map((p) => p?.trim()).filter((p): p is string => Boolean(p));
+  return kept.length ? `<i>${kept.map(esc).join(" · ")}</i>` : undefined;
+}
+
+// Each section leads with a bold emoji header, then prose — no "Field:" labels.
 function renderMemory(candidate: DigestMemoryCandidate): string[] {
   return [
-    "🧠 Memory",
-    candidate.summary.trim(),
-    `Source: ${candidate.source.trim()}`,
-    `When: ${candidate.happenedAt.trim()}`,
-    `Why now: ${candidate.whyNow.trim()}`,
-    `Connection: ${candidate.connection.trim()}`,
-  ];
+    "🧠 <b>Memory</b>",
+    esc(candidate.summary),
+    esc(candidate.whyNow),
+    esc(candidate.connection),
+    footer(candidate.source, candidate.happenedAt),
+  ].filter((line): line is string => Boolean(line));
 }
 
 function renderReceipt(candidate: DigestReceiptCandidate): string[] {
   if (candidate.kind === "agent-win") {
-    return ["🛠 Agent win", candidate.summary.trim(), `Receipt: ${candidate.proof.trim()}`];
+    return ["🛠 <b>Agent win</b>", esc(candidate.summary), footer(candidate.proof)].filter(
+      (line): line is string => Boolean(line),
+    );
   }
   return [
-    "🟢 Recovery",
-    candidate.summary.trim(),
-    `Broke: ${candidate.whatBroke?.trim()}`,
-    `Fixed: ${candidate.whatFixedIt?.trim()}`,
-    `Proof: ${candidate.proof.trim()}`,
-    ...(clean(candidate.remainingRisk)
-      ? [`Remaining risk: ${candidate.remainingRisk?.trim()}`]
-      : []),
-  ];
+    "🟢 <b>Recovery</b>",
+    esc(candidate.summary),
+    // What broke → what fixed it, as one flowing line rather than two labels.
+    candidate.whatBroke || candidate.whatFixedIt
+      ? esc([candidate.whatBroke?.trim(), candidate.whatFixedIt?.trim()].filter(Boolean).join(" — "))
+      : undefined,
+    footer(candidate.proof, clean(candidate.remainingRisk) ? `risk: ${candidate.remainingRisk}` : undefined),
+  ].filter((line): line is string => Boolean(line));
 }
 
 function renderOwnedItem(candidate: DigestActionCandidate | DigestReminderCandidate): string[] {
   if (candidate.kind === "action") {
-    return ["✅ Yours", candidate.title.trim()];
+    return ["✅ <b>Yours</b>", esc(candidate.title)];
   }
   return [
-    "⏰ Reminder",
-    candidate.title.trim(),
-    `Evidence: ${candidate.sourceEvidence.trim()}`,
-    `Why now: ${candidate.presentRelevance.trim()}`,
-    ...(candidate.dueAt ? [`Source deadline: ${candidate.dueAt}`] : []),
-  ];
+    "⏰ <b>Reminder</b>",
+    esc(candidate.title),
+    esc(candidate.presentRelevance),
+    footer(candidate.sourceEvidence, candidate.dueAt ? `due ${candidate.dueAt}` : undefined),
+  ].filter((line): line is string => Boolean(line));
 }
 
 function failureText(error: unknown): string {
@@ -363,7 +375,7 @@ export function makeDigestService(options: DigestServiceOptions): DigestService 
       kind: "ready",
       payload: {
         text: [intro, ...sections.flatMap((section) => ["", ...section])].join("\n"),
-        format: "plain",
+        format: "html",
         buttons: renderDigestButtons(controls),
         policy: {
           sourceEventType: "signal/digest.assembled",

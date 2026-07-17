@@ -192,7 +192,7 @@ describe("digest assembly", () => {
     expect(result.kind).toBe("ready");
     if (result.kind !== "ready") throw new Error("expected ready digest");
     expect(result.selectedMemory?.summary).toBe("Highest relevance");
-    expect(result.payload.text).toContain("Why now: Useful now");
+    expect(result.payload.text).toContain("Useful now");
     expect(result.payload.text).not.toContain("Lower relevance");
   });
 
@@ -263,10 +263,10 @@ describe("fixture prototype controls", () => {
     expect(prototype.result.kind).toBe("ready");
     if (prototype.result.kind !== "ready") throw new Error("expected fixture digest");
 
-    expect(prototype.result.payload.text).toContain("🧠 Memory");
-    expect(prototype.result.payload.text).toContain("🟢 Recovery");
-    expect(prototype.result.payload.text).toContain("✅ Yours");
-    expect(prototype.result.payload.text).toContain("⏰ Reminder");
+    expect(prototype.result.payload.text).toContain("🧠 <b>Memory</b>");
+    expect(prototype.result.payload.text).toContain("🟢 <b>Recovery</b>");
+    expect(prototype.result.payload.text).toContain("✅ <b>Yours</b>");
+    expect(prototype.result.payload.text).toContain("⏰ <b>Reminder</b>");
     expect(prototype.result.payload.policy).toEqual({
       sourceEventType: "signal/digest.assembled",
       priority: "normal",
