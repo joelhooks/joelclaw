@@ -3,8 +3,9 @@ title: "Park Chorus: stop the injection, preserve the outbox, stop the service"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "in_progress"
-assignee: "pi worker (flagg, herdr right column, 2026-07-17)"
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "pi worker (flagg, wB:p2W) + steering (wB:p5) + Joel (sudo stop)"
 parent: "./memory-system-cleanup-brief.svx"
 blockers: []
 created_at: "2026-07-17"
@@ -144,6 +145,12 @@ launchctl print-disabled system | grep 'com.joelclaw.chorus-rhizomatic'
 Expected receipts: `launchctl print` cannot find the service, the disabled map
 shows `=> disabled`, and the port probe fails. Do not boot out or modify the
 already-disabled legacy label as part of this step.
+
+**Down-state receipts (Joel ran the stop, steering verified 2026-07-17
+~20:55Z):** `launchctl print` → `Could not find service
+"com.joelclaw.chorus-rhizomatic" in domain for system`; disabled map →
+`"com.joelclaw.chorus-rhizomatic" => disabled`; `nc -z 127.0.0.1 4821` →
+connection refused. Chorus is parked. Step closed.
 
 ### Un-park path
 
