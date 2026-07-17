@@ -428,3 +428,22 @@ Before attempt #3: (a) answer the delivery question from Joel's phone,
 journal reader creds, or make the gateway's journal storage explicit and
 readable), (c) explain the consumed-but-unconfirmed canary event with
 code in hand — a queue-stall hypothesis needs proof, not vibes.
+
+## Attempt #3 (2026-07-17 17:53Z) — CANONICAL
+
+The attempt-2 outbox rows proved the acting path healthy and localized the
+defect to the canary's matcher: journal rows stamp `origin_system_id` as
+the `source:eventId` composite; the matcher demanded the bare eventId and
+rejected the proving row. Fixed in `0c561c92` (accepts bare or
+`:<eventId>` suffix; wrong-event rejection verified against the real
+captured row). Re-flip: all five handover receipts ordered and successful
+at 17:53:33–34Z; the sighted canary exited 0 with receipt — event
+`3c2aff2f`, flow `flow_v2_e7d1e03d`, platform message `7718912466:14587`,
+journal event `4ef362b8...` read back from the outbox. Health: gateway
+healthy, zero `telegram.channel.start_failed`, zero `handover.failed`,
+single Slack socket. Joel visually confirmed attempt-2's canary and both
+rollback probes on his phone earlier — human and machine receipts now
+agree. `CHAT_SDK_ACTING_ENABLED=1` stays; the Chat SDK is the canonical
+acting path. Remaining observation-window canaries (five-message burst
+supersession, ingress kill/replay, reaction flowId correlation on an
+exact outbound) run during the window before legacy deletion.
