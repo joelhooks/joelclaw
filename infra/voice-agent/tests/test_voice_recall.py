@@ -20,8 +20,8 @@ from voice_recall import (
 NOW = datetime(2026, 7, 12, 18, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
 
 
-def hit(gist, started_at, privacy="private", url="https://brain.joelclaw.com/secret"):
-    return {"gist": gist, "started_at": started_at, "privacy": privacy, "url": url}
+def hit(gist, started_at, privacy="private", url="https://brain.joelclaw.com/secret", **extra):
+    return {"gist": gist, "started_at": started_at, "privacy": privacy, "url": url, **extra}
 
 
 def envelope(hits):
@@ -67,6 +67,22 @@ class VoiceRecallTest(unittest.TestCase):
 
     def test_empty_results_have_distilled_phrasing(self):
         self.assertEqual(format_recall_for_speech([], now=NOW), NOTHING_DISTILLED)
+
+    def test_formats_observation_when_gist_is_empty(self):
+        timestamp = int(NOW.timestamp() * 1000)
+        result = format_recall_for_speech(
+            [hit("", timestamp, observations=["Observation fallback works"])],
+            now=NOW,
+        )
+        self.assertIn("Observation fallback works", result)
+
+    def test_formats_decision_when_gist_and_observations_are_empty(self):
+        timestamp = int(NOW.timestamp() * 1000)
+        result = format_recall_for_speech(
+            [hit("", timestamp, observations=[], decisions=["Decision fallback works"])],
+            now=NOW,
+        )
+        self.assertIn("Decision fallback works", result)
 
     def test_cli_error_fails_soft(self):
         runner = Mock(return_value=SimpleNamespace(returncode=1, stdout="", stderr="down"))

@@ -17,6 +17,21 @@ _MARK_TAG = re.compile(r"</?mark>", re.IGNORECASE)
 _URL = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
+def _first_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        for item in value:
+            text = _first_text(item)
+            if text.strip():
+                return text
+    return ""
+
+
+def _hit_gist(hit: dict[str, Any]) -> str:
+    return _first_text(hit.get("gist")) or _first_text(hit.get("observations")) or _first_text(hit.get("decisions"))
+
+
 def parse_recall_hits(raw: str) -> list[dict[str, Any]]:
     """Parse the observation hits from a joelclaw JSON envelope."""
     data = json.loads(raw)
@@ -77,7 +92,7 @@ def format_recall_for_speech(
         timestamp = _started_at(hit)
         if not timestamp or timestamp < cutoff:
             continue
-        gist = _MARK_TAG.sub("", str(hit.get("gist") or ""))
+        gist = _MARK_TAG.sub("", _hit_gist(hit))
         gist = _URL.sub("", gist).strip()
         if not gist:
             continue
@@ -106,7 +121,7 @@ def run_recall_work(
     """Query distilled observations and always return a safe spoken sentence."""
     try:
         result = runner(
-            ["joelclaw", "sessions", "search", query, "--limit", "10"],
+            ["joelclaw", "sessions", "search", query, "--limit", "25"],
             capture_output=True,
             text=True,
             timeout=10,
