@@ -3,7 +3,8 @@ title: "Survey Capture & Condense: observations, rollups, dreams, retros"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-17"
 assignee: "pi worker (flagg, herdr pane wB:p2F, 2026-07-17)"
 parent: "./memory-system-review-brief.svx"
 blockers: []
@@ -27,3 +28,21 @@ stage (what writes, what reads, where state lives), a verdict per stage
 counts), and the three most load-bearing risks. Must confirm or kill the
 latent concern: the dream's 200-page read cap shadowing aging pages
 (eligiblePages 0 since 07-14).
+
+## Result (2026-07-17)
+
+Wrote [capture-condense-survey.svx](./capture-condense-survey.svx).
+The live loop is running from LaunchAgents, but the release checkout is not the dev checkout.
+Observation capture is active: `652` top-level observation pages, `85` archived pages, and `0` unpublished pending pages.
+The dream cap is real (`cap: 200` before eligibility), but it is not why `eligiblePages` is `0` today; a full read-only scan found `eligible_total: 0` under the live 7-day/30-day rules.
+Retros are consumed by neat-memory, but no observer-side retro writer was found.
+Self-maintenance runs every tick and validates self-reflection pages, but the durable write path is still staged.
+
+Per-stage verdicts:
+
+- deployment/runtime: `wobbly` — LaunchAgents run cleanly, but dev `46c4a7c3` and release `e6cde337` drift.
+- activity capture and observation write: `working` — validated write/publish path exists and state is fresh.
+- rollups and dreams: `wobbly` — the first supervised dream worked, unattended nightly now no-ops and is capped.
+- retros: `gap` — only 2 retro files exist and no observer writer surfaced.
+- neat-memory surfacing: `working` — beat chain sent 6 memories and scheduled the next beat.
+- self-maintenance tick: `wobbly` — checks/gardening run, but self-reflection writes remain staged and `observer-context` log is missing.

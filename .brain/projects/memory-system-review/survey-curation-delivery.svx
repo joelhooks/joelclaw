@@ -3,7 +3,8 @@ title: "Survey Curation & Delivery: neat-memory, beats, Telegram, grading"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-17"
 assignee: "pi worker (flagg, herdr pane wB:p2H, 2026-07-17)"
 parent: "./memory-system-review-brief.svx"
 blockers: []
@@ -31,3 +32,25 @@ verdict per hop with receipts, an explicit answer to "does the judge actually
 SEE graded outcomes on its next beat, or are grades recorded and never
 consumed?", and the three most load-bearing risks. Read-only — do NOT run the
 curator, send DMs, or touch the state file.
+
+## Result (2026-07-17)
+
+Asset: [Curation delivery survey](./curation-delivery-survey.svx)
+
+Verdicts:
+
+- Candidate pool and judge: `working` — recent observation/retro `.svx` pages are filtered, deduped against state, and judged by `openai-codex/gpt-5.6-sol:xhigh` with `observer/neat-memory-simple-v1`.
+- Prompt shape: `working` — the 27-line prompt gets only `{{history}}` and `{{candidates}}`, with no extra meta wrapper.
+- State file: `working` — `~/.joelclaw/observer-neat-memories.json` is 0600, has six sent entries, and requested slug `2026-07-17-248a3715344a` is now graded `outcome: "worked"`.
+- Beat scheduling and dead-man: `working` — the requested pending beat fired, successors fired, and current pending neat-memory wake is `9783956b-52e3-45c0-8b67-b2c8ab05b45d` at `2026-07-18T04:20:54.419Z`; LaunchAgent runs daily at 16:15 as dead-man.
+- Delivery policy and Telegram formatting: `wobbly` — legacy high-priority Telegram notify is live and working today; the fixed Chat SDK acting path has source/test receipts but `CHAT_SDK_ACTING_ENABLED=0`.
+- Reaction capture and bridge: `working` — Telegram requests `message_reaction`, shadow taps emit inbound reactions, and `message/reaction-bridge` publishes `message/reaction.received` with a real redrive receipt in the messaging stabilization trail.
+- Grading return path: `working` — `message/neat-memory-reaction-grade` maps authorized Joel reaction emoji to `worked` / `did-not-work`, verifies neat-memory ownership, and atomically writes the state file.
+
+Grades-consumed answer: yes. `judgePrompt` in `joelclaw-observer/.pi/extensions/observer/neat-memory.ts` builds `history` as `state.sent.slice(-20).map((entry) => ({ slug: entry.slug, sentAt: entry.sentAt, flavor: entry.flavor, outcome: entry.outcome }))`, then substitutes it into `{{history}}`. Recorded outcomes are consumed by the next judge call.
+
+Load-bearing risks:
+
+1. Delivery has two truths: legacy notify is live; Chat SDK acting is fixed but disabled.
+2. Grading can fall back to a two-minute timestamp match because current state entries do not store `flowId`.
+3. Beat liveness depends on both `joelclaw wake` and the LaunchAgent dead-man; `/tmp/observer-neat-memory.log` is the practical health receipt.

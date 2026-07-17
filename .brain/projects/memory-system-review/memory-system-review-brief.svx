@@ -60,14 +60,32 @@ as a proper MDSvX Brain page rendered by the wiki (2026-07-17).
 - [Register the Observer Brain as a Wiki Root](./register-observer-brain-root.svx)
   — done: `observer` root in brain-roots.json (dark-wizard `e03b805`), 23
   pages catalog cleanly; live on next wiki build.
+- [Survey Capture & Condense](./survey-capture-condense.svx) — capture
+  working (652 live observation pages); dreams wobbly (nightly no-op is
+  corpus youth, not the cap — but `slice(0, cap)` starvation is real and
+  `capped:true` daily since 07-15); retros are a gap (2 files, no writer);
+  release/dev drift found live.
+- [Survey Brain Stores](./survey-brain-stores.svx) — 31 `.brain` trees on
+  flagg, 4 registered; renderer working; ratchet wobbly (1 repo lints, 11
+  unratcheted `.md`); graph wobbly (stale 07-12 data, and a rebuild would
+  leak sensitive node metadata — boundary missing in graph-builder).
+- [Survey Curation & Delivery](./survey-curation-delivery.svx) — every hop
+  working except delivery policy (wobbly: legacy path live, fixed acting
+  path dark); taste loop PROVEN closed: Joel's real 👍 graded
+  `2026-07-17-248a3715344a` → `outcome: "worked"`, and outcomes feed
+  `{{history}}` on the next beat.
 
 ## Latent
 
 - Should the wiki page regenerate on a schedule (observer tick? dream
   pipeline?) instead of on-demand — and what would keep its verdicts honest?
-- The observer dream's 200-page read cap may be shadowing aging pages
-  (eligiblePages 0 daily since 07-14) — flagged during the messaging arc;
-  survey-capture-condense should confirm or kill this.
+- Settled by survey-capture-condense: today's eligiblePages 0 is corpus
+  youth (nothing 7 days old yet), not the cap — but the cap starvation
+  mechanism is real code and will bite as post-cap pages age; deserves its
+  own fix step after this effort.
+- Observer release promotion is manual and drifted live (release lacked the
+  priority-high DM commit until the 2026-07-17 ~17:10Z promotion) — does
+  release promotion deserve a receipt-checked script?
 
 ## Out of scope
 

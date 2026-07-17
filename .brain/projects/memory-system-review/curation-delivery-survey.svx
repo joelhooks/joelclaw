@@ -1,0 +1,128 @@
+---
+title: "Curation delivery survey"
+type: "asset"
+parent: "./survey-curation-delivery.svx"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Curation delivery survey
+
+Verdict language: `working` means the hop does its job with receipts; `wobbly` means the hop exists but has a sharp edge, inactive path, or fragile assumption; `gap` means the hop is missing or unused.
+
+## Plain path
+
+1. The Observer neat-memory CLI reads recent private/public observation and retro `.svx` pages from the system Brain.
+2. It filters pages into recent candidates, drops anything already in `~/.joelclaw/observer-neat-memories.json`, and sends a compact candidate list plus send history to the 27-line taste prompt.
+3. The judge is `pi -p --model openai-codex/gpt-5.6-sol:xhigh --no-tools --no-skills --no-context-files --no-extensions --no-session` using prompt version `observer/neat-memory-simple-v1`.
+4. If the judge returns a score at or above 8, the curator sends a Telegram DM via `joelclaw notify send --priority high --telegram-only --source observer/neat-memory`.
+5. When send succeeds, the curator appends the slug, score, flavor, prompt version, judge config, `sentAt`, and `outcome: null` to the 0600 state file.
+6. `bin/neat-memory.sh` reads the judge's `nextBeat`, clamps it, then schedules the next self-paced beat with `joelclaw wake in ... --verb spawn`; the daily LaunchAgent is only a dead-man revive.
+7. Joel reacts on Telegram. Telegram polling includes `message_reaction`, and the Chat SDK shadow tap normalizes the reaction to `message/inbound.reaction`.
+8. `message/reaction-bridge` correlates the platform message back to a message-contract or legacy notify flow, then emits `message/reaction.received`.
+9. `message/neat-memory-reaction-grade` maps the emoji to `worked` / `did-not-work`, verifies the flow belongs to `observer/neat-memory`, finds the matching state entry, and atomically writes the `outcome`.
+10. The next curator beat reads the same state file and includes recent `outcome` values in the judge history.
+
+## Hop verdicts
+
+### 1. Candidate pool and judge — `working`
+
+Receipts:
+
+- Candidate sources are hard-coded in `joelclaw-observer/.pi/extensions/observer/neat-memory.ts`: `OBSERVATIONS = ~/Code/joelhooks/dark-wizard/.brain/observations`, `RETROS = ~/Code/joelhooks/dark-wizard/.brain/resources/retros`, and `STATE = ~/.joelclaw/observer-neat-memories.json`.
+- `selectNeatMemoryCandidates` in `joelclaw-observer/.pi/extensions/observer/lib.ts` only admits `.svx` pages modified inside the 7-day lookback, with `privacy: public` or `privacy: private`, a title, and non-empty body.
+- `filterUnsentNeatMemoryCandidates` dedupes forever against `state.sent`.
+- `defaultNeatMemoryJudgeConfig` sets `model: "openai-codex/gpt-5.6-sol:xhigh"`, `minScore: 8`, `maxCandidates: 120`, and prompt version `observer/neat-memory-simple-v1`.
+- `/tmp/observer-neat-memory-last.json` from `2026-07-17T16:20:35.058Z` saw `342` candidates, `120` unsent candidates, judged one, selected `2026-07-17-777a1698e894`, and set `nextBeat: "12h"`.
+
+### 2. Prompt shape — `working`
+
+Receipts:
+
+- `joelclaw-observer/skills/neat-memory-simple-prompt.md` is the 27-line prompt. It tells the judge silence is fine, defines the send bar, requires JSON-only output, and exposes only `{{history}}` and `{{candidates}}`.
+- `neat-memory.ts` comments make the constraint explicit: `{{history}} and {{candidates}} are the only substitutions; no meta framing.`
+
+### 3. State file — `working`
+
+Receipts:
+
+- Current state path: `~/.joelclaw/observer-neat-memories.json`.
+- Readback on 2026-07-17 found `version` plus `sent` only; six sent entries; file mode `0600`.
+- The requested fact is verified: slug `2026-07-17-248a3715344a` was sent at `2026-07-17T04:18:53.545Z`, score `9`, flavor `useful-resurfacing`, and now has `outcome: "worked"`.
+- Current state entries after the later beats:
+  - `2026-07-16-786f825a7a34` — `outcome: null`
+  - `2026-07-16-25dd785e91dd` — `outcome: null`
+  - `2026-07-16-aa0e30399804` — `outcome: null`
+  - `2026-07-17-248a3715344a` — `outcome: "worked"`
+  - `2026-07-17-721d35cbc3cc` — `outcome: null`
+  - `2026-07-17-777a1698e894` — `outcome: null`
+
+### 4. Beat scheduling and dead-man — `working`
+
+Receipts:
+
+- `joelclaw-observer/bin/neat-memory.sh` runs the curator with `bun .pi/extensions/observer/neat-memory.ts --apply`, reads `/tmp/observer-neat-memory-last.json.nextBeat`, and schedules the successor with `joelclaw wake in "$next_beat" --verb spawn --brief "$BRIEF"`.
+- The same script's dead-man guard exits if any pending wake brief contains `neat-memory-beat`, unless `NEAT_MEMORY_TRIGGER=beat`.
+- LaunchAgent `~/Library/LaunchAgents/com.joelclaw.observer-neat-memory.plist` runs `/Users/joel/.joelclaw/observer-release/bin/neat-memory.sh` daily at `16:15`.
+- The task brief's pending schedule `af0e49ff-9f35-4c12-815e-cbe87214b5f9` is no longer pending because it fired at `2026-07-17T10:19:41Z`. The next beat also fired at `2026-07-17T16:20:35Z`. Current pending successor is `9783956b-52e3-45c0-8b67-b2c8ab05b45d` at `2026-07-18T04:20:54.419Z`.
+- `/tmp/observer-neat-memory.log` shows the chain self-scheduling: `04:19:09Z next beat scheduled in=6h`, `10:20:03Z next beat scheduled in=6h`, `16:20:54Z next beat scheduled in=12h`.
+
+### 5. Delivery policy and Telegram formatting — `wobbly`
+
+Receipts:
+
+- Legacy delivery is the live path today: `~/.joelclaw/scripts/gateway-start.sh` has `CHAT_SDK_INBOUND_SHADOW_ENABLED="1"` and `CHAT_SDK_ACTING_ENABLED="0"`.
+- Curator sends high-priority Telegram-only legacy notify from `sendMessage` in `neat-memory.ts` with `--source observer/neat-memory`.
+- The Chat SDK route exists and is source-fixed: `packages/gateway/src/chat-sdk/outbound.ts` records requested/terminal journal rows, runs Telegram policy, posts via the adapter, requires a non-empty platform message id, and refuses to call confirmation durable unless the journal receipt persisted.
+- The contract route sends `memory` to Telegram operator lane with markdown formatting in `packages/message-contract/src/routing.ts`.
+- `packages/signal/src/policy.ts` has `CURATED_MEMORY_PRODUCER_PATTERN = /^observer[./_-]neat[-_.]?memory$/i` and returns `deliver.curated-memory-dm`.
+- Telegram formatting moved to `packages/gateway/src/telegram-markdown.ts`, using the pinned Chat SDK Telegram MarkdownV2 converter and bullet normalization.
+- The 2026-07-16 confirmed-but-invisible incident is documented and fixed in `messaging-stabilization/run-shadow-window-cutover.svx`: the acting path had digested a normal-priority memory while Redis mislabeled the handled result as confirmed; the fix separates `digested` / `suppressed` / `confirmed`, requires durable journal readback, and adds the visible-delivery canary.
+
+Why wobbly: the fixed Chat SDK acting path is not currently active. Today's real curator delivery depends on the legacy high-priority Telegram notify path. That is fine for delivery, but it means the new contract-v2 outbound path is still source-verified more than production-verified.
+
+### 6. Reaction capture and bridge — `working`
+
+Receipts:
+
+- Telegram polling includes reaction updates in `packages/gateway/src/channels/telegram.ts`: `allowed_updates: ["message", "edited_message", "callback_query", "message_reaction"]`.
+- Chat SDK inbound also declares `message_reaction` in `packages/gateway/src/chat-sdk/instance.ts` and shadow tap handling in `packages/gateway/src/chat-sdk-inbound/taps.ts`.
+- `packages/system-bus/src/inngest/functions/message-reactions.ts` defines `message/reaction-bridge`, decodes `message/inbound.reaction`, rejects unauthorized actors, resolves the outbound flow, sends `message/reaction.received`, and emits `message.reaction.received_published`.
+- `messaging-stabilization/build-reactions-bridge.svx` records a real Telegram redrive: raw event `777932597`, platform message `14562`, inbound event `01KXQ4ET7TBCZAZCJA30QFT3EK`, bridge run `01KXQ4ET8F334EAMM6RFXDA0HD`, emitted `message/reaction.received` event `01KXQ4ETEFYRQ7069Q1RFD0F98`.
+
+### 7. Grading return path — `working`
+
+Receipts:
+
+- `message/neat-memory-reaction-grade` consumes `message/reaction.received`, runs with concurrency key `"neat-memory-state"`, calls `gradeNeatMemoryReaction`, and emits `message.neat_memory.graded` or `message.neat_memory.grade_ignored`.
+- `gradeNeatMemoryReaction` in `packages/system-bus/src/lib/message-reactions.ts` only grades added reactions, maps `👍`, `❤️`, `🔥`, `💯` to `worked` and `👎`, `💩` to `did-not-work`, requires journal rows for the flow, requires a neat-memory source, and writes the state file atomically with mode `0600`.
+- The same function can match by `entry.flowId`, explicit `observer/neat-memory:<slug>` journal source, or one unambiguous sent timestamp inside two minutes.
+- Current state proves at least one real grade landed: `2026-07-17-248a3715344a` is now `outcome: "worked"`.
+
+## Do grades get consumed?
+
+Yes. The taste loop is closed for the judge input. The next curator beat reads `~/.joelclaw/observer-neat-memories.json`, builds `history` from the last 20 sent entries, and includes each entry's `outcome`.
+
+Quoted from `joelclaw-observer/.pi/extensions/observer/neat-memory.ts`:
+
+```ts
+function judgePrompt(candidates: NeatMemoryCandidate[], state: ReturnType<typeof readNeatMemoryState>, taste: string): string {
+  const history = state.sent.slice(-20).map((entry) => ({ slug: entry.slug, sentAt: entry.sentAt, flavor: entry.flavor, outcome: entry.outcome }));
+  const compact = candidates.map((candidate) => ({ slug: candidate.slug, source: candidate.source, title: candidate.title, privacy: candidate.privacy, excerpt: candidate.excerpt.slice(0, 900) }));
+  return taste.replace("{{history}}", JSON.stringify(history, null, 1)).replace("{{candidates}}", JSON.stringify(compact, null, 1));
+}
+```
+
+The state migrator also preserves outcome values:
+
+```ts
+outcome: entry.outcome === "worked" || entry.outcome === "did-not-work" ? entry.outcome : null
+```
+
+So grades are not merely recorded. They are fed back into `{{history}}` on future judge calls.
+
+## Three load-bearing risks
+
+1. **Delivery has two truths right now.** Legacy high-priority Telegram notify is the live path. Chat SDK acting is source-fixed but disabled. If someone assumes the contract-v2 acting path is live because the code is green, they can miss delivery regressions until cutover.
+2. **State matching is still partly timestamp-based.** The grading consumer prefers `flowId` or explicit `observer/neat-memory:<slug>`, but today's state entries do not include `flowId`. When journal metadata lacks an explicit slug, it falls back to a two-minute timestamp match. That is safe only while sends are sparse.
+3. **Beat health is only as good as wake plus LaunchAgent.** The self-scheduler is working now, and the dead-man exists, but if `joelclaw wake` or LaunchAgent silently stops, curation stalls. `/tmp/observer-neat-memory.log` is the practical receipt surface.

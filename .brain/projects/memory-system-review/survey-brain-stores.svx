@@ -3,11 +3,12 @@ title: "Survey Brain Stores: .svx trees, registry, wiki rendering, graph, sync"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker (flagg, herdr pane wB:p2G, 2026-07-17)"
 parent: "./memory-system-review-brief.svx"
 blockers: []
 created_at: "2026-07-17"
+closed_at: "2026-07-17"
 ---
 
 # Survey brain stores
@@ -26,3 +27,24 @@ tree found, registered or orphaned, page counts, `.md` stragglers vs the
 ratchet), how a page travels from file to `brain.joelclaw.com/<root>/<slug>/`,
 a verdict per piece (working / wobbly / gap) with receipts, and the three most
 load-bearing risks. Read-only everywhere.
+
+## Result (2026-07-17)
+
+Survey complete: [Brain stores survey](./brain-stores-survey.svx).
+
+- physical Brain stores: `wobbly` — 31 trees exist; only four are registered,
+  and several are substantial rather than empty scaffolds.
+- `.svx` law and ratchet: `wobbly` — the checker works, but only the wiki runs
+  it during lint; 11 of 29 `.md` files are outside any baseline.
+- root registry: `working` — membership is explicit and the audit reports
+  orphans without auto-registering them; observer registration is present.
+- page renderer: `working` — the three deployed roots render with privacy
+  exclusions, provenance, MDSvX, and local components; observer awaits rebuild.
+- Brain Graph: `wobbly` — the schema-v3 projection and neighborhood UI work,
+  but `graph.json` is five days stale and outside the normal build.
+- fleet sync: `working` — `~/.brain` targets dark-wizard, HEAD matched
+  `origin/main`, and the sync script reports dirty durable state honestly.
+
+The sharpest risk is the privacy mismatch: a fresh graph build would ingest
+renderer-excluded and `privacy: sensitive` pages, while the graph read/UI path
+does not filter their labels or provenance.

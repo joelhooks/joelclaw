@@ -1,0 +1,183 @@
+---
+title: "Asset: capture and condense survey"
+type: "asset"
+parent: "./survey-capture-condense.svx"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Capture and condense survey
+
+This is the map of the observer capture and condense loop as it is running on flagg on 2026-07-17.
+
+Verdicts use the review brief vocabulary: `working`, `wobbly`, `gap`.
+
+## Current deployment
+
+**Verdict: wobbly.** The live loop is running, but the dev checkout and release checkout are not on the same commit.
+
+What runs:
+
+- `com.joelclaw.observer-tick` runs `/Users/joel/.joelclaw/bin/observer-tick.sh` every 1800 seconds. Receipt: `~/Library/LaunchAgents/com.joelclaw.observer-tick.plist` has `StartInterval` `1800`, `StandardOutPath` `/tmp/observer-tick.log`, and `StandardErrorPath` `/tmp/observer-tick.log`.
+- `com.joelclaw.observer-dream` runs `/Users/joel/.joelclaw/bin/observer-dream.sh` daily at 06:10 local. Receipt: `~/Library/LaunchAgents/com.joelclaw.observer-dream.plist` has `StartCalendarInterval` hour `6`, minute `10`, and logs to `/tmp/observer-dream.log`.
+- `com.joelclaw.observer-neat-memory` runs `/Users/joel/.joelclaw/observer-release/bin/neat-memory.sh` daily at 16:15 local. Receipt: `~/Library/LaunchAgents/com.joelclaw.observer-neat-memory.plist` has `StartCalendarInterval` hour `16`, minute `15`, and logs to `/tmp/observer-neat-memory.log`.
+- `launchctl list | grep -i observ` returned all three labels with last status `0`: `com.joelclaw.observer-tick`, `com.joelclaw.observer-dream`, `com.joelclaw.observer-neat-memory`.
+
+State lives here:
+
+- Observer cursor: `/Users/joel/.joelclaw/observer-cursor.json`, size `68973`, mtime `2026-07-17T16:28:46Z`.
+- Observer session metadata: `/Users/joel/.joelclaw/observer-session.json`, session `019f70cb-1c34-7c83-ae5a-369ee1359d8f`, started `2026-07-17T15:56:31.060Z`.
+- Family registry: `/Users/joel/.joelclaw/observer-family.json`, 2 roles, updated `2026-07-17T16:26:32.931217Z`.
+- Pending publish state: `/Users/joel/.joelclaw/observer-pending.json`, `unpublished: 0`, mtime `2026-07-17T16:29:11Z`.
+- Worker state: `/Users/joel/.joelclaw/observer-workers.json`, `workers: 0`, mtime `2026-07-17T16:52:10Z`.
+
+Drift receipt:
+
+- Dev checkout `~/Code/joelhooks/joelclaw-observer` is `46c4a7c3` (`bake in the Telegram contract: skills/telegram-joel.md ...`).
+- Deployed release `~/.joelclaw/observer-release` is `e6cde337` (`validator honors the simple-prompt send shape ...`).
+- That drift may be intended steering lag, but it means code inspection from the dev checkout is not the live truth unless compared against release.
+
+## Stage: activity capture and observation write
+
+**Verdict: working.** The write path exists, state is fresh, and the observation substrate is growing.
+
+What writes:
+
+- The observer tool `write_observation` validates a schema-v1 page, requires matching window metadata for the noise bar, scans secrets, escapes MDSvX braces, writes with `flag: "wx"`, and records pending publish state. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/index.ts:412-430`.
+- The cursor advances per session with `advance_cursor`. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/index.ts:433`.
+- Publish stages only `.brain/observations` before commit/push/index. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/index.ts:435-453`.
+
+What reads:
+
+- `list_activity_windows` reads `/Users/joel/.joelclaw/observer-cursor.json`, scans captured chunks, folds them into session windows, and streams progress counts. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/index.ts:371-380`.
+- `read_session_window` delegates bounded session context to `joelclaw sessions extract`, with chunk fallback. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/index.ts:394`.
+- `distill_window` prepares the Terra distiller brief, mines session signals, computes the `promptHash`, and returns the next subagent call. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/index.ts:396-410`.
+
+Where state lives:
+
+- Observation pages live in `/Users/joel/Code/joelhooks/dark-wizard/.brain/observations`.
+- Current substrate count: `652` top-level `.svx` pages and `85` archived `.svx` pages under `archive/`.
+- Current privacy split in top-level observations: `311 private`, `306 sensitive`, `31 public`, `3 missing`, `1 "private"`.
+- Current day counts in top-level observations: `2026-07-14: 168`, `2026-07-15: 118`, `2026-07-16: 219`, `2026-07-17: 84`.
+- Latest observed page mtime from the tree scan: `2026-07-17-slack-work-state-pass-01KXRFXMGQDZBHEAKJW8AF3D23.svx` at `2026-07-17T16:54:10Z`.
+- Pending publish count is `0` in `/Users/joel/.joelclaw/observer-pending.json`.
+
+Caveat:
+
+- The kind taxonomy is not clean. The top-level scan found `42` pages with missing `kind`, plus many different kind strings (`anomaly`, `observation`, `change`, `implementation`, `review`, `session`, `decision`, `verification`, `epoch`). That is not a write failure, but it makes later grouping and health review noisier.
+
+## Stage: rollups and dreams
+
+**Verdict: wobbly.** The deterministic dream machinery exists and the daily job runs, but the live nightly pass is currently a no-op and the 200-page cap is now active.
+
+What writes:
+
+- `applyReflectorDream` reads top-level observation pages, groups eligible pages, validates rollups before writing, writes rollups with `flag: "wx"`, writes a dream receipt page only when something was condensed, then moves originals into `archive/YYYY-MM`. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/lib.ts:1346-1424`.
+- The real dream script calls `applyReflectorDream` directly with the live observations dir, `cap`, `minAgeDays`, and optional fixed `now`. Receipt: `/Users/joel/.joelclaw/bin/observer-dream.sh:7-34`.
+
+What reads:
+
+- The dream reads only top-level `.svx` files from `/Users/joel/Code/joelhooks/dark-wizard/.brain/observations`, sorted by filename, then takes `files.slice(0, cap)`. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/lib.ts:1350-1352`.
+- It skips `kind: dream-receipt`, waits for plain pages to be at least `minAgeDays`, and only re-rolls rollups at week/month blur levels. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/lib.ts:1205-1212`.
+- Rollup citations preserve source page path, `sessionId`, `machine`, and `commits`. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/lib.ts:1228-1229` and `1257-1304`.
+
+Where state lives:
+
+- Dream JSON receipts append to `/tmp/observer-dream.log`.
+- Condensed originals move under `/Users/joel/Code/joelhooks/dark-wizard/.brain/observations/archive/YYYY-MM/`.
+- Rollup pages and non-empty dream receipt pages land back in `/Users/joel/Code/joelhooks/dark-wizard/.brain/observations`.
+
+Receipts:
+
+- First supervised dream had already proven the write path: `build-reflector-dreaming-pass.svx` records the 2026-07-14 live run as `132 pages read`, `85 pages >=1 day old`, `26 day/repo/privacy rollups`, originals moved to `observations/archive/2026-07/`, receipt page `2026-07-14-dream-receipt-024779dc.svx`, compression `0.81`.
+- The unattended nightly job has been no-oping with `minAgeDays: 7`. `/tmp/observer-dream.log` says:
+  - `2026-07-14T05:14:34.100Z`: `pagesRead:75`, `eligiblePages:0`, `rollupCount:0`, `capped:false`.
+  - `2026-07-14T13:10:01.444Z`: `pagesRead:117`, `eligiblePages:0`, `rollupCount:0`, `capped:false`.
+  - `2026-07-15T13:10:06.006Z`: `pagesRead:200`, `eligiblePages:0`, `rollupCount:0`, `capped:true`.
+  - `2026-07-16T13:10:05.085Z`: `pagesRead:200`, `eligiblePages:0`, `rollupCount:0`, `capped:true`.
+  - `2026-07-17T03:20:03.893Z`: `pagesRead:200`, `eligiblePages:0`, `rollupCount:0`, `capped:true`.
+  - `2026-07-17T13:10:05.238Z`: `pagesRead:200`, `eligiblePages:0`, `rollupCount:0`, `capped:true`.
+
+Cap concern:
+
+- Confirmed: the cap is real. It is `OBSERVER_REFLECTOR_CAP:-200` in `/Users/joel/.joelclaw/bin/observer-dream.sh:9`, and live code takes `files.slice(0, cap)` before parsing eligibility at `~/.joelclaw/observer-release/.pi/extensions/observer/lib.ts:1350-1352`.
+- Killed for today: the 200-page cap is not the cause of `eligiblePages:0` on 2026-07-17. A read-only scan of all `652` top-level observation pages found `eligible_total: 0` and `eligible_first200: 0` under the live rule: plain pages need 7 days; rollups need 30 days for week blur or 90 days for month blur. The oldest current top-level page is `2026-07-11-media-workflow-clips.svx`, so the corpus is still too young for the live 7-day rule.
+- Still risky: once pages after the first 200 sorted names become eligible, the current code will not see them until earlier names are condensed or archived. The log already shows `capped:true` daily since 2026-07-15.
+
+## Stage: retros
+
+**Verdict: gap.** Retros exist as an input to neat-memory, but this survey did not find an observer-side retro writer.
+
+What writes:
+
+- No observer script found here writes retros.
+- The only files currently in `/Users/joel/Code/joelhooks/dark-wizard/.brain/resources/retros` are `three-things-theo-video-retro-2026-07-12.svx` and `grill-master-evolution-2026-07.svx`.
+- The latest retro mtime is `grill-master-evolution-2026-07.svx` at `2026-07-16T15:33:21Z`.
+
+What reads:
+
+- `neat-memory.ts` reads both `/Users/joel/Code/joelhooks/dark-wizard/.brain/observations` and `/Users/joel/Code/joelhooks/dark-wizard/.brain/resources/retros`. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/neat-memory.ts:23-27` and `108-123`.
+
+Where state lives:
+
+- Retro pages live in `/Users/joel/Code/joelhooks/dark-wizard/.brain/resources/retros`.
+- The read-only scan found `2` retro `.svx` files. Both had missing `kind` and missing `privacy` frontmatter by the same simple scan used for observations.
+
+## Stage: neat-memory surfacing
+
+**Verdict: working.** The curator reads observations and retros, judges candidates, sends only on selected high-signal items, records sent state, and schedules the next beat.
+
+What writes:
+
+- On `--apply`, if the decision is `send`, `neat-memory.ts` sends `joelclaw notify send --priority low --source observer/neat-memory ...` and writes `/Users/joel/.joelclaw/observer-neat-memories.json` only after the send envelope is ok. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/neat-memory.ts:98-105` and `125-137`.
+- `bin/neat-memory.sh` schedules the next beat with `joelclaw wake in <nextBeat> --verb spawn --brief ...`; the daily LaunchAgent is the dead-man. Receipt: `~/Code/joelhooks/joelclaw-observer/bin/neat-memory.sh` and live plist path `/Users/joel/.joelclaw/observer-release/bin/neat-memory.sh`.
+
+What reads:
+
+- Candidate files come from observations and retros. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/neat-memory.ts:108-112`.
+- The judge prompt includes recent send history and compact candidate excerpts. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/neat-memory.ts:61-70`.
+- Candidate links are 200-checked against `https://brain.joelclaw.com/user/observations/<slug>` or `https://brain.joelclaw.com/resources/retros/<slug>` before using the canonical URL; otherwise the file path is used. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/neat-memory.ts:90-96`.
+
+Where state lives:
+
+- State file: `/Users/joel/.joelclaw/observer-neat-memories.json`, version `1`, `sent: 6`, mtime `2026-07-17T16:20:54Z`.
+- Log file: `/tmp/observer-neat-memory.log`.
+
+Receipts:
+
+- `/tmp/observer-neat-memory.log` shows a beat at `2026-07-17T10:19:41Z`, `check complete`, next beat scheduled in `6h` as `f5a6e6da-2e0b-48a2-9b7c-4498730f975e`.
+- It then shows a beat at `2026-07-17T16:20:35Z`, `check complete`, next beat scheduled in `12h` as `9783956b-52e3-45c0-8b67-b2c8ab05b45d`.
+- State shows the latest send: slug `2026-07-17-777a1698e894`, sent at `2026-07-17T16:20:35.058Z`, score `8.6`, flavor `milestone-win`, model `openai-codex/gpt-5.6-sol:xhigh`.
+
+## Stage: self-maintenance tick
+
+**Verdict: wobbly.** Tick v4 is alive and checking itself, but the self-reflection write path is still staged and one warning repeats every tick.
+
+What writes:
+
+- The tick supervisor calls self-maintenance with `--apply` before sending the observer `tick`. Receipt: `/Users/joel/.joelclaw/bin/observer-tick.sh:281-303`.
+- `self-maintenance.ts --apply` writes only its own log and pane-gardening actions. It builds and validates a self-reflection page, but returns `writePolicy: "staged only; steering installs observation write path"`. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/self-maintenance.ts:135-145`.
+
+What reads:
+
+- Self-maintenance reads family registry, dispatcher pane, tick log, dispatcher dedupe, telemetry state, pending publish state, observer/dream/context launch logs, current panes, and observation counts. Receipt: `~/.joelclaw/observer-release/.pi/extensions/observer/self-maintenance.ts:115-133`.
+
+Where state lives:
+
+- Self-maintenance log: `/tmp/observer-self-maintenance.log`.
+- Tick log: `/tmp/observer-tick.log`.
+- Family and state files under `/Users/joel/.joelclaw/`.
+
+Receipts:
+
+- `/tmp/observer-tick.log` says `2026-07-17T16:26:33Z tick sent pane=w4:p2A`.
+- The same tick's self-check marked `family-registry`, `dispatcher-dedupe`, `telemetry-state`, `pending-state`, `unpublished-backlog`, `observer-tick`, and `observer-dream` as ok.
+- The same tick warned: `launchagent:com.joelclaw.observer-context: com.joelclaw.observer-context log missing`.
+- The same tick built and validated slug `2026-07-17-observer-self-reflection` but did not write it, because `writePolicy` is `staged only; steering installs observation write path`.
+- `/tmp/observer-self-maintenance.log` shows repeated pane label gardening. The latest line is `2026-07-17T16:26:33.090Z gardening rename pane=w4:p8 label="📡 Dispatcher" reason=protected dispatcher label drift code=0`.
+
+## Three load-bearing risks
+
+1. **The dream cap can starve older pages after the first 200 sorted filenames.** The concern is not causing today's zero eligible pages, but the code really does slice to 200 before eligibility. With `652` top-level pages and `capped:true` already in the daily log, this becomes dangerous as soon as post-cap pages age past the threshold.
+2. **Self-maintenance can see problems but cannot yet write its own durable observation.** It validates self-reflection pages every tick, and it is currently noisy enough to want to write, but the result stays in `/tmp/observer-tick.log` instead of the observation substrate.
+3. **Retros are not part of the observer write loop.** Neat-memory consumes retros, but this survey found only 2 retro files and no observer-side retro writer. If retros are supposed to be first-class memory, they are currently a manual/adjacent input, not a pipeline stage.

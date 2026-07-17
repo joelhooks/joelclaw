@@ -1,0 +1,215 @@
+---
+title: "Brain stores survey: trees, rendering, graph, and sync"
+type: "asset"
+parent: "./survey-brain-stores.svx"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Brain stores survey
+
+This is the flagg snapshot from 2026-07-17 10:01 PDT. The filesystem was
+active while I surveyed it, so counts are a point-in-time receipt, not a
+promise that writers stopped.
+
+## What exists on flagg
+
+The required scan found **31 `.brain` trees**, containing **2,027 `.svx` pages**
+and **29 `.md` files**. The registry names four roots. Everything else is an
+orphan from the wiki's point of view, not automatically a mistake.
+
+`~/.brain` is not a fifth store. It is a symlink to
+`~/Code/joelhooks/dark-wizard/.brain`, the registered `user` root.
+
+| Tree under `~/Code/joelhooks` | Registry root | `.svx` | `.md` | Unratcheted `.md` | Wiki render | Notable scope |
+|---|---:|---:|---:|---:|---|---|
+| `.brain` | — | 1 | 0 | 0 | no | workspace-level PARA scaffold |
+| `.worktrees/joelclaw-inngest-transcription-fix/.brain` | — | 43 | 2 | 2 | no | old joelclaw worktree snapshot |
+| `aie-loopcraft-workshop-2026/.brain` | — | 1 | 0 | 0 | no | workshop index |
+| `cutting-room/.brain` | — | 1 | 0 | 0 | no | PARA scaffold |
+| `dark-wizard/.brain` | `user` | 1,121 | 8 | 0 | yes, 698 eligible | system/user Brain: areas, observations, projects, resources, tasks, components |
+| `dotfiles/.brain` | — | 1 | 0 | 0 | no | index scaffold |
+| `grill-master-not-wayfinder-video/.brain` | — | 27 | 0 | 0 | no | video research, beat sheet, cut pipeline, tasks |
+| `herdr-pings/.brain` | — | 1 | 0 | 0 | no | PARA scaffold |
+| `herdr-remote/.brain` | — | 1 | 0 | 0 | no | PARA scaffold |
+| `jc-slack/.brain` | — | 4 | 0 | 0 | no | bootstrap, search/read, permalink-context tasks |
+| `joelclaw/.brain` | `joelclaw` | 261 | 5 | 1 | yes, 261 eligible | system architecture plus active project and review memory |
+| `joelclaw-api/.brain` | — | 1 | 0 | 0 | no | PARA scaffold |
+| `joelclaw-central/.brain` | — | 20 | 0 | 0 | no | Central architecture and projects |
+| `joelclaw-observer/.brain` | `observer` | 23 | 0 | 0 | local yes; live 404 | observer dispatcher, digest, and operating-paper work |
+| `joelclaw-runtime/.brain` | — | 29 | 1 | 1 | no | runtime architecture, observability, webhook projects |
+| `joelclaw-video/.brain` | — | 1 | 0 | 0 | no | PARA scaffold |
+| `joelclaw-voice/.brain` | — | 11 | 6 | 6 | no | voice projects and lore research data |
+| `joelclaw-wiki/.brain` | `wiki` | 67 | 6 | 0 | yes, 67 eligible | wiki design, graph shape, operating-paper projects, bench |
+| `loopcraft-in-pi/.brain` | — | 35 | 0 | 0 | no | loopcraft source and reliability research |
+| `pi-codex-account-pool/.brain` | — | 2 | 0 | 0 | no | account-pool project |
+| `pi-discord-threads/.brain` | — | 33 | 0 | 0 | no | Discord workroom and run-control projects |
+| `pi-discord-threads-effect-v4-engine/.brain` | — | 19 | 0 | 0 | no | Effect-engine project brain |
+| `pi-discord-threads-run-control-next/.brain` | — | 20 | 0 | 0 | no | run-control project brain |
+| `pi-fable/.brain` | — | 1 | 0 | 0 | no | PARA scaffold |
+| `pi-notes/.brain` | — | 25 | 0 | 0 | no | Brain components, migration, diagrams, agent-loop work |
+| `pi-tools/.brain` | — | 39 | 1 | 1 | no | Pi tools projects and quality sweep |
+| `pi-workflow-os/.brain` | — | 11 | 0 | 0 | no | Workflow OS and compound-engineering work |
+| `shitrat-cli/.brain` | — | 15 | 0 | 0 | no | CLI decisions, architecture, Slack constraints |
+| `transcript-rig/.brain` | — | 1 | 0 | 0 | no | PARA scaffold |
+| `ts-cli-template/.brain` | — | 1 | 0 | 0 | no | template PARA scaffold |
+| `wzrrd-sh-cli/.brain` | — | 211 | 0 | 0 | no | extensive platform areas, decisions, projects, resources, tasks |
+
+“Eligible” applies the renderer's current privacy filter. In the `user` root,
+94 pages sit under excluded sections and 329 more declare
+`privacy: sensitive`. The other three registered roots had no exclusions at
+this snapshot.
+
+Receipts:
+
+- scan: `find ~/Code/joelhooks -maxdepth 3 -name .brain -type d -not -path "*/node_modules/*"`
+- registry: `~/Code/joelhooks/dark-wizard/brain-roots.json`
+- symlink: `~/.brain -> ~/Code/joelhooks/dark-wizard/.brain`
+
+## The `.svx` law and ratchet
+
+**Verdict: `wobbly`.** The checker is real, but enforcement is narrow.
+
+`dark-wizard/scripts/check-brain-svx.sh` finds `.md` files under any `.brain`,
+then subtracts a repo-root `.brain-svx-baseline` (or the legacy
+`.brain/.svx-lint-baseline`). Baselines exist only in `dark-wizard`,
+`joelclaw`, and `joelclaw-wiki`.
+
+Only `joelclaw-wiki/package.json` wires the checker into its normal lint command
+through `lint:brain`. The registered roots contain 19 `.md` files; 18 are
+ratcheted. `joelclaw` currently fails because
+`.brain/data/grill-master/joelclaw-wiki-v0-claude-prompt.md` is not in its
+baseline, while the baseline still carries an old path that no longer exists.
+Across all 31 trees, 11 of the 29 `.md` files are unratcheted violations in five
+trees.
+
+Receipts:
+
+- `~/Code/joelhooks/dark-wizard/scripts/check-brain-svx.sh`
+- `dark-wizard/.brain-svx-baseline`
+- `joelclaw/.brain-svx-baseline`
+- `joelclaw-wiki/.brain-svx-baseline`
+- `joelclaw-wiki/package.json` (`lint` → `lint:brain`)
+
+## Registry and audit
+
+**Verdict: `working`.** Membership is explicit, and the audit treats orphans as
+proposals rather than silently ingesting them.
+
+`brain-roots.json` now names `user`, `joelclaw`, `observer`, and `wiki`.
+`observer` was added by the sibling session at commit `e03b805`, as expected by
+this task. The live static site has not rebuilt from that registry yet:
+`/user/index/`, `/joelclaw/index/`, and `/wiki/index/` returned 200, while
+`/observer/index/` returned 404.
+
+The live `/graph/` page returned 200. It is an honest registered-root index and
+registry-audit view, not the graph projection. Its current audit reports 49
+unregistered candidates from blaine, but flagg's crawl hit its 45-second limit.
+That is why the live audit and this exact local 31-tree scan answer different
+questions.
+
+Receipts:
+
+- `~/Code/joelhooks/dark-wizard/brain-roots.json`
+- `~/Code/joelhooks/dark-wizard/brain-roots-audit.json`
+- `joelclaw-wiki/src/routes/graph/+page.server.ts`
+- `joelclaw-wiki/src/routes/graph/+page.svelte`
+- live checks against `https://brain.joelclaw.com/graph/` and the four root index URLs
+
+## How a file becomes a URL
+
+**Renderer verdict: `working`.** The three previously deployed roots render;
+the new observer root is waiting on the next static build.
+
+1. `brain-roots.json` assigns a root name, checkout, and `.brain` path.
+2. `catalog.ts` walks only `.svx` files. It drops any path containing
+   `captures`, `compaction-dumps`, `people`, or `private-family-health`, and it
+   drops pages whose frontmatter is exactly `privacy: sensitive`.
+3. The relative path loses `.svx`. For example,
+   `.brain/resources/fleet-sync-doctrine.svx` becomes the key
+   `user/resources/fleet-sync-doctrine` and the URL
+   `/user/resources/fleet-sync-doctrine/`.
+4. The Vite `virtual:brain-pages` plugin resolves wikilinks, injects component
+   imports, compiles MDSvX, then checks the generated Svelte. Component lookup
+   is project-local `.brain/components/**` first, then wiki standard/shared
+   components. A broken page becomes a page-scoped compile-error card instead
+   of killing every page.
+5. `[root]/[...slug]/+page.server.ts` prerenders one route per catalog entry,
+   renders the compiled module, adds repo/path/commit provenance, and asks the
+   graph reader for a local neighborhood.
+6. The live site changes only after the wiki is rebuilt and published. A
+   registry commit by itself does not add a live route.
+
+Receipts:
+
+- `joelclaw-wiki/src/lib/brain/catalog.ts`
+- `joelclaw-wiki/src/lib/brain/vite-plugin.ts`
+- `joelclaw-wiki/src/routes/[root]/[...slug]/+page.server.ts`
+
+## Brain Graph
+
+**Verdict: `wobbly`.** The projection and neighborhood UI exist, but the data is
+manual and stale.
+
+The active Brain Graph brief has shipped the registry, multi-root projection,
+renderer, graph quality baseline, and Pi change ledger. Three steps remain open:
+agent query surface, cross-root navigation's Joel-use verdict, and retirement
+of the old Studio viewer.
+
+`graph-builder.ts` reads the registry's `.svx` pages, Git commit provenance,
+frontmatter parents, wikilinks, and edition JSON. It emits brain-page/section,
+edition, observation, open-loop, project, and unresolved-page nodes plus
+containment, parent, wikilink, evidence, project, and source-observation edges.
+It also audits unregistered first-level repo brains.
+
+The current ignored `joelclaw-wiki/data/graph.json` is schema v3, **932 nodes / 805
+edges**, over only `user`, `joelclaw`, and `wiki`. Its filesystem mtime is
+2026-07-12 13:38 PDT. It predates the observer registration and five days of
+Brain writes. The normal wiki `build` script does not rebuild it. The live
+`/graph/` route does not read it; individual Brain pages do read it for
+backlinks and local neighborhoods.
+
+Receipts:
+
+- `joelclaw/.brain/projects/brain-graph/brain-graph-brief.svx`
+- `joelclaw-wiki/src/lib/services/graph-builder.ts`
+- `joelclaw-wiki/src/lib/services/graph-read.ts`
+- `joelclaw-wiki/scripts/build-graph.ts`
+- `joelclaw-wiki/data/graph.json`
+
+## Fleet sync
+
+**Verdict: `working`.** The transport and symlink are correct; active dirty work
+still cannot travel until its owner commits and pushes it.
+
+`dw-sync.sh` fetches and fast-forwards `origin/main`, refuses divergence, reports
+ahead/behind state, and limits staging to durable surfaces. At 10:01 PDT,
+dark-wizard `HEAD` and the local `origin/main` both pointed at `3d40124`; the
+last fetch was 10:00:54 PDT. There were 17 dirty paths, 15 on durable surfaces,
+from active sessions. That is in-flight state, not committed fleet memory.
+
+Receipts:
+
+- `~/Code/joelhooks/dark-wizard/scripts/dw-sync.sh`
+- `git -C ~/Code/joelhooks/dark-wizard status/log/reflog`
+- `~/.brain` symlink target
+
+## Three load-bearing risks
+
+1. **A graph rebuild can leak sensitive metadata.** The renderer excludes four
+   sections and `privacy: sensitive`, but `graph-builder.ts` does not. It reads
+   every `.svx` under registered roots and merely copies privacy fields onto
+   nodes. `graph-read.ts`, `Backlinks.svelte`, and `LocalGraph.svelte` do not
+   filter those nodes before printing labels and provenance. The stale graph
+   currently has zero sensitive nodes; rebuilding against today's user Brain
+   would ingest hundreds unless this boundary is fixed first.
+2. **Freshness depends on a human remembering two different builds.** The static
+   page catalog refreshes only on wiki build/publish, while `graph.json` has its
+   own manual builder and is not part of `package.json`'s build script. The
+   observer root is the live proof: registered locally, still 404; the graph is
+   older still.
+3. **The law and the registry cover only a small slice of physical reality.**
+   Four of 31 trees render, only one repo runs the `.svx` checker during lint,
+   and 11 `.md` files are outside any ratchet. Orphans are not inherently wrong,
+   but right now there is no single gate proving each orphan is intentionally
+   local, intentionally archived, or waiting for registration.
