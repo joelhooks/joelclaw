@@ -169,7 +169,7 @@ Operational boundary for Phase 1:
   - `WORK_STATE_PASS_WAKE_MODE=notify|off`
   - optional path overrides: `WORK_STATE_PASS_OBSERVATIONS_DIR`, `WORK_STATE_PASS_STATE_PATH`, `WORK_STATE_PASS_LAST_RUN_PATH`
   - supervised proof only: `WORK_STATE_PASS_SEEDED_PROOF_ENABLED=0|1`; leave it `0` outside a seeded canary.
-- findings write a sensitive `.svx` observation page without Slack message bodies. The notified-state JSON only suppresses repeat wakes; Slack reactions remain canonical. Wake retries carry a stable `joelclaw notify --event-id`; the gateway Redis adapter atomically deduplicates that UUID for seven days.
+- findings write a sensitive `.svx` observation page without Slack message bodies. The notified-state JSON only suppresses repeat wakes; Slack reactions remain canonical. Wake retries carry a stable `joelclaw notify --event-id`; the gateway Redis adapter atomically deduplicates that UUID for seven days. Expired reservations reconcile against that Redis delivery receipt before a changed batch is assembled.
 - funnel: `bun scripts/work-state-pass-funnel.ts`; per-stage evidence: `joelclaw otel search "slack.work_state.pass" --component work-state-pass --hours 24 --limit 100`.
 
 ### System health

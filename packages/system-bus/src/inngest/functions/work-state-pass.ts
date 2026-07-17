@@ -11,6 +11,7 @@ import {
 import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { NonRetriableError, RetryAfterError } from "inngest";
+import { getRedisClient } from "../../lib/redis";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
@@ -141,6 +142,7 @@ export type NotifiedState = {
     workState: WorkState;
     status: "reserved" | "notified";
     runId: string;
+    deliveryEventId?: string;
   }>;
 };
 
@@ -653,6 +655,9 @@ function readNotifiedState(path: string): NotifiedState {
             workState: entry.workState,
             status: entry.status === "reserved" ? "reserved" : "notified",
             runId: typeof entry.runId === "string" ? entry.runId : runId,
+            ...(typeof entry.deliveryEventId === "string"
+              ? { deliveryEventId: entry.deliveryEventId }
+              : {}),
           }]];
         }),
       ),
@@ -676,11 +681,51 @@ export function selectNewFindings(
   });
 }
 
+async function reconcileDeliveredReservations(
+  state: NotifiedState,
+  nowMs: number,
+  wasQueued: (eventId: string) => Promise<boolean>,
+): Promise<{ state: NotifiedState; reconciled: number }> {
+  const staleDeliveryIds = new Set(
+    Object.values(state.notified).flatMap((entry) => {
+      if (entry.status !== "reserved" || !entry.deliveryEventId) return [];
+      const reservedAt = Date.parse(entry.notifiedAt);
+      if (Number.isFinite(reservedAt) && nowMs - reservedAt < RESERVED_WAKE_TTL_MS) return [];
+      return [entry.deliveryEventId];
+    }),
+  );
+  const delivered = new Set<string>();
+  for (const eventId of staleDeliveryIds) {
+    if (await wasQueued(eventId)) delivered.add(eventId);
+  }
+  if (delivered.size === 0) return { state, reconciled: 0 };
+  let reconciled = 0;
+  const notified = Object.fromEntries(
+    Object.entries(state.notified).map(([key, entry]) => {
+      if (
+        entry.status === "reserved" &&
+        entry.deliveryEventId &&
+        delivered.has(entry.deliveryEventId)
+      ) {
+        reconciled += 1;
+        return [key, { ...entry, status: "notified" as const }];
+      }
+      return [key, entry];
+    }),
+  );
+  return { state: { ...state, notified }, reconciled };
+}
+
+async function notificationWasQueued(eventId: string): Promise<boolean> {
+  return (await getRedisClient().exists(`joelclaw:notify:idempotency:${eventId}`)) === 1;
+}
+
 function nextNotifiedState(params: {
   previous: NotifiedState;
   currentFindings: WorkStateFinding[];
   newEntries: WorkStateFinding[];
   newStatus: "reserved" | "notified";
+  newDeliveryEventId?: string;
   runId: string;
   nowIso: string;
 }): NotifiedState {
@@ -695,6 +740,9 @@ function nextNotifiedState(params: {
         workState: finding.workState,
         status: params.newStatus,
         runId: params.runId,
+        ...(params.newDeliveryEventId
+          ? { deliveryEventId: params.newDeliveryEventId }
+          : {}),
       };
     } else if (prior) notified[finding.key] = prior;
   }
@@ -703,12 +751,13 @@ function nextNotifiedState(params: {
 
 async function sendWake(params: {
   runId: string;
+  eventId: string;
   pagePath: string;
   newFindings: WorkStateFinding[];
   totalFindings: number;
   seededScenario: boolean;
 }): Promise<void> {
-  const eventId = deliveryEventId(params.newFindings);
+  const eventId = params.eventId;
   const preview = params.newFindings
     .slice(0, 5)
     .map((finding) => `#${finding.channelName} ${finding.kind}: ${finding.permalink}`)
@@ -999,7 +1048,20 @@ export const workStatePass = inngest.createFunction(
       : null;
 
     const wakeResult = await step.run("dispatch-work-state-wake", async () => {
-      const previous = readNotifiedState(config.notifiedStatePath);
+      const loaded = readNotifiedState(config.notifiedStatePath);
+      const reconciliation = await reconcileDeliveredReservations(
+        loaded,
+        Date.parse(completedAt),
+        notificationWasQueued,
+      );
+      const previous = reconciliation.state;
+      if (reconciliation.reconciled > 0) {
+        await emitStage({
+          action: "slack.work_state.pass.wake_reconciled",
+          runId,
+          metadata: { reconciled: reconciliation.reconciled },
+        });
+      }
       const newFindings = selectNewFindings(findings, previous, Date.parse(completedAt));
       let wakes = 0;
       let next = nextNotifiedState({
@@ -1012,11 +1074,13 @@ export const workStatePass = inngest.createFunction(
       });
       if (newFindings.length > 0 && config.wakeMode === "notify") {
         if (!pagePath) throw new Error("Cannot wake without an observation page pointer");
+        const eventId = deliveryEventId(newFindings);
         const reserved = nextNotifiedState({
           previous,
           currentFindings: findings,
           newEntries: newFindings,
           newStatus: "reserved",
+          newDeliveryEventId: eventId,
           runId,
           nowIso: completedAt,
         });
@@ -1026,6 +1090,7 @@ export const workStatePass = inngest.createFunction(
         try {
           await sendWake({
             runId,
+            eventId,
             pagePath,
             newFindings,
             totalFindings: findings.length,
@@ -1126,6 +1191,7 @@ export const __workStatePassTestUtils = {
   WORK_STATE_PASS_CRON,
   deliveryEventId,
   nextNotifiedState,
+  reconcileDeliveredReservations,
   secretScan,
   slackGet,
 };

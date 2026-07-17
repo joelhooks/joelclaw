@@ -188,6 +188,41 @@ describe("notification hygiene", () => {
       ),
     ).toEqual([first]);
   });
+
+  test("reconciles a queued reservation before a changed batch is rebuilt", async () => {
+    const first = finding();
+    const disappeared = finding("C09LKT871PE:2:stale_started:started");
+    const arrived = finding("C0211NSK3TP:3:untagged:untagged");
+    const deliveryEventId = __workStatePassTestUtils.deliveryEventId([first, disappeared]);
+    const reserved = __workStatePassTestUtils.nextNotifiedState({
+      previous: {
+        version: 1,
+        updatedAt: new Date(0).toISOString(),
+        runId: "none",
+        notified: {},
+      },
+      currentFindings: [first, disappeared],
+      newEntries: [first, disappeared],
+      newStatus: "reserved",
+      newDeliveryEventId: deliveryEventId,
+      runId: "run-1",
+      nowIso: "2026-07-17T15:00:00.000Z",
+    });
+    const reconciled = await __workStatePassTestUtils.reconcileDeliveredReservations(
+      reserved,
+      Date.parse("2026-07-17T15:15:00.000Z"),
+      async (eventId) => eventId === deliveryEventId,
+    );
+    expect(reconciled.reconciled).toBe(2);
+    expect(reconciled.state.notified[first.key]?.status).toBe("notified");
+    expect(
+      selectNewFindings(
+        [first, arrived],
+        reconciled.state,
+        Date.parse("2026-07-17T15:15:00.000Z"),
+      ),
+    ).toEqual([arrived]);
+  });
 });
 
 describe("Slack transport", () => {
