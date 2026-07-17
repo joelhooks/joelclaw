@@ -18,6 +18,7 @@ import { agentTaskRun } from "./agent-task-run";
 import { agentUsageScan } from "./agent-usage-scan";
 import { backfillObserve } from "./backfill-observe";
 import { bookDownload } from "./book-download";
+import { campaignPulseReaction } from "./campaign-pulse-reactions";
 import { channelMessageClassify } from "./channel-message-classify";
 import { channelMessageIngest } from "./channel-message-ingest";
 import { channelIntelligenceGarden } from "./channels/channel-intelligence-garden";
@@ -236,6 +237,7 @@ export const hostFunctionDefinitions = [
   meetingTranscriptIndex,
   messageReactionBridge,
   neatMemoryReactionGrade,
+  campaignPulseReaction,
   granolaBackfill,
   friction,
   frictionFix,
