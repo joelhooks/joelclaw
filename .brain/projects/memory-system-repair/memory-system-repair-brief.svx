@@ -76,10 +76,15 @@ and the taste bench in one grilling.
   done: shared `isExcludedBrainPage` at build + read-path stripping;
   first safe rebuild 3,082 nodes / 0 sensitive / 0 excluded;
   `graph:build` now part of the normal wiki build (wiki `bc05d5b`).
-- [Fix the Dream Cap](./fix-dream-cap.svx) — built and gated by worker:
-  eligibility computed over the whole corpus, cap bounds the night's
-  work; awaiting steering review + release promotion before the 06:10
-  dream (batched with the promotion script).
+- [Fix the Dream Cap](./fix-dream-cap.svx) — done: eligibility computed
+  over the whole corpus, cap bounds the night's work; reviewed and
+  committed (observer `461eddc8`, 87 tests). Release promotion pending
+  only on the taste-bench worker's tree clearing.
+- [Build the Observer Release Promotion Script](./build-release-promotion-script.svx)
+  — done: `bin/promote-release.sh` (clean-tree gate, smoke checks,
+  dry-run receipt, log) + release-drift warning in the self-maintenance
+  tick; same commit. First real promotion will carry the dream-cap fix
+  before the 06:10 dream.
 
 ## Latent
 
