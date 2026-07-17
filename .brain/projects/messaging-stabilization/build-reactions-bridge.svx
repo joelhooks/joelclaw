@@ -78,3 +78,12 @@ If its receipt says `action: send`, Joel reacts to that exact DM with one of the
 configured grade emoji. Then inspect the matching entry in
 `~/.joelclaw/observer-neat-memories.json`; its `outcome` must change. Do not
 send a fake `--source observer/neat-memory` canary.
+
+**Live proof landed (2026-07-17).** Joel reacted to the real curator DM for
+slug `2026-07-17-248a3715344a` (sent 04:18:53Z, score 9, useful-resurfacing);
+the memory-system-review curation survey read the state file and found
+`outcome: "worked"` written by the grade consumer — a human thumbprint through
+the full path: Telegram reaction → shadow tap → `message/inbound.reaction` →
+bridge → `message/reaction.received` → grade → atomic 0600 state write. The
+survey also quoted `judgePrompt` proving outcomes feed `{{history}}` on the
+next beat: grades are consumed, not just recorded.
