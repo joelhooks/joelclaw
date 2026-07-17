@@ -74,6 +74,19 @@ async function ensureCollections(): Promise<void> {
   }
 }
 
+async function upsertRunDocument(run: Partial<Run> & { id: string }): Promise<void> {
+  const res = await typesenseRequest(
+    `/collections/${RUNS_COLLECTION}/documents?action=upsert`,
+    {
+      method: "POST",
+      body: JSON.stringify(run),
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`run upsert failed: ${res.status} ${await res.text()}`);
+  }
+}
+
 export const memoryRunCaptured = inngest.createFunction(
   {
     // v3 intentionally creates a fresh Inngest concurrency bucket after
@@ -123,7 +136,50 @@ export const memoryRunCaptured = inngest.createFunction(
       return { turns, candidates, format };
     });
 
+    // Build the Run row before branching so empty-but-valid captures get the
+    // same metadata document as captures that produce searchable chunks.
+    const run: Partial<Run> & { id: string } = {
+      id: run_id,
+      user_id,
+      machine_id,
+      agent_runtime,
+      agent_version: "",
+      model: "",
+      parent_run_id: parent_run_id ?? null,
+      root_run_id: parent_run_id ?? null,
+      conversation_id: conversation_id ?? null,
+      tags: tags ?? [],
+      readable_by: [user_id],
+      intent: turns.find((t) => t.role === "user")?.text.slice(0, 500) ?? "",
+      started_at,
+      ended_at: turns[turns.length - 1]?.started_at ?? started_at,
+      duration_ms:
+        (turns[turns.length - 1]?.started_at ?? started_at) - started_at,
+      turn_count: turns.length,
+      user_turn_count: turns.filter((t) => t.role === "user").length,
+      assistant_turn_count: turns.filter((t) => t.role === "assistant").length,
+      tool_turn_count: turns.filter((t) => t.role === "tool").length,
+      token_total: turns.reduce((a, t) => a + t.token_estimate, 0),
+      tool_call_count: turns.filter((t) => t.role === "tool").length,
+      files_touched: [],
+      skills_invoked: [],
+      entities_mentioned: [],
+      enriched_at: null,
+      enrichment_model: null,
+      status: "active",
+      full_text: turns.map((t) => t.text).join("\n"),
+      jsonl_path,
+      jsonl_bytes,
+      jsonl_sha256,
+    };
+
+    const indexRun = () =>
+      step.run("index-run", async () => {
+        await upsertRunDocument(run);
+      });
+
     if (candidates.length === 0) {
+      await indexRun();
       await step.run("emit-empty", async () => {
         await emitOtelEvent({
           level: "warn",
@@ -216,56 +272,7 @@ export const memoryRunCaptured = inngest.createFunction(
       return { imported: chunks.length - errors.length, errors: errors.length };
     });
 
-    // Build + upsert the Run row. Inline-deterministic metadata only
-    // (entity extraction is a separate Inngest function, fire-and-forget).
-    const run: Partial<Run> & { id: string } = {
-      id: run_id,
-      user_id,
-      machine_id,
-      agent_runtime,
-      agent_version: "",
-      model: "",
-      parent_run_id: parent_run_id ?? null,
-      root_run_id: parent_run_id ?? null,
-      conversation_id: conversation_id ?? null,
-      tags: tags ?? [],
-      readable_by: [user_id],
-      intent: turns.find((t) => t.role === "user")?.text.slice(0, 500) ?? "",
-      started_at,
-      ended_at: turns[turns.length - 1]?.started_at ?? started_at,
-      duration_ms:
-        (turns[turns.length - 1]?.started_at ?? started_at) - started_at,
-      turn_count: turns.length,
-      user_turn_count: turns.filter((t) => t.role === "user").length,
-      assistant_turn_count: turns.filter((t) => t.role === "assistant").length,
-      tool_turn_count: turns.filter((t) => t.role === "tool").length,
-      token_total: turns.reduce((a, t) => a + t.token_estimate, 0),
-      tool_call_count: turns.filter((t) => t.role === "tool").length,
-      files_touched: [],
-      skills_invoked: [],
-      entities_mentioned: [],
-      enriched_at: null,
-      enrichment_model: null,
-      status: "active",
-      full_text: turns.map((t) => t.text).join("\n"),
-      jsonl_path,
-      jsonl_bytes,
-      jsonl_sha256,
-    };
-
-    await step.run("index-run", async () => {
-      const res = await typesenseRequest(
-        `/collections/${RUNS_COLLECTION}/documents/import?action=upsert`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: JSON.stringify(run),
-        }
-      );
-      if (!res.ok) {
-        throw new Error(`run import failed: ${res.status} ${await res.text()}`);
-      }
-    });
+    await indexRun();
 
     const duration_ms = performance.now() - t0;
 
