@@ -1,5 +1,5 @@
 ---
-title: "Fix the Slack Reaction Tap's Webhook-Mode Construction"
+title: "Prove SDK-Native Slack Reaction Ingress"
 type: "step"
 kind: "task"
 interaction: "AFK"
@@ -8,33 +8,60 @@ assignee: ""
 parent: "./stream-observation-brief.svx"
 blockers: []
 created_at: "2026-07-17"
+rebaselined_at: "2026-07-17"
 ---
 
-# Fix the Slack Reaction Tap's Webhook-Mode Construction
+# Prove SDK-Native Slack Reaction Ingress
+
+## Re-baseline
+
+The construction defect found by [slack-work-state ingress research](../slack-work-state/slack-ingress-coverage-2026-07-17.svx)
+was removed by the Messaging v2 cutover. The old shadow tap and
+`packages/gateway/src/chat-sdk-inbound/taps.ts` no longer exist. Chat SDK is
+the sole Slack Socket Mode owner.
+
+Current anchors:
+
+- `packages/gateway/src/chat-sdk/instance.ts` resolves both Slack tokens and
+  creates `@chat-adapter/slack` with `{ botToken, appToken, mode: "socket" }`.
+- `packages/gateway/src/chat-sdk-inbound/acting.ts` registers
+  `chat.onReaction`, publishes the observe-only `message/inbound.reaction`
+  event before platform policy, and publishes `message/reaction.received`
+  only when a platform message resolves to an existing contract `flowId`.
+- `packages/gateway/src/daemon.ts` initializes `slack-runtime.ts`, registers
+  canonical inbound handling, and starts the single Chat SDK runtime.
+- `packages/gateway/src/slack-runtime.ts` retains Slack Reply Grant policy.
+  Added reactions reach that policy, while removed reactions are currently
+  observation-only.
+
+Live gateway status at `2026-07-17T18:45Z` reported Slack healthy with owner
+`chat-sdk`. A bounded OTEL search found no Slack
+`message/inbound.reaction` proof in the preceding 24 hours. The current gap
+is therefore live proof and Slack-specific regression coverage, not adapter
+construction.
 
 ## Step
 
-Found by [slack-work-state ingress research](../slack-work-state/slack-ingress-coverage-2026-07-17.svx)
-(2026-07-17): the Chat SDK shadow tap constructs the Slack raw normalizer
-with only `{ botToken }` (`packages/gateway/src/chat-sdk-inbound/taps.ts:49-55`),
-so `@chat-adapter/slack` defaults to webhook mode, refuses construction
-without a signing secret, and Slack lands in `disabledPlatforms` at boot —
-every Slack shadow event is silently skipped. The reactions bridge
-(f26064c3) is Telegram-proven only: 3 Telegram receipts, 0 Slack.
+1. Add a canonical Slack reaction fixture around the acting inbound dispatcher.
+   Assert that the normalized Slack reaction publishes
+   `message/inbound.reaction` and reaches Slack platform policy without
+   enqueueing a prompt.
+2. Run one real Joel reaction canary against a safe Slack root. Require a
+   source-grounded bus or OTEL receipt carrying Slack conversation ID,
+   message ID, actor, emoji, and added/removed action.
+3. Prove both subscribed actions reach the observe-only event. If removed
+   reactions remain intentionally excluded from Reply Grant policy, record
+   that as policy, not an ingress failure.
+4. Make a construction or runtime code change only if the live canary fails.
 
-Smallest safe change (from the asset): construct the normalizer in Socket
-Mode with the `slack_app_token` the legacy Slack owner already leases —
-thread the token into the tap, do not invent a webhook verifier. Then run
-one real Joel reaction canary and require a `message/inbound.reaction`
-receipt. Note: runtime registers `reaction_added` only, not
-`reaction_removed` (Joel enabled both in Slack admin 2026-07-16).
+Do not fabricate a `flowId` for arbitrary inbound roots. Work-state consumers
+key inbound-root reactions by `platformIds.conversationId` plus
+`platformIds.messageId`. `message/reaction.received` is only correct for a
+message already represented by a Messaging v2 flow.
 
-Resolved when: a live Joel reaction on a Slack message produces a
-`message/inbound.reaction` event with a receipt, and no
-`chat-sdk-shadow tap error, phase: construct` appears at gateway start.
-Downstream consumers key inbound-root reactions by
-`platformIds.conversationId + platformIds.messageId` — never a fabricated
-`flowId` (see the asset's semantic-boundary note).
+Resolved when: the Slack fixture passes, a real Slack reaction produces one
+`message/inbound.reaction` receipt through the canonical Chat SDK Socket Mode
+owner, and any add/remove policy difference is explicit and tested.
 
 ## Result (YYYY-MM-DD)
 

@@ -8,31 +8,75 @@ assignee: ""
 parent: "./stream-observation-brief.svx"
 blockers: []
 created_at: "2026-07-17"
+rebaselined_at: "2026-07-17"
 ---
 
 # Build Bounded Slack Ingress Reconciliation for Allowlisted Channels
 
+## Re-baseline
+
+Found by [slack-work-state ingress research](../slack-work-state/slack-ingress-coverage-2026-07-17.svx):
+Socket Mode ingress is edge-triggered with no catch-up, and holes are proven.
+Matt's 2026-07-17 CMS-token root (`C0211NSK3TP`, ts
+`1784281556.387689`) had no forward, ingest, or failure receipt while a later
+thread reply landed. Keep that as historical motivation and verify it again
+before using it as current acceptance evidence.
+
+The canonical path has changed:
+
+- Chat SDK now owns Slack Socket Mode. `packages/gateway/src/slack-runtime.ts`
+  forwards accepted realtime messages through `channel/message.received`.
+- `packages/system-bus/src/inngest/functions/channel-message-ingest.ts`
+  validates and upserts the `channel_messages` projection.
+- `packages/system-bus/src/inngest/functions/slack-backfill.ts` already owns
+  bounded Slack API pagination, thread expansion, user resolution, OTEL, and a
+  batch event, but it writes the separate `slack_messages` collection. Reuse or
+  extract that machinery rather than building a second Slack client.
+
+Reconciliation still does not exist for `channel_messages`. The current
+contract also prevents trustworthy missing-only repair:
+
+- `slack-runtime.ts` emits gateway ingestion time in seconds using
+  `Math.floor(Date.now() / 1000)`.
+- `channel-message-ingest.ts` documents and validates `timestamp` as Unix
+  milliseconds.
+- The generated document ID includes ingestion timestamp, user, thread, and
+  text instead of immutable Slack message identity. A replay can therefore
+  create a different document for the same Slack message.
+
 ## Step
 
-Found by [slack-work-state ingress research](../slack-work-state/slack-ingress-coverage-2026-07-17.svx)
-(2026-07-17): Socket Mode ingress is edge-triggered with no catch-up, and
-holes are proven — Matt's 2026-07-17 CMS-token root (C0211NSK3TP ts
-1784281556.387689) has no forward, ingest, or failure receipt while its
-later thread reply landed and 13 other cc-matt-p messages indexed the same
-day. One missed event stays missing forever; `channel_messages` cannot be
-treated as complete for any allowlisted channel until this exists.
+1. Extend `channel/message.received` with an optional immutable source message
+   ID. For Slack, derive stable identity from `channelId + messageTs`, for
+   example `slack:<channelId>:<messageTs>`, without changing identity behavior
+   for other channel types.
+2. Preserve source occurrence time separately from ingestion time. Fix both
+   realtime Slack branches to emit the timestamp parsed from Slack `message.ts`
+   in the unit required by the event contract.
+3. Add a scheduled and manually requested system-bus reconciliation function.
+   It reads an explicit allowlist of channel IDs and names, keeps a durable
+   per-channel cursor with a bounded overlap window, and fetches roots with
+   `conversations.history`. V1 repairs roots only. Thread expansion remains in
+   the existing backfill unless a separate receipt proves replies also need
+   repair.
+4. Compare immutable Slack source IDs against `channel_messages`, then emit
+   `channel/message.received` only for missing roots. A rerun over the same
+   window must be a no-op.
+5. Reuse or extract the Slack API, pagination, user-label, retry, and error
+   classification code from `slack-backfill.ts`. Do not add a third Slack
+   credential or pagination implementation.
+6. Emit per-channel receipts with cursor before/after, overlap window, fetched,
+   already present, repaired, failed, and truncation counts. Keep message bodies
+   out of operational receipts.
 
-Build the smallest reliability change from the asset: a bounded read-only
-reconciliation for allowlisted channels — fetch roots since the last
-observed Slack ts per channel, emit `channel/message.received` only for
-missing documents, with receipts. Also worth fixing while in there: the
-stored `timestamp` is gateway ingestion time, not Slack message ts (the
-Slack ts survives only as `thread_id` on replies) — reconciled docs should
-carry honest Slack timestamps or a documented field.
+Required tests: cursor plus overlap, stable source ID and timestamp conversion,
+rerun no-op, deliberately omitted root healing, Slack API failure, and partial
+Typesense failure.
 
-Resolved when: a deliberately-skipped test message is healed into
-`channel_messages` by the next reconciliation run with a receipt, and
-Matt's CMS-token root itself is present in the collection.
+Resolved when: a deliberately omitted root is healed into `channel_messages`
+by the next reconciliation run, the immediate rerun creates no duplicate, the
+stored source timestamp matches Slack, Matt's named root is present after a
+fresh read, and the run has an auditable receipt.
 
 ## Result (YYYY-MM-DD)
 
