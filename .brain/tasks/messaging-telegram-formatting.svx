@@ -1,0 +1,41 @@
+---
+title: "Task: Telegram messages formatted nicely — markdown renders, both paths"
+type: task-brief
+created: 2026-07-16
+parent: "../projects/messaging-stabilization/run-shadow-window-cutover.svx"
+---
+
+# Nice Telegram formatting
+
+You are on flagg in `~/Code/joelhooks/joelclaw`. NO commits/pushes, NO
+gateway restart, NO flag flips. Set pi session name to
+"💅 Telegram formatting" immediately.
+
+Joel's ask: DM content written with markdown (**bold**, links, emoji,
+line breaks — the neat-memory curator's dm format, notify sends) must
+RENDER on Telegram, not show literal asterisks.
+
+Read first: `@joelclaw/markdown-formatter` (TelegramConverter,
+escapeText — already imported by channels/telegram.ts), how the legacy
+telegram send path chooses parse mode today (grep telegramFormat /
+parse_mode), the contract v2 routing table's `formatting` field, and
+the SDK send path (chat-sdk/outbound.ts posts plain content).
+
+## Deliverables
+
+1. **Legacy path (acting today)**: notify sends and gateway DMs with
+   markdown content render via MarkdownV2 (convert + escape through
+   the existing formatter; fall back to plain on conversion failure —
+   never a Telegram 400). Neat-memory DMs are the proof case.
+2. **SDK path (post-re-flip)**: contract v2 sends honor the routing
+   table's `formatting: "markdown"` — convert through the same
+   formatter before postMessage, same fail-soft.
+3. **Tests** both paths: bold/link/emoji/multiline fixtures from the
+   real curator dm shape; 400-safety (escaping) proven with the nasty
+   characters MarkdownV2 hates (. ! - ( ) etc.).
+4. **One live proof**: send ONE real notify through the legacy path
+   with bold + emoji + a link; paste the envelope. Joel should SEE
+   formatting.
+
+Gates: tsc + targeted biome + suites green. Append receipts to the
+cutover step. Print DONE.
