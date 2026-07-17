@@ -30,6 +30,7 @@ import {
   resolveTelegramMessageFlow,
 } from "../message-journal";
 import type { OutboundEnvelope } from "../outbound/envelope";
+import { prepareTelegramMarkdown } from "../telegram-markdown";
 import {
   routeTelegramOutbound,
   type TelegramOutboundPolicyContext,
@@ -45,16 +46,17 @@ import type {
   SendOptions,
 } from "./types";
 
-// ── Telegram HTML formatting ───────────────────────────
-// Telegram's HTML mode supports: <b>, <i>, <code>, <pre>, <a href="">
-// Max message length is enforced by the converter.
+// ── Telegram formatting ────────────────────────────────
+// Explicit HTML and streaming retain the legacy converter. Default/markdown
+// envelopes use the Chat SDK's MarkdownV2 converter via telegram-markdown.ts.
 const telegramConverter: FormatConverter = new TelegramConverter();
 const CHUNK_MAX = telegramConverter.maxLength;
 
 type TelegramFormattedOutput = {
   text: string;
-  parseAsHtml: boolean;
-  chunkMode: "markdown" | "raw";
+  plainText: string;
+  parseMode?: "HTML" | "MarkdownV2";
+  fallbackReason?: "conversion_failed" | "message_too_long";
 };
 
 // ── Media download (ADR-0042) ──────────────────────────
@@ -161,9 +163,8 @@ function formatByEnvelope(
 ): TelegramFormattedOutput {
   if (format === "plain") {
     return {
-      text: escapeText(text),
-      parseAsHtml: false,
-      chunkMode: "raw",
+      text,
+      plainText: text,
     };
   }
 
@@ -171,34 +172,42 @@ function formatByEnvelope(
     const validation = telegramConverter.validate(text);
     if (!validation.valid) {
       console.warn("[telegram] HTML formatter validation failed, falling back to plain:", validation.errors);
+      const plainText = stripHtmlTags(text);
       return {
-        text: stripHtmlTags(text),
-        parseAsHtml: false,
-        chunkMode: "raw",
+        text: plainText,
+        plainText,
+        fallbackReason: "conversion_failed",
       };
     }
     return {
       text,
-      parseAsHtml: true,
-      chunkMode: "raw",
+      plainText: stripHtmlTags(text),
+      parseMode: "HTML",
     };
   }
 
-  const result = telegramConverter.convert(text);
-  const validation = telegramConverter.validate(result);
-  if (!validation.valid) {
-    console.warn("[telegram] AST formatter validation failed, falling back to plain:", validation.errors);
+  const prepared = prepareTelegramMarkdown(text);
+  if (!prepared.ok) {
+    console.warn("[telegram] MarkdownV2 conversion failed, falling back to plain:", prepared.error);
     return {
-      text: escapeText(text),
-      parseAsHtml: false,
-      chunkMode: "raw",
+      text: prepared.plainText,
+      plainText: prepared.plainText,
+      fallbackReason: "conversion_failed",
+    };
+  }
+  if (prepared.markdownV2.length > CHUNK_MAX) {
+    console.warn("[telegram] MarkdownV2 message exceeds safe chunk size, falling back to plain");
+    return {
+      text: prepared.plainText,
+      plainText: prepared.plainText,
+      fallbackReason: "message_too_long",
     };
   }
 
   return {
-    text: result,
-    parseAsHtml: true,
-    chunkMode: "markdown",
+    text: prepared.markdownV2,
+    plainText: prepared.plainText,
+    parseMode: "MarkdownV2",
   };
 }
 
@@ -1804,6 +1813,10 @@ async function startTelegramChannel(
     // permanently disabling the channel on first conflict.
     pollingStarting = true;
     void bot.start({
+      // Telegram excludes message_reaction unless explicitly requested —
+      // without it, Joel's emoji reactions never reach the gateway or the
+      // shadow tap (reactions-teach-taste plumbing).
+      allowed_updates: ["message", "edited_message", "callback_query", "message_reaction"],
       onStart: (botInfo) => {
         const recovered = pollRetryAttempts > 0 || pollConflictStreak > 0;
         pollRetryAttempts = 0;
@@ -2200,22 +2213,25 @@ async function sendTelegramMessage(
     : undefined;
 
   const formattedOutput = formatByEnvelope(text, sendInput.format);
-  const { text: formattedText, parseAsHtml, chunkMode } = formattedOutput;
-  if (!parseAsHtml) {
+  const {
+    text: formattedText,
+    plainText,
+    parseMode,
+    fallbackReason,
+  } = formattedOutput;
+  if (fallbackReason) {
     void emitGatewayOtel({
       level: "warn",
       component: "telegram-channel",
       action: "telegram.delivery.format_fallback",
       success: true,
-      metadata: { ...audit, chatId, reason: "html_invalid" },
+      metadata: { ...audit, chatId, reason: fallbackReason },
     });
   }
 
-  const chunks = chunkMode === "markdown"
-    ? telegramConverter.chunk(text)
-    : chunkMessage(formattedText);
+  const chunks = chunkMessage(formattedText);
   const telegramMessageIds: number[] = [];
-  let usedFallback = !parseAsHtml;
+  let usedFallback = Boolean(fallbackReason);
 
   void emitGatewayOtel({
     level: "info",
@@ -2237,7 +2253,7 @@ async function sendTelegramMessage(
 
     try {
       const sent = await bot.api.sendMessage(chatId, chunk, {
-        ...(parseAsHtml ? { parse_mode: "HTML" as const } : {}),
+        ...(parseMode ? { parse_mode: parseMode } : {}),
         ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
         ...(mergedOptions?.replyTo ? { reply_parameters: { message_id: mergedOptions.replyTo } } : {}),
         ...(mergedOptions?.silent ? { disable_notification: true } : {}),
@@ -2259,7 +2275,11 @@ async function sendTelegramMessage(
         telegramMessageId: sent.message_id,
         inReplyToMessageId: mergedOptions?.replyTo ?? audit.inReplyToMessageId,
         chunkIndex: i,
-        text: parseAsHtml ? stripHtmlTags(chunk) : chunk,
+        text: parseMode === "HTML"
+          ? stripHtmlTags(chunk)
+          : parseMode === "MarkdownV2"
+            ? plainText
+            : chunk,
         transportText: chunk,
         deliveryState: "confirmed",
       });
@@ -2267,7 +2287,7 @@ async function sendTelegramMessage(
         _onOutboundMessageId(sent.message_id);
       }
     } catch (error) {
-      if (!parseAsHtml) {
+      if (!parseMode) {
         console.error("[gateway:telegram] plain send failed", { error });
         await journalMessage({
           messageKey,
@@ -2336,14 +2356,14 @@ async function sendTelegramMessage(
             ...audit,
             chatId,
             chunkIndex: i,
-            stage: "html_send",
+            stage: "formatted_send",
             telegramMessageIds,
           },
         });
         throw error;
       }
 
-      console.warn("[gateway:telegram] HTML send rejected, trying plain text", { error });
+      console.warn("[gateway:telegram] formatted send rejected, trying plain text", { error });
       void emitGatewayOtel({
         level: "warn",
         component: "telegram-channel",
@@ -2358,7 +2378,8 @@ async function sendTelegramMessage(
       });
 
       try {
-        const sent = await bot.api.sendMessage(chatId, stripHtmlTags(chunk).slice(0, CHUNK_MAX), {
+        const fallbackText = (parseMode === "HTML" ? stripHtmlTags(chunk) : plainText).slice(0, CHUNK_MAX);
+        const sent = await bot.api.sendMessage(chatId, fallbackText, {
           ...(mergedOptions?.replyTo ? { reply_parameters: { message_id: mergedOptions.replyTo } } : {}),
           ...(mergedOptions?.silent ? { disable_notification: true } : {}),
           ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
@@ -2366,7 +2387,7 @@ async function sendTelegramMessage(
         telegramMessageIds.push(sent.message_id);
         usedFallback = true;
         await rememberTelegramMessageFlow(chatId, sent.message_id, audit.flowId);
-        const fallbackTransportText = stripHtmlTags(chunk).slice(0, CHUNK_MAX);
+        const fallbackTransportText = fallbackText;
         await journalMessage({
           messageKey,
           flowId: audit.flowId,
