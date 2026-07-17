@@ -3,7 +3,8 @@ title: "Build jc-slack Reaction Read-Back (context reactions + board query)"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-17"
 assignee: "pi worker (flagg, herdr pane w1A:p2, 2026-07-17)"
 parent: "./slack-work-state-brief.svx"
 blockers: []
@@ -36,6 +37,15 @@ tools-catalog block mentions `board` (steering session grafts + pushes).
 Authorized build work per the brief's Notes (Joel, 2026-07-17). Worker does
 not commit — steering session reviews, commits, pushes.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-17)
 
-<!-- added at resolution -->
+Built the reaction read-back in `~/Code/joelhooks/jc-slack` without committing.
+
+- `jc-slack context` now maps Slack's existing message `reactions` payload into bounded `{ name, count, reacted_by_joel }` entries. Context packs cap reactions at 10 globally and expose both per-message `truncated` and pack-level `truncation.reactions`.
+- Added `jc-slack board <channel-name-or-id> [--limit 1..100]`. Channel names resolve through the existing bounded `conversations.list` path; roots come from the newly allowed read method `conversations.history`. Output is capped at 100 roots, 2,000 text characters per root, 20,000 total text characters, and 100 reaction entries, with explicit root/character/reaction truncation flags.
+- Work-state only trusts Joel's reaction identity: Joel `:white_check_mark:` = `shipped`; otherwise Joel `:shitrat:` = `started`; otherwise `untagged`. Matching reactions from another user do not move state. The live reader defaults to Joel's verified Slack user ID and accepts an `ownerUserId` override for fakes; no `auth.test` method was added. Board next actions point to `jc-slack context`, then the appropriate `jc-slack react` transition.
+- Added fixture-reader parity, `fixtures/fixture-board-v1.json`, fixture CLI coverage, and fake-transport live-path coverage. Updated the README command table and the exact read-plus-reactions boundary.
+- Gates passed: `bun run typecheck`, `bun run lint`, `bun run format`, and `bun run test` (45 tests across 3 files).
+- Live check passed against `#cc-matt-p` (`C0211NSK3TP`): root `1784281556.387689` returned `work_state: "started"` with `:shitrat:` count 1 and `reacted_by_joel: true`. The 100-root board reported only root-window truncation; character and reaction truncation were false.
+
+Later steps can treat the board as live Slack truth with no second store. The transport method union remains closed; `conversations.history` is the only new read and `reactions.add` remains the sole write. The steering session still owns the dark-wizard catalog line plus review/commit/push.

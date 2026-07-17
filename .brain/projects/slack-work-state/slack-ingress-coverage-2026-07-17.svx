@@ -1,0 +1,193 @@
+---
+title: "Slack ingress coverage: cc-matt-p and reaction events"
+type: "asset"
+parent: "./verify-slack-ingress-coverage.svx"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Slack ingress coverage: cc-matt-p and reaction events
+
+## Answers
+
+### 1. #cc-matt-p is allowlisted and live, but the feed missed the named root
+
+**Configured: yes.** The gateway gets its important-channel allowlist from
+`SLACK_IMPORTANT_CHANNEL_IDS` unless `SlackStartOptions.importantChannelIds`
+is passed explicitly:
+
+- `packages/gateway/src/channels/slack.ts:390-409` parses the CSV and tests IDs/names.
+- `packages/gateway/src/channels/slack.ts:1102-1119` resolves explicit options first, then `process.env.SLACK_IMPORTANT_CHANNEL_IDS` / `SLACK_IMPORTANT_CHANNEL_NAMES`.
+- `packages/gateway/src/daemon.ts:4895-4897` starts Slack with only `allowedUserId`, so the important-channel values come from the environment.
+- Private runtime source: `~/.joelclaw/scripts/gateway-start.sh:86-89`. Its 15-ID CSV includes `C0211NSK3TP`.
+
+**Live: yes.** `joelclaw gateway status` reported Slack configured, started,
+healthy, Socket Mode connected, bot `U0AGRUMQXPF`, owner `U030BJ3CK`.
+The latest `slack.channel.started` receipt at `2026-07-17 09:15:57.225Z`
+reported `importantChannelIds=15`, `importantChannelNames=0`. The same startup
+count appears in `/tmp/joelclaw/gateway.log`.
+
+**Typesense: recent cc-matt-p traffic is landing, but not completely.** A
+read-only query of `channel_messages` at `http://localhost:8108` found:
+
+- 3,564 documents in the collection.
+- 142 Slack documents for `channel_id=C0211NSK3TP` total.
+- 13 documents since `2026-07-17T00:00:00Z`.
+- 13 matching `slack.channel_ingest.forwarded` OTEL receipts on 2026-07-17,
+  first `03:25:44.194Z`, last `14:54:07.896Z`.
+- **0 exact documents** for Matt's CMS-token root
+  `1784281556.387689`.
+- **1 document** in thread `1784281556.387689`: Matt's later reply,
+  `"Yep, exactly"`.
+
+A direct read-only Slack `conversations.replies` call proved the root exists:
+
+- channel: `C0211NSK3TP`
+- root ts: `1784281556.387689`
+- author: Matt (`U0211NP2ZN1`)
+- text: asks for a read-only AI Hero CMS token for agents
+- current root reaction: `:shitrat:` by Joel (`U030BJ3CK`), count 1
+
+The root is an ordinary message (`subtype=null`). The code should admit it as
+important-channel passive intel in
+`packages/gateway/src/channels/slack.ts:706-921`. No forward, ingest, or failure
+receipt exists for that root. The exact transport miss is not recoverable from
+the current logs. The feed has no bounded Socket Mode catch-up/reconciliation,
+so one missed event remains missing while later thread replies land normally.
+Also, the stored `timestamp` is gateway ingestion time (`Date.now()/1000`), not
+the Slack message ts; the Slack ts survives only as `thread_id` for replies.
+
+### 2. Reactions reach the bus for Telegram, not Slack
+
+The intended Slack path is present in code:
+
+1. `packages/gateway/src/channels/slack.ts:1229-1241` registers only
+   `reaction_added` with Bolt Socket Mode.
+2. `handleReactionAdded` calls `tapSlackReaction` before legacy filtering
+   (`packages/gateway/src/channels/slack.ts:966-1044`).
+3. `tapSlackReaction` builds a Slack reaction mirror
+   (`packages/gateway/src/chat-sdk-inbound/taps.ts:186-206`).
+4. The observe-only publisher POSTs `message/inbound.reaction` to Inngest
+   (`packages/gateway/src/chat-sdk-inbound/publish.ts`).
+5. `message/reaction-bridge` consumes that event and emits
+   `message/reaction.received` only after resolving the platform message to a
+   contract `flowId` (`packages/system-bus/src/inngest/functions/message-reactions.ts`
+   and `packages/system-bus/src/lib/message-reactions.ts`).
+
+**The live Slack shadow tap is broken at construction.** Runtime config has
+`CHAT_SDK_INBOUND_SHADOW_ENABLED=1` and `CHAT_SDK_ACTING_ENABLED=0`, but
+`packages/gateway/src/chat-sdk-inbound/taps.ts:49-55` constructs the Slack raw
+normalizer with only `{ botToken }`. `@chat-adapter/slack` therefore defaults to
+webhook mode and refuses construction without a signing secret or webhook
+verifier. The current gateway error log records:
+
+```text
+[gateway:chat-sdk-shadow] tap error {
+  platform: "slack",
+  phase: "construct",
+  error: "signingSecret or webhookVerifier is required for webhook mode..."
+}
+```
+
+`getTap` then adds Slack to the process-local `disabledPlatforms` set, so every
+later Slack shadow event is skipped until the next gateway process.
+
+Live evidence for 2026-07-17:
+
+- `message-reaction-bridge` OTEL receipts: **3 total, all Telegram**, at
+  `04:13:21.905Z`, `04:24:51.145Z`, and `04:25:08.849Z`.
+- Slack bridge receipts: **0**.
+- `slack.reaction.*` legacy OTEL receipts: **0**.
+- `joelclaw events --prefix message/inbound.reaction --hours 24`: 0.
+- `joelclaw events --prefix message/reaction.received --hours 24`: 0. This CLI
+  result is incomplete: the three Telegram bridge OTEL receipts and the
+  reactions-bridge task's exact event/run IDs prove those events did execute.
+- The `channel_messages` Typesense schema is message-only. It has no reaction
+  field or reaction writer, so reactions do not land there.
+- The direct Slack read proves `:shitrat:` exists on Matt's root, but there is
+  **no Inngest, bridge, Typesense, or Slack-reaction OTEL receipt for it**.
+
+The reactions bridge shipped in `f26064c3` is therefore Telegram-proven, not
+Slack-proven. It is not accurate to call the current Slack path Telegram-only
+in source, but it is Telegram-only in earned live evidence.
+
+There is a second semantic boundary: Matt's root is inbound, not a message sent
+through contract v2. Even after the Slack tap is repaired,
+`resolveReactionFlow` will not find a Redis/journal `flowId` for that root, so
+`message/reaction-bridge` will return `flow-unresolved` and will not emit
+`message/reaction.received`. That event is intentionally an outbound-message
+return path keyed by `flowId`; it cannot represent arbitrary Slack roots without
+inventing correlation.
+
+### 3. Exact gaps and smallest changes
+
+1. **Broken Slack mirror construction**
+   - Gap: `createSlackSdkRawNormalizer({ botToken })` selects webhook mode in
+     `packages/gateway/src/chat-sdk-inbound/taps.ts`.
+   - Smallest safe code change: construct the raw normalizer in Socket Mode
+     with `mode: "socket"` and the same `slack_app_token` already leased by the
+     legacy Slack owner. Thread that token into the tap/normalizer rather than
+     adding a fake webhook verifier. Then run one real Joel reaction canary and
+     require a `message/inbound.reaction` receipt.
+
+2. **No correlated flow for reactions on inbound Slack work roots**
+   - Gap: `message/reaction-bridge` requires a contract/journal `flowId`.
+     Matt's root has only Slack `(channel, ts)` identity.
+   - Smallest correct change for this effort: consume the repaired
+     `message/inbound.reaction` event in the stream-observer path keyed by
+     `platformIds.conversationId + platformIds.messageId`; do not fabricate a
+     `flowId` or overload `message/reaction.received`. The board/pass should
+     still read Slack reactions directly because Slack is the only work-state
+     store and ingress events are wake/observation hints.
+
+3. **Allowlisted message feed has no catch-up**
+   - Gap: Socket Mode is edge-triggered; `channel_messages` has no reconciliation
+     pass, and the named root is a proven hole.
+   - Smallest reliability change: bounded read-only reconciliation for
+     allowlisted channels (fetch roots since the last observed Slack ts and
+     emit only missing `channel/message.received` documents), or have the pass
+     read Slack roots directly. Do not treat `channel_messages` as complete
+     work-state truth until this exists.
+
+## Event subscriptions and scopes
+
+The Slack bot token's live `auth.test` headers include `reactions:read`
+(70 scopes total). Slack's bot-token API does not expose the app's configured
+Event Subscriptions. The last human receipt is
+`../messaging-stabilization/provision-bot-identities.svx`: Joel confirmed both
+`reaction_added` and `reaction_removed` in Slack admin on 2026-07-16. Runtime
+code registers `message`, `app_mention`, and `reaction_added`; it does **not**
+register `reaction_removed`. Because the real `:shitrat:` addition produced no
+legacy reaction receipt, live delivery of `reaction_added` still needs a canary
+after the mirror-construction fix.
+
+## Commands and queries run
+
+All live-system work was read-only. No Slack writes, config changes, daemon
+restarts, or worker restarts were performed.
+
+```bash
+joelclaw gateway status
+joelclaw gateway channel status slack
+joelclaw gateway diagnose --hours 24 --lines 200
+joelclaw events --prefix message/inbound.reaction --hours 24 --count 200
+joelclaw events --prefix message/reaction.received --hours 24 --count 200
+joelclaw events --prefix channel/message.received --hours 24 --count 200
+joelclaw otel search "*" --component message-reaction-bridge --hours 24 --limit 200
+joelclaw otel search "*" --component slack-channel --hours 24 --limit 200
+```
+
+Additional read-only API queries:
+
+- Typesense `GET /collections/channel_messages` and
+  `GET /collections/channel_messages/documents/search` with exact channel,
+  date, thread, and text checks.
+- Slack `auth.test` with the leased bot token, inspecting scopes only.
+- Slack `conversations.replies` for `C0211NSK3TP / 1784281556.387689` with the
+  leased user token.
+- Narrow ClickHouse `SELECT` queries against `joelclaw.otel_events` for
+  `slack.channel.started`, `slack.channel_ingest.forwarded`,
+  `slack.reaction.*`, and `message-reaction-bridge`.
+- Targeted reads of `/tmp/joelclaw/gateway.log` and
+  `/tmp/joelclaw/gateway.err` for startup counts and the Slack shadow
+  construction error.

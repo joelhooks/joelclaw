@@ -3,11 +3,12 @@ title: "Verify Slack Ingress Coverage for cc-matt-p and Reaction Events"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker (flagg, herdr pane w1A:p3, 2026-07-17)"
 parent: "./slack-work-state-brief.svx"
 blockers: []
 created_at: "2026-07-17"
+closed_at: "2026-07-17"
 ---
 
 # Verify Slack Ingress Coverage for cc-matt-p and Reaction Events
@@ -39,6 +40,28 @@ Produce an asset `slack-ingress-coverage-2026-07-17.svx` (type: asset,
 parent this step) with receipts: commands run, event/doc counts, config
 locations. Note Socket Mode's event subscription list if discoverable.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-17)
 
-<!-- added at resolution -->
+[Full receipts](./slack-ingress-coverage-2026-07-17.svx).
+
+1. **#cc-matt-p is configured and live, but the feed is incomplete.**
+   `C0211NSK3TP` is one of 15 IDs exported by the private gateway start script;
+   live Slack Socket Mode is healthy. Typesense holds 142 cc-matt-p documents,
+   including 13 on 2026-07-17, but Matt's CMS-token root
+   `1784281556.387689` is absent while one later thread reply is present. Direct
+   Slack read-back proves the root and Joel's `:shitrat:` reaction exist.
+2. **Slack reactions do not reach the observation bus today.** The Slack shadow
+   tap constructs Chat SDK with `{ botToken }`, accidentally selecting webhook
+   mode; construction fails for missing `signingSecret`/`webhookVerifier` and
+   Slack is disabled in the shadow tap for the process. Bridge receipts today:
+   3 Telegram, 0 Slack. `channel_messages` is message-only. The reactions bridge
+   shipped in `f26064c3` is Telegram-proven, not Slack-proven.
+3. **Named gaps / smallest changes.** Construct the Slack raw normalizer in
+   Socket Mode with the already-leased app token, then prove one real reaction.
+   Do not force reactions on inbound Matt roots through
+   `message/reaction.received`: that contract requires an outbound `flowId`,
+   which these roots do not have. Feed the repaired `message/inbound.reaction`
+   event to stream observation keyed by Slack channel+message ts, while the
+   board/pass reads Slack directly as canonical state. Separately, add bounded
+   allowlisted-channel reconciliation (or direct Slack reads) before treating
+   `channel_messages` as complete; the named root is a proven Socket Mode hole.

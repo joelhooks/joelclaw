@@ -46,6 +46,10 @@ stays truthful because Slack stays the only store.
 
 <!-- one line per closed step: gist + link -->
 
+- 2026-07-17 — [Build jc-slack Reaction Read-Back](./build-jc-slack-reaction-readback.svx) closed: context packs expose bounded reaction ownership and `board` computes untagged / started / shipped live from Joel's root reactions; #cc-matt-p CMS-token root `1784281556.387689` proved `started` in the live check.
+
+- [Verify Slack Ingress Coverage for cc-matt-p and Reaction Events](./verify-slack-ingress-coverage.svx) — cc-matt-p is live-allowlisted (15 IDs; 142 indexed docs, 13 today) but the named CMS-token root is a proven feed hole; Slack reaction shadowing is broken by webhook-mode construction, with 3 Telegram bridge receipts and 0 Slack. Repair the tap in Socket Mode, observe inbound-root reactions by Slack identity rather than invented flowIds, and keep Slack read-back canonical.
+
 ## Latent
 
 - Matt's reactions as an acknowledge loop (Matt ✅ = confirmed received) — needs gateway change to act on non-Joel reactions.
