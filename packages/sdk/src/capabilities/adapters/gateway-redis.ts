@@ -12,6 +12,7 @@ const NotifySendArgsSchema = Schema.Struct({
   type: Schema.optional(Schema.String),
   source: Schema.optional(Schema.String),
   telegramOnly: Schema.optional(Schema.Boolean),
+  eventId: Schema.optional(Schema.String),
 })
 
 const NotifySendResultSchema = Schema.Struct({
@@ -24,6 +25,7 @@ const NotifySendResultSchema = Schema.Struct({
   queuedLists: Schema.Array(Schema.String),
   notifyChannels: Schema.Array(Schema.String),
   payload: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  deduplicated: Schema.Boolean,
 })
 
 const commands = {
@@ -40,6 +42,7 @@ type RedisClient = {
   smembers: (key: string) => Promise<string[]>
   lpush: (key: string, value: string) => Promise<number>
   publish: (channel: string, message: string) => Promise<number>
+  eval: (script: string, keyCount: number, ...args: string[]) => Promise<number>
 }
 
 type NotifyPriority = (typeof PRIORITIES)[number]
@@ -114,6 +117,23 @@ function notifyKey(channel: string): string {
   return `joelclaw:notify:${channel}`
 }
 
+const NOTIFY_IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60
+const NOTIFY_IDEMPOTENCY_SCRIPT = `
+if redis.call("EXISTS", KEYS[1]) == 1 then
+  return 0
+end
+redis.call("SET", KEYS[1], "1", "EX", ARGV[1])
+for index = 2, #KEYS do
+  redis.call("LPUSH", KEYS[index], ARGV[2])
+  redis.call("PUBLISH", ARGV[index + 2], ARGV[3])
+end
+return 1
+`
+
+function validEventId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)
+}
+
 export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
   capability: "notify",
   adapter: "gateway-redis",
@@ -139,7 +159,17 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
             )
           }
 
-          const eventId = crypto.randomUUID()
+          const requestedEventId = args.eventId?.trim()
+          if (requestedEventId && !validEventId(requestedEventId)) {
+            return yield* Effect.fail(
+              capabilityError(
+                "NOTIFY_EVENT_ID_INVALID",
+                "--event-id must be a lowercase UUID v4",
+                "Omit --event-id for a generated ID, or provide a stable UUID v4 for idempotent delivery."
+              )
+            )
+          }
+          const eventId = requestedEventId || crypto.randomUUID()
           const audit = createChannelDeliveryAudit(message, {
             flowId: `notify:${eventId}`,
             producer: source,
@@ -185,26 +215,30 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
               ),
           })
 
-          const queuedLists: string[] = []
-          const notifyChannels: string[] = []
+          const targetLists = targets.map(queueKey)
+          const targetNotifyChannels = targets.map(notifyKey)
           const serializedEvent = JSON.stringify(event)
           const notification = JSON.stringify({
             eventId: event.id,
             type: event.type,
             priority,
           })
+          let deduplicated = false
 
           yield* Effect.tryPromise({
             try: async () => {
               try {
-                for (const channel of targets) {
-                  const list = queueKey(channel)
-                  const notify = notifyKey(channel)
-                  await redis.lpush(list, serializedEvent)
-                  await redis.publish(notify, notification)
-                  queuedLists.push(list)
-                  notifyChannels.push(notify)
-                }
+                const inserted = await redis.eval(
+                  NOTIFY_IDEMPOTENCY_SCRIPT,
+                  1 + targetLists.length,
+                  `joelclaw:notify:idempotency:${eventId}`,
+                  ...targetLists,
+                  String(NOTIFY_IDEMPOTENCY_TTL_SECONDS),
+                  serializedEvent,
+                  notification,
+                  ...targetNotifyChannels,
+                )
+                deduplicated = inserted === 0
               } finally {
                 await redis.quit().catch(() => {})
               }
@@ -217,12 +251,14 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
               ),
           })
 
+          const queuedLists = deduplicated ? [] : targetLists
+          const notifyChannels = deduplicated ? [] : targetNotifyChannels
           void emitGatewayOtel({
             level: "info",
             source: "cli",
             systemId: audit.originSystemId,
             component: "notify",
-            action: "channel.delivery.queued",
+            action: deduplicated ? "channel.delivery.deduplicated" : "channel.delivery.queued",
             success: true,
             critical: true,
             metadata: {
@@ -231,6 +267,7 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
               priority,
               queuedLists,
               notifyChannels,
+              deduplicated,
             },
           })
 
@@ -244,6 +281,7 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
             queuedLists,
             notifyChannels,
             payload,
+            deduplicated,
           }
         }
         default:

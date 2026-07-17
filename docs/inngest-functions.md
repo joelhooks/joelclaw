@@ -154,6 +154,24 @@ Operational boundary for Phase 1:
   - current live truth: the first supervised enforce canary anchored at `since=1772981290859` proved the cron observer can auto-apply a real `pause_family` on `content/updated` (`snapshotId=cca656f7-a9ce-4ca2-9f6d-0ed332f56a4d`). The follow-up supervised canary anchored at `since=1772985057594` then proved the patched host worker can auto-apply the matching `resume_family`: it paused on snapshot `1cb24e7b-f0cd-4e0c-ae5d-27cb4934b49a`, resumed on snapshot `151aa03a-fced-41f0-9a54-2f3d1a70856d` / run `01KK72HD0EMT3T34K8QP3SMEW9`, and drained the held `content/updated` item back to queue depth `0`. The worker was then rolled back to `QUEUE_OBSERVER_MODE=dry-run` as the conservative steady state.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
+### Slack work-state pass
+
+- function: `slack-work-state-pass`
+- file: `packages/system-bus/src/inngest/functions/work-state-pass.ts`
+- triggers: hourly cron (`17 * * * *`) plus `slack/work-state.pass.requested` for supervised runs.
+- truth: one bounded live `conversations.history` read per allowlisted channel; `channel_messages` is never the candidate boundary. Joel-owned root reactions classify `untagged`, `started`, and `shipped`.
+- runtime config lives in `~/.config/system-bus.env`:
+  - `WORK_STATE_PASS_ENABLED=0|1`
+  - `WORK_STATE_PASS_CHANNELS=C0211NSK3TP:cc-matt-p,C09LKT871PE:brain-joel`
+  - `WORK_STATE_PASS_UNTAGGED_AFTER_HOURS=4`
+  - `WORK_STATE_PASS_STARTED_STALE_AFTER_DAYS=7`
+  - `WORK_STATE_PASS_HISTORY_LIMIT=200`
+  - `WORK_STATE_PASS_WAKE_MODE=notify|off`
+  - optional path overrides: `WORK_STATE_PASS_OBSERVATIONS_DIR`, `WORK_STATE_PASS_STATE_PATH`, `WORK_STATE_PASS_LAST_RUN_PATH`
+  - supervised proof only: `WORK_STATE_PASS_SEEDED_PROOF_ENABLED=0|1`; leave it `0` outside a seeded canary.
+- findings write a sensitive `.svx` observation page without Slack message bodies. The notified-state JSON only suppresses repeat wakes; Slack reactions remain canonical. Wake retries carry a stable `joelclaw notify --event-id`; the gateway Redis adapter atomically deduplicates that UUID for seven days.
+- funnel: `bun scripts/work-state-pass-funnel.ts`; per-stage evidence: `joelclaw otel search "slack.work_state.pass" --component work-state-pass --hours 24 --limit 100`.
+
 ### System health
 
 - function: `system/check-system-health`

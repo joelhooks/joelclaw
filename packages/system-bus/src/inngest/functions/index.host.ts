@@ -151,6 +151,7 @@ import { voiceTelnyxBalance } from "./voice-telnyx-balance";
 import { voiceWorkerCanary } from "./voice-worker-canary";
 import { webhookSubscriptionDispatchGeneric } from "./webhook-subscription-dispatch-generic";
 import { wikiEditionBuild } from "./wiki-edition-build";
+import { workStatePass } from "./work-state-pass";
 import { xAccountActivityReceived } from "./x-account-activity-notify";
 import { xContentHook } from "./x-content-hook";
 import { xDiscoveryHook } from "./x-discovery-hook";
@@ -238,6 +239,7 @@ export const hostFunctionDefinitions = [
   messageReactionBridge,
   neatMemoryReactionGrade,
   campaignPulseReaction,
+  workStatePass,
   granolaBackfill,
   friction,
   frictionFix,

@@ -1370,6 +1370,12 @@ export type Events = {
       reason?: string;
     };
   };
+  "slack/work-state.pass.requested": {
+    data: {
+      reason?: string;
+      seededScenario?: boolean;
+    };
+  };
   "channel/intelligence.triage.requested": {
     data: {
       scope?: "all" | "email" | "slack";

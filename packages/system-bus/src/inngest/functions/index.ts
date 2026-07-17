@@ -169,6 +169,7 @@ export { voiceSyntheticCall } from "./voice-synthetic-call";
 export { voiceTelnyxBalance } from "./voice-telnyx-balance";
 export { voiceWorkerCanary } from "./voice-worker-canary";
 export { webhookSubscriptionDispatchGithubWorkflowRunCompleted } from "./webhook-subscription-dispatch";
+export { workStatePass } from "./work-state-pass";
 export { xAccountActivityReceived } from "./x-account-activity-notify";
 export { xContentHook } from "./x-content-hook";
 export { xDiscoveryHook } from "./x-discovery-hook";

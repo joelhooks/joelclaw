@@ -71,6 +71,11 @@ const adapterOption = Options.text("adapter").pipe(
   Options.optional,
 )
 
+const eventIdOption = Options.text("event-id").pipe(
+  Options.withDescription("Stable UUID v4 for idempotent notification delivery"),
+  Options.optional,
+)
+
 const notifySend = Command.make(
   "send",
   {
@@ -84,8 +89,9 @@ const notifySend = Command.make(
     source: sourceOption,
     telegramOnly: telegramOnlyOption,
     adapter: adapterOption,
+    eventId: eventIdOption,
   },
-  ({ message, channel, priority, context, type, source, telegramOnly, adapter }) =>
+  ({ message, channel, priority, context, type, source, telegramOnly, adapter, eventId }) =>
     Effect.gen(function* () {
       const parsedContext = parseContextJson(context)
       if (!parsedContext) {
@@ -122,6 +128,7 @@ const notifySend = Command.make(
           type: parseOptionalText(type),
           source: parseOptionalText(source),
           telegramOnly,
+          eventId: parseOptionalText(eventId),
         },
         flags: adapterOverride ? { adapter: adapterOverride } : undefined,
       }).pipe(Effect.either)

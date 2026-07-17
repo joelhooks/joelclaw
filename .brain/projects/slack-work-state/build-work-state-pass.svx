@@ -3,7 +3,8 @@ title: "Build the Work-State Pass"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-17"
 assignee: "pi worker (flagg, herdr pane w1A:p4, 2026-07-17)"
 parent: "./slack-work-state-brief.svx"
 blockers: ["./decide-work-state-pass-shape.svx"]
@@ -24,6 +25,18 @@ seeded scenario (untagged root, stale :shitrat:) produces the decided
 observation page + dispatcher wake end-to-end, and behavior at enable is
 asserted live (config-green alone is not done).
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-17)
 
-<!-- added at resolution -->
+Built and enabled the dedicated hourly host-worker pass.
+
+- **Function**: `slack-work-state-pass` in `packages/system-bus/src/inngest/functions/work-state-pass.ts`; cron `17 * * * *`, serial singleton, plus supervised `slack/work-state.pass.requested` runs. It is registered in the host function graph. The pass leases `slack_user_token` inside each Slack step so credentials never enter Inngest step state.
+- **Truth + classification**: one bounded live `conversations.history` read per allowlisted channel. Non-Joel human roots only; bots/apps/system subtypes excluded. Joel-owned `:white_check_mark:` wins over Joel-owned `:shitrat:`; otherwise the root is untagged. `channel_messages` is not consulted.
+- **Config**: live values are in `~/.config/system-bus.env`; operator reference is `docs/inngest-functions.md`. Launch scope is `C0211NSK3TP:cc-matt-p,C09LKT871PE:brain-joel`, thresholds are `4h/7d`, history limit `200`, wake mode `notify`, and `WORK_STATE_PASS_SEEDED_PROOF_ENABLED=0` after the canary.
+- **Emission**: finding runs write one `privacy: sensitive` `.svx` page under `~/.brain/observations/` with permalink/root/state/age/provenance but no Slack message bodies. Notification hygiene lives at `~/.joelclaw/work-state-pass.json`; a pre-send reservation suppresses immediate retries and expires after 15 minutes so interrupted delivery is reclaimed. Wakes use a transition-derived UUID through `joelclaw notify --event-id`; the gateway Redis adapter atomically deduplicates that ID for seven days, covering the ambiguous post-delivery crash window. Slack remains truth.
+- **Funnel**: `bun scripts/work-state-pass-funnel.ts`. Last-run receipt: `~/.joelclaw/work-state-pass-last-run.json`. Per-stage trace: `joelclaw otel search "<runId>" --component work-state-pass --hours 24 --limit 100`.
+- **Seeded proof**: `bun scripts/verify-work-state-pass-seeded.ts` produced event `01KXRGVJD5JPS8JGH95JP7PJSN` / run `01KXRGVJDEV2V9THEWCQWD0MMV`, with both seeded kinds asserted, one page, two new seeded transitions, and exactly one wake. Eight OTEL receipts covered configured → started → two channel scans → seeded → page → wake → completed. The run trace contains no Slack token.
+- **State-change proof**: final live event `01KXRHX49H5P8MKHEV9Q2HM980` / run `01KXRHX4CFFFPH41KH2CNXGY1J` completed with two channels, 400 roots, 156 findings, one page, zero new transitions, and zero wakes. The funnel reports this run. Both channels reported bounded-window truncation, surfaced explicitly in the receipt.
+- **Delivery-idempotency proof**: two `joelclaw notify send` calls with event ID `6f08a6c4-2b8b-4a5f-8cd3-1749939e8d64` produced `deduplicated: false` then `deduplicated: true`; the duplicate queued no Redis list or pub/sub notification.
+- **Checks**: 11 focused tests pass; system-bus, SDK, CLI, and root TypeScript checks pass; targeted Biome passes; host import/registration passed; project Brain check passes. The broad function suite is 413 pass / 5 unrelated existing failures (`friction`, duplicate generic webhook registration, three agent-loop diff fixtures). Broad Biome is blocked by 63 unrelated import-order findings. The system-Brain check is separately blocked by the pre-existing unsupported `.brain/projects/jc-slack-context/fixture-context-pack-v1.json`, not these pages.
+
+No commit was made.

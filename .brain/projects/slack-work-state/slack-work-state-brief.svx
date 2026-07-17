@@ -1,7 +1,7 @@
 ---
 title: "Slack Work-State: Reactions as Truth, Observed"
 type: "brief"
-status: "active"
+status: "done"
 created_at: "2026-07-17"
 privacy: "private"
 ---
@@ -50,6 +50,7 @@ stays truthful because Slack stays the only store.
 
 - [Verify Slack Ingress Coverage for cc-matt-p and Reaction Events](./verify-slack-ingress-coverage.svx) — cc-matt-p is live-allowlisted (15 IDs; 142 indexed docs, 13 today) but the named CMS-token root is a proven feed hole; Slack reaction shadowing is broken by webhook-mode construction, with 3 Telegram bridge receipts and 0 Slack. Repair the tap in Socket Mode, observe inbound-root reactions by Slack identity rather than invented flowIds, and keep Slack read-back canonical.
 - [Decide the Work-State Pass Shape](./decide-work-state-pass-shape.svx) — hourly dedicated Inngest cron; live sweep is the candidate source (feed = hints); scope cc-matt-p + brain-joel; requests = non-Joel human roots; 4h untagged / 7d stale; page per run + state-change-only dispatcher wakes; OTEL receipts + funnel command with seeded-scenario assert at enable; feed repairs chartered in stream-observation; build authorized.
+- 2026-07-17 — [Build the Work-State Pass](./build-work-state-pass.svx) closed: hourly live Slack sweep is enabled for cc-matt-p + brain-joel; sensitive observation pages, state-change-only DM wakes, per-stage OTEL, and the funnel are live; seeded event `01KXRGVJD5JPS8JGH95JP7PJSN` proved untagged + stale-started → page + one wake, and the following live run proved zero repeat wakes.
 
 ## Latent
 
