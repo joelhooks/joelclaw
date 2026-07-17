@@ -59,10 +59,17 @@ export function verifyJournalRow(
   const delivery = record(row.delivery);
   const telegram = record(row.telegram);
   const metadata = parseMetadata(row.metadata ?? row.metadata_json);
+  // Journal rows stamp origin_system_id as "<source>:<eventId>" (composite),
+  // so accept either the bare eventId or any ":<eventId>" suffix.
   const originSystemId = nonEmptyString(
     row.origin_system_id ?? source?.originSystemId,
   );
-  if (originSystemId !== eventId) return undefined;
+  if (
+    originSystemId !== eventId &&
+    !originSystemId?.endsWith(`:${eventId}`)
+  ) {
+    return undefined;
+  }
 
   const eventType = nonEmptyString(row.event_type ?? row.eventType);
   const deliveryState = nonEmptyString(
