@@ -1,0 +1,72 @@
+---
+title: "Task: delete legacy transports (gateway surgery)"
+type: "task-brief"
+created: "2026-07-17"
+parent: "../projects/messaging-stabilization/delete-legacy-transports.svx"
+---
+
+# Delete legacy transports — worker instructions
+
+You are a build worker on flagg in `~/Code/joelhooks/joelclaw`. Set your
+pi session name to "🔪 Legacy transport deletion" immediately. Edit code
+and run gates. Do NOT commit, do NOT restart the gateway, do NOT touch
+`~/.joelclaw/scripts/gateway-start.sh`. Steering reviews with hunk,
+commits, restarts, and runs the live canaries. Work autonomously, print
+DONE when finished.
+
+Your step file (claimed for you):
+`.brain/projects/messaging-stabilization/delete-legacy-transports.svx` —
+read it, the parent brief, and `run-shadow-window-cutover.svx` (the
+handover architecture + attempt receipts live there). The Chat SDK is
+CANONICAL as of 17:53Z today (`CHAT_SDK_ACTING_ENABLED=1`, all receipts
+green); another worker owns capture/outbox paths (`packages/memory`,
+capture scripts) — stay out of those files.
+
+## Scope
+
+DELETE (after the inventory gate below):
+
+- Legacy Telegram polling channel (`packages/gateway/src/channels/telegram.ts`
+  and its exclusive dependencies) and the legacy Slack socket path.
+- The shadow/diff machinery whose only purpose was comparing legacy vs
+  SDK (`chat-sdk-inbound/mirror.ts`, `diff.ts`, tap call sites in legacy
+  channels) — BUT any code on those paths that is the CURRENT publisher
+  of bus events (e.g. `message/inbound.reaction`) must first be re-homed
+  onto the SDK acting path, not deleted.
+- The start-then-stop handover dance: boot composes the Chat SDK acting
+  path directly; `handoverMessagingTransports` and the
+  `CHAT_SDK_ACTING_ENABLED` flag simplify away (keep
+  `CHAT_SDK_INBOUND_SHADOW_ENABLED` only if something still uses it —
+  justify either way).
+
+KEEP: Discord + iMessage channels untouched; notify-compat (callers still
+speak `joelclaw notify send`); the journal, outbound policy, formatting
+(`telegram-markdown.ts`), reactions bridge in system-bus; all
+message-contract code.
+
+## Hard gate first (this is the step's spine)
+
+Produce the consumer inventory BEFORE deleting: every bus event, state
+write, or side effect currently produced by legacy-channel code paths,
+with its SDK-native replacement named and wired. The one that matters
+most: Telegram reactions → `message/inbound.reaction` (feeds
+`message/reaction-bridge` → neat-memory grading). If the acting path does
+not already publish it, WIRE IT (the SDK instance already requests
+`message_reaction` in allowed_updates), with a test using the real nested
+update shape from the reactions-bridge step receipts.
+
+## Gates
+
+`bunx tsc --noEmit` at root; `pnpm biome check packages/gateway`;
+gateway suite `bun test` in packages/gateway (all green, including
+chat-sdk suites); grep proves no dangling imports of deleted modules.
+Print the diffstat in DONE — Joel gets the deletion ceremony from
+steering.
+
+## Deliverables
+
+1. The inventory (in your DONE + step Result).
+2. The deletion + re-homing diff, gates green.
+3. Step file: `## Result (2026-07-17)` with inventory summary, diffstat,
+   and exactly what steering must do to deploy (restart + which canaries).
+   Flip `status: "closed"` only after gates pass. Do NOT edit the brief.

@@ -1,0 +1,38 @@
+---
+title: "Delete the Legacy Transports: git is the rollback"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p2R, 2026-07-17)"
+parent: "./messaging-stabilization-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Delete the legacy transports
+
+## Step
+
+Joel's call (2026-07-17, verbatim gist): "i think we should delete, it
+will be in git if we need rollback" — the observation window collapses;
+post-deletion rollback is `git revert` + restart, not a flag.
+
+Resolved when the hand-rolled Telegram polling and Slack socket transports
+(and the machinery that only existed to shadow/diff/hand over between them
+and the Chat SDK) are deleted from the gateway, boot goes straight to the
+Chat SDK acting path with no start-then-stop dance, and the system proves
+itself post-surgery: visible-delivery canary exit 0, plus a live reaction
+reaching `message/inbound.reaction` on the bus through the SDK-native
+path.
+
+Hard gate before any deletion lands: an inventory proving every consumer
+fed by legacy code paths has an SDK-native equivalent wired — above all
+the reaction publication that feeds the neat-memory taste loop (the
+shadow tap lives inside the legacy Telegram channel middleware today).
+Discord and iMessage channels are OUT of scope — the SDK owns only
+Telegram and Slack.
+
+## Result
+
+(pending)
