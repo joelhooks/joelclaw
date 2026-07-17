@@ -1,0 +1,30 @@
+---
+title: "Bench Taste Learning: do grades actually change the picks?"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./memory-system-repair-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Bench taste learning
+
+## Step
+
+Joel's challenge, verbatim spirit: one 👍 through the pipe proves
+plumbing, not learning. Resolved when a bench runs the production judge
+(sol:xhigh, `observer/neat-memory-simple-v1` prompt, same substitution
+mechanics) over IDENTICAL candidate pools in paired runs — real graded
+history vs the same history with outcomes stripped to null — enough
+repetitions to see past sampling noise, and publishes the selection delta
+(picks, scores, holds) as an asset with the raw run receipts. An honestly
+null result at today's one-grade history is a valid finding: it sets the
+baseline and the asset must say what graded-history volume would make the
+bench decisive (feeding the brief's latent rerun). Read-only against
+production state; judge runs are sandboxed (`--no-session`, no sends, no
+state writes). Evidence base:
+[curation-delivery survey](../memory-system-review/curation-delivery-survey.svx)
+"Do grades get consumed?".

@@ -1,0 +1,26 @@
+---
+title: "Decide Chorus's Fate: canary or real substrate"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./memory-system-repair-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Decide Chorus's fate
+
+## Step
+
+The rhizomatic/Chorus claims service runs and injects session briefings,
+but its semantic layer is June canary residue (zero preferences, zero
+tasks, newest durable claims 06-18) and 13 mutations sit in its outbox.
+Settle: is Chorus a canary to quiet down (stop noisy briefing injection,
+drain/discard the outbox, park the service) or a real second substrate —
+and if real, define Brain ownership, promotion, conflict, and provenance
+rules BEFORE letting real claims land, so Brain and Chorus can't disagree
+without an owner. Evidence:
+[periphery survey](../memory-system-review/periphery-survey.svx)
+"Rhizomatic / Chorus claims" + flag #2.

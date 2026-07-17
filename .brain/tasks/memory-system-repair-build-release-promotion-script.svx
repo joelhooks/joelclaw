@@ -1,0 +1,53 @@
+---
+title: "Task: observer release promotion script (joelclaw-observer)"
+type: "task-brief"
+created: "2026-07-17"
+parent: "../projects/memory-system-repair/build-release-promotion-script.svx"
+---
+
+# Release promotion script — worker instructions
+
+You are a build worker on flagg in `~/Code/joelhooks/joelclaw-observer`.
+Set your pi session name to "🚀 Release promotion script" immediately.
+Edit code, run tests. Do NOT commit, do NOT run a real promotion against
+`~/.joelclaw/observer-release` (dry-run against a tmp clone is fine and
+encouraged). Work autonomously, print DONE when finished.
+
+Your step file (claimed for you):
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-repair/build-release-promotion-script.svx`
+Read it and its parent brief. Evidence:
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/capture-condense-survey.svx`
+"Current deployment" (the drift receipt).
+
+## Context
+
+Dev repo is branchless-detached-HEAD by house pattern; release
+(`~/.joelclaw/observer-release`) promotes via
+`git fetch <dev-path> HEAD && git checkout --detach FETCH_HEAD`. It's
+manual and drifted silently: release ran old priority-low DM code for
+half a day. Three LaunchAgents execute from release paths; the dispatcher
+re-reads `dispatch-rules.json` per call, but extensions load at pi start.
+
+## Deliverables
+
+1. **`bin/promote-release.sh`** (match the house style of the other bin
+   scripts — set -euo pipefail, explicit PATH exports for launchd
+   contexts, log receipts): refuses dirty dev tree; prints
+   before/after commits with subjects; fetch+detach release to dev HEAD;
+   smoke checks (dispatch-rules.json parses via bun, extension typecheck
+   or `bun test` targeted subset, `bash -n` on bin scripts); appends one
+   receipt line to a log file; `--dry-run` mode that does everything
+   read-only against a tmp clone. Non-zero exit on any failed check with
+   the release left in its prior state (fetch/detach only after checks
+   pass on the dev side).
+2. **Drift detection**: extend
+   `.pi/extensions/observer/self-maintenance.ts`'s check list with a
+   release-vs-dev HEAD comparison that warns when they differ (the tick
+   already surfaces warnings). Pure function + test per the repo's
+   single-test-file idiom.
+3. Gates: `bun test` green, `bash -n` the script, dry-run receipt pasted
+   in DONE.
+4. Step file: `## Result (2026-07-17)` + receipts, flip
+   `status: "closed"`, add `closed_at`. Do NOT edit the brief.
+
+DONE summary: script path, dry-run receipt, drift-check behavior.

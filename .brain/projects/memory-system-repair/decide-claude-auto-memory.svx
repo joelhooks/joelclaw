@@ -1,0 +1,27 @@
+---
+title: "Decide Claude Auto-Memory: kill it or make it a pointer"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./memory-system-repair-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Decide Claude auto-memory
+
+## Step
+
+Claude Code's auto-memory (`~/.claude/projects/-Users-joel/memory/`) is a
+live shadow source: it duplicates operator truths that belong in the
+Brain, and it wrote a fresh topic page on 07-17 after Joel's 07-16
+Brain-only instruction. Settle: disable topic-page writes entirely, or
+reshape the surface into a read-only index pointing at Brain pages —
+and either way, what happens to the 18 existing topic pages (migrate the
+non-duplicated facts into Brain `.svx`, then delete?). The answer must
+bind future Claude sessions mechanically (instruction text where the
+memory feature reads it), not aspirationally. Evidence:
+[periphery survey](../memory-system-review/periphery-survey.svx)
+"Claude auto-memory".

@@ -1,0 +1,28 @@
+---
+title: "Build the Observer Release Promotion Script"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p2Q, 2026-07-17)"
+parent: "./memory-system-repair-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Build the observer release promotion script
+
+## Step
+
+Resolved when promoting `~/Code/joelhooks/joelclaw-observer` (dev,
+branchless detached-HEAD by house pattern) to `~/.joelclaw/observer-release`
+is one receipt-checked script: it refuses a dirty dev tree, fetches and
+detaches release to the exact dev HEAD, prints before/after commits, runs a
+smoke check (extension loads, `dispatch-rules.json` parses, `bun test` or a
+targeted subset), and logs a receipt line. Plus drift detection: the
+observer self-maintenance tick (or the script on a schedule) warns loudly
+when release != dev HEAD for more than a day. Motivation: the review
+caught release running old priority-low DM code because manual promotion
+silently drifted. Evidence:
+[capture-condense survey](../memory-system-review/capture-condense-survey.svx)
+"Current deployment" + the review brief's latent note.

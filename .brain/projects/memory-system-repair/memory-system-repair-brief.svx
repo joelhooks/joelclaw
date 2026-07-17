@@ -1,0 +1,91 @@
+---
+title: "Memory System Repair: fixing the wobbly bits"
+type: "brief"
+status: "active"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Memory system repair
+
+Sequel to [Memory System Review](../memory-system-review/memory-system-review-brief.svx):
+the review's eight-item fix list becomes work. Joel chartered it 2026-07-17
+("let's grill-master a fix for the wobbly bits") and set scope, authorization,
+and the taste bench in one grilling.
+
+## Finish line
+
+- The four mechanical fixes are built, deployed on flagg, and receipted:
+  graph privacy boundary (a graph rebuild cannot leak sensitive or excluded
+  content — proven by test and by a clean rebuilt `graph.json`), dream cap
+  (eligibility is computed over the whole corpus, not the first 200 sorted
+  filenames), capture outbox (the 404 route is fixed, the 71 GB backlog is
+  safely drained or explicitly dispositioned, and a size/age alarm watches
+  the outbox), and release promotion (a receipt-checked script replaces
+  manual promotion, with drift detection).
+- The taste bench has run: same candidate pool judged with real graded
+  history vs stripped history, selection delta published as a receipt —
+  the "curator learns" claim gets evidence or gets retracted on the review
+  page.
+- The five judgment calls are resolved decisions with owners and dates:
+  legacy-memory retirement, system-log home, Claude auto-memory, Chorus
+  fate, retro writer. Resolved means someone could execute without another
+  decision; execution beyond the mechanical four may charter follow-up
+  steps here or new efforts.
+- The [memory system page](../../resources/memory-system.svx) is updated to
+  reflect post-repair reality (regenerated verdicts, not patched sentences,
+  per its own maintenance rule).
+
+## Vocabulary
+
+- **wobbly bits** — every item on the review page's fix list, wobbly AND
+  gap verdicts alike; Joel's word for the whole batch.
+- **mechanical fix** — build work whose shape the review already settled;
+  needs receipts, not decisions.
+- **judgment call** — a fix that starts with a decision Joel must speak to
+  (retirement, ownership, kill-or-keep).
+- **safely drained** — outbox backlog is replayed/deduped/dispositioned
+  without data loss, double-ingestion, or hammering live services; raw
+  deletion only after a step-level check-in.
+- **selection delta** — the observable difference in judge picks/scores
+  between graded-history and stripped-history runs over identical
+  candidates.
+
+## Notes
+
+- Execution authorization (Joel, 2026-07-17): build + deploy on flagg for
+  the mechanical fixes; steering reviews, commits, deploys with receipts.
+  No public surfaces, no schema migrations, and no deletion of raw data
+  without a step-level check-in.
+- Skills: `herdr-orchestration` (fan-out), wiki law `joelclaw-wiki/AGENTS.md`
+  (privacy is the bar for the graph step), `hunk-review` for diff review.
+- The review's four survey assets are the evidence base — workers cite
+  them instead of re-surveying:
+  [capture-condense](../memory-system-review/capture-condense-survey.svx),
+  [brain-stores](../memory-system-review/brain-stores-survey.svx),
+  [curation-delivery](../memory-system-review/curation-delivery-survey.svx),
+  [periphery](../memory-system-review/periphery-survey.svx).
+- Deadline pressure: the dream cap fix wants to land before the corpus
+  ages into eligibility (~2026-07-18; nightly dream fires 06:10 local).
+- Worker contract deviation (carried from the review effort): workers edit
+  only their own step file and named outputs — steering owns this brief.
+
+## Decision ledger
+
+## Latent
+
+- Once a few weeks of graded history exist, rerun the taste bench with
+  real volume — the first run's delta may be honestly null at one grade.
+- If the outbox drain surfaces corrupted or duplicate runs, data repair
+  may deserve its own effort.
+
+## Out of scope
+
+- The Chat SDK acting re-flip — owned by
+  [messaging-stabilization](../messaging-stabilization/run-shadow-window-cutover.svx)
+  with Joel's go already recorded there.
+- Brain Graph feature build-out (query surface, cross-root navigation) —
+  the [brain-graph](../brain-graph/brain-graph-brief.svx) effort owns it;
+  this effort only makes rebuilding SAFE.
+- Registering more of the 27 orphan `.brain` trees — the review surfaced
+  them; onboarding is per-tree judgment for another day.

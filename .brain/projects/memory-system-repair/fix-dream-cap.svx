@@ -1,0 +1,28 @@
+---
+title: "Fix the Dream Cap: eligibility before slicing"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p2N, 2026-07-17)"
+parent: "./memory-system-repair-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Fix the dream cap
+
+## Step
+
+Resolved when the reflector dream computes eligibility over the WHOLE
+top-level observation corpus and applies the cap to the work it takes on,
+not to which files it can see — killing the starvation where
+`files.slice(0, cap)` (first 200 sorted filenames) hides aging pages
+behind younger names. Receipts: unit tests covering the starvation case
+(eligible page beyond position 200 gets condensed), the live
+`applyReflectorDream` deployed to the release checkout via a supervised
+promotion, and the next nightly log line showing the full corpus was
+scanned. Deadline: land before the corpus ages into eligibility
+(~2026-07-18; dream fires 06:10 local). Evidence:
+[capture-condense survey](../memory-system-review/capture-condense-survey.svx)
+"Stage: rollups and dreams".

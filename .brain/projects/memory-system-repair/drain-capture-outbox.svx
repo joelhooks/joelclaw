@@ -1,0 +1,30 @@
+---
+title: "Drain the Capture Outbox: fix the 404 route, disposition 71 GB, add an alarm"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p2P, 2026-07-17)"
+parent: "./memory-system-repair-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Drain the capture outbox
+
+## Step
+
+Resolved when: (1) the writer still POSTing capture deltas to a 404 route
+is identified and fixed (the review caught a live `POST 404 ... outboxed`
+at 10:00:42 on 2026-07-17); (2) the `~/.joelclaw/outbox/` backlog —
+14,798 files, 71.38 GB, oldest 2026-06-08 — has a safe disposition
+executed: analyzed for what's replayable vs already-captured-elsewhere vs
+junk, deduped, replayed in a rate-limited way that cannot hammer live
+ingestion or double-index runs, with raw deletion only after a step-level
+check-in with steering; and (3) a size/age alarm on the outbox is wired
+into an existing watch surface (telemetry watch or observer
+self-maintenance) so a silent pile-up can never reach 71 GB again.
+Analysis and the replay PLAN come first; execution of the drain follows
+steering review of that plan. Evidence:
+[periphery survey](../memory-system-review/periphery-survey.svx)
+"Run/session archive and capture state" + flag #4.

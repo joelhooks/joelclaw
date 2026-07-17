@@ -1,0 +1,53 @@
+---
+title: "Task: fix the graph privacy boundary (joelclaw-wiki)"
+type: "task-brief"
+created: "2026-07-17"
+parent: "../projects/memory-system-repair/fix-graph-privacy-boundary.svx"
+---
+
+# Fix the graph privacy boundary — worker instructions
+
+You are a build worker on flagg in `~/Code/joelhooks/joelclaw-wiki`. Set
+your pi session name to "🔒 Graph privacy boundary" immediately. You may
+edit code and run gates. Do NOT commit, do NOT push, do NOT deploy or run
+`bun run build` for the site (steering owns that). Work autonomously,
+print a DONE summary when finished.
+
+Your step file (claimed for you):
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-repair/fix-graph-privacy-boundary.svx`
+Read it and its parent brief first. Evidence:
+`../projects/memory-system-review/brain-stores-survey.svx` risk #1.
+
+## The defect
+
+`src/lib/services/graph-builder.ts` ingests every `.svx` under registered
+brain roots with no privacy filter — excluded sections and
+`privacy: sensitive` pages become nodes with labels/provenance. The read
+path (`graph-read.ts`, `Backlinks.svelte`, `LocalGraph.svelte`) prints
+them unfiltered. Live `data/graph.json` (stale, 2026-07-12) has zero
+sensitive nodes only by luck; a rebuild today ingests hundreds.
+
+## Deliverables
+
+1. **Boundary at build** (preferred — sensitive data never enters the
+   artifact): the canonical exclusion rule already lives in
+   `src/lib/brain/catalog.ts` (excluded-sections set + sensitive
+   frontmatter check). Extract/share ONE implementation both catalog and
+   graph-builder use — no duplicated drift. Excluded pages produce no
+   node, no label, no provenance, and no edge endpoints (decide and
+   document what happens to wikilinks that point at excluded pages —
+   an unresolved-page node must not leak the excluded title either).
+2. **Read-path belt-and-suspenders**: graph-read/Backlinks/LocalGraph
+   tolerate legacy artifacts by filtering any node flagged sensitive.
+3. **Tests**: sensitive + excluded-section fixtures through the builder
+   (zero leakage in nodes/edges/labels) and through the read path.
+4. **Rebuild policy**: wire `scripts/build-graph.ts` into the normal
+   build path OR document exactly when it runs — pick one, justify in the
+   step Result. Do NOT run the real rebuild yourself; state the command
+   steering runs.
+5. Gates: `bun run check`, `bun run lint`, `bun run test` — all green.
+6. Step file: `## Result (2026-07-17)` with what changed + receipts, flip
+   `status: "closed"`, add `closed_at`. Do NOT edit the brief.
+
+DONE summary: files changed, gate results, the one command steering runs
+to rebuild the graph safely.

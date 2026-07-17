@@ -1,0 +1,60 @@
+---
+title: "Task: capture outbox — root-cause the 404, plan the drain, build the alarm"
+type: "task-brief"
+created: "2026-07-17"
+parent: "../projects/memory-system-repair/drain-capture-outbox.svx"
+---
+
+# Capture outbox — worker instructions
+
+You are a build/analysis worker on flagg in `~/Code/joelhooks/joelclaw`.
+Set your pi session name to "📤 Capture outbox repair" immediately.
+HARD RULES: the outbox and runs archive are READ-ONLY for you — no
+deletion, no replay execution, no moves; do not restart the gateway or
+any daemon; plan first, steering executes the drain after review. Work
+autonomously, do not commit, print DONE when finished.
+
+Your step file (claimed for you):
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-repair/drain-capture-outbox.svx`
+Read it and its parent brief. Evidence:
+`.brain/projects/memory-system-review/periphery-survey.svx`
+"Run/session archive and capture state".
+
+## Known facts
+
+`~/.joelclaw/outbox/` holds 14,798 failed POST bodies, 71.38 GB, oldest
+2026-06-08. Capture logs recorded a live `POST 404 ... outboxed` at
+2026-07-17 10:00:42 while other writes succeeded seconds apart — at least
+one writer targets a dead route. Writers: pi memory-capture extension +
+claude/codex hooks POSTing to `/api/runs`; `packages/memory/src/nas.ts`
+writes raw blobs; Typesense derives indexes on `memory/run.captured`.
+
+## Deliverables
+
+1. **Root cause + code fix** for the 404 writer: find which
+   writer/session posts to what dead route (capture logs, hook configs,
+   route definitions). Fix the route/config in code. If the fix lives in
+   a running session's env rather than code, document exactly what
+   steering must bounce.
+2. **Disposition analysis** (read-only scripts fine, write outputs to the
+   scratchpad or /tmp): backlog broken down by age, target route, size,
+   and dedupe status — how many are already captured elsewhere (compare
+   against the runs archive/Typesense), how many are replayable, how many
+   are junk. Numbers with receipts.
+3. **Replay plan, NOT executed**: rate-limited, idempotent (dedupe key
+   semantics stated), resumable, with a kill switch and an
+   already-indexed skip check. A script steering can run in supervised
+   batches is ideal — build it, don't run it against the real ingest.
+4. **The alarm**: outbox size/age watch wired into an existing surface —
+   prefer the observer self-maintenance check list
+   (`joelclaw-observer/.pi/extensions/observer/self-maintenance.ts` reads
+   flagg state files already) or system-bus telemetry watch; pick one,
+   implement if it's in this repo, or write the exact spec + patch if it
+   belongs in the observer repo (steering applies it there).
+5. Gates for any code you touch: `bunx tsc --noEmit` + targeted tests.
+6. Step file: `## Result (2026-07-17)` + receipts, flip
+   `status: "closed"` ONLY if 1–4 are all delivered (the drain itself
+   remains steering's supervised execution). Do NOT edit the brief.
+
+DONE summary: root cause in one sentence, the disposition numbers, where
+the replay script lives, where the alarm landed.

@@ -1,0 +1,30 @@
+---
+title: "Fix the Graph Privacy Boundary"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane wB:p2M, 2026-07-17)"
+parent: "./memory-system-repair-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Fix the graph privacy boundary
+
+## Step
+
+Resolved when `joelclaw-wiki`'s graph pipeline applies the same privacy
+boundary as the page catalog — excluded sections (`captures`,
+`compaction-dumps`, `people`, `private-family-health`) and
+`privacy: sensitive` pages never become nodes, labels, provenance, or
+neighborhood/backlink output — proven by (a) tests that feed sensitive
+fixtures through `graph-builder.ts` and the read path and assert zero
+leakage, and (b) a freshly rebuilt `data/graph.json` whose node set
+contains zero sensitive entries against today's user Brain (the review
+found hundreds would currently leak). Includes deciding-by-code whether
+the filter lives at build (preferred: sensitive data never enters the
+artifact) or read, and wiring the graph rebuild into the normal build path
+or documenting exactly when it runs. Evidence:
+[brain-stores survey](../memory-system-review/brain-stores-survey.svx)
+risk #1.

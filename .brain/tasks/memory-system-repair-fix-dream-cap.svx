@@ -1,0 +1,54 @@
+---
+title: "Task: fix the dream cap (joelclaw-observer)"
+type: "task-brief"
+created: "2026-07-17"
+parent: "../projects/memory-system-repair/fix-dream-cap.svx"
+---
+
+# Fix the dream cap — worker instructions
+
+You are a build worker on flagg in `~/Code/joelhooks/joelclaw-observer`
+(the dev checkout — deployed release is `~/.joelclaw/observer-release`;
+do not touch release). Set your pi session name to "💤 Dream cap fix"
+immediately. Edit code, run tests. Do NOT commit, do NOT promote release,
+do NOT run the dream against the live observations tree. Work
+autonomously, print DONE when finished.
+
+Your step file (claimed for you):
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-repair/fix-dream-cap.svx`
+Read it and its parent brief. Evidence:
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/capture-condense-survey.svx`
+"Stage: rollups and dreams".
+
+## The defect
+
+`applyReflectorDream` in `.pi/extensions/observer/lib.ts` (~line 1350)
+does `files.slice(0, cap)` over filename-sorted top-level pages BEFORE
+computing eligibility. With 652 pages and cap 200, any page past position
+200 is invisible until earlier names condense — starvation as the corpus
+ages. `/tmp/observer-dream.log` shows `capped:true` daily since 07-15.
+The nightly runs from `/Users/joel/.joelclaw/bin/observer-dream.sh` with
+`OBSERVER_REFLECTOR_CAP:-200`, 06:10 local.
+
+## Deliverables
+
+1. **Eligibility before slicing**: scan/parse the whole top-level corpus
+   (652 files is cheap), compute eligibility with the existing rules
+   (7-day plain pages, 30/90-day rollup blurs, skip dream-receipts), THEN
+   apply the cap to how much eligible work one dream takes on. Keep the
+   cap's original purpose (bound one night's work), keep validation,
+   secret-scan, archive moves, and receipt semantics identical. The
+   `capped` receipt field should now mean "eligible work exceeded cap",
+   not "couldn't see the corpus".
+2. **Tests**: the starvation case (eligible page at position > cap gets
+   condensed; work still bounded by cap), plus existing suite green
+   (`bun test`).
+3. **Check `bin/observer-dream.sh`** for any semantics that change (env
+   knobs, log fields) and update in lockstep; `bash -n` it.
+4. Step file: `## Result (2026-07-17)` + receipts, flip
+   `status: "closed"`, add `closed_at`. Do NOT edit the brief.
+
+Steering reviews, commits, promotes release before tomorrow's 06:10 run —
+call out anything that makes promotion urgent or risky in DONE.
+
+DONE summary: the shape of the fix, test receipts, promotion notes.
