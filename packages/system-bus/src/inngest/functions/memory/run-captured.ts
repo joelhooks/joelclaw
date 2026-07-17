@@ -12,7 +12,16 @@
  * multiple Runs are mid-ingest.
  */
 
-import { readFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { embed } from "@joelclaw/inference-router";
 import {
   type Chunk,
@@ -87,6 +96,40 @@ async function upsertRunDocument(run: Partial<Run> & { id: string }): Promise<vo
   }
 }
 
+function readCapture(jsonlPath: string) {
+  const entries = parseJsonl(readFileSync(jsonlPath, "utf8"));
+  const format = detectFormat(entries);
+  const turns = extractTurns(entries, format);
+  const candidates = chunkTurns(turns);
+  return { candidates, format, turns };
+}
+
+function spoolInlineJsonl(runId: string, jsonl: string) {
+  const sha256 = createHash("sha256").update(jsonl).digest("hex");
+  const spoolDir = join(tmpdir(), "joelclaw-memory-run-capture");
+  const path = join(spoolDir, `${sha256}.${randomUUID()}.jsonl`);
+  const tempPath = `${path}.tmp`;
+
+  mkdirSync(spoolDir, { recursive: true });
+  try {
+    writeFileSync(tempPath, jsonl, "utf8");
+    renameSync(tempPath, path);
+  } finally {
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // The successful rename already removed the temporary path.
+    }
+  }
+
+  return {
+    run_id: runId,
+    path,
+    bytes: Buffer.byteLength(jsonl),
+    sha256,
+  };
+}
+
 export const memoryRunCaptured = inngest.createFunction(
   {
     // v3 intentionally creates a fresh Inngest concurrency bucket after
@@ -120,67 +163,84 @@ export const memoryRunCaptured = inngest.createFunction(
       await ensureCollections();
     });
 
-    // Load jsonl from NAS or the inline event payload.
-    const jsonl =
-      jsonl_inline ??
-      (await step.run("load-jsonl", async () => {
-        return readFileSync(jsonl_path, "utf8");
-      }));
+    // Inngest persists every step result. Keep transcript-scale data on disk and
+    // reopen it inside the steps that need it instead of returning it through
+    // durable step state.
+    const capturePath =
+      jsonl_inline === undefined
+        ? jsonl_path
+        : (
+            await step.run("spool-inline-jsonl", async () =>
+              spoolInlineJsonl(run_id, jsonl_inline)
+            )
+          ).path;
 
-    // Chunk using the memory package's format-aware chunker.
-    const { turns, candidates, format } = await step.run("chunk", async () => {
-      const entries = parseJsonl(jsonl);
-      const format = detectFormat(entries);
-      const turns = extractTurns(entries, format);
-      const candidates = chunkTurns(turns);
-      return { turns, candidates, format };
+    const analysis = await step.run("chunk", async () => {
+      const { candidates, turns } = readCapture(capturePath);
+      return {
+        turn_count: turns.length,
+        candidate_count: candidates.length,
+      };
     });
 
-    // Build the Run row before branching so empty-but-valid captures get the
-    // same metadata document as captures that produce searchable chunks.
-    const run: Partial<Run> & { id: string } = {
-      id: run_id,
-      user_id,
-      machine_id,
-      agent_runtime,
-      agent_version: "",
-      model: "",
-      parent_run_id: parent_run_id ?? null,
-      root_run_id: parent_run_id ?? null,
-      conversation_id: conversation_id ?? null,
-      tags: tags ?? [],
-      readable_by: [user_id],
-      intent: turns.find((t) => t.role === "user")?.text.slice(0, 500) ?? "",
-      started_at,
-      ended_at: turns[turns.length - 1]?.started_at ?? started_at,
-      duration_ms:
-        (turns[turns.length - 1]?.started_at ?? started_at) - started_at,
-      turn_count: turns.length,
-      user_turn_count: turns.filter((t) => t.role === "user").length,
-      assistant_turn_count: turns.filter((t) => t.role === "assistant").length,
-      tool_turn_count: turns.filter((t) => t.role === "tool").length,
-      token_total: turns.reduce((a, t) => a + t.token_estimate, 0),
-      tool_call_count: turns.filter((t) => t.role === "tool").length,
-      files_touched: [],
-      skills_invoked: [],
-      entities_mentioned: [],
-      enriched_at: null,
-      enrichment_model: null,
-      status: "active",
-      full_text: turns.map((t) => t.text).join("\n"),
-      jsonl_path,
-      jsonl_bytes,
-      jsonl_sha256,
-    };
+    const cleanupInlineSpool = () =>
+      jsonl_inline === undefined
+        ? Promise.resolve()
+        : step.run("cleanup-inline-jsonl", async () => {
+            try {
+              unlinkSync(capturePath);
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            }
+            return { run_id };
+          });
 
     const indexRun = () =>
       step.run("index-run", async () => {
+        const { turns } = readCapture(capturePath);
+        const lastTurnStartedAt = turns[turns.length - 1]?.started_at ?? started_at;
+        const run: Partial<Run> & { id: string } = {
+          id: run_id,
+          user_id,
+          machine_id,
+          agent_runtime,
+          agent_version: "",
+          model: "",
+          parent_run_id: parent_run_id ?? null,
+          root_run_id: parent_run_id ?? null,
+          conversation_id: conversation_id ?? null,
+          tags: tags ?? [],
+          readable_by: [user_id],
+          intent: turns.find((turn) => turn.role === "user")?.text.slice(0, 500) ?? "",
+          started_at,
+          ended_at: lastTurnStartedAt,
+          duration_ms: lastTurnStartedAt - started_at,
+          turn_count: turns.length,
+          user_turn_count: turns.filter((turn) => turn.role === "user").length,
+          assistant_turn_count: turns.filter((turn) => turn.role === "assistant").length,
+          tool_turn_count: turns.filter((turn) => turn.role === "tool").length,
+          token_total: turns.reduce((total, turn) => total + turn.token_estimate, 0),
+          tool_call_count: turns.filter((turn) => turn.role === "tool").length,
+          files_touched: [],
+          skills_invoked: [],
+          entities_mentioned: [],
+          enriched_at: null,
+          enrichment_model: null,
+          status: "active",
+          full_text: turns.map((turn) => turn.text).join("\n"),
+          jsonl_path,
+          jsonl_bytes,
+          jsonl_sha256,
+        };
+
         await upsertRunDocument(run);
+        return { run_id, turn_count: turns.length };
       });
 
-    if (candidates.length === 0) {
+    if (analysis.candidate_count === 0) {
       await indexRun();
       await step.run("emit-empty", async () => {
+        const { format } = readCapture(capturePath);
         await emitOtelEvent({
           level: "warn",
           source: "system-bus",
@@ -195,6 +255,7 @@ export const memoryRunCaptured = inngest.createFunction(
           },
         });
       });
+      await cleanupInlineSpool();
       return {
         run_id,
         chunks_indexed: 0,
@@ -206,8 +267,9 @@ export const memoryRunCaptured = inngest.createFunction(
     // a slow or unhealthy local model must not block fresh Runs from search.
     // Pending zero vectors satisfy the existing Typesense schema and are replaced
     // by the embedding backfill path when local inference is healthy.
-    const modelTag = RUN_CAPTURE_EMBEDDINGS ? embeddingModelTag() : "pending";
-    const chunks: Chunk[] = await step.run("prepare-chunks", async () => {
+    const chunkImport = await step.run("index-chunks", async () => {
+      const { candidates } = readCapture(capturePath);
+      const modelTag = RUN_CAPTURE_EMBEDDINGS ? embeddingModelTag() : "pending";
       const embeddings = RUN_CAPTURE_EMBEDDINGS
         ? await Promise.all(
             candidates.map((candidate) =>
@@ -218,17 +280,16 @@ export const memoryRunCaptured = inngest.createFunction(
             )
           )
         : candidates.map(() => PENDING_EMBEDDING);
-
-      return candidates.map<Chunk>((cand, i) => ({
-        id: `${run_id}:${cand.chunk_idx}`,
+      const chunks = candidates.map<Chunk>((candidate, index) => ({
+        id: `${run_id}:${candidate.chunk_idx}`,
         run_id,
-        chunk_idx: cand.chunk_idx,
-        role: cand.role,
-        text: cand.text,
-        embedding: embeddings[i]!,
+        chunk_idx: candidate.chunk_idx,
+        role: candidate.role,
+        text: candidate.text,
+        embedding: embeddings[index]!,
         embedding_model: modelTag,
-        token_count: cand.token_count,
-        started_at: cand.started_at,
+        token_count: candidate.token_count,
+        started_at: candidate.started_at,
         user_id,
         readable_by: [user_id],
         root_run_id: parent_run_id ?? null,
@@ -239,11 +300,8 @@ export const memoryRunCaptured = inngest.createFunction(
           : [...(tags ?? []), "embedding:pending"],
         machine_id,
       }));
-    });
 
-    // Bulk import chunks to Typesense.
-    const chunkImport = await step.run("index-chunks", async () => {
-      const ndjson = chunks.map((c) => JSON.stringify(c)).join("\n");
+      const ndjson = chunks.map((chunk) => JSON.stringify(chunk)).join("\n");
       const res = await typesenseRequest(
         `/collections/${RUN_CHUNKS_COLLECTION}/documents/import?action=upsert`,
         {
@@ -259,17 +317,21 @@ export const memoryRunCaptured = inngest.createFunction(
       const errors = body
         .split("\n")
         .filter(
-          (l) =>
-            l.trim() &&
+          (line) =>
+            line.trim() &&
             (() => {
               try {
-                return (JSON.parse(l) as { success?: boolean }).success === false;
+                return (JSON.parse(line) as { success?: boolean }).success === false;
               } catch {
                 return true;
               }
             })()
-        );
-      return { imported: chunks.length - errors.length, errors: errors.length };
+        ).length;
+      return {
+        imported: chunks.length - errors,
+        errors,
+        chunk_count: chunks.length,
+      };
     });
 
     await indexRun();
@@ -277,6 +339,7 @@ export const memoryRunCaptured = inngest.createFunction(
     const duration_ms = performance.now() - t0;
 
     await step.run("emit-otel", async () => {
+      const { format } = readCapture(capturePath);
       await emitOtelEvent({
         level: "info",
         source: "system-bus",
@@ -289,10 +352,10 @@ export const memoryRunCaptured = inngest.createFunction(
           user_id,
           machine_id,
           agent_runtime,
-          chunk_count: chunks.length,
+          chunk_count: chunkImport.chunk_count,
           chunk_errors: chunkImport.errors,
           embedding_status: RUN_CAPTURE_EMBEDDINGS ? "embedded" : "pending",
-          turn_count: turns.length,
+          turn_count: analysis.turn_count,
           format,
         },
       });
@@ -303,16 +366,17 @@ export const memoryRunCaptured = inngest.createFunction(
       data: {
         run_id,
         user_id,
-        chunk_count: chunks.length,
+        chunk_count: chunkImport.chunk_count,
         index_duration_ms: Math.round(duration_ms),
       },
     });
+    await cleanupInlineSpool();
 
     return {
       run_id,
       chunks_indexed: chunkImport.imported,
       chunk_errors: chunkImport.errors,
-      turn_count: turns.length,
+      turn_count: analysis.turn_count,
       duration_ms,
     };
   }
