@@ -7,7 +7,23 @@ privacy: "private"
 
 # The memory system: map + health
 
-This page is the holistic review you asked for on 2026-07-17: every store
+## The short version
+
+Your machine watches everything you and your agents do, writes the good
+parts down as pages in the Brain, and a picky curator texts you the best
+bits — then learns from which emoji you react with. **That whole loop
+works today**, proven end to end with your own 👍.
+
+Around the healthy core, three things need attention soon: the nightly
+condenser has a blind spot that starts mattering around 2026-07-18, the
+graph builder would leak sensitive page titles if anyone rebuilds it, and
+**71 GB of failed capture uploads** are quietly piling up in a retry
+folder. And there's clutter: four old memory systems are dead but still
+plugged in — one of them still answers `joelclaw recall` with data from
+May as if it were today. The fix list at the bottom is ordered by blast
+radius; the top two are one-sitting jobs.
+
+
 that captures, condenses, stores, curates, delivers, or grades durable
 knowledge for you and your agents — mapped in plain words, then graded.
 Verdicts are `working` (does its job, receipts prove it), `wobbly` (exists
