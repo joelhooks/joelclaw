@@ -3,7 +3,7 @@ name: messaging
 displayName: Messaging v2
 version: 0.1.0
 author: joel
-description: Send joelclaw operator messages through contract v2, consume reaction/reply events by flowId, and operate the Chat SDK acting/shadow cutover safely. Use for notify send, rich message intents, message reactions, message replies, Chat SDK, flowId correlation, or messaging transport ownership.
+description: Send joelclaw operator messages through contract v2, consume reaction/reply events by flowId, and operate the canonical Chat SDK transport safely. Use for notify send, rich message intents, message reactions, message replies, Chat SDK, flowId correlation, or messaging transport ownership.
 tags:
   - messaging
   - gateway
@@ -23,7 +23,7 @@ Load this skill when an agent needs to:
 - send a rich message with a stable correlation ID or reply anchor
 - consume reactions or replies to an outbound message
 - inspect a message lifecycle by `flowId`
-- change Chat SDK acting/shadow flags or gateway listener ownership
+- change Chat SDK gateway listener ownership or transport wiring
 - add or migrate a message producer
 
 Also load `gateway` for daemon operations, `inngest-events` for bus consumers, `telegram` for Telegram-specific behavior, and `system-architecture` for cross-host/runtime changes.
@@ -36,7 +36,7 @@ Existing callers keep using:
 joelclaw notify send "<message>" --priority high
 ```
 
-The CLI shape is unchanged. When `CHAT_SDK_ACTING_ENABLED=1`, the gateway compatibility shim maps the legacy request to contract v2 and sends through Chat SDK. `--channel` and `--telegram-only` are accepted during migration, but contract v2 routing is authoritative; do not use those flags as new policy.
+The CLI shape is unchanged. The gateway compatibility shim maps the legacy request to contract v2 and sends through Chat SDK. `--channel` and `--telegram-only` remain accepted compatibility inputs, but contract v2 routing is authoritative; do not use those flags as new policy.
 
 Use `notify send` for simple text from shell scripts, satellites, skills, and packages that do not own the gateway composition root. Do not import gateway internals across package boundaries.
 
@@ -155,29 +155,21 @@ joelclaw messages trace <flowId>
 joelclaw otel search "<flowId>" --hours 24
 ```
 
-## Acting, shadow, and rollback
+## Canonical ownership and rollback
 
-The live gateway embeds one Chat SDK instance. Never start a second platform listener or standalone Chat SDK daemon.
+The live gateway embeds one Chat SDK instance. It starts directly as the only Telegram poller and Slack Socket Mode owner. There are no acting or shadow flags and no start-then-stop handover.
 
-| flag | meaning |
-|---|---|
-| `CHAT_SDK_ACTING_ENABLED=1` | Chat SDK owns the acting Telegram/Slack transport path after supervised handover |
-| `CHAT_SDK_INBOUND_SHADOW_ENABLED=1` | keep in-process normalized inbound comparison taps on |
-| `CHAT_SDK_OUTBOUND_SHADOW_ENABLED=1` | run outbound comparison where explicitly enabled |
+Telegram-specific commands, callbacks, media intake, journaling, formatting, streaming, and direct Bot API side effects live in `packages/gateway/src/telegram-runtime.ts`. That runtime never polls; Chat SDK feeds it canonical command, action, and attachment events. Slack Reply Grant/passive-intel policy and Web API side effects live in `packages/gateway/src/slack-runtime.ts`, backed by the SDK adapter's `webClient`.
 
-Transport handover order is legacy active → stop legacy Telegram/Slack → register acting handlers → start SDK with `legacyTransportsStopped: true`. Require ordered `chat_sdk.handover.*` OTEL receipts.
+Rollback is source control: review and revert the legacy-transport deletion, then run one supervised `joelclaw gateway restart`. Never clear Redis or start a second listener beside the SDK owner.
 
-Rollback is `CHAT_SDK_ACTING_ENABLED=0` in the existing gateway start environment plus one supervised `joelclaw gateway restart`. Preserve journal, diff, OTEL, and unacked queue evidence. Never clear Redis or start legacy listeners beside an SDK owner to make a health check look green.
-
-Legacy channel deletion is gated on the accepted acting observation window. Until burst, restart/replay, reaction correlation, clean diff, and daily-use proofs are accepted, legacy code is rollback equipment.
-
-Canonical runbook: `.brain/projects/messaging-stabilization/run-shadow-window-cutover.svx`.
+Historical cutover receipts: `.brain/projects/messaging-stabilization/run-shadow-window-cutover.svx`.
 
 ## Rules
 
 - One gateway process and one listener owner per platform.
 - `command-queue` is the only path into the Pi session.
-- Chat SDK events may observe on the bus; shadow events never execute.
+- Chat SDK publishes observe-only bus copies; only the canonical dispatcher executes.
 - Producers use kinds; the routing table owns platforms and lanes.
 - Store and correlate by `flowId`.
 - A receipt without visible delivery is a rollback trigger, not success.

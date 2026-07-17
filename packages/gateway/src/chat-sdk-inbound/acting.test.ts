@@ -6,9 +6,12 @@ import {
   MESSAGE_REACTION_RECEIVED,
 } from "@joelclaw/message-contract";
 import { createActingInboundDispatcher } from "./acting";
+import {
+  createTelegramSdkRawNormalizer,
+  normalizeRawInbound,
+  type RawInboundEnvelope,
+} from "./normalize";
 import { createObserveOnlyInboundPublisher } from "./publish";
-
-const ACTING_ENV = { CHAT_SDK_ACTING_ENABLED: "1" } as NodeJS.ProcessEnv;
 
 function inbound(
   overrides: Partial<InboundEvent> = {},
@@ -77,7 +80,6 @@ function harness() {
   const published: unknown[] = [];
   const correlations: unknown[] = [];
   const dispatch = createActingInboundDispatcher({
-    env: ACTING_ENV,
     enqueue: async (source, prompt, metadata) => {
       enqueued.push({ source, prompt, metadata });
     },
@@ -120,8 +122,7 @@ describe("Chat SDK acting inbound dispatcher", () => {
   test("allows the same event to retry after enqueue fails", async () => {
     let attempts = 0;
     const dispatch = createActingInboundDispatcher({
-      env: ACTING_ENV,
-      enqueue: async () => {
+        enqueue: async () => {
         attempts += 1;
         if (attempts === 1) throw new Error("redis unavailable");
       },
@@ -173,8 +174,7 @@ describe("Chat SDK acting inbound dispatcher", () => {
     const delegated: unknown[] = [];
     const enqueued: unknown[] = [];
     const dispatch = createActingInboundDispatcher({
-      env: ACTING_ENV,
-      enqueue: async (...args) => {
+        enqueue: async (...args) => {
         enqueued.push(args);
       },
       publisher: createObserveOnlyInboundPublisher({ send: async () => {} }),
@@ -254,19 +254,65 @@ describe("Chat SDK acting inbound dispatcher", () => {
     ]);
   });
 
-  test("stays inert when the acting flag is absent", async () => {
-    const enqueued: unknown[] = [];
-    const dispatch = createActingInboundDispatcher({
-      env: {},
-      enqueue: async (...args) => {
-        enqueued.push(args);
+  test("publishes the real nested Telegram reaction update through the canonical path", async () => {
+    const rawUpdate = {
+      update_id: 777_932_597,
+      message_reaction: {
+        chat: { id: 7_718_912_466, type: "private", first_name: "Joel" },
+        message_id: 14_562,
+        date: 1_784_258_778,
+        old_reaction: [],
+        new_reaction: [{ type: "emoji", emoji: "👏" }],
+        user: {
+          id: 7_718_912_466,
+          is_bot: false,
+          first_name: "joel ⛈️",
+          username: "lowdown976",
+        },
       },
-      publisher: createObserveOnlyInboundPublisher({ send: async () => {} }),
-      resolveFlowId: async () => undefined,
-      publishReaction: async () => {},
-    });
+    };
+    const envelope: RawInboundEnvelope = {
+      platform: "telegram",
+      kind: "reaction",
+      transport: "polling",
+      rawEventType: "message_reaction",
+      raw: rawUpdate,
+      receivedAt: "2026-07-17T03:26:18.905Z",
+      allowedActorId: "7718912466",
+      botActorId: "999",
+    };
+    const [reaction] = await normalizeRawInbound(
+      envelope,
+      createTelegramSdkRawNormalizer({
+        botToken: "test-token",
+        mode: "webhook",
+        userName: "joelclaw_bot",
+        botActorId: "999",
+      }),
+      { sdkVersion: "4.34.0", now: () => new Date("2026-07-17T03:26:18.910Z") },
+    );
+    if (!reaction) throw new Error("expected nested Telegram reaction");
 
-    expect(await dispatch(inbound())).toEqual({ status: "disabled" });
-    expect(enqueued).toEqual([]);
+    const { dispatch, correlations } = harness();
+    expect(await dispatch(reaction)).toEqual({ status: "observed" });
+    expect(reaction).toMatchObject({
+      type: "reaction",
+      platformIds: { conversationId: "7718912466", messageId: "14562" },
+      rawAnchors: { updateId: "777932597", sourceMessageId: "14562" },
+      rawEmoji: "👏",
+      added: true,
+    });
+    expect(correlations).toEqual([
+      expect.objectContaining({
+        name: MESSAGE_REACTION_RECEIVED,
+        data: expect.objectContaining({
+          platformMessageId: "14562",
+          rawEventId: "777932597",
+          emoji: "👏",
+          action: "added",
+        }),
+      }),
+    ]);
   });
+
 });

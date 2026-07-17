@@ -9,8 +9,8 @@ import {
   markCallbackTraceDispatched,
   startCallbackTrace,
 } from "../callback-trace";
-import type { InlineButton } from "../channels/telegram";
 import { specializedTelegramApi } from "../telegram-outbound-policy";
+import type { InlineButton } from "../telegram-runtime";
 import {
   type CommandDefinition,
   defineChatCommand,

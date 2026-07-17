@@ -3,9 +3,6 @@ import type {
   MessageReactionReceivedEventType,
 } from "@joelclaw/message-contract";
 import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
-import type { InboundDiffReport } from "./diff";
-
-export const INBOUND_DIFF_EVENT_NAME = "message/inbound.diff" as const;
 
 export type InboundBusEventName =
   | "message/inbound.message"
@@ -19,21 +16,12 @@ export interface InboundBusEnvelope {
   readonly data: InboundEvent;
 }
 
-export interface InboundDiffBusEnvelope {
-  readonly id: string;
-  readonly name: typeof INBOUND_DIFF_EVENT_NAME;
-  readonly data: InboundDiffReport;
-}
-
 export type MessageReactionReceivedBusEnvelope =
   MessageReactionReceivedEventType & { readonly id: string };
 
 export interface InboundBusClient {
   readonly send: (
-    event:
-      | InboundBusEnvelope
-      | InboundDiffBusEnvelope
-      | MessageReactionReceivedBusEnvelope,
+    event: InboundBusEnvelope | MessageReactionReceivedBusEnvelope,
   ) => Promise<unknown>;
 }
 
@@ -50,7 +38,7 @@ export function createGatewayInboundBusClient(
     async send(event): Promise<void> {
       const eventApi = options.eventApi ?? loadGatewayInngestEventConfig()?.eventApi;
       if (!eventApi) {
-        throw new Error("Inngest event config missing for inbound shadow publish");
+        throw new Error("Inngest event config missing for canonical inbound publish");
       }
       const response = await (options.fetchFn ?? fetch)(eventApi, {
         method: "POST",
@@ -86,16 +74,6 @@ export function createObserveOnlyInboundPublisher(client: InboundBusClient) {
         id: event.eventId,
         name: inboundBusEventName(event),
         data: event,
-      });
-    },
-    publishDiff: async (report: InboundDiffReport): Promise<void> => {
-      if (report.shadow !== true || report.sdk.actualActed !== false) {
-        throw new Error("Inbound shadow publisher refuses an acting diff report");
-      }
-      await client.send({
-        id: report.reportId,
-        name: INBOUND_DIFF_EVENT_NAME,
-        data: report,
       });
     },
   };

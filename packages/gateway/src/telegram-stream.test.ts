@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { JournalEvent } from "@joelclaw/message-journal";
 import { createChannelDeliveryAudit } from "@joelclaw/telemetry";
 import type { Bot } from "grammy";
-import { __telegramTestUtils } from "./channels/telegram";
 import { __messageJournalTestUtils } from "./message-journal";
 import { telegramConversationReplyExemption } from "./telegram-outbound-policy";
+import { __telegramTestUtils } from "./telegram-runtime";
 import { begin, finish, pushDelta, turnEnd } from "./telegram-stream";
 
 const originalFetch = globalThis.fetch;

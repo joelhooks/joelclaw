@@ -4,17 +4,17 @@ Canonical notes for the always-on gateway daemon (`packages/gateway`) and its au
 
 ## Messaging contract v2 and Chat SDK ownership
 
-Chat SDK is the platform-adapter layer for Telegram, Slack, and Discord. It runs inside the existing gateway process behind joelclaw authorization, routing, signal suppression, durable command queue, journal, receipt, health, and error-budget wrappers. iMessage remains hand-rolled.
+Chat SDK is the canonical platform-adapter layer for Telegram and Slack. It runs inside the existing gateway process behind joelclaw authorization, routing, signal suppression, durable command queue, journal, receipt, health, and error-budget wrappers. Discord and iMessage remain on their existing channel owners.
 
-- `joelclaw notify send ...` is unchanged for callers. With `CHAT_SDK_ACTING_ENABLED=1`, the compatibility shim maps legacy inputs to a contract-v2 kind and sends through the acting SDK transport.
+- `joelclaw notify send ...` is unchanged for callers. The compatibility shim maps legacy inputs to a contract-v2 kind and sends through Chat SDK.
 - Rich intents use `kind: memory | alert | digest | ask | receipt`; `packages/message-contract/src/routing.ts` owns platform and lane selection.
-- Every rich send returns a `flowId`. Reactions return as `message/reaction.received`; replies use `message/reply.received` when the acting publisher is wired.
-- `CHAT_SDK_INBOUND_SHADOW_ENABLED=1` keeps in-process semantic diff taps on. Shadow events observe only and never enqueue a second Pi turn.
-- Never launch a second Telegram poller, Slack Socket Mode connection, Discord listener, or standalone Chat SDK process. Listener ownership is transferred by `handoverMessagingTransports(...)`.
-- Roll back by setting `CHAT_SDK_ACTING_ENABLED=0` in the existing gateway start environment and running one supervised `joelclaw gateway restart`. Preserve journal, diff, OTEL, and unacked queue evidence.
-- Do not delete legacy channel code until the accepted observation window proves clean diffs, burst semantics, restart replay, reaction `flowId` correlation, and normal daily use.
+- Every rich send returns a `flowId`. Reactions return as `message/reaction.received`; replies use `message/reply.received` when the publisher is wired.
+- Chat SDK starts directly as the only Telegram poller and Slack Socket Mode owner. Never launch a second platform listener or standalone Chat SDK process.
+- Telegram-specific commands, callbacks, media intake, journaling, formatting, and streaming live in `telegram-runtime.ts`, a non-polling companion fed by SDK events.
+- Slack Reply Grant/passive-intel policy and Web API side effects live in `slack-runtime.ts`, backed by the SDK adapter's `webClient`.
+- There is no acting or shadow flag. Rollback is a reviewed `git revert` of the transport deletion plus one supervised `joelclaw gateway restart`.
 
-Canonical agent procedure: `skills/messaging/SKILL.md`. Cutover receipts and exact runbook: `.brain/projects/messaging-stabilization/run-shadow-window-cutover.svx`.
+Canonical agent procedure: `skills/messaging/SKILL.md`. Historical cutover receipts: `.brain/projects/messaging-stabilization/run-shadow-window-cutover.svx`.
 
 ## Project Threads and public channel replies
 
@@ -158,7 +158,7 @@ In `redis_degraded` mode:
 - direct channel conversation stays online
 - `gateway status` falls back to daemon health instead of pretending the gateway is dead
 - `gateway diagnose` marks the Redis bridge as degraded and skips Redis-dependent E2E testing
-- degraded capabilities are listed explicitly (event bridge, replay, Redis-backed operational commands, Telegram poll-owner lease durability)
+- degraded capabilities are listed explicitly (event bridge, replay, and Redis-backed operational commands)
 
 Session pressure is now surfaced in status payloads as first-class data:
 
@@ -268,7 +268,7 @@ Gateway status now exposes a canonical `channels` surface so Telegram ownership 
 
 Current runtime slice exposes per-channel runtime snapshots for:
 
-- `telegram` — configured/started/healthy, owner state, polling state, retry attempts, conflict streak, last lease status
+- `telegram` — configured/started/healthy, canonical Chat SDK owner state, and companion-runtime readiness
 - `discord` — configured/started/healthy, ready state, bot user id
 - `imessage` — configured/started/healthy, connected state, reconnect attempts/delay, healing state
 - `slack` — configured/started/healthy, connected state, bot/allowed user ids
@@ -279,7 +279,7 @@ Operator surfaces:
 - `channelHealth` carries degraded/muted channel lists plus last degrade/recover event and per-channel transition timestamps
 - `joelclaw gateway diagnose` adds a `channel-health` layer with current contract state, muted known issues, and last alert event
 - `/health` components now reflect per-channel contract state instead of just a Telegram boolean
-- Telegram `fallback` with `leaseEnabled=false` is expected local mode, not a degraded owner contract
+- Telegram reports `ownerState: chat-sdk`; legacy lease fields remain zero/null only for CLI response compatibility
 
 Daemon behavior now includes immediate channel-health transition handling:
 
@@ -294,38 +294,18 @@ The deeper rank-6 slice now adds active heal policy state:
 - `channelHealth.healing` exposes degraded streak count, cooldown, attempts, last heal result, plus `manualRepairRequired`, `manualRepairSummary`, and `manualRepairCommands` when the watchdog cannot fix the channel itself
 - `joelclaw gateway diagnose` adds a `channel-healing` layer and now spells out manual repair steps instead of vague `armed` wording
 - watchdog attempts guarded restarts for restart-eligible degraded channels after `2` consecutive degraded checks with a `10m` cooldown
-- ownership/lease problems (for example Telegram passive poll ownership or retrying `getUpdates` conflicts) stay visible as `manual` instead of triggering dumb restart churn
+- Chat SDK transport failures stay `manual` and require a supervised gateway restart instead of spawning a second listener
 - degraded channels that are muted as known issues now also flip to `manual` instead of quietly advertising a restart policy that the watchdog will never actually execute while muted
-- Telegram retry/conflict states no longer read as healthy local fallback: `/health`, `gateway status`, and `gateway diagnose` now degrade the contract when polling is down and only retrying
+- `/health`, `gateway status`, and `gateway diagnose` degrade when the canonical Chat SDK runtime or Telegram companion is not ready
 
 Current boundary of this rank-6 slice:
 
 - shipped: reusable channel runtime health/ownership snapshots, immediate degrade/recover alerting with known-issue suppression, guarded per-channel heal policy state with restart attempts for restart-eligible channels, and explicit manual repair guidance for manual-policy degradations
 - still open: stricter single-owner semantics beyond Telegram and any richer/native repair automation beyond CLI-guided operator steps
 
-## Telegram multi-instance polling ownership (2026-03-05)
+## Telegram single-owner runtime
 
-Gateway Telegram ingress now uses a Redis lease so multiple gateway instances can coexist without all trying to long-poll the same bot token.
-
-- Poll owner lease key: `joelclaw:gateway:telegram:poll-owner:<tokenHash>`
-- Only the lease owner starts `getUpdates` polling.
-- Non-owners stay in passive/send-only mode and retry lease acquisition with backoff.
-- Lease owner renews periodically; on lease loss it stops polling and re-enters passive mode.
-- Poll status key: `joelclaw:gateway:telegram:poll-status:<tokenHash>` (owner/passive/fallback/stopped snapshots)
-
-Telemetry:
-- `telegram.channel.poll_owner.acquired`
-- `telegram.channel.poll_owner.passive`
-- `telegram.channel.poll_owner.retry_scheduled`
-- `telegram.channel.poll_owner.lost`
-- `telegram.channel.poll_owner.fallback`
-
-Conflict guard remains in place:
-- If Bot API returns `409: Conflict: terminated by other getUpdates request`, gateway retries with exponential backoff (`telegram.channel.retry_scheduled`) instead of one-shot disable.
-- `telegram.channel.start_failed` carries retry metadata (`attempt`, `retryDelayMs`, `conflict`, `pollLeaseOwned`).
-- Recovery after transient conflicts emits `telegram.channel.polling_recovered`.
-
-Important: Telegram phone/desktop clients are **not** Bot API pollers. `getUpdates` contention only happens between bot processes using the same token.
+Chat SDK is the only Telegram `getUpdates` owner. The old Redis poll lease, passive mode, retry loop, and handover path were deleted after the accepted cutover window. A 409 now means a forbidden second process exists; do not mask it by starting another listener.
 
 ## Redis reconnect hardening (2026-03-05)
 

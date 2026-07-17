@@ -1,4 +1,4 @@
-import type { InlineButton } from "../channels/telegram";
+import type { InlineButton } from "../telegram-runtime";
 import { createEnvelope, type OutboundChannelId, type OutboundEnvelope } from "./envelope";
 import { applyFormatRules } from "./format";
 

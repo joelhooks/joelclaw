@@ -210,12 +210,12 @@ This shells to `pi -p --no-session --no-extensions` — zero config, zero API co
 
 ## Gateway
 
-Always-on pi session with Redis event bridge. Chat SDK is the adapter layer for Telegram, Slack, and Discord behind joelclaw contract-v2 policy; iMessage remains hand-rolled. Inbound work reaches Pi only through the durable command queue. `joelclaw notify send` remains compatible and maps to contract v2 when the Chat SDK acting path owns transport.
+Always-on pi session with Redis event bridge. Chat SDK is the canonical adapter layer for Telegram and Slack behind joelclaw contract-v2 policy; Discord and iMessage remain on their existing channel owners. Inbound work reaches Pi only through the durable command queue. `joelclaw notify send` remains compatible and always maps to contract v2 after the Chat SDK runtime is ready.
 
 - Gateway middleware (`packages/system-bus/src/inngest/middleware/gateway.ts`) auto-injects `gateway` context into Inngest functions.
-- Contract schemas and routing: `packages/message-contract/`; acting/shadow adapters: `packages/gateway/src/chat-sdk/` and `packages/gateway/src/chat-sdk-inbound/`.
+- Contract schemas and routing: `packages/message-contract/`; canonical adapters and inbound dispatch: `packages/gateway/src/chat-sdk/` and `packages/gateway/src/chat-sdk-inbound/`.
 - Reactions return on the bus as `message/reaction.received` with the original `flowId`.
-- Never start a second Telegram poller, Slack socket, Discord listener, or standalone Chat SDK process; shadow normalization runs inside the current owner.
+- Never start a second Telegram poller, Slack socket, Discord listener, or standalone Chat SDK process. Chat SDK directly owns Telegram and Slack; rollback is source control plus one supervised restart.
 - Cutover and rollback runbook: `.brain/projects/messaging-stabilization/run-shadow-window-cutover.svx`.
 
 ## Observability

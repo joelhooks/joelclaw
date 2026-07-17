@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { extname } from "node:path";
 import type { FormatConverter } from "@joelclaw/markdown-formatter";
 import { escapeText, TelegramConverter } from "@joelclaw/markdown-formatter";
+import type { InboundEvent } from "@joelclaw/message-contract";
 import {
   type ChannelAuditSeed,
   type ChannelDeliveryAudit,
@@ -21,25 +22,8 @@ import {
   failCallbackTrace,
   markCallbackTraceDispatched,
   startCallbackTrace,
-} from "../callback-trace";
-import { tapTelegramUpdate } from "../chat-sdk-inbound/taps";
-import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
-import {
-  journalMessage,
-  rememberTelegramMessageFlow,
-  resolveTelegramMessageFlow,
-} from "../message-journal";
-import type { OutboundEnvelope } from "../outbound/envelope";
-import {
-  normalizeTelegramBulletLines,
-  prepareTelegramMarkdown,
-} from "../telegram-markdown";
-import {
-  routeTelegramOutbound,
-  type TelegramOutboundPolicyContext,
-  type TelegramOutboundRoute,
-} from "../telegram-outbound-policy";
-import type { EnqueueFn } from "./redis";
+} from "./callback-trace";
+import type { EnqueueFn } from "./channels/redis";
 import type {
   Channel,
   ChannelPlatform,
@@ -47,7 +31,23 @@ import type {
   MessageHandler,
   SendMediaPayload,
   SendOptions,
-} from "./types";
+} from "./channels/types";
+import { loadGatewayInngestEventConfig } from "./lib/inngest-event";
+import {
+  journalMessage,
+  rememberTelegramMessageFlow,
+  resolveTelegramMessageFlow,
+} from "./message-journal";
+import type { OutboundEnvelope } from "./outbound/envelope";
+import {
+  normalizeTelegramBulletLines,
+  prepareTelegramMarkdown,
+} from "./telegram-markdown";
+import {
+  routeTelegramOutbound,
+  type TelegramOutboundPolicyContext,
+  type TelegramOutboundRoute,
+} from "./telegram-outbound-policy";
 
 // ── Telegram formatting ────────────────────────────────
 // Explicit HTML and streaming retain the legacy converter. Default/markdown
@@ -66,14 +66,6 @@ type TelegramFormattedOutput = {
 const MEDIA_DIR = "/tmp/joelclaw-media";
 const MAX_DOWNLOAD_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
-const TELEGRAM_POLL_RETRY_BASE_MS = 5_000;
-const TELEGRAM_POLL_RETRY_MAX_MS = 60_000;
-const TELEGRAM_POLL_LEASE_ENABLED = process.env.TELEGRAM_POLL_LEASE_ENABLED !== "0";
-const TELEGRAM_POLL_LEASE_TTL_MS = 30_000;
-const TELEGRAM_POLL_LEASE_RENEW_MS = 10_000;
-const TELEGRAM_POLL_LEASE_RETRY_BASE_MS = 5_000;
-const TELEGRAM_POLL_LEASE_RETRY_MAX_MS = 60_000;
-const TELEGRAM_POLL_STATUS_TTL_MS = 2 * 60_000;
 
 let _botToken: string | undefined;
 
@@ -115,22 +107,9 @@ export type TelegramDeliveryReceipt =
       policy: TelegramOutboundRoute;
     };
 
-export type TelegramStartOptions = {
+export type TelegramRuntimeOptions = {
   configureBot?: (bot: Bot) => void | Promise<void>;
   abortCurrentTurn?: () => Promise<void>;
-}
-
-type PollLeaseState = "owner" | "passive" | "fallback" | "stopped";
-
-type PollLeaseStatus = {
-  state: PollLeaseState;
-  instanceId: string;
-  ownerId?: string;
-  tokenHash?: string;
-  updatedAt: string;
-  reason?: string;
-  attempt?: number;
-  retryDelayMs?: number;
 };
 
 function resolveSendInput(
@@ -515,12 +494,6 @@ function chunkMessage(text: string): string[] {
 let bot: Bot | undefined;
 let allowedUserId: number | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
-let started = false;
-let pollingActive = false;
-let pollingStarting = false;
-let pollRetryTimer: ReturnType<typeof setTimeout> | undefined;
-let pollRetryAttempts = 0;
-let pollConflictStreak = 0;
 
 // ── Callback routing (ADR-0215) ──────────────────────────────────
 // External services register prefixes in Redis hash. Matching callbacks
@@ -652,28 +625,11 @@ async function closeCallbackTraceSubscriber(): Promise<void> {
 let callbackRoutes: Array<{ prefix: string; channel: string }> = [];
 let callbackTraceSubscriber: Redis | undefined;
 
-const pollLeaseInstanceId = crypto.randomUUID();
-let pollLeaseClient: Redis | undefined;
-let pollLeaseOwned = false;
-let pollLeaseOwnerKey: string | undefined;
-let pollLeaseStatusKey: string | undefined;
-let pollLeaseTokenHash: string | undefined;
-let pollLeaseRenewTimer: ReturnType<typeof setInterval> | undefined;
-let pollLeaseRetryTimer: ReturnType<typeof setTimeout> | undefined;
-let pollLeaseRetryAttempts = 0;
-let lastPollLeaseStatus: PollLeaseStatus | null = null;
+let initialized = false;
 
 export type TelegramRuntimeState = {
   configured: boolean;
-  started: boolean;
-  pollingActive: boolean;
-  pollingStarting: boolean;
-  pollRetryAttempts: number;
-  pollConflictStreak: number;
-  pollLeaseEnabled: boolean;
-  pollLeaseOwned: boolean;
-  pollLeaseState: PollLeaseState;
-  pollLeaseStatus: PollLeaseStatus | null;
+  initialized: boolean;
 };
 
 /** Expose the raw grammy Bot instance for streaming (telegram-stream.ts). */
@@ -682,22 +638,9 @@ export function getBot(): Bot | undefined {
 }
 
 export function getRuntimeState(): TelegramRuntimeState {
-  const pollLeaseState = lastPollLeaseStatus?.state
-    ?? (started
-      ? (pollLeaseOwned ? "owner" : TELEGRAM_POLL_LEASE_ENABLED ? "passive" : "fallback")
-      : "stopped");
-
   return {
     configured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_USER_ID),
-    started,
-    pollingActive,
-    pollingStarting,
-    pollRetryAttempts,
-    pollConflictStreak,
-    pollLeaseEnabled: TELEGRAM_POLL_LEASE_ENABLED,
-    pollLeaseOwned,
-    pollLeaseState,
-    pollLeaseStatus: lastPollLeaseStatus,
+    initialized,
   };
 }
 let defaultInstance: TelegramChannel | undefined;
@@ -797,16 +740,16 @@ export class TelegramChannel implements Channel {
 
   async start(..._args: unknown[]): Promise<void> {
     const [token, userId, enqueue, options] = _args;
-    await startTelegramChannel(
+    await initializeTelegramRuntime(
       token as string,
       userId as number,
       enqueue as EnqueueFn,
-      options as TelegramStartOptions | undefined,
+      options as TelegramRuntimeOptions | undefined,
     );
   }
 
   async stop(): Promise<void> {
-    await shutdownTelegramChannel();
+    await shutdown();
   }
 
   async send(target: string, text: string, options?: SendOptions): Promise<void> {
@@ -856,239 +799,13 @@ export class TelegramChannel implements Channel {
   }
 }
 
-function clearPollRetryTimer(): void {
-  if (pollRetryTimer) {
-    clearTimeout(pollRetryTimer);
-    pollRetryTimer = undefined;
-  }
-}
-
-function clearPollLeaseRetryTimer(): void {
-  if (pollLeaseRetryTimer) {
-    clearTimeout(pollLeaseRetryTimer);
-    pollLeaseRetryTimer = undefined;
-  }
-}
-
-function clearPollLeaseRenewTimer(): void {
-  if (pollLeaseRenewTimer) {
-    clearInterval(pollLeaseRenewTimer);
-    pollLeaseRenewTimer = undefined;
-  }
-}
-
-function unrefTimer(timer: unknown): void {
-  if (!timer || typeof timer !== "object" || !("unref" in timer)) return;
-  (timer as NodeJS.Timeout).unref();
-}
-
-function isGetUpdatesConflict(errorText: string): boolean {
-  const normalized = errorText.toLowerCase();
-  return normalized.includes("getupdates") && normalized.includes("409");
-}
-
-function nextPollRetryDelayMs(attempt: number): number {
-  const exp = Math.max(0, Math.min(attempt, 8));
-  return Math.min(TELEGRAM_POLL_RETRY_BASE_MS * 2 ** exp, TELEGRAM_POLL_RETRY_MAX_MS);
-}
-
-function nextPollLeaseRetryDelayMs(attempt: number): number {
-  const exp = Math.max(0, Math.min(attempt, 8));
-  return Math.min(TELEGRAM_POLL_LEASE_RETRY_BASE_MS * 2 ** exp, TELEGRAM_POLL_LEASE_RETRY_MAX_MS);
-}
-
-function stableTokenHash(token: string): string {
-  return crypto.createHash("sha256").update(token).digest("hex").slice(0, 12);
-}
-
-function stopPolling(): void {
-  clearPollRetryTimer();
-  pollRetryAttempts = 0;
-  pollConflictStreak = 0;
-
-  if (bot && (pollingActive || pollingStarting)) {
-    try {
-      bot.stop();
-    } catch {
-      // best-effort
-    }
-  }
-
-  pollingStarting = false;
-  pollingActive = false;
-}
-
-async function ensurePollLeaseClient(): Promise<Redis | undefined> {
-  if (!TELEGRAM_POLL_LEASE_ENABLED) return undefined;
-  if (pollLeaseClient && pollLeaseClient.status !== "end") {
-    return pollLeaseClient;
-  }
-
-  const client = new Redis({
-    host: process.env.REDIS_HOST ?? "localhost",
-    port: Number.parseInt(process.env.REDIS_PORT ?? "6379", 10),
-    lazyConnect: true,
-    maxRetriesPerRequest: null,
-    retryStrategy: (times: number) => Math.min(times * 500, 30_000),
-  });
-
-  client.on("error", (error) => {
-    console.warn("[gateway:telegram] poll lease redis error", { error: String(error) });
-  });
-
-  try {
-    await client.connect();
-    pollLeaseClient = client;
-    return pollLeaseClient;
-  } catch (error) {
-    client.disconnect();
-    console.warn("[gateway:telegram] poll lease redis unavailable", { error: String(error) });
-    void emitGatewayOtel({
-      level: "warn",
-      component: "telegram-channel",
-      action: "telegram.channel.poll_owner.redis_unavailable",
-      success: false,
-      error: String(error),
-    });
-    return undefined;
-  }
-}
-
-async function closePollLeaseClient(): Promise<void> {
-  if (!pollLeaseClient) return;
-  try {
-    await pollLeaseClient.quit();
-  } catch {
-    pollLeaseClient.disconnect();
-  } finally {
-    pollLeaseClient = undefined;
-  }
-}
-
-async function writePollLeaseStatus(
-  state: PollLeaseState,
-  detail?: Partial<Omit<PollLeaseStatus, "state" | "instanceId" | "updatedAt">>,
-): Promise<void> {
-  const status: PollLeaseStatus = {
-    state,
-    instanceId: pollLeaseInstanceId,
-    updatedAt: new Date().toISOString(),
-    ...(pollLeaseTokenHash ? { tokenHash: pollLeaseTokenHash } : {}),
-    ...(detail ?? {}),
-  };
-  lastPollLeaseStatus = status;
-
-  const client = await ensurePollLeaseClient();
-  if (!client || !pollLeaseStatusKey) return;
-
-  try {
-    await client.set(pollLeaseStatusKey, JSON.stringify(status), "PX", TELEGRAM_POLL_STATUS_TTL_MS);
-  } catch (error) {
-    console.warn("[gateway:telegram] failed to write poll lease status", { error: String(error), state });
-  }
-}
-
-async function acquirePollLease(): Promise<{ acquired: boolean; ownerId?: string; fallback: boolean }> {
-  if (!TELEGRAM_POLL_LEASE_ENABLED) {
-    return { acquired: true, ownerId: pollLeaseInstanceId, fallback: true };
-  }
-
-  const client = await ensurePollLeaseClient();
-  if (!client || !pollLeaseOwnerKey) {
-    return { acquired: true, ownerId: pollLeaseInstanceId, fallback: true };
-  }
-
-  try {
-    const setResult = await client.set(
-      pollLeaseOwnerKey,
-      pollLeaseInstanceId,
-      "PX",
-      TELEGRAM_POLL_LEASE_TTL_MS,
-      "NX",
-    );
-
-    if (setResult === "OK") {
-      pollLeaseOwned = true;
-      return { acquired: true, ownerId: pollLeaseInstanceId, fallback: false };
-    }
-
-    const ownerId = await client.get(pollLeaseOwnerKey) ?? undefined;
-    if (ownerId === pollLeaseInstanceId) {
-      pollLeaseOwned = true;
-      await client.pexpire(pollLeaseOwnerKey, TELEGRAM_POLL_LEASE_TTL_MS);
-      return { acquired: true, ownerId, fallback: false };
-    }
-
-    pollLeaseOwned = false;
-    return { acquired: false, ownerId, fallback: false };
-  } catch (error) {
-    console.warn("[gateway:telegram] poll lease acquisition failed; falling back to direct polling", {
-      error: String(error),
-    });
-    void emitGatewayOtel({
-      level: "warn",
-      component: "telegram-channel",
-      action: "telegram.channel.poll_owner.acquire_failed",
-      success: false,
-      error: String(error),
-    });
-    return { acquired: true, ownerId: pollLeaseInstanceId, fallback: true };
-  }
-}
-
-async function renewPollLease(): Promise<boolean> {
-  if (!TELEGRAM_POLL_LEASE_ENABLED || !pollLeaseOwned) return true;
-  const client = await ensurePollLeaseClient();
-  if (!client || !pollLeaseOwnerKey) return false;
-
-  try {
-    const renewed = await client.eval(
-      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end",
-      1,
-      pollLeaseOwnerKey,
-      pollLeaseInstanceId,
-      String(TELEGRAM_POLL_LEASE_TTL_MS),
-    );
-    return Number(renewed) === 1;
-  } catch (error) {
-    console.warn("[gateway:telegram] poll lease renewal failed", { error: String(error) });
-    void emitGatewayOtel({
-      level: "warn",
-      component: "telegram-channel",
-      action: "telegram.channel.poll_owner.renew_failed",
-      success: false,
-      error: String(error),
-    });
-    return false;
-  }
-}
-
-async function releasePollLease(): Promise<void> {
-  if (!TELEGRAM_POLL_LEASE_ENABLED || !pollLeaseOwned) return;
-  const client = await ensurePollLeaseClient();
-  if (!client || !pollLeaseOwnerKey) return;
-
-  try {
-    await client.eval(
-      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
-      1,
-      pollLeaseOwnerKey,
-      pollLeaseInstanceId,
-    );
-  } catch (error) {
-    console.warn("[gateway:telegram] poll lease release failed", { error: String(error) });
-  } finally {
-    pollLeaseOwned = false;
-  }
-}
-
-async function startTelegramChannel(
+async function initializeTelegramRuntime(
   token: string,
   userId: number,
   enqueue: EnqueueFn,
-  options?: TelegramStartOptions,
+  options?: TelegramRuntimeOptions,
 ): Promise<void> {
-  if (started) return;
+  if (initialized) return;
 
   enqueuePrompt = enqueue;
   allowedUserId = userId;
@@ -1102,7 +819,6 @@ async function startTelegramChannel(
 
   // Only allow Joel
   bot.use(async (ctx, next) => {
-    tapTelegramUpdate(ctx.update, allowedUserId, bot?.botInfo?.id);
     if (ctx.from?.id !== allowedUserId) {
       console.warn("[gateway:telegram] unauthorized user", {
         userId: ctx.from?.id,
@@ -1486,7 +1202,7 @@ async function startTelegramChannel(
     if (data.startsWith("replygrant:")) {
       const [, actionName, approvalId, ...restParts] = data.split(":");
       try {
-        const { getRedisClient, pushGatewayEvent } = await import("./redis");
+        const { getRedisClient, pushGatewayEvent } = await import("./channels/redis");
         const redis = getRedisClient();
         if (!redis || !approvalId) throw new Error("reply grant approval state unavailable");
         if (actionName === "close") {
@@ -1676,7 +1392,7 @@ async function startTelegramChannel(
       });
 
       try {
-        const { getRedisClient } = await import("./redis");
+        const { getRedisClient } = await import("./channels/redis");
         const redis = getRedisClient();
         if (!redis) {
           throw new Error("redis client unavailable for callback route publish");
@@ -1807,283 +1523,19 @@ async function startTelegramChannel(
     }
   });
 
-  const startPolling = (): void => {
-    if (!bot || !started) return;
-    if (pollingActive || pollingStarting) return;
-    if (TELEGRAM_POLL_LEASE_ENABLED && !pollLeaseOwned) return;
-
-    // Long polling is single-consumer per bot token. If another process currently
-    // owns getUpdates, Telegram returns 409. Retry with backoff instead of
-    // permanently disabling the channel on first conflict.
-    pollingStarting = true;
-    void bot.start({
-      // Telegram excludes message_reaction unless explicitly requested —
-      // without it, Joel's emoji reactions never reach the gateway or the
-      // shadow tap (reactions-teach-taste plumbing).
-      allowed_updates: ["message", "edited_message", "callback_query", "message_reaction"],
-      onStart: (botInfo) => {
-        const recovered = pollRetryAttempts > 0 || pollConflictStreak > 0;
-        pollRetryAttempts = 0;
-        pollConflictStreak = 0;
-        clearPollRetryTimer();
-        pollingStarting = false;
-        pollingActive = true;
-
-        console.log("[gateway:telegram] started", {
-          botId: botInfo.id,
-          botUsername: botInfo.username,
-          allowedUserId,
-          recovered,
-          pollLeaseOwned,
-        });
-        void emitGatewayOtel({
-          level: "info",
-          component: "telegram-channel",
-          action: "telegram.channel.started",
-          success: true,
-          metadata: {
-            botId: botInfo.id,
-            botUsername: botInfo.username,
-            recovered,
-            pollLeaseOwned,
-          },
-        });
-
-        if (recovered) {
-          void emitGatewayOtel({
-            level: "info",
-            component: "telegram-channel",
-            action: "telegram.channel.polling_recovered",
-            success: true,
-          });
-        }
-      },
-    }).catch(async (error) => {
-      pollingStarting = false;
-      pollingActive = false;
-
-      // grammy may leave an in-flight getUpdates request after error.
-      // Stop the bot to cancel it before we retry, otherwise the next
-      // bot.start() races with the stale request → perpetual 409.
-      try { await bot?.stop(); } catch { /* ignore */ }
-
-      const errorText = String(error);
-      const conflict = isGetUpdatesConflict(errorText);
-      if (conflict) {
-        pollConflictStreak += 1;
-      } else {
-        pollConflictStreak = 0;
-      }
-
-      const delayMs = nextPollRetryDelayMs(pollRetryAttempts);
-      const attempt = pollRetryAttempts + 1;
-      pollRetryAttempts = attempt;
-
-      const level: "warn" | "error" = conflict ? "warn" : "error";
-      console[conflict ? "warn" : "error"](
-        "[gateway:telegram] polling start failed; retry scheduled",
-        {
-          error: errorText,
-          conflict,
-          attempt,
-          delayMs,
-          pollLeaseOwned,
-        },
-      );
-
-      void emitGatewayOtel({
-        level,
-        component: "telegram-channel",
-        action: "telegram.channel.start_failed",
-        success: false,
-        error: errorText,
-        metadata: {
-          conflict,
-          attempt,
-          retryDelayMs: delayMs,
-          pollLeaseOwned,
-        },
-      });
-
-      void emitGatewayOtel({
-        level: "warn",
-        component: "telegram-channel",
-        action: "telegram.channel.retry_scheduled",
-        success: true,
-        metadata: {
-          conflict,
-          attempt,
-          retryDelayMs: delayMs,
-          pollLeaseOwned,
-        },
-      });
-
-      clearPollRetryTimer();
-      pollRetryTimer = setTimeout(() => {
-        pollRetryTimer = undefined;
-        if (!started) return;
-        if (TELEGRAM_POLL_LEASE_ENABLED && !pollLeaseOwned) return;
-        startPolling();
-      }, delayMs);
-      unrefTimer(pollRetryTimer);
-    });
-  };
-
-  const schedulePollLeaseRetry = (reason: string): void => {
-    if (!started || !TELEGRAM_POLL_LEASE_ENABLED) return;
-    if (pollLeaseRetryTimer) return;
-
-    const delayMs = nextPollLeaseRetryDelayMs(pollLeaseRetryAttempts);
-    const attempt = pollLeaseRetryAttempts + 1;
-    pollLeaseRetryAttempts = attempt;
-
-    void emitGatewayOtel({
-      level: "info",
-      component: "telegram-channel",
-      action: "telegram.channel.poll_owner.retry_scheduled",
-      success: true,
-      metadata: {
-        attempt,
-        retryDelayMs: delayMs,
-        reason,
-      },
-    });
-
-    pollLeaseRetryTimer = setTimeout(() => {
-      pollLeaseRetryTimer = undefined;
-      void attemptPollOwnership("retry");
-    }, delayMs);
-    unrefTimer(pollLeaseRetryTimer);
-  };
-
-  const startPollLeaseRenewLoop = (): void => {
-    clearPollLeaseRenewTimer();
-    if (!started || !TELEGRAM_POLL_LEASE_ENABLED || !pollLeaseOwned) return;
-
-    pollLeaseRenewTimer = setInterval(() => {
-      if (!started || !pollLeaseOwned) return;
-
-      void renewPollLease().then((renewed) => {
-        if (renewed) return;
-
-        pollLeaseOwned = false;
-        stopPolling();
-        clearPollLeaseRenewTimer();
-
-        void emitGatewayOtel({
-          level: "warn",
-          component: "telegram-channel",
-          action: "telegram.channel.poll_owner.lost",
-          success: false,
-        });
-        void writePollLeaseStatus("passive", {
-          reason: "lease_lost",
-        });
-
-        schedulePollLeaseRetry("lease_lost");
-      });
-    }, TELEGRAM_POLL_LEASE_RENEW_MS);
-    unrefTimer(pollLeaseRenewTimer);
-  };
-
-  const attemptPollOwnership = async (reason: string): Promise<void> => {
-    if (!started || !bot) return;
-
-    const previouslyOwned = pollLeaseOwned;
-    const { acquired, ownerId, fallback } = await acquirePollLease();
-    if (!started || !bot) return;
-
-    if (acquired) {
-      clearPollLeaseRetryTimer();
-      pollLeaseRetryAttempts = 0;
-
-      if (fallback) {
-        pollLeaseOwned = true;
-        clearPollLeaseRenewTimer();
-        const fallbackReason = TELEGRAM_POLL_LEASE_ENABLED ? "lease_unavailable" : "lease_disabled";
-        console.warn("[gateway:telegram] poll lease unavailable; running direct polling", {
-          reason: fallbackReason,
-        });
-        void emitGatewayOtel({
-          level: "warn",
-          component: "telegram-channel",
-          action: "telegram.channel.poll_owner.fallback",
-          success: true,
-          metadata: { reason: fallbackReason },
-        });
-        void writePollLeaseStatus("fallback", {
-          reason: fallbackReason,
-        });
-      } else {
-        const fromPassive = !previouslyOwned;
-        pollLeaseOwned = true;
-        startPollLeaseRenewLoop();
-
-        console.log("[gateway:telegram] poll owner acquired", {
-          instanceId: pollLeaseInstanceId,
-          tokenHash: pollLeaseTokenHash,
-          ownerId,
-          fromPassive,
-          reason,
-        });
-        void emitGatewayOtel({
-          level: "info",
-          component: "telegram-channel",
-          action: "telegram.channel.poll_owner.acquired",
-          success: true,
-          metadata: {
-            instanceId: pollLeaseInstanceId,
-            ownerId,
-            tokenHash: pollLeaseTokenHash,
-            fromPassive,
-            reason,
-          },
-        });
-        void writePollLeaseStatus("owner", {
-          ownerId: pollLeaseInstanceId,
-        });
-      }
-
-      startPolling();
-      return;
-    }
-
-    pollLeaseOwned = false;
-    clearPollLeaseRenewTimer();
-    stopPolling();
-
-    console.log("[gateway:telegram] passive mode (another poll owner active)", {
-      ownerId,
-      tokenHash: pollLeaseTokenHash,
-      reason,
-    });
-    void emitGatewayOtel({
-      level: "info",
-      component: "telegram-channel",
-      action: "telegram.channel.poll_owner.passive",
-      success: true,
-      metadata: {
-        ownerId,
-        tokenHash: pollLeaseTokenHash,
-        reason,
-      },
-    });
-    void writePollLeaseStatus("passive", {
-      ownerId,
-      reason,
-      attempt: pollLeaseRetryAttempts + 1,
-    });
-
-    schedulePollLeaseRetry(reason);
-  };
-
-  started = true;
-  pollLeaseTokenHash = stableTokenHash(token);
-  pollLeaseOwnerKey = `joelclaw:gateway:telegram:poll-owner:${pollLeaseTokenHash}`;
-  pollLeaseStatusKey = `joelclaw:gateway:telegram:poll-status:${pollLeaseTokenHash}`;
+  await bot.init();
+  initialized = true;
+  console.log("[gateway:telegram] SDK companion initialized", { allowedUserId });
+  void emitGatewayOtel({
+    level: "info",
+    component: "telegram-runtime",
+    action: "telegram.runtime.initialized",
+    success: true,
+    metadata: { allowedUserId },
+  });
 
   // Load callback routes for external consumers (ADR-0215)
-  const { getRedisClient } = await import("./redis");
+  const { getRedisClient } = await import("./channels/redis");
   callbackRoutes = await loadCallbackRoutes(getRedisClient());
   if (callbackRoutes.length > 0) {
     console.log("[gateway:telegram] callback routes loaded", {
@@ -2104,7 +1556,6 @@ async function startTelegramChannel(
     });
   }
 
-  void attemptPollOwnership("startup");
 }
 
 /**
@@ -2676,14 +2127,13 @@ export function parseChatId(source: string): number | undefined {
   return match?.[1] ? parseInt(match[1], 10) : undefined;
 }
 
-export async function start(
+export async function initialize(
   token: string,
   userId: number,
   enqueue: EnqueueFn,
-  options?: TelegramStartOptions,
+  options?: TelegramRuntimeOptions,
 ): Promise<void> {
-  const instance = getDefaultTelegramChannel();
-  await instance.start(token, userId, enqueue, options);
+  await initializeTelegramRuntime(token, userId, enqueue, options);
 }
 
 export async function send(
@@ -2714,6 +2164,96 @@ export async function sendMedia(
   }, options);
 }
 
+function sdkUpdateId(event: InboundEvent): number {
+  const value = event.rawAnchors.updateId ?? event.rawAnchors.transportEventId;
+  const parsed = value ? Number.parseInt(value, 10) : Number.NaN;
+  if (Number.isSafeInteger(parsed)) return parsed;
+  const messageId = event.platformIds.messageId
+    ? Number.parseInt(event.platformIds.messageId, 10)
+    : Number.NaN;
+  return Number.isSafeInteger(messageId) ? messageId : 0;
+}
+
+/**
+ * Preserve Telegram-specific command, callback, and media behavior while Chat
+ * SDK remains the sole update owner. Plain text and reactions continue through
+ * the canonical acting dispatcher.
+ */
+export async function dispatchChatSdkTelegramPolicy(
+  event: InboundEvent,
+  raw: unknown,
+): Promise<boolean> {
+  if (!bot || event.platform !== "telegram") return false;
+  if (event.authorization.verdict !== "accepted") {
+    return event.type === "command" || event.type === "interaction";
+  }
+
+  if (event.type === "command") {
+    await bot.handleUpdate({ update_id: sdkUpdateId(event), message: raw as never });
+    return true;
+  }
+  if (event.type === "interaction") {
+    await bot.handleUpdate({ update_id: sdkUpdateId(event), callback_query: raw as never });
+    return true;
+  }
+  if (event.type === "message" && event.attachmentCount > 0) {
+    await bot.handleUpdate({ update_id: sdkUpdateId(event), message: raw as never });
+    return true;
+  }
+  return false;
+}
+
+export async function prepareChatSdkTelegramMessage(event: InboundEvent): Promise<{
+  source: string;
+  prompt: string;
+  metadata: Record<string, unknown>;
+}> {
+  if (event.platform !== "telegram" || event.type !== "message") {
+    throw new Error("Telegram invoke preparation requires a Telegram message");
+  }
+  const chatId = Number.parseInt(event.platformIds.conversationId, 10);
+  const messageId = Number.parseInt(event.platformIds.messageId ?? "", 10);
+  if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(messageId)) {
+    throw new Error("Telegram message is missing platform-native chat/message ids");
+  }
+  const receivedAt = Date.parse(event.observedAt);
+  const audit = createChannelDeliveryAudit(event.text, {
+    flowId: `telegram-inbound:${chatId}:${messageId}`,
+    producer: "telegram-user",
+    requestedAtMs: Number.isFinite(receivedAt) ? receivedAt : Date.now(),
+    route: `telegram:${chatId}`,
+  }, Number.isFinite(receivedAt) ? receivedAt : Date.now());
+  await journalInboundText({
+    text: event.text,
+    chatId,
+    messageId,
+    updateId: sdkUpdateId(event),
+    receivedAt: audit.requestedAtMs,
+    audit,
+  });
+  await emitGatewayOtel({
+    level: "info",
+    component: "telegram-runtime",
+    action: "telegram.inbound.accepted",
+    success: true,
+    critical: true,
+    duration_ms: Math.max(0, Date.now() - audit.requestedAtMs),
+    metadata: { ...audit, chatId, telegramMessageId: messageId },
+  });
+  const prompt = await enrichPromptWithVaultContext(event.text);
+  return {
+    source: `telegram:${chatId}`,
+    prompt,
+    metadata: {
+      telegramChatId: chatId,
+      telegramMessageId: messageId,
+      telegramFlowId: audit.flowId,
+      channelAudit: audit,
+      trustedTelegramInbound: true,
+    },
+  };
+}
+
 export const __telegramTestUtils = {
   isDefinitiveTelegramRejection,
   journalInboundText,
@@ -2724,54 +2264,11 @@ export const __telegramTestUtils = {
 };
 
 export async function shutdown(): Promise<void> {
-  const instance = getDefaultTelegramChannel();
-  await instance.stop();
-}
-
-async function stopTelegramIngress(destroyBot: boolean): Promise<void> {
-  started = false;
-  clearPollLeaseRetryTimer();
-  clearPollLeaseRenewTimer();
-  stopPolling();
-
-  await writePollLeaseStatus("stopped", {
-    reason: destroyBot ? "shutdown" : "chat_sdk_handover",
-  });
-  await releasePollLease();
-  await closePollLeaseClient();
+  initialized = false;
   await closeCallbackTraceSubscriber();
-
-  pollLeaseOwned = false;
-  pollLeaseRetryAttempts = 0;
-  pollLeaseOwnerKey = undefined;
-  pollLeaseStatusKey = undefined;
-  pollLeaseTokenHash = undefined;
-
-  if (destroyBot && bot) {
-    bot.stop();
-    bot = undefined;
-  }
-
-  console.log(
-    destroyBot
-      ? "[gateway:telegram] stopped"
-      : "[gateway:telegram] polling ownership released; send client retained",
-  );
-  void emitGatewayOtel({
-    level: "info",
-    component: "telegram-channel",
-    action: destroyBot
-      ? "telegram.channel.stopped"
-      : "telegram.channel.ingress_released",
-    success: true,
-  });
-}
-
-/** Stop polling/lease ownership while retaining the Bot API send client. */
-export async function releaseIngressOwnership(): Promise<void> {
-  await stopTelegramIngress(false);
-}
-
-async function shutdownTelegramChannel(): Promise<void> {
-  await stopTelegramIngress(true);
+  bot = undefined;
+  enqueuePrompt = undefined;
+  allowedUserId = undefined;
+  callbackRoutes = [];
+  console.log("[gateway:telegram] SDK companion stopped");
 }

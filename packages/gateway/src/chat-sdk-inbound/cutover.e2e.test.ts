@@ -220,7 +220,6 @@ function message(index: number, actorId = "7718912466"): InboundEvent {
 
 function dispatcher(enqueueBoundary: typeof enqueue) {
   return createActingInboundDispatcher({
-    env: { CHAT_SDK_ACTING_ENABLED: "1" },
     enqueue: async (source, prompt, metadata) => {
       await enqueueBoundary(source, prompt, {
         ...metadata,
@@ -277,8 +276,7 @@ describe("Chat SDK cutover end-to-end harness", () => {
     const event = message(9);
     const makeCrashDispatcher = () =>
       createActingInboundDispatcher({
-        env: { CHAT_SDK_ACTING_ENABLED: "1" },
-        enqueue: async (source, prompt, metadata) => {
+            enqueue: async (source, prompt, metadata) => {
           await enqueue(source, prompt, {
             ...metadata,
             gatewayHumanLatestWins: true,

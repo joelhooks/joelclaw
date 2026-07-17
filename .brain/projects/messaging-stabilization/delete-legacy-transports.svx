@@ -3,7 +3,7 @@ title: "Delete the Legacy Transports: git is the rollback"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker (flagg, herdr pane wB:p2R, 2026-07-17)"
 parent: "./messaging-stabilization-brief.svx"
 blockers: []
@@ -33,6 +33,67 @@ shadow tap lives inside the legacy Telegram channel middleware today).
 Discord and iMessage channels are OUT of scope — the SDK owns only
 Telegram and Slack.
 
-## Result
+## Result (2026-07-17)
 
-(pending)
+The gateway now boots the Chat SDK directly as the only Telegram poller and
+Slack Socket Mode owner. The acting/shadow flags, handover state machine,
+legacy poll/socket owners, shadow taps, semantic diffs, and outbound shadow
+comparison are gone. Rollback is source control plus one supervised restart.
+
+### Consumer inventory
+
+| Legacy side effect | SDK-native replacement now wired |
+|---|---|
+| Telegram text authorization and queueing | Chat SDK normalization → canonical authorization → `prepareChatSdkTelegramMessage` → durable `command-queue` |
+| Telegram inbound journal row + chat/message flow index | `prepareChatSdkTelegramMessage` writes `message.received`, remembers the platform message flow, enriches Vault context, and emits `telegram.inbound.accepted` before enqueue |
+| Telegram photo/voice/audio/video/document download + `media/received` + queue prompt | SDK attachment-bearing messages are handed to the non-polling `telegram-runtime.ts` companion through `dispatchChatSdkTelegramPolicy` |
+| Telegram slash commands, inline callbacks, Reply Grant mutations, callback trace Redis state, external callback routes, `telegram/callback.received`, interaction journal rows, and Bot API acks/edits | SDK command/action events are handed to the same non-polling Telegram companion; Chat SDK remains the sole update owner |
+| Telegram direct sends, formatting/fallback, streaming, media sends, outbound policy, journal rows, flow index, and thread anchors | retained in `telegram-runtime.ts`; its Grammy `Bot` is send/handler-only and never calls `getUpdates` |
+| Telegram `message/inbound.reaction` and correlated `message/reaction.received` | Chat SDK requests `message_reaction`, publishes the observe-only bus copy, resolves platform message → `flowId`, and publishes the consumer event; the real nested receipt shape (`update_id=777932597`, message `14562`, 👏) is a regression test |
+| Slack DM/mention/Reply Grant/passive-intel policy | SDK message handlers pass raw events to `slack-runtime.ts`; it preserves invoke policy and `slack.signal.received` |
+| Slack `channel/message.received` indexing | preserved in `slack-runtime.ts` after SDK policy dispatch |
+| Slack Reply Grant Redis state, Telegram approval alerts, reaction-created grants, and reaction ack | SDK reaction handlers invoke `dispatchChatSdkReactionPolicy` before normal flow correlation |
+| Slack Web API send/media/lookups | `slack-runtime.ts` uses the canonical SDK adapter's `webClient`; `@slack/bolt` was removed |
+| Telegram poll lease/retry state, Slack socket lifecycle, handover OTEL, shadow events/diffs | intentionally deleted; they existed only to run two owners during migration |
+
+Discord and iMessage ownership did not change. Discord lost only the deleted
+shadow tap calls. Notify compatibility, message contract, journal, Telegram
+formatting, outbound policy, and the system-bus reaction bridge remain.
+
+### Diffstat
+
+Implementation diff excluding this receipt: **41 files changed, 4,170
+insertions, 6,890 deletions** (net **-2,720** lines). The large insert count is
+the Telegram/Slack send-policy code moving out of the deleted legacy channel
+modules into non-owning runtime companions.
+
+### Gates
+
+- `bunx tsc --noEmit` — green.
+- `pnpm biome check packages/gateway` — green, 96 files.
+- `cd packages/gateway && bun test` — 166 pass, 0 fail, 455 expectations.
+- Deleted-module/flag grep — no source imports or references to handover,
+  shadow/diff/taps, legacy Telegram/Slack channel modules, or acting/shadow
+  flags.
+- `git diff --check` over the task scope — green.
+
+### Steering deploy ceremony
+
+1. Review this worker diff in Hunk, then commit it. Do not edit the private
+   gateway start script for the deploy; its old flag values are inert after
+   this change.
+2. Run **one** `joelclaw gateway restart`.
+3. Require `joelclaw gateway status` healthy with Telegram owner
+   `chat-sdk`, one Slack socket, and no new Telegram 409/poll-owner conflict.
+4. Run `bun scripts/messaging-visible-delivery-canary.ts`; require exit 0 and a
+   matching confirmed journal/platform message ID.
+5. Run the five-message Telegram burst canary; require one P1 batch, all five
+   bodies, and one Pi turn.
+6. Run the ingress restart/replay canary; require one replay, one prompt, and
+   one ack for the original stream ID.
+7. React to the visible-delivery canary's exact Telegram message; require one
+   `message/reaction.received` with the same `flowId`, platform message ID,
+   actor, emoji, and add/remove action.
+
+This worker did not commit, restart the gateway, change live flags, or run live
+canaries.

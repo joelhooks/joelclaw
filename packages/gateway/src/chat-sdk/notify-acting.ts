@@ -2,7 +2,6 @@ import type {
   DeliveryReceiptEnvelope,
   OutboundIntent,
 } from "@joelclaw/message-contract";
-import { isChatSdkActingEnabled } from "../chat-sdk-inbound/acting";
 import { mapNotifySendToIntent } from "./notify-compat";
 
 export interface NotifyCompatGatewayEvent {
@@ -13,7 +12,6 @@ export interface NotifyCompatGatewayEvent {
 }
 
 export interface NotifyCompatRouteDependencies {
-  readonly env?: NodeJS.ProcessEnv;
   readonly isTransportReady?: () => boolean;
   readonly send: (intent: OutboundIntent) => Promise<DeliveryReceiptEnvelope>;
 }
@@ -112,9 +110,9 @@ function terminalDisposition(
 
 /**
  * Routes the Redis envelope created by `joelclaw notify send` through the
- * contract-v2 compatibility mapper only while the acting flag is enabled.
- * Returning handled=true tells the Redis bridge not to also prompt/send via
- * the legacy path.
+ * contract-v2 compatibility mapper after the canonical Chat SDK transport is
+ * ready. Returning handled=true tells the Redis bridge not to also prompt/send
+ * through the agent lane.
  */
 export async function routeNotifySendCompat(
   event: NotifyCompatGatewayEvent,
@@ -122,11 +120,7 @@ export async function routeNotifySendCompat(
 ): Promise<NotifyCompatRouteResult> {
   const ready =
     dependencies.isTransportReady?.() ?? isChatSdkActingTransportReady();
-  if (
-    !isChatSdkActingEnabled(dependencies.env) ||
-    !ready ||
-    !isNotifySendEvent(event)
-  ) {
+  if (!ready || !isNotifySendEvent(event)) {
     return { handled: false };
   }
 

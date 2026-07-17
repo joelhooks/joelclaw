@@ -715,7 +715,7 @@ Semantics:
 - `log` writes structured system entries (slog backend).
 - `log write` now accepts explicit `--session` / `--system` provenance flags and also falls back to `SLOG_SESSION_ID` / `SLOG_SYSTEM_ID` env vars before handing off to the slog backend.
 - `logs` reads/analyzes runtime logs.
-- `notify` is the canonical simple operator message command; `gateway push` remains transport/debug. Callers keep the same CLI shape. When `CHAT_SDK_ACTING_ENABLED=1`, the gateway maps the request to a contract-v2 kind and returns acting-path telemetry with a `flowId`; legacy channel flags are migration inputs, not routing authority.
+- `notify` is the canonical simple operator message command; `gateway push` remains transport/debug. Callers keep the same CLI shape. The gateway maps the request to a contract-v2 kind and returns Chat SDK telemetry with a `flowId`; legacy channel flags are compatibility inputs, not routing authority.
 - Rich producers that need `replyTo`, reaction/reply correlation, or an explicit `memory|alert|digest|ask|receipt` kind use the contract-v2 gateway `send()` seam instead of adding CLI routing flags.
 - `messages trace <flowId>` reads the private message journal lifecycle; `message/reaction.received` consumers correlate on that same `flowId`.
 - `deploy`, `heal`, `log`, `notify`, `secrets`, `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while executing through capability registry adapters (`scripted-deploy`, `runbook-heal`, `slog-cli`, `gateway-redis`, `agent-secrets-cli`, `mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).

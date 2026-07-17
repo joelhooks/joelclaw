@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { JournalEvent } from "@joelclaw/message-journal";
 import type { Bot } from "grammy";
-import { __messageJournalTestUtils } from "../message-journal";
-import { telegramConversationReplyExemption } from "../telegram-outbound-policy";
-import { __telegramTestUtils } from "./telegram";
+import { __messageJournalTestUtils } from "./message-journal";
+import { telegramConversationReplyExemption } from "./telegram-outbound-policy";
+import { __telegramTestUtils } from "./telegram-runtime";
 
 const { isDefinitiveTelegramRejection } = __telegramTestUtils;
 

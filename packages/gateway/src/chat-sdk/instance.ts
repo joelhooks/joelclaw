@@ -53,6 +53,7 @@ export interface ChatSdkRuntime {
   readonly chat: Chat<Record<string, Adapter>>;
   readonly adapters: ChatSdkAdapters;
   readonly configured: Readonly<Record<"telegram" | "slack" | "discord", boolean>>;
+  readonly started: boolean;
   readonly start: () => Promise<void>;
   readonly stop: () => Promise<void>;
 }
@@ -211,6 +212,9 @@ export function createChatSdkRuntime(options: ChatSdkRuntimeOptions = {}): ChatS
       slack: Boolean(adapters.slack),
       discord: Boolean(adapters.discord),
     },
+    get started(): boolean {
+      return started;
+    },
     async start(): Promise<void> {
       if (started) return;
       try {
@@ -229,8 +233,7 @@ export function createChatSdkRuntime(options: ChatSdkRuntimeOptions = {}): ChatS
       } catch (error) {
         // initialize() can start Telegram before a later adapter fails. Cleanup
         // failure is ownership uncertainty, not a warning: keep initialized=true
-        // so stop() retries and let handover refuse to restart legacy if proof
-        // still cannot be obtained.
+        // so stop() retries before the daemon reports startup failure.
         const cleanupErrors: unknown[] = [];
         try {
           await adapters.telegram?.stopPolling();
@@ -276,17 +279,8 @@ export function getChatSdkRuntime(
   return singleton;
 }
 
-/**
- * Exported daemon wiring seam. Starting a second Telegram poller or Slack
- * socket is forbidden, so steering must prove legacy transport ownership was
- * transferred before activation.
- */
-export async function startChatSdkRuntime(input: {
-  readonly legacyTransportsStopped: true;
-}): Promise<ChatSdkRuntime> {
-  if (input.legacyTransportsStopped !== true) {
-    throw new Error("Chat SDK transport activation requires legacy transport shutdown proof");
-  }
+/** Start the canonical Telegram/Slack transport owner. */
+export async function startChatSdkRuntime(): Promise<ChatSdkRuntime> {
   const runtime = getChatSdkRuntime();
   await runtime.start();
   return runtime;

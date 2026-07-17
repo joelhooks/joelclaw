@@ -1,11 +1,4 @@
 export {
-  handoverMessagingTransports,
-  type MessagingTransportHandoverDependencies,
-  type MessagingTransportOwnership,
-  type MessagingTransportOwnershipReceipt,
-  type MessagingTransportOwnershipState,
-} from "./handover";
-export {
   CHAT_SDK_VERSION,
   type ChatSdkAdapters,
   type ChatSdkRuntime,
@@ -43,14 +36,3 @@ export {
   type SdkSentMessage,
   send,
 } from "./outbound";
-export {
-  isOutboundShadowEnabled,
-  type LegacyOutboundPreview,
-  OUTBOUND_SHADOW_FLAG,
-  type OutboundShadowDependencies,
-  type OutboundShadowReport,
-  type OutboundShadowSkipped,
-  recordShadowComparison,
-  runOutboundShadow,
-  type ShadowMismatch,
-} from "./shadow";

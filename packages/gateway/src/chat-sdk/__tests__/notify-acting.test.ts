@@ -71,8 +71,7 @@ describe("notify send contract-v2 acting route", () => {
   test("maps the Redis compatibility envelope and sends only once", async () => {
     const sent: unknown[] = [];
     const result = await routeNotifySendCompat(event, {
-      env: { CHAT_SDK_ACTING_ENABLED: "1" },
-      isTransportReady: () => true,
+        isTransportReady: () => true,
       send: async (intent) => {
         sent.push(intent);
         return receipt;
@@ -108,8 +107,7 @@ describe("notify send contract-v2 acting route", () => {
           },
         },
         {
-          env: { CHAT_SDK_ACTING_ENABLED: "1" },
-          isTransportReady: () => true,
+                isTransportReady: () => true,
           send: async (intent) => {
             kinds.push(intent.kind);
             return receipt;
@@ -131,8 +129,7 @@ describe("notify send contract-v2 acting route", () => {
         },
       },
       {
-        env: { CHAT_SDK_ACTING_ENABLED: "1" },
-        isTransportReady: () => true,
+            isTransportReady: () => true,
         send: async (intent) => {
           intents.push(intent);
           return receipt;
@@ -161,8 +158,7 @@ describe("notify send contract-v2 acting route", () => {
 
     await expect(
       routeNotifySendCompat(event, {
-        env: { CHAT_SDK_ACTING_ENABLED: "1" },
-        isTransportReady: () => true,
+            isTransportReady: () => true,
         send: async () => invalidReceipt,
       }),
     ).rejects.toMatchObject({
@@ -186,8 +182,7 @@ describe("notify send contract-v2 acting route", () => {
       },
     };
     const result = await routeNotifySendCompat(hotDogEvent, {
-      env: { CHAT_SDK_ACTING_ENABLED: "1" },
-      isTransportReady: () => true,
+        isTransportReady: () => true,
       send: async () => receiptWith("digested", null),
     });
 
@@ -200,8 +195,7 @@ describe("notify send contract-v2 acting route", () => {
 
   test("preserves a failed terminal receipt instead of confirming it", async () => {
     const result = await routeNotifySendCompat(event, {
-      env: { CHAT_SDK_ACTING_ENABLED: "1" },
-      isTransportReady: () => true,
+        isTransportReady: () => true,
       send: async () => receiptWith("failed", null),
     });
 
@@ -215,8 +209,7 @@ describe("notify send contract-v2 acting route", () => {
   test("marks ambiguous SDK failures handled so Redis cannot legacy-fallback", async () => {
     await expect(
       routeNotifySendCompat(event, {
-        env: { CHAT_SDK_ACTING_ENABLED: "1" },
-        isTransportReady: () => true,
+            isTransportReady: () => true,
         send: async () => {
           throw new Error("journal failed after platform send");
         },
@@ -228,12 +221,11 @@ describe("notify send contract-v2 acting route", () => {
     });
   });
 
-  test("leaves legacy routing untouched before transport handover is ready", async () => {
+  test("waits for canonical transport readiness", async () => {
     let called = false;
     expect(
       await routeNotifySendCompat(event, {
-        env: { CHAT_SDK_ACTING_ENABLED: "1" },
-        isTransportReady: () => false,
+            isTransportReady: () => false,
         send: async () => {
           called = true;
           return receipt;
@@ -243,18 +235,4 @@ describe("notify send contract-v2 acting route", () => {
     expect(called).toBe(false);
   });
 
-  test("leaves legacy routing untouched while the flag is absent", async () => {
-    let called = false;
-    expect(
-      await routeNotifySendCompat(event, {
-        env: {},
-        isTransportReady: () => true,
-        send: async () => {
-          called = true;
-          return receipt;
-        },
-      }),
-    ).toEqual({ handled: false });
-    expect(called).toBe(false);
-  });
 });

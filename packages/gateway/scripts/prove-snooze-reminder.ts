@@ -3,12 +3,13 @@
 // deployed signal/reminder function DM Joel back after a short delay.
 // This is exactly what a Snooze button tap drives, minus the Telegram tap.
 // Run from packages/gateway with system-bus env sourced (INNGEST_EVENT_KEY).
-import { Effect } from "effect";
-import Redis from "ioredis";
+
 import {
   makeBrainReminderSourceAdapter,
   makeRedisActionRegistry,
 } from "@joelclaw/source-actions";
+import { Effect } from "effect";
+import Redis from "ioredis";
 import { makeGatewayReminderEmitter } from "../src/digest-gateway";
 
 const DELAY_MS = Number(process.env.PROVE_DELAY_MS ?? "90000");

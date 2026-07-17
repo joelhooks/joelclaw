@@ -39,21 +39,15 @@ import {
 import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, getRuntimeState as getDiscordRuntimeState, markError as markDiscordError, parseChannelId as parseDiscordChannelId, send as sendDiscord, shutdown as shutdownDiscord, start as startDiscord } from "./channels/discord";
 import { getRuntimeState as getIMessageRuntimeState, send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
 import { getRedisClient, getRuntimeState as getRedisRuntimeState, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
-import { dispatchChatSdkMessagePolicy as dispatchSlackChatSdkMessagePolicy, getRuntimeState as getSlackRuntimeState, isStarted as isSlackStarted, releaseIngressOwnership as releaseSlackIngressOwnership, send as sendSlack, shutdown as shutdownSlack, start as startSlack } from "./channels/slack";
-import { getBot, getRuntimeState as getTelegramRuntimeState, parseChatId, releaseIngressOwnership as releaseTelegramIngressOwnership, send as sendTelegram, sendMedia as sendTelegramMedia, setOutboundMessageIdCallback, shutdown as shutdownTelegram, start as startTelegram, TelegramChannel } from "./channels/telegram";
 import type { SendMediaPayload, SendOptions } from "./channels/types";
 import {
+  type ChatSdkRuntime,
   getChatSdkRuntime,
-  handoverMessagingTransports,
-  type MessagingTransportOwnership,
   resolvePlatformMessageFlow,
   setChatSdkActingTransportReady,
   startChatSdkRuntime,
 } from "./chat-sdk";
-import {
-  isChatSdkActingEnabled,
-  registerChatSdkActingInbound,
-} from "./chat-sdk-inbound/acting";
+import { registerChatSdkActingInbound } from "./chat-sdk-inbound/acting";
 import {
   createGatewayInboundBusClient,
   createObserveOnlyInboundPublisher,
@@ -115,7 +109,9 @@ import {
   evaluateSessionPressureAlert,
   getInitialSessionPressureAlertState,
 } from "./session-pressure";
+import { dispatchChatSdkMessagePolicy as dispatchSlackChatSdkMessagePolicy, dispatchChatSdkReactionPolicy as dispatchSlackChatSdkReactionPolicy, getRuntimeState as getSlackRuntimeState, initialize as initializeSlackRuntime, send as sendSlack, shutdown as shutdownSlack } from "./slack-runtime";
 import { resolveTelegramOutboundPolicyContext } from "./telegram-outbound-policy";
+import { dispatchChatSdkTelegramPolicy, getBot, getRuntimeState as getTelegramRuntimeState, initialize as initializeTelegramRuntime, parseChatId, prepareChatSdkTelegramMessage, send as sendTelegram, sendMedia as sendTelegramMedia, setOutboundMessageIdCallback, shutdown as shutdownTelegram, TelegramChannel } from "./telegram-runtime";
 import * as telegramStream from "./telegram-stream";
 import {
   getFallbackWatchdogGraceRemainingMs,
@@ -2052,7 +2048,7 @@ const channelInfo = {
   imessage: Boolean(IMESSAGE_ALLOWED_SENDER),
   slack: false,
 };
-let chatSdkOwnership: MessagingTransportOwnership | undefined;
+let chatSdkRuntime: ChatSdkRuntime | undefined;
 
 registerChannel("console", {
   send: async (message, context) => {
@@ -3441,31 +3437,11 @@ async function configureGatewayTelegramBot(bot: Bot): Promise<void> {
 }
 
 async function restartGatewayChannel(channel: GatewayChannelId, reason: string): Promise<void> {
-  if (chatSdkOwnership && (channel === "telegram" || channel === "slack")) {
-    throw new Error(
-      `${channel} ingress is owned by Chat SDK; use the supervised cutover rollback instead of starting a legacy consumer`,
-    );
-  }
   switch (channel) {
     case "telegram": {
-      if (!TELEGRAM_TOKEN || !TELEGRAM_USER_ID) {
-        throw new Error("telegram not configured");
-      }
-      await shutdownTelegram();
-      await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, enqueueToGateway, {
-        configureBot: configureGatewayTelegramBot,
-        abortCurrentTurn: async () => {
-          await session.abort();
-        },
-      });
-      setOutboundMessageIdCallback((messageId: number) => {
-        const threadCtx = getActiveThreadContext();
-        if (threadCtx?.threadId) {
-          recordOutboundAnchor(threadCtx.threadId, "telegram", String(messageId));
-        }
-      });
-      await updatePinnedStatus().catch(() => {});
-      return;
+      throw new Error(
+        `telegram is owned by the canonical Chat SDK runtime; restart the gateway for repair (${reason})`,
+      );
     }
     case "discord": {
       if (!DISCORD_TOKEN || !DISCORD_ALLOWED_USER_ID) {
@@ -3494,12 +3470,9 @@ async function restartGatewayChannel(channel: GatewayChannelId, reason: string):
       return;
     }
     case "slack": {
-      await shutdownSlack();
-      await startSlack(enqueueToGateway, {
-        allowedUserId: SLACK_ALLOWED_USER_ID,
-      });
-      channelInfo.slack = isSlackStarted();
-      return;
+      throw new Error(
+        `slack is owned by the canonical Chat SDK runtime; restart the gateway for repair (${reason})`,
+      );
     }
   }
 }
@@ -3587,41 +3560,28 @@ function getChannelRuntimeSnapshots(): Record<string, Record<string, unknown>> {
   const imessage = getIMessageRuntimeState();
   const slack = getSlackRuntimeState();
   const sdkTelegramActive = Boolean(
-    chatSdkOwnership?.runtime.configured.telegram,
+    chatSdkRuntime?.started && chatSdkRuntime.configured.telegram,
   );
-  const sdkSlackActive = Boolean(chatSdkOwnership?.runtime.configured.slack);
-  const telegramPollingState = !telegram.started
-    ? "stopped"
-    : telegram.pollingActive
-      ? "active"
-      : telegram.pollingStarting
-        ? "starting"
-        : telegram.pollConflictStreak > 0 && telegram.pollRetryAttempts > 0
-          ? "retrying_conflict"
-          : telegram.pollRetryAttempts > 0
-            ? "retrying"
-            : "idle";
-  const telegramIngressHealthy = channelInfo.telegram
-    ? telegram.started
-      && !(telegram.pollLeaseState === "passive" || (telegram.pollLeaseState === "fallback" && telegram.pollLeaseEnabled) || telegram.pollLeaseState === "stopped")
-      && (telegram.pollingActive || telegram.pollingStarting)
-    : false;
+  const sdkSlackActive = Boolean(
+    chatSdkRuntime?.started && chatSdkRuntime.configured.slack,
+  );
 
   return {
     telegram: {
       configured: channelInfo.telegram,
-      started: sdkTelegramActive || telegram.started,
-      healthy: sdkTelegramActive || telegramIngressHealthy,
-      ownerState: sdkTelegramActive ? "chat-sdk" : telegram.pollLeaseState,
-      pollingState: sdkTelegramActive ? "chat-sdk-active" : telegramPollingState,
-      pollingActive: sdkTelegramActive || telegram.pollingActive,
-      pollingStarting: sdkTelegramActive ? false : telegram.pollingStarting,
-      leaseEnabled: sdkTelegramActive ? false : telegram.pollLeaseEnabled,
-      leaseOwned: sdkTelegramActive ? true : telegram.pollLeaseOwned,
-      retryAttempts: telegram.pollRetryAttempts,
-      conflictStreak: telegram.pollConflictStreak,
-      lastLeaseStatusAt: telegram.pollLeaseStatus?.updatedAt ?? null,
-      lastLeaseReason: telegram.pollLeaseStatus?.reason ?? null,
+      started: sdkTelegramActive,
+      healthy: sdkTelegramActive && telegram.initialized,
+      ownerState: sdkTelegramActive ? "chat-sdk" : "stopped",
+      pollingState: sdkTelegramActive ? "chat-sdk-active" : "stopped",
+      pollingActive: sdkTelegramActive,
+      pollingStarting: false,
+      leaseEnabled: false,
+      leaseOwned: sdkTelegramActive,
+      retryAttempts: 0,
+      conflictStreak: 0,
+      lastLeaseStatusAt: null,
+      lastLeaseReason: null,
+      companionInitialized: telegram.initialized,
     },
     discord: {
       configured: channelInfo.discord,
@@ -3642,15 +3602,16 @@ function getChannelRuntimeSnapshots(): Record<string, Record<string, unknown>> {
     },
     slack: {
       configured: Boolean(SLACK_ALLOWED_USER_ID),
-      started: sdkSlackActive || slack.started,
-      healthy: sdkSlackActive || (Boolean(SLACK_ALLOWED_USER_ID) ? slack.connected : false),
-      connected: sdkSlackActive || slack.connected,
-      socketState: sdkSlackActive ? "chat-sdk-active" : slack.socketState,
-      lastSocketTransitionAt: slack.lastSocketTransitionAt,
-      lastSocketConnectedAt: slack.lastSocketConnectedAt,
-      reconnectCount: slack.reconnectCount,
+      started: sdkSlackActive,
+      healthy: sdkSlackActive && slack.initialized,
+      connected: sdkSlackActive,
+      socketState: sdkSlackActive ? "chat-sdk-active" : "stopped",
+      lastSocketTransitionAt: null,
+      lastSocketConnectedAt: null,
+      reconnectCount: 0,
       botUserId: slack.botUserId,
       allowedUserId: slack.allowedUserId,
+      policyInitialized: slack.initialized,
     },
   };
 }
@@ -3803,7 +3764,9 @@ const wsServer = Bun.serve({
     }
 
     if (req.method === "GET" && url.pathname === "/health/slack") {
-      const healthy = isSlackStarted();
+      const healthy = Boolean(
+        chatSdkRuntime?.started && chatSdkRuntime.configured.slack,
+      );
       return Response.json(
         {
           ok: healthy,
@@ -4833,39 +4796,7 @@ if (IMESSAGE_ALLOWED_SENDER) {
   });
 }
 
-// ── Telegram channel ───────────────────────────────────
-if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
-  await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, enqueueToGateway, {
-    configureBot: configureGatewayTelegramBot,
-    abortCurrentTurn: async () => {
-      await session.abort();
-    },
-  });
-
-  // ADR-0209: Record outbound Telegram message IDs for thread reply-to
-  setOutboundMessageIdCallback((messageId: number) => {
-    const threadCtx = getActiveThreadContext();
-    if (threadCtx?.threadId) {
-      recordOutboundAnchor(threadCtx.threadId, "telegram", String(messageId));
-    }
-  });
-
-  try {
-    await updatePinnedStatus();
-  } catch (error) {
-    console.warn("[gateway] pinned status update failed after telegram startup; continuing", error);
-  }
-} else {
-  console.warn("[gateway] telegram disabled — set TELEGRAM_BOT_TOKEN and TELEGRAM_USER_ID env vars");
-  void emitGatewayOtel({
-    level: "warn",
-    component: "daemon",
-    action: "daemon.telegram.disabled",
-    success: false,
-  });
-}
-
-// ── Slack channel ──────────────────────────────────────
+// ── Canonical Chat SDK Telegram + Slack transports ───────────────
 registerChannel("slack", {
   send: async (message, context) => {
     // ADR-0131: suppress replies to passive intel messages
@@ -4891,143 +4822,120 @@ registerChannel("slack", {
   },
 });
 
-try {
-  await startSlack(enqueueToGateway, {
-    allowedUserId: SLACK_ALLOWED_USER_ID,
-  });
-  channelInfo.slack = isSlackStarted();
-} catch (error) {
-  channelInfo.slack = false;
-  console.error("[gateway] slack failed to start; slack channel disabled", { error: String(error) });
-  void emitGatewayOtel({
-    level: "error",
-    component: "daemon",
-    action: "daemon.slack.start_failed",
-    success: false,
-    error: String(error),
-  });
-}
+setChatSdkActingTransportReady(false);
+const runtime = getChatSdkRuntime({
+  telegramEnabled: Boolean(TELEGRAM_TOKEN && TELEGRAM_USER_ID),
+  slackEnabled: Boolean(SLACK_ALLOWED_USER_ID),
+  discordEnabled: false,
+});
+const inboundBus = createGatewayInboundBusClient();
 
-if (isChatSdkActingEnabled()) {
-  setChatSdkActingTransportReady(false);
-  // Discord remains on its current owner until its separate Gateway/interaction
-  // cutover is explicitly sequenced. This transfer owns Telegram + Slack only.
-  const runtime = getChatSdkRuntime({
-    telegramEnabled: Boolean(TELEGRAM_TOKEN && TELEGRAM_USER_ID),
-    slackEnabled: Boolean(SLACK_ALLOWED_USER_ID),
-    discordEnabled: false,
-  });
-  const inboundBus = createGatewayInboundBusClient();
-  const restartLegacyTelegram = async (): Promise<void> => {
-    if (!TELEGRAM_TOKEN || !TELEGRAM_USER_ID) return;
-    await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, enqueueToGateway, {
-      configureBot: configureGatewayTelegramBot,
-      abortCurrentTurn: async () => {
-        await session.abort();
+try {
+  if (runtime.adapters.telegram && TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
+    await initializeTelegramRuntime(
+      TELEGRAM_TOKEN,
+      TELEGRAM_USER_ID,
+      enqueueToGateway,
+      {
+        configureBot: configureGatewayTelegramBot,
+        abortCurrentTurn: async () => {
+          await session.abort();
+        },
       },
-    });
+    );
     setOutboundMessageIdCallback((messageId: number) => {
       const threadCtx = getActiveThreadContext();
       if (threadCtx?.threadId) {
         recordOutboundAnchor(threadCtx.threadId, "telegram", String(messageId));
       }
     });
-    await updatePinnedStatus().catch(() => {});
-  };
-  const restartLegacySlack = async (): Promise<void> => {
-    await startSlack(enqueueToGateway, {
+  }
+  if (runtime.adapters.slack) {
+    await initializeSlackRuntime(runtime.adapters.slack, enqueueToGateway, {
       allowedUserId: SLACK_ALLOWED_USER_ID,
     });
-    channelInfo.slack = isSlackStarted();
-  };
+  }
 
-  try {
-    chatSdkOwnership = await handoverMessagingTransports({
-      stopLegacyTelegram: releaseTelegramIngressOwnership,
-      stopLegacySlack: releaseSlackIngressOwnership,
-      startLegacyTelegram: restartLegacyTelegram,
-      startLegacySlack: restartLegacySlack,
-      prepareSdk: () => {
-        registerChatSdkActingInbound(runtime, {
-          enqueue: enqueueToGateway,
-          publisher: createObserveOnlyInboundPublisher(inboundBus),
-          resolveFlowId: resolvePlatformMessageFlow,
-          publishReaction: (event) => inboundBus.send(event),
-          dispatchPlatformPolicy: async (event, raw) => {
-            if (event.platform !== "slack" || event.type !== "message") {
-              return false;
-            }
-            await dispatchSlackChatSdkMessagePolicy(
-              raw,
-              event.isMention ? "mention" : "message",
-              event.eventId,
-            );
-            return true;
-          },
-          allowedActorIds: {
-            ...(TELEGRAM_USER_ID
-              ? { telegram: String(TELEGRAM_USER_ID) }
-              : {}),
-            ...(SLACK_ALLOWED_USER_ID
-              ? { slack: SLACK_ALLOWED_USER_ID }
-              : {}),
-            ...(DISCORD_ALLOWED_USER_ID
-              ? { discord: DISCORD_ALLOWED_USER_ID }
-              : {}),
-          },
-          onError: (error, phase, event) => {
-            void emitGatewayOtel({
-              level: "error",
-              component: "daemon.chat-sdk-inbound",
-              action: `chat_sdk.inbound.${phase}.failed`,
-              success: false,
-              error: String(error),
-              metadata: {
-                eventId: event.eventId,
-                platform: event.platform,
-                kind: event.type,
-              },
-            });
-          },
-        });
-      },
-      startSdk: startChatSdkRuntime,
-      stopSdk: () => runtime.stop(),
-      onTransition: (receipt) => {
-        void emitGatewayOtel({
-          level: "info",
-          component: "daemon.chat-sdk-handover",
-          action: `chat_sdk.handover.${receipt.state}`,
-          success: true,
-          metadata: { at: receipt.at },
-        });
-      },
-    });
-    channelInfo.telegram = runtime.configured.telegram;
-    channelInfo.slack = runtime.configured.slack;
-    setChatSdkActingTransportReady(true);
-  } catch (error) {
-    setChatSdkActingTransportReady(false);
-    chatSdkOwnership = undefined;
-    const rollbackUnsafe = String(error).includes("SDK shutdown is unproven");
-    channelInfo.telegram = rollbackUnsafe
-      ? false
-      : Boolean(TELEGRAM_TOKEN && TELEGRAM_USER_ID);
-    channelInfo.slack = rollbackUnsafe ? false : isSlackStarted();
-    console.error(
-      rollbackUnsafe
-        ? "[gateway] Chat SDK handover failed; transport ownership is uncertain and legacy was not restarted"
-        : "[gateway] Chat SDK handover failed; legacy ownership restored",
-      { error: String(error) },
-    );
-    void emitGatewayOtel({
-      level: "fatal",
-      component: "daemon.chat-sdk-handover",
-      action: "chat_sdk.handover.failed",
-      success: false,
-      error: String(error),
+  registerChatSdkActingInbound(runtime, {
+    enqueue: enqueueToGateway,
+    publisher: createObserveOnlyInboundPublisher(inboundBus),
+    resolveFlowId: resolvePlatformMessageFlow,
+    publishReaction: (event) => inboundBus.send(event),
+    dispatchPlatformPolicy: async (event, raw) => {
+      if (event.platform === "telegram") {
+        return dispatchChatSdkTelegramPolicy(event, raw);
+      }
+      if (event.platform === "slack" && event.type === "message") {
+        await dispatchSlackChatSdkMessagePolicy(
+          raw,
+          event.isMention ? "mention" : "message",
+          event.eventId,
+        );
+        return true;
+      }
+      if (event.platform === "slack" && event.type === "reaction") {
+        await dispatchSlackChatSdkReactionPolicy(raw, event);
+      }
+      return false;
+    },
+    prepareInvoke: async (event) => {
+      if (event.platform === "telegram" && event.type === "message") {
+        return prepareChatSdkTelegramMessage(event);
+      }
+      return {};
+    },
+    allowedActorIds: {
+      ...(TELEGRAM_USER_ID ? { telegram: String(TELEGRAM_USER_ID) } : {}),
+      ...(SLACK_ALLOWED_USER_ID ? { slack: SLACK_ALLOWED_USER_ID } : {}),
+      ...(DISCORD_ALLOWED_USER_ID ? { discord: DISCORD_ALLOWED_USER_ID } : {}),
+    },
+    onError: (error, phase, event) => {
+      void emitGatewayOtel({
+        level: "error",
+        component: "daemon.chat-sdk-inbound",
+        action: `chat_sdk.inbound.${phase}.failed`,
+        success: false,
+        error: String(error),
+        metadata: {
+          eventId: event.eventId,
+          platform: event.platform,
+          kind: event.type,
+        },
+      });
+    },
+  });
+
+  chatSdkRuntime = await startChatSdkRuntime();
+  channelInfo.telegram = runtime.configured.telegram;
+  channelInfo.slack = runtime.configured.slack;
+  setChatSdkActingTransportReady(true);
+
+  if (runtime.configured.telegram) {
+    await updatePinnedStatus().catch((error) => {
+      console.warn("[gateway] pinned status update failed after Chat SDK startup; continuing", error);
     });
   }
+
+  void emitGatewayOtel({
+    level: "info",
+    component: "daemon.chat-sdk",
+    action: "chat_sdk.runtime.started",
+    success: true,
+    metadata: { configured: runtime.configured },
+  });
+} catch (error) {
+  setChatSdkActingTransportReady(false);
+  chatSdkRuntime = undefined;
+  channelInfo.telegram = false;
+  channelInfo.slack = false;
+  console.error("[gateway] canonical Chat SDK startup failed", { error: String(error) });
+  void emitGatewayOtel({
+    level: "fatal",
+    component: "daemon.chat-sdk",
+    action: "chat_sdk.runtime.start_failed",
+    success: false,
+    error: String(error),
+  });
 }
 
 await maybeRefreshChannelHealthMuteState(true);
@@ -5875,10 +5783,10 @@ async function gracefulShutdown(signal: string): Promise<void> {
     console.error("[gateway] discord shutdown failed", { error });
   }
 
-  if (chatSdkOwnership) {
+  if (chatSdkRuntime) {
     try {
       setChatSdkActingTransportReady(false);
-      await chatSdkOwnership.runtime.stop();
+      await chatSdkRuntime.stop();
     } catch (error) {
       console.error("[gateway] Chat SDK shutdown failed", { error });
     }

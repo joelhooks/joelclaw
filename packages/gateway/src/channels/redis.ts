@@ -21,8 +21,8 @@ import {
   type OperatorSignalBucket,
 } from "../operator-relay";
 import type { OutboundEnvelope } from "../outbound/envelope";
+import { type InlineButton, send as sendTelegram } from "../telegram-runtime";
 import { describeError, ErrorEmissionBudget, type ErrorSummary } from "./error-emission-budget";
-import { type InlineButton, send as sendTelegram } from "./telegram";
 
 export type EnqueueFn = (
   source: string,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { __slackTestUtils } from "./slack";
+import { __slackTestUtils } from "./slack-runtime";
 
 const message = {
   channelId: "C123",

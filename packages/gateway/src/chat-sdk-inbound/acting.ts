@@ -28,14 +28,6 @@ import type {
   ObserveOnlyInboundPublisher,
 } from "./publish";
 
-export const CHAT_SDK_ACTING_FLAG = "CHAT_SDK_ACTING_ENABLED" as const;
-
-export function isChatSdkActingEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env[CHAT_SDK_ACTING_FLAG] === "1";
-}
-
 export type ActingInboundEnqueue = (
   source: string,
   prompt: string,
@@ -57,14 +49,17 @@ export interface ActingInboundDispatcherDependencies {
     event: InboundEvent,
     raw: unknown,
   ) => Promise<boolean>;
-  readonly env?: NodeJS.ProcessEnv;
+  readonly prepareInvoke?: (event: InboundEvent) => Promise<{
+    readonly source?: string;
+    readonly prompt?: string;
+    readonly metadata?: Record<string, unknown>;
+  }>;
   readonly onError?: (error: unknown, phase: string, event: InboundEvent) => void;
 }
 
 export type ActingInboundDispatchResult =
   | {
       readonly status:
-        | "disabled"
         | "duplicate"
         | "rejected"
         | "observed"
@@ -184,7 +179,6 @@ export function createActingInboundDispatcher(
     event: InboundEvent,
     context: { readonly raw?: unknown } = {},
   ): Promise<ActingInboundDispatchResult> {
-    if (!isChatSdkActingEnabled(dependencies.env)) return { status: "disabled" };
     if (seenEventIds.has(event.eventId)) return { status: "duplicate" };
 
     try {
@@ -238,9 +232,13 @@ export function createActingInboundDispatcher(
       return { status: "observed" };
     }
 
-    const source = sourceFor(event);
-    const prompt = promptFor(event);
-    await dependencies.enqueue(source, prompt, queueMetadata(event));
+    const prepared = await dependencies.prepareInvoke?.(event);
+    const source = prepared?.source ?? sourceFor(event);
+    const prompt = prepared?.prompt ?? promptFor(event);
+    await dependencies.enqueue(source, prompt, {
+      ...queueMetadata(event),
+      ...prepared?.metadata,
+    });
     remember(event.eventId);
     return { status: "enqueued", source, prompt };
   };
@@ -293,7 +291,7 @@ function normalizeActingEvent(
 ): InboundEvent {
   // The bus copy remains explicitly observe-only. The acting dispatcher above
   // is the only place allowed to turn an accepted invoke decision into queue
-  // work, and only while CHAT_SDK_ACTING_ENABLED=1.
+  // work. Chat SDK is the canonical transport owner; there is no legacy gate.
   return normalizeSdkInboundEvent(projected, envelope, {
     sdkVersion: "4.34.0",
     now,

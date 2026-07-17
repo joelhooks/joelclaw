@@ -1,4 +1,4 @@
-import type { InlineButton } from "../channels/telegram";
+import type { InlineButton } from "../telegram-runtime";
 
 export type FormatRule = {
   pattern: RegExp;

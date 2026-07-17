@@ -1,23 +1,18 @@
-import { execSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import type { SlackAdapter } from "@chat-adapter/slack";
 import { type ChannelPermissionPolicy, type ChannelRole, createReplyGrantFromEvent, type ReplyGrant, recordGrantPublicReply, routeSlackMention, type SlackMentionEvent } from "@joelclaw/channel-routing";
+import type { InboundEvent } from "@joelclaw/message-contract";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
-import { tapSlackMessage, tapSlackReaction } from "../chat-sdk-inbound/taps";
-import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
-import { type EnqueueFn, getRedisClient, pushGatewayEvent } from "./redis";
-import {
-  initialSlackSocketLifecycle,
-  type SlackSocketLifecycleState,
-  transitionSlackSocketLifecycle,
-} from "./slack-lifecycle";
+import { type EnqueueFn, getRedisClient, pushGatewayEvent } from "./channels/redis";
 import type {
   Channel,
   ChannelPlatform,
   MessageHandler,
   SendMediaPayload,
   SendOptions,
-} from "./types";
+} from "./channels/types";
+import { loadGatewayInngestEventConfig } from "./lib/inngest-event";
 
 type SlackChannelMessage = {
   channelId: string;
@@ -233,9 +228,7 @@ const SLACK_TRUSTED_USER_IDS = new Set(
     .filter(Boolean),
 );
 
-type SlackStartOptions = {
-  botToken?: string;
-  appToken?: string;
+export type SlackRuntimeOptions = {
   allowedUserId?: string;
   reactionAckEmoji?: string;
   importantChannelIds?: string[];
@@ -253,65 +246,6 @@ type SlackSendMediaOptions = {
   threadTs?: string;
   filename?: string;
   title?: string;
-};
-
-type SlackAuthTestResponse = {
-  user_id?: string;
-};
-
-type SlackConversationsInfoResponse = {
-  channel?: {
-    name?: string;
-    is_im?: boolean;
-  };
-};
-
-type SlackUsersInfoResponse = {
-  user?: {
-    name?: string;
-    real_name?: string;
-    profile?: {
-      display_name?: string;
-      real_name?: string;
-    };
-  };
-};
-
-type SlackPostMessageResponse = {
-  ts?: string;
-  message?: {
-    ts?: string;
-  };
-};
-
-type SlackWebClientLike = {
-  auth: {
-    test: () => Promise<SlackAuthTestResponse>;
-  };
-  chat: {
-    postMessage: (args: Record<string, unknown>) => Promise<SlackPostMessageResponse>;
-  };
-  files: {
-    uploadV2: (args: Record<string, unknown>) => Promise<unknown>;
-  };
-  conversations: {
-    info: (args: Record<string, unknown>) => Promise<SlackConversationsInfoResponse>;
-  };
-  users: {
-    info: (args: Record<string, unknown>) => Promise<SlackUsersInfoResponse>;
-  };
-  reactions: {
-    add: (args: Record<string, unknown>) => Promise<unknown>;
-  };
-};
-
-type SlackAppLike = {
-  client: SlackWebClientLike;
-  start: () => Promise<void>;
-  stop: () => Promise<void>;
-  message: (handler: (args: Record<string, unknown>) => Promise<void>) => void;
-  event: (eventName: string, handler: (args: Record<string, unknown>) => Promise<void>) => void;
-  error?: (handler: (error: Error) => void) => void;
 };
 
 type SlackMessageEvent = {
@@ -346,24 +280,9 @@ type SlackContext = {
   prefix: string;
 };
 
-type SlackSocketModeClientLike = {
-  on: (eventName: string, handler: (error?: unknown) => void) => unknown;
-};
-
-type SlackSocketModeReceiverLike = {
-  client: SlackSocketModeClientLike;
-};
-
-type SlackBoltModule = {
-  App: new (options: Record<string, unknown>) => SlackAppLike;
-  SocketModeReceiver: new (options: Record<string, unknown>) => SlackSocketModeReceiverLike;
-};
-
-let app: SlackAppLike | undefined;
-let socketModeReceiver: SlackSocketModeReceiverLike | undefined;
-let socketLifecycle = initialSlackSocketLifecycle();
+let adapter: SlackAdapter | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
-let started = false;
+let initialized = false;
 let botUserId: string | undefined;
 let allowedUserId: string | undefined;
 let reactionAckEmoji = "eyes";
@@ -407,53 +326,6 @@ function isImportantSlackChannel(channelId: string, channelName: string | undefi
   if (importantChannelIds.has(channelId)) return true;
   if (!channelName) return false;
   return importantChannelNames.has(channelName) || importantChannelNames.has(`#${channelName}`);
-}
-
-function leaseSecret(name: string): string {
-  return execSync(`secrets lease ${name} --ttl 4h`, { encoding: "utf8" }).trim();
-}
-
-function leaseSecretSafe(name: string): string | undefined {
-  try {
-    const secret = leaseSecret(name).trim();
-    if (!secret) return undefined;
-    return secret;
-  } catch (error) {
-    console.warn("[gateway:slack] failed to lease secret", { name, error: String(error) });
-    void emitGatewayOtel({
-      level: "warn",
-      component: "slack-channel",
-      action: "slack.secret.lease_failed",
-      success: false,
-      error: String(error),
-      metadata: { name },
-    });
-    return undefined;
-  }
-}
-
-async function loadSlackBolt(): Promise<SlackBoltModule | undefined> {
-  try {
-    const importer = new Function("specifier", "return import(specifier);") as (
-      specifier: string,
-    ) => Promise<unknown>;
-    const loaded = await importer("@slack/bolt");
-    const module = loaded as Partial<SlackBoltModule>;
-    if (typeof module.App !== "function" || typeof module.SocketModeReceiver !== "function") return undefined;
-    return { App: module.App, SocketModeReceiver: module.SocketModeReceiver };
-  } catch (error) {
-    console.warn("[gateway:slack] @slack/bolt unavailable; slack channel disabled", {
-      error: String(error),
-    });
-    void emitGatewayOtel({
-      level: "warn",
-      component: "slack-channel",
-      action: "slack.channel.dependency_missing",
-      success: false,
-      error: String(error),
-    });
-    return undefined;
-  }
 }
 
 function chunkMessage(text: string): string[] {
@@ -603,10 +475,10 @@ async function resolveChannelName(channelId: string): Promise<string | undefined
   const blockedUntil = channelResolveCooldownUntil.get(channelId);
   if (blockedUntil && blockedUntil > Date.now()) return undefined;
 
-  if (!app) return undefined;
+  if (!adapter) return undefined;
 
   try {
-    const response = await app.client.conversations.info({ channel: channelId });
+    const response = await adapter.webClient.conversations.info({ channel: channelId });
     const name = response.channel?.name;
     if (!name) return undefined;
     channelResolveCooldownUntil.delete(channelId);
@@ -648,10 +520,10 @@ async function resolveChannelName(channelId: string): Promise<string | undefined
 async function resolveUserLabel(userId: string): Promise<string> {
   const cached = userNameCache.get(userId);
   if (cached) return cached;
-  if (!app) return userId;
+  if (!adapter) return userId;
 
   try {
-    const response = await app.client.users.info({ user: userId });
+    const response = await adapter.webClient.users.info({ user: userId });
     const profile = response.user?.profile;
     const label = profile?.display_name?.trim()
       || profile?.real_name?.trim()
@@ -707,16 +579,13 @@ async function handleIncomingMessage(
   rawMessage: unknown,
   kind: "message" | "mention",
   options: {
-    readonly tapShadow?: boolean;
     readonly chatSdkEventId?: string;
   } = {},
 ): Promise<void> {
   if (!enqueuePrompt) return;
+  botUserId = adapter?.botUserId ?? botUserId;
 
   const message = parseMessageEvent(rawMessage);
-  if (options.tapShadow !== false) {
-    tapSlackMessage(rawMessage, { botUserId, allowedUserId });
-  }
   if (!message?.channel || !message.user || !message.text || !message.ts) return;
   if (message.bot_id) return;
   if (message.subtype && message.subtype !== "thread_broadcast") return;
@@ -926,16 +795,13 @@ export async function dispatchChatSdkMessagePolicy(
   kind: "message" | "mention",
   chatSdkEventId: string,
 ): Promise<void> {
-  await handleIncomingMessage(rawMessage, kind, {
-    tapShadow: false,
-    chatSdkEventId,
-  });
+  await handleIncomingMessage(rawMessage, kind, { chatSdkEventId });
 }
 
 async function maybeAcknowledgeReaction(channelId: string, timestamp: string): Promise<void> {
-  if (!app || !reactionAckEmoji) return;
+  if (!adapter || !reactionAckEmoji) return;
   try {
-    await app.client.reactions.add({
+    await adapter.webClient.reactions.add({
       channel: channelId,
       name: reactionAckEmoji,
       timestamp,
@@ -966,8 +832,8 @@ async function maybeAcknowledgeReaction(channelId: string, timestamp: string): P
 async function handleReactionAdded(rawEvent: unknown): Promise<void> {
   if (!enqueuePrompt) return;
 
+  botUserId = adapter?.botUserId ?? botUserId;
   const event = parseReactionEvent(rawEvent);
-  tapSlackReaction(rawEvent, { botUserId, allowedUserId });
   if (!event?.user || !event.item?.channel || !event.item.ts || !event.reaction) return;
   if (event.item.type !== "message") return;
   if (botUserId && event.user === botUserId) return;
@@ -1043,6 +909,14 @@ async function handleReactionAdded(rawEvent: unknown): Promise<void> {
   await maybeAcknowledgeReaction(event.item.channel, event.item.ts);
 }
 
+export async function dispatchChatSdkReactionPolicy(
+  rawEvent: unknown,
+  event: InboundEvent,
+): Promise<void> {
+  if (event.platform !== "slack" || event.type !== "reaction" || !event.added) return;
+  await handleReactionAdded(rawEvent);
+}
+
 function parseFilenameFromUrl(url: string): string {
   try {
     const parsed = new URL(url);
@@ -1056,12 +930,16 @@ export class SlackChannel implements Channel {
   readonly platform: ChannelPlatform = "slack";
 
   async start(..._args: unknown[]): Promise<void> {
-    const [enqueue, options] = _args;
-    await startSlackChannel(enqueue as EnqueueFn, options as SlackStartOptions | undefined);
+    const [sdkAdapter, enqueue, options] = _args;
+    await initialize(
+      sdkAdapter as SlackAdapter,
+      enqueue as EnqueueFn,
+      options as SlackRuntimeOptions | undefined,
+    );
   }
 
   async stop(): Promise<void> {
-    await shutdownSlackChannel();
+    await shutdownSlackRuntime();
   }
 
   async send(target: string, text: string, options?: SendOptions): Promise<void> {
@@ -1099,202 +977,43 @@ function getDefaultSlackChannel(): SlackChannel {
   return defaultInstance;
 }
 
-function startSlackChannel(
+export async function initialize(
+  sdkAdapter: SlackAdapter,
   enqueue: EnqueueFn,
-  options?: SlackStartOptions,
+  options: SlackRuntimeOptions = {},
 ): Promise<void> {
-  return (async () => {
-    if (started) return;
-
-    enqueuePrompt = enqueue;
-    allowedUserId = options?.allowedUserId ?? process.env.SLACK_ALLOWED_USER_ID;
-    reactionAckEmoji = options?.reactionAckEmoji ?? process.env.SLACK_REACTION_ACK_EMOJI ?? "eyes";
-    importantChannelIds = optionListToSet(
-      options?.importantChannelIds,
-      process.env.SLACK_IMPORTANT_CHANNEL_IDS,
-    );
-    importantChannelNames = optionListToSet(
-      options?.importantChannelNames,
-      process.env.SLACK_IMPORTANT_CHANNEL_NAMES,
-    );
-
-    const botToken = options?.botToken ?? leaseSecretSafe("slack_bot_token");
-    const appToken = options?.appToken ?? leaseSecretSafe("slack_app_token");
-
-    if (!botToken || !appToken) {
-      console.warn("[gateway:slack] slack disabled — missing token(s)");
-      void emitGatewayOtel({
-        level: "warn",
-        component: "slack-channel",
-        action: "slack.channel.disabled",
-        success: false,
-        metadata: {
-          hasBotToken: Boolean(botToken),
-          hasAppToken: Boolean(appToken),
-        },
-      });
-      return;
-    }
-
-    const bolt = await loadSlackBolt();
-    if (!bolt) return;
-
-    socketModeReceiver = new bolt.SocketModeReceiver({ appToken });
-    const socketClient = socketModeReceiver.client;
-    const recordSocketTransition = (state: SlackSocketLifecycleState, cause?: unknown): void => {
-      socketLifecycle = transitionSlackSocketLifecycle(socketLifecycle, state);
-      const error = cause instanceof Error ? cause.message : cause ? String(cause) : undefined;
-      const degraded = state === "disconnected" && started;
-
-      console[degraded ? "error" : "log"]("[gateway:slack] socket lifecycle", {
-        state,
-        reconnectCount: socketLifecycle.reconnectCount,
-        ...(error ? { error } : {}),
-      });
-      void emitGatewayOtel({
-        level: degraded ? "error" : state === "reconnecting" ? "warn" : "info",
-        component: "slack-channel",
-        action: "slack.socket.lifecycle_changed",
-        success: !degraded,
-        ...(error ? { error } : {}),
-        metadata: {
-          state,
-          reconnectCount: socketLifecycle.reconnectCount,
-          lastConnectedAt: socketLifecycle.lastConnectedAt,
-        },
-      });
-    };
-
-    for (const state of [
-      "connecting",
-      "authenticated",
-      "connected",
-      "reconnecting",
-      "disconnecting",
-      "disconnected",
-    ] as const) {
-      socketClient.on(state, (cause?: unknown) => {
-        recordSocketTransition(state, state === "disconnected" ? cause : undefined);
-      });
-    }
-
-    app = new bolt.App({
-      token: botToken,
-      receiver: socketModeReceiver,
-    });
-
-    if (typeof app.error === "function") {
-      app.error((error: Error) => {
-        console.error("[gateway:slack] app error", { error: error.message });
-        void emitGatewayOtel({
-          level: "error",
-          component: "slack-channel",
-          action: "slack.channel.error",
-          success: false,
-          error: error.message,
-        });
-      });
-    }
-
-    app.message(async ({ message }: Record<string, unknown>) => {
-      try {
-        await handleIncomingMessage(message, "message");
-      } catch (error) {
-        console.error("[gateway:slack] message handler failed", { error: String(error) });
-        void emitGatewayOtel({
-          level: "error",
-          component: "slack-channel",
-          action: "slack.message.handler_failed",
-          success: false,
-          error: String(error),
-        });
-      }
-    });
-
-    app.event("app_mention", async ({ event }: Record<string, unknown>) => {
-      try {
-        await handleIncomingMessage(event, "mention");
-      } catch (error) {
-        console.error("[gateway:slack] app_mention handler failed", { error: String(error) });
-        void emitGatewayOtel({
-          level: "error",
-          component: "slack-channel",
-          action: "slack.mention.handler_failed",
-          success: false,
-          error: String(error),
-        });
-      }
-    });
-
-    app.event("reaction_added", async ({ event }: Record<string, unknown>) => {
-      try {
-        await handleReactionAdded(event);
-      } catch (error) {
-        console.error("[gateway:slack] reaction_added handler failed", { error: String(error) });
-        void emitGatewayOtel({
-          level: "error",
-          component: "slack-channel",
-          action: "slack.reaction.handler_failed",
-          success: false,
-          error: String(error),
-        });
-      }
-    });
-
-    try {
-      await app.start();
-      started = true;
-      const auth = await app.client.auth.test();
-      botUserId = typeof auth.user_id === "string" ? auth.user_id : undefined;
-
-      console.log("[gateway:slack] started", {
-        botUserId,
-        allowedUserId,
-        importantChannelIds: importantChannelIds.size,
-        importantChannelNames: importantChannelNames.size,
-      });
-      void emitGatewayOtel({
-        level: "info",
-        component: "slack-channel",
-        action: "slack.channel.started",
-        success: true,
-        metadata: {
-          botUserId,
-          allowedUserId,
-          importantChannelIds: importantChannelIds.size,
-          importantChannelNames: importantChannelNames.size,
-        },
-      });
-    } catch (error) {
-      console.error("[gateway:slack] failed to start; slack channel disabled", {
-        error: String(error),
-      });
-      void emitGatewayOtel({
-        level: "error",
-        component: "slack-channel",
-        action: "slack.channel.start_failed",
-        success: false,
-        error: String(error),
-      });
-      try {
-        await app?.stop();
-      } catch (stopError) {
-        console.error("[gateway:slack] failed to clean up partial start", {
-          error: String(stopError),
-        });
-      }
-      app = undefined;
-      socketModeReceiver = undefined;
-      socketLifecycle = initialSlackSocketLifecycle();
-      started = false;
-      botUserId = undefined;
-    }
-  })();
-}
-
-export async function start(enqueue: EnqueueFn, options?: SlackStartOptions): Promise<void> {
-  const instance = getDefaultSlackChannel();
-  await instance.start(enqueue, options);
+  adapter = sdkAdapter;
+  enqueuePrompt = enqueue;
+  allowedUserId = options.allowedUserId ?? process.env.SLACK_ALLOWED_USER_ID;
+  reactionAckEmoji = options.reactionAckEmoji ?? process.env.SLACK_REACTION_ACK_EMOJI ?? "eyes";
+  importantChannelIds = optionListToSet(
+    options.importantChannelIds,
+    process.env.SLACK_IMPORTANT_CHANNEL_IDS,
+  );
+  importantChannelNames = optionListToSet(
+    options.importantChannelNames,
+    process.env.SLACK_IMPORTANT_CHANNEL_NAMES,
+  );
+  botUserId = sdkAdapter.botUserId;
+  initialized = true;
+  console.log("[gateway:slack] SDK policy initialized", {
+    botUserId,
+    allowedUserId,
+    importantChannelIds: importantChannelIds.size,
+    importantChannelNames: importantChannelNames.size,
+  });
+  void emitGatewayOtel({
+    level: "info",
+    component: "slack-runtime",
+    action: "slack.runtime.initialized",
+    success: true,
+    metadata: {
+      botUserId,
+      allowedUserId,
+      importantChannelIds: importantChannelIds.size,
+      importantChannelNames: importantChannelNames.size,
+    },
+  });
 }
 
 async function sendSlackChannel(
@@ -1302,7 +1021,7 @@ async function sendSlackChannel(
   text: string,
   options?: SlackSendOptions,
 ): Promise<void> {
-  if (!app) {
+  if (!adapter) {
     console.warn("[gateway:slack] app unavailable, skipping send");
     void emitGatewayOtel({
       level: "warn",
@@ -1334,7 +1053,7 @@ async function sendSlackChannel(
   for (const chunk of chunks) {
     if (!chunk.trim()) continue;
     try {
-      const response = await app.client.chat.postMessage({
+      const response = await adapter.webClient.chat.postMessage({
         channel: target.channelId,
         text: chunk,
         ...(target.threadTs ? { thread_ts: target.threadTs } : {}),
@@ -1365,7 +1084,7 @@ async function sendSlackChannel(
 
   if (options?.reaction && anchorTs) {
     try {
-      await app.client.reactions.add({
+      await adapter.webClient.reactions.add({
         channel: target.channelId,
         name: options.reaction,
         timestamp: anchorTs,
@@ -1444,7 +1163,7 @@ async function sendSlackMedia(
   media: SendMediaPayload,
   options?: SlackSendMediaOptions,
 ): Promise<void> {
-  if (!app) {
+  if (!adapter) {
     console.warn("[gateway:slack] app unavailable, skipping sendMedia");
     void emitGatewayOtel({
       level: "warn",
@@ -1492,14 +1211,15 @@ async function sendSlackMedia(
       throw new Error("media payload missing url/path");
     }
 
-    await app.client.files.uploadV2({
+    const uploadArgs = {
       channel_id: target.channelId,
       ...(target.threadTs ? { thread_ts: target.threadTs } : {}),
       ...(caption ? { initial_comment: caption } : {}),
       file: fileBuffer,
       filename,
       title: options?.title ?? filename,
-    });
+    };
+    await adapter.webClient.files.uploadV2(uploadArgs as never);
 
     void emitGatewayOtel({
       level: "info",
@@ -1552,93 +1272,37 @@ export async function sendMedia(
   await instance.sendMedia(channelOrThread, media, options);
 }
 
-/** Stop Socket Mode ownership while retaining the Web API send client. */
-export async function releaseIngressOwnership(): Promise<void> {
-  if (!app) {
-    started = false;
-    return;
-  }
-  await app.stop();
-  started = false;
-  socketModeReceiver = undefined;
-  socketLifecycle = initialSlackSocketLifecycle();
-  console.log("[gateway:slack] socket ownership released; send client retained");
-  void emitGatewayOtel({
-    level: "info",
-    component: "slack-channel",
-    action: "slack.channel.ingress_released",
-    success: true,
-  });
-}
-
-async function shutdownSlackChannel(): Promise<void> {
-  started = false;
-
-  if (app) {
-    try {
-      await app.stop();
-    } catch (error) {
-      console.error("[gateway:slack] stop failed", { error: String(error) });
-      void emitGatewayOtel({
-        level: "warn",
-        component: "slack-channel",
-        action: "slack.channel.stop_failed",
-        success: false,
-        error: String(error),
-      });
-    }
-  }
-
-  app = undefined;
-  socketModeReceiver = undefined;
-  socketLifecycle = initialSlackSocketLifecycle();
+async function shutdownSlackRuntime(): Promise<void> {
+  initialized = false;
+  adapter = undefined;
   enqueuePrompt = undefined;
   botUserId = undefined;
+  allowedUserId = undefined;
   channelNameCache.clear();
+  channelResolveCooldownUntil.clear();
   userNameCache.clear();
   seenEvents.clear();
   seenOrder.length = 0;
   mentionThreads.clear();
-
-  console.log("[gateway:slack] stopped");
-  void emitGatewayOtel({
-    level: "info",
-    component: "slack-channel",
-    action: "slack.channel.stopped",
-    success: true,
-  });
+  console.log("[gateway:slack] SDK policy stopped");
 }
 
 export async function shutdown(): Promise<void> {
-  const instance = getDefaultSlackChannel();
-  await instance.stop();
+  await shutdownSlackRuntime();
 }
 
 export type SlackRuntimeState = {
   configured: boolean;
-  started: boolean;
-  connected: boolean;
-  socketState: SlackSocketLifecycleState;
-  lastSocketTransitionAt: number;
-  lastSocketConnectedAt: number | null;
-  reconnectCount: number;
+  initialized: boolean;
   botUserId: string | null;
   allowedUserId: string | null;
 };
 
-export function isStarted(): boolean {
-  return started;
-}
-
 export function getRuntimeState(): SlackRuntimeState {
+  botUserId = adapter?.botUserId ?? botUserId;
   return {
-    configured: Boolean(allowedUserId),
-    started,
-    connected: Boolean(started && app && botUserId && socketLifecycle.state === "connected"),
-    socketState: socketLifecycle.state,
-    lastSocketTransitionAt: socketLifecycle.lastTransitionAt,
-    lastSocketConnectedAt: socketLifecycle.lastConnectedAt,
-    reconnectCount: socketLifecycle.reconnectCount,
+    configured: Boolean(allowedUserId && adapter),
+    initialized,
     botUserId: botUserId ?? null,
     allowedUserId: allowedUserId ?? null,
   };

@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type {
   FlowIdType,
   OutboundIntent,
-  RoutingTable,
 } from "@joelclaw/message-contract";
 import {
   MESSAGE_CONTRACT_VERSION,
@@ -13,7 +12,6 @@ import type { JournalEventInput } from "@joelclaw/message-journal";
 import {
   CHAT_SDK_VERSION,
   createChatSdkRuntime,
-  startChatSdkRuntime,
   TELEGRAM_ALLOWED_UPDATES,
 } from "../instance";
 import { mapNotifySendToIntent } from "../notify-compat";
@@ -25,7 +23,6 @@ import {
   type OutboundJournalPort,
   resolvePlatformMessageFlow,
 } from "../outbound";
-import { recordShadowComparison, runOutboundShadow } from "../shadow";
 
 const TELEGRAM_DELIVER_POLICY = {
   route: async () => ({ disposition: "deliver" as const }),
@@ -133,12 +130,6 @@ describe("Chat SDK outbound v1", () => {
     );
     await runtime.stop();
     expect(shutdownAttempts).toBe(2);
-  });
-
-  test("refuses transport activation without legacy ownership transfer", async () => {
-    await expect(startChatSdkRuntime({ legacyTransportsStopped: false as true })).rejects.toThrow(
-      "requires legacy transport shutdown proof",
-    );
   });
 
   test("routes markdown through Telegram's native formatter, journals the platform id, and returns a receipt", async () => {
@@ -485,77 +476,4 @@ describe("Chat SDK outbound v1", () => {
     });
   });
 
-  test("shadow defaults off and records a real diff only when enabled", async () => {
-    let sends = 0;
-    const skipped = await runOutboundShadow(intent(), {
-      env: {},
-      sendSdk: async () => {
-        sends += 1;
-        throw new Error("must not send");
-      },
-      previewLegacy: () => {
-        throw new Error("must not preview");
-      },
-      resolveSdkTarget: () => {
-        throw new Error("must not resolve target");
-      },
-    });
-    expect(skipped).toEqual({ enabled: false, reason: "flag-disabled" });
-    expect(sends).toBe(0);
-
-    const compared: unknown[] = [];
-    const routeTable: RoutingTable = {
-      version: 2,
-      routes: {
-        memory: { platform: "telegram", lane: "operator", urgency: "normal", formatting: "markdown" },
-        alert: { platform: "telegram", lane: "operator", urgency: "critical", formatting: "markdown" },
-        digest: { platform: "telegram", lane: "digest", urgency: "low", formatting: "markdown" },
-        ask: { platform: "telegram", lane: "operator", urgency: "high", formatting: "markdown" },
-        receipt: { platform: "slack", lane: "automation", urgency: "normal", formatting: "markdown" },
-      },
-    };
-    const sdkSend = makeOutboundSender({
-      adapters: {
-        telegram: {
-          openDM: async () => "telegram:7",
-          postMessage: async (threadId) => ({ id: "7:44", threadId }),
-        },
-      },
-      journal: makeJournal(),
-      routingTable: routeTable,
-      resolveTarget: () => "7",
-      mintFlowId: () => flow(0),
-      telegramPolicy: TELEGRAM_DELIVER_POLICY,
-    });
-    const report = await runOutboundShadow(intent(), {
-      env: { CHAT_SDK_OUTBOUND_SHADOW_ENABLED: "1" },
-      sendSdk: sdkSend,
-      previewLegacy: (_message, route) => ({
-        platform: "telegram",
-        target: "wrong-target",
-        content: "legacy changed this",
-        route,
-      }),
-      resolveSdkTarget: () => "7",
-      recordComparison: async (value) => {
-        compared.push(value);
-      },
-    });
-    expect(report.enabled).toBe(true);
-    if (report.enabled) {
-      expect(report.matches).toBe(false);
-      expect(report.mismatches.map((item) => item.field)).toEqual(["target", "content"]);
-      const rows: JournalEventInput[] = [];
-      await recordShadowComparison(report, async (row) => {
-        rows.push(row);
-        return {
-          journalEventId: `shadow-${rows.length}`,
-          persisted: true,
-          storage: "writer",
-        };
-      });
-      expect(rows[0]?.telegramMessageId).toBe(44);
-    }
-    expect(compared).toHaveLength(1);
-  });
 });
