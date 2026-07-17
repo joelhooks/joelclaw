@@ -3,8 +3,9 @@ title: "Execute the Legacy + System-Log Retirement: one migration, receipts ever
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "in_progress"
-assignee: "pi worker (flagg, herdr right column, 2026-07-17)"
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "pi worker (flagg, wB:p2V) + steering (wB:p5)"
 parent: "./memory-system-cleanup-brief.svx"
 blockers: []
 created_at: "2026-07-17"
@@ -127,3 +128,16 @@ joelclaw inngest restart-worker --register
 joelclaw functions
 joelclaw recall "legacy memory retirement" --limit 3
 ```
+
+## Steering receipts (2026-07-17, closes the step)
+
+1. Archive executed: 28,050 docs → `/Volumes/three-body/backups/typesense/retired-memory-observations/memory_observations-20260717T203650Z.jsonl`,
+   238,383,306 bytes, sha256 `d2f3038d...927db39`, `verified: true`.
+2. Panda snapshot executed: 3,981 lines → `/Volumes/three-body/backups/slog/archive/system-log-panda-20260717T203739Z.jsonl`,
+   sha256 `4e8e815d...9e7d5f`.
+3. Collection dropped after receipt verification (Typesense returned the
+   deleted schema).
+4. Migration committed `a673d5c1` (59 files, -6,306 lines), CLI rebuilt,
+   worker restarted via launchctl kickstart; `joelclaw functions` shows
+   no reflect/promote/proposal/batch-review/system-logger; `joelclaw
+   recall` answers with the new Brain-backed envelope.
