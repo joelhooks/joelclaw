@@ -828,6 +828,14 @@ export type Events = {
       digestPath: string;
     };
   };
+  "memory/retro.requested": {
+    data: {
+      brief_path: string;
+      session_id?: string;
+      repo?: string;
+      requested_by?: string;
+    };
+  };
 
   // ADR-0243 Rule 9a: embed priority lanes.
   "memory/embed.requested": {

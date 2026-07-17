@@ -79,6 +79,7 @@ import { meetingTranscriptIndex } from "./meeting-transcript-index";
 import { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 import { memoryEmbed } from "./memory/embed";
 import { nightlyMaintenance } from "./memory/nightly-maintenance";
+import { memoryRetroWriter } from "./memory/retro-writer";
 import { memoryRunCaptured } from "./memory/run-captured";
 import { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 import {
@@ -243,6 +244,7 @@ export const hostFunctionDefinitions = [
   weeklyMaintenanceSummary,
   adrEvidenceCapture,
   memoryEmbed,
+  memoryRetroWriter,
   memoryRunCaptured,
   echoFizzle,
   taskTriage,

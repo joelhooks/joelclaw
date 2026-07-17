@@ -84,6 +84,7 @@ export { meetingTranscriptIndex } from "./meeting-transcript-index";
 export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 export { memoryEmbed } from "./memory/embed";
 export { nightlyMaintenance } from "./memory/nightly-maintenance";
+export { memoryRetroWriter } from "./memory/retro-writer";
 export { memoryRunCaptured } from "./memory/run-captured";
 export { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 export {

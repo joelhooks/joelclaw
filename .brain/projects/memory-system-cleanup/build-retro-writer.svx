@@ -3,8 +3,9 @@ title: "Build the Retro Writer: hooks → Inngest event → condenser"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-17"
+assignee: "pi (flagg, herdr pane wB:p2Z, 2026-07-17)"
 parent: "./memory-system-cleanup-brief.svx"
 blockers:
   - "./execute-legacy-retirement.svx"
@@ -29,3 +30,70 @@ re-narrate the ledger; (4) one real retro exists as proof — generated
 from the closed
 [memory-system-review brief](../memory-system-review/memory-system-review-brief.svx).
 Serialized behind the retirement migration (same repo surface).
+
+## Result (2026-07-17)
+
+Built the hook-facing retro writer without touching or deploying the live worker.
+
+- Added typed event `memory/retro.requested` and host function `memory-retro-writer`.
+- The writer resolves relative step links from the brief's `## Decision ledger`, reads only each linked step's `## Result` section, and rejects briefs that are not closed/done.
+- The deterministic noise guard skips efforts with fewer than three linked steps and no ledger entries. It emits OTel warn action `memory.retro.skipped` with `noise_bar_not_met` before inference.
+- Shared `infer()` performs the source-grounded condensation with tools/extensions off and strict JSON output. Code, not the model, owns frontmatter, section headings, receipt links, slug/month naming, and the final atomic write.
+- Added `joelclaw retro <brief-path> [--session-id <id>] [--repo <path>] [--requested-by <name>]` as the one-line hook surface.
+- Production output is fixed at `~/Code/joelhooks/dark-wizard/.brain/resources/retros/<brief-slug>-<yyyy-mm>.svx`. This pass wrote only `/tmp/joelclaw-memory-system-review-retro-2026-07-17.svx`.
+
+Changed files:
+
+- `packages/system-bus/src/inngest/functions/memory/retro-writer.ts`
+- `packages/system-bus/src/inngest/functions/memory/retro-writer.test.ts`
+- `packages/system-bus/src/inngest/client.ts`
+- `packages/system-bus/src/inngest/functions/index.host.ts`
+- `packages/system-bus/src/inngest/functions/index.ts`
+- `packages/cli/src/commands/retro.ts`
+- `packages/cli/src/commands/retro.test.ts`
+- `packages/cli/src/cli.ts`
+
+Verification:
+
+- `bun test packages/system-bus/src/inngest/functions/memory/retro-writer.test.ts` — 5 pass.
+- `bun test packages/cli/src/commands/retro.test.ts` — 2 pass.
+- Focused Biome check across all changed code — pass.
+- `bunx tsc --noEmit` — pass.
+- `bun packages/cli/src/cli.ts retro --help` — pass; command and options render.
+- Real condenser dry-run against `../memory-system-review/memory-system-review-brief.svx` — wrote scratch only; 7 linked steps and 7 ledger entries.
+
+### Generated scratch retro
+
+```md
+---
+title: "Memory System Review: the whole loop, mapped and graded retro"
+type: "resource"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# What happened
+
+A receipt-backed MDSvX review now maps and grades the full memory loop plus 11 peripheral stores. It confirms that capture, curation, delivery, reaction grading, and reuse of grades operate end to end, while dreams, retros, graph privacy, delivery policy, and several peripheral stores remain degraded or missing. The review and the Observer Brain were published successfully on the wiki.
+
+# What it means
+
+The core loop is real and demonstrably closed—Joel’s reaction changes the history used by the next memory judgment—but reliability is uneven. The review exposes concrete priorities, especially the graph’s sensitive-metadata boundary, the 71.38 GB run-capture outbox, split delivery paths, dream starvation, and the absent retro writer. This effort diagnosed and prioritized those risks; it did not fix them.
+
+# What changed durable behavior
+
+The `observer` Brain is now a registered wiki root, making its 23 pages part of the published knowledge interface. `.brain/resources/memory-system.svx` is now the canonical review surface, with a stated practice to regenerate it from a fresh survey after material system changes rather than patching verdicts manually. Two Observer pages were corrected to render under MDSvX. **No core memory runtime behavior changed.**
+
+# Receipts
+
+- [Memory System Review: the whole loop, mapped and graded brief](file:///Users/joel/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/memory-system-review-brief.svx)
+- [Register the Observer Brain as a Wiki Root](file:///Users/joel/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/register-observer-brain-root.svx)
+- [Survey Capture & Condense](file:///Users/joel/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/survey-capture-condense.svx)
+- [Survey Brain Stores](file:///Users/joel/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/survey-brain-stores.svx)
+- [Survey Curation & Delivery](file:///Users/joel/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/survey-curation-delivery.svx)
+- [Survey the Periphery](file:///Users/joel/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/survey-periphery.svx)
+- [Write the Memory System Page](file:///Users/joel/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/write-memory-system-page.svx)
+- [Publish, Verify, DM](file:///Users/joel/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/publish-verify-dm.svx)
+```
+
+Steering deploy sequence: review the diff and scratch retro → commit/push → rebuild the CLI binary → restart the host worker from the monorepo checkout → `PUT http://127.0.0.1:3111/api/inngest` → verify `memory-retro-writer` registration → run `joelclaw retro <closed-brief>` and inspect the run/OTel/write receipt.

@@ -39,6 +39,7 @@ import { recallCmd } from "./commands/recall";
 import { recoverCmd } from "./commands/recover";
 import { refresh } from "./commands/refresh";
 import { restateCmd } from "./commands/restate";
+import { retroCmd } from "./commands/retro";
 import { reviewCmd } from "./commands/review";
 import { runCmd, runsCmd } from "./commands/runs";
 import { satelliteCmd } from "./commands/satellite";
@@ -189,6 +190,7 @@ const root = Command.make("joelclaw", {}, () =>
               "joelclaw recall <query> [--limit N] [--min-score F] [--raw]",
             memory:
               "joelclaw memory {write <text> [--category ops|rules|arch|projects|prefs|people|memory] [--tags a,b]|search <query>|recent}",
+            retro: "joelclaw retro <brief-path> [--session-id <id>] [--repo <path>]",
             search:
               "joelclaw search <query> [-c collection] [-n limit] [-f filter] [--semantic]",
             satellite:
@@ -319,6 +321,7 @@ const root = Command.make("joelclaw", {}, () =>
     approvalsCmd,
     recallCmd,
     memoryCmd,
+    retroCmd,
     vaultCmd,
     skillsCmd,
     docsCmd,
