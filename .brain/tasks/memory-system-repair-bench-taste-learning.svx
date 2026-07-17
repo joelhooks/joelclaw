@@ -1,0 +1,66 @@
+---
+title: "Task: bench taste learning (does graded history change the picks?)"
+type: "task-brief"
+created: "2026-07-17"
+parent: "../projects/memory-system-repair/bench-taste-learning.svx"
+---
+
+# Bench taste learning — worker instructions
+
+You are a research worker on flagg in `~/Code/joelhooks/joelclaw-observer`.
+Set your pi session name to "🧪 Taste learning bench" immediately.
+READ-ONLY against production: never write
+`~/.joelclaw/observer-neat-memories.json`, never send messages, never
+schedule beats. Judge runs must be sandboxed `pi -p` with `--no-tools
+--no-skills --no-context-files --no-extensions --no-session`. Work
+autonomously, do not commit, print DONE when finished.
+
+Your step file (claimed for you):
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-repair/bench-taste-learning.svx`
+Read it, the parent brief (vocabulary: "selection delta"), and the
+evidence trail in
+`~/Code/joelhooks/joelclaw/.brain/projects/memory-system-review/curation-delivery-survey.svx`.
+
+## The question (Joel's, verbatim spirit)
+
+One 👍 through the pipe proves plumbing, not learning. Does the graded
+`outcome` history actually change what the judge picks?
+
+## Method
+
+1. Reuse the production mechanics EXACTLY: judge model
+   `openai-codex/gpt-5.6-sol:xhigh`, prompt file
+   `skills/neat-memory-simple-prompt.md`, the same `judgePrompt`
+   substitution shape from `.pi/extensions/observer/neat-memory.ts`
+   (history = last 20 sent entries, candidates = compact excerpts).
+   Build the bench as a standalone script (e.g.
+   `.pi/extensions/observer/neat-memory-taste-bench.ts`) that reads
+   production state READ-ONLY and shells the judge itself — do not
+   import anything that sends.
+2. Paired runs over IDENTICAL candidate pools: (A) real history with
+   outcomes as-is, (B) same history with every `outcome` nulled. Also
+   run (C) a synthetic-contrast arm: history unchanged except the graded
+   entry's outcome flipped to `did-not-work` — with one real grade, C is
+   what makes the bench informative at today's volume.
+3. Repetitions: at least 5 per arm over the same pool (sol is
+   nondeterministic; the delta must beat run-to-run noise). Capture
+   every raw JSON verdict to files under the scratchpad or /tmp.
+4. Report the selection delta: picks, scores, holds, and any wording
+   shifts, A vs B vs C, with run-level tables. An honestly null delta is
+   a valid finding — then state, concretely, what graded-history volume
+   and composition would make this bench decisive (feeds the brief's
+   latent rerun).
+
+## Deliverables
+
+1. Asset:
+   `~/Code/joelhooks/joelclaw/.brain/projects/memory-system-repair/taste-learning-bench.svx`
+   (`type: "asset"`, `parent: "./bench-taste-learning.svx"`, `title`,
+   `created_at: "2026-07-17"`, `privacy: "private"`): method, per-arm
+   tables, the delta verdict in one plain sentence, raw-receipt paths.
+2. The bench script (uncommitted; steering reviews).
+3. Step file: `## Result (2026-07-17)` + verdict + asset link, flip
+   `status: "closed"`, add `closed_at`. Do NOT edit the brief.
+
+DONE summary: the one-sentence delta verdict + the volume needed for a
+decisive rerun.

@@ -3,7 +3,8 @@ title: "Fix the Graph Privacy Boundary"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-17T17:51:13Z"
 assignee: "pi worker (flagg, herdr pane wB:p2M, 2026-07-17)"
 parent: "./memory-system-repair-brief.svx"
 blockers: []
@@ -28,3 +29,42 @@ artifact) or read, and wiring the graph rebuild into the normal build path
 or documenting exactly when it runs. Evidence:
 [brain-stores survey](../memory-system-review/brain-stores-survey.svx)
 risk #1.
+
+## Result (2026-07-17)
+
+Closed the graph privacy hole at both boundaries.
+
+- `src/lib/brain/privacy.ts` now owns the single exclusion rule used by
+  both `catalog.ts` and `graph-builder.ts`: the four protected path sections,
+  `privacy: sensitive`, and an explicit truthy `sensitive` flag.
+- The builder keeps excluded page identities only in memory long enough to
+  suppress links to them. It emits no page/section node, edge endpoint,
+  ambiguity, label, unresolved target, or provenance match for excluded pages.
+  A wikilink that matches an excluded page is dropped entirely; it does not
+  become an `unresolved-page` node because that would copy the excluded title
+  into `graph.json`.
+- `graph-read.ts` strips sensitive nodes plus touching edges and ambiguities
+  from legacy artifacts. `Backlinks.svelte` and `LocalGraph.svelte` repeat the
+  metadata check before rendering.
+- `package.json` adds `graph:build` and runs it during the normal `build` before
+  search indexing. This makes graph freshness part of the existing publication
+  path instead of another manual build operators must remember.
+- Builder fixtures cover `privacy: sensitive`, `sensitive: true`, all four
+  excluded sections, and wikilinks aimed at excluded titles. Read fixtures
+  cover legacy sensitive nodes, backlinks, edges, ambiguity metadata, and disk
+  loading. All assert that secret markers are absent.
+- The full lint gate initially exposed pre-existing Oxlint failures. I applied
+  behavior-preserving lint fixes in `pane-stream.ts`, `memory-pulse.ts`,
+  `site-search-index.ts`, `graph-typesense-index.ts`, and
+  `open-loop-extractor.test.ts` so the required gate is genuinely green.
+
+Receipts:
+
+- `bun run check` — 0 errors, 0 warnings.
+- `bun run check:tsgo` — green.
+- `bun run lint` — green; `brain-svx: ok`.
+- `bun run test` — 52 files passed, 227 tests passed.
+- Focused privacy suite — 3 files passed, 23 tests passed.
+- The real graph was intentionally not rebuilt in this worker. Steering runs
+  `bun run graph:build` from `joelclaw-wiki`, then inspects the new
+  `data/graph.json` before the site build/deploy.

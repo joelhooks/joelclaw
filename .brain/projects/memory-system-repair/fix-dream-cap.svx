@@ -3,11 +3,12 @@ title: "Fix the Dream Cap: eligibility before slicing"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker (flagg, herdr pane wB:p2N, 2026-07-17)"
 parent: "./memory-system-repair-brief.svx"
 blockers: []
 created_at: "2026-07-17"
+closed_at: "2026-07-17"
 ---
 
 # Fix the dream cap
@@ -26,3 +27,19 @@ scanned. Deadline: land before the corpus ages into eligibility
 (~2026-07-18; dream fires 06:10 local). Evidence:
 [capture-condense survey](../memory-system-review/capture-condense-survey.svx)
 "Stage: rollups and dreams".
+
+## Result (2026-07-17)
+
+Closed in dev checkout only; steering still owns review, commit, and release promotion.
+
+Receipts:
+
+- `.pi/extensions/observer/lib.ts`: `applyReflectorDream` and `runReflectorDryRun` now read/parse every top-level `.svx`, compute eligibility first, then cap the eligible work selected for the run. `capped` now means eligible work exceeded the cap. `pagesRead` now reports the full top-level corpus scan.
+- `test/observer.test.ts`: added starvation coverage where eligible pages sorted after the cap are still seen; with `cap: 1`, one old page is archived and another remains for the next dream.
+- `bin/observer-dream.sh`: cap comment updated; env knobs and JSON log shape unchanged.
+- Checks: `bun test test/observer.test.ts --test-name-pattern "dream cap|reflector pure functions"` passed (`16 pass`); `bash -n bin/observer-dream.sh && bun test` passed (`87 pass`).
+
+Promotion notes:
+
+- Do not run the dream against the live observations tree from this worker. Promote to `~/.joelclaw/observer-release` before the next 06:10 run if steering accepts the diff.
+- After promotion, the next `/tmp/observer-dream.log` line should show `pagesRead` near the full top-level corpus count, with `capped` only when eligible pages exceed `OBSERVER_REFLECTOR_CAP`.

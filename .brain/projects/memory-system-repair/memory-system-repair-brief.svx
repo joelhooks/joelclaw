@@ -72,6 +72,15 @@ and the taste bench in one grilling.
 
 ## Decision ledger
 
+- [Fix the Graph Privacy Boundary](./fix-graph-privacy-boundary.svx) —
+  done: shared `isExcludedBrainPage` at build + read-path stripping;
+  first safe rebuild 3,082 nodes / 0 sensitive / 0 excluded;
+  `graph:build` now part of the normal wiki build (wiki `bc05d5b`).
+- [Fix the Dream Cap](./fix-dream-cap.svx) — built and gated by worker:
+  eligibility computed over the whole corpus, cap bounds the night's
+  work; awaiting steering review + release promotion before the 06:10
+  dream (batched with the promotion script).
+
 ## Latent
 
 - Once a few weeks of graded history exist, rerun the taste bench with

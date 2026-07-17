@@ -3,9 +3,10 @@ title: "Build the Observer Release Promotion Script"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi worker (flagg, herdr pane wB:p2Q, 2026-07-17)"
 parent: "./memory-system-repair-brief.svx"
+closed_at: "2026-07-17T17:39:26Z"
 blockers: []
 created_at: "2026-07-17"
 ---
@@ -26,3 +27,19 @@ caught release running old priority-low DM code because manual promotion
 silently drifted. Evidence:
 [capture-condense survey](../memory-system-review/capture-condense-survey.svx)
 "Current deployment" + the review brief's latent note.
+
+## Result (2026-07-17)
+
+Built `bin/promote-release.sh` in `~/Code/joelhooks/joelclaw-observer`.
+
+Receipts:
+
+- `bun test` in the dev checkout: 87 pass, 0 fail.
+- `bash -n bin/promote-release.sh` and `bash -n` over all `bin/*.sh`: pass.
+- Dry-run promotion was exercised from a clean temp dev clone with the worker changes committed there only. It cloned the real release checkout to a temp release target, fetched the temp dev HEAD, detached the temp release clone, and left `~/.joelclaw/observer-release` untouched.
+- Dry-run receipt: `2026-07-17T17:39:26Z mode=dry-run dev=e89a02a56f3841ce4c2c0849a5c44611bb940fd2 before=2e768c2b525610f4ddb562332f7bb03ab268106e after=e89a02a56f3841ce4c2c0849a5c44611bb940fd2 target=/tmp/observer-release-dry-run.yRyU4T/release`.
+
+Drift detection:
+
+- Added pure `assessReleaseDrift` self-maintenance behavior. It reports `ok` when dev and release HEAD match, and warns as `release-drift` when either HEAD is unreadable or the SHAs differ.
+- `self-maintenance.ts` now compares `OBSERVER_DEV_DIR`/`~/Code/joelhooks/joelclaw-observer` against `OBSERVER_RELEASE_DIR`/`~/.joelclaw/observer-release`; the existing tick warning surface will carry the warning.
