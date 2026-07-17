@@ -310,3 +310,86 @@ credentials were absent from this shell:
   and the poll deadline began before enqueue completed. Fixed with TERM/KILL
   command timeouts, a post-enqueue poll deadline, and the timing regression
   above. No blocker or remaining medium finding.
+
+## Telegram formatting repair — 2026-07-17
+
+No gateway restart, acting/shadow flag change, commit, or push was performed.
+The acting flag remains off and the legacy Telegram owner remains healthy.
+
+### Source truth and fix
+
+- `@joelclaw/markdown-formatter`'s existing `TelegramConverter` emits Telegram
+  HTML. It remains unchanged because explicit HTML sends and streaming depend
+  on it.
+- The pinned `@chat-adapter/telegram@4.34.0` exports the MarkdownV2 converter
+  the SDK itself uses. `packages/gateway/src/telegram-markdown.ts` now owns one
+  shared preflight around that converter. Both paths therefore agree on
+  MarkdownV2 escaping without feeding HTML into the SDK.
+- Default/markdown legacy sends now use `parse_mode: "MarkdownV2"`. Conversion
+  failures and unsafe overlength legacy messages become raw plain text. A
+  definitive Telegram 400 gets one plain retry; ambiguous transport failures
+  remain unknown and are never retried.
+- Contract-v2 sends now honor the route's `formatting` field. Telegram markdown
+  is preflighted and posted as SDK markdown; formatter failure becomes raw
+  plain text. Plain routes post raw content. The SDK retains its own rich-message
+  → MarkdownV2 → plain fallback and its 4,096-character bound.
+- Blank lines remain `\n\n` paragraph boundaries. Source `- item` lines are
+  normalized to visible `• item` bullets before both rendering paths, including
+  plain fallback.
+
+### Verification
+
+- Focused legacy/helper/SDK suite — 27 pass, 0 fail. Fixtures cover two
+  paragraphs, a three-item bullet list, bold, link, emoji, and MarkdownV2-hostile
+  `. ! - ( )` characters.
+- The same suite proves legacy and SDK MarkdownV2 400 fallback, no retry after
+  ambiguous legacy transport failure or SDK 5xx, and bounded SDK formatted/plain
+  payloads.
+- `bun test packages/gateway/src` — 184 pass, 0 fail after the paragraph/list
+  amendment and explicit plain-route bullet coverage.
+- `pnpm --filter @joelclaw/markdown-formatter exec vitest run __tests__` — 21
+  pass, 0 fail.
+- `pnpm exec tsc --noEmit -p packages/gateway/tsconfig.json` — green.
+- `bunx tsc --noEmit` — green after the paragraph/list amendment.
+- Targeted Biome over all touched gateway TypeScript — green.
+- `pi-notes brain check` — 235 pages, green.
+- `git diff --check` — green.
+- Final fresh-context review — clean; no blocker, high, or medium findings.
+
+### Live legacy proof
+
+The corrected proof required by Joel's paragraph/list amendment was sent through
+`joelclaw notify send --priority urgent --telegram-only`; the running gateway
+reported legacy Telegram ownership and drained the queue to zero. This proves
+the live legacy runtime, not the un-restarted source edits.
+
+- Event: `17854edf-cb0b-44fc-a549-c92346eb34c1`
+- Flow: `notify:17854edf-cb0b-44fc-a549-c92346eb34c1`
+- Producer: `formatting-canary-amended`
+- Envelope body:
+
+  ```text
+  **Telegram formatting proof** 💅
+
+  Paragraph two keeps its breathing room and includes [the messaging runbook](https://brain.joelclaw.com/).
+
+  - bold renders
+  - links stay clickable
+  - bullets stay readable
+  ```
+
+An earlier proof (`72702daf-f06f-42aa-bc2b-eea92b698211`) was sent before Joel
+added the paragraph/list requirement. The corrected event above supersedes it.
+
+### Concurrent commit contamination
+
+This worker made no commit or push. During the task, another same-worktree Fable
+session committed and pushed `053d2156` as Joel. That commit swept this worker's
+in-progress `channels/telegram.ts` formatting edits together with its reaction
+poller change, but omitted the new untracked `telegram-markdown.ts` dependency.
+Readback proves `origin/main:packages/gateway/src/channels/telegram.ts` imports
+`../telegram-markdown` while `origin/main:packages/gateway/src/telegram-markdown.ts`
+is missing. Local checks are green because the helper remains present and
+uncommitted in this worktree. Steering must include the helper and remaining
+formatting files in its reviewed promotion; do not mistake current `origin/main`
+for a self-contained build.

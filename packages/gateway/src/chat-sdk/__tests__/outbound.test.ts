@@ -4,7 +4,11 @@ import type {
   OutboundIntent,
   RoutingTable,
 } from "@joelclaw/message-contract";
-import { MESSAGE_CONTRACT_VERSION, mintFlowId } from "@joelclaw/message-contract";
+import {
+  MESSAGE_CONTRACT_VERSION,
+  mintFlowId,
+  ROUTING_TABLE_V2,
+} from "@joelclaw/message-contract";
 import type { JournalEventInput } from "@joelclaw/message-journal";
 import {
   CHAT_SDK_VERSION,
@@ -26,6 +30,18 @@ import { recordShadowComparison, runOutboundShadow } from "../shadow";
 const TELEGRAM_DELIVER_POLICY = {
   route: async () => ({ disposition: "deliver" as const }),
 };
+
+const CURATOR_DM = [
+  "**The memory layer caught its own blind spot.** 🧠",
+  "",
+  "A smol move: read [the receipt](https://example.com/a-(b)) - then decide!",
+  "",
+  "- keep the paragraphs",
+  "- render the bullets",
+  "- escape nasty punctuation: . ! - ( )",
+].join("\n");
+
+const CURATOR_NORMALIZED = CURATOR_DM.replace(/^(\s*)[-*+]\s+/gm, "$1• ");
 
 const UUIDS = [
   "11111111-1111-4111-8111-111111111111",
@@ -125,13 +141,17 @@ describe("Chat SDK outbound v1", () => {
     );
   });
 
-  test("routes, sends, journals the platform id, and returns a receipt", async () => {
+  test("routes markdown through Telegram's native formatter, journals the platform id, and returns a receipt", async () => {
     const journal = makeJournal();
+    let posted: unknown;
     const send = makeOutboundSender({
       adapters: {
         telegram: {
           openDM: async () => "telegram:7",
-          postMessage: async (threadId) => ({ id: "7:42", threadId }),
+          postMessage: async (threadId, message) => {
+            posted = message;
+            return { id: "7:42", threadId };
+          },
         },
       },
       journal,
@@ -147,7 +167,10 @@ describe("Chat SDK outbound v1", () => {
       })(),
     });
 
-    const receipt = await send(intent());
+    const receipt = await send({ ...intent(), content: CURATOR_DM });
+    expect(posted).toEqual({ markdown: CURATOR_NORMALIZED });
+    expect((posted as { markdown: string }).markdown).toContain("\n\nA smol move");
+    expect((posted as { markdown: string }).markdown).toContain("\n\n• keep the paragraphs");
     expect(receipt.data.platformMessageId).toBe("7:42");
     expect(receipt.data.deliveryState).toBe("confirmed");
     expect(journal.rows.map((row) => row.eventType)).toEqual([
@@ -157,6 +180,67 @@ describe("Chat SDK outbound v1", () => {
     expect(journal.rows[1]?.messageKey).toBe("telegram:7:42");
     expect(journal.rows[1]?.telegramMessageId).toBe(42);
     expect(journal.anchors.get(`telegram:${flow(0)}`)?.platformMessageId).toBe("7:42");
+  });
+
+  test("honors a plain route with a raw Chat SDK postable", async () => {
+    const journal = makeJournal();
+    let posted: unknown;
+    const send = makeOutboundSender({
+      adapters: {
+        telegram: {
+          openDM: async () => "telegram:7",
+          postMessage: async (threadId, message) => {
+            posted = message;
+            return { id: "7:42", threadId };
+          },
+        },
+      },
+      journal,
+      routingTable: {
+        ...ROUTING_TABLE_V2,
+        routes: {
+          ...ROUTING_TABLE_V2.routes,
+          memory: { ...ROUTING_TABLE_V2.routes.memory, formatting: "plain" },
+        },
+      },
+      resolveTarget: () => "7",
+      mintFlowId: () => flow(0),
+      telegramPolicy: TELEGRAM_DELIVER_POLICY,
+    });
+
+    await send({ ...intent(), content: CURATOR_DM });
+    expect(posted).toEqual({ raw: CURATOR_NORMALIZED });
+    expect((posted as { raw: string }).raw).toContain("\n\n• keep the paragraphs");
+  });
+
+  test("fails soft to a raw plain postable when Telegram markdown conversion fails", async () => {
+    const journal = makeJournal();
+    let posted: unknown;
+    const send = makeOutboundSender({
+      adapters: {
+        telegram: {
+          openDM: async () => "telegram:7",
+          postMessage: async (threadId, message) => {
+            posted = message;
+            return { id: "7:42", threadId };
+          },
+        },
+      },
+      journal,
+      resolveTarget: () => "7",
+      mintFlowId: () => flow(0),
+      telegramPolicy: TELEGRAM_DELIVER_POLICY,
+      prepareTelegramMarkdown: () => ({
+        ok: false,
+        markdownV2: null,
+        plainText: "curator fallback",
+        postable: { raw: "curator fallback" },
+        error: new Error("fixture conversion failure"),
+      }),
+    });
+
+    await send({ ...intent(), content: "**curator fallback**" });
+    expect(posted).toEqual({ raw: "curator fallback" });
   });
 
   test("runs Telegram policy before the adapter and returns suppression", async () => {

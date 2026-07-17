@@ -30,7 +30,10 @@ import {
   resolveTelegramMessageFlow,
 } from "../message-journal";
 import type { OutboundEnvelope } from "../outbound/envelope";
-import { prepareTelegramMarkdown } from "../telegram-markdown";
+import {
+  normalizeTelegramBulletLines,
+  prepareTelegramMarkdown,
+} from "../telegram-markdown";
 import {
   routeTelegramOutbound,
   type TelegramOutboundPolicyContext,
@@ -162,9 +165,10 @@ function formatByEnvelope(
   format: OutboundEnvelope["format"] | undefined,
 ): TelegramFormattedOutput {
   if (format === "plain") {
+    const plainText = normalizeTelegramBulletLines(text);
     return {
-      text,
-      plainText: text,
+      text: plainText,
+      plainText,
     };
   }
 

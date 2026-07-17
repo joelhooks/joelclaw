@@ -25,6 +25,12 @@ import {
   rememberTelegramMessageFlow,
 } from "../message-journal";
 import {
+  normalizeTelegramBulletLines,
+  type PreparedTelegramMarkdown,
+  prepareTelegramMarkdown,
+  type TelegramPostableMessage as SdkPostableMessage,
+} from "../telegram-markdown";
+import {
   routeTelegramOutbound,
   telegramConversationReplyExemption,
 } from "../telegram-outbound-policy";
@@ -38,7 +44,10 @@ export interface SdkSentMessage {
 
 export interface SdkDeliveryAdapter {
   readonly openDM: (userId: string) => Promise<string>;
-  readonly postMessage: (threadId: string, content: string) => Promise<SdkSentMessage>;
+  readonly postMessage: (
+    threadId: string,
+    message: SdkPostableMessage,
+  ) => Promise<SdkSentMessage>;
 }
 
 export interface OutboundFlowAnchor {
@@ -77,6 +86,7 @@ export interface OutboundSenderDependencies {
   readonly resolveTarget?: (platform: MessagePlatformType) => string | undefined;
   readonly mintFlowId?: () => FlowIdType;
   readonly telegramPolicy?: TelegramPolicyPort;
+  readonly prepareTelegramMarkdown?: (markdown: string) => PreparedTelegramMarkdown;
 }
 
 const flowAnchors = new Map<string, OutboundFlowAnchor>();
@@ -310,8 +320,8 @@ export function createSdkDeliveryAdapters(
       ? {
           telegram: {
             openDM: (userId: string) => runtime.adapters.telegram!.openDM(userId),
-            postMessage: (threadId: string, content: string) =>
-              runtime.adapters.telegram!.postMessage(threadId, { markdown: content }),
+            postMessage: (threadId: string, message: SdkPostableMessage) =>
+              runtime.adapters.telegram!.postMessage(threadId, message),
           },
         }
       : {}),
@@ -319,8 +329,8 @@ export function createSdkDeliveryAdapters(
       ? {
           slack: {
             openDM: (userId: string) => runtime.adapters.slack!.openDM(userId),
-            postMessage: (threadId: string, content: string) =>
-              runtime.adapters.slack!.postMessage(threadId, { markdown: content }),
+            postMessage: (threadId: string, message: SdkPostableMessage) =>
+              runtime.adapters.slack!.postMessage(threadId, message),
           },
         }
       : {}),
@@ -328,8 +338,8 @@ export function createSdkDeliveryAdapters(
       ? {
           discord: {
             openDM: (userId: string) => runtime.adapters.discord!.openDM(userId),
-            postMessage: (threadId: string, content: string) =>
-              runtime.adapters.discord!.postMessage(threadId, { markdown: content }),
+            postMessage: (threadId: string, message: SdkPostableMessage) =>
+              runtime.adapters.discord!.postMessage(threadId, message),
           },
         }
       : {}),
@@ -463,7 +473,12 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
       }
 
       const threadId = replyAnchor ? replyThreadId(replyAnchor) : await adapter.openDM(target);
-      const sent = await adapter.postMessage(threadId, intent.content);
+      const postable = route.formatting === "plain"
+        ? { raw: normalizeTelegramBulletLines(intent.content) } as const
+        : route.platform === "telegram"
+          ? (dependencies.prepareTelegramMarkdown ?? prepareTelegramMarkdown)(intent.content).postable
+          : { markdown: intent.content } as const;
+      const sent = await adapter.postMessage(threadId, postable);
       const platformMessageId = sent.id.trim();
       if (!platformMessageId) {
         throw new Error(`${route.platform} adapter returned no platform message id`);
