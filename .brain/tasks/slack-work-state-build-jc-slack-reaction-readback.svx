@@ -1,0 +1,23 @@
+---
+title: "Worker task: build jc-slack reaction read-back"
+type: "task"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Worker task: build jc-slack reaction read-back
+
+You are a worker on the effort [Slack Work-State: Reactions as Truth, Observed](../projects/slack-work-state/slack-work-state-brief.svx).
+Your step (already claimed for you): [Build jc-slack Reaction Read-Back](../projects/slack-work-state/build-jc-slack-reaction-readback.svx) — read the brief and the step file in full before coding.
+
+Repo: `~/Code/joelhooks/jc-slack` (plain git — do NOT commit; Effect v4; gates: `bun run typecheck`, `bun run lint`, `bun run format`, `bun run test`). Study the existing `react` command (src/cli.ts, src/slack-reader.ts, src/domain.ts) and match its idioms exactly: closed `SlackMethod` union, typed `SlackContextError` failures with `fix`, envelope contract, fixture reader parity, bounded output with explicit truncation flags.
+
+Deliverables:
+1. Reactions mapped into `ContextMessage` (from the `reactions` array Slack already returns on `conversations.replies`) — name + count + whether Joel reacted; cap entries and flag truncation like attachments.
+2. `jc-slack board <channel-name-or-id> [--limit N]` — recent thread roots classified untagged / started (`:shitrat:`) / shipped (`:white_check_mark:`) from root reactions. Add `conversations.history` to the method union (a read; the sole write stays `reactions.add`). Resolve channel names via the existing listChannels path. `next_actions` chain into `jc-slack context` / `jc-slack react`.
+3. Tests for both (fixture + fake-transport live paths), README table + boundary section updated.
+4. Live check: run `board` against #cc-matt-p (C0211NSK3TP) and confirm it classifies Matt's CMS-token root (ts 1784281556.387689) as started.
+
+Then edit the STEP file: fill `## Result (2026-07-17)` with what was built, the live-check output summary, and any facts later steps depend on; flip `status: "closed"` and add `closed_at`. Append one ledger line to the brief's Decision ledger. Do not touch dark-wizard (steering session owns the catalog line).
+
+Work autonomously, do not commit, print a DONE summary.

@@ -1,0 +1,60 @@
+---
+title: "Slack Work-State: Reactions as Truth, Observed"
+type: "brief"
+status: "active"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Slack Work-State: Reactions as Truth, Observed
+
+## Finish line
+
+Any agent (or Joel) can ask "what Slack-prompted work is untagged / in flight /
+shipped?" and get a truthful answer computed from the reactions on Slack root
+messages themselves — no second store. An agent acting on any item considers
+FULL context: the message, its thread, the channel, related email/Front
+threads, `.brain` projects, and memory/observations (Joel, 2026-07-17). A
+periodic observer pass (hourly-ish, Inngest, riding the stream-observation
+machinery) analyzes allowlisted channels — #cc-matt-p first — and surfaces
+untagged requests and stale in-flight tags as observation pages plus
+dispatcher wakes. Maintained = the pass runs durably with per-stage receipts
+and one easy funnel/trace command (observability launch gate), and the answer
+stays truthful because Slack stays the only store.
+
+## Vocabulary
+
+- **work-state** — the lifecycle state of a Slack-prompted work item, computed from reactions on the thread root: no tag = untagged, `:shitrat:` = started, `:white_check_mark:` = shipped. Slack is the only store (fleet rule `slack-work-tagging`).
+- **tag** — the act of writing that reaction via `jc-slack react`; always the root, idempotent, rides Joel's user token.
+- **board** — a query listing a channel's roots by work-state; computed live from Slack, never cached as truth.
+- **full context** — what an agent consults before acting on an item: message, thread, channel, related email/Front, `.brain` projects, memory/observations. The reaction is the state marker, never the whole story.
+- **the pass** — the periodic observer analysis over allowlisted channels; emits observation pages and dispatcher wakes, per wake-dont-feed.
+
+## Notes
+
+- Domain: joelclaw gateway/system-bus + jc-slack tooling; driving use-case is Matt requests in #cc-matt-p (AI Hero support).
+- Adjacency (machinery lives there, do not fork it): [stream-observation](../stream-observation/stream-observation-brief.svx) — Slack realtime ingress live since 2026-07-13 (Socket Mode → gateway → Inngest → Typesense `channel_messages`), observer tick, wake-dont-feed dispatcher decision. [observational-memory](../observational-memory/observational-memory-brief.svx) — Observer/Reflector write loop. [recall-consumption](../recall-consumption/recall-consumption-brief.svx) — where full-context assembly ultimately lives.
+- Standing call (Joel, 2026-07-17): **Slack IS the state.** Reactions on roots are canonical; the feed/observer only notices and remembers — never a second source of truth.
+- Standing call (Joel, 2026-07-17): pass findings emit **observation page + dispatcher wake** — no new notification path; respects wake-dont-feed (stream-observation ledger).
+- Standing call (Joel, 2026-07-17): **Matt's reactions are not workflow signals yet** — the convention is one-directional for now (see Latent).
+- Prior work this effort builds on: `jc-slack react` shipped 2026-07-17 (jc-slack 08ddbcb), fleet rule `slack-work-tagging` (dark-wizard eaf9bcb). Our own tags ride Joel's user token, so the gateway's `reaction_added` tap already sees them.
+- Adjacency (reaction consumption + beat pattern): [messaging-stabilization](../messaging-stabilization/messaging-stabilization-brief.svx) shipped the reactions bridge 2026-07-17 (joelclaw f26064c3): `message/reaction-bridge` + `message/neat-memory-reaction-grade` Inngest fns, emoji→flowId→outcome grading, Telegram-proven. The neat-memory curator's scheduled beat (`~/.joelclaw/observer-release/bin/neat-memory.sh`, self-rescheduling) is the reference shape for the pass; reaction consumption extends the bridge vocabulary, it does not fork it.
+- **Execution authorization (Joel, 2026-07-17)**: [Build jc-slack Reaction Read-Back](./build-jc-slack-reaction-readback.svx) is authorized build work — worker builds, steering session reviews and commits. The pass build gets its authorization from the decide step's resolution, not this note.
+- Skills every session should consult: `grill-master` (this file's law), `messaging` (gateway contract), repo `joelclaw` skill.
+
+## Decision ledger
+
+<!-- one line per closed step: gist + link -->
+
+## Latent
+
+- Matt's reactions as an acknowledge loop (Matt ✅ = confirmed received) — needs gateway change to act on non-Joel reactions.
+- Extending work-tagging beyond #cc-matt-p / beyond Matt (other channels, other senders, Front email).
+- Auto-✅ when a herdr workspace that claimed the work closes clean.
+- A one-shot full-context assembly command (thread + Front + `.brain` + observations for a given permalink) — likely graduates into recall-consumption, not here.
+
+## Out of scope
+
+- Posting, replying, or acting in Slack from the pass — read-only forever (stream-observation standing law); the only Slack write anywhere stays `reactions.add` via jc-slack.
+- A ShitRat bot identity for tagging — tags deliberately read as Joel ([shitrat-slack-familiar](../shitrat-slack-familiar.svx) stays its own shaping project).
+- Editorial presentation of findings (Bugle owns it).

@@ -1,0 +1,37 @@
+---
+title: "Decide the Work-State Pass Shape"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./slack-work-state-brief.svx"
+blockers: ["./verify-slack-ingress-coverage.svx"]
+created_at: "2026-07-17"
+---
+
+# Decide the Work-State Pass Shape
+
+## Step
+
+With ingress facts in hand, grill Joel to settle the pass:
+
+- **Trigger**: hourly Inngest cron vs joining the existing observer tick
+  (stream-observation) — one durable machine, not two.
+- **Input**: live Slack read (board-style, truth) vs the ingested
+  `channel_messages` stream (cheaper, but only as fresh as ingress) — or
+  read ingested, verify live before waking.
+- **Scope**: channel allowlist (cc-matt-p first; what else, if anything).
+- **Findings + thresholds**: what counts as a "request" root; untagged-for-N-hours
+  nudge threshold; :shitrat:-without-✅-for-N-days staleness threshold.
+- **Emission**: observation page schema (provenance: permalink, root ts,
+  work-state, thresholds crossed) + dispatcher wake payload, per
+  wake-dont-feed; who gets woken.
+- **Observability**: the per-stage receipts + funnel/trace command the launch
+  gate demands, asserted at first enable (live-remainders-must-block).
+- **Authorization**: the resolution states whether the build step is
+  authorized and what its done-condition is.
+
+## Result (YYYY-MM-DD)
+
+<!-- added at resolution -->

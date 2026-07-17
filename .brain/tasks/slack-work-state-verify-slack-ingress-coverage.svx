@@ -1,0 +1,17 @@
+---
+title: "Worker task: verify Slack ingress coverage for cc-matt-p + reactions"
+type: "task"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Worker task: verify Slack ingress coverage for cc-matt-p + reactions
+
+You are a research worker on the effort [Slack Work-State: Reactions as Truth, Observed](../projects/slack-work-state/slack-work-state-brief.svx).
+Your step (already claimed for you): [Verify Slack Ingress Coverage for cc-matt-p and Reaction Events](../projects/slack-work-state/verify-slack-ingress-coverage.svx) — read the brief and the step file in full first; the step body is the fact list.
+
+Ground rules: READ-ONLY on live systems — no config changes, no daemon or worker restarts, no Slack writes. You are on flagg; the gateway, Inngest bus, and Typesense run here. Useful surfaces: `packages/gateway/src/channels/slack.ts` (importantChannelIds plumbing — find where runtime values come from: env, config file, or launch args), gateway launchd/launch logs, `joelclaw` CLI (event inspection, e.g. `joelclaw event <id>`), Typesense `channel_messages` collection (find the query path other code uses), `packages/gateway/src/chat-sdk-inbound/taps.ts` (reaction taps), and the reactions bridge shipped today (`message/reaction-bridge`, commit f26064c3).
+
+Deliver the answers to the step's three questions with receipts (commands run, counts, config locations, exact code paths). Write the asset file `.brain/projects/slack-work-state/slack-ingress-coverage-2026-07-17.svx` (frontmatter: `type: "asset"`, `parent: "./verify-slack-ingress-coverage.svx"`, `title`, `created_at: "2026-07-17"`, `privacy: "private"`). Then edit the STEP file: `## Result (2026-07-17)` summarizing the three answers + the named gap/smallest-change if any; flip `status: "closed"`, add `closed_at`. Append one ledger line to the brief's Decision ledger.
+
+Work autonomously, do not commit, print a DONE summary.

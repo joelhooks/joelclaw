@@ -1,0 +1,41 @@
+---
+title: "Build jc-slack Reaction Read-Back (context reactions + board query)"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane w1A:p2, 2026-07-17)"
+parent: "./slack-work-state-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Build jc-slack Reaction Read-Back (context reactions + board query)
+
+## Step
+
+Make work-state readable where it lives. In `~/Code/joelhooks/jc-slack`
+(plain git, Effect v4, gates: `bun run typecheck|lint|format|test`):
+
+1. **Reactions in context packs** — `conversations.replies` already returns a
+   `reactions` array per message (`[{name, users, count}]`). Map it into
+   `ContextMessage` (bounded: cap entries like attachments) so `jc-slack
+   context` shows who reacted what, root included.
+2. **Board query** — `jc-slack board <channel-name-or-id> [--limit N]`
+   listing recent thread roots by work-state (untagged / started / shipped),
+   computed from `:shitrat:` / `:white_check_mark:` reactions on the root.
+   Read methods only (`conversations.history` joins the closed method set —
+   still no new writes). Envelope contract: `ok`, typed failures with `fix`,
+   explicit truncation flags, `next_actions` chaining into `context`/`react`.
+3. README + fixture coverage per repo idiom.
+
+Resolved when: gates green, board output truthfully classifies #cc-matt-p's
+current roots (live check), and the catalog line in dark-wizard TOOLS.md +
+tools-catalog block mentions `board` (steering session grafts + pushes).
+
+Authorized build work per the brief's Notes (Joel, 2026-07-17). Worker does
+not commit — steering session reviews, commits, pushes.
+
+## Result (YYYY-MM-DD)
+
+<!-- added at resolution -->

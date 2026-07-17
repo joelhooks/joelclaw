@@ -1,0 +1,29 @@
+---
+title: "Build the Work-State Pass"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./slack-work-state-brief.svx"
+blockers: ["./decide-work-state-pass-shape.svx"]
+created_at: "2026-07-17"
+---
+
+# Build the Work-State Pass
+
+## Step
+
+Implement the pass exactly as [Decide the Work-State Pass Shape](./decide-work-state-pass-shape.svx)
+resolves it — trigger, input, scope, thresholds, emission, observability.
+Execution authorization comes from that resolution, not this file.
+
+Resolved when: the pass runs on its decided cadence with per-stage receipts,
+its funnel/trace command answers "what did the last pass see and emit," a
+seeded scenario (untagged root, stale :shitrat:) produces the decided
+observation page + dispatcher wake end-to-end, and behavior at enable is
+asserted live (config-green alone is not done).
+
+## Result (YYYY-MM-DD)
+
+<!-- added at resolution -->
