@@ -1,0 +1,57 @@
+---
+title: "Reaction handling needs an intent classifier, not deterministic mapping"
+type: "task"
+status: "ready"
+created_at: "2026-07-17"
+privacy: "private"
+tags:
+  - telegram-signal-system
+  - reactions
+---
+
+# Reaction handling needs an intent classifier
+
+## Decision (Joel, 2026-07-17)
+
+Deterministic reaction→intent mapping is a dead end. Telegram exposes a
+huge and open reaction set (the standard emoji set plus custom/premium
+emoji), so you cannot enumerate a reaction→action table that survives
+contact with how Joel actually reacts. "Deterministic processing is
+no-joy."
+
+The right model: an **intent classifier**. When Joel drops any reaction
+on a signal/digest/action message, classify the reaction (+ the message
+it's on, + light context) into an intent — acknowledge, dismiss, snooze,
+approve, "good", "not now", etc. — rather than pattern-matching the
+literal emoji. Whatever he taps, infer what he meant.
+
+## Why this fits the system
+
+- The Chat SDK already consumes reaction/reply events by `flowId`
+  (see the `messaging` skill / chat-sdk work), so the plumbing to
+  receive a reaction on a known message exists. The gap is
+  interpretation, not transport.
+- It mirrors the outbound side: we stopped keyword-scanning message
+  content and started classifying by producer/intent. Inbound
+  reactions deserve the same — classify intent, don't table-match.
+- Buttons stay the precise path (explicit `act:` callbacks with
+  receipts); reactions become the loose, forgiving path where the
+  classifier maps a casual tap to the same underlying action.
+
+## Build (when picked up)
+
+- A small classifier (LLM via `pi`, not a paid key) that takes
+  `{ reaction, messageText, flowId, availableIntents }` → an intent +
+  confidence.
+- Map the classified intent onto the existing action registry /
+  `handleDigestActionCallback` path so a reaction and a button press
+  converge on the same receipt-gated mutation.
+- Low-confidence → do nothing (or a gentle "did you mean…"), never a
+  wrong destructive action from a misread emoji.
+- Non-actionable reactions (👍 on an FYI) are fine to just log.
+
+## Non-goals
+
+- No enumerated emoji→action table.
+- Don't let a reaction trigger a `Done`-class source mutation without
+  the same safety the button path has (readback, receipt).
