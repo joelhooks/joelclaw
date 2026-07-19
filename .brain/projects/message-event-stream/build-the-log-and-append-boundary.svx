@@ -3,9 +3,7 @@ title: "Build the Log and the Append Boundary"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "blocked"
-blocked_by:
-  - "./research-inventory-every-lane.svx"
+status: "ready"
 parent: "./message-event-stream-brief.svx"
 created_at: "2026-07-19"
 ---
