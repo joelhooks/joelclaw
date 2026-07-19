@@ -16,8 +16,10 @@ The gateway daemon is the always-on pi session that receives events from Inngest
 ## CLI Commands
 
 ```bash
+joelclaw gateway doctor    # PASS/FAIL process, live source tree, Redis, adapter, and poller
+joelclaw gateway doctor --live  # Full notify path; requires Telegram platformMessageId
 joelclaw gateway status    # Daemon availability, runtime mode, session pressure, Redis health
-joelclaw gateway restart   # Roll daemon, clean Redis, fresh session
+joelclaw gateway restart   # Roll daemon, then print the doctor summary
 joelclaw gateway enable    # Re-enable launch agent + start daemon
 joelclaw gateway test      # Push test event, verify delivery (Redis bridge path)
 joelclaw gateway push --type <type> [--payload JSON]  # Push an event to all sessions
@@ -28,7 +30,9 @@ joelclaw gateway channel {list|status|enable|disable}  # Enable/disable runtime 
 joelclaw gateway behavior {add|list|promote|remove|apply|stats}  # ADR-0211 behavior control plane
 ```
 
-`joelclaw gateway restart` is the canonical restart. It kills the process, cleans Redis state, re-enables `com.joel.gateway` if launchd disabled it, waits for launchd to respawn, and verifies the new session. `joelclaw gateway enable` is the direct recovery path when launchd drift disabled the service. Never use `launchctl bootout/bootstrap` directly.
+`joelclaw gateway restart` is the canonical restart. It kills the process, cleans Redis state, re-enables `com.joel.gateway` if launchd disabled it, waits for launchd to respawn, records the operator restart marker, and prints the doctor summary. `joelclaw gateway enable` is the direct recovery path when launchd drift disabled the service. Never use `launchctl bootout/bootstrap` directly.
+
+The live daemon executes source from the main joelclaw working tree. Never carry gateway-touching WIP there. Use a separate Git worktree so a daemon crash cannot relaunch half-edited code. `gateway doctor` makes a running daemon plus dirty gateway runtime source a loud failure. Its `--live` proof requires a real Telegram `platformMessageId`; `confirmed` telemetry without that ID is not delivery proof.
 
 ## Channel enable/disable
 
@@ -60,10 +64,10 @@ If Colima is down or node/core pods are not healthy, recover substrate before ga
 Run in order, stop at first failure:
 
 ```bash
-joelclaw gateway status    # 1. Is it alive? Sessions registered?
-joelclaw gateway test      # 2. Can events flow end-to-end?
-joelclaw gateway events    # 3. Are events piling up? (backpressure)
-joelclaw gateway restart   # 4. If stuck, restart
+joelclaw gateway doctor          # 1. Process, source, Redis, adapter, poller
+joelclaw gateway doctor --live   # 2. Real Telegram delivery with platformMessageId
+joelclaw gateway diagnose        # 3. Deep evidence when doctor fails
+joelclaw gateway restart         # 4. Restart and print doctor summary
 ```
 
 If `joelclaw gateway status` shows pending > 0 on sessions, the agent is mid-stream or stuck. If it persists after a minute, restart.

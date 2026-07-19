@@ -1,0 +1,32 @@
+---
+title: Live gateway daemon relaunched dirty working-tree source
+status: resolved
+date: 2026-07-19
+---
+
+# Live gateway daemon relaunched dirty working-tree source
+
+## Incident
+
+Telegram delivery stopped after the gateway daemon crash-relaunched at 10:21:55 PT. The launch daemon executed `packages/gateway/src/daemon.ts` directly from the main joelclaw working tree while an unstaged multi-file messaging edit was incomplete.
+
+A direct Telegram Bot API `sendMessage` succeeded, which proved the token, chat, and API were healthy. One notify probe reached `notify.compat_v2.confirmed` without visible delivery, so confirmed telemetry was not sufficient proof. A clean-source gateway restart restored queued-to-confirmed delivery, and Joel confirmed the message arrived.
+
+## Hard rule
+
+The main joelclaw checkout is a live runtime surface. It must remain runnable at every instant.
+
+All gateway-touching work must use a separate Git worktree. Do not carry multi-file gateway WIP in the live checkout. A running daemon plus dirty gateway runtime source is an operator-visible failure.
+
+## Guardrail
+
+`joelclaw gateway doctor` reports glanceable PASS/FAIL stages for:
+
+1. daemon PID, start time, uptime, and crash-relaunch provenance against the last operator restart marker
+2. CLEAN or DIRTY gateway runtime source
+3. Redis, Chat SDK adapter, and Telegram poller state
+4. optional real Telegram delivery through `--live`
+
+The live probe passes only when the normal notify path returns a non-empty Telegram `platformMessageId`. `confirmed` telemetry without a platform message ID does not prove delivery.
+
+`joelclaw gateway restart` records the operator restart marker and includes the doctor summary when it completes.

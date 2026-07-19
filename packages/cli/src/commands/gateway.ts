@@ -2,8 +2,14 @@ import { execSync } from "node:child_process"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
+import { executeCapabilityCommand } from "../capabilities/runtime"
 import { type NextAction, respond, respondError } from "../response"
 import { gatewayBehaviorCmd } from "./gateway-behavior"
+import {
+  collectGatewayDoctor,
+  type GatewayLiveProbeReceipt,
+  writeGatewayRestartMarker,
+} from "./gateway-doctor"
 
 const SESSIONS_SET = "joelclaw:gateway:sessions"
 const GATEWAY_HEALTH_MUTED_CHANNELS_KEY = "gateway:health:muted-channels"
@@ -1318,6 +1324,65 @@ const gatewayUnmute = Command.make(
     }),
 ).pipe(Command.withDescription("Remove a channel from muted health alerts"))
 
+// ── gateway doctor ──────────────────────────────────────────────────
+
+const gatewayDoctorLive = Options.boolean("live").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Send a real notify probe and require a Telegram platformMessageId"),
+)
+
+type GatewayDoctorNotifySendResult = { readonly eventId: string }
+type GatewayDoctorNotifyWaitResult = GatewayLiveProbeReceipt
+
+async function runGatewayDoctorLiveProbe(): Promise<GatewayLiveProbeReceipt> {
+  const eventId = crypto.randomUUID()
+  const source = "cli/gateway-doctor"
+  const sendResult = await Effect.runPromise(
+    executeCapabilityCommand<GatewayDoctorNotifySendResult>({
+      capability: "notify",
+      subcommand: "send",
+      args: {
+        message: `Gateway doctor live delivery probe · ${new Date().toISOString()}`,
+        channel: "gateway",
+        priority: "high",
+        source,
+        kind: "ask",
+        context: { probe: "gateway-doctor", proof: "telegram-platform-message-id" },
+        telegramOnly: false,
+        eventId,
+      },
+    }),
+  )
+  const receipt = await Effect.runPromise(
+    executeCapabilityCommand<GatewayDoctorNotifyWaitResult>({
+      capability: "notify",
+      subcommand: "wait",
+      args: { eventId: sendResult.eventId, source, timeoutSeconds: 30 },
+    }),
+  )
+  return { ...receipt, eventId: sendResult.eventId }
+}
+
+const gatewayDoctor = Command.make("doctor", { live: gatewayDoctorLive }, ({ live }) =>
+  Effect.gen(function* () {
+    const report = yield* Effect.promise(() => collectGatewayDoctor(
+      { live },
+      live ? { liveProbe: runGatewayDoctorLiveProbe } : {},
+    ))
+    const remediation = report.stages
+      .filter((stage) => stage.status === "FAIL")
+      .flatMap((stage) => stage.remediation)
+      .filter((command, index, all) => all.indexOf(command) === index)
+    const nextActions: NextAction[] = remediation.length > 0
+      ? remediation.map((command) => ({ command, description: "Repair a failed gateway doctor stage" }))
+      : live
+        ? [{ command: "joelclaw gateway status", description: "Inspect detailed gateway state" }]
+        : [{ command: "joelclaw gateway doctor --live", description: "Prove Telegram delivery with a platform message id" }]
+
+    yield* Console.log(respond("gateway doctor", report, nextActions, report.ok))
+  }),
+).pipe(Command.withDescription("Glanceable gateway safety check; --live proves Telegram delivery"))
+
 // ── gateway restart ─────────────────────────────────────────────────
 
 const gatewayRestart = Command.make("restart", {}, () =>
@@ -1335,6 +1400,17 @@ const gatewayRestart = Command.make("restart", {}, () =>
     }
 
     const oldPid = readGatewayPidFile() ?? launchd.pid ?? findGatewayDaemonPid()
+    const warnings: string[] = []
+    const restartRequestedAt = new Date().toISOString()
+    try {
+      writeGatewayRestartMarker({
+        status: "requested",
+        requestedAt: restartRequestedAt,
+        previousPid: oldPid,
+      })
+    } catch (error) {
+      warnings.push(`operator restart marker write failed: ${String(error)}`)
+    }
 
     const redis = yield* makeRedis()
     yield* Effect.tryPromise({
@@ -1364,7 +1440,6 @@ const gatewayRestart = Command.make("restart", {}, () =>
       waited += 500
     }
 
-    const warnings: string[] = []
     const installerRequired =
       launchd.domain === "system"
       && !existsSync(launchd.plistPath)
@@ -1422,11 +1497,37 @@ const gatewayRestart = Command.make("restart", {}, () =>
     }
     if (launchdAfter.disabled === true) warnings.push(`launchd service ${launchdAfter.service} still disabled after restart`)
 
-    const ok = !!newPid && launchdAfter.disabled !== true
-    const nextActions: NextAction[] = [
-      { command: "joelclaw gateway status", description: "Verify sessions registered" },
-      { command: "joelclaw gateway test", description: "Push test event to verify" },
-    ]
+    const restarted = !!newPid && launchdAfter.disabled !== true
+    try {
+      writeGatewayRestartMarker({
+        status: restarted ? "completed" : "failed",
+        requestedAt: restartRequestedAt,
+        completedAt: new Date().toISOString(),
+        previousPid: oldPid,
+        newPid,
+      })
+    } catch (error) {
+      warnings.push(`operator restart marker completion failed: ${String(error)}`)
+    }
+
+    const postRestartHealth = newPid
+      ? yield* Effect.promise(() => waitForGatewayHealthSnapshot(15_000))
+      : null
+    const doctor = yield* Effect.promise(() => collectGatewayDoctor(
+      { live: false },
+      { health: async () => postRestartHealth },
+    ))
+    const ok = restarted && doctor.ok
+    const nextActions: NextAction[] = doctor.ok
+      ? [
+          { command: "joelclaw gateway doctor --live", description: "Prove Telegram delivery with a platform message id" },
+          { command: "joelclaw gateway status", description: "Inspect detailed gateway state" },
+        ]
+      : doctor.stages
+          .filter((stage) => stage.status === "FAIL")
+          .flatMap((stage) => stage.remediation)
+          .filter((command, index, all) => all.indexOf(command) === index)
+          .map((command) => ({ command, description: "Repair a failed gateway doctor stage" }))
     if (installerRequired) {
       nextActions.push({
         command: `sudo ${GATEWAY_INSTALLER_PATH}`,
@@ -1442,7 +1543,7 @@ const gatewayRestart = Command.make("restart", {}, () =>
         plistPath: launchd.plistPath,
         previousPid: oldPid,
         newPid: newPid ?? "unknown",
-        restarted: ok,
+        restarted,
         waitedMs: attempts * 1000,
         actions: {
           enable: enableResult.ok,
@@ -1450,6 +1551,12 @@ const gatewayRestart = Command.make("restart", {}, () =>
           kickstart: kickstartResult.ok,
         },
         log: logTail.split("\n").slice(-3),
+        doctor: {
+          ok: doctor.ok,
+          lines: doctor.lines,
+          stages: doctor.stages,
+          warnings: doctor.warnings,
+        },
         ...(warnings.length > 0 ? { warnings } : {}),
       },
       nextActions,
@@ -1562,7 +1669,6 @@ const gatewayEnable = Command.make("enable", {}, () =>
 // ── gateway stream (ADR-0058) ───────────────────────────────────────
 
 import {
-  emit,
   emitError,
   emitEvent,
   emitLog,
@@ -2946,6 +3052,7 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
       description: "Redis event bridge between Inngest functions and pi sessions (ADR-0018). Per-session fan-out.",
       subcommands: {
         status: "joelclaw gateway status — Active sessions + queue depths",
+        doctor: "joelclaw gateway doctor [--live] — PASS/FAIL daemon, source, transport, and real Telegram delivery",
         events: "joelclaw gateway events — Peek at all pending events",
         push: "joelclaw gateway push --type <type> [--payload JSON] — Push to all sessions",
         drain: "joelclaw gateway drain — Clear all event queues",
@@ -2963,6 +3070,8 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
       },
     },
     [
+      { command: "joelclaw gateway doctor", description: "Glanceable daemon, source, and transport truth" },
+      { command: "joelclaw gateway doctor --live", description: "Prove Telegram delivery with a platform message id" },
       { command: "joelclaw gateway status", description: "Check gateway health" },
       { command: "joelclaw gateway diagnose", description: "Full diagnostic (process → redis → model → delivery)" },
       { command: "joelclaw gateway review", description: "Recent session context (what happened?)" },
@@ -2979,6 +3088,7 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
 ).pipe(
   Command.withSubcommands([
     gatewayStatus,
+    gatewayDoctor,
     gatewayEvents,
     gatewayPush,
     gatewayDrain,

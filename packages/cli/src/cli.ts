@@ -174,7 +174,7 @@ const root = Command.make("joelclaw", {}, () =>
             discover: "joelclaw discover <url> [-c context]",
             note: "joelclaw note <text> [--source source] [--tags a,b,c]",
             gateway:
-              "joelclaw gateway {status|events|push|drain|test|restart|stream|diagnose|review|known-issues|mute|unmute}",
+              "joelclaw gateway {doctor [--live]|status|events|push|drain|test|restart|stream|diagnose|review|known-issues|mute|unmute}",
             notify:
               "joelclaw notify send <message> [--channel <channel>] [--priority <priority>] [--context <json>]",
             secrets: "joelclaw secrets {status|lease|revoke|audit|env}",
