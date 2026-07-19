@@ -3,7 +3,9 @@ title: "Inventory Every Message Lane, Journal, and Identity"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "ready"
+status: "closed"
+closed_at: "2026-07-19"
+assignee: "pi (flagg, herdr pane wY:p1G, 2026-07-19)"
 parent: "./message-event-stream-brief.svx"
 created_at: "2026-07-19"
 ---
@@ -21,3 +23,7 @@ Resolved when an asset maps the complete current messaging estate, so the schema
 5. **Lanes for the demolition list**: name each legacy path that must eventually die, with its current traffic and callers.
 
 Output: one asset file `asset-messaging-estate-inventory.svx` in this directory, tables over prose, every claim with a file:line receipt. Aggregate-only; no tokens, no secrets.
+
+## Result (2026-07-19)
+
+Asset written: [asset-messaging-estate-inventory.svx](./asset-messaging-estate-inventory.svx). 11 legacy lanes with kill conditions and file:line receipts; identity map confirms random-per-delivery IDs are the default in most lanes (the seen-spam pattern generalized); TWO additional journals surfaced beyond the known four partial stores (ClickHouse message journal requiring separate reader credentials, and a fail-open local outbox spool with unbounded retention); direct Bot-API senders exist outside the gateway in Talon and Restate. Six schema consequences bind the build step: mandatory semanticKey (flowId cannot substitute), five distinct identity fields per event, delivery as event transitions, visible digest/suppression events, four day-one views, and ack-after-durable-append.

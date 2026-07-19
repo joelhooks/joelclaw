@@ -43,6 +43,8 @@ Fleet messaging becomes one append-only event log processed as a queue. Chartere
 - [Charter](message-event-stream-brief.svx) — strangler cutover starting with the operator-DM lane, with mandatory demolition: each lane gets a step with an explicit kill condition. (Joel, 2026-07-19)
 - [Charter](message-event-stream-brief.svx) — semantic idempotency keys are law at the append boundary; duplicates are no-ops; derived-per-delivery identities banned. (Joel, 2026-07-19)
 
+- [Inventory Every Message Lane, Journal, and Identity](research-inventory-every-lane.svx) — 11 legacy lanes with kill conditions and receipts; two surprise journals (ClickHouse + local outbox); 6 schema consequences bind the build step. (2026-07-19)
+
 ## Latent
 
 - Writer-agent output as log events: the aihero-support packet→writer pipeline appends its composed message as an event rather than calling notify directly.
