@@ -17,17 +17,43 @@ type SourceConfig = {
   required?: boolean;
 };
 
+type StatStatus = "ok" | "missing" | "timeout" | "error";
+
+type FileStats = {
+  status: StatStatus;
+  exists: boolean | null;
+  files: number | null;
+  newest: number | null;
+  bytes: number | null;
+  error?: string;
+};
+
 type SourceReport = {
   key: string;
   path: string;
-  exists: boolean;
-  sourceFiles: number;
-  backupFiles: number;
+  exists: boolean | null;
+  sourceStatus: StatStatus;
+  backupStatus: StatStatus;
+  sourceFiles: number | null;
+  backupFiles: number | null;
   newestSourceMtimeMs: number | null;
   newestBackupMtimeMs: number | null;
-  bytesSource: number;
-  bytesBackup: number;
+  bytesSource: number | null;
+  bytesBackup: number | null;
+  sourceStatError?: string;
+  backupStatError?: string;
   synced: boolean;
+  error?: string;
+};
+
+type OutboxReport = {
+  before: number;
+  replayAttempted: number;
+  replayed: number;
+  failed: number;
+  skippedLarge: number;
+  after: number;
+  childExitCode: number | null;
   error?: string;
 };
 
@@ -38,13 +64,7 @@ type HostReport = {
   centralHealthOk: boolean;
   centralHealthUrl: string;
   sources: SourceReport[];
-  outbox: {
-    before: number;
-    replayAttempted: number;
-    replayed: number;
-    failed: number;
-    after: number;
-  };
+  outbox: OutboxReport;
   errors: string[];
 };
 
@@ -72,7 +92,8 @@ for (let i = 2; i < process.argv.length; i += 1) {
   if (!arg.startsWith("--")) continue;
   const [rawKey, rawValue] = arg.slice(2).split("=", 2);
   if (rawValue !== undefined) args.set(rawKey, rawValue);
-  else if (process.argv[i + 1] && !process.argv[i + 1].startsWith("--")) args.set(rawKey, process.argv[++i]);
+  else if (process.argv[i + 1] && !process.argv[i + 1].startsWith("--"))
+    args.set(rawKey, process.argv[++i]);
   else args.set(rawKey, true);
 }
 
@@ -81,26 +102,64 @@ const hostList = String(args.get("hosts") || "flagg,blaine,panda")
   .map((host) => host.trim())
   .filter(Boolean) as HostName[];
 const backupRoot = String(args.get("backup-root") || "/Volumes/three-body/sessions");
-const centralUrl = String(args.get("central-url") || "http://joels-mac-studio.tail7af24.ts.net:3111").replace(/\/$/, "");
+const centralUrl = String(
+  args.get("central-url") || "http://joels-mac-studio.tail7af24.ts.net:3111",
+).replace(/\/$/, "");
 const repairEnv = Boolean(args.get("repair-env"));
 const sync = args.get("sync") !== false && args.get("sync") !== "false";
 const replayOutbox = Boolean(args.get("replay-outbox"));
 const replayLimit = Number(args.get("replay-limit") || 0);
 const replayMaxBytes = Number(args.get("replay-max-bytes") || 10 * 1024 * 1024);
-const receiptPath = String(args.get("receipt") || join(backupRoot, "receipts", `agent-session-audit-${new Date().toISOString().replace(/[:.]/g, "")}.json`));
+const requestedStatTimeoutMs = Number(args.get("stat-timeout-ms") || 120_000);
+const statTimeoutMs =
+  Number.isFinite(requestedStatTimeoutMs) && requestedStatTimeoutMs > 0
+    ? Math.floor(requestedStatTimeoutMs)
+    : 120_000;
+const receiptPath = String(
+  args.get("receipt") ||
+    join(
+      backupRoot,
+      "receipts",
+      `agent-session-audit-${new Date().toISOString().replace(/[:.]/g, "")}.json`,
+    ),
+);
 
 function run(command: string, options: { timeoutMs?: number; quiet?: boolean } = {}) {
+  const timeoutMs = options.timeoutMs ?? 120_000;
   const result = spawnSync("/bin/bash", ["-lc", command], {
     encoding: "utf8",
-    timeout: options.timeoutMs ?? 120_000,
+    timeout: timeoutMs,
     maxBuffer: 1024 * 1024 * 20,
   });
   if (!options.quiet && result.stderr) process.stderr.write(result.stderr);
+  const processError = result.error;
+  const processErrorCode =
+    processError && "code" in processError ? String(processError.code) : undefined;
+  const timedOut = processErrorCode === "ETIMEDOUT";
   return {
-    code: result.status ?? 1,
+    code: result.status ?? (timedOut ? 124 : 1),
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
+    error: processError?.message,
+    timedOut,
+    timeoutMs,
   };
+}
+
+function compactError(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 2_000);
+}
+
+function describeRunFailure(label: string, result: ReturnType<typeof run>): string {
+  const detail = compactError(
+    result.error || result.stderr || result.stdout || "no child error output",
+  );
+  if (result.timedOut) return `${label} timed out after ${result.timeoutMs}ms: ${detail}`;
+  return `${label} failed (exit ${result.code}): ${detail}`;
+}
+
+function appendError(current: string | undefined, detail: string): string {
+  return current ? `${current} | ${detail}` : detail;
 }
 
 function q(value: string): string {
@@ -109,7 +168,10 @@ function q(value: string): string {
 
 function hostShell(host: HostConfig, command: string, timeoutMs = 60_000) {
   if (!host.ssh) return run(command, { timeoutMs, quiet: true });
-  return run(`ssh -o BatchMode=yes -o ConnectTimeout=8 ${q(host.ssh)} ${q(`bash -lc ${q(command)}`)}`, { timeoutMs, quiet: true });
+  return run(
+    `ssh -o BatchMode=yes -o ConnectTimeout=8 ${q(host.ssh)} ${q(`bash -lc ${q(command)}`)}`,
+    { timeoutMs, quiet: true },
+  );
 }
 
 function expandLocal(path: string): string {
@@ -118,22 +180,49 @@ function expandLocal(path: string): string {
 
 const statPython = `import os, sys\nroot=os.path.expanduser(sys.argv[1])\nif not os.path.exists(root):\n print('MISSING')\n raise SystemExit(0)\nfiles=0; newest=0; total=0\nif os.path.isfile(root):\n st=os.stat(root); files=1; newest=st.st_mtime; total=st.st_size\nelse:\n for dirpath, _, names in os.walk(root):\n  for name in names:\n   p=os.path.join(dirpath,name)\n   try:\n    st=os.stat(p); files += 1; total += st.st_size; newest=max(newest, st.st_mtime)\n   except OSError: pass\nprint(f'{files}\\t{int(newest*1000) if newest else 0}\\t{total}')`;
 
-function parseStatOutput(out: string): { exists: boolean; files: number; newest: number | null; bytes: number } {
+function parseStatOutput(out: string): FileStats {
   const trimmed = out.trim();
-  if (!trimmed || trimmed === "MISSING") return { exists: false, files: 0, newest: null, bytes: 0 };
-  const [files, newest, bytes] = trimmed.split("\t").map(Number);
-  return { exists: true, files: files || 0, newest: newest ? newest : null, bytes: bytes || 0 };
+  if (trimmed === "MISSING") {
+    return { status: "missing", exists: false, files: 0, newest: null, bytes: 0 };
+  }
+  const values = trimmed.split("\t").map(Number);
+  if (!trimmed || values.length !== 3 || values.some((value) => !Number.isFinite(value))) {
+    return {
+      status: "error",
+      exists: null,
+      files: null,
+      newest: null,
+      bytes: null,
+      error: `invalid stat output: ${compactError(trimmed || "<empty>")}`,
+    };
+  }
+  const [files, newest, bytes] = values;
+  return { status: "ok", exists: true, files, newest: newest || null, bytes };
 }
 
-function statLocalFiles(path: string): { exists: boolean; files: number; newest: number | null; bytes: number } {
-  const result = run(`python3 -c ${q(statPython)} ${q(path)}`, { timeoutMs: 120_000, quiet: true });
-  if (result.code !== 0) return { exists: false, files: 0, newest: null, bytes: 0 };
+function failedFileStats(label: string, result: ReturnType<typeof run>): FileStats {
+  return {
+    status: result.timedOut ? "timeout" : "error",
+    exists: null,
+    files: null,
+    newest: null,
+    bytes: null,
+    error: describeRunFailure(label, result),
+  };
+}
+
+function statLocalFiles(path: string): FileStats {
+  const result = run(`python3 -c ${q(statPython)} ${q(path)}`, {
+    timeoutMs: statTimeoutMs,
+    quiet: true,
+  });
+  if (result.code !== 0) return failedFileStats(`local stat ${path}`, result);
   return parseStatOutput(result.stdout);
 }
 
-function statRemoteFiles(host: HostConfig, path: string): { exists: boolean; files: number; newest: number | null; bytes: number } {
-  const result = hostShell(host, `python3 -c ${q(statPython)} ${q(path)}`, 120_000);
-  if (result.code !== 0) return { exists: false, files: 0, newest: null, bytes: 0 };
+function statRemoteFiles(host: HostConfig, path: string): FileStats {
+  const result = hostShell(host, `python3 -c ${q(statPython)} ${q(path)}`, statTimeoutMs);
+  if (result.code !== 0) return failedFileStats(`remote stat ${host.name}:${path}`, result);
   return parseStatOutput(result.stdout);
 }
 
@@ -141,16 +230,27 @@ function rsyncBinary(): string {
   return existsSync("/opt/homebrew/bin/rsync") ? "/opt/homebrew/bin/rsync" : "rsync";
 }
 
-function rsyncSource(host: HostConfig, source: SourceConfig, destination: string): { ok: boolean; error?: string } {
+function rsyncSource(
+  host: HostConfig,
+  source: SourceConfig,
+  destination: string,
+): { ok: boolean; error?: string } {
   mkdirSync(dirname(destination), { recursive: true });
   const srcPath = host.ssh ? source.path : expandLocal(source.path);
   const destArg = source.kind === "dir" ? `${destination}/` : destination;
   const remotePrefix = host.ssh ? `${host.ssh}:` : "";
-  const sourceArg = source.kind === "dir" ? `${remotePrefix}${srcPath.replace(/\/$/, "")}/` : `${remotePrefix}${srcPath}`;
+  const sourceArg =
+    source.kind === "dir"
+      ? `${remotePrefix}${srcPath.replace(/\/$/, "")}/`
+      : `${remotePrefix}${srcPath}`;
   mkdirSync(source.kind === "dir" ? destination : dirname(destination), { recursive: true });
   const cmd = `${q(rsyncBinary())} -a --ignore-existing ${q(sourceArg)} ${q(destArg)}`;
   const result = run(cmd, { timeoutMs: 30 * 60_000, quiet: true });
-  if (result.code !== 0) return { ok: false, error: result.stderr.trim() || result.stdout.trim() || `rsync exit ${result.code}` };
+  if (result.code !== 0)
+    return {
+      ok: false,
+      error: result.stderr.trim() || result.stdout.trim() || `rsync exit ${result.code}`,
+    };
   return { ok: true };
 }
 
@@ -163,36 +263,77 @@ function repairCentralEnv(host: HostConfig): boolean {
 }
 
 function centralHealth(host: HostConfig): boolean {
-  const result = hostShell(host, `curl -fsS --max-time 10 ${q(`${centralUrl}/api/runs/health`)} >/dev/null`, 20_000);
+  const result = hostShell(
+    host,
+    `curl -fsS --max-time 10 ${q(`${centralUrl}/api/runs/health`)} >/dev/null`,
+    20_000,
+  );
   return result.code === 0;
 }
 
 function countOutbox(host: HostConfig): number {
-  const result = hostShell(host, `find ~/.joelclaw/outbox -type f -name '*.json' 2>/dev/null | wc -l`, 60_000);
+  const result = hostShell(
+    host,
+    `find ~/.joelclaw/outbox -type f -name '*.json' 2>/dev/null | wc -l`,
+    60_000,
+  );
   return Number(result.stdout.trim()) || 0;
 }
 
-function replayOutboxForHost(host: HostConfig): HostReport["outbox"] {
+function replayOutboxForHost(host: HostConfig): OutboxReport {
   const before = countOutbox(host);
   if (!replayOutbox || replayLimit <= 0 || before === 0) {
-    return { before, replayAttempted: 0, replayed: 0, failed: 0, after: before };
+    return {
+      before,
+      replayAttempted: 0,
+      replayed: 0,
+      failed: 0,
+      skippedLarge: 0,
+      after: before,
+      childExitCode: null,
+    };
   }
-  const script = `python3 - <<'PY'\nimport json, os, sys, urllib.request, pathlib, shutil\nlimit=int(os.environ.get('REPLAY_LIMIT','0'))\nmax_bytes=int(os.environ.get('REPLAY_MAX_BYTES','10485760'))\ncentral=os.environ['CENTRAL_URL'].rstrip('/')\nauth_path=pathlib.Path.home()/'.joelclaw'/'auth.json'\nif not auth_path.exists():\n print(json.dumps({'attempted':0,'replayed':0,'failed':0,'skippedLarge':0,'error':'missing auth'})); raise SystemExit(0)\ntoken=json.loads(auth_path.read_text()).get('token')\nroot=pathlib.Path.home()/'.joelclaw'/'outbox'\nsent=pathlib.Path.home()/'.joelclaw'/'outbox-sent'\nsent.mkdir(parents=True, exist_ok=True)\nattempted=replayed=failed=skipped=0\nfiles=sorted(root.glob('*.json'), key=lambda p: (p.stat().st_size, p.stat().st_mtime))\nfor path in files:\n if attempted>=limit: break\n try:\n  if max_bytes > 0 and path.stat().st_size > max_bytes:\n   skipped += 1\n   continue\n except OSError:\n  continue\n attempted+=1\n try:\n  body=path.read_bytes()\n  req=urllib.request.Request(central+'/api/runs', data=body, method='POST', headers={'content-type':'application/json','authorization':'Bearer '+token})\n  with urllib.request.urlopen(req, timeout=60) as res:\n   ok=200 <= res.status < 300\n  if ok:\n   shutil.move(str(path), str(sent/path.name)); replayed+=1\n  else: failed+=1\n except Exception:\n  failed+=1\nprint(json.dumps({'attempted':attempted,'replayed':replayed,'failed':failed,'skippedLarge':skipped,'maxBytes':max_bytes}))\nPY`;
+  const script = `python3 - <<'PY'\nimport json, os, urllib.request, pathlib, shutil\nlimit=int(os.environ.get('REPLAY_LIMIT','0'))\nmax_bytes=int(os.environ.get('REPLAY_MAX_BYTES','10485760'))\ncentral=os.environ['CENTRAL_URL'].rstrip('/')\nauth_path=pathlib.Path.home()/'.joelclaw'/'auth.json'\nif not auth_path.exists():\n print(json.dumps({'attempted':0,'replayed':0,'failed':0,'skippedLarge':0,'error':'missing auth'})); raise SystemExit(0)\ntry:\n token=json.loads(auth_path.read_text()).get('token')\nexcept Exception as exc:\n print(json.dumps({'attempted':0,'replayed':0,'failed':0,'skippedLarge':0,'error':f'{type(exc).__name__}: {exc}'})); raise SystemExit(0)\nif not token:\n print(json.dumps({'attempted':0,'replayed':0,'failed':0,'skippedLarge':0,'error':'missing auth token'})); raise SystemExit(0)\nroot=pathlib.Path.home()/'.joelclaw'/'outbox'\nsent=pathlib.Path.home()/'.joelclaw'/'outbox-sent'\nsent.mkdir(parents=True, exist_ok=True)\nattempted=replayed=failed=skipped=0\nfirst_error=None\nfiles=sorted(root.glob('*.json'), key=lambda p: (p.stat().st_size, p.stat().st_mtime))\nfor path in files:\n if attempted>=limit: break\n try:\n  if max_bytes > 0 and path.stat().st_size > max_bytes:\n   skipped += 1\n   continue\n except OSError as exc:\n  first_error=first_error or f'{type(exc).__name__}: {exc}'\n  continue\n attempted+=1\n try:\n  body=path.read_bytes()\n  req=urllib.request.Request(central+'/api/runs', data=body, method='POST', headers={'content-type':'application/json','authorization':'Bearer '+token})\n  with urllib.request.urlopen(req, timeout=60) as res:\n   ok=200 <= res.status < 300\n  if ok:\n   shutil.move(str(path), str(sent/path.name)); replayed+=1\n  else:\n   failed+=1\n   first_error=first_error or f'HTTP status {res.status}'\n except Exception as exc:\n  failed+=1\n  first_error=first_error or f'{type(exc).__name__}: {exc}'\nresult={'attempted':attempted,'replayed':replayed,'failed':failed,'skippedLarge':skipped,'maxBytes':max_bytes}\nif first_error: result['error']=first_error\nprint(json.dumps(result))\nPY`;
   const envPrefix = `CENTRAL_URL=${q(centralUrl)} REPLAY_LIMIT=${q(String(replayLimit))} REPLAY_MAX_BYTES=${q(String(replayMaxBytes))}`;
   const result = hostShell(host, `${envPrefix} ${script}`, Math.max(60_000, replayLimit * 35_000));
   let attempted = 0;
   let replayed = 0;
   let failed = 0;
-  try {
-    const parsed = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");
-    attempted = Number(parsed.attempted) || 0;
-    replayed = Number(parsed.replayed) || 0;
-    failed = Number(parsed.failed) || 0;
-  } catch {
-    failed = replayLimit;
+  let skippedLarge = 0;
+  let error =
+    result.code === 0 ? undefined : describeRunFailure(`replay child for ${host.name}`, result);
+  const childOutput = result.stdout.trim().split("\n").at(-1);
+  if (childOutput) {
+    try {
+      const parsed = JSON.parse(childOutput) as Record<string, unknown>;
+      attempted = Number(parsed.attempted) || 0;
+      replayed = Number(parsed.replayed) || 0;
+      failed = Number(parsed.failed) || 0;
+      skippedLarge = Number(parsed.skippedLarge) || 0;
+      if (typeof parsed.error === "string" && parsed.error.trim()) {
+        error = appendError(error, compactError(parsed.error));
+      }
+    } catch (parseError) {
+      const detail = parseError instanceof Error ? parseError.message : String(parseError);
+      error = appendError(
+        error,
+        `invalid replay child output: ${compactError(detail)}; output=${compactError(childOutput)}`,
+      );
+    }
+  } else {
+    error = appendError(error, "replay child produced no JSON output");
   }
   const after = countOutbox(host);
-  return { before, replayAttempted: attempted, replayed, failed, after };
+  return {
+    before,
+    replayAttempted: attempted,
+    replayed,
+    failed,
+    skippedLarge,
+    after,
+    childExitCode: result.code,
+    ...(error ? { error } : {}),
+  };
 }
 
 function auditHost(hostName: HostName): HostReport {
@@ -205,38 +346,67 @@ function auditHost(hostName: HostName): HostReport {
 
   const sourceReports: SourceReport[] = [];
   for (const source of sources) {
-    const sourceStats = host.ssh ? statRemoteFiles(host, source.path) : statLocalFiles(expandLocal(source.path));
+    const sourceStats = host.ssh
+      ? statRemoteFiles(host, source.path)
+      : statLocalFiles(expandLocal(source.path));
     const destination = join(backupRoot, hostName, source.key);
     let synced = false;
     let error: string | undefined;
+    if (sourceStats.status === "timeout" || sourceStats.status === "error") {
+      const detail = `${source.key}: ${sourceStats.error || `source verification ${sourceStats.status}`}`;
+      errors.push(detail);
+      error = appendError(error, detail);
+    }
     if (sync && sourceStats.exists) {
       const result = rsyncSource(host, source, destination);
       synced = result.ok;
-      error = result.error;
-      if (error) errors.push(`${source.key}: ${error}`);
+      if (result.error) {
+        const detail = `${source.key}: ${result.error}`;
+        errors.push(detail);
+        error = appendError(error, detail);
+      }
     }
     const backupStats = statLocalFiles(destination);
-    if (sync && sourceStats.exists && backupStats.files < sourceStats.files) {
+    if (backupStats.status === "timeout" || backupStats.status === "error") {
+      const detail = `${source.key}: ${backupStats.error || `backup verification ${backupStats.status}`}`;
+      errors.push(detail);
+      error = appendError(error, detail);
+    }
+    if (
+      sync &&
+      sourceStats.status === "ok" &&
+      backupStats.status === "ok" &&
+      sourceStats.files !== null &&
+      backupStats.files !== null &&
+      backupStats.files < sourceStats.files
+    ) {
       const detail = `${source.key}: backup has ${backupStats.files}/${sourceStats.files} source files after sync`;
       errors.push(detail);
-      error = error ? `${error} | ${detail}` : detail;
+      error = appendError(error, detail);
     }
     sourceReports.push({
       key: source.key,
       path: source.path,
       exists: sourceStats.exists,
+      sourceStatus: sourceStats.status,
+      backupStatus: backupStats.status,
       sourceFiles: sourceStats.files,
       backupFiles: backupStats.files,
       newestSourceMtimeMs: sourceStats.newest,
       newestBackupMtimeMs: backupStats.newest,
       bytesSource: sourceStats.bytes,
       bytesBackup: backupStats.bytes,
+      ...(sourceStats.error ? { sourceStatError: sourceStats.error } : {}),
+      ...(backupStats.error ? { backupStatError: backupStats.error } : {}),
       synced,
-      error,
+      ...(error ? { error } : {}),
     });
   }
 
   const outbox = replayOutboxForHost(host);
+  if (outbox.error) {
+    errors.push(`joelclaw-outbox replay failed: ${outbox.error}`);
+  }
   if (replayOutbox && outbox.after > 0) {
     errors.push(`joelclaw-outbox: ${outbox.after} files remain after bounded replay`);
   }
@@ -263,8 +433,27 @@ const report = {
   replayOutbox,
   replayLimit,
   replayMaxBytes,
+  statTimeoutMs,
   hosts: hostList.map(auditHost),
 };
-report.ok = report.hosts.every((host) => host.reachable && host.centralHealthOk && host.errors.length === 0);
+report.ok = report.hosts.every(
+  (host) => host.reachable && host.centralHealthOk && host.errors.length === 0,
+);
 writeFileSync(receiptPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
-console.log(JSON.stringify({ ok: report.ok, receiptPath, hosts: report.hosts.map((host) => ({ host: host.host, reachable: host.reachable, centralHealthOk: host.centralHealthOk, outbox: host.outbox, errors: host.errors.length })) }, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      ok: report.ok,
+      receiptPath,
+      hosts: report.hosts.map((host) => ({
+        host: host.host,
+        reachable: host.reachable,
+        centralHealthOk: host.centralHealthOk,
+        outbox: host.outbox,
+        errors: host.errors.length,
+      })),
+    },
+    null,
+    2,
+  ),
+);
