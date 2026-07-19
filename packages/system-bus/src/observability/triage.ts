@@ -12,17 +12,20 @@ const TRIAGE_COMPONENT = "o11y-triage";
 const DEFAULT_DEDUP_HOURS = 24;
 const CLASSIFIER_TIMEOUT_MS = 30_000;
 const UNKNOWN_REASONING = "Unknown failure; defaulting to tier 2.";
-const CLASSIFIER_SYSTEM_PROMPT = `You are an observability triage classifier for a personal infrastructure system (JoelClaw). 
-Given a failed OTEL event, classify its severity tier:
+const CLASSIFIER_OUTPUT_PREVIEW_CHARS = 500;
+const CLASSIFIER_SYSTEM_PROMPT = `You are an observability triage classifier for a personal infrastructure system (JoelClaw).
+Given failed OTEL events, classify each event into a severity tier.
 
-Tier 1 (ignore/auto-fix): Transient failures, known race conditions, test probes, self-healing issues.
-Tier 2 (note for later): Novel but non-urgent issues, intermittent failures, performance degradation.  
-Tier 3 (escalate immediately): Sustained failures, data loss risk, pipeline stalls, crashes.
+Tier 1 (ignore/auto-fix): transient failures, known race conditions, test probes, self-healing issues.
+Tier 2 (note for later): novel but non-urgent issues, intermittent failures, performance degradation.
+Tier 3 (escalate immediately): sustained failures, data loss risk, pipeline stalls, crashes.
 
-Respond with ONLY valid JSON:
-{"tier": 1|2|3, "reasoning": "one sentence", "proposed_pattern": {"match": {"component": "...", "action": "...", "error": "regex"}, "tier": N, "dedup_hours": N} | null}
+You are in JSON mode. Return ONE bare JSON array and nothing else.
+Do not use markdown fences. Do not add preamble or commentary.
+Return exactly one array item per input event, in the same order.
 
-When multiple events are provided, return a JSON array in input order where each item follows the same schema.`;
+Each array item must match this schema:
+{"tier":1|2|3,"reasoning":"one sentence","proposed_pattern":{"match":{"component":"...","action":"...","error":"regex"},"tier":1|2|3,"dedup_hours":N}|null}`;
 
 type TriageTier = 1 | 2 | 3;
 
@@ -48,6 +51,11 @@ export type TriageResult = {
   tier2: OtelEvent[];
   tier3: OtelEvent[];
   unmatchedTier2: OtelEvent[];
+};
+
+type ParsedClassifierOutput = {
+  items: unknown[];
+  debug: Record<string, unknown>;
 };
 
 function asFiniteNumber(value: unknown, fallback = 0): number {
@@ -192,54 +200,151 @@ function normalizeLLMClassification(
   };
 }
 
-function parseClassificationArray(raw: string): unknown[] | null {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return null;
+function trimmedPreview(value: string, max = CLASSIFIER_OUTPUT_PREVIEW_CHARS): string {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  if (compact.length <= max) return compact;
+  return `${compact.slice(0, Math.max(1, max - 1))}…`;
+}
 
-  try {
-    const direct = JSON.parse(trimmed) as unknown;
-    if (Array.isArray(direct)) return direct;
-    if (direct && typeof direct === "object") return [direct];
-  } catch {
-    // continue
-  }
+function findBalancedJsonSegment(raw: string, openingChar: "[" | "{"): string | null {
+  const closingChar = openingChar === "[" ? "]" : "}";
 
-  const codeFence = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/iu);
-  if (codeFence?.[1]) {
-    try {
-      const parsed = JSON.parse(codeFence[1]) as unknown;
-      if (Array.isArray(parsed)) return parsed;
-      if (parsed && typeof parsed === "object") return [parsed];
-    } catch {
-      // continue
-    }
-  }
+  for (let start = raw.indexOf(openingChar); start >= 0; start = raw.indexOf(openingChar, start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
 
-  const arrayStart = trimmed.indexOf("[");
-  const arrayEnd = trimmed.lastIndexOf("]");
-  if (arrayStart >= 0 && arrayEnd > arrayStart) {
-    const candidate = trimmed.slice(arrayStart, arrayEnd + 1);
-    try {
-      const parsed = JSON.parse(candidate) as unknown;
-      if (Array.isArray(parsed)) return parsed;
-    } catch {
-      // continue
-    }
-  }
+    for (let index = start; index < raw.length; index += 1) {
+      const char = raw[index];
+      if (!char) continue;
 
-  const objectStart = trimmed.indexOf("{");
-  const objectEnd = trimmed.lastIndexOf("}");
-  if (objectStart >= 0 && objectEnd > objectStart) {
-    const candidate = trimmed.slice(objectStart, objectEnd + 1);
-    try {
-      const parsed = JSON.parse(candidate) as unknown;
-      if (parsed && typeof parsed === "object") return [parsed];
-    } catch {
-      return null;
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (char === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+
+      if (char === openingChar) {
+        depth += 1;
+        continue;
+      }
+
+      if (char === closingChar) {
+        depth -= 1;
+        if (depth === 0) {
+          return raw.slice(start, index + 1);
+        }
+      }
     }
   }
 
   return null;
+}
+
+function parseJsonCandidate(candidate: string): unknown | null {
+  try {
+    return JSON.parse(candidate) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeClassifierItems(parsed: unknown, expectedCount: number): unknown[] | null {
+  if (Array.isArray(parsed)) {
+    return parsed.length === expectedCount ? parsed : null;
+  }
+
+  if (expectedCount === 1 && parsed && typeof parsed === "object") {
+    return [parsed];
+  }
+
+  return null;
+}
+
+function parseClassificationArray(raw: string, expectedCount: number): ParsedClassifierOutput | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+
+  const candidates: Array<{ source: string; text: string }> = [
+    { source: "raw", text: trimmed },
+  ];
+
+  for (const match of trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/giu)) {
+    const fenced = match[1]?.trim();
+    if (fenced) {
+      candidates.push({ source: "fence", text: fenced });
+    }
+  }
+
+  const balancedArray = findBalancedJsonSegment(trimmed, "[");
+  if (balancedArray) {
+    candidates.push({ source: "balanced_array", text: balancedArray });
+  }
+
+  const balancedObject = findBalancedJsonSegment(trimmed, "{");
+  if (balancedObject) {
+    candidates.push({ source: "balanced_object", text: balancedObject });
+  }
+
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const key = `${candidate.source}:${candidate.text}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const parsed = parseJsonCandidate(candidate.text);
+    if (parsed == null) continue;
+
+    const items = normalizeClassifierItems(parsed, expectedCount);
+    if (!items) continue;
+
+    return {
+      items,
+      debug: {
+        parseSource: candidate.source,
+        rawLength: trimmed.length,
+        expectedCount,
+        parsedCount: items.length,
+      },
+    };
+  }
+
+  return null;
+}
+
+function classifierDebugMetadata(raw: string, data: unknown, expectedCount: number): Record<string, unknown> {
+  const trimmed = raw.trim();
+  const dataType = Array.isArray(data) ? "array" : data == null ? "nullish" : typeof data;
+  const parsedCount = Array.isArray(data)
+    ? data.length
+    : expectedCount === 1 && data && typeof data === "object"
+      ? 1
+      : null;
+
+  return {
+    expectedCount,
+    rawLength: trimmed.length,
+    rawPreview: trimmedPreview(trimmed),
+    hasFence: /```/u.test(trimmed),
+    hasJsonArray: trimmed.includes("["),
+    hasJsonObject: trimmed.includes("{"),
+    dataType,
+    dataParsedCount: parsedCount,
+  };
 }
 
 type ComponentContextEvent = {
@@ -381,7 +486,7 @@ export async function classifyWithLLM(
     );
     const contextByComponent = new Map<string, ComponentContextEvent[]>(contextEntries);
 
-  const payload = events.map((event, index) => ({
+    const payload = events.map((event, index) => ({
       index,
       event: {
         id: event.id,
@@ -402,14 +507,13 @@ export async function classifyWithLLM(
 
     const userPrompt = [
       `Classify ${events.length} failed OTEL events.`,
-      "Return ONLY valid JSON array, same order as input.",
+      `Return one bare JSON array with exactly ${events.length} items, same order as input.`,
+      "No markdown fences. No prose. No explanations outside the JSON array.",
       "Each item must match schema: {\"tier\":1|2|3,\"reasoning\":\"one sentence\",\"proposed_pattern\":{\"match\":{\"component\":\"...\",\"action\":\"...\",\"error\":\"regex\"},\"tier\":1|2|3,\"dedup_hours\":N}|null}.",
       memoryContext.trim().length > 0 ? `\n${memoryContext.trim()}` : "",
       "",
       JSON.stringify(payload, null, 2),
     ].join("\n");
-
-    const classifierStartedAt = Date.now();
 
     const classifyResult = await infer(userPrompt, {
       task: "classification",
@@ -420,25 +524,39 @@ export async function classifyWithLLM(
       print: true,
       noTools: true,
       json: true,
+      requireJson: true,
       timeout: CLASSIFIER_TIMEOUT_MS,
       env: { ...process.env, TERM: "dumb" },
+      metadata: {
+        expectedCount: events.length,
+      },
     });
 
-    const parsedArray = parseClassificationArray(
-      classifyResult.text || "",
-    ) ?? (Array.isArray(classifyResult.data) ? classifyResult.data : classifyResult.data ? [classifyResult.data] : null);
+    const directItems = normalizeClassifierItems(classifyResult.data, events.length);
+    const parsed = directItems
+      ? {
+          items: directItems,
+          debug: {
+            parseSource: "infer.data",
+            rawLength: classifyResult.text.length,
+            expectedCount: events.length,
+            parsedCount: directItems.length,
+          },
+        }
+      : parseClassificationArray(classifyResult.text || "", events.length);
 
-    if (!parsedArray) {
-      throw new Error("unparseable classifier output");
+    if (!parsed) {
+      const debug = classifierDebugMetadata(
+        classifyResult.text || "",
+        classifyResult.data,
+        events.length,
+      );
+      const error = new Error("unparseable classifier output");
+      (error as Error & { debug?: Record<string, unknown> }).debug = debug;
+      throw error;
     }
 
-    const normalized: ClassifiedEvent[] = [];
-    for (let i = 0; i < events.length; i += 1) {
-      const event = events[i];
-      if (!event) continue;
-      const record = i < parsedArray.length ? parsedArray[i] : null;
-      normalized.push(normalizeLLMClassification(event, record));
-    }
+    const normalized = events.map((event, index) => normalizeLLMClassification(event, parsed.items[index]));
 
     const tier1Count = normalized.filter((item) => item.tier === 1).length;
     const tier2Count = normalized.filter((item) => item.tier === 2).length;
@@ -458,12 +576,17 @@ export async function classifyWithLLM(
         tier3: tier3Count,
         proposedPatternCount,
         eventIds: normalized.map((item) => item.event.id),
+        parseSource: parsed.debug.parseSource,
       },
     });
 
     return normalized;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const debug = error instanceof Error && "debug" in error
+      ? (error as Error & { debug?: Record<string, unknown> }).debug
+      : undefined;
+
     await emitOtelEvent({
       level: "warn",
       source: "worker",
@@ -475,6 +598,7 @@ export async function classifyWithLLM(
         eventCount: events.length,
         fallbackTier: 2,
         eventIds: events.map((event) => event.id),
+        ...(debug ? { classifierDebug: debug } : {}),
       },
     });
     return fallback(`LLM classification unavailable; defaulted to tier 2 (${message}).`);
@@ -564,3 +688,8 @@ export async function triageFailures(events: OtelEvent[]): Promise<TriageResult>
 
   return grouped;
 }
+
+export const __triageTestUtils = {
+  parseClassificationArray,
+  normalizeLLMClassification,
+};
