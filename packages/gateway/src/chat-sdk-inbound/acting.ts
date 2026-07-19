@@ -49,6 +49,8 @@ export interface ActingInboundDispatcherDependencies {
   readonly resolveDeclaredActions?: (
     flowId: FlowIdType,
   ) => Promise<OutboundActionDeclaration | undefined>;
+  readonly isActionPublished?: (rawEventId: string) => Promise<boolean>;
+  readonly rememberActionPublished?: (rawEventId: string) => Promise<void>;
   readonly recordAction?: (input: {
     readonly flowId: FlowIdType;
     readonly correlationId: string;
@@ -179,6 +181,14 @@ function reactionEvent(
   };
 }
 
+function actionRawEventId(
+  event: Extract<InboundEvent, { readonly type: "interaction" }>,
+): string {
+  return event.audit.rawEventId
+    ?? event.rawAnchors.callbackQueryId
+    ?? event.eventId;
+}
+
 function messageActionRequestedEvent(
   event: Extract<InboundEvent, { readonly type: "interaction" }>,
   flowId: FlowIdType,
@@ -190,17 +200,16 @@ function messageActionRequestedEvent(
     throw new Error("Message callback action is missing its action ID or Telegram message ID");
   }
   const displayName = event.actor.displayName?.trim();
+  const rawEventId = actionRawEventId(event);
   return {
-    id: `${event.eventId}:flow:${flowId}`,
+    id: `message-action:${rawEventId}`,
     name: MESSAGE_ACTION_REQUESTED,
     data: {
       contractVersion: MESSAGE_CONTRACT_VERSION,
       flowId,
       platform: "telegram",
       actionId,
-      rawEventId: event.audit.rawEventId
-        ?? event.rawAnchors.callbackQueryId
-        ?? event.eventId,
+      rawEventId,
       platformMessageId,
       correlationSource: "gateway-acting",
       actor: {
@@ -294,9 +303,11 @@ export function createActingInboundDispatcher(
           remember(event.eventId);
           return { status: "rejected" };
         }
-        const rawEventId = event.audit.rawEventId
-          ?? event.rawAnchors.callbackQueryId
-          ?? event.eventId;
+        const rawEventId = actionRawEventId(event);
+        if (await dependencies.isActionPublished?.(rawEventId)) {
+          remember(event.eventId);
+          return { status: "duplicate" };
+        }
         await dependencies.recordAction?.({
           flowId,
           correlationId: declaration.correlationId,
@@ -310,6 +321,9 @@ export function createActingInboundDispatcher(
         await dependencies.publishAction(
           messageActionRequestedEvent(event, flowId, declared.id),
         );
+        await dependencies.rememberActionPublished?.(rawEventId).catch((error) => {
+          dependencies.onError?.(error, "action-dedupe", event);
+        });
       } catch (error) {
         dependencies.onError?.(error, "action-correlation", event);
         throw error;

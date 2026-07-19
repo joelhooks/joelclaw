@@ -4824,6 +4824,27 @@ registerChannel("slack", {
   },
 });
 
+const MESSAGE_ACTION_DEDUPE_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+function messageActionDedupeKey(rawEventId: string): string {
+  return `joelclaw:message-action:raw-event:${rawEventId}`;
+}
+
+async function isMessageActionPublished(rawEventId: string): Promise<boolean> {
+  const redis = getRedisClient();
+  if (!redis) return false;
+  return (await redis.get(messageActionDedupeKey(rawEventId))) === "published";
+}
+
+async function rememberMessageActionPublished(rawEventId: string): Promise<void> {
+  await getRedisClient()?.set(
+    messageActionDedupeKey(rawEventId),
+    "published",
+    "EX",
+    MESSAGE_ACTION_DEDUPE_TTL_SECONDS,
+  );
+}
+
 setChatSdkActingTransportReady(false);
 const runtime = getChatSdkRuntime({
   telegramEnabled: Boolean(TELEGRAM_TOKEN && TELEGRAM_USER_ID),
@@ -4863,6 +4884,8 @@ try {
     publisher: createObserveOnlyInboundPublisher(inboundBus),
     resolveFlowId: resolvePlatformMessageFlow,
     resolveDeclaredActions: resolveDeclaredMessageActions,
+    isActionPublished: isMessageActionPublished,
+    rememberActionPublished: rememberMessageActionPublished,
     recordAction: async (input) => {
       const receipt = await journalMessageActionRequest(input);
       if (!receipt.persisted) {

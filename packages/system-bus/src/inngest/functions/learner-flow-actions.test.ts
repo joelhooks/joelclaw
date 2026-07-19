@@ -11,10 +11,10 @@ import { Schema } from "effect";
 import {
   createLearnerFlowActionFunction,
   learnerFlowAction,
+  learnerFlowReceiptEventId,
 } from "./learner-flow-actions";
 
 const FLOW_ID = "flow_v2_11111111-1111-4111-8111-111111111111";
-const NOTIFICATION_EVENT_ID = "22222222-2222-4222-8222-222222222222";
 
 function action(
   actionId: "learner-flow.ack" | "learner-flow.run" | "learner-flow.investigate",
@@ -55,9 +55,10 @@ function commandResponse(args: readonly string[]) {
     };
   }
   if (args[1] === "notify" && args[2] === "send") {
+    const eventId = args[args.indexOf("--event-id") + 1];
     return {
       exitCode: 0,
-      stdout: ok({ eventId: NOTIFICATION_EVENT_ID }),
+      stdout: ok({ eventId }),
       stderr: "",
     };
   }
@@ -84,7 +85,6 @@ async function fixture(correlationId = "campaign-pulse:event-1") {
     cwd: directory,
     logPath,
     now: () => new Date("2026-07-19T15:01:00.000Z"),
-    nextEventId: () => NOTIFICATION_EVENT_ID,
     resolveDeclaration: async () => ({
       correlationId,
       actionIds: [
@@ -122,7 +122,11 @@ describe("Learner Flow actions", () => {
       events: [{ name: MESSAGE_ACTION_REQUESTED, data: action("learner-flow.ack") }],
     }).execute();
 
-    expect(execution.result).toEqual({ status: "acknowledged", flowId: FLOW_ID });
+    expect(execution.result).toEqual({
+      status: "acknowledged",
+      flowId: FLOW_ID,
+      recorded: true,
+    });
     expect(JSON.parse((await readFile(setup.logPath, "utf8")).trim())).toMatchObject({
       kind: "ack",
       source: MESSAGE_ACTION_REQUESTED,
@@ -130,32 +134,19 @@ describe("Learner Flow actions", () => {
       actionId: "learner-flow.ack",
       handledAt: "2026-07-19T15:01:00.000Z",
     });
-    expect(setup.commandCalls).toEqual([
-      [
-        "joelclaw",
-        "notify",
-        "send",
-        "--kind",
-        "alert",
-        "--priority",
-        "high",
-        "--source",
-        "learner-flow-action",
-        "--event-id",
-        NOTIFICATION_EVENT_ID,
-        "Seen. Next pulse stays scheduled.",
-      ],
-      [
-        "joelclaw",
-        "notify",
-        "wait",
-        "22222222-2222-4222-8222-222222222222",
-        "--source",
-        "learner-flow-action",
-        "--timeout",
-        "15s",
-      ],
-    ]);
+    expect(setup.commandCalls).toEqual([]);
+  });
+
+  test("a redelivered ack callback appends once and sends zero receipt DMs", async () => {
+    const setup = await fixture();
+    const event = { name: MESSAGE_ACTION_REQUESTED, data: action("learner-flow.ack") };
+
+    await new InngestTestEngine({ function: setup.fn, events: [event] }).execute();
+    await new InngestTestEngine({ function: setup.fn, events: [event] }).execute();
+
+    const rows = (await readFile(setup.logPath, "utf8")).trim().split("\n");
+    expect(rows).toHaveLength(1);
+    expect(setup.commandCalls).toEqual([]);
   });
 
   test("does not append a Campaign Pulse ack for a Daily Flow message", async () => {
@@ -191,6 +182,9 @@ describe("Learner Flow actions", () => {
     expect(setup.commandCalls[0]?.join(" ")).toContain(
       ".brain/projects/learner-flow-ops/asset-daily-flow-agent-runbook.svx",
     );
+    const expectedReceiptEventId = learnerFlowReceiptEventId(action("learner-flow.run"));
+    expect(setup.commandCalls[2]).toContain(expectedReceiptEventId);
+    expect(setup.commandCalls[3]).toContain(expectedReceiptEventId);
   });
 
   test("does not send success when wake-list readback misses the schedule", async () => {

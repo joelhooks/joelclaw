@@ -48,13 +48,15 @@ Every actionable Telegram DM has:
 4. labeled buttons under the message;
 5. no `React: …` footer, emoji code legend, command syntax, or jargon wall.
 
-Campaign Pulse and Daily Flow use these labels:
+Default buttons are real actions that do something useful now:
 
-- `Seen`
 - `Run flow agent`
 - `Investigate`
+- a source-specific action such as `Open report` or `Open page`
 
-For three actions, Telegram renders `Seen` on the first row and the two dispatch actions on the second. Labels are presentation. Stable action IDs are behavior:
+Do not make Joel perform acknowledgment chores. `Seen`, `Acknowledge`, `Got it`, and generic `Done` buttons are forbidden by default. An acknowledgment action is allowed only for a one-time, load-bearing proof where the tap itself closes a rollout gate. The 2026-07-19 `Seen` canary was such a proof; it is not a reusable message pattern.
+
+Labels are presentation. Stable action IDs are behavior:
 
 - `learner-flow.ack`
 - `learner-flow.run`

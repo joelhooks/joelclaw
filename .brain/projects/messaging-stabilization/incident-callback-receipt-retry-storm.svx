@@ -1,0 +1,54 @@
+---
+title: "Incident: callback receipt retry storm"
+type: "incident"
+status: "mitigated-source-fix-staged"
+created_at: "2026-07-19"
+privacy: "private"
+parent: "./design-button-native-interactions.svx"
+source_receipts:
+  - "inngest-run:01KXXMQVENAJSE54JQ1NR3J0HV"
+  - "../../../packages/gateway/src/chat-sdk-inbound/acting.ts"
+  - "../../../packages/system-bus/src/inngest/functions/learner-flow-actions.ts"
+---
+
+# Incident: callback receipt retry storm
+
+## Symptom
+
+One physical `Seen` tap produced five Telegram receipt DMs between `16:53:23Z` and `16:58:24Z`. Redis held five distinct `learner-flow-action:<uuid>` terminal correlations and five distinct Telegram message IDs.
+
+## What actually happened
+
+Telegram did not redeliver the callback. The gateway published one `message/action.requested`, OTEL recorded one `learner_flow.action.declaration_verified`, and Inngest created one `Learner Flow Action` run:
+
+`01KXXMQVENAJSE54JQ1NR3J0HV`
+
+That run retried a stale combined `confirm-ack-receipt` step four times. Each attempt sent a new receipt with a fresh UUID before its readback failed. The installed `joelclaw` binary did not yet expose `notify wait`, so every readback failed with `Invalid subcommand`. During the run, the host worker hot-loaded the newer split-step source and sent a fifth receipt before the same stale CLI failure ended the run at `17:03:42Z`.
+
+The gateway callback was transport-acknowledged by the Chat SDK Telegram adapter. Gateway status showed one healthy active poller, no conflict streak, and no callback retry. No gateway restart was needed to stop the storm. The failed Inngest run was already terminal, and the correlation-key count stayed at five for more than five minutes after the last send.
+
+## Fix
+
+1. The Inngest envelope ID is exactly `message-action:<rawEventId>`. A crash or ambiguous retry republishes the same ID, so Inngest deduplicates it instead of stranding the callback.
+2. After successful publication, the gateway remembers `rawEventId` in Redis for seven days. A redelivery after a gateway restart returns `duplicate`. The marker is never written before publication, so a crash cannot poison a callback that has not reached the bus.
+3. The consumer keeps `idempotency: "event.data.rawEventId"`.
+4. Meaningful action receipt event IDs are deterministic UUIDv4-shaped values derived from `rawEventId + actionId`. Even an unexpected duplicate run reaches the Redis notify idempotency gate with the same ID.
+5. `learner-flow.ack` sends no receipt DM. It records the one-time proof once and emits completion telemetry. Acknowledgment chores are not routine actions.
+6. Campaign Pulse ack-log append checks `rawEventId` before writing, so a duplicate consumer execution cannot append another row.
+
+## Regression proof
+
+- two dispatcher instances sharing the post-publication marker receive the same callback; only the first publishes;
+- the published event ID is derived from `rawEventId`;
+- two executions of the same ack event append one row and send zero notification commands;
+- run/investigate receipt sends reuse the deterministic notification event ID.
+
+## Activation
+
+The source patch needs all three runtime activations:
+
+1. rebuild/install the `joelclaw` CLI so `notify wait` exists for real-action receipts;
+2. restart the host system-bus worker and refresh Inngest registration;
+3. restart the gateway once with `joelclaw gateway restart` to load the durable callback claim.
+
+The gateway restart is an activation step after steering ships, not an emergency spam-stop step.

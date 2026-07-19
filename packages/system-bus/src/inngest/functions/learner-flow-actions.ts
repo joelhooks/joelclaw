@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { appendFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -49,7 +49,6 @@ interface LearnerFlowActionDependencies {
   readonly resolveDeclaration: (flowId: string) => Promise<ActionDeclaration | undefined>;
   readonly emit: (input: Parameters<typeof emitOtelEvent>[0]) => Promise<unknown>;
   readonly now: () => Date;
-  readonly nextEventId: () => string;
 }
 
 type ActionData = MessageActionRequestedEventType["data"];
@@ -175,6 +174,43 @@ function commonMetadata(action: ActionData): Record<string, unknown> {
     platform: action.platform,
     actionId: action.actionId,
   };
+}
+
+export function learnerFlowReceiptEventId(action: ActionData): string {
+  const hex = createHash("sha256")
+    .update(`learner-flow-action:${action.rawEventId}:${action.actionId}`)
+    .digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+async function appendPulseAckOnce(
+  dependencies: LearnerFlowActionDependencies,
+  action: ActionData,
+): Promise<boolean> {
+  const current = await readFile(dependencies.logPath, "utf8").catch(() => "");
+  const duplicate = current.split("\n").some((line) => {
+    if (!line.trim()) return false;
+    try {
+      const row = JSON.parse(line) as { rawEventId?: unknown };
+      return row.rawEventId === action.rawEventId;
+    } catch {
+      return false;
+    }
+  });
+  if (duplicate) return false;
+
+  const row = {
+    kind: "ack",
+    source: MESSAGE_ACTION_REQUESTED,
+    flowId: action.flowId,
+    actionId: action.actionId,
+    at: action.at,
+    handledAt: dependencies.now().toISOString(),
+    rawEventId: action.rawEventId,
+  };
+  await mkdir(dirname(dependencies.logPath), { recursive: true });
+  await appendFile(dependencies.logPath, `${JSON.stringify(row)}\n`, "utf8");
+  return true;
 }
 
 async function sendReceipt(
@@ -303,7 +339,6 @@ const defaults: LearnerFlowActionDependencies = {
   resolveDeclaration,
   emit: emitOtelEvent,
   now: () => new Date(),
-  nextEventId: randomUUID,
 };
 
 export function createLearnerFlowActionFunction(
@@ -356,32 +391,22 @@ export function createLearnerFlowActionFunction(
       }
 
       if (action.actionId === "learner-flow.ack") {
-        if (declaration.correlationId.startsWith("campaign-pulse:")) {
-          await step.run("append-pulse-ack", async () => {
-            const row = {
-              kind: "ack",
-              source: MESSAGE_ACTION_REQUESTED,
-              flowId: action.flowId,
-              actionId: action.actionId,
-              at: action.at,
-              handledAt: dependencies.now().toISOString(),
-              rawEventId: action.rawEventId,
-            };
-            await mkdir(dirname(dependencies.logPath), { recursive: true });
-            await appendFile(dependencies.logPath, `${JSON.stringify(row)}\n`, "utf8");
-          });
-        }
-        const notificationEventId = await step.run(
-          "allocate-ack-receipt-event-id",
-          dependencies.nextEventId,
+        const recorded = declaration.correlationId.startsWith("campaign-pulse:")
+          ? await step.run("append-pulse-ack", () =>
+              appendPulseAckOnce(dependencies, action),
+            )
+          : false;
+        await step.run("record-ack-completion", () =>
+          dependencies.emit({
+            level: "info",
+            source: "worker",
+            component: "learner-flow-action",
+            action: "learner_flow.action.acknowledged",
+            success: true,
+            metadata: { ...commonMetadata(action), recorded },
+          }),
         );
-        await step.run("send-ack-receipt", () =>
-          sendReceipt(dependencies, "Seen. Next pulse stays scheduled.", notificationEventId),
-        );
-        await step.run("verify-ack-receipt", () =>
-          verifyReceipt(dependencies, action, notificationEventId),
-        );
-        return { status: "acknowledged", flowId: action.flowId };
+        return { status: "acknowledged", flowId: action.flowId, recorded };
       }
 
       if (action.actionId === "learner-flow.run") {
@@ -396,10 +421,7 @@ export function createLearnerFlowActionFunction(
         await step.run("verify-flow-agent-schedule", () =>
           verifySchedule(dependencies, action, id, "daily-flow-agent"),
         );
-        const notificationEventId = await step.run(
-          "allocate-flow-agent-receipt-event-id",
-          dependencies.nextEventId,
-        );
+        const notificationEventId = learnerFlowReceiptEventId(action);
         await step.run("send-flow-agent-receipt", () =>
           sendReceipt(dependencies, "Flow agent spawning.", notificationEventId),
         );
@@ -425,10 +447,7 @@ export function createLearnerFlowActionFunction(
       await step.run("verify-investigator-schedule", () =>
         verifySchedule(dependencies, action, id, "pulse-investigator"),
       );
-      const notificationEventId = await step.run(
-        "allocate-investigator-receipt-event-id",
-        dependencies.nextEventId,
-      );
+      const notificationEventId = learnerFlowReceiptEventId(action);
       await step.run("send-investigator-receipt", () =>
         sendReceipt(
           dependencies,

@@ -376,7 +376,7 @@ describe("Chat SDK acting inbound dispatcher", () => {
     ]);
     expect(published).toEqual([
       {
-        id: "telegram:interaction:pulse-action-1:flow:flow_v2_11111111-1111-4111-8111-111111111111",
+        id: "message-action:callback-pulse-1",
         name: MESSAGE_ACTION_REQUESTED,
         data: expect.objectContaining({
           flowId: "flow_v2_11111111-1111-4111-8111-111111111111",
@@ -388,6 +388,44 @@ describe("Chat SDK acting inbound dispatcher", () => {
           actor: { id: "7718912466", displayName: "Joel" },
         }),
       },
+    ]);
+  });
+
+  test("deduplicates a redelivered callback by rawEventId across dispatcher restarts", async () => {
+    const claims = new Set<string>();
+    const published: unknown[] = [];
+    const makeDispatch = () => createActingInboundDispatcher({
+      enqueue: async () => {},
+      publisher: createObserveOnlyInboundPublisher({ send: async () => {} }),
+      resolveFlowId: async () =>
+        "flow_v2_11111111-1111-4111-8111-111111111111" as FlowIdType,
+      resolveDeclaredActions: async (flowId) => ({
+        flowId,
+        correlationId: "campaign-pulse:event-1",
+        platform: "telegram",
+        platformMessageId: "14620",
+        declaredActions: [
+          { kind: "callback", id: "learner-flow.ack", label: "Seen" },
+        ],
+      }),
+      isActionPublished: async (rawEventId) => claims.has(rawEventId),
+      rememberActionPublished: async (rawEventId) => {
+        claims.add(rawEventId);
+      },
+      publishAction: async (event) => {
+        published.push(event);
+      },
+      publishReaction: async () => {},
+    });
+    const action = messageCallbackAction({ value: "learner-flow.ack" });
+
+    expect(await makeDispatch()(action)).toEqual({ status: "observed" });
+    expect(await makeDispatch()(action)).toEqual({ status: "duplicate" });
+    expect(published).toEqual([
+      expect.objectContaining({
+        id: "message-action:callback-pulse-retry",
+        data: expect.objectContaining({ rawEventId: "callback-pulse-retry" }),
+      }),
     ]);
   });
 
