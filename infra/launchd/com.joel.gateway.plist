@@ -16,7 +16,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/joel/.joelclaw/scripts/gateway-start.sh</string>
+        <string>/Users/joel/Code/joelhooks/joelclaw/infra/gateway-daemon.sh</string>
     </array>
 
     <key>WorkingDirectory</key>

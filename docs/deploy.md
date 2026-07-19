@@ -210,15 +210,26 @@ Host launchd assets that are part of joelclaw runtime behavior belong in `infra/
 
 ### Critical boot-safe system daemons (ADR-0240)
 
-These repo-managed plists are the canonical source for the host control plane and are installed into `/Library/LaunchDaemons/` by the root installer:
+These repo-managed plists are the canonical source for the host control plane and are installed into `/Library/LaunchDaemons/` by the root installer.
 
-- `infra/launchd/com.joel.colima.plist`
-- `infra/launchd/com.joel.k8s-reboot-heal.plist`
+Installed only on the host assigned `joelclaw-headless-runtime` in `packages/endpoint-resolver/config/service-placement.json`:
+
 - `infra/launchd/com.joel.agent-secrets.plist`
 - `infra/launchd/com.joel.system-bus-worker.plist`
 - `infra/launchd/com.joel.gateway.plist`
 - `infra/launchd/com.joelclaw.agent-mail.plist`
+- `infra/launchd/com.joelclaw.herdr-server.plist`
+- `infra/launchd/com.joelclaw.wiki-serve.plist`
+- `infra/launchd/com.joelclaw.wiki-serve-check.plist`
 - `infra/agent-mail-daemon.sh`
+- `infra/gateway-daemon.sh`
+- `infra/herdr-server-daemon.sh`
+
+Installed only on the host assigned `k8s` in `packages/endpoint-resolver/config/service-placement.json`:
+
+- `infra/launchd/com.joel.colima.plist`
+- `infra/launchd/com.joel.k8s-reboot-heal.plist`
+- `infra/launchd/com.joel.kube-operator-access.plist`
 
 Canonical installer:
 
@@ -233,8 +244,12 @@ sudo ~/Code/joelhooks/joelclaw/infra/install-headless-bootstrap.sh
 ```
 
 What the installer does:
-- copies the repo-managed plists into `/Library/LaunchDaemons/`
-- removes the old `~/Library/LaunchAgents/<label>.plist` copies for the critical labels
+- reads the current machine roles from `packages/endpoint-resolver/config/service-placement.json`
+- installs the headless runtime only on its assigned host and k8s daemons only on the assigned k8s host
+- validates every selected plist, wrapper, executable, and external checkout before stopping any live service
+- copies the repo-managed plists appropriate to this host into `/Library/LaunchDaemons/`
+- removes non-local headless and k8s daemons, including on a former owner that is no longer assigned either role
+- removes the old `~/Library/LaunchAgents/<label>.plist` copies for the critical labels, including the legacy `com.joelhooks.agent-secrets` alias
 - removes the superseded `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist` bridge
 - kills known manual `nohup` and stale `autossh` colima-tunnel fallbacks from reboot recovery
 - removes the deprecated `com.joel.colima-tunnel` daemon instead of reinstalling it, because Colima/Lima already owns docker-published host ports for `joelclaw-controlplane-1`
@@ -244,9 +259,15 @@ What the installer does:
 
 Agent-mail note: `com.joelclaw.agent-mail` now goes through `infra/agent-mail-daemon.sh`, which resolves the joelclaw-managed `joelhooks/mcp_agent_mail` checkout instead of baking a third-party path into the plist. If the local checkout still lives under a legacy directory name, that is fine as long as the git `origin` remote is `joelhooks/mcp_agent_mail`. The launchd plist and wrapper both raise `NumberOfFiles` to 8192 because git-backed mailbox writes can temporarily hold hundreds of descriptors under multi-agent traffic; the wrapper fallback matters when the installed system plist is stale.
 
+Gateway note: `com.joel.gateway` starts through `infra/gateway-daemon.sh`, which waits for agent-secrets readiness before running the private gateway start script. LaunchDaemons start concurrently, and the gateway leases channel tokens only once, so this readiness gate prevents a boot race from leaving Telegram and Slack disabled until a manual restart.
+
+Herdr note: `com.joelclaw.herdr-server` keeps the persistent headless workspace server available before GUI login. Its wrapper waits when an incumbent detached server already owns the live panes, preserving continuity during installation, and takes over when that process exits. Reinstalling the runtime also leaves an already-loaded system herdr job untouched while its socket has an owner, so an installer refresh cannot kill live panes. The separate herdr relay and focus helpers are remote/UI conveniences and may remain user LaunchAgents.
+
+System Brain note: `com.joelclaw.wiki-serve` keeps the static Brain host available before GUI login. `com.joelclaw.wiki-serve-check` periodically restores only its dedicated Tailscale Serve route. Both call the canonical scripts in the `joelclaw-wiki` checkout.
+
 This replaces the failed ADR-0239 bridge design. We no longer try to bounce LaunchAgents into `user/$UID` from a system daemon.
 
-`com.joel.colima` is a boot/startup helper only. It should run `colima start ...` at load, then exit. It must **not** keep a `StartInterval` that re-runs `colima start` every few minutes against an already-running VM — that adds useless churn to an already fragile host path and obscures whether later Colima instability is real collapse or self-inflicted launchd hammering.
+On the host assigned `k8s`, `com.joel.colima` is a boot/startup helper only. It should run `colima start ...` at load, then exit. It must **not** keep a `StartInterval` that re-runs `colima start` every few minutes against an already-running VM. That adds useless churn to an already fragile host path and obscures whether later Colima instability is real collapse or self-inflicted launchd hammering.
 
 `com.joel.colima-tunnel` is no longer part of the critical boot path. The old autossh daemon was forwarding the same host ports that Colima/Lima already publishes for `joelclaw-controlplane-1` (`3838`, `6379`, `7880`, `7881`, `8288`, `8289`, `9627`) and it killed `ssh` listeners on those ports before binding them itself. That means it could kill Lima's own forwarders and create the exact kind of host-path churn we were trying to avoid. The canonical `infra/colima-tunnel.sh` file now exists only as a deprecated compatibility stub that exits cleanly; `install-critical-launchdaemons.sh` removes any installed `com.joel.colima-tunnel` daemon instead of reinstalling it.
 
@@ -256,9 +277,9 @@ The same host-port contract applies to docs-api. `k8s/docs-api.yaml` exposes Nod
 
 The 2026-05-02 docs-api outage was not random app failure. Lima usernet (`limactl usernet`) panicked in gvproxy and host publishing degraded; manual port-forwards masked some ports, but `3838` had no fallback. A Colima force-cycle then left `joelclaw-controlplane-1` exited because the Docker restart policy was not durable. The recovery was: clean stale usernet/SSH state, restart Colima, `docker start joelclaw-controlplane-1`, `docker update --restart unless-stopped joelclaw-controlplane-1`, reload `br_netfilter` in the Colima VM, restart flannel, and wait for Typesense to reload before verifying `/api/docs/search`.
 
-`com.joel.kube-operator-access` **is** part of the critical boot path now. It is not a resurrection of `com.joel.colima-tunnel`: it does not compete for Lima-owned app ports. Instead it owns two dedicated operator-only loopback ports — `127.0.0.1:16443 -> 10.5.0.2:6443` for kube-apiserver and `127.0.0.1:15000 -> 10.5.0.2:50000` for the Talos API — using `ssh -F ~/.colima/_lima/colima/ssh.config -S none -o ControlPath=none -o ControlMaster=no -o ControlPersist=no`. That makes kubectl/talos access boring again after the rebuild proved the direct host-published 6443 path could still return TLS garbage while the in-VM control-plane endpoint itself was healthy. The installer also cancels any stale operator forwards that were accidentally grafted onto Lima's mux master, because launchd will otherwise thrash forever on `Address already in use`. The daemon refreshes `~/.talos/config` and `~/.kube/config` toward those stable local operator ports. See ADR-0245 for the contract.
+On the host assigned `k8s`, `com.joel.kube-operator-access` **is** part of the critical boot path. It is not a resurrection of `com.joel.colima-tunnel`: it does not compete for Lima-owned app ports. Instead it owns two dedicated operator-only loopback ports, `127.0.0.1:16443 -> 10.5.0.2:6443` for kube-apiserver and `127.0.0.1:15000 -> 10.5.0.2:50000` for the Talos API, using `ssh -F ~/.colima/_lima/colima/ssh.config -S none -o ControlPath=none -o ControlMaster=no -o ControlPersist=no`. That makes kubectl/talos access boring again after the rebuild proved the direct host-published 6443 path could still return TLS garbage while the in-VM control-plane endpoint itself was healthy. The installer also cancels any stale operator forwards that were accidentally grafted onto Lima's mux master, because launchd will otherwise thrash forever on `Address already in use`. The daemon refreshes `~/.talos/config` and `~/.kube/config` toward those stable local operator ports. See ADR-0245 for the contract.
 
-`com.joel.k8s-reboot-heal` must follow the same rule: use `colima status --json`, not plain `colima status`, because the plain command has false-failed during warm recovery and force-cycled a healthy-enough VM. Even JSON is only advisory here — the healer should trust the Docker socket / Colima SSH path before deciding to cycle the VM. The healer also needs to restore the `192.168.1.0/24 via 192.168.64.1 dev col0` NAS route before calling reboot recovery healthy; otherwise gateway can come back while NFS-backed workloads are still cooked. Its recovery markers now persist in `~/.local/state/k8s-reboot-heal.env`, because launchd runs the script as a fresh process every interval and in-memory timestamps were not enough to suppress repeat flannel restarts from already-seen `subnet.env` events. That state file now also carries Colima escalation markers (`COLIMA_UNHEALTHY_STREAK`, `LAST_COLIMA_UNHEALTHY_EPOCH`, `LAST_COLIMA_FORCE_CYCLE_EPOCH`, `LAST_COLIMA_FAILED_RECOVERY_EPOCH`) so a single ugly tick cannot immediately panic-cycle the whole VM again and a post-restart regression can block repeated healer theatre. The second-stage escalation is faster now, but still earned: after the first unhealthy tick, the healer runs a short rapid-confirmation window before authorizing a force-cycle, and if host access is still down but no escalation is yet allowed it exits early instead of pretending downstream kube/NAS repairs are actionable. The durability rule is stricter now: a restart is not recovery, recovery only counts after a post-restart stability window keeps Docker, Colima SSH, Kubernetes API, Typesense, and Inngest healthy for repeated passes, and a regression during that window is recorded as a failed recovery that suppresses more force-cycles for a hold period. See ADR-0241 for escalation gates, ADR-0244 for the durable verification contract, and ADR-0245 for the operator access path.
+On the host assigned `k8s`, `com.joel.k8s-reboot-heal` must follow the same rule: use `colima status --json`, not plain `colima status`, because the plain command has false-failed during warm recovery and force-cycled a healthy-enough VM. Even JSON is only advisory here. The healer should trust the Docker socket / Colima SSH path before deciding to cycle the VM. The healer also needs to restore the `192.168.1.0/24 via 192.168.64.1 dev col0` NAS route before calling reboot recovery healthy; otherwise gateway can come back while NFS-backed workloads are still cooked. Its recovery markers now persist in `~/.local/state/k8s-reboot-heal.env`, because launchd runs the script as a fresh process every interval and in-memory timestamps were not enough to suppress repeat flannel restarts from already-seen `subnet.env` events. That state file now also carries Colima escalation markers (`COLIMA_UNHEALTHY_STREAK`, `LAST_COLIMA_UNHEALTHY_EPOCH`, `LAST_COLIMA_FORCE_CYCLE_EPOCH`, `LAST_COLIMA_FAILED_RECOVERY_EPOCH`) so a single ugly tick cannot immediately panic-cycle the whole VM again and a post-restart regression can block repeated healer theatre. The second-stage escalation is faster now, but still earned: after the first unhealthy tick, the healer runs a short rapid-confirmation window before authorizing a force-cycle, and if host access is still down but no escalation is yet allowed it exits early instead of pretending downstream kube/NAS repairs are actionable. The durability rule is stricter now: a restart is not recovery, recovery only counts after a post-restart stability window keeps Docker, Colima SSH, Kubernetes API, Typesense, and Inngest healthy for repeated passes, and a regression during that window is recorded as a failed recovery that suppresses more force-cycles for a hold period. See ADR-0241 for escalation gates, ADR-0244 for the durable verification contract, and ADR-0245 for the operator access path.
 
 `infra/colima-proof.sh` is the evidence-first companion to the healer. It captures incident-scoped Colima/Lima substrate artifacts under `~/.local/share/colima-proof/incidents/<incident_id>/` and emits structured OTEL under `source=infra`, `component=colima-proof`. The healer now calls it at the failure edge, on hold states, before/after force-cycles, after post-Colima invariant outcomes, and on post-restart verification regressions so recovery no longer destroys the evidence needed to prove root cause. The harness also has a non-destructive `recover-usernet` mode that resets Lima `user-v2` control state, writes pre/post snapshots, and emits an explicit verdict artifact for `H1-usernet` instead of pretending every restart proves something. See ADR-0242 for the proof contract.
 
@@ -270,6 +291,10 @@ launchctl print system/com.joel.system-bus-worker | rg 'state =|pid =|last exit 
 launchctl print system/com.joel.kube-operator-access | rg 'state =|pid =|last exit code'
 launchctl print system/com.joel.agent-secrets | rg 'state =|pid =|last exit code'
 launchctl print system/com.joelclaw.agent-mail | rg 'state =|pid =|last exit code'
+launchctl print system/com.joelclaw.herdr-server | rg 'state =|pid =|last exit code'
+launchctl print system/com.joelclaw.wiki-serve | rg 'state =|pid =|last exit code'
+herdr status --json
+curl -fsS http://127.0.0.1:8790/
 kubectl get nodes
 curl -k https://127.0.0.1:16443/readyz?verbose
 joelclaw status

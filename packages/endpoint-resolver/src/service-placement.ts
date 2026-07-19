@@ -1,6 +1,6 @@
 import defaultPlacement from "../config/service-placement.json";
 
-export type HostedService = "k8s";
+export type HostedService = "k8s" | "joelclaw-headless-runtime";
 
 export type ServicePlacementConfig = {
   readonly version: 1;

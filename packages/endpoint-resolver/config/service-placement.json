@@ -2,6 +2,10 @@
   "version": 1,
   "hosts": [
     {
+      "hostname": "flagg",
+      "services": ["joelclaw-headless-runtime"]
+    },
+    {
       "hostname": "panda",
       "services": ["k8s"]
     }

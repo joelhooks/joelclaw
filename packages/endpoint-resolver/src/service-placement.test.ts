@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { probeK8sHealth } from "./k8s-health";
 import {
+  DEFAULT_SERVICE_PLACEMENT,
   formatNotHostedHere,
   resolveServicePlacement,
   type ServicePlacementConfig,
@@ -8,7 +9,10 @@ import {
 
 const placement = {
   version: 1,
-  hosts: [{ hostname: "panda", services: ["k8s"] }],
+  hosts: [
+    { hostname: "flagg", services: ["joelclaw-headless-runtime"] },
+    { hostname: "panda", services: ["k8s"] },
+  ],
 } as const satisfies ServicePlacementConfig;
 
 describe("service placement", () => {
@@ -16,6 +20,26 @@ describe("service placement", () => {
     expect(resolveServicePlacement("k8s", "panda.local", placement)).toEqual({
       service: "k8s",
       hostname: "panda",
+      hostedHere: true,
+      hostedOn: ["panda"],
+    });
+  });
+
+  test("maps the headless runtime to flagg", () => {
+    expect(resolveServicePlacement("joelclaw-headless-runtime", "flagg.localdomain", placement)).toEqual({
+      service: "joelclaw-headless-runtime",
+      hostname: "flagg",
+      hostedHere: true,
+      hostedOn: ["flagg"],
+    });
+  });
+
+  test("keeps the checked-in default placement aligned with Flagg and Panda", () => {
+    expect(resolveServicePlacement("joelclaw-headless-runtime", "flagg", DEFAULT_SERVICE_PLACEMENT)).toMatchObject({
+      hostedHere: true,
+      hostedOn: ["flagg"],
+    });
+    expect(resolveServicePlacement("k8s", "panda", DEFAULT_SERVICE_PLACEMENT)).toMatchObject({
       hostedHere: true,
       hostedOn: ["panda"],
     });
