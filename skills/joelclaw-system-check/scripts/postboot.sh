@@ -212,14 +212,23 @@ authority_shape_ok() {
   central_url="$(env_value JOELCLAW_CENTRAL_URL || true)"
   typesense_url="$(env_value TYPESENSE_URL || env_value JOELCLAW_TYPESENSE_URL || true)"
 
+  central_url="${central_url%/}"
+  typesense_url="${typesense_url%/}"
+
   printf 'host=%s central=%s typesense=%s\n' \
     "$host" \
     "${central_url:-<unset>}" \
     "${typesense_url:-<unset>}"
 
   if [[ "$host" == "flagg" || "$host" == "flagg.localdomain" ]]; then
-    [[ "$central_url" == *"panda.tail7af24.ts.net"* ]] || return 1
-    [[ "$typesense_url" == *"panda:8108"* || "$typesense_url" == *"panda.tail7af24.ts.net"* || "$typesense_url" == *"8108"* ]] || return 1
+    case "$central_url" in
+      http://localhost:3111|http://127.0.0.1:3111|http://joels-mac-studio.tail7af24.ts.net:3111) ;;
+      *) return 1 ;;
+    esac
+    case "$typesense_url" in
+      http://localhost:8108|http://127.0.0.1:8108|http://joels-mac-studio.tail7af24.ts.net:8108) ;;
+      *) return 1 ;;
+    esac
   fi
 }
 
@@ -246,7 +255,15 @@ nas_route_ok() {
 }
 
 nas_mount_status_ok() {
-  "${CENTRAL_SCRIPTS}/mount-nas.sh" status
+  bash "${CENTRAL_SCRIPTS}/mount-nas.sh" status
+}
+
+nas_mount_helper_executable_ok() {
+  local helper="${SERVICE_CENTRAL_SCRIPTS}/mount-nas.sh"
+  [[ -x "$helper" ]] || {
+    printf 'missing or not executable: %s\n' "$helper"
+    return 1
+  }
 }
 
 nas_verify_ok() {
@@ -333,6 +350,7 @@ else
 fi
 
 probe required 'nas launchd label' launchd_system_ok com.joelclaw.central.nas-mounts
+probe required 'nas launchd helper executable' nas_mount_helper_executable_ok
 probe required 'nas route 10GbE/MTU' nas_route_ok
 probe required 'nas mounts status' nas_mount_status_ok
 probe required 'nas verifier write probe' nas_verify_ok
