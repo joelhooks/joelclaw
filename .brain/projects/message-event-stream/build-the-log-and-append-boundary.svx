@@ -1,0 +1,25 @@
+---
+title: "Build the Log and the Append Boundary"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "blocked"
+blocked_by:
+  - "./research-inventory-every-lane.svx"
+parent: "./message-event-stream-brief.svx"
+created_at: "2026-07-19"
+---
+
+# Build the log and the append boundary
+
+## Step
+
+Resolved when the canonical log exists and the key law is mechanically enforced:
+
+1. Convex deployment carries a `messageEvents` table: append-only, indexed by semantic key (unique), flowId, and time. Schema versioned.
+2. One append function is the only write path. It requires `semanticKey`, `kind`, `source`, and payload; a duplicate key returns the original record (no-op) with a `deduplicated: true` marker; a missing or malformed key is a schema-level rejection, not a runtime convention.
+3. An Inngest consumer tails the log (or receives append-published events) and proves the queue shape: one test producer append → one consumer execution → one materialized view row, with a re-append proving zero duplicate processing.
+4. `joelclaw messages trace <flowId>` gains a Convex-backed read path (view), replacing the credential-broken journal reader as the default.
+5. Nothing cuts over yet: this step builds the primitives beside the live system. Cutover is the strangle step's job.
+
+Done-condition receipts: schema file, append function with tests (duplicate, malformed, replay), consumer proof run, trace command reading the view.

@@ -1,0 +1,22 @@
+---
+title: "Grill: Retention, Replay, and View Ownership"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "ready"
+parent: "./message-event-stream-brief.svx"
+created_at: "2026-07-19"
+---
+
+# Grill: retention, replay, and view ownership
+
+## Step
+
+Live decision conversation with Joel (grill-me, one question at a time, recommendation first). Undecided at charter:
+
+1. **Retention**: does the log keep everything forever, or archive/window (e.g. hot 90 days in Convex, cold export)? Cost and privacy posture both bear on this — the log carries operator content.
+2. **Replay semantics**: what does replaying a flow DO — re-render views only (safe default), or re-execute consumers behind an explicit flag? Who may trigger replay?
+3. **View ownership**: which views exist day one (journal/trace, per-flow delivery state, action history) and does anything besides `messages trace` read them (wiki? pulse?)?
+4. **Parity window N** for the strangle step's proof.
+
+Record settlements here; graduate any that spawn build work into their own steps.

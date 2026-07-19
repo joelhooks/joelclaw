@@ -1,0 +1,23 @@
+---
+title: "Inventory Every Message Lane, Journal, and Identity"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "ready"
+parent: "./message-event-stream-brief.svx"
+created_at: "2026-07-19"
+---
+
+# Inventory every message lane, journal, and identity
+
+## Step
+
+Resolved when an asset maps the complete current messaging estate, so the schema step designs against reality and the demolition list is exhaustive rather than remembered:
+
+1. **Producers**: every code path that sends an operator-facing message (notify send callers, gateway composition-root send() callers, digest emitters, satellite scripts, launchd agents). For each: what identity/correlation it mints, what kind/priority it declares.
+2. **Consumers**: every reader of message state (trace/audit commands, reaction/callback consumers, digest batchers, projections).
+3. **Journals and stores**: every place message state persists today (message-journal, Redis correlation/action/dedupe keys, otel spans, HATEOAS receipts, Chat SDK internals). For each: schema, writer, readers, retention.
+4. **Identities**: every ID in flight (flowId, eventId, correlationId, rawEventId, platformMessageId, receipt UUIDs) — where each is minted, whether it is semantic or per-delivery, and which ones the seen-spam incident proved dangerous.
+5. **Lanes for the demolition list**: name each legacy path that must eventually die, with its current traffic and callers.
+
+Output: one asset file `asset-messaging-estate-inventory.svx` in this directory, tables over prose, every claim with a file:line receipt. Aggregate-only; no tokens, no secrets.

@@ -1,7 +1,8 @@
 ---
 title: "Proposal: retire Campaign Pulse reaction handling"
 type: "proposal"
-status: "proposed"
+status: "completed"
+completed_at: "2026-07-19"
 created_at: "2026-07-19"
 parent: "./design-button-native-interactions.svx"
 privacy: "private"
@@ -14,7 +15,9 @@ targets:
 
 # Proposal: retire Campaign Pulse reaction handling
 
-This is a removal proposal, not an executed deletion.
+This removal is complete. Joel tapped the one-time `Seen` canary on 2026-07-19. Gateway OTEL recorded `learner_flow.action.declaration_verified`, and the local bus completed `Learner Flow Action`. That satisfied the load-bearing cutover gate without a synthetic reaction event.
+
+The retired consumer, its tests, host registration, and exports were then deleted. `learner-flow/action` remains the sole Campaign Pulse and Daily Flow callback consumer.
 
 ## Keep the useful behavior
 
@@ -80,9 +83,9 @@ The `lastDmFlowId` / `dmFlows` state check exists only to prove a reaction belon
 2. Change Telegram callback encoding and gateway publication; keep one Chat SDK owner.
 3. Register `learner-flow/action` while the old reaction consumer remains registered but receives no button callbacks.
 4. Swap Hourly Pulse and Daily Flow composers to `kind: "callback"` actions.
-5. Send one formatted canary and tap `Seen` once.
-6. Verify outbound confirmation, callback query acknowledgement, `flowId` correlation, event publication, ack append, and terminal receipt DM.
-7. Remove `campaign-pulse/reaction` and its old file.
+5. Send one formatted canary and tap `Seen` once. **Completed 2026-07-19.**
+6. Verify outbound confirmation, callback query acknowledgement, `flowId` correlation, event publication, ack append, and terminal receipt DM. **Completed: declaration verified and durable consumer run reached `COMPLETED`.**
+7. Remove `campaign-pulse/reaction` and its old file. **Completed in the retirement slice.**
 8. Broader native-reaction retirement is required by Joel's rejection, but it belongs in a separate reviewed slice: `message-reactions.ts`, neat-memory grading, `message_reaction` allowed updates, and the reaction contract event. Do not bundle that wider deletion into the Pulse migration.
 
 ## Stop and rollback rules

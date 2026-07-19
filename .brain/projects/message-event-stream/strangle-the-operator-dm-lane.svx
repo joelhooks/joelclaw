@@ -1,0 +1,23 @@
+---
+title: "Strangle the Operator-DM Lane"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "blocked"
+blocked_by:
+  - "./build-the-log-and-append-boundary.svx"
+parent: "./message-event-stream-brief.svx"
+created_at: "2026-07-19"
+---
+
+# Strangle the operator-DM lane
+
+## Step
+
+Resolved when the operator-DM path (notify shim, button callbacks, writer-agent output) runs THROUGH the log:
+
+1. `notify send` compat shim appends to the log; the gateway's Telegram delivery becomes a log consumer emitting delivery-state view updates. The legacy direct path stays alive in shadow until parity receipts exist.
+2. Button callbacks append `message/action.requested` events with `telegram:callback_query.<id>` as the semantic key — the dedupe shipped in 8863396f becomes a property of the append boundary, not consumer code.
+3. Writer-agent messages (aihero-support packets) append as events.
+4. Parity proof: N days (settle N with Joel at review) of every operator DM flowing log-first with zero missed deliveries against the legacy path's receipts.
+5. On parity: charter one demolition step per legacy path found in the inventory, each with its kill condition, and flip the lane. This step closes only when the strangle is live; the demolitions close the brief.

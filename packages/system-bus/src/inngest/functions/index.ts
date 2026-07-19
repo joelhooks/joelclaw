@@ -18,10 +18,6 @@ export { agentTaskRun } from "./agent-task-run";
 export { approvalRequest, approvalResolve } from "./approval";
 export { backfillObserve } from "./backfill-observe";
 export { bookDownload } from "./book-download";
-export {
-  campaignPulseReaction,
-  createCampaignPulseReactionFunction,
-} from "./campaign-pulse-reactions";
 export { channelMessageClassify } from "./channel-message-classify";
 export { channelMessageIngest } from "./channel-message-ingest";
 export { channelIntelligenceGarden } from "./channels/channel-intelligence-garden";

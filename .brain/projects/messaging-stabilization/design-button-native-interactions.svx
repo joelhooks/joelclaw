@@ -151,7 +151,7 @@ Minimum receipts:
 - consumer row: action result plus schedule ID or ack-log append receipt;
 - final DM receipt: plain text stating what actually happened.
 
-A live canary needs one message and one tap. Send one formatted Pulse-shaped DM with the three buttons. Joel taps `Seen` once. The proof closes only when the same `flowId` appears in the outbound row, callback row, `message/action.requested`, and `learner-flow/action` success receipt. No reaction event counts as proof.
+The live canary passed on 2026-07-19 with one formatted message and one `Seen` tap. Gateway OTEL recorded `learner_flow.action.declaration_verified`, and the local bus ran `Learner Flow Action` to `COMPLETED`. That one-time acknowledgment was load-bearing because it authorized retirement of `campaign-pulse/reaction`. It must not remain on routine messages.
 
 ## Explicit non-goals
 

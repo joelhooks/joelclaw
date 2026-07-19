@@ -1,0 +1,57 @@
+---
+title: "Message Event Stream"
+type: "brief"
+status: "active"
+created_at: "2026-07-19"
+tags:
+  - messaging
+  - charter
+---
+
+# Message event stream
+
+Fleet messaging becomes one append-only event log processed as a queue. Chartered by Joel (2026-07-19) after a day of receipts for the missing half: a seen-spam loop from per-delivery identities, a digest lane that silently suppressed, four partial journals none of which `messages trace` could read, and priority lanes that encoded meaning as urgency flags. "Messages should be an event stream that's processed as a queue" — and the primitives must align with how Inngest already works.
+
+## Finish line
+
+1. One canonical append-only message-events log exists in Convex. Every operator-facing message (outbound DM, inbound action, receipt) is an event in it.
+2. The append boundary enforces a producer-supplied semantic idempotency key. Duplicate key = no-op returning the original record. Fresh-per-delivery identities are unrepresentable at the schema level.
+3. Inngest consumes the log for routing/delivery; Redis is pure transport (hot queue), never truth.
+4. `joelclaw messages trace <flowId>` reads the log's materialized views and works without ceremony.
+5. **Demolition complete**: every strangled legacy lane is DELETED, not bypassed. The brief cannot close while any legacy-lane step remains open. Bypassed-but-alive is a failing state.
+6. Maintained after: new producers append events; adding a message surface requires zero new delivery code, only a packet and a kind.
+
+## Vocabulary
+
+- **log** — the canonical append-only Convex message-events table. The only truth.
+- **semantic key** — producer-supplied idempotency key: `source + stable-identity` (e.g. `telegram:callback_query.<id>`, `pulse:2026-07-19T17:00`). Required at append.
+- **lane** — a legacy delivery path being strangled. Each lane has a kill condition and dies by deletion.
+- **view** — a materialized projection of the log (journal, per-flow state, delivery status). Views are derived, disposable, rebuildable.
+- **packet** — the typed context object a surface emits (see aihero-support message-writer work). Packets become log events.
+
+## Notes
+
+- Home: next to [messaging-stabilization](../messaging-stabilization/messaging-stabilization-brief.svx), which it partially supersedes — the button-native callback path, kinds routing, and dedupe fixes shipped there become producers/consumers on the log.
+- **Execution is authorized** (Joel, 2026-07-19: "make the keys law and charter it") for build steps that carry a stated done-condition.
+- Convex and Redis are both at our disposal; Inngest (flagg system-bus locally, Inngest Cloud for ai-hero) is the processor. iMessage stays hand-rolled and out of the stream for now.
+- Today's proofs to reuse: deterministic receipt ids from `rawEventId + actionId` (joelclaw 8863396f) are the semantic-key discipline in miniature; the reconciler's `semanticIdempotencyKey` handling (ai-hero 2ce93ba) is the duplicate-equals-done pattern.
+- Standing rulings that bind all steps: no priority lanes (kinds only), buttons are real actions never ack chores, no silent suppression anywhere, writer-agent messages compose from packets.
+
+## Decision ledger
+
+- [Charter](message-event-stream-brief.svx) — canonical log lives in Convex (append-only table, enforced keys), not Redis Streams and not Inngest event history; Inngest consumes, Redis transports. (Joel, 2026-07-19)
+- [Charter](message-event-stream-brief.svx) — strangler cutover starting with the operator-DM lane, with mandatory demolition: each lane gets a step with an explicit kill condition. (Joel, 2026-07-19)
+- [Charter](message-event-stream-brief.svx) — semantic idempotency keys are law at the append boundary; duplicates are no-ops; derived-per-delivery identities banned. (Joel, 2026-07-19)
+
+## Latent
+
+- Writer-agent output as log events: the aihero-support packet→writer pipeline appends its composed message as an event rather than calling notify directly.
+- Slack receipt lane migration (after operator-DM lane proves out).
+- Digest policy as a log consumer: batching becomes a visible consumer behavior over the stream, never suppression.
+- Replay tooling: re-emit a flow's events into a dev consumer for debugging.
+- Cross-host appends: ai-hero prod (Vercel) appending to the fleet log — auth boundary and latency unknowns.
+
+## Out of scope
+
+- iMessage: hand-rolled, stays outside the stream until the operator-DM lane has proven the model.
+- Rewriting ai-hero's own Inngest event usage (course pipeline events stay as they are; only operator messaging rides the log).
