@@ -1,0 +1,161 @@
+---
+title: "Button-native Telegram interactions"
+type: "decision"
+status: "accepted"
+created_at: "2026-07-19"
+owner: "messaging-stabilization"
+privacy: "private"
+supersedes:
+  - "./build-reactions-bridge.svx"
+  - "../../tasks/messaging-reactions-bridge.svx"
+source_receipts:
+  - "../../../packages/message-contract/src/outbound.ts"
+  - "../../../packages/gateway/src/chat-sdk/telegram-adapter.ts"
+  - "../../../packages/gateway/src/chat-sdk-inbound/acting.ts"
+  - "../../../packages/system-bus/src/inngest/functions/campaign-pulse-reactions.ts"
+  - "../../data/telegram-signal-research/report-actions.svx"
+---
+
+# Button-native Telegram interactions
+
+## Decision
+
+Telegram inline keyboard buttons are the only operator interaction surface for actionable DMs. Emoji reactions are not an action API.
+
+The current code on commit `ba3976b2` draws inline buttons, but encodes them as `kind: "reaction"`, sends `message_reaction` callback data, synthesizes an emoji, and publishes `message/reaction.received`. That is the rejected model wearing button clothes. Do not extend it.
+
+The replacement is callback-native end to end:
+
+```text
+contract-v2 callback action
+  → Telegram inline keyboard
+  → existing Chat SDK callback_query owner
+  → authorized interaction + flowId correlation
+  → message/action.requested
+  → one domain consumer
+  → durable action receipt
+```
+
+No second bot, poller, listener, or Chat SDK instance is allowed. Do not change acting/shadow flags. `flowId` remains the correlation authority; Telegram message IDs are adapter-local lookup keys only.
+
+## Operator-facing shape
+
+Every actionable Telegram DM has:
+
+1. one bold verdict sentence;
+2. short, plain-language facts;
+3. one tappable source link when a useful source exists;
+4. labeled buttons under the message;
+5. no `React: …` footer, emoji code legend, command syntax, or jargon wall.
+
+Campaign Pulse and Daily Flow use these labels:
+
+- `Seen`
+- `Run flow agent`
+- `Investigate`
+
+For three actions, Telegram renders `Seen` on the first row and the two dispatch actions on the second. Labels are presentation. Stable action IDs are behavior:
+
+- `learner-flow.ack`
+- `learner-flow.run`
+- `learner-flow.investigate`
+
+These IDs intentionally describe the shared learner-flow control surface. Both `campaign-pulse` and `daily-flow-agent` messages may declare them; one `learner-flow/action` consumer owns their meaning.
+
+Use MarkdownV2 through the existing formatter and adapter preflight. A definitive Telegram entity-parse rejection retries once as plain text with the same buttons. Ambiguous network failures do not retry and risk a duplicate. Formatting failure may degrade presentation; it may never become non-delivery.
+
+## Typed contract
+
+Replace the reaction-shaped action with a callback action:
+
+```ts
+type CallbackAction = {
+  kind: "callback";
+  id: "learner-flow.ack" | "learner-flow.run" | "learner-flow.investigate";
+  label: string;
+};
+
+type MessageActionRequested = {
+  contractVersion: 2;
+  flowId: FlowId;
+  platform: "telegram";
+  actionId: CallbackAction["id"];
+  actor: { id: string; displayName?: string };
+  rawEventId: string;          // Telegram callback_query.id
+  platformMessageId: string;   // correlation input, never domain ownership
+  at: string;
+  correlationSource: "gateway-acting";
+};
+```
+
+The bus event is `message/action.requested`. “Requested” matters: Telegram callback acknowledgement only stops the spinner. It does not prove that a flow agent started or an investigator completed.
+
+The private message journal is canonical. Each confirmed outbound row stores `correlationId` and `declaredActions: [{id,label}]` in `metadata_json`. Redis is only a seven-day projection for fast callback/readback lookup:
+
+- `joelclaw:message-contract:correlation:<correlationId>` → terminal receipt;
+- `joelclaw:message-contract:actions:<flowId>` → declared action IDs and platform message anchor.
+
+Both projections are written only after the confirmed journal row persists. Callback handling falls back to the journal when the action projection is absent; it never treats a missing cache key as permission.
+
+The proposed CLI readback is:
+
+```bash
+joelclaw notify wait <event-id> --source <producer> --timeout 15s
+```
+
+It resolves correlation ID `<producer>:<event-id>` and returns `flowId`, `platform`, `platformMessageId`, `deliveryState`, `declaredActions`, and `confirmedAt`. A real deadline with no terminal row returns `NOTIFY_TERMINAL_RECEIPT_TIMEOUT`. Terminal `failed`, `suppressed`, and `digested` rows return distinct `NOTIFY_DELIVERY_FAILED`, `NOTIFY_SUPPRESSED`, and `NOTIFY_DIGESTED` codes. None permits an automatic resend with a new event ID. On timeout, repeat `notify wait` or audit the same event; on a terminal non-delivery, stop for an explicit operator decision. Producers must not claim delivery or persist callback ownership. This command does not exist yet and is part of the button-contract implementation slice.
+
+The gateway must reject a callback when the actor is not Joel, the platform message does not resolve to a `flowId`, or the action ID was not declared for that flow. Callback payloads remain under Telegram’s 64-byte limit; the proposed Chat SDK form is 50 bytes for `learner-flow.run`:
+
+```text
+chat:{"a":"message_action","v":"learner-flow.run"}
+```
+
+## Existing-gateway route
+
+1. `GatewayTelegramAdapter` renders `inline_keyboard`; it does not poll.
+2. The one Chat SDK Telegram adapter receives `callback_query` and calls its existing `answerCallbackQuery` path immediately with transport-level acknowledgement.
+3. The normalizer emits an authorized `interaction` with the stable callback query ID. Reprocessing the same callback must produce the same event identity.
+4. The acting dispatcher resolves the clicked platform message back to `flowId`, verifies the declared action, and publishes `message/action.requested` once.
+5. The domain consumer uses `rawEventId` for idempotency, executes the requested action, verifies the resulting schedule or append, and sends a short receipt DM.
+6. Failures stay retryable until event publication succeeds. Do not put a callback in the seen set before correlation and publication succeed.
+
+Native emoji `message_reaction` updates do not enter this route.
+
+## Action lifecycle
+
+The action lifecycle is finite and should be one XState v5 machine when implemented:
+
+| State | Meaning | Exit |
+| --- | --- | --- |
+| `received` | callback was decoded and transport-acknowledged | authorize |
+| `rejected` | actor, flow, or declaration check failed | terminal |
+| `correlated` | platform message resolved to `flowId` | publish |
+| `published` | `message/action.requested` accepted durably | consumer executes |
+| `executing` | domain consumer owns the side effect | verify result |
+| `succeeded` | append or schedule readback proved the result | send receipt |
+| `failed_retryable` | correlation, publication, or action failed transiently | retry by stable `rawEventId` |
+| `failed_terminal` | invalid action or non-retryable domain error | emit receipt/telemetry |
+
+Telegram’s spinner acknowledgement is not a state transition to `succeeded`.
+
+## Observability and proof
+
+Minimum receipts:
+
+- outbound confirmed row: `flowId`, declared action IDs, Telegram message ID, formatting mode, fallback used;
+- callback row: callback query ID, action ID, actor verdict, platform message ID, resolved `flowId`;
+- bus row: `message/action.requested` accepted with deterministic event ID;
+- consumer row: action result plus schedule ID or ack-log append receipt;
+- final DM receipt: plain text stating what actually happened.
+
+A live canary needs one message and one tap. Send one formatted Pulse-shaped DM with the three buttons. Joel taps `Seen` once. The proof closes only when the same `flowId` appears in the outbound row, callback row, `message/action.requested`, and `learner-flow/action` success receipt. No reaction event counts as proof.
+
+## Explicit non-goals
+
+- No source-mutation framework.
+- No generic `Done` button.
+- No synthetic emoji translation.
+- No platform message ID subscriptions.
+- No extra listener or direct Bot API poller.
+- No claim that dispatch acceptance equals action completion.

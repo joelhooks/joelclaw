@@ -1,0 +1,164 @@
+---
+title: "Pulse and Daily Flow button composer swap"
+type: "implementation-spec"
+status: "ready-after-button-contract"
+created_at: "2026-07-19"
+parent: "./design-button-native-interactions.svx"
+privacy: "private"
+source_files:
+  - "/Users/joel/Code/badass-courses/aihero-support/.brain/projects/campaign-pulse/asset-hourly-pulse-runbook.svx"
+  - "/Users/joel/Code/badass-courses/aihero-support/.brain/projects/learner-flow-ops/asset-daily-flow-agent-runbook.svx"
+  - "/Users/joel/Code/badass-courses/aihero-support/tools/aih-pulse"
+---
+
+# Pulse and Daily Flow button composer swap
+
+## Gate
+
+Do not change either producer until contract v2 accepts callback actions and the gateway publishes `message/action.requested`. The current `kind: "reaction"` action contract is rejected even though it renders inline buttons.
+
+`tools/aih-pulse` is owned by another session. This is the handoff spec, not an edit to that package.
+
+## Shared action declaration
+
+Both DMs pass this exact semantic shape through `joelclaw notify send --context`:
+
+```json
+{
+  "actions": [
+    {"kind":"callback","id":"learner-flow.ack","label":"Seen"},
+    {"kind":"callback","id":"learner-flow.run","label":"Run flow agent"},
+    {"kind":"callback","id":"learner-flow.investigate","label":"Investigate"}
+  ]
+}
+```
+
+The producer declares meaning and labels. It does not construct Telegram `callback_data`, choose keyboard rows, or mention emoji.
+
+Build JSON with `jq`, not shell-escaped hand JSON:
+
+```bash
+actions_json="$(jq -cn '{actions:[
+  {kind:"callback",id:"learner-flow.ack",label:"Seen"},
+  {kind:"callback",id:"learner-flow.run",label:"Run flow agent"},
+  {kind:"callback",id:"learner-flow.investigate",label:"Investigate"}
+]}')"
+```
+
+## Hourly Campaign Pulse
+
+Target: `aihero-support/.brain/projects/campaign-pulse/asset-hourly-pulse-runbook.svx`, step 5. `tools/aih-pulse` continues to own the aggregate `.dm` facts; do not move send policy into the metric gatherer.
+
+1. Remove the literal footer:
+
+   ```text
+   React: 👍 seen · 🔧 run flow agent · 🔎 investigate
+   ```
+
+2. Turn the first line into a Markdown verdict. Healthy example:
+
+   ```text
+   **Campaign pulse is healthy.**
+
+   Ads: 412 impressions, 28 clicks, $61 spent.
+   Learner flow: 214 signups, email 0 sent for 214, 0 pipeline failures.
+   [Open Campaign Pulse](https://brain.joelclaw.com/search/?q=Campaign%20Pulse)
+   ```
+
+   Failure example:
+
+   ```text
+   **Campaign pulse needs attention.**
+
+   Learner flow: contacts moved, email 0 did not.
+   Check: bin/aih-ads-scoreboard overview --product-id email-course --range today
+   [Open Campaign Pulse](https://brain.joelclaw.com/search/?q=Campaign%20Pulse)
+   ```
+
+   Keep source-generated numbers. Do not invent copy or metrics to make the format pretty.
+
+3. Send once:
+
+   ```bash
+   joelclaw notify send \
+     --kind alert \
+     --priority high \
+     --source campaign-pulse \
+     --context "$actions_json" \
+     "$dm" > "$notify_receipt"
+   ```
+
+4. Validate terminal delivery, not queue acceptance. Parse `eventId` from the initial send envelope, then use the proposed readback command:
+
+   ```bash
+   event_id="$(jq -r '.result.eventId' "$notify_receipt")"
+   joelclaw notify wait "$event_id" \
+     --source campaign-pulse \
+     --timeout 15s > /tmp/aih-pulse-terminal-receipt.json
+   jq -e '
+     .ok == true
+     and .result.deliveryState == "confirmed"
+     and (.result.flowId | startswith("flow_v2_"))
+     and (.result.platformMessageId | type == "string" and length > 0)
+     and ([.result.declaredActions[].id] == [
+       "learner-flow.ack",
+       "learner-flow.run",
+       "learner-flow.investigate"
+     ])
+   ' /tmp/aih-pulse-terminal-receipt.json >/dev/null
+   ```
+
+   `notify wait` is part of the button-contract implementation and is not available today. It reads the gateway’s Redis terminal-receipt projection keyed by correlation ID `campaign-pulse:<eventId>`; the confirmed private-journal row remains canonical. A deadline with no terminal row returns `NOTIFY_TERMINAL_RECEIPT_TIMEOUT`; terminal failed, suppressed, and digested rows return `NOTIFY_DELIVERY_FAILED`, `NOTIFY_SUPPRESSED`, and `NOTIFY_DIGESTED`. Never send again with a new event ID automatically. On timeout, repeat `notify wait` or audit the same event. On a terminal non-delivery, stop for an explicit operator decision. In every non-confirmed case, do not claim delivery and do not persist callback ownership.
+
+5. Persist the confirmed terminal receipt in the run receipt. Do not persist the initial legacy `notify:*` ID as button correlation.
+
+6. After the journal action declaration and terminal readback are live, stop appending new `lastDmFlowId` / `dmFlows` rows solely for reaction matching. Keep historical fields readable until `campaign-pulse/reaction` is retired. Action ownership comes from the confirmed outbound declaration, not AI Hero’s metric state file.
+
+## Daily Flow Agent
+
+Target: `aihero-support/.brain/projects/learner-flow-ops/asset-daily-flow-agent-runbook.svx`, step 5.
+
+1. Keep the existing facts but make the verdict the first bold sentence. Example:
+
+   ```text
+   **Daily learner flow is healthy.**
+
+   Reconciler: 24 runs, 19 created, 19 served, 0 deferred, 0 brakes.
+   Tier 2: none.
+   Conversions: 7 uploaded, 12 already done, 0 failed.
+   Canary: advanced on schedule.
+   [Open learner-flow receipts](https://brain.joelclaw.com/search/?q=Daily%20Flow%20Agent)
+   ```
+
+2. Use the same shared learner-flow action declaration and send flags. This is intentional: both producers request the same operations from `learner-flow/action`. `learner-flow.ack` records an interaction receipt (and only Campaign Pulse adds its pulse ack row), `learner-flow.run` schedules the Daily Flow Agent, and `learner-flow.investigate` schedules the Pulse investigator against the latest persisted pulse:
+
+   ```bash
+   joelclaw notify send \
+     --kind alert \
+     --priority high \
+     --source daily-flow-agent \
+     --context "$actions_json" \
+     "$dm" > "$notify_receipt"
+   ```
+
+3. Resolve the terminal receipt with `joelclaw notify wait "$event_id" --source daily-flow-agent --timeout 15s` and apply the same confirmed `flow_v2_*`, platform-message, and declared-action assertions as Campaign Pulse. Store the initial notify envelope, terminal receipt, and later action receipt in the dated Daily Flow receipt. Do not add platform message IDs or callback payloads to the human DM.
+
+## Formatting contract
+
+- MarkdownV2 is the normal Telegram format.
+- The existing converter owns escaping; producers write ordinary Markdown.
+- A Telegram entity-parse rejection retries as plain text with buttons intact.
+- One message, one source link, no raw JSON, no receipt IDs, no schedule mechanics, no `React:` legend.
+- The plain-text fallback must remain readable if every Markdown marker is removed.
+
+## Composer verification
+
+Before live send:
+
+1. unit-test the exact action JSON through notify compatibility decoding;
+2. test healthy and alert fixtures for multiline Markdown, punctuation, and links;
+3. prove the Telegram adapter emits the expected two-row keyboard;
+4. prove a MarkdownV2 parse failure sends the same words and same action IDs as plain text;
+5. prove the callback event carries the confirmed `flowId`, not the CLI’s legacy `notify:*` ID.
+
+Final canary: one Pulse-shaped DM, then one `Seen` tap. The tap must reach `learner-flow/action`; do not ask Joel for three taps.

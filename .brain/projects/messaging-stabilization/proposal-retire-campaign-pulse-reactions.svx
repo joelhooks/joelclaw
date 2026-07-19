@@ -1,0 +1,107 @@
+---
+title: "Proposal: retire Campaign Pulse reaction handling"
+type: "proposal"
+status: "proposed"
+created_at: "2026-07-19"
+parent: "./design-button-native-interactions.svx"
+privacy: "private"
+targets:
+  - "../../../packages/system-bus/src/inngest/functions/campaign-pulse-reactions.ts"
+  - "../../../packages/system-bus/src/inngest/functions/campaign-pulse-reactions.test.ts"
+  - "../../../packages/system-bus/src/inngest/functions/index.host.ts"
+  - "../../../packages/system-bus/src/inngest/functions/index.ts"
+---
+
+# Proposal: retire Campaign Pulse reaction handling
+
+This is a removal proposal, not an executed deletion.
+
+## Keep the useful behavior
+
+`campaign-pulse-reactions.ts` currently contains three useful domain operations:
+
+- append an aggregate `ack` row;
+- request a Daily Flow Agent schedule and parse a returned schedule ID;
+- request a Pulse investigator schedule and parse a returned schedule ID;
+- queue a short follow-up DM after each operation.
+
+Current limitations matter: it does not run `joelclaw wake list` to read back the exact schedule ID, and `queueReceiptDm` proves only `joelclaw notify send` queue acceptance before emitting `receipt_queued`. Neither behavior is terminal verification.
+
+Keep the operations, strengthen their readback, and remove reactions as their trigger and vocabulary.
+
+## Replacement
+
+Create `learner-flow-actions.ts` with function ID `learner-flow/action`, triggered by `message/action.requested`. It intentionally owns actions declared by both `campaign-pulse` and `daily-flow-agent` messages.
+
+Map stable action IDs directly:
+
+| action ID | operation |
+| --- | --- |
+| `learner-flow.ack` | record the interaction receipt; for Campaign Pulse also append its ack row; send `Seen. Next pulse stays scheduled.` |
+| `learner-flow.run` | schedule the Daily Flow Agent, read back the exact schedule ID with `joelclaw wake list --format json`, then send `Flow agent spawning.` |
+| `learner-flow.investigate` | schedule the investigator, read back the exact schedule ID, then send `Investigator spawning. It will DM findings.` |
+
+Use `event.data.rawEventId` for Inngest idempotency. Verify the outbound flow declared the requested action before executing. Do not map emojis, accept removal events, or infer action from Telegram presentation.
+
+Rename telemetry from `campaign_pulse.reaction.*` to `learner_flow.action.*`. Receipt source becomes `learner-flow-action`. The consumer sends each result back to Telegram explicitly, not with contract kind `receipt` (which routes to Slack):
+
+```bash
+joelclaw notify send \
+  --kind alert \
+  --priority high \
+  --source learner-flow-action \
+  "$message" > "$notify_receipt"
+event_id="$(jq -r '.result.eventId' "$notify_receipt")"
+joelclaw notify wait "$event_id" --source learner-flow-action --timeout 15s
+```
+
+A success receipt DM is terminal only when that readback returns `deliveryState: "confirmed"` plus a platform message ID.
+
+## Exact code removed from the old file
+
+After the button-native consumer passes its canary:
+
+1. Delete imports of `MESSAGE_REACTION_RECEIVED`, `MessageReactionReceivedEvent`, and `MessageReactionReceivedEventType`.
+2. Delete `ReactionData`, `PulseReaction`, and `reactionByEmoji`.
+3. Delete the `reaction.action !== "added"` branch and the `emoji-unmapped` branch.
+4. Delete synthetic emoji fields from ack log rows and telemetry metadata.
+5. Replace the event trigger and schema decode with `message/action.requested`.
+6. Rename dependency, helper, function, component, and source names from `Reaction` / `reaction` to `Action` / `action`.
+7. Replace `campaign-pulse-reactions.test.ts` with action-event tests using real callback-query identity and the three stable action IDs.
+8. Update exports and host registration in `index.ts` and `index.host.ts`.
+9. Remove `campaign-pulse/reaction` registration only after `learner-flow/action` is registered and one live `Seen` callback completes.
+10. Delete `campaign-pulse-reactions.ts` and its test instead of leaving a compatibility alias.
+
+The `lastDmFlowId` / `dmFlows` state check exists only to prove a reaction belongs to Pulse. The replacement should use the gateway’s confirmed action declaration or journal metadata. Once that read is live, stop coupling the host worker to AI Hero’s pulse metric state for authorization.
+
+## Rollout order
+
+1. Add callback action schemas and `message/action.requested`.
+2. Change Telegram callback encoding and gateway publication; keep one Chat SDK owner.
+3. Register `learner-flow/action` while the old reaction consumer remains registered but receives no button callbacks.
+4. Swap Hourly Pulse and Daily Flow composers to `kind: "callback"` actions.
+5. Send one formatted canary and tap `Seen` once.
+6. Verify outbound confirmation, callback query acknowledgement, `flowId` correlation, event publication, ack append, and terminal receipt DM.
+7. Remove `campaign-pulse/reaction` and its old file.
+8. Broader native-reaction retirement is required by Joel's rejection, but it belongs in a separate reviewed slice: `message-reactions.ts`, neat-memory grading, `message_reaction` allowed updates, and the reaction contract event. Do not bundle that wider deletion into the Pulse migration.
+
+## Stop and rollback rules
+
+- If a callback has no confirmed `flowId`, do not execute.
+- If the action was not declared for the flow, reject it and emit telemetry.
+- If schedule readback fails, do not send a success receipt.
+- If Markdown fails, send plain text with buttons; do not drop the DM.
+- If callback publication fails, leave it retryable by stable callback query ID.
+- Rollback means a formatted text-only DM with no actions. Never restore the rejected `kind: "reaction"` composer or synthetic reaction callbacks. Do not start a second listener.
+
+## Verification commands for the implementation slice
+
+```bash
+bun test packages/message-contract packages/gateway packages/system-bus/src/inngest/functions/learner-flow-actions.test.ts
+bunx tsc --noEmit
+pnpm biome check packages/ apps/
+pnpm oxlint packages/message-contract packages/gateway packages/system-bus/src/inngest/functions/learner-flow-actions.ts packages/system-bus/src/inngest/functions/learner-flow-actions.test.ts
+git diff --check
+```
+
+The full Biome command may expose unrelated existing failures; report them separately and keep targeted checks green.

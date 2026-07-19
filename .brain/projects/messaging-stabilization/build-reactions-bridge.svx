@@ -9,9 +9,13 @@ parent: "./messaging-stabilization-brief.svx"
 blockers:
   - "./build-outbound-v1.svx"
 created_at: "2026-07-16"
+superseded_at: "2026-07-19"
+superseded_by: "./design-button-native-interactions.svx"
 ---
 
 # Build the Reactions Bridge
+
+> **Historical receipt only.** Joel rejected reactions as an operator action system on 2026-07-19. Do not follow the imperative reaction instructions below. New work starts at [Button-native Telegram interactions](./design-button-native-interactions.svx).
 
 ## Step
 
@@ -87,3 +91,7 @@ the full path: Telegram reaction → shadow tap → `message/inbound.reaction` �
 bridge → `message/reaction.received` → grade → atomic 0600 state write. The
 survey also quoted `judgePrompt` proving outcomes feed `{{history}}` on the
 next beat: grades are consumed, not just recorded.
+
+## Superseded interaction model — 2026-07-19
+
+This remains a truthful historical receipt, but reactions are no longer an accepted operator-action surface. New actionable DMs use labeled inline buttons and publish `message/action.requested`; callbacks must not synthesize emoji or reuse `message/reaction.received`. See [Button-native Telegram interactions](./design-button-native-interactions.svx) and the [Campaign Pulse reaction retirement proposal](./proposal-retire-campaign-pulse-reactions.svx).

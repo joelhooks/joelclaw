@@ -70,3 +70,13 @@ lanes from flags.
    existing journal fail-open discipline; the routing table, kind enum,
    and event schemas are versioned artifacts in the joelclaw domain
    layer per house rules.
+
+## Superseding return-path decision — 2026-07-19
+
+Joel rejected emoji reactions as an operator action system. Point 2 above remains historical evidence, not the current interaction contract.
+
+Target behavior: actionable Telegram DMs use labeled inline keyboard buttons. The existing Chat SDK `callback_query` owner will resolve each click to the confirmed `flowId` and publish `message/action.requested` with a stable action ID and callback query ID. It must not synthesize emoji or publish `message/reaction.received`. Telegram callback acknowledgement stops the spinner; only downstream readback proves completion.
+
+Current code on commit `ba3976b2` is not there yet: it renders buttons as `kind: "reaction"`, decodes `message_reaction`, synthesizes an emoji, and publishes the rejected `message/reaction.received` event. Do not treat the accepted decision as a shipped receipt.
+
+Accepted design: [Button-native Telegram interactions](./design-button-native-interactions.svx). Composer handoff: [Pulse and Daily Flow button composer swap](./spec-pulse-daily-button-composers.svx).
