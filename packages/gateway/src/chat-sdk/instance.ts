@@ -5,11 +5,12 @@ import {
 } from "@chat-adapter/discord";
 import { createSlackAdapter, type SlackAdapter } from "@chat-adapter/slack";
 import { createMemoryState } from "@chat-adapter/state-memory";
-import {
-  createTelegramAdapter,
-  type TelegramAdapter,
-} from "@chat-adapter/telegram";
+
 import { type Adapter, Chat, type Logger } from "chat";
+import {
+  createGatewayTelegramAdapter,
+  type GatewayTelegramAdapter,
+} from "./telegram-adapter";
 
 export const CHAT_SDK_VERSION = "4.34.0" as const;
 export const TELEGRAM_ALLOWED_UPDATES = [
@@ -44,7 +45,7 @@ export interface ChatSdkRuntimeOptions {
 }
 
 export interface ChatSdkAdapters {
-  readonly telegram?: TelegramAdapter;
+  readonly telegram?: GatewayTelegramAdapter;
   readonly slack?: SlackAdapter;
   readonly discord?: DiscordAdapter;
 }
@@ -137,7 +138,7 @@ export function createChatSdkRuntime(options: ChatSdkRuntimeOptions = {}): ChatS
   const adapters: ChatSdkAdapters = {
     ...(telegramToken
       ? {
-          telegram: createTelegramAdapter({
+          telegram: createGatewayTelegramAdapter({
             botToken: telegramToken,
             mode: "polling",
             longPolling: { allowedUpdates: [...TELEGRAM_ALLOWED_UPDATES] },

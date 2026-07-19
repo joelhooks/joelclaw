@@ -71,6 +71,37 @@ function inbound(
   });
 }
 
+function messageReactionAction(
+  overrides: Record<string, unknown> = {},
+): InboundEvent {
+  const message = inbound();
+  return decodeInboundEvent({
+    ...message,
+    eventId: "telegram:interaction:pulse-action-retry",
+    type: "interaction",
+    authorization: {
+      ...message.authorization,
+      policyAction: "invoke",
+    },
+    platformIds: {
+      ...message.platformIds,
+      messageId: "7718912466:14620",
+    },
+    rawAnchors: {
+      ...message.rawAnchors,
+      callbackQueryId: "callback-pulse-retry",
+      sourceMessageId: "14620",
+    },
+    audit: {
+      ...message.audit,
+      rawEventId: "callback-pulse-retry",
+    },
+    actionId: "message_reaction",
+    value: "🔧",
+    ...overrides,
+  });
+}
+
 function harness() {
   const enqueued: Array<{
     source: string;
@@ -252,6 +283,160 @@ describe("Chat SDK acting inbound dispatcher", () => {
         }),
       },
     ]);
+  });
+
+  test("maps a native message action button to the existing reaction event by flowId", async () => {
+    const message = inbound();
+    const published: unknown[] = [];
+    const resolved: unknown[] = [];
+    let platformPolicyCalls = 0;
+    const dispatch = createActingInboundDispatcher({
+      enqueue: async () => {
+        throw new Error("message actions must not enter the agent queue");
+      },
+      publisher: createObserveOnlyInboundPublisher({ send: async () => {} }),
+      resolveFlowId: async (...args) => {
+        resolved.push(args);
+        return "flow_v2_11111111-1111-4111-8111-111111111111" as FlowIdType;
+      },
+      publishReaction: async (event) => {
+        published.push(event);
+      },
+      dispatchPlatformPolicy: async () => {
+        platformPolicyCalls += 1;
+        return true;
+      },
+    });
+    const action = decodeInboundEvent({
+      ...message,
+      eventId: "telegram:interaction:pulse-action-1",
+      type: "interaction",
+      authorization: {
+        ...message.authorization,
+        policyAction: "invoke",
+      },
+      platformIds: {
+        ...message.platformIds,
+        messageId: "7718912466:14620",
+      },
+      rawAnchors: {
+        ...message.rawAnchors,
+        callbackQueryId: "callback-pulse-1",
+        sourceMessageId: "14620",
+      },
+      audit: {
+        ...message.audit,
+        rawEventId: "callback-pulse-1",
+      },
+      actionId: "message_reaction",
+      value: "🔧",
+    });
+
+    expect(await dispatch(action)).toEqual({ status: "observed" });
+    expect(platformPolicyCalls).toBe(0);
+    expect(resolved).toEqual([["telegram", "7718912466:14620", "7718912466"]]);
+    expect(published).toEqual([
+      {
+        id: "telegram:interaction:pulse-action-1:flow:flow_v2_11111111-1111-4111-8111-111111111111",
+        name: MESSAGE_REACTION_RECEIVED,
+        data: expect.objectContaining({
+          flowId: "flow_v2_11111111-1111-4111-8111-111111111111",
+          platform: "telegram",
+          emoji: "🔧",
+          action: "added",
+          added: true,
+          rawEventId: "callback-pulse-1",
+          platformMessageId: "7718912466:14620",
+          correlationSource: "gateway-acting",
+          actor: { id: "7718912466", displayName: "Joel" },
+        }),
+      },
+    ]);
+  });
+
+  test("lets the same callback retry after flow correlation is temporarily missing", async () => {
+    let resolveAttempts = 0;
+    let publishes = 0;
+    const errors: string[] = [];
+    const dispatch = createActingInboundDispatcher({
+      enqueue: async () => {},
+      publisher: createObserveOnlyInboundPublisher({ send: async () => {} }),
+      resolveFlowId: async () => {
+        resolveAttempts += 1;
+        return resolveAttempts === 1
+          ? undefined
+          : "flow_v2_11111111-1111-4111-8111-111111111111" as FlowIdType;
+      },
+      publishReaction: async () => {
+        publishes += 1;
+      },
+      onError: (error) => errors.push(String(error)),
+    });
+    const action = messageReactionAction();
+
+    await expect(dispatch(action)).rejects.toThrow("No flowId found");
+    expect(await dispatch(action)).toEqual({ status: "observed" });
+    expect(resolveAttempts).toBe(2);
+    expect(publishes).toBe(1);
+    expect(errors).toHaveLength(1);
+  });
+
+  test("lets the same callback retry after reaction publication fails", async () => {
+    let publishAttempts = 0;
+    const dispatch = createActingInboundDispatcher({
+      enqueue: async () => {},
+      publisher: createObserveOnlyInboundPublisher({ send: async () => {} }),
+      resolveFlowId: async () =>
+        "flow_v2_11111111-1111-4111-8111-111111111111" as FlowIdType,
+      publishReaction: async () => {
+        publishAttempts += 1;
+        if (publishAttempts === 1) throw new Error("Inngest unavailable");
+      },
+    });
+    const action = messageReactionAction();
+
+    await expect(dispatch(action)).rejects.toThrow("Inngest unavailable");
+    expect(await dispatch(action)).toEqual({ status: "observed" });
+    expect(publishAttempts).toBe(2);
+  });
+
+  test("does not turn an unauthorized forged button callback into a reaction", async () => {
+    const message = inbound();
+    const published: unknown[] = [];
+    let platformPolicyCalls = 0;
+    const dispatch = createActingInboundDispatcher({
+      enqueue: async () => {},
+      publisher: createObserveOnlyInboundPublisher({ send: async () => {} }),
+      resolveFlowId: async () =>
+        "flow_v2_11111111-1111-4111-8111-111111111111" as FlowIdType,
+      publishReaction: async (event) => {
+        published.push(event);
+      },
+      dispatchPlatformPolicy: async () => {
+        platformPolicyCalls += 1;
+        return true;
+      },
+    });
+    const action = decodeInboundEvent({
+      ...message,
+      eventId: "telegram:interaction:forged-action",
+      type: "interaction",
+      authorization: {
+        verdict: "rejected",
+        reason: "non_joel_actor",
+        policyAction: "reject",
+        expectedActorId: "7718912466",
+        actualActorId: "123",
+        canPublish: true,
+        canExecute: false,
+      },
+      actionId: "message_reaction",
+      value: "👍",
+    });
+
+    expect(await dispatch(action)).toEqual({ status: "platform-policy" });
+    expect(platformPolicyCalls).toBe(1);
+    expect(published).toEqual([]);
   });
 
   test("publishes the real nested Telegram reaction update through the canonical path", async () => {

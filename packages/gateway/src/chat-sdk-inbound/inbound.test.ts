@@ -1,17 +1,47 @@
 import { describe, expect, test } from "bun:test";
+import { TelegramAdapter } from "@chat-adapter/telegram";
 import {
   type InboundEvent,
 } from "@joelclaw/message-contract";
+import type { ChatInstance } from "chat";
 import {
+  type ChatSdkNormalizedInbound,
   createDiscordSdkRawNormalizer,
   createSlackSdkRawNormalizer,
   createTelegramSdkRawNormalizer,
   normalizeRawInbound,
+  normalizeSdkInboundEvent,
   type RawInboundEnvelope,
 } from "./normalize";
 
 const FIXED_DATE = new Date("2026-07-16T19:00:00.050Z");
 const now = () => FIXED_DATE;
+
+class CallbackAckTelegramAdapter extends TelegramAdapter {
+  readonly calls: Array<{ method: string; payload?: Record<string, unknown> }> = [];
+
+  protected override async telegramFetch<TResult>(
+    method: string,
+    payload?: Record<string, unknown> | FormData,
+  ): Promise<TResult> {
+    this.calls.push({
+      method,
+      ...(payload && !(payload instanceof FormData) ? { payload } : {}),
+    });
+    return true as TResult;
+  }
+
+  async captureCallback(update: unknown): Promise<void> {
+    const tasks: Promise<unknown>[] = [];
+    this.chat = {
+      processAction: async () => undefined,
+    } as unknown as ChatInstance;
+    this.processUpdate(update as never, {
+      waitUntil: (task) => tasks.push(Promise.resolve(task)),
+    });
+    await Promise.all(tasks);
+  }
+}
 
 const rawTelegramUpdate = {
   update_id: 42,
@@ -307,6 +337,106 @@ describe("Chat SDK inbound normalization", () => {
       type: "interaction",
       actionId: "approve:item-42",
       value: "approve:item-42",
+      rawAnchors: { callbackQueryId: "telegram-callback-1" },
+      authorization: { verdict: "accepted", canExecute: false },
+    });
+  });
+
+  test("keeps a live Chat SDK callback identity stable across reprocessing", () => {
+    const projected: ChatSdkNormalizedInbound = {
+      kind: "interaction",
+      platform: "telegram",
+      actor: {
+        id: "7718912466",
+        userName: "joel",
+        displayName: "Joel",
+        isBot: false,
+        isMe: false,
+      },
+      conversationId: "telegram:7718912466",
+      messageId: "7718912466:500",
+      threadId: "telegram:7718912466",
+      occurredAt: "2026-07-16T19:00:00.000Z",
+      actionId: "message_reaction",
+      value: "👍",
+    };
+    const callbackEnvelope: RawInboundEnvelope = {
+      platform: "telegram",
+      kind: "interaction",
+      transport: "polling",
+      rawEventType: "chat-sdk.interaction",
+      raw: rawTelegramInteraction.callback_query,
+      receivedAt: "2026-07-16T19:00:00.050Z",
+      allowedActorId: "7718912466",
+      botActorId: "999",
+    };
+    const first = normalizeSdkInboundEvent(projected, callbackEnvelope, {
+      sdkVersion: "4.34.0",
+      now: () => new Date("2026-07-16T19:00:00.060Z"),
+    });
+    const replay = normalizeSdkInboundEvent(
+      { ...projected, occurredAt: "2026-07-16T19:05:00.000Z" },
+      callbackEnvelope,
+      {
+        sdkVersion: "4.34.0",
+        now: () => new Date("2026-07-16T19:05:00.000Z"),
+      },
+    );
+
+    expect(first.eventId).toBe(replay.eventId);
+    expect(first).toMatchObject({
+      platformIds: { messageId: "500" },
+      rawAnchors: {
+        callbackQueryId: "telegram-callback-1",
+        sourceMessageId: "500",
+        transportEventId: "telegram-callback-1",
+      },
+      audit: { rawEventId: "telegram-callback-1" },
+    });
+  });
+
+  test("the existing Chat SDK Telegram owner answers callback queries", async () => {
+    const adapter = new CallbackAckTelegramAdapter({
+      botToken: "test-token",
+      mode: "webhook",
+    });
+
+    await adapter.captureCallback(rawTelegramInteraction);
+
+    expect(adapter.calls).toContainEqual({
+      method: "answerCallbackQuery",
+      payload: { callback_query_id: "telegram-callback-1" },
+    });
+  });
+
+  test("decodes Chat SDK reaction buttons into the semantic action and emoji", async () => {
+    const [event] = await normalizeRawInbound(
+      envelope(
+        "telegram",
+        "interaction",
+        {
+          ...rawTelegramInteraction,
+          callback_query: {
+            ...rawTelegramInteraction.callback_query,
+            data: "chat:{\"a\":\"message_reaction\",\"v\":\"🔎\"}",
+          },
+        },
+        "7718912466",
+        "999",
+      ),
+      createTelegramSdkRawNormalizer({
+        botToken: "test-token",
+        mode: "webhook",
+        userName: "joelclaw_bot",
+        botActorId: "999",
+      }),
+      { sdkVersion: "4.34.0", now },
+    );
+
+    expect(event).toMatchObject({
+      type: "interaction",
+      actionId: "message_reaction",
+      value: "🔎",
       rawAnchors: { callbackQueryId: "telegram-callback-1" },
       authorization: { verdict: "accepted", canExecute: false },
     });

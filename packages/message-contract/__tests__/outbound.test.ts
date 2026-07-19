@@ -30,6 +30,54 @@ describe("message contract v2", () => {
     })).toThrow(InvalidMessageIntentError);
   });
 
+  test("accepts bounded semantic reaction actions", () => {
+    const intent = decodeOutboundIntent({
+      contractVersion: MESSAGE_CONTRACT_VERSION,
+      kind: "alert",
+      content: "**Healthy.**",
+      correlationId: "campaign-pulse-1",
+      actions: [
+        { kind: "reaction", label: "👍 Seen", emoji: "👍" },
+        { kind: "reaction", label: "🔧 Run flow agent", emoji: "🔧" },
+        { kind: "reaction", label: "🔎 Investigate", emoji: "🔎" },
+      ],
+    });
+
+    expect(intent.actions?.map((action) => action.emoji)).toEqual(["👍", "🔧", "🔎"]);
+  });
+
+  test("rejects empty or oversized action declarations", () => {
+    expect(() => decodeOutboundIntent({
+      contractVersion: MESSAGE_CONTRACT_VERSION,
+      kind: "alert",
+      content: "Pulse",
+      correlationId: "campaign-pulse-empty",
+      actions: [],
+    })).toThrow(InvalidMessageIntentError);
+    expect(() => decodeOutboundIntent({
+      contractVersion: MESSAGE_CONTRACT_VERSION,
+      kind: "alert",
+      content: "Pulse",
+      correlationId: "campaign-pulse-many",
+      actions: Array.from({ length: 7 }, (_, index) => ({
+        kind: "reaction",
+        label: `Action ${index}`,
+        emoji: "👍",
+      })),
+    })).toThrow(InvalidMessageIntentError);
+    expect(() => decodeOutboundIntent({
+      contractVersion: MESSAGE_CONTRACT_VERSION,
+      kind: "alert",
+      content: "Pulse",
+      correlationId: "campaign-pulse-callback-too-large",
+      actions: [{
+        kind: "reaction",
+        label: "Too many emoji",
+        emoji: "👍👍👍👍👍👍👍👍",
+      }],
+    })).toThrow(InvalidMessageIntentError);
+  });
+
   test("owns versioned kind routing", () => {
     expect(ROUTING_TABLE_V2.version).toBe(2);
     expect(resolveMessageRoute("memory")).toEqual({

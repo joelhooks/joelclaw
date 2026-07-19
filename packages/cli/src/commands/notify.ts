@@ -5,8 +5,10 @@ import { executeCapabilityCommand } from "../capabilities/runtime"
 import { respond, respondError } from "../response"
 
 const NOTIFY_PRIORITIES = ["low", "normal", "high", "urgent"] as const
+const NOTIFY_KINDS = ["memory", "alert", "digest", "ask", "receipt"] as const
 
 type NotifyPriority = (typeof NOTIFY_PRIORITIES)[number]
+type NotifyKind = (typeof NOTIFY_KINDS)[number]
 type OptionalText = { _tag: "Some"; value: string } | { _tag: "None" }
 
 function parseOptionalText(value: OptionalText): string | undefined {
@@ -61,6 +63,13 @@ const sourceOption = Options.text("source").pipe(
   Options.optional,
 )
 
+const kindOption = Options.choice("kind", NOTIFY_KINDS).pipe(
+  Options.withDescription(
+    "Contract-v2 message kind; controls routing lane. ask/alert/memory deliver to Telegram operator lane; digest may batch or suppress; receipt goes to Slack. Default: inferred from priority/source"
+  ),
+  Options.optional,
+)
+
 const telegramOnlyOption = Options.boolean("telegram-only").pipe(
   Options.withDescription("Mark notification for immediate Telegram delivery only"),
   Options.withDefault(false),
@@ -87,11 +96,12 @@ const notifySend = Command.make(
     context: contextOption,
     type: typeOption,
     source: sourceOption,
+    kind: kindOption,
     telegramOnly: telegramOnlyOption,
     adapter: adapterOption,
     eventId: eventIdOption,
   },
-  ({ message, channel, priority, context, type, source, telegramOnly, adapter, eventId }) =>
+  ({ message, channel, priority, context, type, source, kind, telegramOnly, adapter, eventId }) =>
     Effect.gen(function* () {
       const parsedContext = parseContextJson(context)
       if (!parsedContext) {
@@ -127,6 +137,7 @@ const notifySend = Command.make(
           context: parsedContext,
           type: parseOptionalText(type),
           source: parseOptionalText(source),
+          kind: kind._tag === "Some" ? (kind.value as NotifyKind) : undefined,
           telegramOnly,
           eventId: parseOptionalText(eventId),
         },
@@ -155,9 +166,9 @@ const notifySend = Command.make(
           "notify send",
           result.right,
           [
-            { command: "joelclaw gateway events", description: "Confirm notification event entered gateway queue" },
+            { command: "joelclaw otel search \"<eventId>\" --hours 1", description: "Verify terminal delivery state (notify.compat_v2.confirmed) — queue entry alone is not delivery" },
             { command: "joelclaw gateway status", description: "Verify gateway session is healthy" },
-            { command: "joelclaw notify send \"<message>\" --priority urgent --telegram-only", description: "Send immediate escalation to Telegram" },
+            { command: "joelclaw notify send \"<message>\" --kind ask", description: "Route to the Telegram operator lane (always delivers; digest kind may suppress)" },
           ]
         )
       )

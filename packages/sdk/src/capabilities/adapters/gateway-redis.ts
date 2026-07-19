@@ -3,6 +3,7 @@ import { Effect, ParseResult, Schema } from "effect"
 import { type CapabilityPort, capabilityError } from "../contract"
 
 const PRIORITIES = ["low", "normal", "high", "urgent"] as const
+const MESSAGE_KINDS = ["memory", "alert", "digest", "ask", "receipt"] as const
 
 const NotifySendArgsSchema = Schema.Struct({
   message: Schema.String,
@@ -11,6 +12,7 @@ const NotifySendArgsSchema = Schema.Struct({
   context: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
   type: Schema.optional(Schema.String),
   source: Schema.optional(Schema.String),
+  kind: Schema.optional(Schema.Literal(...MESSAGE_KINDS)),
   telegramOnly: Schema.optional(Schema.Boolean),
   eventId: Schema.optional(Schema.String),
 })
@@ -184,6 +186,7 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
             context: args.context ?? {},
             audit,
             immediateTelegram: priority === "high" || priority === "urgent",
+            ...(args.kind ? { kind: args.kind } : {}),
             ...(args.telegramOnly === true ? { telegramOnly: true } : {}),
           }
 

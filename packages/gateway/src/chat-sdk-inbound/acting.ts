@@ -3,6 +3,7 @@ import {
   type InboundEvent,
   type InboundPlatform,
   MESSAGE_CONTRACT_VERSION,
+  MESSAGE_REACTION_ACTION_ID,
   MESSAGE_REACTION_RECEIVED,
 } from "@joelclaw/message-contract";
 import type {
@@ -159,6 +160,48 @@ function reactionEvent(
   };
 }
 
+function messageActionReactionEvent(
+  event: Extract<InboundEvent, { readonly type: "interaction" }>,
+  flowId: FlowIdType,
+): MessageReactionReceivedBusEnvelope {
+  const platformMessageId = event.platformIds.messageId
+    ?? event.rawAnchors.sourceMessageId;
+  if (!platformMessageId || !event.value) {
+    throw new Error("Message reaction action is missing its emoji or platform message id");
+  }
+  const displayName = event.actor.displayName?.trim();
+  return {
+    id: `${event.eventId}:flow:${flowId}`,
+    name: MESSAGE_REACTION_RECEIVED,
+    data: {
+      contractVersion: MESSAGE_CONTRACT_VERSION,
+      flowId,
+      platform: event.platform,
+      emoji: event.value,
+      action: "added",
+      added: true,
+      rawEventId: event.audit.rawEventId
+        ?? event.rawAnchors.callbackQueryId
+        ?? event.eventId,
+      platformMessageId,
+      correlationSource: "gateway-acting",
+      actor: {
+        id: event.actor.platformUserId,
+        ...(displayName ? { displayName } : {}),
+      },
+      at: event.occurredAt,
+    },
+  };
+}
+
+function isMessageReactionAction(
+  event: InboundEvent,
+): event is Extract<InboundEvent, { readonly type: "interaction" }> {
+  return event.type === "interaction"
+    && event.actionId === MESSAGE_REACTION_ACTION_ID
+    && Boolean(event.value?.trim());
+}
+
 export function createActingInboundDispatcher(
   dependencies: ActingInboundDispatcherDependencies,
 ) {
@@ -185,6 +228,38 @@ export function createActingInboundDispatcher(
       await dependencies.publisher.publishEvent(event);
     } catch (error) {
       dependencies.onError?.(error, "publish", event);
+    }
+
+    if (
+      isMessageReactionAction(event)
+      && event.authorization.verdict === "accepted"
+      && event.authorization.reason === "authorized_joel"
+    ) {
+      const platformMessageId = event.platformIds.messageId
+        ?? event.rawAnchors.sourceMessageId;
+      try {
+        if (!platformMessageId) {
+          throw new Error("Message reaction action has no platform message id");
+        }
+        const flowId = await dependencies.resolveFlowId(
+          event.platform,
+          platformMessageId,
+          event.platformIds.conversationId,
+        );
+        if (!flowId) {
+          throw new Error(
+            `No flowId found for ${event.platform} message ${platformMessageId}`,
+          );
+        }
+        await dependencies.publishReaction(
+          messageActionReactionEvent(event, flowId),
+        );
+      } catch (error) {
+        dependencies.onError?.(error, "action-correlation", event);
+        throw error;
+      }
+      remember(event.eventId);
+      return { status: "observed" };
     }
 
     if (dependencies.dispatchPlatformPolicy) {

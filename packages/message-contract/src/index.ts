@@ -67,7 +67,16 @@ export {
   MessageUrgency,
   type MessageUrgency as MessageUrgencyType,
 } from "./kinds";
-export { decodeOutboundIntent, OutboundIntentV2, type OutboundIntentV2 as OutboundIntent } from "./outbound";
+export {
+  decodeOutboundIntent,
+  MESSAGE_REACTION_ACTION_ID,
+  MessageAction,
+  type MessageAction as MessageActionType,
+  MessageReactionAction,
+  type MessageReactionAction as MessageReactionActionType,
+  OutboundIntentV2,
+  type OutboundIntentV2 as OutboundIntent,
+} from "./outbound";
 export {
   createDeliveryReceipt,
   DeliveryReceiptEnvelopeV2,

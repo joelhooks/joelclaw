@@ -118,6 +118,126 @@ describe("notify send contract-v2 acting route", () => {
     expect(kinds).toEqual(["digest", "digest", "alert", "alert"]);
   });
 
+  test("an explicit payload.kind overrides priority/source inference", async () => {
+    const kinds: string[] = [];
+    for (const kind of ["memory", "alert", "digest", "ask", "receipt"] as const) {
+      await routeNotifySendCompat(
+        {
+          ...event,
+          id: `notify-kind-${kind}`,
+          payload: {
+            ...event.payload,
+            priority: "normal",
+            kind,
+            audit: { flowId: `notify:notify-kind-${kind}` },
+          },
+        },
+        {
+          isTransportReady: () => true,
+          send: async (intent) => {
+            kinds.push(intent.kind);
+            return receipt;
+          },
+        },
+      );
+    }
+    expect(kinds).toEqual(["memory", "alert", "digest", "ask", "receipt"]);
+  });
+
+  test("rejects an invalid payload.kind instead of guessing a lane", async () => {
+    const sent: unknown[] = [];
+    let caught: unknown;
+    try {
+      await routeNotifySendCompat(
+        {
+          ...event,
+          id: "notify-kind-bogus",
+          payload: {
+            ...event.payload,
+            kind: "shipping-list",
+            audit: { flowId: "notify:notify-kind-bogus" },
+          },
+        },
+        {
+          isTransportReady: () => true,
+          send: async (intent) => {
+            sent.push(intent);
+            return receipt;
+          },
+        },
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(sent).toEqual([]);
+    expect(caught).toMatchObject({
+      name: "NotifyCompatDeliveryError",
+      cause: expect.objectContaining({
+        message: expect.stringContaining("payload.kind must be one of"),
+      }),
+    });
+  });
+
+  test("carries semantic reaction actions from notify context into contract v2", async () => {
+    const intents: unknown[] = [];
+    await routeNotifySendCompat(
+      {
+        ...event,
+        payload: {
+          ...event.payload,
+          context: {
+            actions: [
+              { kind: "reaction", label: "👍 Seen", emoji: "👍" },
+              { kind: "reaction", label: "🔧 Run flow agent", emoji: "🔧" },
+              { kind: "reaction", label: "🔎 Investigate", emoji: "🔎" },
+            ],
+          },
+        },
+      },
+      {
+        isTransportReady: () => true,
+        send: async (intent) => {
+          intents.push(intent);
+          return receipt;
+        },
+      },
+    );
+
+    expect(intents).toEqual([
+      {
+        contractVersion: 2,
+        kind: "alert",
+        content: "Cutover receipt",
+        correlationId: "cli/notify:notify-event-1",
+        actions: [
+          { kind: "reaction", label: "👍 Seen", emoji: "👍" },
+          { kind: "reaction", label: "🔧 Run flow agent", emoji: "🔧" },
+          { kind: "reaction", label: "🔎 Investigate", emoji: "🔎" },
+        ],
+      },
+    ]);
+  });
+
+  test("marks malformed action declarations handled instead of falling through", async () => {
+    await expect(routeNotifySendCompat(
+      {
+        ...event,
+        payload: {
+          ...event.payload,
+          context: { actions: [{ label: "missing kind" }] },
+        },
+      },
+      {
+        isTransportReady: () => true,
+        send: async () => receipt,
+      },
+    )).rejects.toMatchObject({
+      name: "NotifyCompatDeliveryError",
+      handled: true,
+      eventId: "notify-event-1",
+    });
+  });
+
   test("does not treat channel or telegram-only flags as routing authority", async () => {
     const intents: unknown[] = [];
     await routeNotifySendCompat(

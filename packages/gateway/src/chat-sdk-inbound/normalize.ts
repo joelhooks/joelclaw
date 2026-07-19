@@ -214,7 +214,8 @@ function scalar(value: unknown): string | undefined {
 function deriveRawAnchors(envelope: RawInboundEnvelope): InboundRawAnchors {
   const raw = record(envelope.raw);
   const message = record(raw?.message) ?? record(raw?.edited_message);
-  const callback = record(raw?.callback_query);
+  const callback = record(raw?.callback_query)
+    ?? (envelope.kind === "interaction" ? raw : undefined);
   const callbackMessage = record(callback?.message);
   const reaction = record(raw?.message_reaction);
   const item = record(raw?.item);
@@ -223,7 +224,11 @@ function deriveRawAnchors(envelope: RawInboundEnvelope): InboundRawAnchors {
   const sourceMessage = message ?? callbackMessage ?? reaction;
   return {
     transportEventId:
-      scalar(raw?.update_id) ?? scalar(raw?.event_ts) ?? scalar(raw?.id) ?? null,
+      scalar(raw?.update_id)
+      ?? scalar(callback?.id)
+      ?? scalar(raw?.event_ts)
+      ?? scalar(raw?.id)
+      ?? null,
     updateId: scalar(raw?.update_id) ?? null,
     callbackQueryId: scalar(callback?.id) ?? null,
     sourceMessageId:
@@ -562,13 +567,32 @@ function eventIdentityParts(event: ChatSdkNormalizedInbound): ReadonlyArray<stri
   }
 }
 
-function rawAnchors(event: ChatSdkNormalizedInbound): InboundRawAnchors {
+function rawAnchors(
+  event: ChatSdkNormalizedInbound,
+  envelope: RawInboundEnvelope,
+): InboundRawAnchors {
+  const derived = deriveRawAnchors(envelope);
   return {
-    transportEventId: event.anchors?.transportEventId ?? event.rawEventId ?? null,
-    updateId: event.anchors?.updateId ?? null,
-    callbackQueryId: event.anchors?.callbackQueryId ?? null,
-    sourceMessageId: event.anchors?.sourceMessageId ?? event.messageId ?? null,
-    sourceThreadId: event.anchors?.sourceThreadId ?? event.threadId ?? null,
+    transportEventId:
+      event.anchors?.transportEventId
+      ?? event.rawEventId
+      ?? derived.transportEventId
+      ?? null,
+    updateId: event.anchors?.updateId ?? derived.updateId ?? null,
+    callbackQueryId:
+      event.anchors?.callbackQueryId
+      ?? derived.callbackQueryId
+      ?? null,
+    sourceMessageId:
+      event.anchors?.sourceMessageId
+      ?? derived.sourceMessageId
+      ?? event.messageId
+      ?? null,
+    sourceThreadId:
+      event.anchors?.sourceThreadId
+      ?? derived.sourceThreadId
+      ?? event.threadId
+      ?? null,
   };
 }
 
@@ -607,16 +631,20 @@ export function normalizeSdkInboundEvent(
 
   const normalizedAt = (options.now ?? (() => new Date()))().toISOString();
   const authorization = authorizeSdkActor(event.actor, envelope, event.kind);
-  const anchors = rawAnchors(event);
+  const anchors = rawAnchors(event, envelope);
+  const rawEventId = event.rawEventId
+    ?? anchors.callbackQueryId
+    ?? anchors.updateId
+    ?? anchors.transportEventId;
   const lineageId = stableId([
     event.platform,
     event.kind,
     event.conversationId,
     event.threadId ?? "",
-    event.rawEventId ?? "",
+    rawEventId ?? "",
     event.messageId ?? "",
     event.actor.id,
-    event.occurredAt,
+    rawEventId ? "" : event.occurredAt,
     ...eventIdentityParts(event),
   ]);
   const common = {
@@ -642,7 +670,7 @@ export function normalizeSdkInboundEvent(
       sdkVersion: options.sdkVersion,
       normalizedAt,
       rawEventType: envelope.rawEventType,
-      rawEventId: event.rawEventId ?? null,
+      rawEventId: rawEventId ?? null,
       lineageId,
     },
     authorization,

@@ -1,5 +1,6 @@
 import type {
   DeliveryReceiptEnvelope,
+  MessageKindType,
   OutboundIntent,
 } from "@joelclaw/message-contract";
 import { mapNotifySendToIntent } from "./notify-compat";
@@ -93,6 +94,47 @@ function priorityFrom(
   return undefined;
 }
 
+const MESSAGE_KINDS: readonly MessageKindType[] = [
+  "memory",
+  "alert",
+  "digest",
+  "ask",
+  "receipt",
+];
+
+function kindFrom(value: unknown): MessageKindType | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !MESSAGE_KINDS.includes(value as MessageKindType)) {
+    throw new Error(
+      `notify send payload.kind must be one of ${MESSAGE_KINDS.join(", ")}`,
+    );
+  }
+  return value as MessageKindType;
+}
+
+function actionsFrom(value: unknown): OutboundIntent["actions"] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error("notify send context.actions must be an array");
+  }
+  return value.map((item) => {
+    if (!item || typeof item !== "object") {
+      throw new Error("notify send context.actions entries must be objects");
+    }
+    const action = item as Record<string, unknown>;
+    if (
+      action.kind !== "reaction"
+      || typeof action.label !== "string"
+      || typeof action.emoji !== "string"
+    ) {
+      throw new Error(
+        "notify send context.actions entries require kind=reaction, label, and emoji",
+      );
+    }
+    return { kind: "reaction" as const, label: action.label, emoji: action.emoji };
+  });
+}
+
 function terminalDisposition(
   receipt: DeliveryReceiptEnvelope,
 ): NotifyCompatDisposition {
@@ -132,19 +174,22 @@ export async function routeNotifySendCompat(
       ? (context as Record<string, unknown>)
       : undefined;
   const replyTo = contextRecord?.replyTo;
-  const intent = mapNotifySendToIntent({
-    message,
-    correlationId: event.id,
-    source: event.source,
-    priority: priorityFrom(event.payload.priority),
-    telegramOnly: event.payload.telegramOnly === true,
-    channel:
-      typeof contextRecord?.channel === "string"
-        ? contextRecord.channel
-        : undefined,
-    replyTo: typeof replyTo === "string" ? (replyTo as OutboundIntent["replyTo"]) : undefined,
-  });
+  let intent: OutboundIntent;
   try {
+    intent = mapNotifySendToIntent({
+      message,
+      correlationId: event.id,
+      source: event.source,
+      kind: kindFrom(event.payload.kind),
+      priority: priorityFrom(event.payload.priority),
+      telegramOnly: event.payload.telegramOnly === true,
+      channel:
+        typeof contextRecord?.channel === "string"
+          ? contextRecord.channel
+          : undefined,
+      replyTo: typeof replyTo === "string" ? (replyTo as OutboundIntent["replyTo"]) : undefined,
+      actions: actionsFrom(contextRecord?.actions),
+    });
     const receipt = await dependencies.send(intent);
     const disposition = terminalDisposition(receipt);
     return { handled: true, intent, receipt, disposition };

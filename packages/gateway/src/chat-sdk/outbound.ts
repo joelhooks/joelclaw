@@ -19,6 +19,7 @@ import {
 } from "@joelclaw/message-contract";
 import type { JournalEventInput } from "@joelclaw/message-journal";
 import { createChannelDeliveryAudit } from "@joelclaw/telemetry";
+import type { AdapterPostableMessage } from "chat";
 import {
   type JournalPersistenceReceipt,
   journalMessage,
@@ -28,19 +29,24 @@ import {
   normalizeTelegramBulletLines,
   type PreparedTelegramMarkdown,
   prepareTelegramMarkdown,
-  type TelegramPostableMessage as SdkPostableMessage,
 } from "../telegram-markdown";
 import {
   routeTelegramOutbound,
   telegramConversationReplyExemption,
 } from "../telegram-outbound-policy";
 import { type ChatSdkRuntime, getChatSdkRuntime } from "./instance";
+import {
+  isTelegramActionMessage,
+  type TelegramActionMessage,
+} from "./telegram-adapter";
 
 export interface SdkSentMessage {
   readonly id: string;
   readonly threadId: string;
   readonly raw?: unknown;
 }
+
+export type SdkPostableMessage = AdapterPostableMessage | TelegramActionMessage;
 
 export interface SdkDeliveryAdapter {
   readonly openDM: (userId: string) => Promise<string>;
@@ -221,6 +227,28 @@ function telegramChatId(threadId: string): number {
   return Number.isSafeInteger(parsed) ? parsed : 0;
 }
 
+function telegramPostable(
+  intent: OutboundIntent,
+  formatting: MessageRouteType["formatting"],
+  prepare: (markdown: string) => PreparedTelegramMarkdown,
+): SdkPostableMessage {
+  const prepared = prepare(intent.content);
+  if (!intent.actions) {
+    return formatting === "plain"
+      ? { raw: normalizeTelegramBulletLines(intent.content) }
+      : prepared.postable;
+  }
+
+  return {
+    telegramActionMessage: true,
+    markdownV2: formatting === "markdown" ? prepared.markdownV2 : null,
+    plainText: formatting === "markdown"
+      ? prepared.plainText
+      : normalizeTelegramBulletLines(intent.content),
+    actions: intent.actions,
+  };
+}
+
 function journalInput(input: {
   readonly intent: OutboundIntent;
   readonly flowId: FlowIdType;
@@ -321,7 +349,9 @@ export function createSdkDeliveryAdapters(
           telegram: {
             openDM: (userId: string) => runtime.adapters.telegram!.openDM(userId),
             postMessage: (threadId: string, message: SdkPostableMessage) =>
-              runtime.adapters.telegram!.postMessage(threadId, message),
+              isTelegramActionMessage(message)
+                ? runtime.adapters.telegram!.postActionMessage(threadId, message)
+                : runtime.adapters.telegram!.postMessage(threadId, message),
           },
         }
       : {}),
@@ -330,7 +360,10 @@ export function createSdkDeliveryAdapters(
           slack: {
             openDM: (userId: string) => runtime.adapters.slack!.openDM(userId),
             postMessage: (threadId: string, message: SdkPostableMessage) =>
-              runtime.adapters.slack!.postMessage(threadId, message),
+              runtime.adapters.slack!.postMessage(
+                threadId,
+                message as AdapterPostableMessage,
+              ),
           },
         }
       : {}),
@@ -339,7 +372,10 @@ export function createSdkDeliveryAdapters(
           discord: {
             openDM: (userId: string) => runtime.adapters.discord!.openDM(userId),
             postMessage: (threadId: string, message: SdkPostableMessage) =>
-              runtime.adapters.discord!.postMessage(threadId, message),
+              runtime.adapters.discord!.postMessage(
+                threadId,
+                message as AdapterPostableMessage,
+              ),
           },
         }
       : {}),
@@ -428,6 +464,11 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
     }
 
     try {
+      if (intent.actions && route.platform !== "telegram") {
+        throw new Error(
+          `Message actions are not implemented for ${route.platform}`,
+        );
+      }
       if (route.platform === "telegram") {
         const chatId = Number(target);
         if (!Number.isSafeInteger(chatId)) {
@@ -473,11 +514,13 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
       }
 
       const threadId = replyAnchor ? replyThreadId(replyAnchor) : await adapter.openDM(target);
-      const postable = route.formatting === "plain"
-        ? { raw: normalizeTelegramBulletLines(intent.content) } as const
-        : route.platform === "telegram"
-          ? (dependencies.prepareTelegramMarkdown ?? prepareTelegramMarkdown)(intent.content).postable
-          : { markdown: intent.content } as const;
+      const postable: SdkPostableMessage = route.platform === "telegram"
+        ? telegramPostable(
+            intent,
+            route.formatting,
+            dependencies.prepareTelegramMarkdown ?? prepareTelegramMarkdown,
+          )
+        : { markdown: intent.content };
       const sent = await adapter.postMessage(threadId, postable);
       const platformMessageId = sent.id.trim();
       if (!platformMessageId) {

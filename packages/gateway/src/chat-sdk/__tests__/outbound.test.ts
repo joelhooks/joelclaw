@@ -23,6 +23,10 @@ import {
   type OutboundJournalPort,
   resolvePlatformMessageFlow,
 } from "../outbound";
+import {
+  GatewayTelegramAdapter,
+  isTelegramActionMessage,
+} from "../telegram-adapter";
 
 const TELEGRAM_DELIVER_POLICY = {
   route: async () => ({ disposition: "deliver" as const }),
@@ -171,6 +175,122 @@ describe("Chat SDK outbound v1", () => {
     expect(journal.rows[1]?.messageKey).toBe("telegram:7:42");
     expect(journal.rows[1]?.telegramMessageId).toBe(42);
     expect(journal.anchors.get(`telegram:${flow(0)}`)?.platformMessageId).toBe("7:42");
+  });
+
+  test("renders semantic actions as Telegram-native inline buttons", async () => {
+    const journal = makeJournal();
+    let posted: unknown;
+    const send = makeOutboundSender({
+      adapters: {
+        telegram: {
+          openDM: async () => "telegram:7",
+          postMessage: async (threadId, message) => {
+            posted = message;
+            return { id: "7:42", threadId };
+          },
+        },
+      },
+      journal,
+      resolveTarget: () => "7",
+      mintFlowId: () => flow(0),
+      telegramPolicy: TELEGRAM_DELIVER_POLICY,
+    });
+
+    await send({
+      ...intent("alert"),
+      content: "**Healthy.**\n\n[Open the Brain](https://brain.joelclaw.com)",
+      actions: [
+        { kind: "reaction", label: "👍 Seen", emoji: "👍" },
+        { kind: "reaction", label: "🔧 Run flow agent", emoji: "🔧" },
+        { kind: "reaction", label: "🔎 Investigate", emoji: "🔎" },
+      ],
+    });
+
+    expect(posted).toEqual({
+      telegramActionMessage: true,
+      markdownV2: "*Healthy\\.*\n\n[Open the Brain](https://brain.joelclaw.com)",
+      plainText: "Healthy.\n\nOpen the Brain",
+      actions: [
+        { kind: "reaction", label: "👍 Seen", emoji: "👍" },
+        { kind: "reaction", label: "🔧 Run flow agent", emoji: "🔧" },
+        { kind: "reaction", label: "🔎 Investigate", emoji: "🔎" },
+      ],
+    });
+  });
+
+  test("keeps buttons when MarkdownV2 delivery degrades to plain text", async () => {
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    let sendAttempts = 0;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const body = await request.json() as Record<string, unknown>;
+        const method = new URL(request.url).pathname.split("/").at(-1) ?? "";
+        calls.push({ method, body });
+        if (method === "sendMessage" && sendAttempts++ === 0) {
+          return Response.json(
+            { ok: false, error_code: 400, description: "Bad Request: can't parse entities" },
+            { status: 400 },
+          );
+        }
+        return Response.json({
+          ok: true,
+          result: {
+            message_id: 42,
+            date: 1,
+            chat: { id: 7, type: "private" },
+            text: body.text,
+          },
+        });
+      },
+    });
+
+    try {
+      const telegram = new GatewayTelegramAdapter({
+        botToken: "fixture-token",
+        apiUrl: `http://127.0.0.1:${server.port}`,
+      });
+      const journal = makeJournal();
+      const send = makeOutboundSender({
+        adapters: {
+          telegram: {
+            openDM: async () => "telegram:7",
+            postMessage: (threadId, message) =>
+              isTelegramActionMessage(message)
+                ? telegram.postActionMessage(threadId, message)
+                : telegram.postMessage(threadId, message),
+          },
+        },
+        journal,
+        resolveTarget: () => "7",
+        mintFlowId: () => flow(0),
+        telegramPolicy: TELEGRAM_DELIVER_POLICY,
+      });
+
+      await send({
+        ...intent("alert"),
+        content: "**Healthy.** A raw period. [Brain](https://brain.joelclaw.com)",
+        actions: [{ kind: "reaction", label: "👍 Seen", emoji: "👍" }],
+      });
+
+      expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage"]);
+      expect(calls[0]?.body).toMatchObject({
+        parse_mode: "MarkdownV2",
+        reply_markup: {
+          inline_keyboard: [[{
+            text: "👍 Seen",
+            callback_data: "chat:{\"a\":\"message_reaction\",\"v\":\"👍\"}",
+          }]],
+        },
+      });
+      expect(calls[1]?.body).toMatchObject({
+        text: "Healthy. A raw period. Brain",
+        reply_markup: calls[0]?.body.reply_markup,
+      });
+      expect(calls[1]?.body.parse_mode).toBeUndefined();
+    } finally {
+      server.stop(true);
+    }
   });
 
   test("honors a plain route with a raw Chat SDK postable", async () => {

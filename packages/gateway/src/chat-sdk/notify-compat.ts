@@ -13,6 +13,7 @@ export interface NotifySendCompatInput {
   readonly channel?: string;
   readonly kind?: MessageKindType;
   readonly replyTo?: OutboundIntent["replyTo"];
+  readonly actions?: OutboundIntent["actions"];
 }
 
 function inferKind(input: NotifySendCompatInput): MessageKindType {
@@ -45,6 +46,7 @@ export function mapNotifySendToIntent(input: NotifySendCompatInput): OutboundInt
       ? `${input.source}:${input.correlationId}`
       : input.correlationId,
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+    ...(input.actions ? { actions: input.actions } : {}),
   };
   return intent;
 }

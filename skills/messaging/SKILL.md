@@ -38,6 +38,14 @@ joelclaw notify send "<message>" --priority high
 
 The CLI shape is unchanged. The gateway compatibility shim maps the legacy request to contract v2 and sends through Chat SDK. `--channel` and `--telegram-only` remain accepted compatibility inputs, but contract v2 routing is authoritative; do not use those flags as new policy.
 
+Declare meaning with `--kind` (added 2026-07-18). Without it, the shim infers kind from priority/source, and low/normal-priority sends become `digest` — which the Telegram digest lane may batch or **silently suppress**:
+
+```bash
+joelclaw notify send "Here is the list you asked for" --kind ask
+```
+
+`--kind` accepts `memory | alert | digest | ask | receipt` and overrides inference. Use `ask`/`alert`/`memory` for anything Joel must actually see (operator lane, always delivers). After sending, verify terminal delivery with `joelclaw otel search "<eventId>" --hours 1` — it must show `notify.compat_v2.confirmed`; a queued event with a drained gateway queue is not delivery.
+
 Use `notify send` for simple text from shell scripts, satellites, skills, and packages that do not own the gateway composition root. Do not import gateway internals across package boundaries.
 
 ## Send rich intents: use contract v2
