@@ -71,6 +71,7 @@ import { granolaBackfill } from "./granola-backfill";
 import { heartbeatCron, heartbeatWake } from "./heartbeat";
 import { knowledgeTurnWrite } from "./knowledge-turn-write";
 import { knowledgeWatchdog } from "./knowledge-watchdog";
+import { learnerFlowAction } from "./learner-flow-actions";
 import { manifestArchive } from "./manifest-archive";
 import { mediaProcess } from "./media-process";
 import { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
@@ -232,6 +233,7 @@ export const hostFunctionDefinitions = [
   messageReactionBridge,
   neatMemoryReactionGrade,
   campaignPulseReaction,
+  learnerFlowAction,
   workStatePass,
   granolaBackfill,
   friction,

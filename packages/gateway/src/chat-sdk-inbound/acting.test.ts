@@ -3,6 +3,7 @@ import {
   decodeInboundEvent,
   type FlowIdType,
   type InboundEvent,
+  MESSAGE_ACTION_REQUESTED,
   MESSAGE_REACTION_RECEIVED,
 } from "@joelclaw/message-contract";
 import { createActingInboundDispatcher } from "./acting";
@@ -71,7 +72,7 @@ function inbound(
   });
 }
 
-function messageReactionAction(
+function messageCallbackAction(
   overrides: Record<string, unknown> = {},
 ): InboundEvent {
   const message = inbound();
@@ -96,8 +97,8 @@ function messageReactionAction(
       ...message.audit,
       rawEventId: "callback-pulse-retry",
     },
-    actionId: "message_reaction",
-    value: "🔧",
+    actionId: "message_action",
+    value: "learner-flow.run",
     ...overrides,
   });
 }
@@ -121,6 +122,20 @@ function harness() {
     }),
     resolveFlowId: async () =>
       "flow_v2_11111111-1111-4111-8111-111111111111" as FlowIdType,
+    resolveDeclaredActions: async (flowId) => ({
+      flowId,
+      correlationId: "campaign-pulse:event-1",
+      platform: "telegram",
+      platformMessageId: "14620",
+      declaredActions: [
+        { kind: "callback", id: "learner-flow.ack", label: "Seen" },
+        { kind: "callback", id: "learner-flow.run", label: "Run flow agent" },
+        { kind: "callback", id: "learner-flow.investigate", label: "Investigate" },
+      ],
+    }),
+    publishAction: async (event) => {
+      correlations.push(event);
+    },
     publishReaction: async (event) => {
       correlations.push(event);
     },
@@ -285,9 +300,10 @@ describe("Chat SDK acting inbound dispatcher", () => {
     ]);
   });
 
-  test("maps a native message action button to the existing reaction event by flowId", async () => {
+  test("maps a native callback button to message/action.requested by flowId", async () => {
     const message = inbound();
     const published: unknown[] = [];
+    const recorded: unknown[] = [];
     const resolved: unknown[] = [];
     let platformPolicyCalls = 0;
     const dispatch = createActingInboundDispatcher({
@@ -299,8 +315,23 @@ describe("Chat SDK acting inbound dispatcher", () => {
         resolved.push(args);
         return "flow_v2_11111111-1111-4111-8111-111111111111" as FlowIdType;
       },
-      publishReaction: async (event) => {
+      resolveDeclaredActions: async (flowId) => ({
+        flowId,
+        correlationId: "campaign-pulse:event-1",
+        platform: "telegram",
+        platformMessageId: "14620",
+        declaredActions: [
+          { kind: "callback", id: "learner-flow.run", label: "Run flow agent" },
+        ],
+      }),
+      recordAction: async (input) => {
+        recorded.push(input);
+      },
+      publishAction: async (event) => {
         published.push(event);
+      },
+      publishReaction: async () => {
+        throw new Error("callback actions must not publish reaction events");
       },
       dispatchPlatformPolicy: async () => {
         platformPolicyCalls += 1;
@@ -328,23 +359,29 @@ describe("Chat SDK acting inbound dispatcher", () => {
         ...message.audit,
         rawEventId: "callback-pulse-1",
       },
-      actionId: "message_reaction",
-      value: "🔧",
+      actionId: "message_action",
+      value: "learner-flow.run",
     });
 
     expect(await dispatch(action)).toEqual({ status: "observed" });
     expect(platformPolicyCalls).toBe(0);
     expect(resolved).toEqual([["telegram", "7718912466:14620", "7718912466"]]);
+    expect(recorded).toEqual([
+      expect.objectContaining({
+        flowId: "flow_v2_11111111-1111-4111-8111-111111111111",
+        correlationId: "campaign-pulse:event-1",
+        actionId: "learner-flow.run",
+        rawEventId: "callback-pulse-1",
+      }),
+    ]);
     expect(published).toEqual([
       {
         id: "telegram:interaction:pulse-action-1:flow:flow_v2_11111111-1111-4111-8111-111111111111",
-        name: MESSAGE_REACTION_RECEIVED,
+        name: MESSAGE_ACTION_REQUESTED,
         data: expect.objectContaining({
           flowId: "flow_v2_11111111-1111-4111-8111-111111111111",
           platform: "telegram",
-          emoji: "🔧",
-          action: "added",
-          added: true,
+          actionId: "learner-flow.run",
           rawEventId: "callback-pulse-1",
           platformMessageId: "7718912466:14620",
           correlationSource: "gateway-acting",
@@ -352,6 +389,33 @@ describe("Chat SDK acting inbound dispatcher", () => {
         }),
       },
     ]);
+  });
+
+  test("rejects an action that was not declared for the outbound flow", async () => {
+    let publishes = 0;
+    const dispatch = createActingInboundDispatcher({
+      enqueue: async () => {},
+      publisher: createObserveOnlyInboundPublisher({ send: async () => {} }),
+      resolveFlowId: async () =>
+        "flow_v2_11111111-1111-4111-8111-111111111111" as FlowIdType,
+      resolveDeclaredActions: async (flowId) => ({
+        flowId,
+        correlationId: "campaign-pulse:event-1",
+        platform: "telegram",
+        platformMessageId: "14620",
+        declaredActions: [
+          { kind: "callback", id: "learner-flow.ack", label: "Seen" },
+        ],
+      }),
+      publishAction: async () => {
+        publishes += 1;
+      },
+      publishReaction: async () => {},
+    });
+
+    expect(await dispatch(messageCallbackAction())).toEqual({ status: "rejected" });
+    expect(publishes).toBe(0);
+    expect(await dispatch(messageCallbackAction())).toEqual({ status: "duplicate" });
   });
 
   test("lets the same callback retry after flow correlation is temporarily missing", async () => {
@@ -367,12 +431,22 @@ describe("Chat SDK acting inbound dispatcher", () => {
           ? undefined
           : "flow_v2_11111111-1111-4111-8111-111111111111" as FlowIdType;
       },
-      publishReaction: async () => {
+      resolveDeclaredActions: async (flowId) => ({
+        flowId,
+        correlationId: "campaign-pulse:event-1",
+        platform: "telegram",
+        platformMessageId: "14620",
+        declaredActions: [
+          { kind: "callback", id: "learner-flow.run", label: "Run flow agent" },
+        ],
+      }),
+      publishAction: async () => {
         publishes += 1;
       },
+      publishReaction: async () => {},
       onError: (error) => errors.push(String(error)),
     });
-    const action = messageReactionAction();
+    const action = messageCallbackAction();
 
     await expect(dispatch(action)).rejects.toThrow("No flowId found");
     expect(await dispatch(action)).toEqual({ status: "observed" });
@@ -381,26 +455,36 @@ describe("Chat SDK acting inbound dispatcher", () => {
     expect(errors).toHaveLength(1);
   });
 
-  test("lets the same callback retry after reaction publication fails", async () => {
+  test("lets the same callback retry after action publication fails", async () => {
     let publishAttempts = 0;
     const dispatch = createActingInboundDispatcher({
       enqueue: async () => {},
       publisher: createObserveOnlyInboundPublisher({ send: async () => {} }),
       resolveFlowId: async () =>
         "flow_v2_11111111-1111-4111-8111-111111111111" as FlowIdType,
-      publishReaction: async () => {
+      resolveDeclaredActions: async (flowId) => ({
+        flowId,
+        correlationId: "campaign-pulse:event-1",
+        platform: "telegram",
+        platformMessageId: "14620",
+        declaredActions: [
+          { kind: "callback", id: "learner-flow.run", label: "Run flow agent" },
+        ],
+      }),
+      publishAction: async () => {
         publishAttempts += 1;
         if (publishAttempts === 1) throw new Error("Inngest unavailable");
       },
+      publishReaction: async () => {},
     });
-    const action = messageReactionAction();
+    const action = messageCallbackAction();
 
     await expect(dispatch(action)).rejects.toThrow("Inngest unavailable");
     expect(await dispatch(action)).toEqual({ status: "observed" });
     expect(publishAttempts).toBe(2);
   });
 
-  test("does not turn an unauthorized forged button callback into a reaction", async () => {
+  test("rejects an unauthorized forged button callback before platform policy", async () => {
     const message = inbound();
     const published: unknown[] = [];
     let platformPolicyCalls = 0;
@@ -430,12 +514,12 @@ describe("Chat SDK acting inbound dispatcher", () => {
         canPublish: true,
         canExecute: false,
       },
-      actionId: "message_reaction",
-      value: "👍",
+      actionId: "message_action",
+      value: "learner-flow.ack",
     });
 
-    expect(await dispatch(action)).toEqual({ status: "platform-policy" });
-    expect(platformPolicyCalls).toBe(1);
+    expect(await dispatch(action)).toEqual({ status: "rejected" });
+    expect(platformPolicyCalls).toBe(0);
     expect(published).toEqual([]);
   });
 

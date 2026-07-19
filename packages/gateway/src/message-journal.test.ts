@@ -3,6 +3,7 @@ import type { JournalEvent } from "@joelclaw/message-journal";
 import {
   __messageJournalTestUtils,
   journalMessage,
+  journalMessageActionRequest,
   rememberTelegramMessageFlow,
   resolveTelegramMessageFlow,
 } from "./message-journal";
@@ -75,6 +76,35 @@ describe("gateway message journal fail-open boundary", () => {
       storage: "failed",
     });
     expect(writes).toBe(0);
+  });
+
+  test("journals a callback request with the callback query id and stable action", async () => {
+    const rows: JournalEvent[] = [];
+    __messageJournalTestUtils.setWriteOverride(async (row) => {
+      rows.push(row);
+    });
+
+    await journalMessageActionRequest({
+      flowId: "flow_v2_11111111-1111-4111-8111-111111111111",
+      correlationId: "campaign-pulse:event-1",
+      actionId: "learner-flow.run",
+      rawEventId: "callback-query-1",
+      platformMessageId: "7718912466:14562",
+      conversationId: "7718912466",
+      actorId: "7718912466",
+      occurredAt: "2026-07-19T15:00:00.000Z",
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      direction: "interaction",
+      event_type: "message.action.requested",
+      callback_query_id: "callback-query-1",
+      interaction_action: "learner-flow.run",
+      interaction_outcome: "requested",
+      telegram_chat_id: 7718912466,
+      telegram_message_id: 14562,
+    });
   });
 
   test("passes the complete row to the configured writer", async () => {

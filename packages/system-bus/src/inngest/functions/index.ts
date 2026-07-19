@@ -76,6 +76,10 @@ export { heartbeatCron, heartbeatWake } from "./heartbeat";
 export { clusterFunctionDefinitions, clusterFunctionIds } from "./index.cluster";
 export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
 export { knowledgeTurnWrite } from "./knowledge-turn-write";
+export {
+  createLearnerFlowActionFunction,
+  learnerFlowAction,
+} from "./learner-flow-actions";
 export { manifestArchive } from "./manifest-archive";
 export { mediaProcess } from "./media-process";
 export { mediaTranscriptionPipeline } from "./media-transcription-pipeline";

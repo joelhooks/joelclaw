@@ -5,7 +5,9 @@ import {
   decodeOutboundIntent,
   FlowId,
   InvalidMessageIntentError,
+  MESSAGE_ACTION_REQUESTED,
   MESSAGE_CONTRACT_VERSION,
+  MessageActionRequestedEvent,
   MessageReactionReceivedEvent,
   mintFlowId,
   ROUTING_TABLE_V2,
@@ -30,23 +32,27 @@ describe("message contract v2", () => {
     })).toThrow(InvalidMessageIntentError);
   });
 
-  test("accepts bounded semantic reaction actions", () => {
+  test("accepts bounded semantic callback actions", () => {
     const intent = decodeOutboundIntent({
       contractVersion: MESSAGE_CONTRACT_VERSION,
       kind: "alert",
       content: "**Healthy.**",
       correlationId: "campaign-pulse-1",
       actions: [
-        { kind: "reaction", label: "👍 Seen", emoji: "👍" },
-        { kind: "reaction", label: "🔧 Run flow agent", emoji: "🔧" },
-        { kind: "reaction", label: "🔎 Investigate", emoji: "🔎" },
+        { kind: "callback", id: "learner-flow.ack", label: "Seen" },
+        { kind: "callback", id: "learner-flow.run", label: "Run flow agent" },
+        { kind: "callback", id: "learner-flow.investigate", label: "Investigate" },
       ],
     });
 
-    expect(intent.actions?.map((action) => action.emoji)).toEqual(["👍", "🔧", "🔎"]);
+    expect(intent.actions?.map((action) => action.id)).toEqual([
+      "learner-flow.ack",
+      "learner-flow.run",
+      "learner-flow.investigate",
+    ]);
   });
 
-  test("rejects empty or oversized action declarations", () => {
+  test("rejects empty, oversized, or undeclared callback actions", () => {
     expect(() => decodeOutboundIntent({
       contractVersion: MESSAGE_CONTRACT_VERSION,
       kind: "alert",
@@ -60,20 +66,20 @@ describe("message contract v2", () => {
       content: "Pulse",
       correlationId: "campaign-pulse-many",
       actions: Array.from({ length: 7 }, (_, index) => ({
-        kind: "reaction",
+        kind: "callback",
+        id: "learner-flow.ack",
         label: `Action ${index}`,
-        emoji: "👍",
       })),
     })).toThrow(InvalidMessageIntentError);
     expect(() => decodeOutboundIntent({
       contractVersion: MESSAGE_CONTRACT_VERSION,
       kind: "alert",
       content: "Pulse",
-      correlationId: "campaign-pulse-callback-too-large",
+      correlationId: "campaign-pulse-unknown-action",
       actions: [{
-        kind: "reaction",
-        label: "Too many emoji",
-        emoji: "👍👍👍👍👍👍👍👍",
+        kind: "callback",
+        id: "learner-flow.delete-everything",
+        label: "Nope",
       }],
     })).toThrow(InvalidMessageIntentError);
   });
@@ -104,6 +110,25 @@ describe("message contract v2", () => {
     });
     expect(receipt._links.flow.href).toContain(flowId);
     expect(receipt.data.platformMessageId).toBe("42");
+  });
+
+  test("validates callback-native action request events", () => {
+    const flowId = mintFlowId(() => UUID);
+    const event = Schema.decodeUnknownSync(MessageActionRequestedEvent)({
+      name: MESSAGE_ACTION_REQUESTED,
+      data: {
+        contractVersion: 2,
+        flowId,
+        platform: "telegram",
+        actionId: "learner-flow.run",
+        actor: { id: "joel" },
+        rawEventId: "callback-777932597",
+        platformMessageId: "14562",
+        correlationSource: "gateway-acting",
+        at: "2026-07-16T20:00:00.000Z",
+      },
+    });
+    expect(event.data.actionId).toBe("learner-flow.run");
   });
 
   test("validates versioned reaction events", () => {

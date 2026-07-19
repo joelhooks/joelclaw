@@ -1,5 +1,6 @@
 import type {
   InboundReactionEventType,
+  MessageActionRequestedEventType,
   MessageReactionReceivedEventType,
 } from "@joelclaw/message-contract";
 import type { ChannelAuditSeed } from "@joelclaw/telemetry";
@@ -1202,6 +1203,9 @@ export type Events = {
   };
   "message/inbound.reaction": {
     data: InboundReactionEventType;
+  };
+  "message/action.requested": {
+    data: MessageActionRequestedEventType["data"];
   };
   "message/reaction.received": {
     data: MessageReactionReceivedEventType["data"];

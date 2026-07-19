@@ -21,6 +21,7 @@ import {
   makeOutboundSender,
   type OutboundFlowAnchor,
   type OutboundJournalPort,
+  type OutboundTerminalReceipt,
   resolvePlatformMessageFlow,
 } from "../outbound";
 import {
@@ -65,12 +66,15 @@ function intent(kind: OutboundIntent["kind"] = "memory"): OutboundIntent {
 function makeJournal(): OutboundJournalPort & {
   readonly rows: JournalEventInput[];
   readonly anchors: Map<string, OutboundFlowAnchor>;
+  readonly terminals: OutboundTerminalReceipt[];
 } {
   const rows: JournalEventInput[] = [];
   const anchors = new Map<string, OutboundFlowAnchor>();
+  const terminals: OutboundTerminalReceipt[] = [];
   return {
     rows,
     anchors,
+    terminals,
     async record(row) {
       rows.push(row);
       return {
@@ -84,6 +88,9 @@ function makeJournal(): OutboundJournalPort & {
     },
     async resolve(flowId, platform): Promise<OutboundFlowAnchor | undefined> {
       return anchors.get(`${platform}:${flowId}`);
+    },
+    async rememberTerminal(receipt): Promise<void> {
+      terminals.push(receipt);
     },
   };
 }
@@ -200,9 +207,9 @@ describe("Chat SDK outbound v1", () => {
       ...intent("alert"),
       content: "**Healthy.**\n\n[Open the Brain](https://brain.joelclaw.com)",
       actions: [
-        { kind: "reaction", label: "👍 Seen", emoji: "👍" },
-        { kind: "reaction", label: "🔧 Run flow agent", emoji: "🔧" },
-        { kind: "reaction", label: "🔎 Investigate", emoji: "🔎" },
+        { kind: "callback", id: "learner-flow.ack", label: "Seen" },
+        { kind: "callback", id: "learner-flow.run", label: "Run flow agent" },
+        { kind: "callback", id: "learner-flow.investigate", label: "Investigate" },
       ],
     });
 
@@ -211,11 +218,26 @@ describe("Chat SDK outbound v1", () => {
       markdownV2: "*Healthy\\.*\n\n[Open the Brain](https://brain.joelclaw.com)",
       plainText: "Healthy.\n\nOpen the Brain",
       actions: [
-        { kind: "reaction", label: "👍 Seen", emoji: "👍" },
-        { kind: "reaction", label: "🔧 Run flow agent", emoji: "🔧" },
-        { kind: "reaction", label: "🔎 Investigate", emoji: "🔎" },
+        { kind: "callback", id: "learner-flow.ack", label: "Seen" },
+        { kind: "callback", id: "learner-flow.run", label: "Run flow agent" },
+        { kind: "callback", id: "learner-flow.investigate", label: "Investigate" },
       ],
     });
+    expect(journal.rows[1]?.metadata).toMatchObject({
+      correlationId: "canary-alert",
+      declaredActions: [
+        { id: "learner-flow.ack", label: "Seen" },
+        { id: "learner-flow.run", label: "Run flow agent" },
+        { id: "learner-flow.investigate", label: "Investigate" },
+      ],
+    });
+    expect(journal.terminals).toEqual([
+      expect.objectContaining({
+        correlationId: "canary-alert",
+        deliveryState: "confirmed",
+        platformMessageId: "7:42",
+      }),
+    ]);
   });
 
   test("keeps buttons when MarkdownV2 delivery degrades to plain text", async () => {
@@ -270,17 +292,33 @@ describe("Chat SDK outbound v1", () => {
       await send({
         ...intent("alert"),
         content: "**Healthy.** A raw period. [Brain](https://brain.joelclaw.com)",
-        actions: [{ kind: "reaction", label: "👍 Seen", emoji: "👍" }],
+        actions: [
+          { kind: "callback", id: "learner-flow.ack", label: "Seen" },
+          { kind: "callback", id: "learner-flow.run", label: "Run flow agent" },
+          { kind: "callback", id: "learner-flow.investigate", label: "Investigate" },
+        ],
       });
 
       expect(calls.map((call) => call.method)).toEqual(["sendMessage", "sendMessage"]);
       expect(calls[0]?.body).toMatchObject({
         parse_mode: "MarkdownV2",
         reply_markup: {
-          inline_keyboard: [[{
-            text: "👍 Seen",
-            callback_data: "chat:{\"a\":\"message_reaction\",\"v\":\"👍\"}",
-          }]],
+          inline_keyboard: [
+            [{
+              text: "Seen",
+              callback_data: "chat:{\"a\":\"message_action\",\"v\":\"learner-flow.ack\"}",
+            }],
+            [
+              {
+                text: "Run flow agent",
+                callback_data: "chat:{\"a\":\"message_action\",\"v\":\"learner-flow.run\"}",
+              },
+              {
+                text: "Investigate",
+                callback_data: "chat:{\"a\":\"message_action\",\"v\":\"learner-flow.investigate\"}",
+              },
+            ],
+          ],
         },
       });
       expect(calls[1]?.body).toMatchObject({

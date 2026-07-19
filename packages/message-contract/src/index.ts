@@ -41,8 +41,11 @@ export {
   ReplyAnchorNotFoundError,
 } from "./errors";
 export {
+  MESSAGE_ACTION_REQUESTED,
   MESSAGE_REACTION_RECEIVED,
   MESSAGE_REPLY_RECEIVED,
+  MessageActionRequestedEvent,
+  type MessageActionRequestedEvent as MessageActionRequestedEventType,
   MessageActor,
   MessageFlowReference,
   type MessageFlowReference as MessageFlowReferenceType,
@@ -68,12 +71,15 @@ export {
   type MessageUrgency as MessageUrgencyType,
 } from "./kinds";
 export {
+  CallbackActionId,
+  type CallbackActionId as CallbackActionIdType,
   decodeOutboundIntent,
-  MESSAGE_REACTION_ACTION_ID,
+  LEARNER_FLOW_ACTION_IDS,
+  MESSAGE_CALLBACK_ACTION_ID,
   MessageAction,
   type MessageAction as MessageActionType,
-  MessageReactionAction,
-  type MessageReactionAction as MessageReactionActionType,
+  MessageCallbackAction,
+  type MessageCallbackAction as MessageCallbackActionType,
   OutboundIntentV2,
   type OutboundIntentV2 as OutboundIntent,
 } from "./outbound";

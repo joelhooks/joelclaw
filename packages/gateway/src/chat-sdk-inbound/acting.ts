@@ -2,8 +2,9 @@ import {
   type FlowIdType,
   type InboundEvent,
   type InboundPlatform,
+  MESSAGE_ACTION_REQUESTED,
+  MESSAGE_CALLBACK_ACTION_ID,
   MESSAGE_CONTRACT_VERSION,
-  MESSAGE_REACTION_ACTION_ID,
   MESSAGE_REACTION_RECEIVED,
 } from "@joelclaw/message-contract";
 import type {
@@ -15,6 +16,7 @@ import type {
   Thread,
 } from "chat";
 import type { ChatSdkRuntime } from "../chat-sdk/instance";
+import type { OutboundActionDeclaration } from "../chat-sdk/outbound";
 import {
   type ChatSdkNormalizedInbound,
   fromChatSdkCommand,
@@ -25,6 +27,7 @@ import {
   type RawInboundEnvelope,
 } from "./normalize";
 import type {
+  MessageActionRequestedBusEnvelope,
   MessageReactionReceivedBusEnvelope,
   ObserveOnlyInboundPublisher,
 } from "./publish";
@@ -43,6 +46,22 @@ export interface ActingInboundDispatcherDependencies {
     platformMessageId: string,
     conversationId?: string,
   ) => Promise<FlowIdType | undefined>;
+  readonly resolveDeclaredActions?: (
+    flowId: FlowIdType,
+  ) => Promise<OutboundActionDeclaration | undefined>;
+  readonly recordAction?: (input: {
+    readonly flowId: FlowIdType;
+    readonly correlationId: string;
+    readonly actionId: string;
+    readonly rawEventId: string;
+    readonly platformMessageId: string;
+    readonly conversationId: string;
+    readonly actorId: string;
+    readonly occurredAt: string;
+  }) => Promise<void>;
+  readonly publishAction?: (
+    event: MessageActionRequestedBusEnvelope,
+  ) => Promise<unknown>;
   readonly publishReaction: (
     event: MessageReactionReceivedBusEnvelope,
   ) => Promise<unknown>;
@@ -160,26 +179,25 @@ function reactionEvent(
   };
 }
 
-function messageActionReactionEvent(
+function messageActionRequestedEvent(
   event: Extract<InboundEvent, { readonly type: "interaction" }>,
   flowId: FlowIdType,
-): MessageReactionReceivedBusEnvelope {
+  actionId: MessageActionRequestedBusEnvelope["data"]["actionId"],
+): MessageActionRequestedBusEnvelope {
   const platformMessageId = event.platformIds.messageId
     ?? event.rawAnchors.sourceMessageId;
-  if (!platformMessageId || !event.value) {
-    throw new Error("Message reaction action is missing its emoji or platform message id");
+  if (!platformMessageId || !event.value || event.platform !== "telegram") {
+    throw new Error("Message callback action is missing its action ID or Telegram message ID");
   }
   const displayName = event.actor.displayName?.trim();
   return {
     id: `${event.eventId}:flow:${flowId}`,
-    name: MESSAGE_REACTION_RECEIVED,
+    name: MESSAGE_ACTION_REQUESTED,
     data: {
       contractVersion: MESSAGE_CONTRACT_VERSION,
       flowId,
-      platform: event.platform,
-      emoji: event.value,
-      action: "added",
-      added: true,
+      platform: "telegram",
+      actionId,
       rawEventId: event.audit.rawEventId
         ?? event.rawAnchors.callbackQueryId
         ?? event.eventId,
@@ -194,11 +212,11 @@ function messageActionReactionEvent(
   };
 }
 
-function isMessageReactionAction(
+function isMessageCallbackAction(
   event: InboundEvent,
 ): event is Extract<InboundEvent, { readonly type: "interaction" }> {
   return event.type === "interaction"
-    && event.actionId === MESSAGE_REACTION_ACTION_ID
+    && event.actionId === MESSAGE_CALLBACK_ACTION_ID
     && Boolean(event.value?.trim());
 }
 
@@ -230,16 +248,19 @@ export function createActingInboundDispatcher(
       dependencies.onError?.(error, "publish", event);
     }
 
-    if (
-      isMessageReactionAction(event)
-      && event.authorization.verdict === "accepted"
-      && event.authorization.reason === "authorized_joel"
-    ) {
+    if (isMessageCallbackAction(event)) {
+      if (
+        event.authorization.verdict !== "accepted"
+        || event.authorization.reason !== "authorized_joel"
+      ) {
+        remember(event.eventId);
+        return { status: "rejected" };
+      }
       const platformMessageId = event.platformIds.messageId
         ?? event.rawAnchors.sourceMessageId;
       try {
         if (!platformMessageId) {
-          throw new Error("Message reaction action has no platform message id");
+          throw new Error("Message callback action has no platform message id");
         }
         const flowId = await dependencies.resolveFlowId(
           event.platform,
@@ -251,8 +272,43 @@ export function createActingInboundDispatcher(
             `No flowId found for ${event.platform} message ${platformMessageId}`,
           );
         }
-        await dependencies.publishReaction(
-          messageActionReactionEvent(event, flowId),
+        if (
+          !dependencies.resolveDeclaredActions
+          || !dependencies.publishAction
+        ) {
+          throw new Error("Message callback action dependencies are not configured");
+        }
+        const declaration = await dependencies.resolveDeclaredActions(flowId);
+        if (!declaration) {
+          throw new Error(`No declared actions found for ${flowId}`);
+        }
+        const declared = declaration.declaredActions.find(
+          (action) => action.id === event.value,
+        );
+        if (!declared) {
+          dependencies.onError?.(
+            new Error(`Action ${event.value} was not declared for ${flowId}`),
+            "action-declaration",
+            event,
+          );
+          remember(event.eventId);
+          return { status: "rejected" };
+        }
+        const rawEventId = event.audit.rawEventId
+          ?? event.rawAnchors.callbackQueryId
+          ?? event.eventId;
+        await dependencies.recordAction?.({
+          flowId,
+          correlationId: declaration.correlationId,
+          actionId: declared.id,
+          rawEventId,
+          platformMessageId,
+          conversationId: event.platformIds.conversationId,
+          actorId: event.actor.platformUserId,
+          occurredAt: event.occurredAt,
+        });
+        await dependencies.publishAction(
+          messageActionRequestedEvent(event, flowId, declared.id),
         );
       } catch (error) {
         dependencies.onError?.(error, "action-correlation", event);

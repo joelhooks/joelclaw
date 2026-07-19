@@ -3,7 +3,7 @@ name: messaging
 displayName: Messaging v2
 version: 0.1.0
 author: joel
-description: Send joelclaw operator messages through contract v2, consume reaction/reply events by flowId, and operate the canonical Chat SDK transport safely. Use for notify send, rich message intents, message reactions, message replies, Chat SDK, flowId correlation, or messaging transport ownership.
+description: Send joelclaw operator messages through contract v2, design button callbacks and replies by flowId, and operate the canonical Chat SDK transport safely. Use for notify send, rich message intents, Telegram inline buttons, callback queries, message replies, Chat SDK, flowId correlation, or messaging transport ownership.
 tags:
   - messaging
   - gateway
@@ -21,7 +21,7 @@ Load this skill when an agent needs to:
 
 - DM Joel or send an operator notification
 - send a rich message with a stable correlation ID or reply anchor
-- consume reactions or replies to an outbound message
+- consume button callbacks or replies to an outbound message
 - inspect a message lifecycle by `flowId`
 - change Chat SDK gateway listener ownership or transport wiring
 - add or migrate a message producer
@@ -102,59 +102,35 @@ A neat-memory DM originally used low priority and Telegram-only flags. Low prior
 
 Contract v2 fixes that: call a memory `memory`, an alert `alert`, and an approval `ask`. Routing policy decides the lane. Do not encode meaning as `priority`, `channel`, or `telegramOnly` in new producers.
 
-## Reactions and replies by flowId
+## Button callbacks and replies by flowId
 
-Return-path events are:
+Joel rejected emoji reactions as an operator action API on 2026-07-19. Actionable Telegram DMs use labeled inline keyboard buttons. A callback is an action request, not a synthetic reaction and not proof that the action completed.
+
+Accepted target event:
 
 ```text
-message/reaction.received
-message/reply.received
+message/action.requested
 ```
 
-Reaction data:
+Target data:
 
 ```ts
 {
   flowId,
-  platform,
-  emoji,
-  action: "added" | "removed",
+  platform: "telegram",
+  actionId,
   actor: { id, displayName? },
+  rawEventId,          // callback_query.id; idempotency key
+  platformMessageId,  // lookup input only
   at
 }
 ```
 
-Reply data:
+The existing Chat SDK `callback_query` owner must answer the callback, authorize Joel, resolve the platform message to `flowId`, verify the action was declared on that flow, then publish the request. Consumers subscribe by `flowId` and `actionId`. They emit a truthful receipt only after their append, schedule, or mutation has been read back.
 
-```ts
-{
-  flowId,
-  platform,
-  text,
-  actor: { id, displayName? },
-  at
-}
-```
+The button-native source path uses `kind: "callback"`, stable `learner-flow.*` IDs, and `message/action.requested`. It is not earned live truth until the gateway and host worker are deployed and one `Seen` tap reaches the `learner-flow/action` receipt. Never treat a reaction event, queue acceptance, or Telegram spinner acknowledgement as button proof. Design source: `.brain/projects/messaging-stabilization/design-button-native-interactions.svx`.
 
-Create an ordinary Inngest function, trigger on the event name, and match the stored `flowId` from the original receipt:
-
-```ts
-import { MESSAGE_REACTION_RECEIVED } from "@joelclaw/message-contract";
-
-export const consumeReaction = inngest.createFunction(
-  { id: "my-message-reaction" },
-  { event: MESSAGE_REACTION_RECEIVED },
-  async ({ event, step }) => {
-    const owner = await step.run("resolve-flow-owner", () => lookupOwner(event.data.flowId));
-    if (!owner) return { status: "ignored", flowId: event.data.flowId };
-    return step.run("apply-reaction", () => applyReaction(owner, event.data));
-  },
-);
-```
-
-Do not subscribe by platform message ID. The gateway journals that ID and resolves it back to `flowId` before publishing the bus event.
-
-Current earned truth: reaction-to-`flowId` publication is wired in the acting inbound dispatcher. `message/reply.received` exists in the contract, but verify an acting publisher/live canary before building a critical consumer around replies.
+`message/reply.received` exists in the contract, but verify an acting publisher/live canary before building a critical consumer around replies.
 
 Inspect one lifecycle with:
 
@@ -167,7 +143,7 @@ joelclaw otel search "<flowId>" --hours 24
 
 The live gateway embeds one Chat SDK instance. It starts directly as the only Telegram poller and Slack Socket Mode owner. There are no acting or shadow flags and no start-then-stop handover.
 
-Telegram-specific commands, callbacks, media intake, journaling, formatting, streaming, and direct Bot API side effects live in `packages/gateway/src/telegram-runtime.ts`. That runtime never polls; Chat SDK feeds it canonical command, action, and attachment events. Slack Reply Grant/passive-intel policy and Web API side effects live in `packages/gateway/src/slack-runtime.ts`, backed by the SDK adapter's `webClient`.
+Telegram-specific commands, callbacks, media intake, journaling, formatting, streaming, and direct Bot API side effects live in `packages/gateway/src/telegram-runtime.ts`. That runtime never polls; Chat SDK feeds it canonical command, button-action, and attachment events. Slack Reply Grant/passive-intel policy and Web API side effects live in `packages/gateway/src/slack-runtime.ts`, backed by the SDK adapter's `webClient`.
 
 Rollback is source control: review and revert the legacy-transport deletion, then run one supervised `joelclaw gateway restart`. Never clear Redis or start a second listener beside the SDK owner.
 

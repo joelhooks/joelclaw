@@ -38,6 +38,14 @@ function fixOrFallback(error: CapabilityError, fallback: string): string {
   return error.fix ?? fallback
 }
 
+export function parseNotifyWaitTimeoutSeconds(input: string): number | null {
+  const match = /^(\d+)(s|m)?$/.exec(input.trim().toLowerCase())
+  if (!match) return null
+  const amount = Number.parseInt(match[1]!, 10)
+  if (!Number.isSafeInteger(amount) || amount <= 0) return null
+  return match[2] === "m" ? amount * 60 : amount
+}
+
 const channelOption = Options.text("channel").pipe(
   Options.withDescription("Target channel: gateway (default), main, or all"),
   Options.withDefault("gateway"),
@@ -83,6 +91,15 @@ const adapterOption = Options.text("adapter").pipe(
 const eventIdOption = Options.text("event-id").pipe(
   Options.withDescription("Stable UUID v4 for idempotent notification delivery"),
   Options.optional,
+)
+
+const waitSourceOption = Options.text("source").pipe(
+  Options.withDescription("Producer used by notify send, for example campaign-pulse"),
+)
+
+const waitTimeoutOption = Options.text("timeout").pipe(
+  Options.withDescription("Terminal receipt deadline, for example 15s or 1m"),
+  Options.withDefault("15s"),
 )
 
 const notifySend = Command.make(
@@ -175,7 +192,69 @@ const notifySend = Command.make(
     })
 ).pipe(Command.withDescription("Send canonical operator notification through gateway"))
 
+const notifyWait = Command.make(
+  "wait",
+  {
+    eventId: Args.text({ name: "event-id" }).pipe(
+      Args.withDescription("Event ID returned by notify send"),
+    ),
+    source: waitSourceOption,
+    timeout: waitTimeoutOption,
+    adapter: adapterOption,
+  },
+  ({ eventId, source, timeout, adapter }) =>
+    Effect.gen(function* () {
+      const timeoutSeconds = parseNotifyWaitTimeoutSeconds(timeout)
+      if (timeoutSeconds === null) {
+        yield* Console.log(
+          respondError(
+            "notify wait",
+            `Invalid timeout: ${timeout}`,
+            "INVALID_TIMEOUT",
+            "Use a positive duration such as 15s or 1m.",
+          ),
+        )
+        return
+      }
+
+      const adapterOverride = parseOptionalText(adapter)
+      const result = yield* executeCapabilityCommand({
+        capability: "notify",
+        subcommand: "wait",
+        args: { eventId, source, timeoutSeconds },
+        flags: adapterOverride ? { adapter: adapterOverride } : undefined,
+      }).pipe(Effect.either)
+
+      if (result._tag === "Left") {
+        const error = result.left
+        yield* Console.log(
+          respondError(
+            "notify wait",
+            error.message,
+            codeOrFallback(error),
+            fixOrFallback(error, "Retry the same event ID; do not send a new notification."),
+            [
+              { command: `joelclaw notify wait ${eventId} --source ${source} --timeout ${timeout}`, description: "Retry terminal readback for the same event" },
+              { command: "joelclaw messages audit --since 1h", description: "Inspect private journal delivery rows" },
+            ],
+          ),
+        )
+        return
+      }
+
+      yield* Console.log(
+        respond(
+          "notify wait",
+          result.right,
+          [
+            { command: `joelclaw messages trace ${result.right.flowId}`, description: "Trace the confirmed message lifecycle" },
+          ],
+        ),
+      )
+    }),
+).pipe(Command.withDescription("Wait for terminal contract-v2 delivery confirmation"))
+
 export const notifyCmd = Command.make("notify").pipe(
   Command.withDescription("Capability: alerts/notifications through gateway"),
-  Command.withSubcommands([notifySend]),
+  Command.withSubcommands([notifySend, notifyWait]),
 )

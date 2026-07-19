@@ -43,6 +43,7 @@ import type { SendMediaPayload, SendOptions } from "./channels/types";
 import {
   type ChatSdkRuntime,
   getChatSdkRuntime,
+  resolveDeclaredMessageActions,
   resolvePlatformMessageFlow,
   setChatSdkActingTransportReady,
   startChatSdkRuntime,
@@ -99,6 +100,7 @@ import { buildGatewayTurnKnowledgeWrite, sendGatewayTurnKnowledgeWrite } from ".
 import { decideIdleGatewayMaintenance } from "./maintenance-policy";
 import {
   journalMessage,
+  journalMessageActionRequest,
   rememberTelegramMessageFlow,
 } from "./message-journal";
 import { normalizeOperatorRelayText } from "./operator-relay";
@@ -4860,6 +4862,14 @@ try {
     enqueue: enqueueToGateway,
     publisher: createObserveOnlyInboundPublisher(inboundBus),
     resolveFlowId: resolvePlatformMessageFlow,
+    resolveDeclaredActions: resolveDeclaredMessageActions,
+    recordAction: async (input) => {
+      const receipt = await journalMessageActionRequest(input);
+      if (!receipt.persisted) {
+        throw new Error(`Callback ${input.rawEventId} was not durably journaled`);
+      }
+    },
+    publishAction: (event) => inboundBus.send(event),
     publishReaction: (event) => inboundBus.send(event),
     dispatchPlatformPolicy: async (event, raw) => {
       if (event.platform === "telegram") {

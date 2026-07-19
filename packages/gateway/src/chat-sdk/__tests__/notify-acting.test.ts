@@ -178,7 +178,7 @@ describe("notify send contract-v2 acting route", () => {
     });
   });
 
-  test("carries semantic reaction actions from notify context into contract v2", async () => {
+  test("carries semantic callback actions from notify context into contract v2", async () => {
     const intents: unknown[] = [];
     await routeNotifySendCompat(
       {
@@ -187,9 +187,9 @@ describe("notify send contract-v2 acting route", () => {
           ...event.payload,
           context: {
             actions: [
-              { kind: "reaction", label: "👍 Seen", emoji: "👍" },
-              { kind: "reaction", label: "🔧 Run flow agent", emoji: "🔧" },
-              { kind: "reaction", label: "🔎 Investigate", emoji: "🔎" },
+              { kind: "callback", id: "learner-flow.ack", label: "Seen" },
+              { kind: "callback", id: "learner-flow.run", label: "Run flow agent" },
+              { kind: "callback", id: "learner-flow.investigate", label: "Investigate" },
             ],
           },
         },
@@ -210,9 +210,9 @@ describe("notify send contract-v2 acting route", () => {
         content: "Cutover receipt",
         correlationId: "cli/notify:notify-event-1",
         actions: [
-          { kind: "reaction", label: "👍 Seen", emoji: "👍" },
-          { kind: "reaction", label: "🔧 Run flow agent", emoji: "🔧" },
-          { kind: "reaction", label: "🔎 Investigate", emoji: "🔎" },
+          { kind: "callback", id: "learner-flow.ack", label: "Seen" },
+          { kind: "callback", id: "learner-flow.run", label: "Run flow agent" },
+          { kind: "callback", id: "learner-flow.investigate", label: "Investigate" },
         ],
       },
     ]);

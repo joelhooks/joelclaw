@@ -30,11 +30,42 @@ const NotifySendResultSchema = Schema.Struct({
   deduplicated: Schema.Boolean,
 })
 
+const NotifyWaitArgsSchema = Schema.Struct({
+  eventId: Schema.String,
+  source: Schema.String,
+  timeoutSeconds: Schema.optional(Schema.Number),
+})
+
+const NotifyCallbackActionSchema = Schema.Struct({
+  kind: Schema.Literal("callback"),
+  id: Schema.Literal(
+    "learner-flow.ack",
+    "learner-flow.run",
+    "learner-flow.investigate",
+  ),
+  label: Schema.String,
+})
+
+const NotifyWaitResultSchema = Schema.Struct({
+  flowId: Schema.String,
+  correlationId: Schema.String,
+  platform: Schema.String,
+  platformMessageId: Schema.NullOr(Schema.String),
+  deliveryState: Schema.Literal("confirmed", "failed", "suppressed", "digested"),
+  declaredActions: Schema.Array(NotifyCallbackActionSchema),
+  confirmedAt: Schema.NullOr(Schema.String),
+})
+
 const commands = {
   send: {
     summary: "Send canonical operator notification through gateway Redis bridge",
     argsSchema: NotifySendArgsSchema,
     resultSchema: NotifySendResultSchema,
+  },
+  wait: {
+    summary: "Wait for a terminal contract-v2 notification receipt",
+    argsSchema: NotifyWaitArgsSchema,
+    resultSchema: NotifyWaitResultSchema,
   },
 } as const
 
@@ -42,6 +73,7 @@ type RedisClient = {
   connect: () => Promise<void>
   quit: () => Promise<void>
   smembers: (key: string) => Promise<string[]>
+  get: (key: string) => Promise<string | null>
   lpush: (key: string, value: string) => Promise<number>
   publish: (channel: string, message: string) => Promise<number>
   eval: (script: string, keyCount: number, ...args: string[]) => Promise<number>
@@ -101,6 +133,57 @@ async function connectRedis(): Promise<RedisClient> {
   }
 
   return redis as unknown as RedisClient
+}
+
+export interface NotifyTerminalReceipt {
+  readonly flowId: string
+  readonly correlationId: string
+  readonly platform: string
+  readonly platformMessageId: string | null
+  readonly deliveryState: "confirmed" | "failed" | "suppressed" | "digested"
+  readonly declaredActions: ReadonlyArray<{
+    readonly kind: "callback"
+    readonly id: "learner-flow.ack" | "learner-flow.run" | "learner-flow.investigate"
+    readonly label: string
+  }>
+  readonly confirmedAt: string | null
+}
+
+export function notifyTerminalFailureCode(
+  state: Exclude<NotifyTerminalReceipt["deliveryState"], "confirmed">,
+): "NOTIFY_DELIVERY_FAILED" | "NOTIFY_SUPPRESSED" | "NOTIFY_DIGESTED" {
+  if (state === "failed") return "NOTIFY_DELIVERY_FAILED"
+  if (state === "suppressed") return "NOTIFY_SUPPRESSED"
+  return "NOTIFY_DIGESTED"
+}
+
+export async function waitForNotifyTerminalReceipt(
+  input: {
+    readonly correlationId: string
+    readonly timeoutMs: number
+  },
+  dependencies: {
+    readonly get: (key: string) => Promise<string | null>
+    readonly now?: () => number
+    readonly sleep?: (milliseconds: number) => Promise<void>
+    readonly pollIntervalMs?: number
+  },
+): Promise<NotifyTerminalReceipt | null> {
+  const now = dependencies.now ?? Date.now
+  const sleep = dependencies.sleep ?? ((milliseconds: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
+  const deadline = now() + Math.max(0, input.timeoutMs)
+  const key = `joelclaw:message-contract:correlation:${input.correlationId}`
+  while (now() <= deadline) {
+    const raw = await dependencies.get(key)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      return Schema.decodeUnknownSync(NotifyWaitResultSchema)(parsed)
+    }
+    if (now() >= deadline) return null
+    await sleep(dependencies.pollIntervalMs ?? 250)
+  }
+  return null
 }
 
 async function resolveTargets(redis: RedisClient, requestedChannel: string): Promise<string[]> {
@@ -286,6 +369,79 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
             payload,
             deduplicated,
           }
+        }
+        case "wait": {
+          const args = yield* decodeArgs("wait", rawArgs)
+          const eventId = args.eventId.trim()
+          const source = args.source.trim()
+          if (!validEventId(eventId) || source.length === 0) {
+            return yield* Effect.fail(
+              capabilityError(
+                "NOTIFY_WAIT_INVALID_ARGS",
+                "notify wait requires a lowercase UUID v4 event ID and non-empty source",
+                "Use the eventId returned by notify send and the exact producer passed to --source."
+              )
+            )
+          }
+          const timeoutSeconds = args.timeoutSeconds ?? 15
+          if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 0 || timeoutSeconds > 300) {
+            return yield* Effect.fail(
+              capabilityError(
+                "NOTIFY_WAIT_INVALID_TIMEOUT",
+                "--timeout must be between 0 and 300 seconds",
+                "Use --timeout 15s for the normal terminal receipt window."
+              )
+            )
+          }
+          const redis = yield* Effect.tryPromise({
+            try: () => connectRedis(),
+            catch: (error) =>
+              capabilityError(
+                "NOTIFY_BACKEND_UNAVAILABLE",
+                `Redis connection failed: ${String(error)}`,
+                "Verify Redis is running (`joelclaw status`) and retry the same event ID."
+              ),
+          })
+          const correlationId = `${source}:${eventId}`
+          const receipt = yield* Effect.tryPromise({
+            try: async () => {
+              try {
+                return await waitForNotifyTerminalReceipt(
+                  { correlationId, timeoutMs: timeoutSeconds * 1_000 },
+                  { get: (key) => redis.get(key) },
+                )
+              } finally {
+                await redis.quit().catch(() => {})
+              }
+            },
+            catch: (error) =>
+              capabilityError(
+                "NOTIFY_TERMINAL_RECEIPT_INVALID",
+                `Terminal receipt could not be decoded: ${String(error)}`,
+                "Audit the same correlation ID in the private message journal; do not resend."
+              ),
+          })
+          if (!receipt) {
+            return yield* Effect.fail(
+              capabilityError(
+                "NOTIFY_TERMINAL_RECEIPT_TIMEOUT",
+                `No terminal receipt appeared for ${correlationId} before the deadline`,
+                "Repeat notify wait or audit this same event ID; do not send a new notification.",
+                true,
+              )
+            )
+          }
+          if (receipt.deliveryState !== "confirmed") {
+            const code = notifyTerminalFailureCode(receipt.deliveryState)
+            return yield* Effect.fail(
+              capabilityError(
+                code,
+                `Notification ended in terminal state ${receipt.deliveryState}`,
+                "Inspect the terminal receipt and stop for an explicit operator decision; do not resend automatically."
+              )
+            )
+          }
+          return receipt
         }
         default:
           return yield* Effect.fail(

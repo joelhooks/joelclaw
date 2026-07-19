@@ -3,21 +3,21 @@ import {
   type TelegramAdapterConfig,
   type TelegramRawMessage,
 } from "@chat-adapter/telegram";
-import { MESSAGE_REACTION_ACTION_ID } from "@joelclaw/message-contract";
+import { MESSAGE_CALLBACK_ACTION_ID } from "@joelclaw/message-contract";
 
 const TELEGRAM_TEXT_LIMIT = 4_096;
 const TELEGRAM_CALLBACK_LIMIT_BYTES = 64;
 
-export interface TelegramReactionAction {
+export interface TelegramCallbackAction {
+  readonly id: "learner-flow.ack" | "learner-flow.run" | "learner-flow.investigate";
   readonly label: string;
-  readonly emoji: string;
 }
 
 export interface TelegramActionMessage {
   readonly telegramActionMessage: true;
   readonly markdownV2: string | null;
   readonly plainText: string;
-  readonly actions: readonly TelegramReactionAction[];
+  readonly actions: readonly TelegramCallbackAction[];
 }
 
 export function isTelegramActionMessage(
@@ -36,14 +36,24 @@ function boundedPlainText(text: string): string {
   return `${characters.slice(0, TELEGRAM_TEXT_LIMIT - 3).join("")}...`;
 }
 
-function callbackData(emoji: string): string {
-  const data = `chat:${JSON.stringify({ a: MESSAGE_REACTION_ACTION_ID, v: emoji })}`;
+function callbackData(actionId: TelegramCallbackAction["id"]): string {
+  const data = `chat:${JSON.stringify({ a: MESSAGE_CALLBACK_ACTION_ID, v: actionId })}`;
   if (Buffer.byteLength(data, "utf8") > TELEGRAM_CALLBACK_LIMIT_BYTES) {
     throw new Error(
-      `Telegram reaction callback exceeds ${TELEGRAM_CALLBACK_LIMIT_BYTES} bytes`,
+      `Telegram callback action exceeds ${TELEGRAM_CALLBACK_LIMIT_BYTES} bytes`,
     );
   }
   return data;
+}
+
+function keyboard(actions: readonly TelegramCallbackAction[]) {
+  const buttons = actions.map((action) => ({
+    text: action.label,
+    callback_data: callbackData(action.id),
+  }));
+  if (buttons.length <= 1) return [buttons];
+  const first = buttons[0];
+  return first ? [[first], buttons.slice(1)] : [];
 }
 
 /**
@@ -62,12 +72,7 @@ export class GatewayTelegramAdapter extends TelegramAdapter {
     message: TelegramActionMessage,
   ): Promise<{ readonly id: string; readonly threadId: string; readonly raw: TelegramRawMessage }> {
     const thread = this.decodeThreadId(threadId);
-    const replyMarkup = {
-      inline_keyboard: [message.actions.map((action) => ({
-        text: action.label,
-        callback_data: callbackData(action.emoji),
-      }))],
-    };
+    const replyMarkup = { inline_keyboard: keyboard(message.actions) };
     const plainText = boundedPlainText(message.plainText);
     const send = (
       parseMode: "MarkdownV2" | "plain",

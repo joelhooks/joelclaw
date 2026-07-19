@@ -1,5 +1,6 @@
 import type {
   InboundEvent,
+  MessageActionRequestedEventType,
   MessageReactionReceivedEventType,
 } from "@joelclaw/message-contract";
 import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
@@ -16,12 +17,18 @@ export interface InboundBusEnvelope {
   readonly data: InboundEvent;
 }
 
+export type MessageActionRequestedBusEnvelope =
+  MessageActionRequestedEventType & { readonly id: string };
+
 export type MessageReactionReceivedBusEnvelope =
   MessageReactionReceivedEventType & { readonly id: string };
 
 export interface InboundBusClient {
   readonly send: (
-    event: InboundBusEnvelope | MessageReactionReceivedBusEnvelope,
+    event:
+      | InboundBusEnvelope
+      | MessageActionRequestedBusEnvelope
+      | MessageReactionReceivedBusEnvelope,
   ) => Promise<unknown>;
 }
 

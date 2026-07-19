@@ -1,7 +1,9 @@
 import { Schema } from "effect";
 import { FlowId } from "./flow-id";
 import { MESSAGE_CONTRACT_VERSION, MessagePlatform } from "./kinds";
+import { CallbackActionId } from "./outbound";
 
+export const MESSAGE_ACTION_REQUESTED = "message/action.requested" as const;
 export const MESSAGE_REACTION_RECEIVED = "message/reaction.received" as const;
 export const MESSAGE_REPLY_RECEIVED = "message/reply.received" as const;
 
@@ -52,6 +54,23 @@ export const MessageReactionReceivedEvent = Schema.Struct({
 });
 export interface MessageReactionReceivedEvent
   extends Schema.Schema.Type<typeof MessageReactionReceivedEvent> {}
+
+export const MessageActionRequestedEvent = Schema.Struct({
+  name: Schema.Literal(MESSAGE_ACTION_REQUESTED),
+  data: Schema.Struct({
+    contractVersion: Schema.Literal(MESSAGE_CONTRACT_VERSION),
+    flowId: FlowId,
+    platform: Schema.Literal("telegram"),
+    actionId: CallbackActionId,
+    actor: MessageActor,
+    rawEventId: Schema.NonEmptyTrimmedString,
+    platformMessageId: Schema.NonEmptyTrimmedString,
+    at: UtcTimestamp,
+    correlationSource: Schema.Literal("gateway-acting"),
+  }),
+});
+export interface MessageActionRequestedEvent
+  extends Schema.Schema.Type<typeof MessageActionRequestedEvent> {}
 
 export const MessageReplyReceivedEvent = Schema.Struct({
   name: Schema.Literal(MESSAGE_REPLY_RECEIVED),

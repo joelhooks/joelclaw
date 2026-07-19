@@ -3,27 +3,35 @@ import { InvalidMessageIntentError } from "./errors";
 import { FlowId } from "./flow-id";
 import { MESSAGE_CONTRACT_VERSION, MessageKind } from "./kinds";
 
-export const MESSAGE_REACTION_ACTION_ID = "message_reaction" as const;
+export const MESSAGE_CALLBACK_ACTION_ID = "message_action" as const;
+export const LEARNER_FLOW_ACTION_IDS = [
+  "learner-flow.ack",
+  "learner-flow.run",
+  "learner-flow.investigate",
+] as const;
+
 const TELEGRAM_CALLBACK_LIMIT_BYTES = 64;
 
-const MessageReactionEmoji = Schema.NonEmptyTrimmedString.pipe(
-  Schema.maxLength(16),
-  Schema.filter((emoji) =>
+export const CallbackActionId = Schema.Literal(...LEARNER_FLOW_ACTION_IDS);
+export type CallbackActionId = typeof CallbackActionId.Type;
+
+const BoundedCallbackActionId = CallbackActionId.pipe(
+  Schema.filter((id) =>
     new TextEncoder().encode(
-      `chat:${JSON.stringify({ a: MESSAGE_REACTION_ACTION_ID, v: emoji })}`,
+      `chat:${JSON.stringify({ a: MESSAGE_CALLBACK_ACTION_ID, v: id })}`,
     ).byteLength <= TELEGRAM_CALLBACK_LIMIT_BYTES
   ),
 );
 
-export const MessageReactionAction = Schema.Struct({
-  kind: Schema.Literal("reaction"),
+export const MessageCallbackAction = Schema.Struct({
+  kind: Schema.Literal("callback"),
+  id: BoundedCallbackActionId,
   label: Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(40)),
-  emoji: MessageReactionEmoji,
 });
-export interface MessageReactionAction
-  extends Schema.Schema.Type<typeof MessageReactionAction> {}
+export interface MessageCallbackAction
+  extends Schema.Schema.Type<typeof MessageCallbackAction> {}
 
-export const MessageAction = MessageReactionAction;
+export const MessageAction = MessageCallbackAction;
 export type MessageAction = typeof MessageAction.Type;
 
 export const OutboundIntentV2 = Schema.Struct({

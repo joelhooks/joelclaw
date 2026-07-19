@@ -2,10 +2,15 @@
 title: "Task: reactions bridge — Joel's emoji grades the curator"
 type: task-brief
 created: 2026-07-17
+status: superseded
+superseded_at: 2026-07-19
+superseded_by: "../projects/messaging-stabilization/design-button-native-interactions.svx"
 parent: "../projects/messaging-stabilization/build-reactions-bridge.svx"
 ---
 
 # Reactions bridge
+
+> Historical task only. Joel rejected reactions as an operator action system on 2026-07-19. Do not execute this brief. Use [Button-native Telegram interactions](../projects/messaging-stabilization/design-button-native-interactions.svx).
 
 You are on flagg in `~/Code/joelhooks/joelclaw`. NO commits/pushes, NO
 gateway restart. You MAY restart the system-bus worker to register a

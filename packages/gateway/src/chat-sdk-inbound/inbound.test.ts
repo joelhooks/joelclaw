@@ -357,8 +357,8 @@ describe("Chat SDK inbound normalization", () => {
       messageId: "7718912466:500",
       threadId: "telegram:7718912466",
       occurredAt: "2026-07-16T19:00:00.000Z",
-      actionId: "message_reaction",
-      value: "👍",
+      actionId: "message_action",
+      value: "learner-flow.ack",
     };
     const callbackEnvelope: RawInboundEnvelope = {
       platform: "telegram",
@@ -409,7 +409,7 @@ describe("Chat SDK inbound normalization", () => {
     });
   });
 
-  test("decodes Chat SDK reaction buttons into the semantic action and emoji", async () => {
+  test("decodes Chat SDK callback buttons into the semantic action ID", async () => {
     const [event] = await normalizeRawInbound(
       envelope(
         "telegram",
@@ -418,7 +418,7 @@ describe("Chat SDK inbound normalization", () => {
           ...rawTelegramInteraction,
           callback_query: {
             ...rawTelegramInteraction.callback_query,
-            data: "chat:{\"a\":\"message_reaction\",\"v\":\"🔎\"}",
+            data: "chat:{\"a\":\"message_action\",\"v\":\"learner-flow.investigate\"}",
           },
         },
         "7718912466",
@@ -435,8 +435,8 @@ describe("Chat SDK inbound normalization", () => {
 
     expect(event).toMatchObject({
       type: "interaction",
-      actionId: "message_reaction",
-      value: "🔎",
+      actionId: "message_action",
+      value: "learner-flow.investigate",
       rawAnchors: { callbackQueryId: "telegram-callback-1" },
       authorization: { verdict: "accepted", canExecute: false },
     });

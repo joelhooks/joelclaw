@@ -8,9 +8,11 @@ import {
   MessageJournalWriter,
   type MessageJournalWriterService,
   makeJournalOutbox,
+  messageJournalQueryLayer,
   messageJournalTelemetryLive,
   messageJournalWriterLayer,
   resolveMessageJournalConnection,
+  traceMessage,
 } from "@joelclaw/message-journal";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { Effect, Layer } from "effect";
@@ -23,6 +25,48 @@ export interface JournalPersistenceReceipt {
   readonly journalEventId: string;
   readonly persisted: boolean;
   readonly storage: "writer" | "outbox" | "failed";
+}
+
+export interface JournalActionDeclaration {
+  readonly correlationId: string;
+  readonly declaredActions: ReadonlyArray<{
+    readonly id: string;
+    readonly label: string;
+  }>;
+  readonly platformMessageId: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function decodeActionDeclaration(metadataJson: string): JournalActionDeclaration | undefined {
+  try {
+    const metadata = asRecord(JSON.parse(metadataJson));
+    const correlationId = metadata?.correlationId;
+    const platformMessageId = metadata?.platformMessageId;
+    const actions = metadata?.declaredActions;
+    if (
+      typeof correlationId !== "string"
+      || typeof platformMessageId !== "string"
+      || !Array.isArray(actions)
+    ) {
+      return undefined;
+    }
+    const declaredActions = actions.flatMap((value) => {
+      const action = asRecord(value);
+      return typeof action?.id === "string" && typeof action.label === "string"
+        ? [{ id: action.id, label: action.label }]
+        : [];
+    });
+    return declaredActions.length > 0
+      ? { correlationId, declaredActions, platformMessageId }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 type FlowPersistenceOverride = {
@@ -177,6 +221,64 @@ export async function journalMessage(
     persisted: false,
     storage: "failed",
   };
+}
+
+export async function journalMessageActionRequest(input: {
+  readonly flowId: string;
+  readonly correlationId: string;
+  readonly actionId: string;
+  readonly rawEventId: string;
+  readonly platformMessageId: string;
+  readonly conversationId: string;
+  readonly actorId: string;
+  readonly occurredAt: string;
+}): Promise<JournalPersistenceReceipt> {
+  const telegramMessageId = Number(input.platformMessageId.split(":").at(-1));
+  const telegramChatId = Number(input.conversationId.split(":").at(-1));
+  return journalMessage({
+    messageKey: `telegram:${input.platformMessageId}:callback:${input.rawEventId}`,
+    flowId: input.flowId,
+    channel: "telegram",
+    direction: "interaction",
+    eventType: "message.action.requested",
+    contentKind: "callback",
+    occurredAt: input.occurredAt,
+    producer: "gateway-chat-sdk",
+    originSystemId: input.correlationId,
+    sourceEventId: input.rawEventId,
+    sourceRef: input.platformMessageId,
+    telegramChatId: Number.isSafeInteger(telegramChatId) ? telegramChatId : 0,
+    telegramMessageId: Number.isSafeInteger(telegramMessageId) ? telegramMessageId : null,
+    callbackQueryId: input.rawEventId,
+    interactionAction: input.actionId,
+    interactionPayload: input.actionId,
+    interactionOutcome: "requested",
+    deliveryState: "requested",
+    metadata: {
+      actorId: input.actorId,
+      correlationId: input.correlationId,
+      platformMessageId: input.platformMessageId,
+    },
+  });
+}
+
+export async function resolveMessageActionDeclarationFromJournal(
+  flowId: string,
+): Promise<JournalActionDeclaration | undefined> {
+  const connection = await Effect.runPromise(resolveMessageJournalConnection("reader"));
+  const queryLayer = messageJournalQueryLayer(connection).pipe(
+    Layer.provide(clickHouseClientLayer(connection)),
+  );
+  const result = await Effect.runPromise(
+    traceMessage(flowId).pipe(Effect.provide(queryLayer)),
+  );
+  if (result.kind !== "trace") return undefined;
+  for (const row of [...result.events].reverse()) {
+    if (row.event_type !== "message.outbound.confirmed") continue;
+    const declaration = decodeActionDeclaration(row.metadata_json);
+    if (declaration) return declaration;
+  }
+  return undefined;
 }
 
 export async function rememberTelegramMessageFlow(

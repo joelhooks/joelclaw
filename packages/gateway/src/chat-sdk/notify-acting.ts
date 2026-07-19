@@ -1,7 +1,9 @@
-import type {
-  DeliveryReceiptEnvelope,
-  MessageKindType,
-  OutboundIntent,
+import {
+  type CallbackActionIdType,
+  type DeliveryReceiptEnvelope,
+  LEARNER_FLOW_ACTION_IDS,
+  type MessageKindType,
+  type OutboundIntent,
 } from "@joelclaw/message-contract";
 import { mapNotifySendToIntent } from "./notify-compat";
 
@@ -123,15 +125,22 @@ function actionsFrom(value: unknown): OutboundIntent["actions"] | undefined {
     }
     const action = item as Record<string, unknown>;
     if (
-      action.kind !== "reaction"
+      action.kind !== "callback"
+      || typeof action.id !== "string"
+      || !LEARNER_FLOW_ACTION_IDS.includes(
+        action.id as (typeof LEARNER_FLOW_ACTION_IDS)[number],
+      )
       || typeof action.label !== "string"
-      || typeof action.emoji !== "string"
     ) {
       throw new Error(
-        "notify send context.actions entries require kind=reaction, label, and emoji",
+        "notify send context.actions entries require kind=callback, id, and label",
       );
     }
-    return { kind: "reaction" as const, label: action.label, emoji: action.emoji };
+    return {
+      kind: "callback" as const,
+      id: action.id as CallbackActionIdType,
+      label: action.label,
+    };
   });
 }
 
