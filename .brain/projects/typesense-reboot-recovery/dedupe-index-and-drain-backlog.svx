@@ -16,7 +16,7 @@ created_at: "2026-07-20"
 
 Clean up what the ack-loss bug left behind, after the keying fix lands. Resolved when:
 
-1. The historical overlapping duplicates from 2026-07-20 (~90 alerted sources) are removed from `sessions.db` by byte-proven `(source_identity, from_offset)` dedupe — manifest-grade proof, raw JSONL untouched, the covering Run wins.
+1. The historical overlapping duplicates from 2026-07-20 (~90 alerted sources, plus source `sha256:ee2cabd9…` which alerted live at 23:0x during the fix's QA window — runs `58ee1ff8…`/`3fe3a124…`, 4,041-byte overlap at cursor 582856, almost certainly from a steering worker bounce dropping an in-flight ack) are removed from `sessions.db` by byte-proven `(source_identity, from_offset)` dedupe — manifest-grade proof, raw JSONL untouched, the covering Run wins.
 2. The 978-file legacy `~/.joelclaw/outbox` backlog is drained through the canonical `scripts/replay-capture-outbox.ts` (the ONLY allowed replay path) against the fixed server — bounded batches, counts reconciled before/after.
 3. `CAPTURE_INCIDENT_QUIET_MS` returns from the interim 24h to its normal 60m once a drained-and-deduped day passes without a true positive.
 4. Receipts: before/after chunk and Run counts, alert state, and a validation query pass.
