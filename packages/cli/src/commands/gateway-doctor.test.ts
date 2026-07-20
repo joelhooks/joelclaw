@@ -3,6 +3,7 @@ import {
   collectGatewayDoctor,
   detectCrashRelaunch,
   type GatewayDoctorDependencies,
+  type GatewayLifecycleMarker,
   type GatewayLiveProbeReceipt,
   type GatewayRestartMarker,
 } from "./gateway-doctor"
@@ -15,6 +16,15 @@ const marker: GatewayRestartMarker = {
   completedAt: "2026-07-19T19:54:30.000Z",
   previousPid: "80000",
   newPid: "87618",
+}
+
+const lifecycleMarker: GatewayLifecycleMarker = {
+  status: "completed",
+  reason: "session-rotation:idle_session_age",
+  requestedAt: "2026-07-19T19:59:50.000Z",
+  completedAt: "2026-07-19T19:59:55.000Z",
+  previousPid: "87618",
+  newPid: "96573",
 }
 
 function healthyDependencies(overrides: Partial<GatewayDoctorDependencies> = {}): GatewayDoctorDependencies {
@@ -60,7 +70,17 @@ describe("gateway doctor", () => {
       currentPid: "96573",
       processStartAt: "2026-07-19T20:21:55.000Z",
       marker,
+      lifecycleMarker: null,
     })).toBe(true)
+  })
+
+  test("accepts a daemon relaunched after a recorded graceful lifecycle restart", () => {
+    expect(detectCrashRelaunch({
+      currentPid: "96573",
+      processStartAt: "2026-07-19T19:59:55.000Z",
+      marker,
+      lifecycleMarker,
+    })).toBe(false)
   })
 
   test("prints glanceable PASS lines for process, source, and transport", async () => {

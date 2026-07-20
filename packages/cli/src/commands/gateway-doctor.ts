@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 
 export const GATEWAY_RESTART_MARKER_PATH = "/tmp/joelclaw/gateway.operator-restart.json"
+export const GATEWAY_LIFECYCLE_MARKER_PATH = "/tmp/joelclaw/gateway.lifecycle.json"
 const GATEWAY_PID_PATH = "/tmp/joelclaw/gateway.pid"
 const GATEWAY_WS_PORT_PATH = "/tmp/joelclaw/gateway.ws.port"
 
@@ -48,6 +49,15 @@ export interface GatewayRestartMarker {
   readonly newPid?: string | null
 }
 
+export interface GatewayLifecycleMarker {
+  readonly status: "requested" | "completed"
+  readonly reason: string
+  readonly requestedAt: string
+  readonly completedAt?: string
+  readonly previousPid: string
+  readonly newPid?: string
+}
+
 export interface GatewayLiveProbeReceipt {
   readonly eventId: string
   readonly flowId: string
@@ -78,6 +88,7 @@ export interface GatewayDoctorDependencies {
   readonly repoRoot?: (pid: number | null) => string
   readonly sourceChanges?: (repoRoot: string) => readonly string[]
   readonly restartMarker?: () => GatewayRestartMarker | null
+  readonly lifecycleMarker?: () => GatewayLifecycleMarker | null
   readonly liveProbe?: () => Promise<GatewayLiveProbeReceipt>
 }
 
@@ -215,14 +226,25 @@ export function detectCrashRelaunch(input: {
   readonly currentPid: string | null
   readonly processStartAt: string | null
   readonly marker: GatewayRestartMarker | null
+  readonly lifecycleMarker?: GatewayLifecycleMarker | null
 }): boolean | null {
-  const { currentPid, processStartAt, marker } = input
-  if (!currentPid || !processStartAt || !marker?.completedAt || !marker.newPid) return null
-  if (currentPid === marker.newPid) return false
+  const { currentPid, processStartAt, marker, lifecycleMarker } = input
+  if (!currentPid || !processStartAt) return null
+
+  const completedMarkers = [marker, lifecycleMarker]
+    .filter((candidate): candidate is GatewayRestartMarker | GatewayLifecycleMarker =>
+      Boolean(candidate?.completedAt && candidate.newPid))
+
+  if (completedMarkers.some((candidate) => candidate.newPid === currentPid)) return false
+
+  const completedAtValues = completedMarkers
+    .map((candidate) => Date.parse(candidate.completedAt!))
+    .filter(Number.isFinite)
+  if (completedAtValues.length === 0) return null
+
   const processStart = Date.parse(processStartAt)
-  const operatorRestartCompleted = Date.parse(marker.completedAt)
-  if (!Number.isFinite(processStart) || !Number.isFinite(operatorRestartCompleted)) return null
-  return processStart > operatorRestartCompleted
+  if (!Number.isFinite(processStart)) return null
+  return processStart > Math.max(...completedAtValues)
 }
 
 export function writeGatewayRestartMarker(marker: GatewayRestartMarker): void {
@@ -262,7 +284,8 @@ export async function collectGatewayDoctor(
     : (dependencies.processStartAt?.(pidNumber)
       ?? (uptimeMs === null ? defaultProcessStartAt(pidNumber) : new Date(checkedAtMs - uptimeMs).toISOString()))
   const marker = (dependencies.restartMarker ?? (() => readJson<GatewayRestartMarker>(GATEWAY_RESTART_MARKER_PATH)))()
-  const crashRelaunched = detectCrashRelaunch({ currentPid: pidText, processStartAt, marker })
+  const lifecycleMarker = (dependencies.lifecycleMarker ?? (() => readJson<GatewayLifecycleMarker>(GATEWAY_LIFECYCLE_MARKER_PATH)))()
+  const crashRelaunched = detectCrashRelaunch({ currentPid: pidText, processStartAt, marker, lifecycleMarker })
   const repoRoot = (dependencies.repoRoot ?? defaultRepoRoot)(pidNumber)
   const remediation = failureCommands(repoRoot)
   const stages: GatewayDoctorStage[] = []
@@ -281,6 +304,7 @@ export async function collectGatewayDoctor(
       uptimeMs,
       crashRelaunched,
       operatorRestartMarker: marker,
+      lifecycleMarker,
     },
   })
 

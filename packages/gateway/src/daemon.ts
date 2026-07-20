@@ -166,6 +166,47 @@ const JOELCLAW_DIR = join(HOME, ".joelclaw");
 const SESSION_ID_FILE = join(JOELCLAW_DIR, "gateway.session");
 const GATEWAY_SESSION_DIR = join(JOELCLAW_DIR, "sessions", "gateway");
 const GATEWAY_FORCE_NEW_SESSION_FILE = join(PID_DIR, "gateway.force-new-session.json");
+const GATEWAY_LIFECYCLE_MARKER_FILE = join(PID_DIR, "gateway.lifecycle.json");
+
+type GatewayLifecycleMarker = {
+  status: "requested" | "completed";
+  reason: string;
+  requestedAt: string;
+  completedAt?: string;
+  previousPid: string;
+  newPid?: string;
+};
+
+async function writeGatewayLifecycleShutdown(reason: string): Promise<void> {
+  const marker: GatewayLifecycleMarker = {
+    status: "requested",
+    reason,
+    requestedAt: new Date().toISOString(),
+    previousPid: String(process.pid),
+  };
+  await writeFile(GATEWAY_LIFECYCLE_MARKER_FILE, `${JSON.stringify(marker, null, 2)}\n`);
+}
+
+async function completeGatewayLifecycleRestart(): Promise<GatewayLifecycleMarker | null> {
+  let marker: GatewayLifecycleMarker;
+  try {
+    marker = JSON.parse(await readFile(GATEWAY_LIFECYCLE_MARKER_FILE, "utf8")) as GatewayLifecycleMarker;
+  } catch {
+    return null;
+  }
+
+  if (marker.status !== "requested" || marker.previousPid === String(process.pid)) return null;
+
+  const completed: GatewayLifecycleMarker = {
+    ...marker,
+    status: "completed",
+    completedAt: new Date().toISOString(),
+    newPid: String(process.pid),
+  };
+  await writeFile(GATEWAY_LIFECYCLE_MARKER_FILE, `${JSON.stringify(completed, null, 2)}\n`);
+  return completed;
+}
+
 // Gateway-specific working dir — has its own .pi/settings.json with aggressive compaction.
 // Project-level settings (cwd/.pi/settings.json) override global (~/.pi/agent/settings.json).
 // This keeps gateway compaction isolated from interactive pi sessions.
@@ -5710,6 +5751,7 @@ function getHealthStatus(): {
 
 await writeFile(PID_FILE, `${process.pid}\n`);
 await writeFile(SESSION_ID_FILE, `${session.sessionId}\n`);
+const completedLifecycleRestart = await completeGatewayLifecycleRestart();
 
 console.log("[gateway] daemon started", {
   pid: process.pid,
@@ -5728,6 +5770,7 @@ console.log("[gateway] daemon started", {
   pidFile: PID_FILE,
   wsPort: wsServer.port,
   wsPortFile: WS_PORT_FILE,
+  lifecycleRestart: completedLifecycleRestart,
 });
 
 // Register gateway agent with agent-mail (non-blocking, non-fatal)
@@ -5787,6 +5830,11 @@ async function gracefulShutdown(signal: string): Promise<void> {
   shuttingDown = true;
 
   console.log("[gateway] shutting down", { signal });
+  try {
+    await writeGatewayLifecycleShutdown(signal);
+  } catch (error) {
+    console.error("[gateway] failed writing lifecycle shutdown marker", { error: String(error) });
+  }
   void emitGatewayOtel({
     level: "warn",
     component: "daemon",
