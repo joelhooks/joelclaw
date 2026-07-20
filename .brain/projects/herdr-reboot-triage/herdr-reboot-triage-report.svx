@@ -207,7 +207,7 @@ Quickest unblocks, already staged by live sessions: **one Enter in w1P:p8** inst
 
 - The five triage worker panes (w1T:p2–p6) were harvested — outputs reviewed, all five assets accepted — and closed by this steering session.
 - Harvested the 15 SHIPPED workspaces and wV (ABANDONED): outputs reviewed against commit receipts; outcome committed (wV: rejected by design, receipts in `09f97de`); those panes may close. That covers: w7, wA, w1J, w19, w9 (all seven panes), wJ, w1N, w11, wH (all three panes), w1G, w13 (both panes), w0, w15, w1M (both panes), wT, wV (all three panes).
-- BLOCKED and INTERESTING panes stay open until you act or a fresh session takes the thread; their pi sessions resume from disk either way.
+- Consolidation (Joel, 2026-07-20, after report review): all 52 non-live panes were closed, including BLOCKED and INTERESTING ones — this report's resume points supersede parked panes, and every pi/claude session resumes from disk. Six live workspaces remain: memory cleanup, Typesense recovery, automations recovery, campaign pulse, resilience charter, and this triage workspace.
 - w11:p1 label corrected (it claimed the reminder DM was blocked; the thread shipped).
 - wY:p25/p26 ("TYPE SUDO PW") are superseded dead shells; flagged for janitor, owned by the live wY session.
 
