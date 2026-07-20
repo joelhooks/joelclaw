@@ -3,7 +3,8 @@ title: "Add Cumulative-Prefix Growth and Startup-Budget Alerts"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "pi (flagg, herdr pane wY:p1R, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./patch-capture-and-replay.svx"]
@@ -21,4 +22,13 @@ Make recurrence loud. Resolved when:
 3. Health output includes search freshness and source provenance (finish-line condition 5).
 4. Alerts reach Joel through the messaging contract (`joelclaw notify send` / gateway), not a log nobody reads.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+Closed with two host-worker Inngest checks and fixture tests.
+
+- `search/capture-prefix-growth-alert` consumes `memory/run.captured` independently of Typesense indexing. It keeps a bounded Redis range ledger per `source_identity` and alerts once when distinct Run IDs overlap. Detection is on-ingest because the validated offsets are already present and an independent consumer remains available while Typesense is rebuilding.
+- `search/typesense-startup-budget` probes Typesense `/health` each minute. It persists the first unavailable observation, compares the duration with configurable `TYPESENSE_STARTUP_BUDGET_MS` (15 minutes by default), alerts once per outage, and clears state after recovery. The budget contract names both engine and target so SQLite indexes can use the same transition later. Typesense only exposes process-level readiness, so the acting target is truthfully `typesense:process`, not a guessed collection.
+- Both hard alerts call `joelclaw notify send --kind alert --priority high`, then require `joelclaw notify wait` to confirm terminal delivery.
+- `/api/runs/health` now includes the persisted startup-budget state plus session-search freshness and raw Run provenance: engine, index, Run ID, source identity, byte range, JSONL hash, and JSONL path.
+
+Verification: 14 focused Bun tests pass; targeted Biome passes; `bunx tsc --noEmit -p packages/system-bus/tsconfig.json` passes. No live alerts, Typesense writes, raw Run mutations, worker restart, deploy, or commit occurred.

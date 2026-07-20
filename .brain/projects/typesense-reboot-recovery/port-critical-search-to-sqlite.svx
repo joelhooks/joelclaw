@@ -3,7 +3,8 @@ title: "Port Critical Search to SQLite"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "pi (flagg, herdr pane wY:p1P, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: []
@@ -23,4 +24,16 @@ Build the critical projection as one SQLite FTS5 database on flagg, per [the ava
 
 Typesense keeps its non-critical collections untouched. The replication of `critical.db` to the NAS boxes is the next step, not this one.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+Built `~/.joelclaw/search/critical.db` with `scripts/build-critical-search-db.ts` and the SQLite FTS5 implementation in `packages/cli/src/lib/critical-search.ts`. The builder is single-writer on flagg, writes a temporary database, runs `PRAGMA integrity_check`, sets mode `0600`, and atomically replaces the live file. A repeatable fixture test proves reruns replace stable IDs without duplicates.
+
+The current database is 274,702,336 bytes with 29,900 unique documents: 1,020 local observer pages, 713 local Brain pages, 22 Vault files, 102 local knowledge inputs, and 28,050 archived `memory_observations` rows, minus stable-ID overlaps. Observer documents preserve `runId` and return `runBacklink: run:<id>`. Metadata records build time, newest source time, document count, and status/count for every source.
+
+`joelclaw recall` and `joelclaw knowledge search` now open SQLite first and return `backend: sqlite-fts5` plus freshness metadata. The old Typesense recall adapter and knowledge query remain as fallbacks when `critical.db` is missing or unreadable; no Typesense path was removed.
+
+Live Typesense parity could not run: `/health` returned `{"ok":false}` and a read-only `memory_observations` query returned HTTP 503 `Not Ready or Lagging`. Source parity passed instead: the retired memory archive had one literal `Todoist API token` match and SQLite returned the corresponding memory records; local Brain queries returned the recovery task documents; fixture tests proved observer Run-ID backlinks.
+
+Zero-rebuild proof used five fresh Bun reader processes. The first cold file-cache answer took 0.42 s wall / 394.53 ms inside SQLite; the next four took 0.02 s wall each / 10.45–11.51 ms inside SQLite. Every process opened the existing file and answered without an index build.
+
+Validation passed: 18 targeted Bun tests, root `bunx tsc --noEmit`, and targeted Biome over all touched code.

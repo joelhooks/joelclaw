@@ -1,0 +1,106 @@
+---
+title: "Session index validation"
+type: "asset"
+parent: "./build-compacted-collection.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Session index validation
+
+## Verdict
+
+The compacted SQLite FTS5 session index is built and validated. The validation script returned `ok: true` with no failures.
+
+- Database: `~/.joelclaw/search/sessions.db`
+- Database size: **1,692,884,992 bytes** (1.58 GiB)
+- Database SHA-256: `4d23c1be278a16509a4f15d23a9070c44731a46cdf34be434bdc0d3f5852179f`
+- Manifest SHA-256 recorded in the database: `7d8c851f522c05685a6d35d8ffa5b2c0ad7a55fa6e06584cfad38622c83fe88d`
+- Full build time: **56.100 seconds**
+
+The builder read all **148,023** manifest records. It indexed the **134,013** kept Runs and recorded lineage for all **14,010** skipped Runs. It read and hash-checked **4,378,291,190 bytes** of kept JSONL. It produced **447,609** chunks with IDs shaped as `${run_id}:${chunk_idx}`.
+
+## Restart cost
+
+A fresh Bun process opened the finished database and returned the first FTS result in:
+
+- Child process open to first result: **5.065 ms**
+- Full parent-observed process launch to result: **19.313 ms**
+- SQLite open: **1.208 ms**
+- First query after open: **3.857 ms**
+
+This is the key availability result. The index does not rebuild on process restart. It opens and answers in tens of milliseconds, far below the required minutes-scale ceiling.
+
+## Validation receipts
+
+Command:
+
+```sh
+bun scripts/validate-session-index.ts
+```
+
+Results:
+
+| Check | Result |
+| --- | --- |
+| SQLite integrity | `ok` |
+| Kept Runs | 134,013 database = 134,013 manifest |
+| Skipped Runs | 14,010 database = 14,010 manifest |
+| Chunks | 447,609 content rows = 447,609 FTS rows |
+| Skipped lineage | 0 missing covering Runs |
+| Divergent siblings | 0 in this manifest; retained `verdict` and prefix-group fields support future siblings |
+| Raw samples | 25 deterministic Runs, 40 parsed chunks, exact field/text matches |
+| Latest Run | `97b58c54df0e47caa851edb99a`, timestamp matched manifest |
+| FTS queries | 25 hits each for `Typesense Reboot Recovery`, `run_chunks_dev`, and `ShitRat` |
+| Raw fallback | `rg` found `run_chunks_dev` in 1,638 raw JSONL files in 2.553 seconds |
+| Typesense parity | Skipped: `/health` returned HTTP 503 with `{"ok":false}` |
+
+The Typesense skip follows the task's containment rule. No request read or wrote the inflated collection while health was red. Raw JSONL and the manifest supplied the validation truth instead.
+
+## Builder behavior
+
+`scripts/build-session-index.ts`:
+
+1. Writes to `sessions.db.building`.
+2. Streams the manifest.
+3. Reads only kept raw JSONL bodies.
+4. Checks every kept body's byte length and SHA-256 before parsing.
+5. Reuses `packages/memory/src/chunking.ts` for format detection, turn extraction, 8,000-token chunk splitting, overlap, and chunk indexes.
+6. Stores kept Run provenance in `runs`.
+7. Stores each skipped Run and its `covering_run_id` in `skipped_runs`.
+8. Builds an external-content FTS5 table over `chunks.text`.
+9. Runs `PRAGMA integrity_check`.
+10. Renames the completed database into place only after success.
+
+Script hashes:
+
+- Builder: `a812bdf59800d32971f1ab25754bfeeef1c2e286302562d2654a19ef9b39ed85`
+- Validator: `e2158a65002294cc091249915bd72fa0776a2a9f4a34a8670a6836aaeb129db0`
+
+## Incremental append design
+
+Do not wire this path until cutover. The capture pipeline patch already stops cumulative-prefix growth. At cutover, add one SQLite adapter after the capture blob is durable.
+
+The adapter contract:
+
+1. Accept the capture event's `run_id`, provenance, offsets, source identity, metadata, and durable JSONL path.
+2. Open `sessions.db` in WAL mode with a bounded `busy_timeout`.
+3. Start `BEGIN IMMEDIATE`.
+4. Check `runs` by `run_id`.
+   - Same Run ID and SHA-256: return an idempotent no-op.
+   - Same Run ID with different bytes: roll back and emit a hard conflict.
+5. Read and verify the durable blob.
+6. Parse and chunk through the same `packages/memory/src/chunking.ts` functions.
+7. Insert the Run, chunk rows, and matching FTS rowids in one transaction.
+8. Commit only after all rows succeed.
+9. Emit append duration, freshness timestamp, source identity, chunk count, and conflict status.
+
+A failed append leaves no partial FTS state. Replay retries the same idempotent transaction. Full rebuild remains an offline recovery tool, not the steady-state write path. System-bus owns the future wiring; this step does not edit `packages/**`.
+
+## Containment
+
+- `~/.joelclaw/runs-dev` was opened only for reads.
+- The inflated `run_chunks_dev` collection was not touched.
+- No package file was edited.
+- No dependency was added.
+- Nothing was committed.

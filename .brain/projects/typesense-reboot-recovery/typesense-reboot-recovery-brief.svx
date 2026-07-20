@@ -39,6 +39,7 @@ The effort ends when all of these hold, on existing tailnet hardware only (flagg
 - Fan-out runs as herdr pi workers, ultracode-style — implementer plus adversarial verifier on risky steps (Joel, 2026-07-19).
 - Standing containment calls (from the diagnosis, 2026-07-19): never run the generic `agent-session-audit-backup.ts --replay-outbox` against backlogs; keep the currently-recovering Typesense process running until an explicit recovery decision; raw Run JSONL is immutable source of truth.
 - Panda is being decommissioned and rebuilt; k8s is on the way out (Joel, 2026-07-19). No new services target panda.
+- Deploy record (2026-07-19): the patched capture code is live on the flagg host worker (supervisor respawn, health 200). The panda k8s cluster worker stays on image `20260709-094619` — its cluster egress cannot reach ghcr.io, it runs neither the capture endpoint nor `verifyAgentSessionCaptureBackups` (host-role on flagg), and it is decommissioning. The patched image `20260719-202049` is pushed to GHCR if ever needed.
 
 ## Decision ledger
 
@@ -47,6 +48,8 @@ The effort ends when all of these hold, on existing tailnet hardware only (flagg
 - [Patch the Capture Client and Make Replay Canonical](./patch-capture-and-replay.svx) — closed 2026-07-20 after a full verify round-trip: provenance fields on all three capture clients, one coalesced pending segment per stale cursor, canonical-only replay with the scheduled `nas-backup` caller migrated, endpoint conflict behavior locked by tests; first close was refuted by [adversarial verification](./patch-verification.svx), rework re-reviewed CLEAN.
 - [Decide the Availability Shape Within Tailnet Resources](./decide-availability-shape.svx) — SQLite locked in: critical projection in a replicated FTS5 `critical.db` (flagg writes, both NAS boxes read-only, ordered fallback); session search two-tier (observer layer + flagg-local FTS5 from the manifest keep-set); Typesense demoted to flagg-only non-critical collections; 3-node cluster rejected.
 - [Implement the Chosen Availability Shape](./implement-availability-shape.svx) — closed unworked; superseded by the split into [Port Critical Search to SQLite](./port-critical-search-to-sqlite.svx) and [Replicate the Critical DB to Both NAS Boxes](./replicate-critical-db-to-nas.svx).
+- [Build and Validate the Compacted Session Index](./build-compacted-collection.svx) — closed 2026-07-20: built a 1.58 GiB FTS5 index with 134,013 Runs and 447,609 chunks; raw validation passed, skipped lineage is complete, and a fresh process answered in 19.313 ms wall time; Typesense parity was skipped on HTTP 503.
+- [Add Cumulative-Prefix Growth and Startup-Budget Alerts](./add-growth-and-budget-alerts.svx) — closed 2026-07-20: independent on-ingest range-ledger alerts and a configurable Typesense `/health` startup budget deliver through messaging v2; Run health now exposes search freshness and raw-source provenance.
 
 ## Latent
 

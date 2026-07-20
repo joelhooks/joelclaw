@@ -1,0 +1,23 @@
+---
+title: "Worker task: adversarially verify the compacted session index"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: adversarially verify the compacted session index
+
+You are an adversarial verifier on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). A worker built and closed [Build and Validate the Compacted Session Index](../projects/typesense-reboot-recovery/build-compacted-collection.svx) — read its Result and [Session index validation](../projects/typesense-reboot-recovery/session-index-validation.svx). Artifacts: `~/.joelclaw/search/sessions.db` (1.58 GiB FTS5), uncommitted `scripts/build-session-index.ts` and `scripts/validate-session-index.ts`. Try to refute the claim that this index can replace `run_chunks_dev`.
+
+Attack angles, minimum:
+
+1. Independent sampling: pick your OWN random Runs from the manifest keep-set (not the worker's 25 deterministic samples) and verify chunk text against raw JSONL bytes. Include edge Runs: the 19 legacy no-conversation Runs, divergent siblings, the largest Run, multi-byte-heavy content.
+2. Completeness: do counts reconcile exactly — 134,013 Runs, 447,609 chunks, all 14,010 skipped Runs resolvable through lineage to a covering Run whose content actually contains theirs?
+3. Chunking parity: does the builder's chunking match `packages/memory/src/chunking.ts` semantics exactly, or a reimplementation that drifts?
+4. `PRAGMA integrity_check`, FTS index consistency (query for terms you extract from raw bodies yourself), and the 21ms restart claim — reproduce it cold.
+5. The documented append contract: would the WAL transaction design actually be idempotent under the patched capture path's redelivery semantics?
+6. Containment audit: any evidence `~/.joelclaw/runs-dev` was written to? (mtimes, the scripts' code paths.)
+
+Containment for you: `~/.joelclaw/runs-dev` strictly read-only; sessions.db read-only (open with `?mode=ro` or immutable); live Typesense untouched; do not commit.
+
+Deliverable: `.brain/projects/typesense-reboot-recovery/session-index-verification.svx` (`type: "asset"`, `parent: "./build-compacted-collection.svx"`) with CONFIRMED/REFUTED per claim and evidence. Do not edit the step file. Work autonomously. Do not commit. Print a DONE summary.

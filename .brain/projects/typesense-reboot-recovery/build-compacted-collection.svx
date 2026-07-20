@@ -3,7 +3,8 @@ title: "Build and Validate the Compacted Session Index"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "pi (flagg, herdr pane wY:p1Q, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./build-run-manifest.svx", "./patch-capture-and-replay.svx"]
@@ -26,4 +27,10 @@ Build the full-transcript session index from the manifest's keep-set (134,013 Ru
 
 `run_chunks_dev` is not touched — retirement happens only through [Review the Cutover](./review-cutover-and-retire-inflated-collection.svx).
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+Built `~/.joelclaw/search/sessions.db` from the manifest keep-set with `scripts/build-session-index.ts`. The 1.58 GiB FTS5 database contains 134,013 kept Runs, 447,609 chunks, and explicit covering-Run lineage for all 14,010 skipped snapshots. Every kept raw body passed byte-length and SHA-256 verification before parsing through the existing `packages/memory/src/chunking.ts` semantics.
+
+`scripts/validate-session-index.ts` passed integrity, manifest counts, 25 deterministic raw samples, latest timestamps, three known FTS queries, skipped-lineage resolution, and the raw `rg` fallback. A fresh process returned its first result in 19.313 ms wall time (5.065 ms inside the child from open start). Typesense parity was skipped as required because `/health` returned HTTP 503; the inflated collection was not queried or changed.
+
+The unwired steady-state append contract is documented in [Session index validation](./session-index-validation.svx): one WAL transaction inserts the Run, chunks, and FTS rowids after the capture blob is durable, with SHA-based idempotency and hard conflicts. System-bus wiring remains a cutover task.
