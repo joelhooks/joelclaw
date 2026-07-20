@@ -20,7 +20,7 @@ GATEWAY_START="${GATEWAY_START:-$HOME/.joelclaw/scripts/gateway-start.sh}"
 # only once, so do not let it start in a permanently degraded state while the
 # secrets daemon is still creating its socket.
 for _ in $(seq 1 60); do
-  if "$SECRETS_BIN" status --json >/dev/null 2>&1; then
+  if "$SECRETS_BIN" status >/dev/null 2>&1; then
     exec "$GATEWAY_START"
   fi
   sleep 1

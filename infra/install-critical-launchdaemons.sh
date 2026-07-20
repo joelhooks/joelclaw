@@ -240,7 +240,7 @@ stop_manual_fallbacks() {
       'mcp_agent_mail.cli import app; app() -- serve-http --port 8765'
     kill_verified_port_owner \
       8790 \
-      "python3 -m http.server 8790 --bind 127.0.0.1 --directory ${TARGET_HOME}/Code/joelhooks/joelclaw-wiki/build"
+      "-m http.server 8790 --bind 127.0.0.1 --directory ${TARGET_HOME}/Code/joelhooks/joelclaw-wiki/build"
   fi
 
   if [ "$HOSTNAME_SHORT" = "$K8S_HOST" ]; then
