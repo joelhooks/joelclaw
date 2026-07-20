@@ -1,0 +1,20 @@
+---
+title: "Triage worker task — egghead/commerce workspaces"
+type: "asset"
+parent: "../projects/herdr-reboot-triage/investigate-egghead-commerce-workspaces.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Task: triage the egghead / commerce / misc workspace group
+
+Follow the shared method in the co-attached file. Your step file: `~/Code/joelhooks/joelclaw/.brain/projects/herdr-reboot-triage/investigate-egghead-commerce-workspaces.svx`. Your asset output: `~/Code/joelhooks/joelclaw/.brain/projects/herdr-reboot-triage/triage-egghead-commerce.svx`.
+
+## Your workspaces and panes
+
+- **w6** "[egg] commerce charter" — five pi panes, all idle NEEDS JOEL, 2d quiet: w6:p1 "Serene Lilith" turn 3 cwd `~/Code/skillrecordings/migrate-egghead`; w6:p7 "💳 Egghead Commerce Inventory" turn 1 cwd `~/Code/worktrees/migrate-egghead-commerce-rails`; w6:pA "💳 Egghead Commerce Survey" turn 17 cwd `~/Code/worktrees/migrate-egghead-commerce-coursebuilder`; w6:p8 "Serene Aching" turn 3 cwd `~/Code/worktrees/migrate-egghead-commerce-slack`; w6:p9 "Serene Petulia" turn 4 cwd `~/Code/worktrees/migrate-egghead-commerce-stripe`. Session paths via `herdr pane list`. Look for a commerce charter brief in `~/Code/skillrecordings/migrate-egghead/.brain/projects/`.
+- **w7** "payout" — w7:p1 dead shell, no label, cwd `~/Code/skillrecordings/payout`
+- **w14** "Provisioning lifecycle grill" — w14:p6 dead shell "🎛️ steering: user-provisioning-lifecycle", cwd `~/Code/badass-courses/course-builder`
+- **wA** "Auth hardening shipped" — wA:p2 dead shell, no label, cwd course-builder (workspace name suggests SHIPPED — verify)
+- **w17** "MEGA UI" — w17:p1 pi idle "🧭 MEGA Context Recovery", turn 9, NEEDS JOEL, cwd `~/Code/mega-dot-dev/mega-dev`
+- **w1J** "Uline shelf order" — w1J:p1 dead shell "🛒 Uline rack expansion order", cwd `~` (personal errand; likely quick verdict)

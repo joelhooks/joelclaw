@@ -1,0 +1,162 @@
+---
+title: "Fleet and tooling workspace triage"
+type: "asset"
+parent: "./investigate-fleet-tooling-workspaces.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Fleet and tooling workspace triage
+
+## w13 — [jc] slack cli (bespoke)
+
+**Verdict: SHIPPED**
+
+- Pane `w13:p6` points at Pi session `/Users/joel/.pi/agent/sessions/--Users-joel-Code-joelhooks-shitrat-cli-push--/2026-07-17T17-23-02-119Z_019f711a-6167-7ee5-95fd-b1e2ac888840.jsonl`; `w13:p1` is a dead shell in `aihero-support`.
+- The actual thread built `shitrat push`, not Slack CLI work. The worker left a fully checked but uncommitted implementation for steering review.
+- The work later landed in `joelhooks/shitrat-cli`: `3317c36 feat: add git push transport`, hardened by `087dc8e`, then merged as `ecd3c5a` in PR #26.
+- The temporary `~/Code/joelhooks/shitrat-cli-push` worktree no longer exists. The installed `shitrat push --help` exposes the shipped command.
+
+No continuation is needed.
+
+## w0 — [jc] herdr guidance
+
+**Verdict: SHIPPED**
+
+- Pane `w0:p1` still has Pi session `/Users/joel/.pi/agent/sessions/--Users-joel-Code-badass-courses-aihero-support--/2026-07-17T18-29-47-963Z_019f7157-813b-7cca-a012-be286cf7a229.jsonl`, but its final turn says the fleet rollout is complete.
+- Herdr guidance for Pi, Claude, and Codex landed in `dark-wizard` as `3124a5d docs: teach fleet harnesses herdr workflows`; the brief receipt followed in `c912d55`.
+- Flagg, Blaine, and Panda were synced to `c912d55`. Fresh review was CLEAN. The transcript records no remaining implementation blocker.
+- Panda's stale real Claude skill directory was backed up and made content-identical; the deferred symlink cleanup does not block the guidance rollout.
+
+No continuation is needed.
+
+## w15 — Fleet stack defaults
+
+**Verdict: SHIPPED**
+
+- Dead pane `w15:p1` has no attached session and only the stale label `Befuddled Gilt`.
+- The canonical stack document and graft block landed in `dark-wizard` as `010286f Add fleet stack defaults: STACK.md canonical doc + graft block on all surfaces`.
+- `.brain/projects/fleet-stack-defaults/write-stack-doc-and-graft.svx` is closed and records successful installation across the four harness surfaces.
+- The Effect pin was later advanced to `4.0.0-beta.99` in `5b2f346`. The broader brief still tracks template work, but this dead stack-defaults pane has no interrupted state worth recovering.
+
+No continuation is needed.
+
+## w1H — Effect fleet
+
+**Verdict: BLOCKED-ON-JOEL**
+
+- Pane `w1H:p1` retains Pi session `/Users/joel/.pi/agent/sessions/--Users-joel--/2026-07-18T04-51-18-451Z_019f7390-8333-76ca-9868-313bc8cf0c76.jsonl` and is marked `NEEDS JOEL` after 125 turns.
+- Fleet infrastructure shipped: `dark-wizard` commit `5b2f346`; `pi-effect` commits `993b546` and `8870bbb`. The fleet now uses the canonical Effect repo with version-aware v3/v4 source selection.
+- The session updated 20 manifests across 13 application repos and checked the main consumers, but deliberately left those repo changes uncommitted and unpushed because many worktrees already contained unrelated work.
+- Current status still shows task-shaped Effect changes in `support-bench`, `herdr-brain`, `jc-slack`, `joelclaw-api`, `joelclaw-video`, `joelclaw-wiki`, three `pi-discord-threads` checkouts, `pi-fable`, `ts-cli-template`, `ai-hero`, and `aihero-support`. Several are mixed with substantial unrelated changes.
+
+```text
+Objective
+Finish the Effect v4 beta.99 application-repo rollout without swallowing unrelated dirty work. Review each repo-specific dependency, lockfile, source-pointer, and compatibility change; preserve only the changes that still belong; then commit and push each coherent repo slice only after Joel approves that repo's dirty-worktree reconciliation.
+
+State
+Fleet-level work is shipped. dark-wizard commit 5b2f346 advances the fleet pin and graft. pi-effect commits 993b546 and 8870bbb make source mirrors branch/version aware, reject stale exact mirrors, and fix search argument handling. The original session updated 20 manifests across 13 repos, refreshed canonical mirrors, removed stale nested locks in aihero-support, migrated AI Hero Pulse to Schema.Defect(), and ran focused checks. Application-repo changes remain uncommitted/unpushed by design.
+
+Resume points
+Pi: pi --session /Users/joel/.pi/agent/sessions/--Users-joel--/2026-07-18T04-51-18-451Z_019f7390-8333-76ca-9868-313bc8cf0c76.jsonl
+Fleet policy: /Users/joel/Code/joelhooks/dark-wizard/STACK.md
+Fleet brief: /Users/joel/Code/joelhooks/dark-wizard/.brain/projects/fleet-stack-defaults/fleet-stack-defaults-brief.svx
+Repos: /Users/joel/Code/badass-courses/{ai-hero,aihero-support,support-bench}; /Users/joel/Code/joelhooks/{herdr-brain,jc-slack,joelclaw-api,joelclaw-video,joelclaw-wiki,pi-discord-threads,pi-discord-threads-effect-v4-engine,pi-discord-threads-run-control-next,pi-fable,ts-cli-template}
+
+Next steps
+1. Ask Joel whether to close the rollout as fleet-infrastructure-only or reconcile the 13 application repos.
+2. If approved, inspect task-scoped diffs one repo at a time and separate them from unrelated changes.
+3. Re-run each repo's focused dependency, type, and test checks.
+4. Commit and push coherent slices with the configured ShitRat actor. Do not bulk-stage dirty repos.
+5. Reassess MEGA separately; the original session deferred it because its 24-hour release-age gate rejected beta.99 at the time.
+
+Gotchas
+Effect-TS/effect main is v4; v3 source lives on the v3 branch. Exact beta pins are required. A mirror with the right major but wrong exact beta is stale. Several current worktrees contain unrelated code and generated Brain data, so a blanket commit would be destructive. Two AI Hero tools had pre-existing Node/Bun type failures; Redis-backed Pi Discord smokes timed out; ts-cli-template had a pre-existing CLAUDE.md format failure.
+```
+
+## w1K — [dw] Panda report ready
+
+**Verdict: BLOCKED-ON-JOEL**
+
+- Pane `w1K:p1` retains Pi session `/Users/joel/.pi/agent/sessions/--Users-joel--/2026-07-19T01-16-33-927Z_019f77f2-4507-7339-a42f-aba0ded7e103.jsonl` and is marked `NEEDS JOEL`.
+- The Panda responsibility inventory and review report shipped in `dark-wizard` commit `bfefe92`.
+- The permanent noindex review page is `https://panda-decommission-readiness.wzrrd.sh/`; the session verified HTTP 200, privacy, mobile layout, and feedback controls.
+- `.brain/projects/panda-decommission-readiness/review-panda-dependency-board.svx` remains open because Joel has not recorded corrections or confirmation. Panda is explicitly not format-ready.
+
+```text
+Objective
+Complete Joel's review of the Panda decommission dependency board. Capture his corrections or confirmation, then continue the brief's caller tracing and replacement proof. Do not stop services, remove routes, erase data, or format Panda.
+
+State
+The charter and inventory are durable in dark-wizard. The published report at https://panda-decommission-readiness.wzrrd.sh/ is permanent, noindex, and verified. Commit bfefe92 contains the report source, receipt, and HITL review step. The board says Panda still owns public ingress, the Talos/k8s data plane, Bluesky PDS identity state, dual gateway/worker surfaces, machine-local state, PVCs, and dirty repos.
+
+Resume points
+Pi: pi --session /Users/joel/.pi/agent/sessions/--Users-joel--/2026-07-19T01-16-33-927Z_019f77f2-4507-7339-a42f-aba0ded7e103.jsonl
+Brief: /Users/joel/Code/joelhooks/dark-wizard/.brain/projects/panda-decommission-readiness/panda-decommission-readiness-brief.svx
+Review step: /Users/joel/Code/joelhooks/dark-wizard/.brain/projects/panda-decommission-readiness/review-panda-dependency-board.svx
+Inventory: /Users/joel/Code/joelhooks/dark-wizard/.brain/projects/panda-decommission-readiness/panda-responsibility-inventory.svx
+
+Next steps
+1. Have Joel review the wzrrd board and state corrections or confirmation.
+2. Record his feedback in the open review step and close it only after explicit review.
+3. Continue with real-consumer tracing, especially webhook targets and Panda-only event traffic.
+4. Require replacement readback or an explicit disposable decision for every responsibility.
+
+Gotchas
+A one-time quiet traffic check does not prove a service has no consumers. The brief forbids shutdown, deletion, route removal, credential revocation, and formatting without separate approval. The old repo-wide Brain check failure on jc-slack-context JSON is unrelated.
+```
+
+## w1M — [dw] Flagg GPT default
+
+**Verdict: SHIPPED**
+
+- Pane `w1M:p1` session `/Users/joel/.pi/agent/sessions/--Users-joel-Code-badass-courses-aihero-support--/2026-07-19T01-28-39-518Z_019f77fd-575d-7c76-bb75-3f61e3689ad3.jsonl` updated Pi from `0.80.7` to `0.80.10` on Blaine, Flagg, and Panda.
+- Joel then explicitly requested that Flagg stop defaulting to Grok. The pane set `openai-codex/gpt-5.6-sol`, verified fleet sync, and reported no remaining action.
+- Pane `w1M:p2` session `/Users/joel/.pi/agent/sessions/--Users-joel-Code-badass-courses-aihero-support--/2026-07-19T01-33-09-263Z_019f7801-750f-74e9-9479-65293821e066.jsonl` completed a read-only fleet check and published `https://joelclaw-fleet-check-2026-07-18.wzrrd.sh/`.
+- The report's load, outbox, backup, and stale-probe findings are separate follow-up work, not interrupted implementation in this workspace.
+
+No continuation is needed.
+
+## wT — home / Fleet To Spec Migration
+
+**Verdict: SHIPPED**
+
+- The dead pane maps to Pi session `/Users/joel/.pi/agent/sessions/--Users-joel--/2026-07-14T04-03-33-576Z_019f5ecb-5c48-759e-8c1c-39d8b7491939.jsonl`.
+- Brain-first `to-spec` replaced `to-prd` in `dark-wizard` commit `97ff12b3c853b9c308d826c79f9cd9dd25c769b8`; dotfiles manifests were updated in `c3f5503`.
+- Flagg, Blaine, and Panda were synced. The final session says `pi-notes brain check .` passed.
+- Old `to-prd` links remain dangling rollback pointers because the command guard blocked home-directory symlink deletion. They cannot load and do not block `to-spec`.
+
+No continuation is needed.
+
+## wX — home / Pi 1Password Noise
+
+**Verdict: INTERESTING**
+
+- The dead pane maps to Pi session `/Users/joel/.pi/agent/sessions/--Users-joel--/2026-07-15T01-46-27-316Z_019f6374-3274-787c-8209-73c34d4fb784.jsonl`.
+- Root cause was in Skill Recordings support CLI: `op account list --format=json` returned `[]` with exit 0, so `isOpCliAvailable()` falsely treated 1Password as authenticated and launched interactive `op item get` calls.
+- The session changed `/Users/joel/Code/skillrecordings/support/packages/cli/src/core/keychain.ts` to require a non-empty parsed account list. The exact Kit lookup then exited 0 without stderr, `bun run check-types` passed, and the blocked Pi session resumed.
+- The fix remains present and uncommitted in a dirty support checkout. No focused regression test was added; the attempted `bun test src/core/keychain.test.ts` matched no file.
+
+```text
+Objective
+Preserve and ship the support CLI fix that prevents unauthenticated 1Password CLI probes from wedging support jobs. Add focused regression coverage, validate the real fallback path, and commit only this coherent fix without absorbing unrelated support-repo changes.
+
+State
+packages/cli/src/core/keychain.ts now runs `op account list --format=json`, parses the output, and returns true only when at least one account exists. The original incident was reproduced with exit 0 plus `[]`. After the edit, the exact Kit subscriber lookup completed successfully with no 1Password prompt or stderr. `bun run check-types` passed. The working-tree diff is still present and uncommitted.
+
+Resume points
+Pi: pi --session /Users/joel/.pi/agent/sessions/--Users-joel--/2026-07-15T01-46-27-316Z_019f6374-3274-787c-8209-73c34d4fb784.jsonl
+Repo: /Users/joel/Code/skillrecordings/support
+Key file: /Users/joel/Code/skillrecordings/support/packages/cli/src/core/keychain.ts
+Existing related tests: /Users/joel/Code/skillrecordings/support/packages/cli/src/commands/doctor.test.ts
+
+Next steps
+1. Inspect the current keychain diff and preserve unrelated dirty files.
+2. Add focused tests for empty account JSON, one configured account, malformed output, and command failure.
+3. Run the package's Vitest suite and `bun run check-types`.
+4. Re-run a non-destructive CLI lookup with no configured 1Password account and verify no interactive `op item get` child appears.
+5. Review and commit only the keychain fix plus its tests using the repo's configured actor/workflow.
+
+Gotchas
+`op account list` exit code 0 does not mean an account exists. The support repo is already dirty with refund and triage work, so never stage everything. The original focused Bun test command was false evidence because no `src/core/keychain.test.ts` file existed.
+```

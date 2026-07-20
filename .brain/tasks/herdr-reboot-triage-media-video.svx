@@ -1,0 +1,25 @@
+---
+title: "Triage worker task — media/video/voice workspaces"
+type: "asset"
+parent: "../projects/herdr-reboot-triage/investigate-media-video-workspaces.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Task: triage the media / video / voice workspace group
+
+Follow the shared method in the co-attached file. Your step file: `~/Code/joelhooks/joelclaw/.brain/projects/herdr-reboot-triage/investigate-media-video-workspaces.svx`. Your asset output: `~/Code/joelhooks/joelclaw/.brain/projects/herdr-reboot-triage/triage-media-video.svx`.
+
+All panes in this group are dead shells — evidence lives in session transcripts, repo state, and Brain briefs.
+
+## Your workspaces and panes
+
+- **wH** "Video pipeline build" — wH:p1 "🎬 steering" (`~`); wH:p2 "subagent-reviewer-fad5dbd7-1" (`~/Code/joelhooks/transcript-rig`); wH:p3 "📝 templates + workflow + skill" (`~/Code/joelhooks`)
+- **wQ** "Recorder build" — wQ:p1 "🔥 instant-watch-page: poster live — your take + workshop owed" (`~`)
+- **wR** "[yt] grill-master" — wR:p1 "🔥 grill-master video: waiting on the sketch walkthrough" (`~`)
+- **wZ** "wzrrd-sh-cli" — wZ:p1 "🔥 grilling: zoom-in video series brief" (`~/Code/joelhooks/wzrrd-sh-cli`)
+- **wE** "voice agent" — wE:p1 "🐀 voice workroom steering" (`~`); wE:p2 "☎️ Call model research" (`~/Code/joelhooks/joelclaw`); wE:p6 "🎥 Call Telemetry Migration" (`~/Code/joelhooks/joelclaw-voice`). Note: joelclaw has uncommitted edits in `infra/voice-agent/` — check whether they belong to this thread.
+- **w1G** "[jc] herdr-brain live reload" — w1G:p1 "🔁 building live reload for brain viewer" (`~/Code/joelhooks/herdr-brain`)
+- **w16** "hunk-herdr charter" — w16:p1 "🔥 hunk-herdr: research harvested — prototype next" (`~`). Look for a hunk-herdr grill-master brief (check `~/Code/joelhooks/joelclaw/.brain/projects/` and herdr/hunk repos).
+
+The 🔥 labels are grill-master efforts — find each brief and report which steps are open/ready.

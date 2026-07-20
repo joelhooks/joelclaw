@@ -1,0 +1,191 @@
+---
+title: "Herdr reboot triage — media, video, and voice"
+type: "asset"
+parent: "./investigate-media-video-workspaces.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Media, video, and voice workspace triage
+
+## wH — Video pipeline build
+
+**Verdict: SHIPPED**
+
+- The steering transcript closes the full video-to-editorial pipeline and reports the NAS transcript/editorial publish, templates, skill, and paper page complete.
+- `transcript-rig` is clean. Its landed sequence ends at `08a2cbe9`, after clean-ASR (`0d55503`) and the visual-index stage (`9f56746`).
+- The durable task series under `~/.brain/projects/video-transcript-pipeline/` reached task 06 and published the retro.
+- Resume receipt: `~/.claude/projects/-Users-joel/460504f6-6dd7-4ac7-8ec1-df8b8c483570.jsonl`.
+
+## wQ — Recorder build
+
+**Verdict: BLOCKED-ON-JOEL**
+
+- The processing page, early URL, recorder fast path, and progressive poster all landed. `wzrrd-sh-cli` ends this slice at `ca96f5f`.
+- The fast-path worker passed `swift build` and 36 tests; its session is `~/.pi/agent/sessions/--Users-joel-Code-badass-courses-wzrrd-recorder--/2026-07-16T00-43-45-412Z_019f6861-2784-70d9-85f0-82c4e2e31972.jsonl`.
+- The brief remains active. `verify-the-experience.svx` needs Joel's eyeball verdict after measured 1.696–5.084 second page delivery; `grill-convex-decision.svx` is ready and needs the live Convex-vs-D1 workshop.
+- Current recorder dirt is only `.pi/notes-bridge/document-host.log`; `wzrrd-sh-cli` only has `.pi-subagents/`. Neither is interrupted feature work.
+
+```text
+Objective
+Close the instant-watch-page effort. Confirm that a real recorder stop feels instant enough, then settle Convex versus D1 from the completed research.
+
+State
+The page and recorder path shipped in wzrrd-sh-cli through ca96f5f. The stable URL can arrive at upload initialization, opens a processing page without a 404, swaps to the player, and carries a progressive poster. The repeatable check is scripts/verify-instant-watch.sh. The brief records a best live URL result of 1.696s and an earlier qualified 5.084s result.
+
+Resume points
+- ~/Code/joelhooks/wzrrd-sh-cli/.brain/projects/instant-watch-page/instant-watch-page-brief.svx
+- ~/Code/joelhooks/wzrrd-sh-cli/.brain/projects/instant-watch-page/verify-the-experience.svx
+- ~/Code/joelhooks/wzrrd-sh-cli/.brain/projects/instant-watch-page/grill-convex-decision.svx
+- pi --session ~/.pi/agent/sessions/--Users-joel-Code-badass-courses-wzrrd-recorder--/2026-07-16T00-43-45-412Z_019f6861-2784-70d9-85f0-82c4e2e31972.jsonl
+
+Next steps
+1. Have Joel record and stop one real loom-mode take, then call the experience good or not good.
+2. If needed, rerun scripts/verify-instant-watch.sh for a small timing sample.
+3. Run the ready Convex-vs-D1 grilling from the three closed research assets.
+4. Write convex-decision-adr.svx and close the brief only when both finish-line conditions hold.
+
+Gotchas
+The old 404 was a watch-route policy, not upload latency. Do not reopen that diagnosis. A prior player assertion failed because a script matched the full Svelte class string; use the repaired verifier. The workshop is a decision, not permission to start a Convex migration inside this effort.
+```
+
+## wR — [yt] grill-master
+
+**Verdict: BLOCKED-ON-JOEL**
+
+- The video brief is durable at `~/Code/joelhooks/grill-master-not-wayfinder-video/.brain/projects/video/video-brief.svx`.
+- Research, the beat sheet, and the thumbnail direction landed through commit `8993328`. The leading thumbnail is Joel crying into his hands over the tweet card.
+- The next gate is `hand-sketch-the-storyboard.svx`: Joel must export the reMarkable frames into `assets/storyboard/`.
+- The attached Claude session ended while waiting for that walkthrough: `~/.claude/projects/-Users-joel/1cf040d3-a70a-423c-8cba-314be8431cd5.jsonl`.
+
+```text
+Objective
+Publish the YouTube video that tells the wayfinder-to-grill-master story. The video must preserve the sourced fork thesis, credit Matt Pocock, and ship through the cutting-room pipeline.
+
+State
+The brief, beat sheet, source research, Matt clips, fork-thesis evidence, and cutting-room audit are durable. The thumbnail direction is locked at commit 8993328: Joel crying into his hands over the tweet card. The old tldraw walkthrough was superseded by hand-drawn reMarkable storyboard frames.
+
+Resume points
+- claude --resume 1cf040d3-a70a-423c-8cba-314be8431cd5
+- ~/.claude/projects/-Users-joel/1cf040d3-a70a-423c-8cba-314be8431cd5.jsonl
+- ~/Code/joelhooks/grill-master-not-wayfinder-video/.brain/projects/video/video-brief.svx
+- ~/Code/joelhooks/grill-master-not-wayfinder-video/.brain/projects/video/hand-sketch-the-storyboard.svx
+- ~/Code/joelhooks/grill-master-not-wayfinder-video/.brain/projects/video/beat-sheet-draft.svx
+
+Next steps
+1. Ask Joel to export one reMarkable PNG per beat into assets/storyboard/.
+2. Review the frames and update the beat sheet where the drawings changed the story.
+3. Close hand-sketch-the-storyboard and pin-video-shape.
+4. Draft the script and title candidates, then record, edit, and publish.
+
+Gotchas
+The explorer register was agent amplification, not Matt's spoken philosophy. The sketch outranks the existing beat sheet. Do not invent source claims. Do not use profanity in the title or thumbnail.
+```
+
+## wZ — wzrrd-sh-cli
+
+**Verdict: BLOCKED-ON-JOEL**
+
+- This was an early grill-master conversation, not implementation. No Zoom In brief was created in the searched Brain roots.
+- Joel set the finish line to publishing the first video, not designing a broad series.
+- The last open question was which topic ships first. The session recommended “Setting up Effect v4” via `effect-smol`.
+- Exact session: `~/.claude/projects/-Users-joel-Code-joelhooks-wzrrd-sh-cli/ee6770f6-d572-4c0b-9b79-1923597ea1b1.jsonl`.
+
+```text
+Objective
+Get the first 5–10 minute Zoom In video published. Keep planning limited to decisions required to hit publish.
+
+State
+Joel chose a publish-first finish line. Candidate topics were Effect v4 setup via effect-smol, IRON FIST linting, and XState machines for agent compliance. The session recommended Effect v4 setup as the concrete first episode. No durable brief exists yet.
+
+Resume points
+- claude --resume ee6770f6-d572-4c0b-9b79-1923597ea1b1
+- ~/.claude/projects/-Users-joel-Code-joelhooks-wzrrd-sh-cli/ee6770f6-d572-4c0b-9b79-1923597ea1b1.jsonl
+- ~/Code/joelhooks/wzrrd-sh-cli
+- ~/Code/joelhooks/effect-smol
+
+Next steps
+1. Ask Joel to accept or replace “Setting up Effect v4” as video one.
+2. Create the smallest publish-first grill-master brief in the correct content repo.
+3. Settle only the hook, concrete demo finish line, recording path, and publish gate.
+4. Record and publish before expanding the series backlog.
+
+Gotchas
+IRON FIST had no settled Brain definition in the session. Do not guess it. The effort exists to publish, not to build an editorial calendar.
+```
+
+## wE — voice agent
+
+**Verdict: INTERESTING**
+
+- The workspace mixed three real voice threads. Fast-model research closed with Haiku 4.5 first (`2df1c6c5`), but the call-tuning brief still has `diagnose-judge-scheduling`, daily retro, and fast-model A/B open.
+- The judge emitted 30 completion events without one run. The transcript's leading hypothesis is over-broad Inngest idempotency on `event.data.room`, with Inngest flapping as a second suspect.
+- Call telemetry writers moved to `callTelemetry:*` (`3095af70`) and gained tests (`6627caa6`), but `separate-call-telemetry-from-sessions.svx` remains open for legacy row migration, auth-only `sessions`, live-dashboard deploy retirement, and runtime rollout.
+- Current `infra/voice-agent/main.py` and `verify-voice.sh` edits change recall privacy/health behavior. They do not match the call-model or telemetry diffs and should not be claimed by this recovery thread.
+
+```text
+Objective
+Restore the call-driven tuning loop and finish the call-telemetry custody split without disturbing unrelated voice privacy edits. Every call should produce a judge receipt, and Better Auth sessions must no longer share a table or deploy stream with call telemetry.
+
+State
+Fast-model research is closed at 2df1c6c5. The judge, rubric, and telemetry module exist. Writers were repointed in 3095af70 and tested in 6627caa6. The judge still schedules zero runs after real and synthetic completion events. The telemetry step still owes legacy data migration, removal of the temporary sessions union, retirement of apps/live-dashboard/convex as a deployer, and a live runtime proof.
+
+Resume points
+- claude --resume 0d9e4f52-1bf8-4412-9fee-990159cd3be9
+- ~/.claude/projects/-Users-joel/0d9e4f52-1bf8-4412-9fee-990159cd3be9.jsonl
+- ~/Code/joelhooks/joelclaw/.brain/projects/call-tuning-loop/call-tuning-loop-brief.svx
+- ~/Code/joelhooks/joelclaw/.brain/projects/call-tuning-loop/diagnose-judge-scheduling.svx
+- ~/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/separate-call-telemetry-from-sessions.svx
+- ~/Code/joelhooks/joelclaw/infra/voice-agent/
+
+Next steps
+1. Preserve the unrelated dirty files and inspect Inngest's function state, dedupe counters, and registration for voice-call-judge.
+2. Prove or reject the room-level idempotency hypothesis with one bounded synthetic event.
+3. Fix scheduling and prove one judge write before starting the retro or A/B steps.
+4. Inventory and migrate legacy telemetry rows, restore auth-only sessions, retire the second Convex deployer, and verify a live writer.
+
+Gotchas
+Healthy sibling functions scheduled while the judge did not, so do not reduce this to a generic outage. Re-judging after prompt changes is required; room-level permanent dedupe is wrong even if it caused the current failure. The current infra/voice-agent dirty edits are a separate privacy/health slice.
+```
+
+## w1G — [jc] herdr-brain live reload
+
+**Verdict: SHIPPED**
+
+- Live reload shipped and pushed on `main` as `a7492cb`.
+- The implementation uses an XState reload machine, keeps the last good render after parse errors, preserves scroll, and handles atomic rename-over saves.
+- The real Bun/macOS watcher failure was captured in `.brain/resources/bun-fswatch-rename-gotcha.svx`; the target is fingerprinted on every directory event.
+- The original session is `~/.claude/projects/-Users-joel-Code-joelhooks-herdr-brain/5ac06bd8-6082-401e-bca4-acddbda0792f.jsonl`. Current uncommitted package/doc edits came later and are not evidence of an interrupted reload build.
+
+## w16 — hunk-herdr charter
+
+**Verdict: BLOCKED-ON-JOEL**
+
+- The API-boundary and Hunk handoff research steps are closed in the brief.
+- A throwaway linked plugin exists at `~/Code/joelhooks/hunk-herdr-proto/`. It opens `hunk diff --watch` in the worker column and exposes the Hunk session immediately.
+- `prototype-one-gesture-jj-diff-pane.svx` stays open because the artifact is Joel's reaction, not the code.
+- Session: `~/.claude/projects/-Users-joel/92c02401-ab3d-49a2-9ba7-caa9c17b398c.jsonl`.
+
+```text
+Objective
+Turn the tested hunk-herdr prototype into an opinionated fleet plugin only after Joel judges the real review gesture, placement, sizing, and watch behavior.
+
+State
+The API and session-handoff research is closed. The locally linked prototype at ~/Code/joelhooks/hunk-herdr-proto/ can open one live working-copy Hunk pane per repo in the worker column. It passed fresh-column, stacked-column, replace-existing, and immediate session-discovery checks. The durable brief is still active because Joel has not reacted to the prototype.
+
+Resume points
+- claude --resume 92c02401-ab3d-49a2-9ba7-caa9c17b398c
+- ~/.claude/projects/-Users-joel/92c02401-ab3d-49a2-9ba7-caa9c17b398c.jsonl
+- ~/Code/joelhooks/dark-wizard/.brain/projects/hunk-herdr/hunk-herdr-brief.svx
+- ~/Code/joelhooks/dark-wizard/.brain/projects/hunk-herdr/prototype-one-gesture-jj-diff-pane.svx
+- ~/Code/joelhooks/hunk-herdr-proto/
+
+Next steps
+1. Have Joel focus a dirty repo pane and invoke `herdr plugin action invoke review --plugin hunk-herdr.proto`.
+2. Record his verdict on gesture, placement, stack ratio, label, and `--watch` default.
+3. Close or revise the prototype step from that reaction.
+4. Then bootstrap joelhooks/hunk-herdr and settle actions, handoff, and auto-sweep before fleet rollout.
+
+Gotchas
+The prototype is deliberately disposable and not a Git repo. Do not treat working code as acceptance. In herdr 0.7.4, plugin-pane split targeting is broken; the prototype uses the ordinary pane API and geometry.
+```

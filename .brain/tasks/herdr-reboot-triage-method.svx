@@ -1,0 +1,43 @@
+---
+title: "Herdr Reboot Triage — shared worker method"
+type: "asset"
+parent: "../projects/herdr-reboot-triage/herdr-reboot-triage-brief.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Shared method for triage workers
+
+You are one of five investigation workers. Flagg rebooted; herdr panes came back as dead shells with stale labels. Your job: for each workspace assigned to you, reconstruct what the work was, where it stood at reboot, and whether it is worth continuing. You produce a verdict per workspace and a continuation prompt for every thread worth resuming.
+
+## Evidence sources (use all that apply, in this order)
+
+1. **Pane metadata**: `herdr pane list` (JSON) — filter to your workspace ids. Capture label, cwd, and any `agent_session.value` (a pi session `.jsonl` path).
+2. **Pi session transcripts**: for panes with a session path, read `head -n 3` (initial task) and the last ~2 turns (`tail -n 20`, lines are large JSON — extract the text fields, don't dump raw). For dead panes, look in `~/.pi/agent/sessions/` for the directory whose name matches the pane's cwd (slug format: `--Users-joel-...--`) and inspect files with mtime 2026-07-16 through 2026-07-20.
+3. **Claude session transcripts**: `~/.claude/projects/<cwd-slug>/*.jsonl`, same mtime window, head + tail.
+4. **Repo state**: in each pane cwd (if a repo): `jj status 2>/dev/null || git status -s`, and `git log --oneline -8`. Uncommitted changes are the strongest signal of interrupted work.
+5. **Brain briefs**: labels mentioning 🔥/grilling/charter point at `.brain/projects/<effort>/` in the relevant repo — read the brief's ledger and open steps.
+6. **Live claude panes** (marked LIVE in your task file): `herdr pane read <pane_id> --lines 80` ONLY. Never send keys, never close, never rename.
+
+## Verdicts
+
+- **SHIPPED** — work landed (commit/deploy receipts found); pane is a trophy. Say what shipped and where.
+- **ABANDONED** — no durable output and no reason to resume, or superseded by later work. Say why.
+- **BLOCKED-ON-JOEL** — the session was waiting on Joel (password, decision, approval). Say exactly what it needs.
+- **INTERESTING** — real work interrupted mid-flight, worth a fresh session. Requires a continuation prompt.
+- **ACTIVE** — a live session is still attached and coherent; leave it alone.
+
+## Continuation prompt format (for every INTERESTING, and BLOCKED-ON-JOEL worth resuming)
+
+A fenced block a fresh session could be started with, containing:
+- **Objective** — what the thread is trying to achieve, one paragraph.
+- **State** — what is done, with receipts (commit hashes, file paths, URLs, brief/step files).
+- **Resume points** — exact session file paths (`pi --session <path>` or the claude project dir), relevant `.brain` briefs, key repo paths.
+- **Next steps** — the concrete next actions the dead session was about to take.
+- **Gotchas** — anything the transcript shows the session learned the hard way.
+
+## Output
+
+Write ONE file: the asset path named in your task file, frontmatter `type: "asset"`, `parent:` pointing at your step file. Structure: one `## <workspace id> — <workspace name>` section per workspace with verdict, evidence (2-6 lines), and continuation prompt block if warranted. Then edit your step file: fill `## Result (2026-07-20)` with a 3-line summary and flip `status:` to `"closed"` with `closed_at: "2026-07-20"`.
+
+Rules: read-only on repos — no commits, no file edits outside your two output files, no pane closes/renames, no sending input to any agent pane. Work autonomously. Print a DONE summary (verdict counts + interesting threads) when finished.

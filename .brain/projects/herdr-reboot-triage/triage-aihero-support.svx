@@ -1,0 +1,158 @@
+---
+title: "Herdr reboot triage — AI Hero support workspaces"
+type: "asset"
+parent: "./investigate-aihero-support-workspaces.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# AI Hero support workspace triage
+
+## w1E — attribution skill
+
+**Verdict: BLOCKED-ON-JOEL**
+
+- Pane `w1E:p1` is a dead shell labeled `🧭 steering: attribution skill proving` in `aihero-support`.
+- The skill shipped through five cold proofs. Run 5 reached `kernel_proven`; its final fold shipped as `badass-courses/skills` merge `b37ba06e`.
+- The support ledger landed in `fd79482c`. Defects plateaued at `8 → 4 → 1 → 1 → 1`.
+- The brief explicitly paused the autonomous loop for Joel to choose more same-property runs or a third-property proof.
+
+```text
+Objective
+Choose and execute the next proof for the portable paid-attribution kernel skill. The skill is already shipped and repeatedly reaches kernel_proven. The unresolved question is whether another Mega run adds evidence or whether a cold third-property run is the sharper convergence test.
+
+State
+Five Mega proofs completed. Run 5 reached kernel_proven and folded its naming-precedence defect. The final skill fold shipped as badass-courses/skills merge b37ba06e. The support-repo ledger landed in fd79482c. A later Mega audit reconciled drift and pushed commits 6d25b28 and 463f305.
+
+Resume points
+Claude project directory: /Users/joel/.claude/projects/-Users-joel-Code-badass-courses-aihero-support
+Latest attribution orchestrator transcript: /Users/joel/.claude/projects/-Users-joel-Code-badass-courses-aihero-support/80722f4f-1392-4de3-b9d6-a0f153d56bd6.jsonl
+Original long attribution transcript: /Users/joel/.claude/projects/-Users-joel-Code-badass-courses-aihero-support/9c85fbcf-9c9c-4b24-8c7e-9240503f1b78.jsonl
+Brief: /Users/joel/Code/badass-courses/aihero-support/.brain/projects/portable-attribution-skill/portable-attribution-skill-brief.svx
+Key repo: /Users/joel/Code/badass-courses/skills/paid-attribution-kernel
+
+Next steps
+Ask Joel to choose: stop at the current proof, run Mega again, or prove cold on a third property. If he chooses another proof, charter one bounded run and preserve the instructions-under-test rule. Stop again on any defect instead of extending the autonomous loop.
+
+Gotchas
+Do not claim convergence from repeated kernel_proven alone. Every silent improvisation is a skill defect. Keep property names out of portable instructions except the provenance changelog.
+```
+
+## w5 — SupportBench hard cases
+
+**Verdict: BLOCKED-ON-JOEL**
+
+- The SupportBench effort and hard-case follow-up are closed. Commits `7f91f4e0` and `f45ffc58` carry the closeout receipts.
+- Pane `w5:p12` ran fresh CWA sweep `cwa_bench_20260719T033133Z`, archived 19 approved threads, and left 22 open.
+- The review page was `https://code-with-antonio-support-2026-07-19-49117d.wzrrd.sh/`, with expiry recorded as 2026-07-21 03:42 UTC.
+- The run is `awaiting_feedback`. It changed the CWA profile, current review pointer, and rollout-kit Brain asset. Those changes remain in the dirty `aihero-support` worktree.
+
+```text
+Objective
+Finish the fresh Code with Antonio support sweep by collecting Joel's decisions on the remaining policy and routing questions, applying only approved actions through the existing support gates, and closing the persisted sweep lifecycle.
+
+State
+Fresh run cwa_bench_20260719T033133Z completed its research and review surface. Nineteen approved archives were executed and verified. The queue is 22 open. The lifetime-plan refund was already complete, so no duplicate refund or customer reply ran. The page contains six policy questions, a 16-row creator/partner batch, and six full-context money/access items. Measured cost was $12.970860. The lifecycle is awaiting_feedback.
+
+Resume points
+Resume Pi: pi --session /Users/joel/.pi/agent/sessions/--Users-joel-Code-badass-courses-aihero-support--/2026-07-19T03-19-37-489Z_019f7862-ef11-7b26-ac4a-0ca1872bed73.jsonl
+Review page: https://code-with-antonio-support-2026-07-19-49117d.wzrrd.sh/
+Run directory: /Users/joel/Code/badass-courses/aihero-support/.brain/data/support-operator/sweeps/code-with-antonio-support/cwa_bench_20260719T033133Z
+Rollout asset: /Users/joel/Code/badass-courses/aihero-support/.brain/projects/sri-support-rollout/asset-rollout-kit-draft.svx
+SupportBench brief: /Users/joel/Code/badass-courses/aihero-support/.brain/projects/supportbench/supportbench-brief.svx
+
+Next steps
+Get Joel's Q4–Q9 answers and creator/partner routing decision. Ingest the feedback against this exact run. Re-read affected threads, dry-run each approved mutation, execute only approved actions, verify provider readback, then close the lifecycle and review the three task-owned dirty files before any commit.
+
+Gotchas
+Do not use the generic Skill CLI refund adapter for Code with Antonio. Do not reconstruct missing historical money or access state from live providers. Preserve the large unrelated dirty worktree. The old review URL may have expired; republish from the persisted run if needed.
+```
+
+## w12 — course sync
+
+**Verdict: BLOCKED-ON-JOEL**
+
+- Pane `w12:p1` is a dead shell labeled `🔥 Course Sync Tracer` in `aihero-support`.
+- CVM PR `#1346` merged as `80a8f30c`. The AI Hero draft sync control plane was implemented and verified with 837 tests.
+- Blaine had writable Dropbox access and all 17 MP4 files, totaling 5,293,227,500 bytes.
+- The exact sync stopped before mutation because the frozen Course Version UUID, original `includeTodoLessons` policy, and production frozen tree were unavailable.
+
+```text
+Objective
+Complete the first safe Course Video Manager v3 import into AI Hero's one bound unpublished target without inventing source facts or publishing customer-visible content.
+
+State
+CVM PR #1346 merged as 80a8f30c and provides immutable v3 bundles. AI Hero has a strict draft sync control plane with staging, frozen Dropbox revisions, streamed hashes, preview/diff, atomic apply, no-op replay, rollback, and versioned API surfaces. The target is product-ma254 with workshop-2ozd9 and a settled two-section-in-one-workshop shape. Production still exposed v2 at the last check. Zero source writes occurred during the blocked verification.
+
+Resume points
+Claude project directory: /Users/joel/.claude/projects/-Users-joel-Code-badass-courses-aihero-support
+Steering transcript: /Users/joel/.claude/projects/-Users-joel-Code-badass-courses-aihero-support/b23e2cc7-f32b-4295-b733-5dae4be44302.jsonl
+Brief: /Users/joel/Code/badass-courses/aihero-support/.brain/projects/ai-hero-draft-course-sync/ai-hero-draft-course-sync-brief.svx
+Handoff: /Users/joel/Code/badass-courses/aihero-support/.brain/projects/ai-hero-draft-course-sync/handoff-2026-07-17.svx
+Verification receipt: /Users/joel/Code/badass-courses/aihero-support/.brain/data/course-sync/v3-manifest-verify-2026-07-17.json
+App repo: /Users/joel/Code/badass-courses/ai-hero
+CVM repo: /Users/joel/Code/mattpocock/course-video-manager
+
+Next steps
+Have Joel or Matt provide approved read-only access to CVM's production database, or supply the exact frozen Course Version UUID and original includeTodoLessons value with a source receipt. Run the exact frozen-version Dropbox sync. Verify the v3 root manifest and every pinned file revision and hash. Then create the server-owned binding, preview, apply to the draft target, verify the authoring surface, and prove a no-op replay.
+
+Gotchas
+Do not mint a replacement UUID or infer includeTodoLessons from v2. A guessed value could produce a convincing but false v3 root marker. Never publish the course. Preserve unrelated dirty files in both repos.
+```
+
+## w19 — bot tokens
+
+**Verdict: SHIPPED**
+
+- The implementation, deploy, and production proof are complete. Mint/read/write-denial/revoke checks returned `201/200/403/200`, and revoked-token read returned `401`.
+- Discovery shipped at `https://www.aihero.dev/api` and `https://www.aihero.dev/api/openapi.json`; the OpenAPI worker landed in `a3bd5a8`.
+- The verification token was revoked. Three matching Axiom verification events were found.
+- Matt's handoff exists as `mattpocock/course-video-manager#1372`. The only remaining action was pasting the already-written notice into Matt's Slack thread, not more implementation.
+
+## w1A — slack work-state
+
+**Verdict: BLOCKED-ON-JOEL**
+
+- The core Slack work-state effort is done: hourly live sweeps, the board, state-change wakes, OTEL receipts, and a scheduled cron proof are in the brief.
+- The rebooted Pi session re-baselined two separate stream-observation follow-ups and pushed bot-authored commit `80e0292`.
+- The remaining work is a safe live Slack reaction canary, then bounded reconciliation for missing roots.
+- Joel must choose a safe Slack root before the canary can run.
+
+```text
+Objective
+Prove canonical Chat SDK Slack reaction ingress on one safe root, then build bounded missing-root reconciliation for allowlisted Slack channels without creating a second Slack listener or source of truth.
+
+State
+Slack work-state itself is done. Reactions on Slack roots remain canonical. Commit 80e0292 re-baselined the follow-ups after Messaging v2 made Chat SDK the sole Socket Mode owner. The reaction task now needs a fixture and one live canary. The reconciliation task needs immutable Slack source IDs, source-time correction, overlap cursors, and missing-only replay through channel/message.received.
+
+Resume points
+Resume Pi: pi --session /Users/joel/.pi/agent/sessions/--Users-joel-Code-badass-courses-aihero-support--/2026-07-17T18-32-39-882Z_019f715a-20ca-74d8-bd47-38040e659f7b.jsonl
+Work-state brief: /Users/joel/Code/joelhooks/joelclaw/.brain/projects/slack-work-state/slack-work-state-brief.svx
+Reaction step: /Users/joel/Code/joelhooks/joelclaw/.brain/projects/stream-observation/fix-slack-reaction-tap-construction.svx
+Reconciliation step: /Users/joel/Code/joelhooks/joelclaw/.brain/projects/stream-observation/build-slack-ingress-reconciliation.svx
+Repo: /Users/joel/Code/joelhooks/joelclaw
+
+Next steps
+Ask Joel to name a safe Slack root. Add the canonical reaction fixture. Run one add/remove reaction canary and verify message/inbound.reaction receipts. Close that step if proof passes. Then implement the bounded reconciliation step using slack-backfill.ts machinery and prove omitted-root healing plus rerun no-op.
+
+Gotchas
+Never start another Slack Socket Mode owner. Do not fabricate flowId for arbitrary inbound roots. Slack root identity is channelId plus messageTs. The current realtime path emits ingestion seconds where the event contract expects source milliseconds; fix that before reconciliation proof.
+```
+
+## w1P — aihero-support automation recovery
+
+**Verdict: ACTIVE**
+
+- Live Claude pane `w1P:p1` is coherent and was inspected read-only. It reports both automation chains self-sustaining again.
+- Dispatcher and wake reconciliation were proven live. The minter fix landed in joelclaw commit `e40dd493`.
+- Pane `w1P:p8` is the explicit HITL handoff: `🔧 JOEL: install health-script fix (sudo)`.
+- The live session says one Enter in that pane installs the fix. It will then recount the poison queue before any fresh purge authorization.
+
+## w1S — campaign pulse
+
+**Verdict: ACTIVE**
+
+- Live Claude pane `w1S:p1` is coherent and was inspected read-only.
+- It shipped `2017eaef` for slow-source warning behavior and `e0124d5b` for `bin/aih-pulse gap-trace` plus aggregate signup-gap detail.
+- A stranded learner replay emitted once, closed the gap in about 20 seconds, and got email-0.
+- Independent readback showed 135 of 135 in-window signups had identities and zero remaining gap candidates. The next hourly pulse is the only pending observation.

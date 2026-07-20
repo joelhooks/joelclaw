@@ -1,0 +1,24 @@
+---
+title: "Investigate egghead-commerce workspaces"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "closed"
+closed_at: "2026-07-20"
+assignee: "pi worker (flagg, herdr pane w1T:p3, 2026-07-20)"
+parent: "./herdr-reboot-triage-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+---
+
+# Investigate egghead-commerce workspaces
+
+## Step
+
+Reconstruct state and assign verdicts for the egghead-commerce workspace group per the shared method (.brain/tasks/herdr-reboot-triage-method.svx). Task file: .brain/tasks/herdr-reboot-triage-egghead-commerce.svx. Asset: ./triage-egghead-commerce.svx.
+
+## Result (2026-07-20)
+
+Triaged six workspaces: three SHIPPED, two INTERESTING, and one BLOCKED-ON-JOEL.
+The Egghead commerce research and provisioning lifecycle grill are worth fresh sessions; MEGA needs current human-gate reconciliation.
+Full evidence and continuation prompts: [triage asset](./triage-egghead-commerce.svx).

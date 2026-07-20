@@ -1,0 +1,24 @@
+---
+title: "Investigate media-video workspaces"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "closed"
+assignee: "pi worker (flagg, herdr pane w1T:p5, 2026-07-20)"
+parent: "./herdr-reboot-triage-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+closed_at: "2026-07-20"
+---
+
+# Investigate media-video workspaces
+
+## Step
+
+Reconstruct state and assign verdicts for the media-video workspace group per the shared method (.brain/tasks/herdr-reboot-triage-method.svx). Task file: .brain/tasks/herdr-reboot-triage-media-video.svx. Asset: ./triage-media-video.svx.
+
+## Result (2026-07-20)
+
+- Triaged seven workspaces: 2 SHIPPED, 4 BLOCKED-ON-JOEL, and 1 INTERESTING.
+- The strongest resume targets are the call-tuning/telemetry repair, instant-watch workshop, grill-master video storyboard, Zoom In first video, and hunk-herdr reaction gate.
+- Full evidence and continuation prompts: [media/video/voice triage](./triage-media-video.svx).

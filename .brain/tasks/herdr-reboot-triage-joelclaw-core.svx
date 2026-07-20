@@ -1,0 +1,25 @@
+---
+title: "Triage worker task — joelclaw core workspaces"
+type: "asset"
+parent: "../projects/herdr-reboot-triage/investigate-joelclaw-core-workspaces.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Task: triage the joelclaw core infra workspace group
+
+Follow the shared method in the co-attached file. Your step file: `~/Code/joelhooks/joelclaw/.brain/projects/herdr-reboot-triage/investigate-joelclaw-core-workspaces.svx`. Your asset output: `~/Code/joelhooks/joelclaw/.brain/projects/herdr-reboot-triage/triage-joelclaw-core.svx`.
+
+This is the densest group — the joelclaw repo has live uncommitted changes and active recovery efforts. Be precise about what belongs to which thread.
+
+## Your workspaces and panes
+
+- **wB** "[jc] memory cleanup" — wB:p5 claude idle LIVE "🧠 memory system state review", cwd `~` (read-only!)
+- **wY** "Typesense Recovery" — wY:p1 claude idle LIVE "🔥 Typesense recovery: cutover DONE, 4 steps left" (read-only!), cwd joelclaw; w1Y is backed by `~/Code/joelhooks/joelclaw/.brain/projects/typesense-reboot-recovery/` (brief has uncommitted edits — read it); wY:p25 dead "🔑 TYPE SUDO PW: three-body replica"; wY:p26 dead "🔑 TYPE SUDO PW: maturin replica" — these two were waiting for Joel to type a sudo password.
+- **w9** "joelclaw wiki/brain" — seven panes, all dead shells: w9:p1 (no label, `~`); w9:p6 "Claude Bleeding Repair" (joelclaw); w9:p9 (no label, joelclaw); w9:pA "Claude Wiki v0" (`~/Code/joelhooks`); w9:pD "🎥 Bugle Mux Primary" (joelclaw-wiki); w9:pE "🧭 Graph Gate Fix" (joelclaw-wiki); w9:pF "📰 Bugle Handoff Chip" (joelclaw-wiki). Check `~/Code/joelhooks/joelclaw-wiki` repo state and its `.brain/projects/bugle-redesign/`.
+- **wJ** "Brain Graph tickets" — wJ:p1 dead "🧭 Steering: orphans + ranking + bench", cwd `~`. Related: `~/Code/joelhooks/joelclaw/.brain/projects/brain-graph/`.
+- **w1N** "[jc] fleet maintenance" — w1N:p1 dead "🔥 Fleet maintenance steering", cwd `~`
+- **w11** "Telegram signal (stable)" — w11:p1 dead "✅ Snooze wired + proven — reminder DM blocked on live gateway", cwd `~`
+- **wV** "Herdr Discord bridge — killed after e2e" — wV:p1 dead "🧭 steering: bridge 86d, receipts written" (`~`); wV:p2 dead "✅ Discord bridge built: 16/16, committed 62b109c" (`~/Code/joelhooks/pi-discord-threads`); wV:p3 dead "✅ relay titles: shipped e93bdee, live on :8375" (`~/Code/joelhooks/herdr-remote`). Verify the cited commits exist; workspace name says the effort was killed after e2e — reconcile that with the ✅ labels.
+
+Also note (do NOT investigate deeply, just record as ACTIVE): w1R "[jc] resilience charter" claude working; w1T this triage session.

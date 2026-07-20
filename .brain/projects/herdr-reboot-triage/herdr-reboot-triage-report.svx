@@ -1,0 +1,218 @@
+---
+title: "Herdr Reboot Triage Report — 2026-07-20"
+type: "asset"
+parent: "./synthesize-report-and-continuation-prompts.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Herdr reboot triage report
+
+Flagg rebooted. The herdr session came back with 59 panes across 37 workspaces. Five pi workers investigated every workspace against session transcripts, repo state, and Brain briefs. Full evidence lives in the five `triage-*.svx` assets beside this report. This report is the operator surface: verdicts, what needs you, and a continuation prompt for every thread worth resuming.
+
+## The numbers
+
+| Verdict | Count | Meaning |
+|---|---|---|
+| SHIPPED | 15 | Work landed with commit receipts. Panes are trophies; janitor may close. |
+| BLOCKED-ON-JOEL | 11 | Waiting on a decision, password, or artifact only you can supply. |
+| ACTIVE | 6 | Live sessions, coherent. Left alone. |
+| INTERESTING | 4 | Interrupted mid-flight with uncommitted work at risk. |
+| ABANDONED | 1 | Discord bridge — deliberately killed after e2e (commit `09f97de`). |
+
+## Verdict table
+
+| Ws | Name | Verdict | One line |
+|---|---|---|---|
+| w6 | [egg] commerce charter | INTERESTING | Four research lanes done, uncommitted in four worktrees; harvest never happened |
+| w14 | Provisioning lifecycle | INTERESTING | XState prototype dirty in course-builder; ADR still open |
+| wE | voice agent | INTERESTING | Judge schedules zero runs; telemetry custody split half-done |
+| wX | Pi 1Password noise | INTERESTING | Real keychain.ts fix sitting uncommitted in skillrecordings/support |
+| w17 | MEGA UI | BLOCKED | Needs read-capable Axiom token, then DNS cutover with you |
+| w1E | [aih] attribution skill | BLOCKED | Choose: stop, another Mega run, or cold third-property proof |
+| w5 | [aih] SupportBench | BLOCKED | CWA sweep awaiting_feedback: Q4–Q9 + creator/partner routing |
+| w12 | [aih] course sync | BLOCKED | Needs frozen Course Version UUID + includeTodoLessons from CVM prod |
+| w1A | [aih] slack work-state | BLOCKED | Needs a safe Slack root for the reaction canary |
+| wQ | Recorder build | BLOCKED | Your eyeball verdict on instant watch page, then Convex-vs-D1 grill |
+| wR | [yt] grill-master video | BLOCKED | Export reMarkable storyboard frames to assets/storyboard/ |
+| wZ | wzrrd Zoom In video | BLOCKED | Accept/replace "Setting up Effect v4" as episode one |
+| w16 | hunk-herdr charter | BLOCKED | Prototype works; needs your reaction to the review gesture |
+| w1H | Effect fleet | BLOCKED | 13 app repos hold uncommitted v4 bumps; close or reconcile? |
+| w1K | [dw] Panda report | BLOCKED | Review https://panda-decommission-readiness.wzrrd.sh/ |
+| wB | [jc] memory cleanup | ACTIVE | Live claude; work committed as `2d34e1f0` |
+| wY | Typesense recovery | ACTIVE | Live claude; replicas building, outage proof next |
+| w1P | aihero automations | ACTIVE | Live claude; w1P:p8 wants one Enter to install sudo health fix |
+| w1S | [aih] campaign pulse | ACTIVE | Live claude; gap-trace shipped, watching next hourly pulse |
+| w1R | [jc] resilience charter | ACTIVE | Working right now — untouched |
+| w1T | [jc] reboot triage | ACTIVE | This effort |
+| w7 | payout | SHIPPED | May payout receipts in `39ff973` |
+| wA | Auth hardening | SHIPPED | Better Auth Phase 4 accepted; release chain landed |
+| w1J | Uline shelf order | SHIPPED | Ordered 2026-07-18; receipt at uline-rack-expansion.wzrrd.sh |
+| w19 | [aih] bot tokens | SHIPPED | Minting proven in prod; only a Slack paste remained |
+| w9 | joelclaw wiki/brain | SHIPPED | Bugle Mux, handoff chip, graph/map lanes all committed |
+| wJ | Brain Graph tickets | SHIPPED | Orphans 79%→35% in `a9f4f9d`; ranking + bench landed |
+| w1N | [jc] fleet maintenance | SHIPPED | Maintenance night closed; receipts `815f4707`, `22da7c94` |
+| w11 | Telegram signal | SHIPPED | Label lied — snooze + reminder policy + digest all shipped |
+| wH | Video pipeline | SHIPPED | Pipeline closed through `08a2cbe9`; retro published |
+| w1G | herdr-brain reload | SHIPPED | Live reload on main as `a7492cb` |
+| w13 | shitrat push | SHIPPED | Merged as PR #26 (`ecd3c5a`); worktree gone |
+| w0 | herdr guidance | SHIPPED | Fleet rollout complete in dark-wizard `3124a5d` + `c912d55` |
+| w15 | Fleet stack defaults | SHIPPED | STACK.md + graft in `010286f` |
+| w1M | [dw] Flagg GPT default | SHIPPED | Pi 0.80.10 fleet-wide; Flagg default set; fleet check published |
+| wT | Fleet to-spec | SHIPPED | to-spec replaced to-prd in `97ff12b3`; fleet synced |
+| wV | Herdr Discord bridge | ABANDONED | Killed by design after overnight noise; parts salvage only |
+
+## Resume now — interrupted work with uncommitted state at risk
+
+These four have real diffs sitting in working trees. Each block below is a complete prompt for a fresh session.
+
+### 1. Egghead commerce: harvest the four research lanes (w6)
+
+```text
+Objective
+Resume the Move Egghead Commerce to CourseBuilder charter. Harvest the four completed research lanes into the shared brief, reconcile their evidence, and continue toward the v1 contract and cutover design. CourseBuilder must become the sole commerce writer without rebuilding existing Stripe objects.
+
+State
+The brief landed in commit 41b9c8b at .brain/projects/egghead-commerce/egghead-commerce-brief.svx. Four workers completed read-only research and left uncommitted assets in separate worktrees:
+- /Users/joel/Code/worktrees/migrate-egghead-commerce-rails/.brain/projects/egghead-commerce/asset-rails-commerce-surfaces.svx
+- /Users/joel/Code/worktrees/migrate-egghead-commerce-coursebuilder/.brain/projects/egghead-commerce/asset-coursebuilder-commerce-capabilities.svx
+- /Users/joel/Code/worktrees/migrate-egghead-commerce-slack/.brain/projects/egghead-commerce/asset-slack-commerce-context.svx
+- /Users/joel/Code/worktrees/migrate-egghead-commerce-stripe/.brain/projects/egghead-commerce/asset-stripe-object-event-inventory.svx
+Each matching step file is modified and closed in its worktree. No research commit was created. The Stripe lane found 7,541 unique events over 90 days and 2,875 errored or processing events, mostly invoice.payment_failed.
+
+Resume points
+- pi --session /Users/joel/.pi/agent/sessions/--Users-joel-Code-skillrecordings-migrate-egghead--/2026-07-17T18-33-25-526Z_019f715a-d316-7281-a7ef-1f12c6e2b546.jsonl
+- /Users/joel/Code/skillrecordings/migrate-egghead/.brain/projects/egghead-commerce/egghead-commerce-brief.svx
+- The four worktrees and asset paths listed above
+
+Next steps
+1. Review each asset and matching closed step.
+2. Copy or reconcile the accepted files into the main migrate-egghead checkout without losing worktree changes.
+3. Add concise decision-ledger entries to the shared brief.
+4. Run pi-notes brain check and inspect the exact diff.
+5. Continue with grill-commerce-v1-contract.svx and grill-cutover-sequence-and-gates.svx before implementation slices.
+
+Gotchas
+- Existing Stripe customers, subscriptions, products, and prices stay in place.
+- Rails is still the commerce/access writer. Do not change production writer ownership without Joel's explicit gate.
+- CourseBuilder 3.x has reusable checkout and workflow machinery, but the survey found missing webhook await/dedupe safety, subscription lifecycle, atomic seats/entitlements, and reconciliation.
+- Keep customer data, Stripe identifiers, tokens, and raw Slack history out of Brain artifacts.
+```
+
+### 2. Provisioning lifecycle: finish the prototype, then the ADR (w14)
+
+```text
+Objective
+Resume the User Provisioning Lifecycle grill. Finish the explicit XState v5 lifecycle prototype, use it to sharpen the ownership questions, then settle transition ownership in the repo ADR before authorizing implementation.
+
+State
+The effort brief and three research inventories are durable. Commits b3bc12d0e, abc2dd52e, 4f2eec942, and 0904fc867 carry the charter, research, and handoff. The working tree still contains:
+- .brain/projects/user-provisioning-lifecycle/provisioning-machine.prototype.ts
+- .brain/projects/user-provisioning-lifecycle/provisioning-machine-walkthrough.svx
+- a modified .brain/projects/user-provisioning-lifecycle/prototype-provisioning-lifecycle-machine.svx
+The prototype step and decide-transition-ownership-adr.svx remain open.
+
+Resume points
+- /Users/joel/Code/badass-courses/course-builder/.brain/projects/user-provisioning-lifecycle/user-provisioning-lifecycle-brief.svx
+- /Users/joel/Code/badass-courses/course-builder/.brain/projects/user-provisioning-lifecycle/prototype-provisioning-lifecycle-machine.svx
+- /Users/joel/Code/badass-courses/course-builder/.brain/projects/user-provisioning-lifecycle/provisioning-machine.prototype.ts
+- /Users/joel/Code/badass-courses/course-builder/.brain/projects/user-provisioning-lifecycle/provisioning-machine-walkthrough.svx
+- /Users/joel/Code/badass-courses/course-builder/.brain/projects/user-provisioning-lifecycle/decide-transition-ownership-adr.svx
+
+Next steps
+1. Review the dirty prototype and walkthrough against the three landed research assets.
+2. Finish or reject the prototype with a dated result and evidence.
+3. Grill the unresolved XState, Effect, Inngest, adapter, and policy boundaries.
+4. Write and accept the repo ADR before any behavior implementation.
+5. Keep unrelated dirty Brain files out of this thread.
+
+Gotchas
+- Joel explicitly ruled out a tactical patch and did not authorize build work.
+- The original three-hole finish line is an undercount; research found many additional out-of-band minting paths.
+- The current repo has unrelated untracked Brain and task files. Preserve them.
+- Effect v4 would be a new shared-runtime boundary; verify APIs from official source before making claims.
+```
+
+### 3. Voice: judge scheduling + telemetry custody split (wE)
+
+```text
+Objective
+Restore the call-driven tuning loop and finish the call-telemetry custody split without disturbing unrelated voice privacy edits. Every call should produce a judge receipt, and Better Auth sessions must no longer share a table or deploy stream with call telemetry.
+
+State
+Fast-model research is closed at 2df1c6c5. The judge, rubric, and telemetry module exist. Writers were repointed in 3095af70 and tested in 6627caa6. The judge still schedules zero runs after real and synthetic completion events (30 completion events, zero runs). The telemetry step still owes legacy data migration, removal of the temporary sessions union, retirement of apps/live-dashboard/convex as a deployer, and a live runtime proof.
+
+Resume points
+- claude --resume 0d9e4f52-1bf8-4412-9fee-990159cd3be9
+- ~/.claude/projects/-Users-joel/0d9e4f52-1bf8-4412-9fee-990159cd3be9.jsonl
+- ~/Code/joelhooks/joelclaw/.brain/projects/call-tuning-loop/call-tuning-loop-brief.svx
+- ~/Code/joelhooks/joelclaw/.brain/projects/call-tuning-loop/diagnose-judge-scheduling.svx
+- ~/Code/joelhooks/joelclaw/.brain/projects/video-pipeline/separate-call-telemetry-from-sessions.svx
+- ~/Code/joelhooks/joelclaw/infra/voice-agent/
+
+Next steps
+1. Preserve the unrelated dirty files and inspect Inngest's function state, dedupe counters, and registration for voice-call-judge.
+2. Prove or reject the room-level idempotency hypothesis with one bounded synthetic event.
+3. Fix scheduling and prove one judge write before starting the retro or A/B steps.
+4. Inventory and migrate legacy telemetry rows, restore auth-only sessions, retire the second Convex deployer, and verify a live writer.
+
+Gotchas
+Healthy sibling functions scheduled while the judge did not, so do not reduce this to a generic outage. Re-judging after prompt changes is required; room-level permanent dedupe is wrong even if it caused the current failure. The current infra/voice-agent dirty edits (main.py, verify-voice.sh) are a separate privacy/health slice — do not claim them.
+```
+
+### 4. Support CLI: ship the 1Password fix (wX)
+
+```text
+Objective
+Preserve and ship the support CLI fix that prevents unauthenticated 1Password CLI probes from wedging support jobs. Add focused regression coverage, validate the real fallback path, and commit only this coherent fix without absorbing unrelated support-repo changes.
+
+State
+packages/cli/src/core/keychain.ts now runs `op account list --format=json`, parses the output, and returns true only when at least one account exists. The original incident was reproduced with exit 0 plus `[]`. After the edit, the exact Kit subscriber lookup completed successfully with no 1Password prompt or stderr. `bun run check-types` passed. The working-tree diff is still present and uncommitted.
+
+Resume points
+- pi --session /Users/joel/.pi/agent/sessions/--Users-joel--/2026-07-15T01-46-27-316Z_019f6374-3274-787c-8209-73c34d4fb784.jsonl
+- /Users/joel/Code/skillrecordings/support (key file: packages/cli/src/core/keychain.ts)
+- Existing related tests: packages/cli/src/commands/doctor.test.ts
+
+Next steps
+1. Inspect the current keychain diff and preserve unrelated dirty files.
+2. Add focused tests for empty account JSON, one configured account, malformed output, and command failure.
+3. Run the package's Vitest suite and `bun run check-types`.
+4. Re-run a non-destructive CLI lookup with no configured 1Password account and verify no interactive `op item get` child appears.
+5. Review and commit only the keychain fix plus its tests using the repo's configured actor/workflow.
+
+Gotchas
+`op account list` exit code 0 does not mean an account exists. The support repo is already dirty with refund and triage work, so never stage everything. The original focused Bun test command was false evidence because no `src/core/keychain.test.ts` file existed.
+```
+
+## Waiting on you — one decision or artifact each
+
+Each thread below is parked on a specific input from you. Full continuation prompts live in the group asset named in parentheses.
+
+1. **Effect v4 rollout (w1H)** — 13 application repos hold uncommitted, deliberately-unpushed v4 bumps mixed with unrelated dirty work. Decide: close as fleet-infrastructure-only, or reconcile repo by repo. (`triage-fleet-tooling.svx`)
+2. **SupportBench CWA sweep (w5)** — run `cwa_bench_20260719T033133Z` is awaiting_feedback: six policy questions, a 16-row creator/partner routing batch, six money/access items. The review URL may have expired 07-21; republish from the persisted run if so. (`triage-aihero-support.svx`)
+3. **Course sync (w12)** — needs the frozen Course Version UUID and original includeTodoLessons value from CVM production, or read-only DB access. Guessing would mint a convincing but false v3 root. (`triage-aihero-support.svx`)
+4. **Attribution skill (w1E)** — kernel proven five times; choose stop, another Mega run, or a cold third-property proof. (`triage-aihero-support.svx`)
+5. **Slack reaction canary (w1A)** — name one safe Slack root; the canary and reconciliation build follow mechanically. (`triage-aihero-support.svx`)
+6. **MEGA gates (w17)** — read-capable Axiom token for operator proof, then DNS cutover. (`triage-egghead-commerce.svx`)
+7. **Panda decommission (w1K)** — review https://panda-decommission-readiness.wzrrd.sh/ and record corrections or confirmation. (`triage-fleet-tooling.svx`)
+8. **Instant watch page (wQ)** — record and stop one real loom-mode take; call it good or not. Then the Convex-vs-D1 grill is ready. (`triage-media-video.svx`)
+9. **grill-master video (wR)** — export one reMarkable PNG per beat into assets/storyboard/. (`triage-media-video.svx`)
+10. **Zoom In episode one (wZ)** — accept or replace "Setting up Effect v4" as the first video. (`triage-media-video.svx`)
+11. **hunk-herdr prototype (w16)** — focus a dirty repo pane, run `herdr plugin action invoke review --plugin hunk-herdr.proto`, react to the gesture. (`triage-media-video.svx`)
+
+Quickest unblocks, already staged by live sessions: **one Enter in w1P:p8** installs the health-script sudo fix; the wY sudo panes are obsolete (both passwords were entered pre-reboot).
+
+## Cleanup and harvest receipts
+
+- The five triage worker panes (w1T:p2–p6) were harvested — outputs reviewed, all five assets accepted — and closed by this steering session.
+- Harvested the 15 SHIPPED workspaces and wV (ABANDONED): outputs reviewed against commit receipts; outcome committed (wV: rejected by design, receipts in `09f97de`); those panes may close. That covers: w7, wA, w1J, w19, w9 (all seven panes), wJ, w1N, w11, wH (all three panes), w1G, w13 (both panes), w0, w15, w1M (both panes), wT, wV (all three panes).
+- BLOCKED and INTERESTING panes stay open until you act or a fresh session takes the thread; their pi sessions resume from disk either way.
+- w11:p1 label corrected (it claimed the reminder DM was blocked; the thread shipped).
+- wY:p25/p26 ("TYPE SUDO PW") are superseded dead shells; flagged for janitor, owned by the live wY session.
+
+## Known issues surfaced by the triage
+
+- Seven legacy `.brain/tasks/*.md` files in this repo fail `pi-notes brain check` (the `.svx` law ratchet). Pre-existing; not touched by this effort.
+- `joelclaw-wiki` is dirty: 20 modified + 3 untracked files that no w9 lane claims. Needs its own review before anyone commits there.
+- The stale-recap pattern repeats: three panes wore ✅/blocked labels that later work invalidated. Labels are managed state; the reboot made the drift visible all at once.

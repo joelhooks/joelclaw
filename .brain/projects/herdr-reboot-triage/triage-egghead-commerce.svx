@@ -1,0 +1,158 @@
+---
+title: "Herdr reboot triage — egghead, commerce, and misc workspaces"
+type: "asset"
+parent: "./investigate-egghead-commerce-workspaces.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Egghead, commerce, and misc workspace triage
+
+## w6 — egg commerce charter
+
+**Verdict: INTERESTING**
+
+Evidence:
+- The steering session chartered the active effort in `migrate-egghead/.brain/projects/egghead-commerce/egghead-commerce-brief.svx`; commit `41b9c8b` landed the brief.
+- All four research workers completed and left uncommitted Brain assets in their isolated worktrees: Rails surfaces, CourseBuilder capabilities, Slack context, and Stripe inventory.
+- The Stripe lane found 7,541 unique events over 90 days and 2,875 errored or processing events, mostly `invoice.payment_failed`.
+- The steering transcript says the next move was to harvest and reconcile all four results. That never happened.
+
+```text
+Objective
+Resume the Move Egghead Commerce to CourseBuilder charter. Harvest the four completed research lanes into the shared brief, reconcile their evidence, and continue toward the v1 contract and cutover design. CourseBuilder must become the sole commerce writer without rebuilding existing Stripe objects.
+
+State
+The brief landed in commit 41b9c8b at .brain/projects/egghead-commerce/egghead-commerce-brief.svx. Four workers completed read-only research and left uncommitted assets in separate worktrees:
+- /Users/joel/Code/worktrees/migrate-egghead-commerce-rails/.brain/projects/egghead-commerce/asset-rails-commerce-surfaces.svx
+- /Users/joel/Code/worktrees/migrate-egghead-commerce-coursebuilder/.brain/projects/egghead-commerce/asset-coursebuilder-commerce-capabilities.svx
+- /Users/joel/Code/worktrees/migrate-egghead-commerce-slack/.brain/projects/egghead-commerce/asset-slack-commerce-context.svx
+- /Users/joel/Code/worktrees/migrate-egghead-commerce-stripe/.brain/projects/egghead-commerce/asset-stripe-object-event-inventory.svx
+Each matching step file is modified and closed in its worktree. No research commit was created.
+
+Resume points
+- pi --session /Users/joel/.pi/agent/sessions/--Users-joel-Code-skillrecordings-migrate-egghead--/2026-07-17T18-33-25-526Z_019f715a-d316-7281-a7ef-1f12c6e2b546.jsonl
+- /Users/joel/Code/skillrecordings/migrate-egghead/.brain/projects/egghead-commerce/egghead-commerce-brief.svx
+- The four worktrees and asset paths listed above
+
+Next steps
+1. Review each asset and matching closed step.
+2. Copy or reconcile the accepted files into the main migrate-egghead checkout without losing worktree changes.
+3. Add concise decision-ledger entries to the shared brief.
+4. Run pi-notes brain check and inspect the exact diff.
+5. Continue with grill-commerce-v1-contract.svx and grill-cutover-sequence-and-gates.svx before implementation slices.
+
+Gotchas
+- Existing Stripe customers, subscriptions, products, and prices stay in place.
+- Rails is still the commerce/access writer. Do not change production writer ownership without Joel's explicit gate.
+- CourseBuilder 3.x has reusable checkout and workflow machinery, but the survey found missing webhook await/dedupe safety, subscription lifecycle, atomic seats/entitlements, and reconciliation.
+- Keep customer data, Stripe identifiers, tokens, and raw Slack history out of Brain artifacts.
+```
+
+## w7 — payout
+
+**Verdict: SHIPPED**
+
+Evidence:
+- The checkout is clean.
+- Commit `39ff973` records the May 2026 payout execution receipts; `74a782d` records the prior cycle handoff.
+- The stale pane had no label, session path, or uncommitted work. Later session listings only identify it as the idle `Payout Email Preview` session.
+- There is no interrupted durable work to recover from this pane.
+
+## w14 — Provisioning lifecycle grill
+
+**Verdict: INTERESTING**
+
+Evidence:
+- The active brief is `.brain/projects/user-provisioning-lifecycle/user-provisioning-lifecycle-brief.svx`; commit `b3bc12d0e` chartered it.
+- Three research steps landed in commits `abc2dd52e` and `4f2eec942`; commit `0904fc867` added the session handoff.
+- The claimed prototype remains open at `.brain/projects/user-provisioning-lifecycle/prototype-provisioning-lifecycle-machine.svx` with assignee `w14:p6`.
+- Uncommitted prototype files remain in the repo. The ADR step is still open, and the brief forbids implementation until the decision work closes.
+
+```text
+Objective
+Resume the User Provisioning Lifecycle grill. Finish the explicit XState v5 lifecycle prototype, use it to sharpen the ownership questions, then settle transition ownership in the repo ADR before authorizing implementation.
+
+State
+The effort brief and three research inventories are durable. Commits b3bc12d0e, abc2dd52e, 4f2eec942, and 0904fc867 carry the charter, research, and handoff. The working tree still contains:
+- .brain/projects/user-provisioning-lifecycle/provisioning-machine.prototype.ts
+- .brain/projects/user-provisioning-lifecycle/provisioning-machine-walkthrough.svx
+- a modified .brain/projects/user-provisioning-lifecycle/prototype-provisioning-lifecycle-machine.svx
+The prototype step and decide-transition-ownership-adr.svx remain open.
+
+Resume points
+- /Users/joel/Code/badass-courses/course-builder/.brain/projects/user-provisioning-lifecycle/user-provisioning-lifecycle-brief.svx
+- /Users/joel/Code/badass-courses/course-builder/.brain/projects/user-provisioning-lifecycle/prototype-provisioning-lifecycle-machine.svx
+- /Users/joel/Code/badass-courses/course-builder/.brain/projects/user-provisioning-lifecycle/provisioning-machine.prototype.ts
+- /Users/joel/Code/badass-courses/course-builder/.brain/projects/user-provisioning-lifecycle/provisioning-machine-walkthrough.svx
+- /Users/joel/Code/badass-courses/course-builder/.brain/projects/user-provisioning-lifecycle/decide-transition-ownership-adr.svx
+
+Next steps
+1. Review the dirty prototype and walkthrough against the three landed research assets.
+2. Finish or reject the prototype with a dated result and evidence.
+3. Grill the unresolved XState, Effect, Inngest, adapter, and policy boundaries.
+4. Write and accept the repo ADR before any behavior implementation.
+5. Keep unrelated dirty Brain files out of this thread.
+
+Gotchas
+- Joel explicitly ruled out a tactical patch and did not authorize build work.
+- The original three-hole finish line is an undercount; research found many additional out-of-band minting paths.
+- The current repo has unrelated untracked Brain and task files. Preserve them.
+- Effect v4 would be a new shared-runtime boundary; verify APIs from official source before making claims.
+```
+
+## wA — Auth hardening shipped
+
+**Verdict: SHIPPED**
+
+Evidence:
+- Better Auth Phase 4 is marked accepted, and the Phase 3 auth facade is marked decided.
+- The release chain landed: `9770a2717` cut EPE to Better Auth, `8bad70c0c` recorded ADR-0012 Phase 4 completion, and `be194662c` merged release hardening.
+- Follow-up production fixes and proof commits also landed, including `a200d0b59`, `2b1b13b1f`, and `1aa39d45c`.
+- The dead shell has no session path or unique dirty files. Current course-builder changes belong to later provisioning and design work.
+
+## w17 — MEGA UI
+
+**Verdict: BLOCKED-ON-JOEL**
+
+Evidence:
+- The attached Pi session recovered the former Claude context and verified the then-current production deploy was healthy.
+- Its final state named two human-gated needs: a read-capable Axiom token for production `operator.request` proof, then DNS cutover with Joel.
+- Later commits advanced attribution work through `463f3058`, but they do not prove those operator/DNS gates closed.
+- The working tree only has a modified `CONVENTIONS.md`; do not attribute it to this session without review.
+
+```text
+Objective
+Reconcile the recovered MEGA context with current main, then close the remaining operator-proof and DNS human gates without redoing already-shipped attribution work.
+
+State
+The recovered session reported production healthy at c51fafa1 and blocked on a read-capable Axiom token plus DNS cutover with Joel. Main later advanced through f978d3b9, 6d25b28c, and 463f3058 for the attribution kernel and reconciliation work. The MEGA brief remains active at .brain/projects/mega-course-platform/mega-course-platform-brief.svx.
+
+Resume points
+- pi --session /Users/joel/.pi/agent/sessions/--Users-joel-Code-mega-dot-dev-mega-dev--/2026-07-17T18-33-01-260Z_019f715a-744c-7123-9fc0-d5fb4925fd17.jsonl
+- Claude project session 3f8d7aeb-60fe-4053-aa7a-51d6143778ad under /Users/joel/.claude/projects/-Users-joel-Code-mega-dot-dev-mega-dev/
+- /Users/joel/Code/mega-dot-dev/mega-dev/.brain/projects/mega-course-platform/mega-course-platform-brief.svx
+- /Users/joel/Code/mega-dot-dev/mega-dev/.brain/projects/mega-course-platform/take-dns-control-of-mega-dev.svx
+
+Next steps
+1. Diff the recovered session claims against current main and the brief ledger.
+2. Ask Joel for the exact remaining account/token or DNS action only if current receipts still show it open.
+3. Prove the production operator event through the approved read seam.
+4. Continue DNS or Postmark-domain work only through explicit human gates.
+5. Review the unrelated CONVENTIONS.md change separately.
+
+Gotchas
+- Do not call the attribution kernel live attribution proof. The brief keeps real paid-click proof behind a later gate.
+- DNS, account linking, billing, MFA, campaign activation, and spend-capable actions need Joel.
+- Do not reuse AI Hero credentials, identifiers, or service state in MEGA.
+```
+
+## w1J — Uline shelf order
+
+**Verdict: SHIPPED**
+
+Evidence:
+- Claude session `75f292d5-ec09-42bd-9224-e1571c38819a` reconstructed the prior order and verified Uline product pages.
+- Joel reduced the order to two `H-2946-72` shelf kits plus one `H-2905ROLLER`, listed at $575 before tax and shipping.
+- The transcript records Joel saying the items were ordered and the review page was updated to “Ordered 2026-07-18.”
+- The final review receipt is `https://uline-rack-expansion.wzrrd.sh/`; there is nothing to resume.

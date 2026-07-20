@@ -1,0 +1,24 @@
+---
+title: "Investigate joelclaw-core workspaces"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "closed"
+closed_at: "2026-07-20"
+assignee: "pi worker (flagg, herdr pane w1T:p4, 2026-07-20)"
+parent: "./herdr-reboot-triage-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+---
+
+# Investigate joelclaw-core workspaces
+
+## Step
+
+Reconstruct state and assign verdicts for the joelclaw-core workspace group per the shared method (.brain/tasks/herdr-reboot-triage-method.svx). Task file: .brain/tasks/herdr-reboot-triage-joelclaw-core.svx. Asset: ./triage-joelclaw-core.svx.
+
+## Result (2026-07-20)
+
+Triaged nine workspaces: 4 ACTIVE, 4 SHIPPED, and 1 ABANDONED.
+No dead workspace in this group needs a continuation prompt; the unfinished Typesense recovery remains attached and coherent.
+Full evidence and commit/session receipts are in [the joelclaw core triage asset](./triage-joelclaw-core.svx).

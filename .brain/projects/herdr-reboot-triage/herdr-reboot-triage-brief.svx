@@ -1,0 +1,52 @@
+---
+title: "Herdr Reboot Triage"
+type: "brief"
+status: "done"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Herdr Reboot Triage
+
+Flagg rebooted. The herdr session came back with 59 panes across 37 workspaces: dead shells with stale labels, reattached pi sessions parked on NEEDS JOEL, a few live claude panes, and janitor STALE flags everywhere with no harvest evidence to act on.
+
+## Finish line
+
+- Every workspace (except the two live ones excluded below) carries a verdict: SHIPPED, ABANDONED, BLOCKED-ON-JOEL, INTERESTING, or ACTIVE — with evidence.
+- A triage report exists in this effort dir listing every verdict, plus a continuation prompt with full context for each INTERESTING thread.
+- Harvest receipts are written for SHIPPED/ABANDONED panes so herdr-janitor can close them; lying pane labels are corrected.
+- Joel can pick any continuation prompt and start a fresh session without archaeology.
+
+Maintained by: the report is a point-in-time artifact; future reboots re-run this playbook, they don't edit this report.
+
+## Vocabulary
+
+- **dead shell** — a pane whose pre-reboot agent process died; the label survives, the context lives only in session transcripts and repo state.
+- **verdict** — one of SHIPPED / ABANDONED / BLOCKED-ON-JOEL / INTERESTING / ACTIVE, assigned per workspace with evidence.
+- **continuation prompt** — a self-contained prompt (objective, state with receipts, session paths, next steps, gotchas) that lets a fresh session resume a thread.
+- **harvest receipt** — the steering statement janitor needs: output reviewed, outcome (committed / rejected / no changes needed), pane may close.
+
+## Notes
+
+- Skills: `herdr-orchestration` (fan-out + janitor cooperation), `grill-master`, `session-search` (transcript locations).
+- Execution authorized (Joel, 2026-07-20): investigation workers, report writing, pane renames, harvest receipts. Pane closes go through janitor, not raw closes of panes this session didn't create.
+- Excluded from triage: w1R (resilience charter, claude actively working) and w1T (this steering session).
+- Live claude panes (wB:p5, wY:p1, w1P:p1, w1S:p1) are read-only: `herdr pane read` only, never send keys, never close.
+
+## Decision ledger
+
+- [Investigate aihero-support workspaces](./investigate-aihero-support-workspaces.svx) — 2 active, 1 shipped, 4 blocked-on-Joel; asset [triage-aihero-support](./triage-aihero-support.svx)
+- [Investigate egghead-commerce workspaces](./investigate-egghead-commerce-workspaces.svx) — 3 shipped, 2 interesting (commerce harvest, provisioning prototype), 1 blocked; asset [triage-egghead-commerce](./triage-egghead-commerce.svx)
+- [Investigate joelclaw-core workspaces](./investigate-joelclaw-core-workspaces.svx) — 4 active, 4 shipped, Discord bridge confirmed deliberately abandoned; asset [triage-joelclaw-core](./triage-joelclaw-core.svx)
+- [Investigate media-video workspaces](./investigate-media-video-workspaces.svx) — 2 shipped, 4 blocked-on-Joel, voice thread interesting; asset [triage-media-video](./triage-media-video.svx)
+- [Investigate fleet-tooling workspaces](./investigate-fleet-tooling-workspaces.svx) — 5 shipped, 2 blocked (Effect v4, Panda review), 1Password fix interesting; asset [triage-fleet-tooling](./triage-fleet-tooling.svx)
+- [Synthesize the triage report and continuation prompts](./synthesize-report-and-continuation-prompts.svx) — report at [herdr-reboot-triage-report](./herdr-reboot-triage-report.svx); receipts stated, labels fixed, cleanup done
+
+## Latent
+
+- Whether a reboot-recovery playbook should become a standing skill or janitor feature (this effort is the manual prototype).
+
+## Out of scope
+
+- Actually resuming any of the interesting threads — that's what the continuation prompts hand to fresh sessions.
+- Fixing the underlying reboot fragility (owned by the resilience charter in w1R).

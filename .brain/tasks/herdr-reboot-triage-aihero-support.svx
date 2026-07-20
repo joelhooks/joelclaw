@@ -1,0 +1,23 @@
+---
+title: "Triage worker task — aihero-support workspaces"
+type: "asset"
+parent: "../projects/herdr-reboot-triage/investigate-aihero-support-workspaces.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Task: triage the AI Hero support workspace group
+
+Follow the shared method in the co-attached file. Your step file: `~/Code/joelhooks/joelclaw/.brain/projects/herdr-reboot-triage/investigate-aihero-support-workspaces.svx`. Your asset output: `~/Code/joelhooks/joelclaw/.brain/projects/herdr-reboot-triage/triage-aihero-support.svx`.
+
+## Your workspaces and panes
+
+- **w1E** "[aih] attribution skill" — w1E:p1 dead shell, label "🧭 steering: attribution skill proving", cwd `~/Code/badass-courses/aihero-support`
+- **w5** "[aih] SupportBench hard cases" — w5:p1 dead shell, label "✅ SupportBench: effort closed, $11.97 proving sweep"; w5:p12 pi idle "Forfochten Vlad", turn 72, NEEDS JOEL, janitor says worker changed files; session `~/.pi/agent/sessions/--Users-joel-Code-badass-courses-aihero-support--/2026-07-19T03-19-37-489Z_019f7862-ef11-7b26-ac4a-0ca1872bed73.jsonl`
+- **w12** "[aih] course sync" — w12:p1 dead shell, label "🔥 Course Sync Tracer", cwd aihero-support
+- **w19** "[aih] bot tokens" — w19:p1 pi idle "🔐 AI Hero Agent Tokens", turn 7, NEEDS JOEL, 2d quiet; session path via `herdr pane list`
+- **w1A** "[aih] slack work-state" — w1A:p1 pi idle "🔧 Slack Ingress Rebaseline", turn 28, NEEDS JOEL, 2d quiet
+- **w1P** "aihero-support" — w1P:p1 claude idle LIVE "🩺 Diagnosing rebooted automations" (read-only!); w1P:p8 dead shell "🔧 JOEL: install health-script fix (sudo)", cwd joelclaw
+- **w1S** "[aih] campaign pulse" — w1S:p1 claude idle LIVE "🩺 email course pulse check" (read-only!)
+
+Relevant repo for most: `~/Code/badass-courses/aihero-support` (check its `.brain/projects/` for SupportBench, attribution, course-sync, slack-work-state efforts).

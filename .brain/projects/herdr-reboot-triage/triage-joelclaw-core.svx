@@ -1,0 +1,86 @@
+---
+title: "Herdr reboot triage — joelclaw core workspaces"
+type: "asset"
+parent: "./investigate-joelclaw-core-workspaces.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Joelclaw core workspace triage
+
+## wB — [jc] memory cleanup
+
+**Verdict: ACTIVE**
+
+- `wB:p5` is still a coherent Claude session. It is idle at a prompt and was inspected read-only.
+- The pane recovered the observer family, drained the capture backlog, and replaced retired Typesense `runs_dev` checks with `~/.joelclaw/search/sessions.db`.
+- The work landed as joelclaw commit `2d34e1f0`. Current `origin/main` contains it, so the pane's "not pushed" recap is stale.
+- Resume evidence remains in `/Users/joel/.claude/projects/-Users-joel/b9dcf703-5f83-47d8-b6b3-be9e803a9336.jsonl`. Leave the attached session alone.
+
+## wY — Typesense Recovery
+
+**Verdict: ACTIVE**
+
+- `wY:p1` is a coherent live Claude session. Its latest read says the three-body container build completed and the maturin build reached its final step.
+- The two sudo panes are dead shells, but the live steering transcript supersedes their password labels: Joel entered both passwords before the reboot.
+- The durable step still says `status: "blocked"` in `.brain/projects/typesense-reboot-recovery/replicate-critical-db-to-nas.svx`. The brief has one uncommitted ledger line for that step.
+- Next in the live session: wait for both replica health checks, run the Flagg-off outage proof, close the replication step, then run its verifier. Session: `/Users/joel/.claude/projects/-Users-joel-Code-joelhooks-joelclaw/05a052f3-eb3b-43f6-a9dd-a1dad3675850.jsonl`.
+
+## w9 — joelclaw wiki/brain
+
+**Verdict: SHIPPED**
+
+- The parent Claude wiki session ended with its workers idle and its lanes committed. Session: `/Users/joel/.claude/projects/-Users-joel-Code-joelhooks/4d1247b0-75d2-400c-a231-34a5655fb8b8.jsonl`.
+- `🎥 Bugle Mux Primary` shipped as `c2b8b4b`; `📰 Bugle Handoff Chip` shipped as `4496cad`; graph, map, and verdict lanes shipped as `dab3193`, `ab69ff7`, and `3d8ba61`.
+- The session verified the work live at `https://brain.joelclaw.com` and reported 154 tests, type-check, and build green for its final lane.
+- `joelclaw-wiki` is dirty now: 20 modified and 3 untracked files. The shared-worktree transcript explicitly left sibling-session work untouched, and no named w9 lane has an uncommitted handoff. The unlabeled shells and `Claude Bleeding Repair` cannot be safely tied to a remaining diff.
+
+## wJ — Brain Graph tickets
+
+**Verdict: SHIPPED**
+
+- The steering thread finished the work named in the pane label: graph v3 reduced orphan rate from 79.49% to 34.78% in `a9f4f9d`.
+- Ranking and the Typesense bench landed in `f559287`; the node-id bridge landed in `725a158`. The earlier baseline lives in wiki commit `29ad9c7` and joelclaw Brain commit `7e7429ef`.
+- The session later verified the graph walk and Brain page renderer by page content, not only HTTP status.
+- Transcript: `/Users/joel/.claude/projects/-Users-joel/a338ca4f-d128-425c-bf28-14770f55b2ab.jsonl`. The broader Brain Graph brief remains active, but this workspace's orphan, ranking, and bench sprint is complete.
+
+## w1N — [jc] fleet maintenance
+
+**Verdict: SHIPPED**
+
+- The steering session says the maintenance night finished, all receipts were committed and pushed, and worker panes were swept.
+- Verified joelclaw fixes include `815f4707` for postboot authority and NAS checks, plus `22da7c94` for truthful backup and replay receipts.
+- The run stopped one 151-CPU-hour orphan, removed 117 dead pi-notes hosts, and replayed 4,596 outbox envelopes with zero reported loss.
+- Transcript: `/Users/joel/.claude/projects/-Users-joel/3d12a2e9-f42f-4d28-b93a-674f5a5b3a38.jsonl`. The remaining watchdog and backup-policy items were chartered as separate follow-ups, not interrupted work.
+
+## w11 — Telegram signal (stable)
+
+**Verdict: SHIPPED**
+
+- The pane label is stale. The transcript proves the reminder reached Telegram after the policy allowed producer `signal/reminder`.
+- Snooze wiring shipped in `e8898b29`; reminder delivery policy shipped in `0abfa5c2`; digest HTML formatting shipped in `3aecd364`.
+- The final session message says the old reminder watcher was superseded, formatting was deployed, and no work remained in this thread.
+- Transcript: `/Users/joel/.claude/projects/-Users-joel/792da67b-b3b5-4e3b-8a48-29bfc70299a2.jsonl`.
+
+## wV — Herdr Discord bridge — killed after e2e
+
+**Verdict: ABANDONED**
+
+- The component commits are real: `62b109c` built the 16-test Discord bridge, and `e93bdee` added `workspace_title` to the live herdr relay.
+- The product effort was deliberately killed after overnight live use. Constant status notifications buried the rare actionable approval prompt.
+- Commit `09f97de` records the verdict. The bridge process stopped, 19 owned channels plus its category were deleted, and its ownership state was removed.
+- `herdr.joelclaw.com` and the relay-title improvement remain live. The bridge code stays only for parts salvage and is unpushed. Transcript: `/Users/joel/.claude/projects/-Users-joel/94edc5cd-34b5-4265-b0cf-4f65ef2ceefc.jsonl`.
+
+## w1R — [jc] resilience charter
+
+**Verdict: ACTIVE**
+
+- Recorded as active per the triage task. This workspace was excluded from deep inspection.
+- Herdr still shows the resilience workspace and its Claude pane. Leave it alone.
+
+## w1T — Herdr reboot triage
+
+**Verdict: ACTIVE**
+
+- This is the current triage workspace. Its steering pane and five worker panes are attached.
+- It owns this report effort. Leave it alone until synthesis and janitor cleanup complete.

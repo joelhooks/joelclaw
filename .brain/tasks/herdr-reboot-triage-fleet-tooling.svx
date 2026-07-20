@@ -1,0 +1,25 @@
+---
+title: "Triage worker task — fleet/tooling workspaces"
+type: "asset"
+parent: "../projects/herdr-reboot-triage/investigate-fleet-tooling-workspaces.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Task: triage the fleet / tooling workspace group
+
+Follow the shared method in the co-attached file. Your step file: `~/Code/joelhooks/joelclaw/.brain/projects/herdr-reboot-triage/investigate-fleet-tooling-workspaces.svx`. Your asset output: `~/Code/joelhooks/joelclaw/.brain/projects/herdr-reboot-triage/triage-fleet-tooling.svx`.
+
+## Your workspaces and panes
+
+- **w13** "[jc] slack cli (bespoke)" — w13:p1 dead "🐀 ShitRat push — steering" (cwd aihero-support); w13:p6 pi idle "Forfochten Jason" (cwd `~`), session `~/.pi/agent/sessions/--Users-joel-Code-joelhooks-shitrat-cli-push--/2026-07-17T17-23-02-119Z_019f711a-6167-7ee5-95fd-b1e2ac888840.jsonl`
+- **w0** "[jc] herdr guidance" — w0:p1 pi idle "🐑 Herdr Fleet Guidance", turn 58, 2d quiet, NEEDS JOEL, session `~/.pi/agent/sessions/--Users-joel-Code-badass-courses-aihero-support--/2026-07-17T18-29-47-963Z_019f7157-813b-7cca-a012-be286cf7a229.jsonl`
+- **w15** "Fleet stack defaults" — w15:p1 dead "Befuddled Gilt" (`~`). Fleet stack defaults shipped to dark-wizard STACK.md recently — verify and likely SHIPPED.
+- **w1H** "Effect fleet" — w1H:p1 pi idle "⚡ Effect v4 Fleet Bump", turn 125 (big session!), NEEDS JOEL, 2d quiet, session `~/.pi/agent/sessions/` (path via `herdr pane list`)
+- **w1K** "[dw] Panda report ready" — w1K:p1 pi idle "Serene Adora", turn 4, 1d quiet
+- **w1M** "[dw] Flagg GPT default" — w1M:p1 pi idle "🔧 Flagg GPT Default" turn 5; w1M:p2 pi idle "🩺 JoelClaw Systems Check" turn 14, both 1d quiet, cwd aihero-support
+- **wT** "~" — wT:p1 dead "🛠️ Fleet To Spec Migration" (`~`)
+- **wX** "~" — wX:p1 dead "🔐 Pi 1Password Noise" (`~`)
+- **w17** covered by another worker; skip.
+
+Fleet-shared efforts may have briefs in `~/Code/joelhooks/dark-wizard/.brain/projects/` — check there for the [dw] workspaces.

@@ -1,0 +1,22 @@
+---
+title: "Synthesize the triage report and continuation prompts"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "closed"
+closed_at: "2026-07-20"
+assignee: "claude (flagg, herdr pane w1T:p1, 2026-07-20)"
+parent: "./herdr-reboot-triage-brief.svx"
+blockers: ["./investigate-aihero-support-workspaces.svx", "./investigate-egghead-commerce-workspaces.svx", "./investigate-joelclaw-core-workspaces.svx", "./investigate-media-video-workspaces.svx", "./investigate-fleet-tooling-workspaces.svx"]
+created_at: "2026-07-20"
+---
+
+# Synthesize the triage report and continuation prompts
+
+## Step
+
+Resolved when: the five triage assets are merged into one report (./herdr-reboot-triage-report.svx) with per-workspace verdicts and continuation prompts, harvest receipts are stated for SHIPPED/ABANDONED panes, lying labels are renamed, and the brief's ledger reflects all closed steps.
+
+## Result (2026-07-20)
+
+Report written at [herdr-reboot-triage-report.svx](./herdr-reboot-triage-report.svx): 37 workspaces — 15 SHIPPED, 11 BLOCKED-ON-JOEL, 6 ACTIVE, 4 INTERESTING, 1 ABANDONED. Four inline continuation prompts for the interesting threads (egghead commerce harvest, provisioning prototype, voice judge/telemetry, 1Password fix); eleven decision items each pointing at its full prompt in the group assets. Harvest receipts stated for all SHIPPED/ABANDONED panes; w11:p1 label corrected; worker panes closed; janitor sweep requested.
