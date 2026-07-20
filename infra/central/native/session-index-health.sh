@@ -191,21 +191,41 @@ recover() {
     return 1
   fi
 
-  log "recovering Inngest and host worker (reason=${reason})"
-  inngest_recovered=0
-  worker_recovered=0
-  launchctl kickstart -k system/com.joelclaw.central.inngest || inngest_recovered=$?
-  uid="$(id -u joel 2>/dev/null || true)"
-  if [ -n "${uid}" ]; then
-    launchctl kickstart -k "gui/${uid}/com.joel.system-bus-worker" 2>/dev/null || worker_recovered=$?
-  else
-    worker_recovered=1
+  # Restart only the failing target. worker_unavailable and index_lag_exceeded
+  # implicate the host worker, never the event server; unscoped recovery killed
+  # healthy Inngest 54 times after the 2026-07-19 reboot.
+  restart_inngest=0
+  restart_worker=0
+  case "${reason}" in
+    inngest_unavailable) restart_inngest=1 ;;
+    *) restart_worker=1 ;;
+  esac
+
+  # kickstart -k is destructive, so the cooldown starts when the attempt starts.
+  # Evaluating success first is what produced the 07-19 restart storm: the
+  # worker kick kept failing, the cooldown never advanced, and every 60s pass
+  # killed Inngest again.
+  write_number "${LAST_RECOVERY_FILE}" "${now}"
+
+  inngest_rc=0
+  worker_rc=0
+  if [ "${restart_inngest}" -eq 1 ]; then
+    log "recovering Inngest (reason=${reason})"
+    launchctl kickstart -k system/com.joelclaw.central.inngest || inngest_rc=$?
   fi
-  if [ "${inngest_recovered}" -ne 0 ] || [ "${worker_recovered}" -ne 0 ]; then
-    log "recovery failed inngest=${inngest_recovered} worker=${worker_recovered}"
+  if [ "${restart_worker}" -eq 1 ]; then
+    log "recovering host worker (reason=${reason})"
+    uid="$(id -u joel 2>/dev/null || true)"
+    if [ -n "${uid}" ]; then
+      launchctl kickstart -k "gui/${uid}/com.joel.system-bus-worker" 2>/dev/null || worker_rc=$?
+    else
+      worker_rc=1
+    fi
+  fi
+  if [ "${inngest_rc}" -ne 0 ] || [ "${worker_rc}" -ne 0 ]; then
+    log "recovery attempt incomplete inngest=${inngest_rc} worker=${worker_rc} (cooldown stamped, retry after ${RECOVERY_COOLDOWN_SECONDS}s)"
     return 1
   fi
-  write_number "${LAST_RECOVERY_FILE}" "${now}"
   write_number "${FAILURE_FILE}" 0
   return 0
 }
