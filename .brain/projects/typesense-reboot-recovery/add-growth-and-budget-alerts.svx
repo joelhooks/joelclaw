@@ -3,8 +3,7 @@ title: "Add Cumulative-Prefix Growth and Startup-Budget Alerts"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "closed"
-closed_at: "2026-07-20"
+status: "open"
 assignee: "pi (flagg, herdr pane wY:p1R, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./patch-capture-and-replay.svx"]
@@ -22,6 +21,12 @@ Make recurrence loud. Resolved when:
 3. Health output includes search freshness and source provenance (finish-line condition 5).
 4. Alerts reach Joel through the messaging contract (`joelclaw notify send` / gateway), not a log nobody reads.
 
+Added 2026-07-20 after adversarial verification:
+
+5. One incident, one alert: growth alerts deduplicate per source incident with an explicit recovery/quiet-period reset — never per Run-ID pair.
+6. The budget tracks the collection, not just the process: a `typesense:runs_dev`-level target whose outage clock clears only when the projection query itself succeeds; `TYPESENSE_STARTUP_BUDGET_MS` parses as a complete safe integer or falls back — partial numeric garbage rejected.
+7. `/api/runs/health` reports monitor failure in its top-level status, with route-level fixtures for fresh, stale, empty, outage, and store-error shapes. The ledger policy (2,048 segments/source, one key per active source, 90-day idle expiry) is stated in the Result.
+
 ## Result (2026-07-20)
 
 Closed with two host-worker Inngest checks and fixture tests.
@@ -32,3 +37,7 @@ Closed with two host-worker Inngest checks and fixture tests.
 - `/api/runs/health` now includes the persisted startup-budget state plus session-search freshness and raw Run provenance: engine, index, Run ID, source identity, byte range, JSONL hash, and JSONL path. A current outage or a health snapshot older than two minutes marks the persisted search result stale.
 
 Verification: 18 focused Bun tests pass, including interrupted-delivery and reverse-order replay fixtures; targeted Biome passes; `bunx tsc --noEmit -p packages/system-bus/tsconfig.json` passes. No live alerts, Typesense writes, raw Run mutations, worker restart, deploy, or commit occurred.
+
+## Verification (2026-07-20)
+
+Adversarial verification ([receipts](./alerts-verification.svx)) confirmed the July 19 signature fires, patched-path false positives stay quiet, delivery argv parses, and registrations coexist — but **refuted the close**: dedup per Run-ID pair lets one incident alert on every new ingest; the budget monitor clears its outage clock on process health while `runs_dev` is still 503 (today's exact failure would pass silently); `/api/runs/health` returns `ok: true` on monitor error; `parseInt` accepts partial garbage. Step reopened with conditions 5–7; worker re-engaged in the same pane.

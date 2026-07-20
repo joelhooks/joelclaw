@@ -1,0 +1,142 @@
+---
+title: "Growth and startup-budget alert verification"
+type: "asset"
+parent: "./add-growth-and-budget-alerts.svx"
+created_at: "2026-07-20"
+privacy: "private"
+verdict: "refuted"
+---
+
+# Growth and startup-budget alert verification
+
+## Verdict
+
+**REFUTED.** The capture-growth detector catches the July 19 geometry, and the patched happy paths stay quiet. The startup monitor does not prove the required collection rebuild budget. It budgets Typesense process health only. Capture deduplication is also per Run-ID pair, so one cumulative-growth incident can alert again on every new Run.
+
+No live alert was sent. No live Typesense mutation, Redis write, Run mutation, worker restart, or commit occurred.
+
+## Claims
+
+### 1. July 19 cumulative-prefix recurrence is loud — CONFIRMED
+
+A read-only manifest sample supplied the real July 19 pair:
+
+| Field | Prefix Run | Covering Run |
+| --- | --- | --- |
+| Run ID | `0000519d27904d5da53a3a6439` | `0057b61d8219484fa4373e9433` |
+| Source identity | `8fedaa242b43f207531ce49f113c08897be82c61fc708404aab3af7e26aa52fd` | same |
+| Stored range | `[0, 25153)` | `[0, 44587)` |
+| SHA-256 | `c6b565e7df8e00c463eaca944379c588010a232c2315f9c1275f94af1bbb615d` | `5ffa27c5aee73a5a6bf85fcdd1dfe3690a1098810634599725fd98689fe59b3e` |
+
+Source: `~/.joelclaw/analysis/run-manifest-2026-07-19.jsonl`. The manifest already records the first body as a strict byte prefix of the second.
+
+A fixture replay through `processCaptureGrowth` produced one finding with `overlapBytes: 25153` and one notifier call. The detector uses half-open overlap math at `packages/system-bus/src/lib/search-maintenance.ts:100-115`.
+
+### 2. Patched-path false positives stay quiet — CONFIRMED
+
+Two fixtures stayed quiet:
+
+1. Same-Run growth matching `accepted_prefix`: `[0, 25153)` followed by `[0, 44587)` under one Run ID.
+2. A suffix Run with `parent_run_id` and adjacent range `[25153, 44587)` after `[0, 25153)`.
+
+The first is ignored because the detector rejects equal Run IDs. The second is ignored because adjacent half-open ranges have zero overlap. The API emits `accepted_prefix` under the stored Run ID at `packages/system-bus/src/routes/run-capture.ts:171-205`.
+
+The detector does not inspect `parent_run_id`; it does not need that field to distinguish adjacency from overlap. A parented suffix that actually overlaps still alerts, which is correct for the stated byte-range contract.
+
+### 3. Alert discipline and bounded ledger — REFUTED
+
+The ledger is mechanically bounded **per source**:
+
+- maximum `2,048` segments per source;
+- `90`-day TTL on each ledger write;
+- `4,600` fixture sources produced `4,600` independent keys, each with the TTL.
+
+Evidence: `packages/system-bus/src/inngest/functions/typesense-recovery-alerts.ts:20-26,115-117`.
+
+There is no global key cap. Active conversations refresh their TTL. The eviction story is time-based expiry after 90 idle days, not a global least-recently-used policy.
+
+More importantly, alert deduplication is per Run-ID pair. The alert ID includes both Run IDs at `packages/system-bus/src/lib/search-maintenance.ts:293-300`. A fixture with A `[0,100)`, B `[0,200)`, and C `[0,300)` emitted alerts for B and C. A continued recurrence can therefore create a new hard alert on every ingest. This fails the requested no-storm condition.
+
+### 4. Delivery command exists and parses — CONFIRMED
+
+The current CLI defines:
+
+- `notify send --kind alert --priority high --source <source> --event-id <uuid> <message>`;
+- `notify wait <event-id> --source <source> --timeout 15s`.
+
+Definitions: `packages/cli/src/commands/notify.ts:54-120,195-259`.
+
+Two fixture-only parser runs used the implementation's argument order. `notify send` reached the deliberate `INVALID_JSON` stop, and `notify wait` reached the deliberate `INVALID_TIMEOUT` stop. This proves argv parsing without dispatching a message.
+
+`sendHardAlert` also requires a matching event ID, `deliveryState: "confirmed"`, and a non-empty platform message ID at `packages/system-bus/src/lib/search-maintenance.ts:303-347`. Its mocked command test passed. No real notification ran.
+
+### 5. Startup rebuild budget is loud and well configured — REFUTED
+
+The process-level state machine works. A fixture proved:
+
+`503` → still below budget → `503` at budget → one alert → later `503` with no second alert → `200` → state cleared.
+
+That does **not** satisfy the collection rebuild claim. The implementation probes only `/health` at `packages/system-bus/src/inngest/functions/typesense-recovery-alerts.ts:184-207` and hardcodes `typesense:process` at lines `149-152`. It reads the `runs_dev` projection only after process health is true at lines `167-171`.
+
+A counter-fixture started with an active outage, returned process health `200`, then made the `runs_dev` query return `503`. `processStartupBudget` deleted the outage state, threw the projection error, and sent no alert. A process that reports ready while `runs_dev` remains unavailable can therefore exceed the collection budget silently.
+
+Configuration parsing is also too permissive. `Number.parseInt` at lines `27-33` produced:
+
+| Input | Effective budget |
+| --- | ---: |
+| `garbage` | `900000` ms |
+| `120000oops` | `120000` ms |
+| `30000` | `60000` ms |
+| `120000` | `120000` ms |
+
+A partly numeric garbage value is accepted instead of falling back or failing closed.
+
+### 6. Function registration coexists with message-event work — CONFIRMED
+
+Both alert functions and the unrelated `messageEventConsumer` coexist in:
+
+- `packages/system-bus/src/inngest/functions/index.host.ts:85,125-126,237,255-256`;
+- `packages/system-bus/src/inngest/functions/index.ts:92,146-147`.
+
+`bunx tsc --noEmit -p packages/system-bus/tsconfig.json` passed with the combined uncommitted tree. Targeted Biome also passed for the changed system-bus files.
+
+### 7. `/api/runs/health` is truthful — REFUTED
+
+The helper's fresh fixture includes the required fields:
+
+- freshness: `observedAt`, `latestSourceAt`, `ageMs`, `reportedAt`, `observationAgeMs`, and `stale`;
+- provenance: engine, index, source of truth, Run ID, source identity, byte range, JSONL hash, and JSONL path.
+
+The fixture read back those values and correctly marked the sample fresh.
+
+The route itself is misleading on monitor failure. `packages/system-bus/src/serve.ts:282-296` catches a Redis/helper error into `recovery.error` but still returns top-level `ok: true`. It also has no route-level fixture for fresh, stale, empty, outage, or store-error shapes. The helper is truthful on its success path; the HTTP health contract is not truthful on its error path.
+
+## Verification receipts
+
+```text
+bun test /tmp/typesense-alert-adversarial.test.ts
+8 pass, 0 fail, 20 assertions
+
+bun test \
+  packages/system-bus/src/inngest/functions/typesense-recovery-alerts.test.ts \
+  packages/system-bus/src/lib/search-maintenance.test.ts \
+  packages/system-bus/src/routes/run-capture.test.ts \
+  scripts/lib/capture-outbox-replay.test.ts
+26 pass, 0 fail, 89 assertions
+
+bunx tsc --noEmit -p packages/system-bus/tsconfig.json
+exit 0
+
+pnpm biome check <eight changed system-bus files>
+Checked 8 files. No fixes applied.
+```
+
+The temporary adversarial suite covered the real manifest pair, same-Run `accepted_prefix`, an adjacent parented suffix, alert storms, ledger cap and TTL, 4,600 source keys, the process-health/collection-failure counterexample, the outage lifecycle, and health provenance.
+
+## Required rework before closing the finish line
+
+1. Track a collection-level target such as `typesense:runs_dev`. Do not clear its outage clock until its projection query succeeds.
+2. Deduplicate capture alerts by source incident, with an explicit recovery or quiet-period reset. Do not key only by Run pair.
+3. Parse `TYPESENSE_STARTUP_BUDGET_MS` as a complete safe integer string. Reject partial numeric garbage.
+4. Make `/api/runs/health` report monitor failure in its top-level status, and add route fixtures.
+5. State the ledger policy plainly: 2,048 segments per source, one key per active source, and 90-day idle expiry. Add a global cap only if that key count is not acceptable.
