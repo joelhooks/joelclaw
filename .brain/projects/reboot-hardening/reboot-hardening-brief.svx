@@ -39,6 +39,7 @@ After any reboot of flagg, within 15 minutes: Inngest is up, the dispatcher can 
 - [Fix the dispatcher pane-viability fallback](./fix-dispatcher-pane-viability.svx) — 40x10 floor + only-burn-on-success + 3-attempt latch; commit 2e456f98 promoted; proven live by the 15:20Z daily-flow spawn at 54x23.
 - [Add the wake-registry late-fire reconciler](./add-wake-registry-reconciler.svx) — pane/schedule.reconcile (cron */5 + startup); commit d1a37e89; drained de16dde1 live at 15:30:42Z after a manual re-registration (dead-binding via purge-window outage).
 - [Late-fire the backlog and revive both chains](./late-fire-backlog-and-revive-chains.svx) — pulse chain self-sustaining again (successor armed 16:00Z), daily-flow audited late + tomorrow armed, registry drained to zero overdue.
+- [Fix the session-index-health recovery transaction](./fix-session-index-health-recovery.svx) — scoped per-target kicks + cooldown stamped at attempt time; e40dd493 installed; hours of healthy passes, zero storms.
 
 ## Latent
 

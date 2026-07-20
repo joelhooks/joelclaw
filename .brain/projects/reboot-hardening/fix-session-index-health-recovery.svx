@@ -3,7 +3,8 @@ title: "Fix the session-index-health Recovery Transaction"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "claude (flagg, herdr pane w1P:p1, 2026-07-20)"
 parent: "./reboot-hardening-brief.svx"
 blockers: []
@@ -15,3 +16,7 @@ created_at: "2026-07-20"
 ## Step
 
 `session-index-health`'s `recover()` force-restarts Inngest (`launchctl kickstart -k`), then the GUI worker, and advances `last-recovery-epoch` only if both succeed — so a failing worker kick (exit 125/113 in the 2026-07-19/20 storms) leaves the cooldown expired and kills healthy Inngest every 60-second pass. 54 forced replacements post-reboot; evidence in [the boot timeline asset](./asset-inngest-boot-timeline.svx). Two fixes: (1) make the recovery transactional per target — advance the cooldown after ANY forced restart happens, and track worker-kick failure separately instead of retrying the whole pair; (2) scope triggers — `worker_unavailable` and `index_lag_exceeded` point at the worker/indexer and must not restart the event server. Resolved when a simulated worker-kick failure produces exactly one Inngest restart per cooldown window (not per pass) and an index-lag condition restarts only the worker.
+
+## Result (2026-07-20)
+
+Fixed in `infra/central/native/session-index-health.sh` (commit `e40dd493`): recovery scoped per target — only `inngest_unavailable` may kick the event server; `worker_unavailable`/`index_lag_exceeded` kick the worker alone — and the cooldown stamps at attempt time because `kickstart -k` is destructive the moment it runs. Test harness rewritten to the new doctrine (scoped kicks, stamped-cooldown-on-failure, inngest-only case); all pass. Joel installed via `install-session-index-health.sh` (sudo); deployed script verified byte-identical to the repo; ~3 hours of live passes show `healthy lag=0s` with zero recovery attempts. Bonus finding recorded on the purge step: this minter was the mass-poison source — bounces mint envID-less queue items.

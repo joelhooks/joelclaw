@@ -11,8 +11,8 @@ date: "2026-07-20"
 - Installed binary: `1.27.0-781c91d3c`
 - Pinned source: `inngest/inngest@v1.27.0` / `781c91d3c5c21852e84ee575d6d36b1ad9dcde1a`
 - Redis: `redis://127.0.0.1:6379`
-- Redis `LASTSAVE`: `1784561100`
-- Queue items scanned: **1867**
+- Redis `LASTSAVE`: `1784572117`
+- Queue items scanned: **2312**
 - Selected items: **597**
 - Expected items: **595**
 - Authorization condition met: **no**
@@ -33,7 +33,7 @@ date: "2026-07-20"
 {
   "tool": "inngest-v127-purge",
   "mode": "dry-run",
-  "generatedAt": "2026-07-20T15:25:32.053Z",
+  "generatedAt": "2026-07-20T18:29:08.839Z",
   "inngest": {
     "expectedVersion": "1.27.0",
     "installedVersion": "1.27.0-781c91d3c",
@@ -43,8 +43,8 @@ date: "2026-07-20"
   },
   "redis": {
     "url": "redis://127.0.0.1:6379",
-    "lastSave": 1784561100,
-    "queueItemCount": 1867
+    "lastSave": 1784572117,
+    "queueItemCount": 2312
   },
   "selection": {
     "expectedCount": 595,
@@ -135,6 +135,16 @@ date: "2026-07-20"
       "atMS": 1784340600000,
       "envID": "00000000-0000-0000-0000-000000000000",
       "backlogKey": "{queue}:backlog:sorted:fn:155f899f-3c23-5c49-a142-649c64764b70"
+    },
+    {
+      "jobID": "11ajfq8bg0hsj",
+      "functionID": "8f5e3d9e-e60b-5a49-8762-5127ee2597e7",
+      "functionPrefix": "8f5e3d9e",
+      "runID": "01KY02BY72SCJA5MB5Q9CDRM15",
+      "kind": "start",
+      "atMS": 1784561400000,
+      "envID": "00000000-0000-0000-0000-000000000000",
+      "backlogKey": "{queue}:backlog:sorted:fn:8f5e3d9e-e60b-5a49-8762-5127ee2597e7"
     },
     {
       "jobID": "11b4gxz8bxvka",
@@ -3335,16 +3345,6 @@ date: "2026-07-20"
       "atMS": 1784511120000,
       "envID": "00000000-0000-0000-0000-000000000000",
       "backlogKey": "{queue}:backlog:sorted:fn:6489b63e-41e8-5b9d-a3cc-0f9d58817a82"
-    },
-    {
-      "jobID": "31r50io76t2eb",
-      "functionID": "8f5e3d9e-e60b-5a49-8762-5127ee2597e7",
-      "functionPrefix": "8f5e3d9e",
-      "runID": "00000000000000000000000000",
-      "kind": "cron",
-      "atMS": 1784561399995,
-      "envID": "00000000-0000-0000-0000-000000000000",
-      "backlogKey": "{queue}:backlog:sorted:fn:8f5e3d9e-e60b-5a49-8762-5127ee2597e7"
     },
     {
       "jobID": "31tlzycvzpbfs",
