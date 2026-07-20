@@ -3,7 +3,8 @@ title: "Patch the Capture Client and Make Replay Canonical"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-19"
 assignee: "pi (flagg, herdr pane wY:p1K, 2026-07-19)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: []
@@ -24,4 +25,27 @@ Stop the abuse at the source. Resolved when:
 
 Containment holds throughout: no replay against real backlogs, raw JSONL untouched, current Typesense process left alone.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-19)
+
+Implemented the capture and replay guardrails without touching a live backlog, `~/.joelclaw/runs-dev`, or the running Typesense process.
+
+### Changes
+
+- `packages/pi-extensions/memory-capture/index.ts`, `scripts/joelclaw-capture-session.ts`, and `scripts/joelclaw-capture-codex-session.js` now send byte-accurate `from_offset`, `to_offset`, `jsonl_sha256`, and hashed `source_identity` fields.
+- The three capture clients derive one deterministic pending filename from `source_identity + stale offset`. Later failures overwrite that pending segment and retain its Run ID instead of creating cumulative Runs under new IDs.
+- `packages/system-bus/src/serve.ts` validates the segment range, hash, and source identity. It persists the provenance in raw metadata and forwards it through `memory/run.captured`.
+- `packages/memory/src/nas.ts` makes same-Run/same-bytes delivery idempotent and rejects same-Run/different-bytes delivery. Raw Run JSONL is no longer overwritten by redelivery.
+- `packages/memory/src/types.ts`, `packages/memory/src/schemas/runs.ts`, `packages/system-bus/src/inngest/client.ts`, and `packages/system-bus/src/inngest/functions/memory/run-captured.ts` carry the provenance into the Run projection.
+- `scripts/lib/capture-outbox-replay.ts` validates the new envelope, groups new captures by source identity and stale cursor, and updates offsets and hashes when it trims a captured prefix. `scripts/replay-capture-outbox.ts` catalogs the new grouping fields.
+- `scripts/agent-session-audit-backup.ts` no longer contains a replay implementation. Legacy replay flags fail closed and point to `scripts/replay-capture-outbox.ts`.
+- `scripts/joelclaw-capture-session.test.ts`, `scripts/lib/capture-outbox-replay.test.ts`, and `packages/memory/__tests__/nas.test.ts` cover actual stale-cursor coalescing, prefix-aware grouping and suffix derivation, and idempotent same-Run redelivery with divergent-byte rejection.
+
+### Validation
+
+- `bun test scripts/joelclaw-capture-session.test.ts scripts/lib/capture-outbox-replay.test.ts` — 11 passed.
+- `packages/memory/node_modules/.bin/vitest run packages/memory/__tests__/nas.test.ts` — 2 passed.
+- `bunx tsc --noEmit --pretty false` — passed.
+- Targeted `pnpm biome check` over all 15 changed code/test files — passed.
+- `pnpm biome check packages/ apps/` — blocked by 56 unrelated pre-existing import-order diagnostics in `apps/web/**` and `packages/world-restate/**`; this patch added no targeted Biome diagnostics.
+- `git diff --check` — passed.
+- A fixture-only legacy-flag check proved `agent-session-audit-backup.ts --replay-outbox` fails closed before host or backlog work.

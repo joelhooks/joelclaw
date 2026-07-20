@@ -6,7 +6,7 @@ interaction: "HITL"
 status: "open"
 assignee: ""
 parent: "./typesense-reboot-recovery-brief.svx"
-blockers: ["./implement-availability-shape.svx", "./add-growth-and-budget-alerts.svx"]
+blockers: ["./replicate-critical-db-to-nas.svx", "./add-growth-and-budget-alerts.svx", "./review-cutover-and-retire-inflated-collection.svx"]
 created_at: "2026-07-19"
 ---
 

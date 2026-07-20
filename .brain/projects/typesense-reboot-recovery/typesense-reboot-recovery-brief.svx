@@ -13,7 +13,7 @@ privacy: "private"
 The effort ends when all of these hold, on existing tailnet hardware only (flagg, panda, and the two NAS machines — no new nodes, no cloud):
 
 1. The capture abuse is stopped. Captures carry `from_offset`, `to_offset`, `jsonl_sha256`, and deterministic source identity. A stale cursor coalesces one pending outbox segment instead of growing cumulative bodies. `scripts/lib/capture-outbox-replay.ts` is the only replay implementation.
-2. The inflated `run_chunks_dev` collection is replaced by a validated compacted collection. Raw Run JSONL stays immutable and untouched.
+2. The inflated `run_chunks_dev` collection is replaced by a validated compacted session index. Raw Run JSONL stays immutable and untouched.
 3. Critical operator search succeeds before, during, and after a Flagg reboot, and never waits on the session index.
 4. The session index has a measured minutes-scale startup ceiling, with working raw fallback while it rebuilds.
 5. Maintenance is enforced, not hoped for: a hard alert fires on cumulative-prefix growth and on collection startup budget, and health output shows search freshness and source provenance.
@@ -24,10 +24,12 @@ The effort ends when all of these hold, on existing tailnet hardware only (flagg
 - **prefix Run** — a Run whose bytes are entirely a prefix of a later Run from the same conversation; redundant by proof, not by guess.
 - **canonical replay path** — `scripts/lib/capture-outbox-replay.ts`; after this effort, the only allowed outbox replay implementation.
 - **inflated collection** — the current `run_chunks_dev`: ~4.6M projected chunks, ~90% proven redundant.
-- **compacted collection** — the replacement collection built from non-redundant Runs via the manifest.
-- **critical search** — the bounded operator-search projection that must survive a Flagg reboot; distinct from session search.
-- **session index** — the bounded session-search index (successor to `run_chunks_dev`); allowed to rebuild after restart if raw fallback covers the gap.
-- **tailnet resources** — flagg, panda, and the two NAS machines; the entire hardware budget for any availability shape.
+- **critical projection** — the bounded critical set (observations, memory recall, knowledge/vault, operational lookups) in one SQLite FTS5 database; flagg writes, both NAS boxes serve read-only replicas.
+- **critical db** — the `critical.db` file holding the critical projection; replication is file replication.
+- **session index** — the full-transcript SQLite FTS5 index on flagg, built from the manifest keep-set (successor to `run_chunks_dev`); non-critical, ripgrep over raw JSONL as last-ditch fallback.
+- **observer layer** — distilled session observations with Run-ID backlinks; tier 1 of session search, rides in the critical projection.
+- **ordered fallback** — clients walk flagg → NAS-A → NAS-B; read-only replicas, no quorum, no leader election.
+- **tailnet resources** — flagg and the two NAS machines (soon physically separated); panda is decommissioning and is not a host target.
 
 ## Notes
 
@@ -36,16 +38,20 @@ The effort ends when all of these hold, on existing tailnet hardware only (flagg
 - **Execution authorized** (Joel, 2026-07-19): "I want this done right regardless of the brief." Task steps build; grilling steps still gate the cutover and the availability shape.
 - Fan-out runs as herdr pi workers, ultracode-style — implementer plus adversarial verifier on risky steps (Joel, 2026-07-19).
 - Standing containment calls (from the diagnosis, 2026-07-19): never run the generic `agent-session-audit-backup.ts --replay-outbox` against backlogs; keep the currently-recovering Typesense process running until an explicit recovery decision; raw Run JSONL is immutable source of truth.
+- Panda is being decommissioned and rebuilt; k8s is on the way out (Joel, 2026-07-19). No new services target panda.
 
 ## Decision ledger
 
 - [Typesense reboot recovery diagnosis](./diagnosis.svx) — restart index rebuild is documented Typesense behavior; the catastrophe came from replay inflating `run_chunks_dev` with ~90% redundant prefix copies; committed a99aa938.
+- [Build the Run Manifest](./build-run-manifest.svx) — byte proof keeps 134,013 Runs and skips 14,010 prefix or exact copies totaling 24,853,552,678 bytes; 19 legacy Runs without conversation IDs stay separate via deterministic Run-ID fallbacks; receipts in [Run manifest summary](./run-manifest-summary.svx).
+- [Patch the Capture Client and Make Replay Canonical](./patch-capture-and-replay.svx) — capture envelopes now carry byte ranges, hashes, and deterministic source identity; stale cursors coalesce under one Run ID; raw Run writes reject divergent redelivery; the audit script no longer owns replay.
+- [Decide the Availability Shape Within Tailnet Resources](./decide-availability-shape.svx) — SQLite locked in: critical projection in a replicated FTS5 `critical.db` (flagg writes, both NAS boxes read-only, ordered fallback); session search two-tier (observer layer + flagg-local FTS5 from the manifest keep-set); Typesense demoted to flagg-only non-critical collections; 3-node cluster rejected.
+- [Implement the Chosen Availability Shape](./implement-availability-shape.svx) — closed unworked; superseded by the split into [Port Critical Search to SQLite](./port-critical-search-to-sqlite.svx) and [Replicate the Critical DB to Both NAS Boxes](./replicate-critical-db-to-nas.svx).
 
 ## Latent
 
-- A search engine with durable on-disk indexes — only if the bounded Typesense split still misses the restart budget after compaction.
-- What "critical search" must contain, exactly, as a bounded document set — sharpens inside the availability-shape grilling.
-- Startup-ceiling measurement methodology for the session index — sharpens once the compacted collection exists.
+- Off-site sync of raw `~/.joelclaw/runs-dev` to the physically-separated NAS — the raw source of truth lives on one disk in one building today; should ride the same replication train as the critical db (surfaced in the availability grilling, 2026-07-19).
+- Exact contents and refresh cadence of "operational lookups" (otel/queue state) in the critical projection — sharpens during the SQLite port.
 
 ## Out of scope
 

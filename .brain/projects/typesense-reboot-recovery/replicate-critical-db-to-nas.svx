@@ -1,0 +1,24 @@
+---
+title: "Replicate the Critical DB to Both NAS Boxes"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: ["./port-critical-search-to-sqlite.svx"]
+created_at: "2026-07-19"
+---
+
+# Replicate the Critical DB to Both NAS Boxes
+
+## Step
+
+Make critical search answer while flagg is dark. One mechanism, twice, per [the availability decision](./decide-availability-shape.svx). Resolved when:
+
+1. `critical.db` replicates continuously from flagg to both NAS boxes (Litestream to Garage, or file sync — pick during work and record why), with measured staleness in minutes, not hours.
+2. Each NAS serves the file read-only through a small shim container. No writes anywhere but flagg, no quorum, no leader election.
+3. Clients walk the ordered fallback flagg → NAS-A → NAS-B, health-aware, and surface which replica answered plus its freshness.
+4. Proven by test: with flagg's serving process stopped, a recall query and a knowledge query answer from a NAS replica.
+
+## Result (YYYY-MM-DD)

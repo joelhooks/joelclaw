@@ -3,8 +3,9 @@ title: "Implement the Chosen Availability Shape"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-19"
+assignee: "claude (flagg, herdr pane wY:p1, 2026-07-19)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./decide-availability-shape.svx", "./review-cutover-and-retire-inflated-collection.svx"]
 created_at: "2026-07-19"
@@ -16,4 +17,6 @@ created_at: "2026-07-19"
 
 Build whatever [Decide the Availability Shape](./decide-availability-shape.svx) settles, on existing tailnet hardware. Resolved when critical search is served per the decision, clients are health-aware, and the serving host survives a Flagg reboot without operator intervention. The concrete done-conditions get rewritten from the decision's result before work starts.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-19)
+
+Superseded, not worked. [The availability decision](./decide-availability-shape.svx) made this placeholder concrete enough to split into two session-sized steps: [Port Critical Search to SQLite](./port-critical-search-to-sqlite.svx) and [Replicate the Critical DB to Both NAS Boxes](./replicate-critical-db-to-nas.svx). Those carry the done-conditions this step deferred.

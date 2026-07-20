@@ -1,0 +1,24 @@
+---
+title: "Worker task: adversarially verify the capture/replay patch"
+type: "task"
+created_at: "2026-07-19"
+privacy: "private"
+---
+
+# Worker task: adversarially verify the capture/replay patch
+
+You are an adversarial verifier on the effort [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). A previous worker implemented [Patch the Capture Client and Make Replay Canonical](../projects/typesense-reboot-recovery/patch-capture-and-replay.svx) and closed it — its Result section lists the changed files. The changes are **uncommitted in the working tree**. Your job is to try to refute the claim that the step's five done-conditions are met.
+
+Attack angles, minimum:
+
+1. Read the diff (`git diff` + untracked test files) against each done-condition. Look for a condition satisfied in one capture client but not all three (pi extension, claude script, codex script).
+2. Offset arithmetic: byte-accurate `from_offset`/`to_offset` under multi-byte UTF-8, empty slices, and a cursor that goes stale twice in a row. Does coalescing truly retain one Run ID, or can two pending segments exist for one source?
+3. Idempotency: same Run ID + same bytes accepted, same Run ID + different bytes rejected — is the hash comparison on raw bytes or parsed content?
+4. The legacy replay path: prove `--replay-outbox` actually fails closed (fixtures only — NEVER against a real backlog).
+5. Run the test suites the Result names, plus `bunx tsc --noEmit`. Check the tests assert behavior, not implementation echoes.
+
+Containment: read-only on `~/.joelclaw/runs-dev`, never touch the live Typesense, do not commit, fixtures only.
+
+Deliverable: write `.brain/projects/typesense-reboot-recovery/patch-verification.svx` (frontmatter `type: "asset"`, `parent: "./patch-capture-and-replay.svx"`, `title`, `created_at: "2026-07-19"`, `privacy: "private"`) with a verdict — CONFIRMED or REFUTED per done-condition, evidence for each, and any defects found. Do not edit the step file; the steering session decides what happens next.
+
+Work autonomously. Do not commit. Print a DONE summary when finished.

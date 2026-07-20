@@ -3,8 +3,9 @@ title: "Decide the Availability Shape Within Tailnet Resources"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-19"
+assignee: "claude (flagg, herdr pane wY:p1, 2026-07-19)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: []
 created_at: "2026-07-19"
@@ -22,4 +23,16 @@ Critical search must survive a Flagg reboot using only flagg, panda, and the two
 
 Settle in the same grilling: what "critical search" contains as a bounded document set, which host serves it, and who maintains it after the effort closes. Stress-test with the concrete scenario: Flagg reboots at 14:28, what does operator search do at 14:29?
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-19)
+
+Joel locked in SQLite ("sqlite it is, lock it in"). The shape:
+
+**Critical search** — the critical projection (observations, memory recall, knowledge/vault, operational lookups) lives in one SQLite FTS5 database. Flagg is the only writer. The file replicates to **both** NAS boxes (soon physically separated), each serving it read-only through a small shim. Clients walk an ordered fallback — flagg → NAS-A → NAS-B — no quorum, no leader election. SQLite's durable on-disk indexes mean zero rebuild on any restart.
+
+**Session search** — two-tier. Tier 1: the observer layer (distilled observations) rides in the critical projection and links back to Run IDs. Tier 2: full transcripts in a separate SQLite FTS5 index on flagg, built from the compacted manifest Run set; ripgrep over raw JSONL is the last-ditch fallback. `run_chunks_dev` leaves Typesense entirely.
+
+**Typesense** — demoted to flagg-only, non-critical collections (telemetry etc.). Its failure mode drops from "operator is blind" to "telemetry search is down".
+
+Rejected: a 3-node Typesense cluster (Raft across residential links between physical sites will flap; a stale read replica beats a flapping cluster), and Typesense export/import replicas on the NAS boxes (a permanent bespoke pipeline to avoid a one-time adapter port). Panda is decommissioning and was ruled out as a host.
+
+Consequences: [Build and Validate the Compacted Collection](./build-compacted-collection.svx) retargets from a Typesense collection to the session FTS5 index; the generic implement step splits into [Port Critical Search to SQLite](./port-critical-search-to-sqlite.svx) and [Replicate the Critical DB to Both NAS Boxes](./replicate-critical-db-to-nas.svx); off-site raw JSONL backup goes latent on the brief.

@@ -1,0 +1,73 @@
+---
+title: "Run manifest summary"
+type: "asset"
+parent: "./build-run-manifest.svx"
+created_at: "2026-07-19"
+privacy: "private"
+---
+
+# Run manifest summary
+
+The read-only scan produced one record for each of the **148,023** Run JSONL and metadata pairs in `~/.joelclaw/runs-dev`.
+
+- Manifest: `~/.joelclaw/analysis/run-manifest-2026-07-19.jsonl`
+- Manifest size: 175,939,452 bytes
+- Manifest SHA-256: `7d8c851f522c05685a6d35d8ffa5b2c0ad7a55fa6e06584cfad38622c83fe88d`
+- Generator: `scripts/build-run-manifest.py`
+- Generator SHA-256: `51db0f971915ad2f647c1f64701212637e46d8c9ecff31263884d4b5086b38ff`
+- Machine summary: `~/.joelclaw/analysis/run-manifest-2026-07-19.summary.json`
+- Independent verification receipt: `~/.joelclaw/analysis/run-manifest-2026-07-19.verification.json`
+
+## Verdict totals
+
+| Verdict | Runs | JSONL bytes | Compaction action |
+| --- | ---: | ---: | --- |
+| `exact_duplicate` | 96 | 26,068,616 | skip |
+| `strict_prefix` | 13,914 | 24,827,484,062 | skip |
+| `unique_tail` | 134,013 | 4,378,291,190 | keep |
+| `divergent_sibling` | 0 | 0 | keep |
+| **Total** | **148,023** | **29,231,843,868** | — |
+
+The compacted projection keeps **134,013 Runs** and skips **14,010 Runs**. The skipped bodies account for **24,853,552,678 bytes**, or **85.022186%** of all raw JSONL bytes.
+
+Each skipped record names its `covering_run_id`. The generator proves `exact_duplicate` by byte equality. It proves `strict_prefix` with a byte-prefix comparison. The manifest also records both bodies' SHA-256 values and byte lengths.
+
+## Reconciliation with the diagnosis
+
+| Measure | Diagnosis | Manifest | Delta |
+| --- | ---: | ---: | ---: |
+| JSONL and metadata pairs | 148,023 | 148,023 | 0 |
+| JSONL bytes | 29,231,843,868 | 29,231,843,868 | 0 |
+| Known conversation IDs | 4,629 | 4,629 | 0 |
+| Strict-prefix Runs | 13,914 | 13,914 | 0 |
+| Proven prefix or exact redundant bytes | 24,853,552,678 | 24,853,552,678 | 0 |
+| Redundant byte share | 85.02% | 85.022186% | rounding only |
+| Kept Runs / earlier maximal-representative estimate | 133,997 | 134,013 | +16 |
+
+The `+16` keep delta is deliberate. The diagnosis grouped 19 legacy smoke-test Runs with missing `conversation_id` into three runtime buckets and counted one presumed representative per bucket. The manifest cannot prove those files share a conversation. It gives each a deterministic Run-ID fallback identity and keeps all 19. This replaces three presumed representatives with 19 safe keeps.
+
+The manifest has **4,648 deterministic source identities**: 4,629 known conversations plus 19 legacy Run-ID fallbacks.
+
+## Byte ranges
+
+Legacy metadata does not contain the original transcript `from_offset` and `to_offset`. The manifest therefore records the only provable range: `[0, jsonl_bytes)` within each stored Run body, with `basis: "stored_jsonl_body"`. It does not invent absolute transcript offsets.
+
+Prefix order is defined by body coverage, not `captured_at`. Delayed replay changed `captured_at` long after some bodies were created. The covering Run is the deterministic retained body that byte-covers the skipped body.
+
+## Verification
+
+A separate verification pass parsed all 148,023 records and found 148,023 unique Run IDs. It recalculated every JSONL SHA-256 across 29,231,843,868 bytes. It then repeated byte equality or byte-prefix proof for all 14,010 skipped Runs.
+
+The verification receipt reports `ok: true`. The manifest's embedded generator hash matches the working-tree script. A clean second generator run produced the same 175,939,452 bytes and the same manifest SHA-256.
+
+The source tree stayed unchanged across the work:
+
+- files: 296,046 before and after
+- bytes: 29,305,024,826 before and after
+- maximum modification time: `1784492302117883694` ns before and after
+
+No Typesense endpoint was read or written.
+
+## Largest redundant lineage
+
+The largest prefix group is Pi conversation `019e9088-1c79-72d8-bf9d-7027f4de965b` with null parent. It contains 1,340 Runs. Byte proof skips 1,339 Runs and 8,958,117,450 bytes while retaining one tail.

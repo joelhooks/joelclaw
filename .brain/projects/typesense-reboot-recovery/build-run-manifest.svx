@@ -3,7 +3,8 @@ title: "Build the Run Manifest"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-19"
 assignee: "pi (flagg, herdr pane wY:p1M, 2026-07-19)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: []
@@ -24,4 +25,12 @@ Constraints:
 - Manifest output lives outside the repo (e.g. `~/.joelclaw/analysis/`), not in `.brain/data`.
 - Prefix proof is byte comparison or hash-chain, never heuristics — the compacted collection will be built from this.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-19)
+
+Built the byte-proven Run manifest at `~/.joelclaw/analysis/run-manifest-2026-07-19.jsonl` with the reproducible generator `scripts/build-run-manifest.py`.
+
+The manifest contains 148,023 records and covers 29,231,843,868 JSONL bytes. It marks 13,914 strict prefixes and 96 exact duplicates for removal. Those 14,010 Runs account for 24,853,552,678 bytes, or 85.022186% of raw JSONL bytes.
+
+The compacted projection keeps 134,013 Runs. This is 16 more than the diagnosis's 133,997 maximal-representative estimate because 19 legacy Runs lack conversation IDs. The manifest preserves each with a deterministic Run-ID fallback rather than collapsing them into three runtime buckets.
+
+An independent pass recalculated every JSONL SHA-256 and repeated byte proof for all 14,010 skipped Runs. The receipt reports `ok: true`. See [Run manifest summary](./run-manifest-summary.svx) for totals, hashes, reconciliation, and the read-only source receipt.

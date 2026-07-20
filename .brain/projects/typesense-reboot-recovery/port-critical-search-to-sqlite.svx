@@ -1,0 +1,26 @@
+---
+title: "Port Critical Search to SQLite"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: []
+created_at: "2026-07-19"
+---
+
+# Port Critical Search to SQLite
+
+## Step
+
+Build the critical projection as one SQLite FTS5 database on flagg, per [the availability decision](./decide-availability-shape.svx). Resolved when:
+
+1. A builder produces `critical.db` containing the critical set: observations (observer layer, with Run-ID backlinks), memory recall, knowledge/vault. Flagg is the only writer.
+2. The recall and knowledge adapters (`packages/cli/src/capabilities/adapters/typesense-recall.ts` and kin) read SQLite first; results carry freshness metadata.
+3. Parity is validated against the Typesense-backed results on real queries before any Typesense critical path is removed.
+4. Restarting flagg (or just the process) costs zero index rebuild — the file opens and answers.
+
+Typesense keeps its non-critical collections untouched. The replication of `critical.db` to the NAS boxes is the next step, not this one.
+
+## Result (YYYY-MM-DD)

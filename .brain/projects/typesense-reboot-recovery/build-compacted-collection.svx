@@ -1,5 +1,5 @@
 ---
-title: "Build and Validate the Compacted Collection"
+title: "Build and Validate the Compacted Session Index"
 type: "step"
 kind: "task"
 interaction: "AFK"
@@ -10,17 +10,20 @@ blockers: ["./build-run-manifest.svx", "./patch-capture-and-replay.svx"]
 created_at: "2026-07-19"
 ---
 
-# Build and Validate the Compacted Collection
+# Build and Validate the Compacted Session Index
 
 ## Step
 
-Build a new compacted collection from the manifest's non-redundant Runs (~447,609 expected chunks vs 4.6M inflated). Resolved when:
+Retargeted 2026-07-19 by [the availability decision](./decide-availability-shape.svx): the compaction target is a SQLite FTS5 session index on flagg, not a Typesense collection.
 
-1. The compacted collection is fully indexed alongside the inflated one (no cutover yet).
-2. Divergent siblings and lineage for skipped prefix snapshots are preserved.
-3. Validation passes: conversation search parity, latest timestamps, random samples against raw JSONL, raw fallback exercised.
-4. A validation report asset exists for the cutover review.
+Build the full-transcript session index from the manifest's keep-set (134,013 Runs, receipts in [Run manifest summary](./run-manifest-summary.svx)). Resolved when:
 
-The inflated collection is not touched — retirement happens only through [Review the Cutover](./review-cutover-and-retire-inflated-collection.svx).
+1. A builder produces the session FTS5 database from non-redundant Runs; chunking keys stay `${run_id}:${chunk_idx}`; divergent siblings and lineage for skipped prefix snapshots are preserved.
+2. The patched capture path appends new Runs incrementally — no full rebuilds in steady state.
+3. Validation passes: conversation search parity against the (still-running) inflated Typesense collection, latest timestamps, random samples against raw JSONL, and the ripgrep raw fallback exercised.
+4. Restart cost is measured and recorded: process restart to first successful query.
+5. A validation report asset exists for the cutover review.
+
+`run_chunks_dev` is not touched — retirement happens only through [Review the Cutover](./review-cutover-and-retire-inflated-collection.svx).
 
 ## Result (YYYY-MM-DD)
