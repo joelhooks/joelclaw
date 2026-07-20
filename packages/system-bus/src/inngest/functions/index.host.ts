@@ -121,6 +121,10 @@ import { transcriptionAsrChunkRun } from "./transcription-asr-chunk";
 import { transcriptionCleanup } from "./transcription-cleanup";
 import { transcriptionDiarizeRun } from "./transcription-diarize";
 import {
+  capturePrefixGrowthAlert,
+  typesenseStartupBudgetCheck,
+} from "./typesense-recovery-alerts";
+import {
   typesenseBlogSync,
   typesenseFullSync,
   typesenseVaultSync,
@@ -246,6 +250,8 @@ export const hostFunctionDefinitions = [
   memoryEmbed,
   memoryRetroWriter,
   memoryRunCaptured,
+  capturePrefixGrowthAlert,
+  typesenseStartupBudgetCheck,
   echoFizzle,
   taskTriage,
   checkSessions,

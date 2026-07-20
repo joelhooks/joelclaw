@@ -139,6 +139,10 @@ export { transcriptionAsrChunkRun } from "./transcription-asr-chunk";
 export { transcriptionCleanup } from "./transcription-cleanup";
 export { transcriptionDiarizeRun } from "./transcription-diarize";
 export {
+  capturePrefixGrowthAlert,
+  typesenseStartupBudgetCheck,
+} from "./typesense-recovery-alerts";
+export {
   typesenseBlogSync,
   typesenseFullSync,
   typesenseVaultSync,

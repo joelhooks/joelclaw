@@ -69,6 +69,7 @@ import {
 import { enqueueRegisteredQueueEvent } from "./lib/queue";
 import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
 import { type MemoryIdentity, registerRunCaptureRoute } from "./routes/run-capture";
+import { registerRunHealthRoute } from "./routes/run-health";
 
 const app = new Hono();
 const OTEL_EMIT_TOKEN = process.env.OTEL_EMIT_TOKEN;
@@ -278,15 +279,7 @@ registerRunCaptureRoute(app, {
   sendCaptured: (event) => inngest.send(event),
 });
 
-app.get("/api/runs/health", (c) =>
-  c.json({
-    ok: true,
-    service: "system-bus-run-capture",
-    endpoint: "/api/runs",
-    typesenseAuthConfigured: Boolean(process.env.TYPESENSE_API_KEY),
-    runStore: process.env.MEMORY_RUN_STORE ?? "~/.joelclaw/runs-dev",
-  }),
-);
+registerRunHealthRoute(app);
 
 app.get("/", (c) =>
   c.json({

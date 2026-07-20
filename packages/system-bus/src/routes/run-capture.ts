@@ -80,14 +80,15 @@ function parseRunBody(value: unknown): ParsedRunIngestRequest | null {
   const body = value as RunIngestRequest;
   if (!body.jsonl || typeof body.jsonl !== "string") return null;
   if (!body.agent_runtime || !VALID_RUN_RUNTIMES.includes(body.agent_runtime)) return null;
-  const segmentFields = [body.from_offset, body.to_offset, body.jsonl_sha256, body.source_identity];
+  const { from_offset: fromOffset, to_offset: toOffset } = body;
+  const segmentFields = [fromOffset, toOffset, body.jsonl_sha256, body.source_identity];
   if (segmentFields.some((field) => field !== undefined)) {
     if (
-      !Number.isSafeInteger(body.from_offset) ||
-      !Number.isSafeInteger(body.to_offset) ||
-      (body.from_offset as number) < 0 ||
-      (body.to_offset as number) < (body.from_offset as number) ||
-      body.to_offset - body.from_offset !== Buffer.byteLength(body.jsonl, "utf8") ||
+      !Number.isSafeInteger(fromOffset) ||
+      !Number.isSafeInteger(toOffset) ||
+      (fromOffset as number) < 0 ||
+      (toOffset as number) < (fromOffset as number) ||
+      (toOffset as number) - (fromOffset as number) !== Buffer.byteLength(body.jsonl, "utf8") ||
       body.jsonl_sha256 !== createHash("sha256").update(body.jsonl).digest("hex") ||
       typeof body.source_identity !== "string" ||
       !/^sha256:[0-9a-f]{64}$/u.test(body.source_identity)
