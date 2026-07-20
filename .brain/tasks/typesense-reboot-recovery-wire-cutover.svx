@@ -1,0 +1,31 @@
+---
+title: "Worker task: wire the session index for cutover"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: wire the session index for cutover
+
+You are a worker on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step: [Wire the Session Index for Cutover](../projects/typesense-reboot-recovery/wire-session-index-cutover.svx) — read it, the brief, [Session index validation](../projects/typesense-reboot-recovery/session-index-validation.svx) (the append contract), and the cutover preconditions in [Review the Cutover](../projects/typesense-reboot-recovery/review-cutover-and-retire-inflated-collection.svx).
+
+## Hard containment rules
+
+- `run_chunks_dev` is READ-ONLY: parity queries yes, mutation or drop NEVER. Retirement is exclusively Joel's review outcome.
+- `~/.joelclaw/runs-dev` read-only. `sessions.db` may be modified (WAL flip, appends) — it is your artifact.
+- The working tree contains uncommitted files from another session (`message-event-*`, `retro-writer.ts`, the remaining `client.ts`/`index.*`/`package.json` hunks) — leave them exactly as they are; your registration edits go alongside.
+- Do not commit. Do not restart the running worker.
+
+## The work
+
+The five done-conditions in your step file, notably:
+
+1. WAL flip + append consumer wired into the patched capture path (`memory/run.captured`), idempotent under real Inngest at-least-once redelivery and step retries — proven by test, not assertion.
+2. Grep-proven `run_chunks_dev` reader inventory; switch `joelclaw sessions search` (and anything the inventory surfaces) to `sessions.db` with ripgrep fallback. Rebuild the CLI binary is steering's job — validate through `bun build --compile` to a temp path.
+3. Real parity against the now-healthy collection: same queries both ways, overlap and deltas quantified — compaction should improve results by dropping ~4.2M redundant chunks; show it.
+4. Rollback plan written into the review packet.
+5. Review packet asset: `.brain/projects/typesense-reboot-recovery/cutover-review-packet.svx` (`type: "asset"`, `parent: "./wire-session-index-cutover.svx"`) — parity numbers, inventory table, rollback plan, open gaps. Joel decides from this document alone.
+
+## Deliverables
+
+Code + tests uncommitted; `bunx tsc --noEmit` and targeted Biome pass; fill your step's `## Result`, flip status closed with `closed_at`, one brief ledger line. Work autonomously. Do not commit. Print a DONE summary.
