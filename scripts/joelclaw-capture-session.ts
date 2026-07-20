@@ -27,6 +27,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -134,7 +135,9 @@ function readPending(path: string): Record<string, unknown> | undefined {
 
 function writeToOutbox(path: string, body: unknown): string {
   mkdirSync(OUTBOX_DIR, { recursive: true });
-  writeFileSync(path, JSON.stringify(body));
+  const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  writeFileSync(temporaryPath, JSON.stringify(body));
+  renameSync(temporaryPath, path);
   return path;
 }
 
@@ -251,6 +254,7 @@ async function main() {
   }
 
   try {
+    writeToOutbox(outboxPath, body);
     const res = await fetch(`${CENTRAL_URL}/api/runs`, {
       method: "POST",
       headers: {

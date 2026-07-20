@@ -71,33 +71,14 @@ export function appendSessionCapture(input: SessionCaptureAppendInput): SessionC
   if (!columns.has("tags_json")) {
     db.exec("ALTER TABLE runs ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'");
   }
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS runs_source_cursor ON runs(source_identity, from_offset)",
+  );
 
   let transactionOpen = false;
   try {
     db.exec("BEGIN IMMEDIATE");
     transactionOpen = true;
-
-    const existing = db
-      .query("SELECT jsonl_sha256, chunk_count, captured_at, source_identity FROM runs WHERE run_id = ?")
-      .get(input.runId) as
-      | { jsonl_sha256: string; chunk_count: number; captured_at: number; source_identity: string }
-      | null;
-
-    if (existing) {
-      if (existing.jsonl_sha256 !== input.jsonlSha256) {
-        throw new SessionIndexConflictError(input.runId);
-      }
-      db.exec("COMMIT");
-      transactionOpen = false;
-      return {
-        status: "already_indexed",
-        run_id: input.runId,
-        chunk_count: existing.chunk_count,
-        freshness_timestamp: existing.captured_at,
-        source_identity: existing.source_identity,
-        duration_ms: performance.now() - started,
-      };
-    }
 
     const blob = readFileSync(input.capturePath);
     if (blob.length !== input.jsonlBytes) {
@@ -112,12 +93,108 @@ export function appendSessionCapture(input: SessionCaptureAppendInput): SessionC
       );
     }
 
+    const sourceIdentity = input.sourceIdentity ?? `legacy-run:${input.runId}`;
+    const fromOffset = Number.isSafeInteger(input.fromOffset) ? input.fromOffset : undefined;
+    const existing = db
+      .query(`SELECT jsonl_sha256, jsonl_bytes, chunk_count, captured_at,
+        source_identity, from_offset, to_offset FROM runs WHERE run_id = ?`)
+      .get(input.runId) as
+      | {
+          jsonl_sha256: string;
+          jsonl_bytes: number;
+          chunk_count: number;
+          captured_at: number;
+          source_identity: string;
+          from_offset: number | null;
+          to_offset: number | null;
+        }
+      | null;
+
+    if (existing) {
+      const sameRunIdentity =
+        existing.jsonl_sha256 === input.jsonlSha256 &&
+        existing.jsonl_bytes === input.jsonlBytes &&
+        (input.sourceIdentity === undefined ||
+          (existing.source_identity === input.sourceIdentity &&
+            existing.from_offset === (input.fromOffset ?? null) &&
+            existing.to_offset === (input.toOffset ?? null)));
+      if (!sameRunIdentity) throw new SessionIndexConflictError(input.runId);
+      db.exec("COMMIT");
+      transactionOpen = false;
+      return {
+        status: "already_indexed",
+        run_id: input.runId,
+        chunk_count: existing.chunk_count,
+        freshness_timestamp: existing.captured_at,
+        source_identity: existing.source_identity,
+        duration_ms: performance.now() - started,
+      };
+    }
+
+    const existingByCursor =
+      input.sourceIdentity !== undefined && fromOffset !== undefined
+        ? (db
+            .query(`SELECT run_id, jsonl_path, jsonl_bytes, jsonl_sha256, to_offset,
+              chunk_count, captured_at, source_identity
+              FROM runs WHERE source_identity = ? AND from_offset = ? LIMIT 1`)
+            .get(input.sourceIdentity, fromOffset) as
+            | {
+                run_id: string;
+                jsonl_path: string;
+                jsonl_bytes: number;
+                jsonl_sha256: string;
+                to_offset: number | null;
+                chunk_count: number;
+                captured_at: number;
+                source_identity: string;
+              }
+            | null)
+        : null;
+    if (existingByCursor) {
+      const exactSegment =
+        existingByCursor.jsonl_sha256 === input.jsonlSha256 &&
+        existingByCursor.jsonl_bytes === input.jsonlBytes &&
+        existingByCursor.to_offset === (input.toOffset ?? null);
+      let relatedPrefix = false;
+      if (!exactSegment && existsSync(existingByCursor.jsonl_path)) {
+        const indexedBlob = readFileSync(existingByCursor.jsonl_path);
+        relatedPrefix =
+          (blob.length >= indexedBlob.length &&
+            blob.subarray(0, indexedBlob.length).equals(indexedBlob)) ||
+          (indexedBlob.length >= blob.length && indexedBlob.subarray(0, blob.length).equals(blob));
+      }
+      if (!exactSegment && !relatedPrefix) {
+        throw new SessionIndexConflictError(existingByCursor.run_id);
+      }
+      db.exec("COMMIT");
+      transactionOpen = false;
+      return {
+        status: "already_indexed",
+        run_id: existingByCursor.run_id,
+        chunk_count: existingByCursor.chunk_count,
+        freshness_timestamp: existingByCursor.captured_at,
+        source_identity: existingByCursor.source_identity,
+        duration_ms: performance.now() - started,
+      };
+    }
+
+    // Different-start overlap: no exact-cursor row matched above, so any
+    // range intersection means a segment that starts inside indexed bytes.
+    // A well-behaved client cannot produce this; never store the same source
+    // bytes twice. Reject loudly — raw JSONL on NAS stays durable.
+    if (input.sourceIdentity !== undefined && fromOffset !== undefined && input.toOffset !== undefined) {
+      const overlapping = db
+        .query(`SELECT run_id FROM runs
+          WHERE source_identity = ? AND from_offset IS NOT NULL AND to_offset IS NOT NULL
+            AND from_offset < ? AND to_offset > ? LIMIT 1`)
+        .get(input.sourceIdentity, input.toOffset, fromOffset) as { run_id: string } | null;
+      if (overlapping) throw new SessionIndexConflictError(overlapping.run_id);
+    }
+
     const entries = parseJsonl(blob.toString("utf8"));
     const turns = extractTurns(entries, detectFormat(entries));
     const chunks = chunkTurns(turns);
     const endedAt = turns[turns.length - 1]?.started_at ?? input.startedAt;
-    const sourceIdentity = input.sourceIdentity ?? `legacy-run:${input.runId}`;
-
     db.query(`INSERT INTO runs (
       run_id, user_id, machine_id, agent_runtime, conversation_id, parent_run_id,
       source_identity, prefix_group_identity, verdict, started_at, captured_at,

@@ -98,3 +98,7 @@ bunx tsc --noEmit
 ```
 
 All fixtures used temporary directories and temporary SQLite databases. No live Typesense collection, real `sessions.db`, outbox backlog, Run store, or worker process was touched. No commit was created.
+
+## Steering remediation (2026-07-20)
+
+Claim 5's gap is closed: `appendSessionCapture` now rejects ANY non-exact-start range intersection per source with a loud `SessionIndexConflictError` (error OTEL + NonRetriableError downstream) — the verifier's exact `[0, first+repeated)` / `[first, repeated+final)` fixture is a checked-in regression test and the index holds one run. Well-behaved clients cannot produce this shape; if it ever appears, a human hears about it instead of the index silently absorbing duplicate bytes.

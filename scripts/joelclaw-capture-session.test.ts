@@ -100,11 +100,17 @@ describe("Claude capture hook", () => {
     );
 
     const requests: CaptureBody[] = [];
+    const pendingAtRequest: boolean[] = [];
     const server = Bun.serve({
       port: 0,
       async fetch(request) {
         const body = (await request.json()) as CaptureBody;
         requests.push(body);
+        const files = readdirSync(join(configDir, "outbox"));
+        const pending = JSON.parse(
+          readFileSync(join(configDir, "outbox", files[0]), "utf8"),
+        ) as CaptureBody;
+        pendingAtRequest.push(files.length === 1 && pending.run_id === body.run_id);
         if (requests.length === 1) return Response.json({ error: "response lost" }, { status: 500 });
         if (requests.length === 2) {
           return Response.json(
@@ -134,6 +140,7 @@ describe("Claude capture hook", () => {
 
       await runHook(fixtureRoot, contextPath, centralUrl);
       expect(requests).toHaveLength(3);
+      expect(pendingAtRequest).toEqual([true, true, true]);
       expect(requests[1].run_id).toBe(requests[0].run_id);
       expect(requests[2].run_id).not.toBe(requests[0].run_id);
       expect(requests[2].from_offset).toBe(Buffer.byteLength(firstLine));

@@ -246,6 +246,42 @@ describe("memory/run.captured", () => {
     db.close(false);
   });
 
+  test("dedupes a fresh Run ID that reuses the same source cursor", async () => {
+    const original = emptyRunData();
+    await executeRun(original);
+    const duplicate = await executeRun({
+      ...original,
+      run_id: "run-fresh-overlap",
+    });
+
+    expect(duplicate.stepOutputs.get("append-session-index")).toMatchObject({
+      status: "already_indexed",
+      run_id: original.run_id,
+    });
+    const db = new Database(sessionIndexPath, { readonly: true, strict: true });
+    expect(
+      db.query("SELECT run_id, from_offset FROM runs ORDER BY run_id").all(),
+    ).toEqual([{ run_id: original.run_id, from_offset: original.from_offset }]);
+    db.close(false);
+  });
+
+  test("rejects divergent bytes from a fresh Run ID at an indexed source cursor", async () => {
+    const original = emptyRunData();
+    await executeRun(original);
+    const divergentJsonl = '{"type":"session","version":99}\n';
+
+    await expect(
+      executeRun({
+        ...original,
+        run_id: "run-fresh-divergent",
+        jsonl_bytes: Buffer.byteLength(divergentJsonl),
+        jsonl_sha256: createHash("sha256").update(divergentJsonl).digest("hex"),
+        to_offset: original.from_offset! + Buffer.byteLength(divergentJsonl),
+        jsonl_inline: divergentJsonl,
+      }),
+    ).rejects.toThrow(`session index Run ${original.run_id} already exists`);
+  });
+
   test("survives a real Inngest step retry after the SQLite side effect committed", async () => {
     const event = { name: "memory/run.captured" as const, data: emptyRunData() };
     runUpsertStatus = 503;
@@ -272,6 +308,19 @@ describe("memory/run.captured", () => {
       count: 1,
     });
     db.close(false);
+  });
+
+  test("fails hard when a replay reuses a Run ID at a different source cursor", async () => {
+    const original = emptyRunData();
+    await executeRun(original);
+
+    await expect(
+      executeRun({
+        ...original,
+        from_offset: original.from_offset! + 1,
+        to_offset: original.to_offset! + 1,
+      }),
+    ).rejects.toThrow("already exists with different JSONL bytes");
   });
 
   test("fails hard when a replay reuses a Run ID for different bytes", async () => {
@@ -383,5 +432,41 @@ describe("memory/run.captured", () => {
         },
       },
     ]);
+  });
+
+  test("rejects a different-start overlapping segment loudly", async () => {
+    // Verifier fixture (keying-verification.svx §5): [0, first+repeated) then
+    // [first, repeated+final) under a new run_id must not double-index the
+    // repeated bytes — any non-exact-start intersection is a hard conflict.
+    const bodyA = '{"type":"session","version":3}\n{"role":"user","text":"first part repeated"}\n';
+    const source = `sha256:${"b".repeat(64)}`;
+    const first = emptyRunData();
+    first.run_id = "run-overlap-a";
+    first.conversation_id = "conversation-overlap";
+    first.source_identity = source;
+    first.jsonl_inline = bodyA;
+    first.jsonl_bytes = Buffer.byteLength(bodyA);
+    first.jsonl_sha256 = createHash("sha256").update(bodyA).digest("hex");
+    first.from_offset = 0;
+    first.to_offset = Buffer.byteLength(bodyA);
+    await executeRun(first);
+
+    const bodyB = '{"role":"user","text":"repeated tail plus new bytes"}\n';
+    const second = emptyRunData();
+    second.run_id = "run-overlap-b";
+    second.conversation_id = "conversation-overlap";
+    second.source_identity = source;
+    second.jsonl_inline = bodyB;
+    second.jsonl_bytes = Buffer.byteLength(bodyB);
+    second.jsonl_sha256 = createHash("sha256").update(bodyB).digest("hex");
+    second.from_offset = 10;
+    second.to_offset = 10 + Buffer.byteLength(bodyB);
+
+    await expect(executeRun(second)).rejects.toThrow(/conflict|run-overlap-a/i);
+
+    const db = new Database(sessionIndexPath, { readonly: true });
+    const count = db.query("SELECT COUNT(*) AS n FROM runs").get() as { n: number };
+    db.close(false);
+    expect(count.n).toBe(1);
   });
 });

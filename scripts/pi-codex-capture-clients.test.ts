@@ -42,11 +42,21 @@ function createFixture() {
   return { root: fixtureRoot, configDir, authPath };
 }
 
-function failingCentral(requests: CaptureBody[]) {
+function failingCentral(
+  requests: CaptureBody[],
+  configDir: string,
+  pendingAtRequest: boolean[],
+) {
   return Bun.serve({
     port: 0,
     async fetch(request) {
-      requests.push((await request.json()) as CaptureBody);
+      const body = (await request.json()) as CaptureBody;
+      requests.push(body);
+      const files = readdirSync(join(configDir, "outbox"));
+      const pending = JSON.parse(
+        readFileSync(join(configDir, "outbox", files[0]), "utf8"),
+      ) as CaptureBody;
+      pendingAtRequest.push(files.length === 1 && pending.run_id === body.run_id);
       return Response.json({ ok: false, error: "fixture failure" }, { status: 503 });
     },
   });
@@ -147,7 +157,8 @@ describe("capture client fixtures", () => {
     const fixture = createFixture();
     const transcriptPath = join(fixture.root, "pi-session.jsonl");
     const requests: CaptureBody[] = [];
-    const central = failingCentral(requests);
+    const pendingAtRequest: boolean[] = [];
+    const central = failingCentral(requests, fixture.configDir, pendingAtRequest);
     try {
       writeFileSync(transcriptPath, lines[0]);
       for (let index = 0; index < lines.length; index += 1) {
@@ -160,6 +171,7 @@ describe("capture client fixtures", () => {
         });
       }
       assertCoalesced(requests, fixture.configDir, lines.join(""));
+      expect(pendingAtRequest).toEqual([true, true, true]);
       expect(requests.every((request) => request.agent_runtime === "pi")).toBe(true);
     } finally {
       central.stop(true);
@@ -170,7 +182,8 @@ describe("capture client fixtures", () => {
     const fixture = createFixture();
     const transcriptPath = join(fixture.root, "codex-session.jsonl");
     const requests: CaptureBody[] = [];
-    const central = failingCentral(requests);
+    const pendingAtRequest: boolean[] = [];
+    const central = failingCentral(requests, fixture.configDir, pendingAtRequest);
     try {
       writeFileSync(transcriptPath, lines[0]);
       for (let index = 0; index < lines.length; index += 1) {
@@ -183,6 +196,7 @@ describe("capture client fixtures", () => {
         });
       }
       assertCoalesced(requests, fixture.configDir, lines.join(""));
+      expect(pendingAtRequest).toEqual([true, true, true]);
       expect(requests.every((request) => request.agent_runtime === "codex")).toBe(true);
     } finally {
       central.stop(true);

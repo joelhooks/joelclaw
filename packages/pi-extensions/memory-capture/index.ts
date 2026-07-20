@@ -21,6 +21,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -78,12 +79,14 @@ function loadAllState(): Record<string, SessionState> {
     return {};
   }
 }
-function saveAllState(state: Record<string, SessionState>) {
+function saveAllState(state: Record<string, SessionState>): boolean {
   try {
     mkdirSync(dirname(STATE_PATH), { recursive: true });
     writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
+    return true;
   } catch (err) {
     log(`save state failed: ${(err as Error).message}`);
+    return false;
   }
 }
 function sha256(value: string | Uint8Array): string {
@@ -106,7 +109,9 @@ function pendingBody(path: string): Record<string, unknown> | undefined {
 function writeToOutbox(path: string, body: unknown): string {
   try {
     mkdirSync(OUTBOX_DIR, { recursive: true });
-    writeFileSync(path, JSON.stringify(body));
+    const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    writeFileSync(temporaryPath, JSON.stringify(body));
+    renameSync(temporaryPath, path);
     return path;
   } catch (err) {
     log(`outbox write failed: ${(err as Error).message}`);
@@ -222,6 +227,7 @@ async function captureDeltaUnsafe(params: {
   if (prior?.last_run_id) body.parent_run_id = prior.last_run_id;
 
   try {
+    if (!writeToOutbox(outboxPath, body)) return;
     const res = await fetch(`${CENTRAL_URL}/api/runs`, {
       method: "POST",
       headers: {
@@ -254,7 +260,7 @@ async function captureDeltaUnsafe(params: {
       last_captured_at: new Date().toISOString(),
       turn_count: (prior?.turn_count ?? 0) + acceptedTurns,
     };
-    saveAllState(all);
+    if (!saveAllState(all)) return;
     clearPending(outboxPath);
     log(
       `captured run=${resp.run_id} session=${sessionId} delta=${delta.length}B turns=${assistantTurns} trigger=${trigger}`,

@@ -23,6 +23,7 @@ const {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -100,7 +101,9 @@ function newRunId() {
 
 function writeToOutbox(path, body) {
   mkdirSync(OUTBOX_DIR, { recursive: true });
-  writeFileSync(path, JSON.stringify(body));
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temporaryPath, JSON.stringify(body));
+  renameSync(temporaryPath, path);
   return path;
 }
 
@@ -217,6 +220,7 @@ async function main() {
   if (prior?.last_run_id) body.parent_run_id = prior.last_run_id;
 
   try {
+    writeToOutbox(outboxPath, body);
     const res = await fetch(`${CENTRAL_URL}/api/runs`, {
       method: "POST",
       headers: {
