@@ -15,3 +15,7 @@ created_at: "2026-07-20"
 ## Step
 
 `/Users/Shared/joelclaw/logs/inngest/launchd.err.log` is 30.9 GB of lease-failure spam. Sample what matters (error-type census, first/last timestamps) into an asset, then truncate in place (`sudo truncate -s 0`, keeps launchd's inode — no restart; skip the 30 GB incident copy unless disk headroom is proven), and install a `newsyslog.d` rule bounding both Inngest launchd logs. HITL because every command here is sudo (gated per the brief's Notes): produce the exact commands and run them with Joel present or hand them to him. Resolved when the log is under 10 MB and a rotation rule exists.
+
+## Result (2026-07-20, partial — truncation done, rotation open)
+
+Census captured first ([asset](./asset-inngest-errlog-census.svx)): 35.3 GB spanning since June 17, >99% paired lease-spam lines, plus a June-era `rejecting event; event key not recognized` population worth a someday-look. Joel ran the truncate (dcg correctly blocked the agent pre-fill; human executed) — log now ~2.5 KB, 35.3 GB freed, no restart needed (inode preserved). The rotation half stays open: `newsyslog` rotates by rename and launchd holds the old fd until the next daemon restart, so a size rule is a half-measure — the rotation decision is flagged for the resilience-engineering effort (structured log shipping may supersede it). With the purge landed, growth is back to normal rates, so the remaining risk is low.

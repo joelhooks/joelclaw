@@ -1,0 +1,30 @@
+---
+title: "Asset: Inngest error-log census before truncation"
+type: "asset"
+parent: "./bound-inngest-log-growth.svx"
+date: "2026-07-20"
+privacy: "private"
+---
+
+# Inngest launchd.err.log census (pre-truncation)
+
+Taken 2026-07-20 immediately before truncate-in-place.
+
+- File: `/Users/Shared/joelclaw/logs/inngest/launchd.err.log`
+- Size: 35,309,086,069 bytes (35.3 GB)
+- First line: 2026-06-17T20:58:42Z (the log spans the daemon's whole life since install)
+- Last lease failure: 2026-07-20T19:06:09Z (window-2 bootout; zero since — purge verified)
+
+100 MB samples at head / 15 GB / 34 GB offsets, top messages:
+
+| Offset | Top messages |
+|---|---|
+| 0 (June 17) | `rejecting event; event key not recognized` (50k), `received event` (43k), `error handling queue item` (38k) |
+| 15 GB (mid-July) | `acquiring capacity lease failed` (17.3k), `could not check constraints to lease item` (17.3k) |
+| 34 GB (July 19-20) | `could not check constraints to lease item` (17.1k), `acquiring capacity lease failed` (17.1k) |
+
+Reading: the bulk of the file is the poisoned-item lease spam (paired `acquiring capacity lease failed` + `could not check constraints to lease item` lines, ~99% of sampled volume from mid-file onward). The June head also shows a `rejecting event; event key not recognized` population worth a look someday — some producer used a wrong event key in June.
+
+Truncation: `sudo truncate -s 0` keeps launchd's inode — no restart needed. The 30 GB incident copy was skipped deliberately: composition is recorded here, the purge receipts hold the item-level detail, and the history is >99% two repeated lines.
+
+Rotation caveat for the follow-up rule: `newsyslog` rotates by rename, but launchd keeps the old fd until the daemon restarts — so a size-based `newsyslog.d` rule only takes effect at the next bounce. Flagged, not fixed; the resilience-engineering effort may prefer structured log shipping instead.
