@@ -3,7 +3,8 @@ title: "Keep the Critical DB Fresh"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "pi (flagg, herdr pane wY:p21, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./port-critical-search-to-sqlite.svx"]
@@ -31,17 +32,11 @@ Added 2026-07-20 after adversarial verification:
 
 Added two host-role Inngest functions in `packages/system-bus/src/inngest/functions/critical-db-maintenance.ts`:
 
-- `search/critical-db-rebuild` runs the existing hardened builder at minute 17 every six hours (`17 */6 * * *`). It never passes `--allow-degraded-sources`. A terminal rebuild failure sends a hard alert through `sendHardAlert` and emits `search.critical_db.rebuild.failed`; a successful build emits `search.critical_db.rebuild.completed`.
-- `search/critical-db-staleness` runs hourly at minute 7 (`7 * * * *`). It reads `critical.db` metadata directly and alerts once per incident when the file build age exceeds 8 hours or the live `files:observations` high-water age exceeds 24 hours. Redis confirmation happens only after delivery, so interrupted sends retry. The production file was fresh at verification: build age 4,857,506 ms and observation age 7,087,523 ms.
+- `search/critical-db-rebuild` runs the existing hardened builder at minute 17 every six hours (`17 */6 * * *`). It never passes `--allow-degraded-sources`. Terminal failures use a Redis-backed incident: the first failure creates an ID independent of error text, delivery confirms it, repeated failures stay quiet while details drift, a successful rebuild clears it, and a later failure opens a new incident. The terminal `onFailure` path sends through `sendHardAlert` and emits `search.critical_db.rebuild.failed`.
+- `search/critical-db-staleness` runs hourly at minute 7 (`7 * * * *`). It preserves the 8-hour build and 24-hour observation budgets. It also evaluates every required source with the port's seven-day rule and honors `degraded_override`. A required source that is stale, missing, or non-`ok` cannot leave the alert healthy when the port reports `stale` or `degraded`.
 
-Added `scripts/export-critical-memory-gap.ts`. It searches Typesense read-only, excludes embeddings, deduplicates by document ID, and writes a new cumulative archive snapshot. It never edits an existing archive. The expected June-onward legacy gap does not exist: the complete 28,050-document collection snapshot taken before retirement on 2026-07-17 has a `2026-05-31T03:30:53Z` high-water, and the collection was then intentionally dropped. The live server now returns HTTP 404 for `memory_observations`, so the export count is 0 and no archive file changed. New observations land as Brain observer pages under `~/.brain/observations`; the builder scanned 1,022 current observer documents and their high-water drives the 24-hour alert. Archived legacy hits keep their truthful May freshness.
+Added `scripts/export-critical-memory-gap.ts`. It searches Typesense read-only, excludes embeddings, deduplicates by document ID, and writes a new cumulative archive snapshot. It never edits an existing archive. The expected June-onward legacy gap does not exist: the complete 28,050-document collection snapshot taken before retirement on 2026-07-17 has a `2026-05-31T03:30:53Z` high-water, and the collection was then intentionally dropped. New observations land as Brain observer pages under `~/.brain/observations`.
 
-The hardened builder was invoked without Typesense writes and exited 1 on its source gate. It found the same five malformed observer pages and left the healthy database byte-identical (`e00c9074…4344792`). These pages remain for Joel:
+Steering fixed the five malformed observer pages in dark-wizard commit `362e662`; the hardened builder now publishes cleanly. Read-only production comparison after rework returned `stale` from both paths because `archive:memory_observations` is older than the canonical seven-day threshold. This is the intended unified contract, not a healthy-alert split.
 
-- `2026-07-15-189bf975447b.svx`
-- `2026-07-15-80bee5060046.svx`
-- `2026-07-15-d7eac1bfd797.svx`
-- `2026-07-16-586659049029.svx`
-- `2026-07-16-c59d5a62fa17.svx`
-
-Validation passed: 12 alert fixture tests, `bunx tsc --noEmit`, targeted Biome, and `git diff --check`. `pi-notes brain check` reached 350 pages and stopped only on the seven pre-existing `.brain/tasks/*.md` files already outside this effort. No alert was sent, no worker was restarted, and no commit was made.
+Checked-in fixtures now cover 7h59m/8h01m, 23h59m/24h01m, all five required sources crossing the seven-day threshold, all five becoming degraded, `degraded_override`, held-lock builder exit 1, interrupted delivery, error-detail drift, successful rebuild recovery, later failure reopen, and the actual terminal `onFailure` adapter. Validation passed: 31 tests, `bunx tsc --noEmit`, targeted Biome, and `git diff --check`. `pi-notes brain check` reached 352 pages and stopped on the same seven pre-existing `.brain/tasks/*.md` support files. No alert was sent, no worker was restarted, and no commit was made.
