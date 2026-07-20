@@ -21,7 +21,9 @@ import { inngest } from "../client";
 
 const AIH_SUPPORT_ROOT =
   process.env.AIH_SUPPORT_ROOT?.trim() || "/Users/joel/Code/badass-courses/aihero-support";
-const PULSE_LOG_PATH = join(AIH_SUPPORT_ROOT, ".brain/data/campaign-pulse/pulse-log.jsonl");
+// Ack receipts get their own file: pulse-log.jsonl is one-line-per-pulse
+// (Joel, 2026-07-20), and mixed record kinds made it lie about run history.
+const PULSE_ACK_LOG_PATH = join(AIH_SUPPORT_ROOT, ".brain/data/campaign-pulse/ack-log.jsonl");
 const DAILY_FLOW_RUNBOOK = join(
   AIH_SUPPORT_ROOT,
   ".brain/projects/learner-flow-ops/asset-daily-flow-agent-runbook.svx",
@@ -333,7 +335,7 @@ async function verifySchedule(
 }
 
 const defaults: LearnerFlowActionDependencies = {
-  logPath: PULSE_LOG_PATH,
+  logPath: PULSE_ACK_LOG_PATH,
   cwd: AIH_SUPPORT_ROOT,
   runCommand,
   resolveDeclaration,
