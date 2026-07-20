@@ -334,7 +334,6 @@ describe("memory/run.captured", () => {
     expect(result).toMatchObject({
       run_id: "run-large-inline",
       chunks_indexed: 128,
-      chunk_errors: 0,
       turn_count: 128,
     });
     expect(stepOutputs.get("spool-inline-jsonl")).toEqual({
@@ -347,11 +346,7 @@ describe("memory/run.captured", () => {
       turn_count: 128,
       candidate_count: 128,
     });
-    expect(stepOutputs.get("index-chunks")).toEqual({
-      imported: 128,
-      errors: 0,
-      chunk_count: 128,
-    });
+    expect(stepIds).not.toContain("index-chunks");
     expect(stepOutputs.get("index-run")).toEqual({
       run_id: "run-large-inline",
       turn_count: 128,

@@ -22,19 +22,14 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { embed } from "@joelclaw/inference-router";
 import {
   appendSessionCapture,
-  type Chunk,
   chunkTurns,
   detectFormat,
-  embeddingModelTag,
   extractTurns,
   parseJsonl,
-  RUN_CHUNKS_COLLECTION,
   RUNS_COLLECTION,
   type Run,
-  runChunksSchema,
   runsSchema,
   SessionIndexConflictError,
 } from "@joelclaw/memory";
@@ -44,11 +39,6 @@ import { inngest } from "../../client";
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY ?? "";
-const EMBED_DIMS = 768;
-const RUN_CAPTURE_EMBEDDINGS = /^(1|true|yes)$/i.test(
-  process.env.RUN_CAPTURE_EMBEDDINGS ?? "false"
-);
-const PENDING_EMBEDDING = Array.from({ length: EMBED_DIMS }, () => 0);
 
 async function typesenseRequest(
   path: string,
@@ -65,8 +55,9 @@ async function typesenseRequest(
 }
 
 async function ensureCollections(): Promise<void> {
+  // run_chunks_dev retired 2026-07-20 (Joel-approved cutover): full-transcript
+  // chunks live in sessions.db only. Never recreate the Typesense collection.
   for (const [name, schema] of [
-    [RUN_CHUNKS_COLLECTION, runChunksSchema(RUN_CHUNKS_COLLECTION, EMBED_DIMS)],
     [RUNS_COLLECTION, runsSchema(RUNS_COLLECTION)],
   ] as const) {
     const existing = await typesenseRequest(`/collections/${name}`);
@@ -335,77 +326,9 @@ export const memoryRunCaptured = inngest.createFunction(
       };
     }
 
-    // Text indexing is the availability path. Embedding is optional enrichment:
-    // a slow or unhealthy local model must not block fresh Runs from search.
-    // Pending zero vectors satisfy the existing Typesense schema and are replaced
-    // by the embedding backfill path when local inference is healthy.
-    const chunkImport = await step.run("index-chunks", async () => {
-      const { candidates } = readCapture(capturePath);
-      const modelTag = RUN_CAPTURE_EMBEDDINGS ? embeddingModelTag() : "pending";
-      const embeddings = RUN_CAPTURE_EMBEDDINGS
-        ? await Promise.all(
-            candidates.map((candidate) =>
-              embed(candidate.text, {
-                priority: "ingest-realtime",
-                dimensions: EMBED_DIMS,
-              }).then((result) => result.embedding)
-            )
-          )
-        : candidates.map(() => PENDING_EMBEDDING);
-      const chunks = candidates.map<Chunk>((candidate, index) => ({
-        id: `${run_id}:${candidate.chunk_idx}`,
-        run_id,
-        chunk_idx: candidate.chunk_idx,
-        role: candidate.role,
-        text: candidate.text,
-        embedding: embeddings[index]!,
-        embedding_model: modelTag,
-        token_count: candidate.token_count,
-        started_at: candidate.started_at,
-        user_id,
-        readable_by: [user_id],
-        root_run_id: parent_run_id ?? null,
-        agent_runtime,
-        conversation_id: conversation_id ?? null,
-        tags: RUN_CAPTURE_EMBEDDINGS
-          ? (tags ?? [])
-          : [...(tags ?? []), "embedding:pending"],
-        machine_id,
-      }));
-
-      const ndjson = chunks.map((chunk) => JSON.stringify(chunk)).join("\n");
-      const res = await typesenseRequest(
-        `/collections/${RUN_CHUNKS_COLLECTION}/documents/import?action=upsert`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: ndjson,
-        }
-      );
-      if (!res.ok) {
-        throw new Error(`chunk import failed: ${res.status} ${await res.text()}`);
-      }
-      const body = await res.text();
-      const errors = body
-        .split("\n")
-        .filter(
-          (line) =>
-            line.trim() &&
-            (() => {
-              try {
-                return (JSON.parse(line) as { success?: boolean }).success === false;
-              } catch {
-                return true;
-              }
-            })()
-        ).length;
-      return {
-        imported: chunks.length - errors,
-        errors,
-        chunk_count: chunks.length,
-      };
-    });
-
+    // run_chunks_dev retired 2026-07-20: sessions.db (appended above, before
+    // any Typesense work) is the only full-transcript chunk index. Typesense
+    // keeps Run metadata (runs_dev) for provenance and health only.
     await indexRun();
 
     const duration_ms = performance.now() - t0;
@@ -417,16 +340,14 @@ export const memoryRunCaptured = inngest.createFunction(
         source: "system-bus",
         component: "memory-run-captured",
         action: "memory.run.captured",
-        success: chunkImport.errors === 0,
+        success: true,
         duration_ms: Math.round(duration_ms),
         metadata: {
           run_id,
           user_id,
           machine_id,
           agent_runtime,
-          chunk_count: chunkImport.chunk_count,
-          chunk_errors: chunkImport.errors,
-          embedding_status: RUN_CAPTURE_EMBEDDINGS ? "embedded" : "pending",
+          chunk_count: sessionAppend.chunk_count,
           turn_count: analysis.turn_count,
           format,
           session_index_status: sessionAppend.status,
@@ -441,7 +362,7 @@ export const memoryRunCaptured = inngest.createFunction(
       data: {
         run_id,
         user_id,
-        chunk_count: chunkImport.chunk_count,
+        chunk_count: sessionAppend.chunk_count,
         index_duration_ms: Math.round(duration_ms),
       },
     });
@@ -449,8 +370,7 @@ export const memoryRunCaptured = inngest.createFunction(
 
     return {
       run_id,
-      chunks_indexed: chunkImport.imported,
-      chunk_errors: chunkImport.errors,
+      chunks_indexed: sessionAppend.chunk_count,
       turn_count: analysis.turn_count,
       duration_ms,
     };

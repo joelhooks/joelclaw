@@ -182,8 +182,8 @@ export async function POST(request: NextRequest) {
       },
       next_actions: [
         {
-          description: "Poll Typesense for ingest completion",
-          command: `curl -sS 'http://localhost:8108/collections/run_chunks_dev/documents/search?q=*&query_by=text&filter_by=run_id:=${runId}' -H "X-TYPESENSE-API-KEY: $TYPESENSE_API_KEY"`,
+          description: "Search the session index for the ingested Run",
+          command: `joelclaw sessions search '${runId}' --raw`,
         },
       ],
     },
