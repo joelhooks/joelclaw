@@ -1,0 +1,25 @@
+---
+title: "Worker task: deploy the patched capture clients fleet-wide"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: deploy the patched capture clients fleet-wide
+
+You are a worker on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step: [Deploy the Patched Capture Clients Fleet-Wide](../projects/typesense-reboot-recovery/deploy-capture-clients-fleet-wide.svx) — read it and the closed patch step for what "patched" means. Load `tailnet-topology` before any ssh; verify hosts with `tailscale status`. Machine notes: blaine is Joel's laptop (hostname reports `Dark-Tower`, may be offline — handle gracefully); panda is decommissioning but may still run capture; use tailnet IPs when MagicDNS fails.
+
+## Hard containment rules
+
+- Discover the real machine set from Run metadata (`machine_id` values in `~/.joelclaw/runs-dev` metadata files — read-only) before assuming.
+- On remote machines: `git pull` (or `jj git fetch` + update) in the joelclaw checkout and rebuild/install only capture-client artifacts. Nothing else. No repo resets, no force operations, no service restarts beyond what capture clients need.
+- If a machine is unreachable, record it as a gap with the exact command Joel or a session on that machine should run — never claim deployment you didn't verify.
+- Do not commit (on any machine).
+
+## The work
+
+The three done-conditions in your step file. Proof standard: condition 2 requires fresh captures FROM EACH updated machine arriving at flagg with the provenance fields — trigger a small pi/claude session remotely (or ask the machine's running session via a note in your Result if that's not possible) and verify the arriving metadata in `~/.joelclaw/runs-dev` or `sessions.db`.
+
+## Deliverables
+
+Step `## Result` filled with the machine table (host, reachable, pulled-to commit, provenance proof or gap), status closed with `closed_at` ONLY if every reachable machine is proven, one brief ledger line. Work autonomously. Do not commit. Print a DONE summary.

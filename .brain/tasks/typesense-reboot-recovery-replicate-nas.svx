@@ -1,0 +1,24 @@
+---
+title: "Worker task: replicate the critical db to both NAS boxes"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: replicate the critical db to both NAS boxes
+
+You are a worker on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step: [Replicate the Critical DB to Both NAS Boxes](../projects/typesense-reboot-recovery/replicate-critical-db-to-nas.svx) — read it, the brief, and [the availability decision](../projects/typesense-reboot-recovery/decide-availability-shape.svx). Load the `tailnet-topology` skill and read `~/.brain/resources/operator-network-context.svx` before touching any host — verify NAS hostnames/IPs with `tailscale status`, never guess.
+
+## Hard containment rules
+
+- NAS boxes are production family/service hosts. Additive changes only: new containers, new directories, new sync jobs. Never touch Garage data, existing shares, or existing containers. No destructive commands.
+- Territory: `packages/cli/**` (ordered fallback in the critical-search reader), new `infra/critical-search-replica/**`, new `scripts/replicate-critical-db*`. Nothing in `packages/system-bus` (another worker owns it).
+- `critical.db` on flagg: read-only (you replicate it, never rewrite it). Do not commit.
+
+## The work
+
+The six done-conditions in your step file. Key design constraints from the decision and step: one mechanism twice (pick Litestream→Garage or plain file sync — record why); replicas served from each NAS's **local disk** (never SQLite over NFS/SMB); read-only shims; client walks flagg → NAS-A → NAS-B with health-awareness and surfaces which replica answered plus freshness; staleness measured in minutes; proof = stop flagg's serving path and query a replica; continuous synthetic reads with alerting can be designed and stubbed here, wired fully when the freshness worker's alert plumbing lands.
+
+## Deliverables
+
+Infra + code + tests uncommitted; `bunx tsc --noEmit` and targeted Biome pass; record host names, container names, sync cadence, and measured staleness in your step's `## Result`; flip status closed with `closed_at`; one brief ledger line. Work autonomously. Do not commit. Print a DONE summary.

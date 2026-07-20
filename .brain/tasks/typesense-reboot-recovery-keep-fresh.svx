@@ -1,0 +1,25 @@
+---
+title: "Worker task: keep the critical db fresh"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: keep the critical db fresh
+
+You are a worker on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step: [Keep the Critical DB Fresh](../projects/typesense-reboot-recovery/keep-critical-db-fresh.svx) — read it, the brief, and the closed [Port Critical Search to SQLite](../projects/typesense-reboot-recovery/port-critical-search-to-sqlite.svx) (the builder's gate semantics matter: honest source status, swap-abort on degraded sources, `--allow-degraded-sources` only explicit).
+
+## Hard containment rules
+
+- Territory: `packages/system-bus/**` (scheduled Inngest function + staleness alert) and new `scripts/export-*`. Do NOT edit the builder (`scripts/build-critical-search-db.ts`), `packages/cli/**`, or `packages/memory/**` — invoke the builder, don't change it.
+- Typesense is healthy and read-only to you: exports are GET/search only.
+- The five malformed observer pages the builder refuses on are NOT yours to fix — surface them in your Result for Joel.
+- Fixture tests only for alerts; no live sends. `~/.joelclaw/runs-dev` read-only. Do not commit, do not restart the worker.
+
+## The work
+
+The four done-conditions in your step file. Notes: the gap export pulls June-onward `memory_observations` from the now-healthy Typesense into the archive location the builder reads (extend the archive, never rewrite history); the scheduled rebuild invokes the existing builder and must be loud on failure (the builder exiting 1 on its source gate is a feature — the alert reports it, nothing overrides it); the staleness budget alert follows the existing incident pattern in `typesense-recovery-alerts.ts` and delivers through the same messaging path.
+
+## Deliverables
+
+Code + fixture tests uncommitted; `bunx tsc --noEmit` and targeted Biome pass; fill your step's `## Result` (cadence, budget values, gap-export counts), flip status closed with `closed_at`, one brief ledger line. Work autonomously. Do not commit. Print a DONE summary.
