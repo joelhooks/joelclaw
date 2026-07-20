@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RUNS_COLLECTION } from "@joelclaw/memory";
+import { emitOtelEvent } from "../observability/emit";
 
 export type CaptureSegment = {
   runId: string;
@@ -312,12 +313,24 @@ export function captureGrowthIncidentAlertId(
   );
 }
 
+export interface HardAlertReceipt {
+  sent: true;
+  receiptConfirmed: boolean;
+  receiptDetail: string | null;
+}
+
+/**
+ * Sends the alert, then waits for the terminal delivery receipt. A failed or
+ * missing receipt must NOT throw: the platform message already went out, and a
+ * throw makes retrying callers re-send the same alert (2026-07-20 Telegram
+ * spam incident). Only a failed send throws.
+ */
 export async function sendHardAlert(input: {
   eventId: string;
   source: string;
   message: string;
   runCommand?: CommandRunner;
-}): Promise<void> {
+}): Promise<HardAlertReceipt> {
   const runCommand = input.runCommand ?? defaultCommandRunner;
   const sent = await runCommand([
     "joelclaw",
@@ -338,22 +351,46 @@ export async function sendHardAlert(input: {
     throw new Error("joelclaw notify send returned the wrong eventId");
   }
 
-  const confirmed = await runCommand([
-    "joelclaw",
-    "notify",
-    "wait",
-    input.eventId,
-    "--source",
-    input.source,
-    "--timeout",
-    "15s",
-  ]);
-  const waitEnvelope = requireCommandSuccess(confirmed, "joelclaw notify wait");
-  if (
-    waitEnvelope.result?.deliveryState !== "confirmed" ||
-    typeof waitEnvelope.result.platformMessageId !== "string" ||
-    waitEnvelope.result.platformMessageId.length === 0
-  ) {
-    throw new Error("joelclaw notify wait did not confirm a platform message");
+  try {
+    const confirmed = await runCommand([
+      "joelclaw",
+      "notify",
+      "wait",
+      input.eventId,
+      "--source",
+      input.source,
+      "--timeout",
+      "15s",
+    ]);
+    const waitEnvelope = requireCommandSuccess(confirmed, "joelclaw notify wait");
+    if (
+      waitEnvelope.result?.deliveryState !== "confirmed" ||
+      typeof waitEnvelope.result.platformMessageId !== "string" ||
+      waitEnvelope.result.platformMessageId.length === 0
+    ) {
+      return unconfirmedReceipt(input, "notify wait did not confirm a platform message");
+    }
+    return { sent: true, receiptConfirmed: true, receiptDetail: null };
+  } catch (error) {
+    return unconfirmedReceipt(input, String(error).slice(0, 300));
   }
+}
+
+async function unconfirmedReceipt(
+  input: { eventId: string; source: string },
+  detail: string,
+): Promise<HardAlertReceipt> {
+  try {
+    await emitOtelEvent({
+      level: "warn",
+      source: "system-bus",
+      component: "search-maintenance",
+      action: "alert.receipt.unconfirmed",
+      success: false,
+      metadata: { eventId: input.eventId, alertSource: input.source, detail },
+    });
+  } catch {
+    // Telemetry must never turn a delivered alert into a retry storm.
+  }
+  return { sent: true, receiptConfirmed: false, receiptDetail: detail };
 }

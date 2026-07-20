@@ -146,4 +146,33 @@ describe("hard alert delivery", () => {
       "joelclaw", "notify", "wait", "fixture-alert", "--source", "fixture", "--timeout", "15s",
     ]);
   });
+
+  test("receipt timeout does not throw after a successful send", async () => {
+    const receipt = await sendHardAlert({
+      eventId: "fixture-alert",
+      source: "fixture",
+      message: "fixture message",
+      runCommand: async (args) => {
+        if (args[2] === "send") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ ok: true, result: { eventId: "fixture-alert" } }),
+            stderr: "",
+          };
+        }
+        return {
+          exitCode: 1,
+          stdout: JSON.stringify({
+            ok: false,
+            error: { code: "NOTIFY_TERMINAL_RECEIPT_TIMEOUT" },
+          }),
+          stderr: "",
+        };
+      },
+    });
+
+    expect(receipt.sent).toBe(true);
+    expect(receipt.receiptConfirmed).toBe(false);
+    expect(receipt.receiptDetail).toContain("notify wait");
+  });
 });
