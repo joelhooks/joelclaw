@@ -3,6 +3,7 @@ import { join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { Inngest } from "../inngest"
+import { searchCriticalDb } from "../lib/critical-search"
 import { respond, respondError } from "../response"
 import { resolveTypesenseApiKey } from "../typesense-auth"
 
@@ -327,6 +328,41 @@ function isMissingKnowledgeCollection(status: number, body: string): boolean {
   return status === 404 && /collection not found/i.test(body)
 }
 
+type KnowledgeFallbackResult =
+  | { ok: true; data: any; repair?: KnowledgeSyncResult }
+  | { ok: false; detail: string }
+
+async function searchKnowledgeTypesense(query: string, type: string | undefined, limit: number): Promise<KnowledgeFallbackResult> {
+  try {
+    const h = await headers()
+    const params = new URLSearchParams({
+      q: query,
+      query_by: "title,content",
+      per_page: String(limit),
+      exclude_fields: "embedding",
+    })
+    if (type) params.set("filter_by", `type:=${type}`)
+    const search = () => fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents/search?${params}`, {
+      headers: h,
+      signal: AbortSignal.timeout(15_000),
+    })
+    let response = await search()
+    let repair: KnowledgeSyncResult | undefined
+    if (!response.ok) {
+      const text = await response.text()
+      if (!isMissingKnowledgeCollection(response.status, text)) {
+        return { ok: false, detail: `${response.status} ${text}`.slice(0, 500) }
+      }
+      repair = await syncKnowledgeIndex()
+      response = await search()
+    }
+    if (!response.ok) return { ok: false, detail: `${response.status} ${await response.text()}`.slice(0, 500) }
+    return { ok: true, data: await response.json(), ...(repair ? { repair } : {}) }
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 // --- Commands ---
 
 const syncCmd = Command.make(
@@ -378,74 +414,68 @@ const searchCmd = Command.make(
   },
   ({ query, type, limit }) =>
     Effect.gen(function* () {
-      const h = yield* Effect.promise(() => headers())
-
-      const params = new URLSearchParams({
-        q: query,
-        query_by: "title,content",
-        per_page: String(limit),
-        exclude_fields: "embedding",
+      const typeValue = type._tag === "Some" ? type.value : undefined
+      const sqlite = yield* Effect.sync(() => {
+        try {
+          return searchCriticalDb({
+            query,
+            limit,
+            collections: ["system_knowledge", "vault_notes"],
+            type: typeValue,
+          })
+        } catch {
+          return null
+        }
       })
 
-      if (type._tag === "Some") {
-        params.set("filter_by", `type:=${type.value}`)
-      }
-
-      let resp = yield* Effect.promise(() =>
-        fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents/search?${params}`, { headers: h }),
-      )
-
-      let repair: KnowledgeSyncResult | undefined
-      if (!resp.ok) {
-        const text = yield* Effect.promise(() => resp.text())
-
-        if (isMissingKnowledgeCollection(resp.status, text)) {
-          repair = yield* Effect.promise(() => syncKnowledgeIndex())
-          resp = yield* Effect.promise(() =>
-            fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents/search?${params}`, { headers: h }),
-          )
-        } else {
-          yield* Console.log(
-            respondError(
-              "knowledge search",
-              `Search failed: ${resp.status} ${text}`,
-              "KNOWLEDGE_SEARCH_FAILED",
-              "Check Typesense health on localhost:8108 and run `joelclaw knowledge sync` if the system_knowledge index drifted.",
-              [
-                { command: "joelclaw knowledge sync", description: "Rebuild the system_knowledge collection" },
-                { command: "joelclaw status", description: "Check core runtime health" },
-              ],
-            ),
-          )
-          return
-        }
-      }
-
-      if (!resp.ok) {
-        const text = yield* Effect.promise(() => resp.text())
+      if (sqlite) {
         yield* Console.log(
-          respondError(
-            "knowledge search",
-            `Search failed after auto-repair: ${resp.status} ${text}`,
-            "KNOWLEDGE_SEARCH_FAILED",
-            "Run `joelclaw knowledge sync` explicitly and inspect Typesense health if the collection is still missing or unreadable.",
-            [
-              { command: "joelclaw knowledge sync", description: "Rebuild the system_knowledge collection" },
-              { command: "joelclaw status", description: "Check core runtime health" },
-            ],
-          ),
+          respond("knowledge search", {
+            query,
+            found: sqlite.found,
+            backend: "sqlite-fts5",
+            freshness: sqlite.freshness,
+            queryDurationMs: sqlite.durationMs,
+            dbPath: sqlite.dbPath,
+            hits: sqlite.hits.map((hit) => ({
+              id: hit.id,
+              type: hit.type,
+              title: hit.title,
+              score: hit.score,
+              snippet: hit.snippet.slice(0, 200),
+              source: hit.source,
+              sourceFreshness: hit.sourceFreshness,
+              path: hit.path,
+              collection: hit.collection,
+            })),
+          }, [{ command: "joelclaw knowledge sync", description: "Re-sync the legacy Typesense projection" }]),
         )
         return
       }
 
-      const data = yield* Effect.promise(() => resp.json()) as any
-      const hits = data.hits ?? []
-
+      const fallback = yield* Effect.promise(() => searchKnowledgeTypesense(query, typeValue, limit))
+      if (!fallback.ok) {
+        yield* Console.log(respondError(
+          "knowledge search",
+          `SQLite was unavailable; Typesense fallback failed: ${fallback.detail}`,
+          "KNOWLEDGE_SEARCH_FAILED",
+          "Build critical.db, then check the Typesense credential and network path.",
+          [
+            { command: "bun scripts/build-critical-search-db.ts", description: "Rebuild critical.db on flagg" },
+            { command: "joelclaw status", description: "Check core runtime health" },
+          ],
+        ))
+        return
+      }
+      const hits = fallback.data.hits ?? []
       yield* Console.log(
         respond("knowledge search", {
           query,
-          found: data.found ?? 0,
-          ...(repair ? { autoRepair: repair } : {}),
+          found: fallback.data.found ?? 0,
+          backend: "typesense",
+          fallback: { from: "sqlite-fts5", reason: "critical.db unavailable or unreadable" },
+          freshness: { status: "unavailable", detail: "critical.db unavailable or unreadable" },
+          ...(fallback.repair ? { autoRepair: fallback.repair } : {}),
           hits: hits.map((h: any) => ({
             id: h.document?.id,
             type: h.document?.type,
@@ -453,12 +483,7 @@ const searchCmd = Command.make(
             score: h.text_match_info?.score ?? h.hybrid_search_info?.rank_fusion_score,
             snippet: String(h.document?.content ?? "").slice(0, 200),
           })),
-        }, [
-          {
-            command: "joelclaw knowledge sync",
-            description: "Re-sync ADRs and skills",
-          },
-        ]),
+        }, [{ command: "bun scripts/build-critical-search-db.ts", description: "Rebuild critical.db on flagg" }]),
       )
     }),
 )

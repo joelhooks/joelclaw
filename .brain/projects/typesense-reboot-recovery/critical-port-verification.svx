@@ -121,3 +121,20 @@ Results: 4 tests passed; TypeScript passed; Biome passed.
 5. Define and test recall parity. Decide whether SQLite should preserve query rewrite, ranking, token matching, trust filters, score semantics, and budget behavior.
 6. Store a resolvable Run identity or stop emitting `runBacklink` as if it resolves into `~/.joelclaw/runs-dev`.
 7. Re-run live Typesense parity after Typesense becomes readable.
+
+## Re-verification (2026-07-20)
+
+**Verdict: CONFIRMED.** The remediation closes every previously refuted failure claim. Live Typesense parity remains a recorded cutover gap, not a recovery-path claim.
+
+| Re-attacked item | Verdict | Evidence |
+|---|---|---|
+| Compiled fallback for missing, truncated, unreadable, and schema-mismatched `critical.db` | **CONFIRMED** | Built `packages/cli/src/cli.ts` to `/tmp/joelclaw-reverify`. Against a local read-only mock Typesense, recall and knowledge each handled all four database failures. All eight probes exited 0, returned `backend: typesense`, returned the expected mock hit, and wrote no stderr. Recall reported the concrete SQLite failure reason. |
+| Builder gate and healthy-db preservation | **CONFIRMED** | A temporary healthy fixture rejected missing, empty, malformed, and 30% collapsed observation sources. Every rejection left the healthy database byte-identical by SHA-256. The collapse was 10 to 7 documents with a safe minimum of 8. The same degraded input published only with `allowDegradedSources: true`, and the result reported `freshness.status: degraded`. |
+| Exclusive builder lock | **CONFIRMED** | Two separate live builder processes targeted the production path concurrently. One reported `critical.db builder lock is held`; the lock holder reached the source gate and refused publication. Both exited 1. The production database SHA-256 stayed `e00c9074a8b8083db3676e7d2a076402f4d5e899b0680019d2d807dda4344792`. |
+| Five malformed live observation pages refuse publication | **CONFIRMED** | The live `bun scripts/build-critical-search-db.ts --skip-typesense` run reproduced exactly five malformed `.svx` pages under the observation source. It exited 1 with `files:observations is error (1020 documents)`. The database remained byte-identical. No degraded override ran on the live path. |
+| Archived-memory freshness and aggregate status | **CONFIRMED** | Compiled recall for `Todoist API token` returned archived memory hits with `sourceKey: archive:memory_observations`, high-water `2026-05-31T03:30:53.000Z`, age about 4.32 million seconds, and `status: stale`. Overall freshness was also `stale`; unrelated fresh Brain pages did not reset memory age. |
+| Observer identity honesty and cutover gaps | **CONFIRMED** | Compiled observation hits emitted `observerRunId` plus `observerRunReference: { kind: "source-label", resolvableInRunsDev: false }`. No hit emitted `runBacklink`. Production source contains no positive Runs-dev navigability claim. Freshness metadata records all three gaps: memory after the May 31 archive high-water, missing dynamic knowledge types `turn_note` and `failed_target`, and observer IDs that do not resolve into `~/.joelclaw/runs-dev`. |
+| Healthy-path regression sweep | **CONFIRMED** | `/tmp/joelclaw-reverify recall 'Typesense reboot recovery' --limit 3` returned `backend: sqlite-fts5`, 507 matches, and stale per-source freshness. Compiled knowledge search returned `backend: sqlite-fts5` and 39 matches. The live database has 29,906 documents, `PRAGMA integrity_check = ok`, mode `0600`, and size 275,406,848 bytes. |
+| Targeted validation | **CONFIRMED** | The 31-test suite passed across `critical-search.test.ts`, `critical-search-cli.test.ts`, `knowledge.test.ts`, and `recall.test.ts` with 91 assertions. Root `bunx tsc --noEmit` passed. Targeted Biome checked the builder, SQLite library and tests, recall adapter, and knowledge command with no findings. |
+
+Containment held: `~/.joelclaw/runs-dev` and Typesense were read only. The real `critical.db` was touched only by the builder's refused-publication path and remained byte-identical. No commit was made.
