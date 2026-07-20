@@ -4,7 +4,7 @@ type: "step"
 kind: "task"
 interaction: "AFK"
 status: "open"
-assignee: ""
+assignee: "pi (flagg, herdr pane wY:p2G, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./reconcile-observation-run-identity.svx"]
 created_at: "2026-07-20"
