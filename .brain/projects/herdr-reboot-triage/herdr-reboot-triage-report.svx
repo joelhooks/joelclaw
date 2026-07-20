@@ -160,6 +160,8 @@ Gotchas
 Healthy sibling functions scheduled while the judge did not, so do not reduce this to a generic outage. Re-judging after prompt changes is required; room-level permanent dedupe is wrong even if it caused the current failure. The current infra/voice-agent dirty edits (main.py, verify-voice.sh) are a separate privacy/health slice — do not claim them.
 ```
 
+RESOLVED 2026-07-20 (commit 08c00cd9): steps 1-3 are done. Scheduling was never broken — room-keyed idempotency (24h window) swallowed same-day re-drives and the flapping GQL API hid the successful runs. Idempotency removed from voice-call-judge; proof run COMPLETED with analysis row via callTelemetry:sessionDetail. Full receipts: .brain/projects/call-tuning-loop/diagnose-judge-scheduling.svx. Step 4 (legacy telemetry migration, auth-only sessions, deployer retirement) remains with the custody session.
+
 ### 4. Support CLI: ship the 1Password fix (wX)
 
 ```text
