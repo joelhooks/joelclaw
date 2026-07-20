@@ -206,6 +206,9 @@ def search_payload(request: dict[str, Any]) -> dict[str, Any]:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "critical-search-replica/1"
+    # Real HTTP/1.1 keep-alive (Content-Length is always sent), so pooled
+    # clients stop dying on reused sockets. Takes effect at next image build.
+    protocol_version = "HTTP/1.1"
 
     def authenticated(self) -> bool:
         provided = self.headers.get("authorization", "")

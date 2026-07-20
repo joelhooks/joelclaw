@@ -3,7 +3,8 @@ title: "Replicate the Critical DB to Both NAS Boxes"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "blocked"
+status: "closed"
+closed_at: "2026-07-20"
 blocked_on: ["interactive Docker elevation on both NAS hosts"]
 assignee: "pi (flagg, herdr pane wY:p1Z, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
@@ -46,3 +47,14 @@ Implementation and replication are live; read serving is blocked on one interact
 **Proof completed:** 26 targeted tests pass, including the real authenticated Python shim, compiled recall and knowledge fallback, missing-heartbeat rejection, synthetic failure/recovery transitions, concurrent publication, stale-lock recovery, and equal-generation checksum conflict. `bunx tsc --noEmit` and targeted Biome pass. A local hardened container returned `401` without auth and `200` with auth against the 29,929-document replica. Live host receipts prove the database is on each NAS's local disk and continuous sync is running.
 
 **Remaining blocker:** both NAS Docker sockets require interactive elevation. Files, private `.env`, token, compose config, and database are staged. Run the two installer-reported `sudo ... compose up -d --build` commands on the NAS hosts, then rerun the outage proof with Flagg-local search disabled. Do not close this step until both direct synthetic reads pass and the compiled recall and knowledge commands report a NAS in `servedBy`.
+
+## Completion (2026-07-20, steering)
+
+The sudo blocker cleared: Joel started both containers; they crash-looped on `/app/server.py` Errno 13 — the image COPY preserved the staged 0640 joel-owned mode as root-owned. One-line fix (`COPY --chmod=0644`, commit `335bfe0f`), Joel re-ran compose, both replicas came up.
+
+Receipts:
+
+- Synthetic check green on both: three-body and maturin each answer recall (10,146 found) and knowledge (680 found), sync heartbeat seconds old, replica lag 19 s.
+- A keep-alive flake surfaced: Bun fetch reusing sockets the HTTP/1.0-style shim closes. Fixed client-side (`connection: close` on all replica requests) and server-side (`protocol_version = "HTTP/1.1"`, takes effect at next image build).
+- Outage proof: `JOELCLAW_CRITICAL_SEARCH_SKIP_LOCAL=1` — recall and knowledge both answered `servedBy: three-body (replica)` through the compiled CLI.
+- Quirk recorded: `JOELCLAW_CRITICAL_DB` does not reach the recall projection path; the skip-local switch is the outage lever the synthetic monitor uses.

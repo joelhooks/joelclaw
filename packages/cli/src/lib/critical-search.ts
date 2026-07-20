@@ -902,7 +902,9 @@ async function searchReplica(
   timeoutMs: number,
 ): Promise<CriticalSearchResult> {
   if (!replica.token?.trim()) throw new Error("replica authentication token is missing")
-  const headers = { authorization: `Bearer ${replica.token.trim()}` }
+  // connection: close — the replica shim closes sockets per response; reused
+  // keep-alive connections die with "socket closed unexpectedly".
+  const headers = { authorization: `Bearer ${replica.token.trim()}`, connection: "close" }
   const healthResponse = await fetch(`${replica.url}/health`, {
     headers,
     signal: AbortSignal.timeout(timeoutMs),

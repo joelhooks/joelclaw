@@ -36,7 +36,13 @@ async function postSearch(replica: Replica, body: Record<string, unknown>): Prom
   if (!replica.token) throw new Error("replica authentication token is missing")
   const response = await fetch(`${replica.url.replace(/\/$/u, "")}/search`, {
     method: "POST",
-    headers: { authorization: `Bearer ${replica.token}`, "content-type": "application/json" },
+    headers: {
+      authorization: `Bearer ${replica.token}`,
+      "content-type": "application/json",
+      // The replica shim speaks HTTP/1.0-style one-shot connections; forbid
+      // keep-alive reuse or a second request rides a socket the server closed.
+      connection: "close",
+    },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   })
@@ -49,7 +55,7 @@ async function probe(replica: Replica): Promise<ProbeResult> {
     if (!replica.token) throw new Error("replica authentication token is missing")
     const base = replica.url.replace(/\/$/u, "")
     const healthResponse = await fetch(`${base}/health`, {
-      headers: { authorization: `Bearer ${replica.token}` },
+      headers: { authorization: `Bearer ${replica.token}`, connection: "close" },
       signal: AbortSignal.timeout(timeoutMs),
     })
     if (!healthResponse.ok) throw new Error(`health HTTP ${healthResponse.status}`)
