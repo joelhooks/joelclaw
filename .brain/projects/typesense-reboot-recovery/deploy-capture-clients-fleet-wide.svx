@@ -3,7 +3,8 @@ title: "Deploy the Patched Capture Clients Fleet-Wide"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20T05:10:30Z"
 assignee: "pi (flagg, herdr pane wY:p22, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: []
@@ -20,4 +21,15 @@ The patched capture clients are live on flagg, but capture also runs from other 
 2. Proof by provenance: fresh captures from each machine arrive at flagg carrying `from_offset`/`to_offset`/`jsonl_sha256`/`source_identity`.
 3. The machine list and how each was updated is recorded here for the next time.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+Run metadata under `~/.joelclaw/runs-dev` contains four `machine_id` values: `flagg`, `blaine`, `panda`, and historical `dark-wizard`. The live Tailscale check showed `flagg`, `blaine`, and `panda` online. `dark-wizard` has no current Tailscale peer and `tailscale debug resolve dark-wizard` returned `no such host`; its newest Run is from 2026-05 and it is not a deployable capture source.
+
+| Host / `machine_id` | Reachable | Pulled to | Capture-client update | Provenance proof at flagg |
+| --- | --- | --- | --- | --- |
+| `flagg` | yes; local host `flagg` | `c0299e6b77487aacc921b0f94d932988013ebc67` | Already ran the patched checkout. The Pi extension and Claude/Codex helpers resolve to repo files containing the four provenance fields. | Run `ebea40471c3d47779bb3843264`: Pi capture with `from_offset=431788`, `to_offset=434963`, SHA-256 `5dd9d10…`, and `source_identity=sha256:3cd8a42…`. |
+| `blaine` | yes; SSH host reports `Dark-Tower` | `c0299e6b77487aacc921b0f94d932988013ebc67` via `git pull --ff-only` | Pi extension is repo-symlinked; Claude and active Codex hooks invoke repo scripts. Reinstalled the standalone Codex helper from the same script; SHA-256 matches `03bb9f9a…`. Repo remained clean. | Canary Run `c8f7b37bcdc347228c5519ea49`: `from_offset=0`, `to_offset=1717`, SHA-256 `785f3a11…`, `source_identity=sha256:6bd42718…`. |
+| `panda` | yes; SSH host reports `panda` | `c0299e6b77487aacc921b0f94d932988013ebc67` via `git pull --ff-only` | Pi extension and Claude helper are repo-symlinked. Reinstalled the copied Codex helper; SHA-256 matches repo `03bb9f9a…`. Repo remained clean. | Canary Run `6b17c371fc2f42b28ee2b4e520`: `from_offset=0`, `to_offset=1492`, SHA-256 `f4bc9d9b…`, `source_identity=sha256:5d79463a…`. |
+| historical `dark-wizard` | no current machine | not applicable | Historical metadata identity only. No current peer or resolvable host exists. | Gap is retired, not an unverified reachable source. No command can target this removed host. |
+
+All reachable capture sources now run the patched clients, and each produced a fresh capture with the complete provenance field set.

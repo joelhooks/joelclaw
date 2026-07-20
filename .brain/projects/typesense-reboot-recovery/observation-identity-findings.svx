@@ -1,0 +1,171 @@
+---
+title: "Observation and capture identity findings"
+type: "asset"
+parent: "./reconcile-observation-run-identity.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Observation and capture identity findings
+
+## Verdict
+
+The 0/64 check tested the wrong identity field.
+
+The transcript Observer does not mint a capture Run ID. It writes a Brain observation page with `sessionId`. For normal pages, that value is the capture `conversation_id`. The current `runId` values belong to a different producer: the Slack work-state pass. They are not transcript identities and must not be presented as backlinks into `runs-dev`.
+
+The tier-1 to tier-2 bridge already exists for almost every transcript observation. It is:
+
+`observation.sessionId` = `sessions.db.runs.conversation_id` → epoch-scoped Runs → transcript chunks.
+
+The design must call this a **capture-conversation reference**, not a Run-ID backlink.
+
+## Where each identity comes from
+
+### Capture Run identity
+
+The capture clients create a random 26-character Run ID for each posted transcript body. The capture route preserves `conversation_id` separately. `sessions.db` stores both in `runs.run_id` and `runs.conversation_id`.
+
+Relevant source:
+
+- `scripts/joelclaw-capture-session.ts`: `newRunId()` creates the capture Run ID; the request sends the runtime session as `conversation_id`.
+- `packages/system-bus/src/routes/run-capture.ts`: the request contract keeps `run_id` and `conversation_id` distinct.
+- `packages/memory/src/session-index.ts`: the SQLite session index stores both identities.
+
+### Transcript Observer identity
+
+The current Observer is the Pi extension in `~/Code/joelhooks/joelclaw-observer/.pi/extensions/observer/`.
+
+Its flow is:
+
+1. `fetchActivityDocumentsSinceFloor()` reads `run_chunks_dev` fields including `run_id` and `conversation_id`.
+2. `foldActivityWindows()` groups each chunk by `session_id ?? conversation_id ?? run_id`.
+3. The current Run-chunk schema has no `session_id`, so normal captured transcripts use `conversation_id`. Legacy chunks without a conversation fall back to `run_id`.
+4. `distill_window` passes that group key as `sessionId`.
+5. `write_observation` writes the distiller's schema-v1 page with `sessionId`, `windowFrom`, and `windowTo`.
+
+The Observer therefore identifies an observed **conversation epoch**, not one capture body. This is correct because one epoch can span several capture Runs.
+
+### The misleading `runId`
+
+The critical-db verification found 64 distinct observation `run_id` values. The current live tree has 65. Every one is a Slack work-state-pass page written by `packages/system-bus/src/inngest/functions/work-state-pass.ts`. That function's `runId` identifies its own operational pass. It never claims to be a capture Run in its source domain.
+
+`packages/cli/src/lib/critical-search.ts` flattened every page's generic `runId` into `documents.run_id`. The recall adapter then called it `observerRunId`. That erased the producer namespace and created the false backlink.
+
+There is a second observation store, `memory_observations`, written by `packages/system-bus/src/inngest/functions/observe.ts`. It also records `session_id`, not capture `run_id`. It is separate from the Brain observation-page producer analyzed here.
+
+## Measured mapping
+
+Command:
+
+```sh
+bun scripts/observation-run-mapping.ts --examples 8
+```
+
+Read-only inputs:
+
+- `~/Code/joelhooks/dark-wizard/.brain/observations/**/*.svx`
+- `~/.joelclaw/search/sessions.db`
+
+Live result at `2026-07-20T05:09:18.857Z`:
+
+| Population | Count | Result |
+|---|---:|---|
+| Parsed observation pages | 1,022 | denominator |
+| Exact conversation + epoch-window mappings | 822 | high confidence |
+| Synthetic telemetry, reflector, or external-context pages | 134 | intentionally no transcript mapping |
+| Slack work-state producer Runs | 65 | intentionally no transcript mapping |
+| Transcript-shaped page without usable identity | 1 | unmapped |
+| Malformed pages excluded before the denominator | 5 | builder already reports these |
+
+All-page mapping: **822 / 1,022 = 80.43%**.
+
+Transcript-eligible mapping: **822 / 823 = 99.88%**.
+
+Every mapped page had both:
+
+- exact `sessionId = runs.conversation_id`; and
+- one or more chunks inside `(windowFrom, windowTo]`.
+
+No fuzzy time-only join was needed. Time narrows an exact conversation join to the Runs that contain the observed epoch. The mapper labels these mappings `high` confidence.
+
+The script reports the live tree. The earlier critical-db snapshot had 1,013 documents and 64 operational `runId` values because it predates nine current pages and one current Slack pass.
+
+## Tier-1 to tier-2 proof
+
+### Critical-search port re-verification
+
+- Observation: `2026-07-20-e65eff4d5a5a.svx`
+- Tier-1 identity: `sessionId=019f7db1-600f-7e25-bac4-e142dfb6837f`
+- Join: exact `sessions.db.runs.conversation_id`
+- Epoch candidates: 16 Runs
+- Transcript proof: Run `b3afb3b29b6f48258bf9da4bf7`, chunk 6 contains the earlier `REFUTED` verdict and both fallback/builder blockers. Chunk 7 contains the SQLite-port step under review.
+
+This matches the observation's statement that the worker re-verified the missing/corrupt fallback and healthy-db replacement failures.
+
+### Truthful backup receipts
+
+- Observation: `2026-07-19-bb35a06253bd.svx`
+- Tier-1 identity: `sessionId=3d12a2e9-f42f-4d28-b93a-674f5a5b3a38`
+- Join: exact `sessions.db.runs.conversation_id`
+- Epoch candidates: 2 Runs
+- Transcript proof: Run `c639f556234d428a86c52696ca`, chunk 5 states that verification now distinguishes `ok`, `missing`, `timeout`, and `error`, and that replay receipts preserve child exit/error details.
+
+This is the source claim summarized by the observation.
+
+### Module dossier harvest
+
+- Observation: `2026-07-19-b9a7c04eef18.svx`
+- Tier-1 identity: `sessionId=eadb9150-c53b-48f7-9e82-3a5fee2ac947`
+- Join: exact `sessions.db.runs.conversation_id`
+- Epoch candidates: 1 Run
+- Transcript proof: Run `2b1c809c92eb4576a728fe7092`, chunk 36 says "17 sourced, 10 honest stubs" and names Stolperbeats, Metron/Voltera/Axxent, Constellation/Maestro, Mutable, and Noise Engineering modules.
+
+This directly supports the observation's dossier counts and source-honesty decision.
+
+## Recommendation
+
+Use a combination of fix-at-mint, an honest design amendment, and a join at read time. Do **not** add a large observation-to-Run mapping table to `critical.db`.
+
+### 1. Amend the identity contract
+
+Change the brief vocabulary from "Run-ID backlinks" to:
+
+> distilled transcript observations with capture-conversation references; the reference resolves through `sessions.db.runs.conversation_id` to the Runs and chunks for the observation epoch.
+
+Operational, telemetry, reflector, and external-context pages are observer-layer documents but do not promise transcript navigation.
+
+### 2. Make the producer namespace explicit
+
+In `joelclaw-observer`:
+
+- Keep `sessionId` for compatibility.
+- Add `identityKind: capture-conversation` and `captureConversationId: <sessionId>` to transcript epoch pages.
+- Carry the window's source Run IDs from `foldActivityWindows()` into `ActivityWindow` and optionally write `captureRunIds`. Treat these as an audit receipt, not the canonical join.
+- For the legacy fallback where no `conversation_id` exists, write `identityKind: capture-run`.
+
+In `work-state-pass.ts`, rename future page metadata from generic `runId` to `producerRunId` or add `identityKind: work-state-pass`. Do not imply transcript navigation.
+
+### 3. Fix the critical projection and recall shape
+
+In `packages/cli/src/lib/critical-search.ts` and the recall adapter:
+
+- Preserve `session_id` as the transcript reference.
+- Emit `observerSessionReference: { kind: "capture-conversation", value, resolvableInSessionsDb: true }` only after an exact `sessions.db` check.
+- Rename operational `runId` to `producerRunId` in the projection or keep it only inside `payload_json`.
+- Stop emitting `observerRunReference` for producer-local Runs.
+- Add a read-time resolver that queries `sessions.db` by `conversation_id` and narrows chunks with `(windowFrom, windowTo]`.
+- Return all candidate Runs for the epoch. Do not invent one canonical Run when the epoch spans several captures.
+
+### 4. Validate historical pages during the critical build
+
+The builder can run the same exact join as the proof-of-concept and record counts in freshness metadata. It should fail or report a cutover gap if transcript-eligible mapping falls below an agreed threshold.
+
+A separate mapping table adds stale duplicated state. It also does not improve reboot availability because tier-2 transcript bodies remain flagg-local. The stable bridge is the conversation ID already stored in both databases.
+
+## Proof-of-concept limits
+
+- The mapper reads only local Brain pages and `sessions.db`.
+- It does not mutate raw Runs, SQLite, Typesense, or observer state.
+- Token overlap selects one evidence chunk for inspection. It is not part of identity confidence.
+- Five malformed source pages remain outside this step's allowed write set.

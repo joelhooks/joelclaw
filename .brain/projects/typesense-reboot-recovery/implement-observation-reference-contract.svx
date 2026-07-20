@@ -1,0 +1,24 @@
+---
+title: "Implement the Observation Reference Contract"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: ["./reconcile-observation-run-identity.svx"]
+created_at: "2026-07-20"
+---
+
+# Implement the Observation Reference Contract
+
+## Step
+
+Apply the patch plan from [Observation and capture identity findings](./observation-identity-findings.svx) §§2–3. Resolved when:
+
+1. Observer transcript pages mint `identityKind: capture-conversation` + `captureConversationId` (repo `joelclaw-observer`); `work-state-pass.ts` pages stop using generic `runId`.
+2. `critical-search.ts` and the recall adapter emit `observerSessionReference: { kind: "capture-conversation", resolvableInSessionsDb }` verified against `sessions.db`, keep producer Runs as `producerRunId`, and stop emitting `observerRunReference` for producer-local IDs.
+3. A read-time resolver joins `sessions.db` by `conversation_id` narrowed by `(windowFrom, windowTo]`, returning all candidate Runs for the epoch.
+4. The 822-page high-confidence population resolves through the shipped path; tests lock the contract.
+
+## Result (YYYY-MM-DD)

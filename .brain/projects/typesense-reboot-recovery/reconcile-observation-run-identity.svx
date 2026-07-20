@@ -3,7 +3,8 @@ title: "Reconcile Observation and Run Identity"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "pi (flagg, herdr pane wY:p10, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./port-critical-search-to-sqlite.svx"]
@@ -20,4 +21,14 @@ Verification found 0 of 64 observation `run_id` values resolve in `~/.joelclaw/r
 2. A real mapping exists (observation → capture Run(s), even if via conversation/time-window join), or the design is honestly amended and the brief's **observer layer** vocabulary updated to match reality.
 3. Tier-1 → tier-2 navigation is proven end to end: pick observations, follow their links, land in the right transcripts in the session index.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+Closed with [Observation and capture identity findings](./observation-identity-findings.svx) and the read-only proof-of-concept `scripts/observation-run-mapping.ts`.
+
+The 0/64 verification tested the wrong namespace. All 64 values in that critical-db snapshot were Slack work-state-pass `runId` values. They identify operational passes, not captured transcript bodies. The transcript Observer writes `sessionId`, sourced from `run_chunks_dev.conversation_id` by `joelclaw-observer`'s `foldActivityWindows()`; capture Run IDs remain separate random IDs.
+
+The live proof measured 1,022 parsed observation pages. It mapped 822 by exact `sessionId = sessions.db.runs.conversation_id` plus epoch-window chunks: 80.43% of all pages and 99.88% of the 823 transcript-eligible pages. The remaining population is intentionally non-transcript: 134 telemetry/reflector/external-context pages, 65 Slack work-state producer Runs, and one old page without usable identity. Five malformed pages were reported and left untouched.
+
+Tier-1 to tier-2 navigation was proven on three real observations. Exact conversation joins landed in the correct `sessions.db` Runs and chunks for critical-search re-verification, truthful backup receipts, and the module dossier harvest.
+
+Recommendation: amend "Run-ID backlinks" to "capture-conversation references"; add explicit identity kinds at mint time; resolve `sessionId` through `sessions.db` at read time; keep producer-local Runs out of the transcript-reference field. Do not add a duplicated mapping table. The critical builder should validate and report mapping coverage. No package or builder files were changed.
