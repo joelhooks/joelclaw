@@ -9,6 +9,7 @@
  * plus the transformed JSONL SHA is the replay idempotency key. Checkpoints are
  * append-only and an inflight/accepted item is never resent automatically.
  */
+import { Database } from "bun:sqlite";
 import {
   appendFileSync,
   existsSync,
@@ -106,12 +107,14 @@ const centralUrl = (
   configValue("JOELCLAW_CENTRAL_URL") ??
   "http://127.0.0.1:3111"
 ).replace(/\/$/u, "");
-const typesenseUrl = (
-  arg("--typesense-url") ??
-  configValue("TYPESENSE_URL") ??
-  "http://127.0.0.1:8108"
-).replace(/\/$/u, "");
-const typesenseKey = configValue("TYPESENSE_API_KEY");
+const sessionsDbPath = resolve(
+  arg("--sessions-db") ??
+    configValue("SESSION_INDEX_PATH") ??
+    join(HOME, ".joelclaw", "search", "sessions.db"),
+);
+const runStorePath = resolve(
+  arg("--run-store") ?? configValue("RUN_STORE_PATH") ?? join(HOME, ".joelclaw", "runs-dev"),
+);
 const isRun = flags.has("--run");
 const execute = flags.has("--execute");
 const maxFiles = intArg("--max-files", 0);
@@ -182,75 +185,66 @@ function validateCatalogSource(expected: CatalogEntry, realOutbox: string): Capt
   return actual.body;
 }
 
-async function typesense(path: string): Promise<Response> {
-  if (!typesenseKey)
-    throw new Error("TYPESENSE_API_KEY is required; it is read locally and never printed");
-  return fetch(`${typesenseUrl}${path}`, { headers: { "X-TYPESENSE-API-KEY": typesenseKey } });
+// sessions.db is the canonical session index (ADR-backed successor to the
+// retired Typesense runs_dev collection). Central writes it synchronously on
+// capture ingest, so index verification reads it directly.
+type IndexedRun = {
+  run_id: string;
+  parent_run_id: string | null;
+  source_identity: string | null;
+  jsonl_path: string | null;
+  jsonl_sha256: string | null;
+};
+
+let sessionsDb: Database | undefined;
+function sessionIndex(): Database {
+  if (!sessionsDb) {
+    if (!existsSync(sessionsDbPath))
+      throw new Error(`session index not found: ${sessionsDbPath}`);
+    // The index is WAL-mode and its -wal/-shm sidecars vanish between writer
+    // sessions; a readonly connection then fails with SQLITE_CANTOPEN because
+    // it may not create them. Open read-write, enforce no-writes per-connection.
+    sessionsDb = new Database(sessionsDbPath);
+    sessionsDb.run("PRAGMA query_only = ON");
+  }
+  return sessionsDb;
 }
 
-function filterEscape(value: string): string {
-  return value.replaceAll("`", "\\`");
+function exactRun(runId: string): IndexedRun | undefined {
+  const row = sessionIndex()
+    .query<IndexedRun, [string]>(
+      "SELECT run_id, parent_run_id, source_identity, jsonl_path, jsonl_sha256 FROM runs WHERE run_id = ?",
+    )
+    .get(runId);
+  return row ?? undefined;
 }
 
-async function exactRun(runId: string): Promise<Record<string, unknown> | undefined> {
-  const response = await typesense(`/collections/runs_dev/documents/${encodeURIComponent(runId)}`);
-  if (response.status === 404) return undefined;
-  if (!response.ok)
-    throw new Error(`Typesense exact-run check failed with HTTP ${response.status}`);
-  return (await response.json()) as Record<string, unknown>;
-}
-
-async function capturedSiblings(body: CaptureBody): Promise<CapturedSibling[]> {
+function capturedSiblings(body: CaptureBody): CapturedSibling[] {
   if (!body.conversation_id) return [];
-  const filters = [
-    `agent_runtime:=\`${filterEscape(body.agent_runtime)}\``,
-    `conversation_id:=\`${filterEscape(body.conversation_id)}\``,
-  ];
-  if (body.parent_run_id) {
-    filters.push(`parent_run_id:=\`${filterEscape(body.parent_run_id)}\``);
-  }
-  if (body.source_identity) {
-    filters.push(`source_identity:=\`${filterEscape(body.source_identity)}\``);
-  }
+  const rows = sessionIndex()
+    .query<IndexedRun, [string, string]>(
+      "SELECT run_id, parent_run_id, source_identity, jsonl_path, jsonl_sha256 FROM runs WHERE agent_runtime = ? AND conversation_id = ?",
+    )
+    .all(body.agent_runtime, body.conversation_id);
   const siblings: CapturedSibling[] = [];
-  let page = 1;
-  let found = 0;
-  do {
-    const params = new URLSearchParams({
-      q: "*",
-      query_by: "full_text",
-      filter_by: filters.join(" && "),
-      page: String(page),
-      per_page: "250",
-      include_fields: "id,parent_run_id,source_identity,jsonl_path,jsonl_sha256",
-    });
-    const response = await typesense(`/collections/runs_dev/documents/search?${params}`);
-    if (!response.ok)
-      throw new Error(`Typesense sibling check failed with HTTP ${response.status}`);
-    const payload = (await response.json()) as {
-      found?: number;
-      hits?: Array<{
-        document: {
-          id: string;
-          parent_run_id?: string;
-          source_identity?: string;
-          jsonl_path?: string;
-          jsonl_sha256?: string;
-        };
-      }>;
-    };
-    found = payload.found ?? 0;
-    for (const hit of payload.hits ?? []) {
-      const doc = hit.document;
-      if ((doc.parent_run_id ?? undefined) !== (body.parent_run_id ?? undefined)) continue;
-      if (body.source_identity && doc.source_identity !== body.source_identity) continue;
-      if (!doc.jsonl_path || !existsSync(doc.jsonl_path)) continue;
-      siblings.push(
-        verifiedCapturedSibling(doc.id, readFileSync(doc.jsonl_path, "utf8"), doc.jsonl_sha256),
-      );
-    }
-    page += 1;
-  } while ((page - 1) * 250 < found);
+  for (const row of rows) {
+    if ((row.parent_run_id ?? undefined) !== (body.parent_run_id ?? undefined)) continue;
+    if (body.source_identity && row.source_identity !== body.source_identity) continue;
+    if (!row.jsonl_path) continue;
+    // sessions.db stores run-store-relative jsonl paths (same convention as
+    // `joelclaw sessions`); absolute paths are legacy rows.
+    const jsonlPath = row.jsonl_path.startsWith("/")
+      ? row.jsonl_path
+      : join(runStorePath, row.jsonl_path);
+    if (!existsSync(jsonlPath)) continue;
+    siblings.push(
+      verifiedCapturedSibling(
+        row.run_id,
+        readFileSync(jsonlPath, "utf8"),
+        row.jsonl_sha256 ?? undefined,
+      ),
+    );
+  }
   return siblings;
 }
 
@@ -274,7 +268,7 @@ async function plan(): Promise<void> {
     (candidate) => candidate.disposition === "representative",
   )) {
     const body = readBody(entry.path);
-    const derivation = deriveReplayBody(body, await capturedSiblings(body));
+    const derivation = deriveReplayBody(body, capturedSiblings(body));
     entry.archiveStatus = derivation.status;
     if (derivation.status === "covered") {
       entry.capturedRunId = derivation.capturedRunId;
@@ -349,7 +343,7 @@ async function waitForIndex(
 ): Promise<"indexed" | "conflict" | "timeout"> {
   const deadline = Date.now() + indexWaitMs;
   while (Date.now() <= deadline) {
-    const doc = await exactRun(runId);
+    const doc = exactRun(runId);
     if (doc) return doc.jsonl_sha256 === replaySha256 ? "indexed" : "conflict";
     if (Date.now() >= deadline) break;
     await sleep(Math.min(2_000, Math.max(1, deadline - Date.now())));
@@ -398,7 +392,7 @@ async function run(): Promise<void> {
       continue;
     }
     const source = validateCatalogSource(entry, realOutbox);
-    const derivation = deriveReplayBody(source, await capturedSiblings(source));
+    const derivation = deriveReplayBody(source, capturedSiblings(source));
     if (derivation.status === "covered") {
       const key = replayKey(source.run_id, entry.bodySha256, entry.jsonlSha256);
       const row = checkpoint({
@@ -444,7 +438,7 @@ async function run(): Promise<void> {
       );
     }
 
-    const existing = await exactRun(targetRunId);
+    const existing = exactRun(targetRunId);
     if (existing) {
       if (existing.jsonl_sha256 !== derivation.replaySha256) {
         throw new Error(`run_id conflict for ${targetRunId}; refusing overwrite`);
