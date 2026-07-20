@@ -6,7 +6,7 @@ interaction: "HITL"
 status: "open"
 assignee: ""
 parent: "./typesense-reboot-recovery-brief.svx"
-blockers: ["./build-compacted-collection.svx"]
+blockers: ["./build-compacted-collection.svx", "./wire-session-index-cutover.svx"]
 created_at: "2026-07-19"
 ---
 

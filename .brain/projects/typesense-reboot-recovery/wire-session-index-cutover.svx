@@ -1,0 +1,27 @@
+---
+title: "Wire the Session Index for Cutover"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: ["./build-compacted-collection.svx"]
+created_at: "2026-07-20"
+---
+
+# Wire the Session Index for Cutover
+
+## Step
+
+Build everything [Review the Cutover](./review-cutover-and-retire-inflated-collection.svx) needs so the review is a decision, not a construction site. Typesense is healthy again as of 2026-07-20 ~04:00, so real parity is possible. Resolved when:
+
+1. `sessions.db` is flipped to WAL and the documented append consumer (see [Session index validation](./session-index-validation.svx)) is wired into the patched capture path — idempotent under real Inngest at-least-once redelivery and step retries, proven by test.
+2. A grep-proven inventory of every `run_chunks_dev` reader exists, and `joelclaw sessions search` (plus any reader the inventory surfaces) opens `sessions.db`, with ripgrep-over-raw as fallback. No reader switched from memory.
+3. Typesense parity runs against the now-healthy `run_chunks_dev`: conversation search parity, latest timestamps, result overlap on real queries — differences explained (the compaction should *improve* results by removing ~4.2M redundant chunks; quantify that).
+4. A written rollback plan exists (cheap by design: raw JSONL + manifest rebuild the index; readers can flip back).
+5. A cutover review packet asset summarizes 1–4 for Joel's HITL review.
+
+Containment: `run_chunks_dev` is not modified, not dropped, not written. Retirement is exclusively the review's outcome.
+
+## Result (YYYY-MM-DD)
