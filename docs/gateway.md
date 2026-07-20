@@ -88,7 +88,7 @@ joelclaw gateway unmute imessage
 
 Use `doctor` first. It prints one PASS/FAIL line per critical boundary and exact repair commands for every failure. `--live` sends one real probe through `notify send` and passes only when Telegram's Bot API result produces a non-empty `platformMessageId`; `confirmed` telemetry alone is not delivery proof. Use `diagnose` second for deeper process/Redis/log/e2e/model evidence.
 
-The launch daemon executes `packages/gateway/src/daemon.ts` from the main working tree. A running daemon plus dirty gateway runtime source is a production hazard: a crash can relaunch half-edited code. `gateway doctor` marks that state `FAIL`. All gateway-touching WIP must live in a separate Git worktree. `gateway restart` records an operator restart marker, reports whether the current process crash-relaunched afterward, and includes the doctor summary in its result.
+The launch daemon executes `packages/gateway/src/daemon.ts` from the main working tree. A running daemon plus dirty gateway runtime source is a production hazard: a crash can relaunch half-edited code. `gateway doctor` marks that state `FAIL`. All gateway-touching WIP must live in a separate Git worktree. `gateway restart` records an operator restart marker, reports whether the current process crash-relaunched afterward, and includes the doctor summary in its result. Graceful daemon exits, including session rotation and system shutdown, write `/tmp/joelclaw/gateway.lifecycle.json`; the successor completes that marker so the doctor can distinguish an expected relaunch from a crash.
 
 ## Thread-oriented demand context (ADR-0237)
 
