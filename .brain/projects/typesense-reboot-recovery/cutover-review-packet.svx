@@ -1,0 +1,126 @@
+---
+title: "Session index cutover review packet"
+type: "asset"
+parent: "./wire-session-index-cutover.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Session index cutover review packet
+
+## Decision
+
+**Do not retire `run_chunks_dev` yet.** The replacement code and rollback path are ready for deployment. The running worker and installed CLI still use the old code because this task prohibited a worker restart and assigned the live CLI rebuild to steering.
+
+The one-shot catch-up appended 128 post-manifest Runs. Before cutover, steering must rerun the catch-up, deploy both artifacts, and verify one fresh `memory/run.captured` event in `sessions.db`. Then Joel can decide whether to retire the Typesense collection.
+
+## What is wired
+
+- `memory/run.captured` now appends the durable capture to `sessions.db` before it touches Typesense.
+- The append uses WAL, a 5-second busy timeout, `BEGIN IMMEDIATE`, byte and SHA-256 checks, the shared chunker, and one transaction for Run, chunk, and FTS rows.
+- Run rows preserve source identity, offsets, tags, machine, runtime, conversation, parent, timestamps, path, bytes, and SHA-256. The existing database schema was migrated in place for `from_offset`, `to_offset`, and `tags_json`.
+- Same Run ID plus same SHA-256 is an idempotent no-op.
+- Same Run ID plus different SHA-256 is a hard conflict.
+- A real `InngestTestEngine` retry test commits the SQLite append, fails a later Typesense step, replays the event, and proves one Run row remains.
+- `joelclaw sessions search --raw --source typesense` keeps its legacy flag for compatibility but now opens `sessions.db`. If the database cannot open, it searches immutable Run JSONL with `rg`.
+- The existing default observer search remains tier 1. The SQLite path replaces only the full-transcript tier.
+- The real database now reports `journal_mode=wal`.
+
+## Reader inventory
+
+Inventory command:
+
+```sh
+rg -n --hidden --glob '!node_modules' --glob '!.git' 'run_chunks_dev' .
+```
+
+| Surface | Classification | Cutover action |
+| --- | --- | --- |
+| `packages/cli/src/commands/sessions.ts` | Production full-transcript reader | Switched to `sessions.db`; immutable Run-store `rg` fallback added. The `typesense` source spelling remains a compatibility alias. |
+| `scripts/validate-session-index.ts` | Read-only parity probe | Intentionally keeps read-only Typesense queries for review evidence. It never writes the collection. |
+| `apps/web/app/api/runs/route.ts` | Operator hint only, not an executing reader | Its response still prints a direct Typesense polling command. Remove or replace this hint after Joel approves retirement. |
+| `packages/system-bus/src/inngest/functions/memory/run-captured.ts` | Writer | Keeps Typesense writes until Joel approves retirement; now appends SQLite first. |
+| `scripts/backfill-run-typesense.ts`, `scripts/typesense-restore/*`, `scripts/memory-spike/smoke-e2e.ts` | Repair, restore, or test writers | Retain until the retirement decision. They are not readers. |
+| Docs, skills, Brain notes, schemas, and tests | References or contracts | Update after retirement. No runtime reader was found in `apps/web` or another Inngest function. |
+
+## Live parity
+
+Source: `.brain/data/typesense-reboot-recovery/session-index-parity-2026-07-20.json`.
+
+Command:
+
+```sh
+TYPESENSE_API_KEY="$(secrets lease typesense_api_key)" bun scripts/validate-session-index.ts
+```
+
+The command returned `ok: true` against healthy Typesense.
+
+| Measure | SQLite | Typesense | Delta |
+| --- | ---: | ---: | ---: |
+| Indexed chunks | 449,220 | 3,570,503 | **3,121,283 fewer in SQLite (87.42%)** |
+| Multi-Run conversation `019f7db5-fcc4-7bc2-bc46-a86924e22ab3` | 78 Runs | 83 Runs across 204 chunks | All 78 SQLite Runs overlap; five Typesense Runs arrived after the catch-up scan |
+| Latest `started_at` | `1784521524679` | `1784521582482` | SQLite was 57,803 ms behind at measurement |
+
+The catch-up command appended 128 post-manifest Runs and 1,611 chunks from 6,027,741 immutable JSONL bytes. The remaining 57.8-second gap is live traffic after that bounded scan. Rerun `bun scripts/backfill-session-index.ts --apply` immediately before the worker rollout. The new steady-state append code is not live because this task prohibited restarting the worker.
+
+### Real query deltas
+
+| Query | SQLite top Runs | Typesense matching chunks | Typesense top Runs | Top-Run overlap |
+| --- | ---: | ---: | ---: | ---: |
+| `Typesense Reboot Recovery` | 7 | 203 | 72 | 4 |
+| `run_chunks_dev` | 23 | 1,032 | 72 | 2 |
+| `ShitRat` | 18 | 89,614 | 57 | 0 |
+
+Low top-result overlap is not a silent parity pass. It is the measured ranking change. Typesense ranking is dominated by repeated prefix chunks, especially the 89,614 broad `ShitRat` matches. SQLite ranks the manifest keep-set plus 128 post-manifest appends. This removes 3.12 million current redundant chunks, but Joel should spot-check result quality before retirement.
+
+The earlier estimate was about 4.2 million redundant chunks against a projected 4.6 million collection. The healthy collection now contains 3.57 million chunks, so the measured current reduction is 3.12 million, not 4.2 million.
+
+## Availability receipts
+
+- Fresh process wall time to first FTS result: **20.853 ms**.
+- SQLite open: **1.307 ms**.
+- First query: **4.529 ms**.
+- Raw Run-store fallback: **1,657 matching files in 5.708 seconds** for `run_chunks_dev`.
+- Compiled CLI check: `bun build packages/cli/src/cli.ts --compile --outfile /tmp/joelclaw-session-cutover`.
+- Compiled CLI SQLite query returned `source: "sqlite"`.
+- The same binary with `SESSION_INDEX_PATH=/tmp/does-not-exist-sessions.db` returned `source: "raw-run-store"` and an explicit fallback reason.
+
+## Rollback
+
+### Before retirement
+
+1. Keep `run_chunks_dev` unchanged.
+2. Keep immutable `~/.joelclaw/runs-dev` and the manifest unchanged.
+3. Save the current `sessions.db` SHA-256 and the pre-cutover CLI binary.
+4. Rerun `bun scripts/backfill-session-index.ts --apply` until it reports zero pending Runs at the rollout boundary.
+5. Deploy the worker and CLI without dropping Typesense.
+6. Verify a fresh captured Run by Run ID, SHA-256, offsets, chunk count, and `captured_at`.
+
+### Reader rollback
+
+If SQLite search regresses:
+
+1. Set `SESSION_INDEX_PATH` to a missing path to force the tested immutable Run-store `rg` fallback immediately.
+2. Restore the pre-cutover CLI binary if Typesense search is needed during diagnosis.
+3. Keep capture running. Raw JSONL remains authoritative.
+
+### Index rollback
+
+If append state is corrupt or conflicts:
+
+1. Stop only the SQLite append consumer through the worker rollback. Do not alter raw captures.
+2. Move the suspect `sessions.db`, `sessions.db-wal`, and `sessions.db-shm` aside as evidence.
+3. Rebuild from the immutable Run store and manifest with `scripts/build-session-index.ts`.
+4. Run `scripts/validate-session-index.ts`.
+5. Resume append only after integrity, counts, raw samples, WAL mode, and a fresh canary pass.
+
+No rollback step requires a Typesense mutation. Dropping `run_chunks_dev` remains a separate, explicit Joel decision.
+
+## Open gaps before Joel says “retire it”
+
+1. Steering must rebuild and install the CLI binary.
+2. Steering must restart the host worker later. This task explicitly prohibited it.
+3. Rerun the bounded catch-up at rollout, then prove the append consumer keeps the gap closed.
+4. Joel should spot-check the changed top results. Compaction explains ranking differences but does not prove taste.
+5. Replace the stale direct Typesense polling hint in `apps/web/app/api/runs/route.ts` after retirement approval.
+6. Only after those checks may Joel approve dropping `run_chunks_dev`.

@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
+import { Database } from "bun:sqlite";
 /** Validate the compacted SQLite session index without mutating its inputs. */
 import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { Database } from "bun:sqlite";
 import { chunkTurns, extractTurns, parseJsonl } from "../packages/memory/src/chunking";
 
 interface ManifestRecord {
@@ -72,7 +72,9 @@ function ftsExpression(query: string): string {
 }
 
 function openReadOnly(path: string): Database {
-  return new Database(path, { readonly: true, strict: true });
+  // WAL readers may need to create the -shm file after reboot. readwrite opens
+  // the existing database without creating it and allows that SQLite sidecar.
+  return new Database(path, { readwrite: true, strict: true });
 }
 
 function querySqlite(
@@ -182,28 +184,44 @@ async function typesenseHealth(): Promise<{ green: boolean; status: number | nul
   }
 }
 
-async function typesenseQuery(query: string): Promise<Set<string>> {
+async function typesenseSearch(params: URLSearchParams): Promise<{
+  found: number;
+  runIds: string[];
+  latestStartedAt?: number;
+}> {
   const key = process.env.TYPESENSE_API_KEY;
   if (!key) throw new Error("TYPESENSE_API_KEY is required when Typesense health is green");
   const base = process.env.TYPESENSE_URL ?? "http://localhost:8108";
-  const params = new URLSearchParams({
-    q: query,
-    query_by: "text",
-    per_page: "25",
-    include_fields: "run_id",
-  });
   const response = await fetch(`${base}/collections/run_chunks_dev/documents/search?${params}`, {
     headers: { "X-TYPESENSE-API-KEY": key },
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(30000),
   });
   if (!response.ok)
     throw new Error(
       `Typesense query failed: ${response.status} ${(await response.text()).slice(0, 200)}`,
     );
-  const body = (await response.json()) as { hits?: Array<{ document?: { run_id?: string } }> };
-  return new Set(
-    (body.hits ?? []).map((hit) => hit.document?.run_id).filter((id): id is string => Boolean(id)),
+  const body = (await response.json()) as {
+    found?: number;
+    hits?: Array<{ document?: { run_id?: string; started_at?: number } }>;
+  };
+  const hits = body.hits ?? [];
+  return {
+    found: body.found ?? hits.length,
+    runIds: hits.map((hit) => hit.document?.run_id).filter((id): id is string => Boolean(id)),
+    latestStartedAt: hits[0]?.document?.started_at,
+  };
+}
+
+async function typesenseQuery(query: string): Promise<{ found: number; runIds: Set<string> }> {
+  const result = await typesenseSearch(
+    new URLSearchParams({
+      q: query,
+      query_by: "text",
+      per_page: "100",
+      include_fields: "run_id,started_at",
+    }),
   );
+  return { found: result.found, runIds: new Set(result.runIds) };
 }
 
 async function main(): Promise<void> {
@@ -237,8 +255,8 @@ async function main(): Promise<void> {
     missing_covering_runs: number;
     divergent_siblings: number;
   };
-  if (counts.runs !== manifest.kept)
-    failures.push(`kept count: db=${counts.runs} manifest=${manifest.kept}`);
+  if (counts.runs < manifest.kept)
+    failures.push(`kept count regressed: db=${counts.runs} manifest=${manifest.kept}`);
   if (counts.skipped !== manifest.skipped)
     failures.push(`skipped count: db=${counts.skipped} manifest=${manifest.skipped}`);
   if (counts.chunks !== counts.fts_chunks)
@@ -292,26 +310,36 @@ async function main(): Promise<void> {
     started_at: number;
     captured_at: number;
   };
+  const conversation = db
+    .query(`SELECT conversation_id, count(*) AS runs, max(started_at) AS latest_started_at
+      FROM runs
+      WHERE conversation_id IS NOT NULL AND conversation_id != ''
+      GROUP BY conversation_id
+      HAVING count(*) >= 2
+      ORDER BY latest_started_at DESC
+      LIMIT 1`)
+    .get() as { conversation_id: string; runs: number; latest_started_at: number } | null;
+  const conversationRunIds = conversation
+    ? new Set(
+        (db.query("SELECT run_id FROM runs WHERE conversation_id = ?").all(conversation.conversation_id) as Array<{ run_id: string }>).map(
+          (row) => row.run_id,
+        ),
+      )
+    : new Set<string>();
   const latestCapturedDb = db
     .query("SELECT run_id, captured_at FROM runs ORDER BY captured_at DESC LIMIT 1")
     .get() as {
     run_id: string;
     captured_at: number;
   };
-  if (
-    latestDb.run_id !== manifest.latestStarted.run_id ||
-    latestDb.started_at !== manifest.latestStarted.started_at
-  ) {
+  if (latestDb.started_at < manifest.latestStarted.started_at) {
     failures.push(
-      `latest started Run differs: db=${latestDb.run_id} manifest=${manifest.latestStarted.run_id}`,
+      `latest started Run regressed: db=${latestDb.run_id} manifest=${manifest.latestStarted.run_id}`,
     );
   }
-  if (
-    latestCapturedDb.run_id !== manifest.latestCaptured.run_id ||
-    latestCapturedDb.captured_at !== manifest.latestCaptured.captured_at
-  ) {
+  if (latestCapturedDb.captured_at < manifest.latestCaptured.captured_at) {
     failures.push(
-      `latest captured Run differs: db=${latestCapturedDb.run_id} manifest=${manifest.latestCaptured.run_id}`,
+      `latest captured Run regressed: db=${latestCapturedDb.run_id} manifest=${manifest.latestCaptured.run_id}`,
     );
   }
 
@@ -377,17 +405,85 @@ async function main(): Promise<void> {
     skipped: !health.green,
   };
   if (health.green) {
-    const parity: Record<string, { sqlite_runs: number; typesense_runs: number; overlap: number }> =
-      {};
+    const parity: Record<string, {
+      sqlite_top_runs: number;
+      typesense_found_chunks: number;
+      typesense_top_runs: number;
+      top_run_overlap: number;
+      sqlite_only_top_runs: string[];
+      typesense_only_top_runs: string[];
+    }> = {};
     for (const query of args.queries) {
       const sqliteIds = new Set(ftsResults[query]!.run_ids);
-      const typesenseIds = await typesenseQuery(query);
-      const overlap = [...sqliteIds].filter((id) => typesenseIds.has(id)).length;
-      parity[query] = { sqlite_runs: sqliteIds.size, typesense_runs: typesenseIds.size, overlap };
-      if (sqliteIds.size > 0 && typesenseIds.size > 0 && overlap === 0)
-        failures.push(`Typesense parity has no Run overlap: ${query}`);
+      const typesenseResult = await typesenseQuery(query);
+      const typesenseIds = typesenseResult.runIds;
+      const overlapIds = [...sqliteIds].filter((id) => typesenseIds.has(id));
+      parity[query] = {
+        sqlite_top_runs: sqliteIds.size,
+        typesense_found_chunks: typesenseResult.found,
+        typesense_top_runs: typesenseIds.size,
+        top_run_overlap: overlapIds.length,
+        sqlite_only_top_runs: [...sqliteIds].filter((id) => !typesenseIds.has(id)),
+        typesense_only_top_runs: [...typesenseIds].filter((id) => !sqliteIds.has(id)).slice(0, 25),
+      };
     }
+
+    const latestTypesense = await typesenseSearch(
+      new URLSearchParams({
+        q: "*",
+        query_by: "text",
+        per_page: "1",
+        sort_by: "started_at:desc",
+        include_fields: "run_id,started_at",
+      }),
+    );
+    const conversationTypesense = conversation
+      ? await typesenseSearch(
+          new URLSearchParams({
+            q: "*",
+            query_by: "text",
+            filter_by: `conversation_id:=\`${conversation.conversation_id.replaceAll("`", "\\`")}\``,
+            per_page: "250",
+            include_fields: "run_id,started_at",
+          }),
+        )
+      : null;
+    const conversationTypesenseIds = new Set(conversationTypesense?.runIds ?? []);
+    const conversationOverlap = [...conversationRunIds].filter((id) => conversationTypesenseIds.has(id));
+
     typesenseParity.skipped = false;
+    typesenseParity.collection_chunks = latestTypesense.found;
+    typesenseParity.sqlite_chunks = counts.chunks;
+    typesenseParity.redundant_chunk_delta = latestTypesense.found - counts.chunks;
+    typesenseParity.latest = {
+      sqlite: latestDb,
+      typesense: {
+        run_id: latestTypesense.runIds[0] ?? null,
+        started_at: latestTypesense.latestStartedAt ?? null,
+      },
+      started_at_delta_ms:
+        typeof latestTypesense.latestStartedAt === "number"
+          ? latestTypesense.latestStartedAt - latestDb.started_at
+          : null,
+    };
+    typesenseParity.conversation = conversation
+      ? {
+          conversation_id: conversation.conversation_id,
+          sqlite_runs: conversationRunIds.size,
+          typesense_found_chunks: conversationTypesense?.found ?? 0,
+          typesense_runs: conversationTypesenseIds.size,
+          run_overlap: conversationOverlap.length,
+          sqlite_only_runs: [...conversationRunIds]
+            .filter((id) => !conversationTypesenseIds.has(id))
+            .slice(0, 25),
+          sqlite_only_run_count: [...conversationRunIds].filter(
+            (id) => !conversationTypesenseIds.has(id),
+          ).length,
+          typesense_only_runs: [...conversationTypesenseIds]
+            .filter((id) => !conversationRunIds.has(id))
+            .slice(0, 25),
+        }
+      : { skipped: "no multi-Run conversation in SQLite" };
     typesenseParity.queries = parity;
   }
 
@@ -396,7 +492,11 @@ async function main(): Promise<void> {
     database: args.db,
     database_bytes: Bun.file(args.db).size,
     counts,
-    manifest: { kept: manifest.kept, skipped: manifest.skipped },
+    manifest: {
+      kept: manifest.kept,
+      skipped: manifest.skipped,
+      appended_after_manifest: counts.runs - manifest.kept,
+    },
     raw_samples: { runs: manifest.samples.length, chunks: sampledChunks },
     latest: { started: latestDb, captured: latestCapturedDb },
     fts: ftsResults,

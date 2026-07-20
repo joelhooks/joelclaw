@@ -20,10 +20,11 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { embed } from "@joelclaw/inference-router";
 import {
+  appendSessionCapture,
   type Chunk,
   chunkTurns,
   detectFormat,
@@ -35,7 +36,9 @@ import {
   type Run,
   runChunksSchema,
   runsSchema,
+  SessionIndexConflictError,
 } from "@joelclaw/memory";
+import { NonRetriableError } from "inngest";
 import { emitOtelEvent } from "../../../observability/emit";
 import { inngest } from "../../client";
 
@@ -162,10 +165,6 @@ export const memoryRunCaptured = inngest.createFunction(
       jsonl_inline,
     } = event.data;
 
-    await step.run("ensure-collections", async () => {
-      await ensureCollections();
-    });
-
     // Inngest persists every step result. Keep transcript-scale data on disk and
     // reopen it inside the steps that need it instead of returning it through
     // durable step state.
@@ -177,6 +176,73 @@ export const memoryRunCaptured = inngest.createFunction(
               spoolInlineJsonl(run_id, jsonl_inline)
             )
           ).path;
+
+    let sessionAppend: ReturnType<typeof appendSessionCapture>;
+    try {
+      sessionAppend = await step.run("append-session-index", async () =>
+        appendSessionCapture({
+          databasePath:
+            process.env.SESSION_INDEX_PATH ??
+            join(homedir(), ".joelclaw", "search", "sessions.db"),
+          capturePath,
+          runId: run_id,
+          userId: user_id,
+          machineId: machine_id,
+          agentRuntime: agent_runtime,
+          conversationId: conversation_id,
+          parentRunId: parent_run_id,
+          sourceIdentity: source_identity,
+          fromOffset: from_offset,
+          toOffset: to_offset,
+          tags,
+          startedAt: started_at,
+          capturedAt: Date.now(),
+          jsonlPath: jsonl_path,
+          jsonlBytes: jsonl_bytes,
+          jsonlSha256: jsonl_sha256,
+        })
+      );
+    } catch (error) {
+      if (!(error instanceof SessionIndexConflictError)) throw error;
+      await step.run("emit-session-index-conflict", async () => {
+        await emitOtelEvent({
+          level: "error",
+          source: "system-bus",
+          component: "memory-run-captured",
+          action: "memory.run.session-index.append",
+          success: false,
+          metadata: {
+            run_id,
+            source_identity: source_identity ?? `legacy-run:${run_id}`,
+            conflict: true,
+          },
+        });
+      });
+      throw new NonRetriableError(error.message, { cause: error });
+    }
+
+    await step.run("emit-session-index-append", async () => {
+      await emitOtelEvent({
+        level: "info",
+        source: "system-bus",
+        component: "memory-run-captured",
+        action: "memory.run.session-index.append",
+        success: true,
+        duration_ms: Math.round(sessionAppend.duration_ms),
+        metadata: {
+          run_id,
+          status: sessionAppend.status,
+          freshness_timestamp: sessionAppend.freshness_timestamp,
+          source_identity: sessionAppend.source_identity,
+          chunk_count: sessionAppend.chunk_count,
+          conflict: false,
+        },
+      });
+    });
+
+    await step.run("ensure-collections", async () => {
+      await ensureCollections();
+    });
 
     const analysis = await step.run("chunk", async () => {
       const { candidates, turns } = readCapture(capturePath);
@@ -363,6 +429,9 @@ export const memoryRunCaptured = inngest.createFunction(
           embedding_status: RUN_CAPTURE_EMBEDDINGS ? "embedded" : "pending",
           turn_count: analysis.turn_count,
           format,
+          session_index_status: sessionAppend.status,
+          session_index_freshness: sessionAppend.freshness_timestamp,
+          source_identity: sessionAppend.source_identity,
         },
       });
     });

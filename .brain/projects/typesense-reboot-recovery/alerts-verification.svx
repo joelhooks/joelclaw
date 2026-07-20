@@ -140,3 +140,95 @@ The temporary adversarial suite covered the real manifest pair, same-Run `accept
 3. Parse `TYPESENSE_STARTUP_BUDGET_MS` as a complete safe integer string. Reject partial numeric garbage.
 4. Make `/api/runs/health` report monitor failure in its top-level status, and add route fixtures.
 5. State the ledger policy plainly: 2,048 segments per source, one key per active source, and 90-day idle expiry. Add a global cap only if that key count is not acceptable.
+
+## Re-verification (2026-07-20)
+
+**CONFIRMED.** The rework closes every previously refuted claim. No regression was found in the first verifier's confirmed paths.
+
+No live alert was sent. No production Redis key or Typesense document was written. `~/.joelclaw/runs-dev` was not modified. No worker was restarted. No commit occurred.
+
+### 1. Source-scoped incident lifecycle — CONFIRMED
+
+An independent fixture replayed one source through these ranges:
+
+1. A `[0,100)` established the ledger.
+2. B `[0,200)` opened an incident and emitted one alert.
+3. C `[0,300)` overlapped in the same incident and emitted no alert.
+4. A valid adjacent capture `[300,400)` cleared the incident.
+5. D `[0,400)` opened a new incident and emitted one more alert.
+6. After `CAPTURE_INCIDENT_QUIET_MS + 1`, E `[0,500)` opened another incident without an explicit recovery capture.
+
+The alert count was exactly `1`, then `2`, then `3`. All three incident event IDs were distinct. The source-scoped state lives at `CAPTURE_ALERT_PREFIX + sha256(source_identity)` in `packages/system-bus/src/inngest/functions/typesense-recovery-alerts.ts`. Confirmed incidents deduplicate until a non-overlap deletes the state or the last overlap is more than one hour old.
+
+### 2. Collection outage clock — CONFIRMED
+
+A fixture started with process `/health` at HTTP 503. At the 60-second budget boundary, process health changed to HTTP 200 while the `runs_dev` projection query threw HTTP 503. The monitor preserved `unavailableSince: 1000`, marked `typesense:runs_dev` exceeded, and emitted one alert at `unavailableForMs: 60000`.
+
+A later successful projection query cleared `STARTUP_BUDGET_STATE_KEY`. Process health alone did not clear it. Evidence is the `collectionHealthy = probe.healthy && projectionError === null` gate in `processStartupBudget` and the independent fixture result.
+
+### 3. Complete-integer budget parsing — CONFIRMED
+
+The required matrix produced:
+
+| Input | Effective budget |
+| --- | ---: |
+| `garbage` | `900000` ms fallback |
+| `120000oops` | `900000` ms fallback |
+| `-5` | `900000` ms fallback |
+| `1e6` | `900000` ms fallback |
+| `30000` | `60000` ms minimum clamp |
+| `120000` | `120000` ms |
+
+`parseStartupBudgetMs` requires `/^[0-9]+$/`, then requires `Number.isSafeInteger`. Partial, signed, and exponent forms do not parse.
+
+### 4. `/api/runs/health` contract — CONFIRMED
+
+Route-level fixtures returned the required top-level truth:
+
+| Shape | HTTP | top-level `ok` |
+| --- | ---: | --- |
+| fresh projection | 200 | `true` |
+| stale projection | 503 | `false` |
+| empty monitor state | 503 | `false` |
+| active collection outage | 503 | `false` |
+| monitor store error | 503 | `false` |
+
+The store-error body also retained the bounded error detail. `registerRunHealthRoute` now owns this contract in `packages/system-bus/src/routes/run-health.ts`; `serve.ts` delegates the route to it.
+
+### 5. Regression sweep — CONFIRMED
+
+- The real July 19 pair from read-only `~/.joelclaw/analysis/run-manifest-2026-07-19.jsonl` still produced `overlapBytes: 25153` for source identity `8fedaa242b43f207531ce49f113c08897be82c61fc708404aab3af7e26aa52fd`.
+- Same-Run `accepted_prefix` geometry stayed quiet.
+- An adjacent parented suffix `[25153,44587)` stayed quiet.
+- Fixture-only CLI parser probes reached `INVALID_JSON` for `notify send` and `INVALID_TIMEOUT` for `notify wait`. No dispatch occurred.
+- `messageEventConsumer`, `capturePrefixGrowthAlert`, and `typesenseStartupBudgetCheck` coexist in both the host registration and barrel exports.
+- Targeted Biome passed on the nine alert, health-route, registration, and server files.
+
+### Verification receipts
+
+```text
+bun test packages/system-bus/src/tmp-typesense-alert-reverification.test.ts
+5 pass, 0 fail, 20 assertions
+(the temporary fixture file was removed after the run)
+
+bun test \
+  packages/system-bus/src/inngest/functions/typesense-recovery-alerts.test.ts \
+  packages/system-bus/src/lib/search-maintenance.test.ts \
+  packages/system-bus/src/routes/run-health.test.ts \
+  packages/system-bus/src/routes/run-capture.test.ts \
+  scripts/lib/capture-outbox-replay.test.ts
+33 pass, 0 fail, 112 assertions
+
+bunx tsc --noEmit
+exit 0
+
+bunx tsc --noEmit -p packages/system-bus/tsconfig.json
+exit 0
+
+pnpm biome check <nine alert/health/registration/server files>
+Checked 9 files. No fixes applied.
+```
+
+### Final verdict
+
+All five re-verification items are **CONFIRMED**. The alerts step now meets the reworked Result. No further alert-specific rework is required from this pass.

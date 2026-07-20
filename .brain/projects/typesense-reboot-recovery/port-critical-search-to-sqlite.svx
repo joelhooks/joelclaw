@@ -31,7 +31,7 @@ Added 2026-07-20 after adversarial verification:
 7. Freshness is per-source truthful — a hit carries its own source's age, the archive gets a high-water timestamp, and stale data can never report near-zero age.
 8. `runBacklink` either verifiably resolves into `~/.joelclaw/runs-dev` or is renamed to stop claiming it does; the 0/64 intersection is explained. The 2026-05-31 archive end and the dynamic knowledge types (`turn_note`, `failed_target`) are reconciled or recorded as explicit gaps for the cutover review.
 
-## Result (2026-07-20)
+## Initial result (superseded by verification)
 
 Built `~/.joelclaw/search/critical.db` with `scripts/build-critical-search-db.ts` and the SQLite FTS5 implementation in `packages/cli/src/lib/critical-search.ts`. The builder is single-writer on flagg, writes a temporary database, runs `PRAGMA integrity_check`, sets mode `0600`, and atomically replaces the live file. A repeatable fixture test proves reruns replace stable IDs without duplicates.
 
@@ -49,13 +49,13 @@ Validation passed: 18 targeted Bun tests, root `bunx tsc --noEmit`, and targeted
 
 Adversarial verification ([receipts](./critical-port-verification.svx)) **refuted the first close**: the SQLite-first happy path, atomicity, archive counts, and containment were confirmed, but recall crashed instead of falling back when `critical.db` was missing or corrupt, the builder replaced a healthy db with an empty one when sources failed, two builders clobbered each other, aggregate freshness made stale memory look current, and `runBacklink` values had zero intersection with `runs-dev`.
 
-### Remediation after refutation
+## Result (2026-07-20, after remediation)
 
 Recall now uses `Effect.catchAll` to invoke the legacy adapter after any SQLite open, corruption, or schema failure. A compiled CLI suite proves fallback for missing, truncated, unreadable, and schema-mismatched databases against a successful read-only Typesense mock. The same compiled suite proves knowledge fallback catches credential and rejected-network failures and returns `KNOWLEDGE_SEARCH_FAILED` instead of crashing.
 
 The builder now holds an exclusive filesystem lock, reports missing, empty, malformed, and failed sources honestly, and refuses publication when any required source fails or falls below 80% of its prior count. Only `--allow-degraded-sources` bypasses the gate. Tests prove concurrent builders serialize, malformed local/archive input fails, a count collapse fails, and a healthy database remains byte-identical after a rejected build.
 
-The source gate found five malformed observation pages in the live source tree. A final normal rebuild refused publication and left the healthy 29,906-document schema-v2 database untouched. Those private source files are outside this step's containment; no degraded override ran.
+The source gate found five malformed observation pages in the live source tree. A final normal rebuild exited 1, removed its lock, and left the healthy 29,906-document schema-v2 database byte-identical by SHA-256. Those private source files are outside this step's containment; no degraded override ran.
 
 Freshness is now per source and per hit. The archive high-water is `2026-05-31T03:30:53Z`, so archived memory reports stale even when Brain changed recently. The database reports overall `stale` and records three cutover gaps: memory after May 31 is absent, dynamic knowledge types `turn_note` and `failed_target` are absent while Typesense cannot export, and observer Run IDs do not resolve into `~/.joelclaw/runs-dev`.
 

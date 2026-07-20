@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { Database } from "bun:sqlite";
 /**
  * Build the compacted SQLite FTS5 session index from the proven Run manifest.
  *
@@ -11,7 +12,6 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSy
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { Database } from "bun:sqlite";
 import {
   chunkTurns,
   detectFormat,
@@ -111,7 +111,10 @@ function createSchema(db: Database): void {
       jsonl_bytes INTEGER NOT NULL,
       jsonl_sha256 TEXT NOT NULL,
       turn_count INTEGER NOT NULL,
-      chunk_count INTEGER NOT NULL
+      chunk_count INTEGER NOT NULL,
+      from_offset INTEGER,
+      to_offset INTEGER,
+      tags_json TEXT NOT NULL DEFAULT '[]'
     ) STRICT;
 
     CREATE TABLE skipped_runs (
@@ -163,11 +166,16 @@ async function main(): Promise<void> {
   const db = new Database(temp, { create: true, strict: true });
   createSchema(db);
 
-  const insertRun = db.prepare(`INSERT INTO runs VALUES (
+  const insertRun = db.prepare(`INSERT INTO runs (
+    run_id, user_id, machine_id, agent_runtime, conversation_id,
+    parent_run_id, source_identity, prefix_group_identity, verdict,
+    started_at, captured_at, ended_at, jsonl_path, jsonl_bytes,
+    jsonl_sha256, turn_count, chunk_count, from_offset, to_offset, tags_json
+  ) VALUES (
     $run_id, $user_id, $machine_id, $agent_runtime, $conversation_id,
     $parent_run_id, $source_identity, $prefix_group_identity, $verdict,
     $started_at, $captured_at, $ended_at, $jsonl_path, $jsonl_bytes,
-    $jsonl_sha256, $turn_count, $chunk_count
+    $jsonl_sha256, $turn_count, $chunk_count, NULL, NULL, '[]'
   )`);
   const insertSkipped = db.prepare(`INSERT INTO skipped_runs VALUES (
     $run_id, $covering_run_id, $source_identity, $prefix_group_identity,
@@ -326,6 +334,10 @@ async function main(): Promise<void> {
     const integrity = db.query("PRAGMA integrity_check").get() as Record<string, string>;
     if (!Object.values(integrity).includes("ok"))
       throw new Error(`integrity_check failed: ${JSON.stringify(integrity)}`);
+    const journalMode = db.query("PRAGMA journal_mode = WAL").get() as { journal_mode?: string };
+    if (journalMode.journal_mode !== "wal") {
+      throw new Error(`failed to enable WAL: ${JSON.stringify(journalMode)}`);
+    }
     db.close(false);
     renameSync(temp, args.output);
     console.log(

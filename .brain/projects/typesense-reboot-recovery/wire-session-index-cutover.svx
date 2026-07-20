@@ -3,7 +3,8 @@ title: "Wire the Session Index for Cutover"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "pi (flagg, herdr pane wY:p1Y, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./build-compacted-collection.svx"]
@@ -24,4 +25,10 @@ Build everything [Review the Cutover](./review-cutover-and-retire-inflated-colle
 
 Containment: `run_chunks_dev` is not modified, not dropped, not written. Retirement is exclusively the review's outcome.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+Closed the construction step. `memory/run.captured` now appends to WAL-backed `sessions.db` before Typesense, with transactional Run/chunk/FTS writes, SHA-256 conflict detection, and idempotent replay. A real `InngestTestEngine` test proved the append survives a later step failure and event retry without duplicate rows.
+
+The full-transcript CLI reader now opens SQLite and falls back to ripgrep over immutable Run JSONL. A temp compiled binary proved both paths. The installed CLI rebuild remains steering's job.
+
+A bounded catch-up appended 128 post-manifest Runs. Live parity then measured 3,570,503 Typesense chunks versus 449,220 SQLite chunks: 3,121,283 fewer (87.42%), with SQLite 57.8 seconds behind ongoing traffic. Conversation coverage, latest timestamps, three real query deltas, the reader inventory, rollback, deployment gaps, and the retirement gate are in [Session index cutover review packet](./cutover-review-packet.svx). The running worker was not restarted, so Joel must not retire `run_chunks_dev` until steering reruns catch-up, deploys, and verifies one fresh append.

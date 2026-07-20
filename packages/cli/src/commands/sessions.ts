@@ -1,16 +1,16 @@
+import { Database } from "bun:sqlite"
 import { Buffer } from "node:buffer"
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { dirname, isAbsolute, join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { Effect } from "effect"
 import { respond, respondError } from "../response"
-import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 import { searchObservations } from "./observations"
 
-const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
-const RUN_CHUNKS_COLLECTION = "run_chunks_dev"
+const SESSION_INDEX_PATH = process.env.SESSION_INDEX_PATH || join(process.env.HOME ?? "", ".joelclaw", "search", "sessions.db")
+const RUN_STORE_PATH = process.env.RUN_STORE_PATH || join(process.env.HOME ?? "", ".joelclaw", "runs-dev")
 const SESSION_SEARCH_SOURCES = ["typesense", "ssh", "local", "both"] as const
 const SESSION_SEARCH_RUNTIMES = ["pi", "codex", "claude-code", "claude", "all"] as const
 
@@ -26,7 +26,7 @@ function parseOptionalText(value: OptionalText): string | undefined {
 }
 
 type SessionHit = {
-  source: "typesense" | "ssh" | "local"
+  source: "sqlite" | "raw-run-store" | "ssh" | "local"
   id: string
   runId?: string
   sessionId?: string
@@ -38,18 +38,6 @@ type SessionHit = {
   score?: number
   snippets: string[]
   extraction?: Extraction | { id: string; path?: string; error: string }
-}
-
-type TypesenseHit = {
-  document?: Record<string, unknown>
-  highlights?: Array<{ field?: string; snippet?: string; value?: string }>
-  text_match?: number
-  text_match_info?: { score?: number }
-}
-
-type TypesenseSearchResponse = {
-  found?: number
-  hits?: TypesenseHit[]
 }
 
 type RemoteSearchResponse = {
@@ -89,87 +77,115 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
-function quoteFilterValue(value: string): string {
-  return `\`${value.replace(/`/g, "\\`")}\``
-}
-
 function timestampFromMillis(value: unknown): string | undefined {
   const millis = asNumber(value)
   return millis == null ? undefined : new Date(millis).toISOString()
 }
 
-function firstHighlight(hit: TypesenseHit): string | undefined {
-  for (const highlight of hit.highlights ?? []) {
-    const snippet = asString(highlight.snippet) ?? asString(highlight.value)
-    if (snippet) return snippet
-  }
-  return undefined
+function ftsExpression(query: string): string {
+  return query
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => `"${token.replaceAll('"', '""')}"`)
+    .join(" AND ")
 }
 
-function tagsSessionId(doc: Record<string, unknown>): string | undefined {
-  const tags = Array.isArray(doc.tags) ? doc.tags : []
-  for (const tag of tags) {
-    if (typeof tag === "string" && tag.startsWith("session:")) {
-      return tag.slice("session:".length)
-    }
-  }
-  return undefined
-}
-
-async function searchTypesense(input: {
+function searchRawRunStore(input: {
   query: string
   machine: string
   runtime: SessionSearchRuntime
   limit: number
-}): Promise<{ ok: true; found: number; hits: SessionHit[] }> {
-  const apiKey = resolveTypesenseApiKey()
-  const params = new URLSearchParams({
-    q: input.query,
-    query_by: "text",
-    per_page: String(input.limit),
-    sort_by: "started_at:desc",
-    include_fields: "id,run_id,machine_id,started_at,role,text,tags",
-    exclude_fields: "embedding",
-  })
-
-  const normalizedRuntime = input.runtime === "claude" ? "claude-code" : input.runtime
-  const filters = normalizedRuntime === "all" ? [] : [`agent_runtime:=${quoteFilterValue(normalizedRuntime)}`]
-  if (input.machine && input.machine !== "all") {
-    filters.push(`machine_id:=${quoteFilterValue(input.machine)}`)
-  }
-  params.set("filter_by", filters.join(" && "))
-
-  const response = await fetch(
-    `${TYPESENSE_URL}/collections/${RUN_CHUNKS_COLLECTION}/documents/search?${params}`,
-    { headers: { "X-TYPESENSE-API-KEY": apiKey } }
+}): { ok: true; found: number; hits: SessionHit[]; fallbackReason: string } {
+  const proc = spawnSync(
+    "rg",
+    ["--files-with-matches", "--fixed-strings", "--ignore-case", "--max-count", "1", "--glob", "*.jsonl", input.query, RUN_STORE_PATH],
+    { encoding: "utf8", timeout: 45_000, maxBuffer: 1024 * 1024 * 8 },
   )
-
-  if (!response.ok) {
-    throw new Error(`Typesense session search failed (${response.status}): ${await response.text()}`)
+  if (proc.error) throw proc.error
+  if (proc.status !== 0 && proc.status !== 1) {
+    throw new Error(`raw Run-store fallback failed (${proc.status}): ${proc.stderr || proc.stdout}`)
   }
-
-  const body = (await response.json()) as TypesenseSearchResponse
-  const hits = (body.hits ?? []).map<SessionHit>((hit) => {
-    const doc = hit.document ?? {}
-    const runId = asString(doc.run_id)
-    const id = asString(doc.id) ?? runId ?? "unknown"
-    const text = asString(doc.text)
-    const snippet = firstHighlight(hit) ?? (text ? text.replace(/\s+/g, " ").slice(0, 500) : "")
-
-    return {
-      source: "typesense",
-      id,
+  const paths = proc.stdout.trim().split("\n").filter(Boolean)
+  const hits: SessionHit[] = []
+  for (const path of paths) {
+    if (hits.length >= input.limit) break
+    const metadataPath = path.replace(/\.jsonl$/u, ".metadata.json")
+    let metadata: Record<string, unknown> = {}
+    try { metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as Record<string, unknown> } catch { /* raw path remains useful */ }
+    const runtime = asString(metadata.agent_runtime)
+    const machine = asString(metadata.machine_id)
+    const normalizedRuntime = input.runtime === "claude" ? "claude-code" : input.runtime
+    if (normalizedRuntime !== "all" && runtime !== normalizedRuntime) continue
+    if (input.machine !== "all" && machine && machine !== input.machine) continue
+    const body = readFileSync(path, "utf8")
+    const matchAt = body.toLowerCase().indexOf(input.query.toLowerCase())
+    const snippet = body.slice(Math.max(0, matchAt - 180), Math.max(0, matchAt) + 320).replace(/\s+/g, " ")
+    const runId = asString(metadata.run_id) ?? path.split("/").pop()?.replace(/\.jsonl$/u, "") ?? path
+    hits.push({
+      source: "raw-run-store",
+      id: runId,
       runId,
-      sessionId: tagsSessionId(doc),
-      machineId: asString(doc.machine_id),
-      startedAt: timestampFromMillis(doc.started_at),
-      role: asString(doc.role),
-      score: asNumber(hit.text_match) ?? asNumber(hit.text_match_info?.score),
+      machineId: machine,
+      startedAt: timestampFromMillis(metadata.started_at),
+      role: runtime,
+      path,
       snippets: snippet ? [snippet] : [],
-    }
-  })
+    })
+  }
+  return { ok: true, found: paths.length, hits, fallbackReason: `sessions.db unavailable; searched immutable Run JSONL with ripgrep` }
+}
 
-  return { ok: true, found: body.found ?? hits.length, hits }
+async function searchSessionIndex(input: {
+  query: string
+  machine: string
+  runtime: SessionSearchRuntime
+  limit: number
+}): Promise<{ ok: true; found: number; hits: SessionHit[]; fallbackReason?: string }> {
+  if (!existsSync(SESSION_INDEX_PATH)) return searchRawRunStore(input)
+  let db: Database | undefined
+  try {
+    // A WAL reader may need to create the -shm sidecar after reboot.
+    db = new Database(SESSION_INDEX_PATH, { readwrite: true, strict: true })
+    const normalizedRuntime = input.runtime === "claude" ? "claude-code" : input.runtime
+    const rows = db.query(`
+      SELECT c.chunk_id, c.run_id, c.role, c.text, c.started_at,
+             r.machine_id, r.agent_runtime, r.jsonl_path,
+             bm25(chunk_fts) AS score
+      FROM chunk_fts f
+      JOIN chunks c ON c.rowid = f.rowid
+      JOIN runs r ON r.run_id = c.run_id
+      WHERE chunk_fts MATCH $query
+        AND ($machine = 'all' OR r.machine_id = $machine)
+        AND ($runtime = 'all' OR r.agent_runtime = $runtime)
+      ORDER BY score, c.started_at DESC
+      LIMIT $limit
+    `).all({
+      query: ftsExpression(input.query),
+      machine: input.machine || "all",
+      runtime: normalizedRuntime,
+      limit: input.limit,
+    }) as Array<Record<string, unknown>>
+    const hits = rows.map<SessionHit>((row) => {
+      const storedPath = asString(row.jsonl_path)
+      return {
+        source: "sqlite",
+        id: asString(row.chunk_id) ?? asString(row.run_id) ?? "unknown",
+        runId: asString(row.run_id),
+        machineId: asString(row.machine_id),
+        startedAt: timestampFromMillis(row.started_at),
+        role: asString(row.role),
+        path: storedPath && !isAbsolute(storedPath) ? join(RUN_STORE_PATH, storedPath) : storedPath,
+        score: asNumber(row.score),
+        snippets: [String(row.text ?? "").replace(/\s+/g, " ").slice(0, 500)],
+      }
+    })
+    return { ok: true, found: hits.length, hits }
+  } catch (error) {
+    return searchRawRunStore(input)
+  } finally {
+    db?.close(false)
+  }
 }
 
 const REMOTE_SESSION_SEARCH_SCRIPT = String.raw`
@@ -428,12 +444,6 @@ function isLocalMachine(machine: string): boolean {
   if (!hostname) return false
   const normalized = machine.toLowerCase()
   return hostname === normalized || hostname.split(".")[0] === normalized.split(".")[0]
-}
-
-function hasLocalTypesenseCredential(): boolean {
-  if (process.env.TYPESENSE_API_KEY?.trim()) return true
-  const systemBusEnv = join(process.env.HOME ?? "", ".config", "system-bus.env")
-  return existsSync(systemBusEnv)
 }
 
 type TranscriptEntry = {
@@ -1050,9 +1060,9 @@ function summarizeFriction(hits: FrictionHit[]): Array<{ kind: string; category:
     .sort((a, b) => b.count - a.count)
 }
 
-async function searchTypesenseChunks(input: { query: string; machine: string; runtime: SessionSearchRuntime; limit: number }): Promise<{ found: number; chunks: SessionHit[]; unavailable?: string }> {
+async function searchSessionIndexChunks(input: { query: string; machine: string; runtime: SessionSearchRuntime; limit: number }): Promise<{ found: number; chunks: SessionHit[]; unavailable?: string }> {
   try {
-    const result = await searchTypesense(input)
+    const result = await searchSessionIndex(input)
     return { found: result.found, chunks: result.hits }
   } catch (error) {
     return { found: 0, chunks: [], unavailable: error instanceof Error ? error.message : String(error) }
@@ -1078,17 +1088,17 @@ const searchQueryArg = Args.text({ name: "query" }).pipe(
 
 const sourceOpt = Options.choice("source", SESSION_SEARCH_SOURCES).pipe(
   Options.withDefault("both" as SessionSearchSource),
-  Options.withDescription("Search source: Typesense derived chunks, local raw Pi/Claude/Codex sessions, SSH raw sessions, or both")
+  Options.withDescription("Search source: SQLite session index (legacy name: typesense), local raw sessions, SSH raw sessions, or both")
 )
 
 const machineOpt = Options.text("machine").pipe(
   Options.withDefault("flagg"),
-  Options.withDescription("Machine filter for Typesense results; use 'all' for every machine")
+  Options.withDescription("Machine filter for session-index results; use 'all' for every machine")
 )
 
 const runtimeOpt = Options.choice("runtime", SESSION_SEARCH_RUNTIMES).pipe(
   Options.withDefault("all" as SessionSearchRuntime),
-  Options.withDescription("Agent runtime filter for Typesense and raw transcript roots: pi, codex, claude-code/claude, or all")
+  Options.withDescription("Agent runtime filter for the session index and raw transcript roots")
 )
 
 const sshTargetOpt = Options.text("ssh-target").pipe(
@@ -1221,20 +1231,8 @@ const searchCmd = Command.make(
           ? (isLocalMachine(machine) ? "local" : "ssh")
           : source
         const sources = source === "both" ? ["typesense", rawSource] as const : [rawSource]
-        const skipTypesense = source === "both" && rawSource === "local" && !hasLocalTypesenseCredential()
-        let typesenseUnavailable: string | undefined
-        const typesense = sources.includes("typesense") && !skipTypesense
-          ? yield* Effect.promise(async () => {
-            try {
-              return await searchTypesense({ query, machine, runtime, limit })
-            } catch (error) {
-              if (source === "both") {
-                typesenseUnavailable = error instanceof Error ? error.message : String(error)
-                return undefined
-              }
-              throw error
-            }
-          })
+        const sessionIndex = sources.includes("typesense")
+          ? yield* Effect.promise(() => searchSessionIndex({ query, machine, runtime, limit }))
           : undefined
         const local = sources.includes("local")
           ? searchLocal({ query, limit, machine, runtime, maxFiles })
@@ -1243,7 +1241,7 @@ const searchCmd = Command.make(
           ? searchRemote({ query, limit, sshTarget, runtime, maxFiles })
           : undefined
 
-        const hits = mergeHits(typesense?.hits ?? [], [...(local?.hits ?? []), ...(remote?.hits ?? [])], limit)
+        const hits = mergeHits(sessionIndex?.hits ?? [], [...(local?.hits ?? []), ...(remote?.hits ?? [])], limit)
 
         const hitsWithExtractions = extract
           ? hits.map((hit) => {
@@ -1263,9 +1261,12 @@ const searchCmd = Command.make(
           machine,
           runtime,
           sshTarget: sources.includes("ssh") ? sshTarget : undefined,
-          typesense: typesense ? { found: typesense.found, returned: typesense.hits.length } : undefined,
-          typesenseSkipped: skipTypesense ? "missing local TYPESENSE_API_KEY or ~/.config/system-bus.env; raw local search still ran" : undefined,
-          typesenseUnavailable,
+          sessionIndex: sessionIndex ? {
+            path: SESSION_INDEX_PATH,
+            found: sessionIndex.found,
+            returned: sessionIndex.hits.length,
+            fallbackReason: sessionIndex.fallbackReason,
+          } : undefined,
           local: local ? { found: local.found, rawReturned: local.hits.length, emittedHits: hitsWithExtractions.filter((hit) => hit.source === "local").length, searchedFiles: local.searchedFiles } : undefined,
           ssh: remote ? { found: remote.found, rawReturned: remote.hits.length, emittedHits: hitsWithExtractions.filter((hit) => hit.source === "ssh").length, searchedFiles: remote.searchedFiles } : undefined,
           hits: hitsWithExtractions,
@@ -1273,7 +1274,7 @@ const searchCmd = Command.make(
         }, [
           {
             command: `sessions search "${query.replace(/"/g, "\\\"")}" --raw --source typesense --machine ${machine} --runtime ${runtime} --limit ${limit}`,
-            description: "Search Central Typesense session chunks only",
+            description: "Search the SQLite session index (legacy source flag)",
           },
           {
             command: `sessions search "${query.replace(/"/g, "\\\"")}" --raw --source local --machine ${machine} --runtime all --limit ${limit}`,
@@ -1288,26 +1289,11 @@ const searchCmd = Command.make(
             description: "Search and extract bounded task context from top raw hits",
           },
           {
-            command: "knowledge search \"typesense session indexing recovery runbook\"",
-            description: "Find the recovery runbook when Typesense is stale or session search looks wrong",
+            command: "knowledge search \"session index recovery runbook\"",
+            description: "Find the recovery runbook when session search looks wrong",
           },
         ]))
       } catch (error) {
-        if (isTypesenseApiKeyError(error)) {
-          yield* writeEnvelope(respondError(
-            "sessions search",
-            error.message,
-            error.code,
-            error.fix,
-            [
-              { command: "secrets status", description: "Check agent-secrets health" },
-              { command: "sessions search <query> --raw --source local", description: "Bypass Typesense and search raw local session files", params: { query: { required: true } } },
-              { command: "sessions search <query> --raw --source ssh", description: "Bypass Typesense and search raw remote session files", params: { query: { required: true } } },
-            ]
-          ))
-          return
-        }
-
         const message = error instanceof Error ? error.message : String(error)
         const code = message.includes("ssh") ? "SESSION_SEARCH_SSH_FAILED" : "SESSION_SEARCH_FAILED"
         yield* writeEnvelope(respondError(
@@ -1318,7 +1304,7 @@ const searchCmd = Command.make(
             ? "Verify SSH access: ssh joel@flagg 'hostname && python3 --version'"
             : message.includes("local session search")
               ? "Verify local Pi/Claude/Codex sessions and Python: python3 --version && find ~/.pi/agent/sessions ~/.claude/projects ~/.codex/sessions -type f -name '*.jsonl' | head"
-              : "Check Typesense health and the session indexing runbook",
+              : "Check sessions.db and the immutable Run store",
           [
             { command: "status", description: "Check joelclaw service health" },
             { command: "knowledge search \"typesense session indexing recovery runbook\"", description: "Find the session indexing recovery runbook" },
@@ -1459,13 +1445,13 @@ const chunksCmd = Command.make(
     const rawSource = source === "both" ? (isLocalMachine(machine) ? "local" : "ssh") : source
     const allChunks: unknown[] = []
     const chunks: Record<string, unknown> = { query, source, resolvedRawSource: source === "both" ? rawSource : undefined, machine, runtime, contextBefore, contextAfter }
-    if ((source === "typesense" || source === "both") && !(source === "both" && rawSource === "local" && !hasLocalTypesenseCredential())) {
-      const typesenseChunks = yield* Effect.promise(() => searchTypesenseChunks({ query, machine, runtime, limit }))
-      chunks.typesense = typesenseChunks
-      allChunks.push(...typesenseChunks.chunks)
+    if (source === "typesense" || source === "both") {
+      const sessionIndexChunks = yield* Effect.promise(() => searchSessionIndexChunks({ query, machine, runtime, limit }))
+      chunks.sessionIndex = sessionIndexChunks
+      allChunks.push(...sessionIndexChunks.chunks)
     }
     if (rawSource === "local" || source === "local") {
-      const local = searchLocal({ query, limit, machine, maxFiles })
+      const local = searchLocal({ query, limit, machine, runtime, maxFiles })
       const localChunks = local.hits.map((hit) => hit.path ? inspectSession(hit.path, query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), contextBefore, contextAfter) : hit)
       chunks.local = { found: local.found, rawReturned: local.hits.length, emittedChunks: localChunks.length, searchedFiles: local.searchedFiles, chunks: localChunks }
       allChunks.push(...localChunks)
@@ -1480,7 +1466,7 @@ function sessionsRoot(name: "sessions" | "session") {
   return Command.make(name, {}, () =>
     Effect.gen(function* () {
     yield* writeEnvelope(respond("sessions", {
-      description: "Search captured agent Runs in Typesense and raw local/remote Pi session files",
+      description: "Search captured Runs in SQLite with immutable JSONL fallback and raw local/remote sessions",
       commands: {
         search: "joelclaw sessions search <query> [--source typesense|local|ssh|both] [--runtime pi|codex|claude-code|all] [--extract] [--machine flagg] [--ssh-target joel@flagg] [--limit 8]",
         extract: "joelclaw sessions extract <session-id-or-path> --query <topic> [--format json|markdown]",
@@ -1496,13 +1482,13 @@ function sessionsRoot(name: "sessions" | "session") {
         params: { query: { required: true, description: "Search terms" } },
       },
       {
-        command: "knowledge search \"typesense session indexing recovery runbook\"",
+        command: "knowledge search \"session index recovery runbook\"",
         description: "Find the troubleshooting runbook",
       },
     ]))
   })
 ).pipe(
-  Command.withDescription("Search and extract agent session history across Typesense and raw transcript bridges"),
+  Command.withDescription("Search and extract agent session history across SQLite and raw transcript bridges"),
   Command.withSubcommands([searchCmd, extractCmd, chunksCmd, inspectCmd, signalsCmd, frictionCmd])
 )
 }

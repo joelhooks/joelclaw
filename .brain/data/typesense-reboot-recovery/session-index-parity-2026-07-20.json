@@ -1,0 +1,92 @@
+{
+  "generated_at": "2026-07-20",
+  "validation_ok": true,
+  "counts": {
+    "runs": 134141,
+    "skipped": 14010,
+    "chunks": 449220,
+    "fts_chunks": 449220,
+    "missing_covering_runs": 0,
+    "divergent_siblings": 0
+  },
+  "manifest": {
+    "kept": 134013,
+    "skipped": 14010,
+    "appended_after_manifest": 128
+  },
+  "latest": {
+    "started": {
+      "run_id": "e8128718102a4264ac0ff7d2b7",
+      "started_at": 1784521524679,
+      "captured_at": 1784521524686
+    },
+    "captured": {
+      "run_id": "e8128718102a4264ac0ff7d2b7",
+      "captured_at": 1784521524686
+    }
+  },
+  "raw_ripgrep_fallback": {
+    "query": "run_chunks_dev",
+    "matches": 1657,
+    "first_path": "/Users/joel/.joelclaw/runs-dev/joel/2026-07/534f8283d8d94dbb9a158bfe13.jsonl",
+    "duration_ms": 5708.48675
+  },
+  "restart_probe": {
+    "ok": true,
+    "query": "Typesense Reboot Recovery",
+    "open_ms": 1.3073329999999999,
+    "first_query_ms": 4.529208000000001,
+    "process_to_first_query_ms": 5.83675,
+    "run_id": "121bc197a8094e1ab602bbf500",
+    "wall_ms": 20.85254199999963
+  },
+  "typesense_parity": {
+    "health_status": 200,
+    "collection_chunks": 3570503,
+    "sqlite_chunks": 449220,
+    "redundant_chunk_delta": 3121283,
+    "reduction_percent": 87.41857939903706,
+    "latest": {
+      "sqlite": {
+        "run_id": "e8128718102a4264ac0ff7d2b7",
+        "started_at": 1784521524679,
+        "captured_at": 1784521524686
+      },
+      "typesense": {
+        "run_id": "f050346017e4452d88b78625db",
+        "started_at": 1784521582482
+      },
+      "started_at_delta_ms": 57803
+    },
+    "conversation": {
+      "conversation_id": "019f7db5-fcc4-7bc2-bc46-a86924e22ab3",
+      "sqlite_runs": 78,
+      "typesense_found_chunks": 204,
+      "typesense_runs": 83,
+      "run_overlap": 78,
+      "sqlite_only_run_count": 0,
+      "typesense_only_run_count": 5
+    },
+    "queries": {
+      "Typesense Reboot Recovery": {
+        "sqlite_top_runs": 7,
+        "typesense_found_chunks": 203,
+        "typesense_top_runs": 72,
+        "top_run_overlap": 4
+      },
+      "run_chunks_dev": {
+        "sqlite_top_runs": 23,
+        "typesense_found_chunks": 1032,
+        "typesense_top_runs": 72,
+        "top_run_overlap": 2
+      },
+      "ShitRat": {
+        "sqlite_top_runs": 18,
+        "typesense_found_chunks": 89614,
+        "typesense_top_runs": 57,
+        "top_run_overlap": 0
+      }
+    }
+  },
+  "failures": []
+}

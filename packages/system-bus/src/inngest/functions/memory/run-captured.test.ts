@@ -1,11 +1,19 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { unlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { InngestTestEngine } from "@inngest/test";
 import { runsSchema } from "@joelclaw/memory";
 import { memoryRunCaptured } from "./run-captured";
 
 const originalFetch = globalThis.fetch;
 const originalOtelEnabled = process.env.OTEL_EVENTS_ENABLED;
+const originalSessionIndexPath = process.env.SESSION_INDEX_PATH;
 
+let testDirectory = "";
+let sessionIndexPath = "";
 let upsertedRun: Record<string, unknown> | null = null;
 let requestedPaths: string[] = [];
 let runUpsertStatus = 200;
@@ -13,6 +21,32 @@ let runUpsertBody = '{"id":"run-empty"}';
 const spooledPaths = new Set<string>();
 
 beforeEach(() => {
+  testDirectory = mkdtempSync(join(tmpdir(), "run-captured-test-"));
+  sessionIndexPath = join(testDirectory, "sessions.db");
+  process.env.SESSION_INDEX_PATH = sessionIndexPath;
+  const db = new Database(sessionIndexPath, { create: true, strict: true });
+  db.exec(`
+    CREATE TABLE runs (
+      run_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, machine_id TEXT NOT NULL,
+      agent_runtime TEXT NOT NULL, conversation_id TEXT, parent_run_id TEXT,
+      source_identity TEXT NOT NULL, prefix_group_identity TEXT NOT NULL,
+      verdict TEXT NOT NULL, started_at INTEGER NOT NULL, captured_at INTEGER NOT NULL,
+      ended_at INTEGER NOT NULL, jsonl_path TEXT NOT NULL, jsonl_bytes INTEGER NOT NULL,
+      jsonl_sha256 TEXT NOT NULL, turn_count INTEGER NOT NULL, chunk_count INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE chunks (
+      rowid INTEGER PRIMARY KEY, chunk_id TEXT NOT NULL UNIQUE,
+      run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+      chunk_idx INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL,
+      started_at INTEGER NOT NULL, token_count INTEGER NOT NULL,
+      UNIQUE(run_id, chunk_idx)
+    ) STRICT;
+    CREATE VIRTUAL TABLE chunk_fts USING fts5(
+      text, content='chunks', content_rowid='rowid', tokenize='unicode61'
+    );
+  `);
+  db.close(false);
+
   upsertedRun = null;
   requestedPaths = [];
   runUpsertStatus = 200;
@@ -36,6 +70,8 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   if (originalOtelEnabled === undefined) delete process.env.OTEL_EVENTS_ENABLED;
   else process.env.OTEL_EVENTS_ENABLED = originalOtelEnabled;
+  if (originalSessionIndexPath === undefined) delete process.env.SESSION_INDEX_PATH;
+  else process.env.SESSION_INDEX_PATH = originalSessionIndexPath;
 
   for (const path of spooledPaths) {
     try {
@@ -45,6 +81,7 @@ afterEach(() => {
     }
   }
   spooledPaths.clear();
+  rmSync(testDirectory, { recursive: true, force: true });
 });
 
 interface CaptureEventData {
@@ -59,6 +96,9 @@ interface CaptureEventData {
   parent_run_id?: string;
   conversation_id?: string;
   tags?: string[];
+  from_offset?: number;
+  to_offset?: number;
+  source_identity?: string;
   jsonl_inline?: string;
 }
 
@@ -99,19 +139,23 @@ async function executeRun(data: CaptureEventData) {
 }
 
 function emptyRunData(): CaptureEventData {
+  const jsonl = '{"type":"session","version":3}\n';
   return {
     run_id: "run-empty",
     user_id: "joel",
     machine_id: "flagg",
     agent_runtime: "pi",
     jsonl_path: "/captures/run-empty.jsonl",
-    jsonl_bytes: 31,
-    jsonl_sha256: "sha256-empty",
+    jsonl_bytes: Buffer.byteLength(jsonl),
+    jsonl_sha256: createHash("sha256").update(jsonl).digest("hex"),
     started_at: 1_721_238_660_000,
     parent_run_id: "run-parent",
     conversation_id: "conversation-empty",
     tags: ["capture-outbox"],
-    jsonl_inline: '{"type":"session","version":3}\n',
+    from_offset: 0,
+    to_offset: Buffer.byteLength(jsonl),
+    source_identity: `sha256:${"a".repeat(64)}`,
+    jsonl_inline: jsonl,
   };
 }
 
@@ -147,8 +191,10 @@ describe("memory/run.captured", () => {
       status: "active",
       full_text: "",
       jsonl_path: "/captures/run-empty.jsonl",
-      jsonl_bytes: 31,
-      jsonl_sha256: "sha256-empty",
+      jsonl_bytes: Buffer.byteLength('{"type":"session","version":3}\n'),
+      jsonl_sha256: createHash("sha256")
+        .update('{"type":"session","version":3}\n')
+        .digest("hex"),
     });
 
     const requiredFields = runsSchema().fields
@@ -163,6 +209,84 @@ describe("memory/run.captured", () => {
         path.includes("/run_chunks_dev/documents/import?action=upsert")
       )
     ).toBe(false);
+  });
+
+  test("is idempotent across Inngest event redelivery and step retry", async () => {
+    const data = emptyRunData();
+
+    const first = await executeRun(data);
+    const replay = await executeRun(data);
+
+    expect(first.stepOutputs.get("append-session-index")).toMatchObject({
+      status: "appended",
+      run_id: "run-empty",
+      chunk_count: 0,
+    });
+    expect(replay.stepOutputs.get("append-session-index")).toMatchObject({
+      status: "already_indexed",
+      run_id: "run-empty",
+      chunk_count: 0,
+    });
+
+    const db = new Database(sessionIndexPath, { readonly: true, strict: true });
+    expect(db.query("SELECT count(*) AS count FROM runs WHERE run_id = ?").get("run-empty")).toEqual({
+      count: 1,
+    });
+    expect(db.query("SELECT count(*) AS count FROM chunks WHERE run_id = ?").get("run-empty")).toEqual({
+      count: 0,
+    });
+    expect(
+      db.query("SELECT from_offset, to_offset, tags_json FROM runs WHERE run_id = ?").get("run-empty"),
+    ).toEqual({
+      from_offset: 0,
+      to_offset: data.to_offset,
+      tags_json: '["capture-outbox"]',
+    });
+    expect(db.query("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
+    db.close(false);
+  });
+
+  test("survives a real Inngest step retry after the SQLite side effect committed", async () => {
+    const event = { name: "memory/run.captured" as const, data: emptyRunData() };
+    runUpsertStatus = 503;
+    runUpsertBody = '{"message":"retry me"}';
+
+    const failed = await new InngestTestEngine({
+      function: memoryRunCaptured,
+      events: [event],
+    }).execute();
+    expect(failed.error).toBeDefined();
+    expect(String((failed.error as { message?: string })?.message ?? failed.error)).toContain(
+      "run upsert failed: 503",
+    );
+
+    runUpsertStatus = 200;
+    const replay = await new InngestTestEngine({
+      function: memoryRunCaptured,
+      events: [event],
+    }).execute();
+    expect(replay.result).toMatchObject({ run_id: "run-empty", chunks_indexed: 0 });
+
+    const db = new Database(sessionIndexPath, { readonly: true, strict: true });
+    expect(db.query("SELECT count(*) AS count FROM runs WHERE run_id = ?").get("run-empty")).toEqual({
+      count: 1,
+    });
+    db.close(false);
+  });
+
+  test("fails hard when a replay reuses a Run ID for different bytes", async () => {
+    const original = emptyRunData();
+    await executeRun(original);
+    const changedJsonl = '{"type":"session","version":4}\n';
+
+    await expect(
+      executeRun({
+        ...original,
+        jsonl_bytes: Buffer.byteLength(changedJsonl),
+        jsonl_sha256: createHash("sha256").update(changedJsonl).digest("hex"),
+        jsonl_inline: changedJsonl,
+      }),
+    ).rejects.toThrow("already exists with different JSONL bytes");
   });
 
   test("fails the run when Typesense rejects the metadata document", async () => {
@@ -200,7 +324,7 @@ describe("memory/run.captured", () => {
       agent_runtime: "pi",
       jsonl_path: "/captures/run-large-inline.jsonl",
       jsonl_bytes: Buffer.byteLength(jsonlInline),
-      jsonl_sha256: "sha256-large-inline",
+      jsonl_sha256: createHash("sha256").update(jsonlInline).digest("hex"),
       started_at: 1_721_238_660_000,
       conversation_id: "conversation-large-inline",
       tags: ["capture-outbox"],
