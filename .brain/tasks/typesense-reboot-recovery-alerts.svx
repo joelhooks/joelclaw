@@ -1,0 +1,27 @@
+---
+title: "Worker task: add growth and budget alerts"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: add growth and budget alerts
+
+You are a worker on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step: [Add Cumulative-Prefix Growth and Startup-Budget Alerts](../projects/typesense-reboot-recovery/add-growth-and-budget-alerts.svx). Read the brief, your step, the diagnosis (`diagnosis.svx` § Prevent recurrence), and the closed patch step for the new provenance fields (`from_offset`, `to_offset`, `jsonl_sha256`, `source_identity`).
+
+## Hard containment rules
+
+- Territory: you own `packages/system-bus/**` (new Inngest function files, health output) and their tests. Do NOT edit `packages/cli/**` or create files under `scripts/` (other workers own those). Do not touch `pnpm-lock.yaml`/`package.json`.
+- The working tree contains uncommitted work by other sessions in `packages/system-bus` (message-event consumer files, `index.ts`/`index.host.ts` registration hunks). Leave those files' existing changes intact; your registration edits go alongside them.
+- Tests are fixture-only: no real alert sends, no live Typesense mutations, `~/.joelclaw/runs-dev` read-only.
+- Do not commit, and do not restart the running worker — steering deploys after harvest.
+
+## The work
+
+1. A hard alert when captures for one conversation show cumulative-prefix growth (same `source_identity`, overlapping byte ranges under distinct Run IDs — exactly the July 19 failure signature). Detection can be on-ingest or scheduled scan; justify the choice.
+2. A hard alert when a search index exceeds its startup budget: Typesense `/health` 503 duration against a configured budget, shaped so the SQLite indexes can plug in the same budget check later.
+3. Health output gains search freshness and source provenance (finish-line condition 5) — extend the existing health surface, read the repo `messaging` skill, and deliver alerts through the messaging contract (`joelclaw notify send` path), not a log.
+
+## Deliverables
+
+Code + fixture tests (uncommitted); `bunx tsc --noEmit` and targeted Biome over touched files pass. Fill your step's `## Result`, flip status closed with `closed_at`, add one brief ledger line. Work autonomously. Do not commit. Print a DONE summary.

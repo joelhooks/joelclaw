@@ -1,0 +1,27 @@
+---
+title: "Worker task: build and validate the compacted session index"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: build and validate the compacted session index
+
+You are a worker on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step: [Build and Validate the Compacted Session Index](../projects/typesense-reboot-recovery/build-compacted-collection.svx). Read the brief, your step, [the availability decision](../projects/typesense-reboot-recovery/decide-availability-shape.svx), and [Run manifest summary](../projects/typesense-reboot-recovery/run-manifest-summary.svx) first.
+
+## Hard containment rules
+
+- `~/.joelclaw/runs-dev` is strictly read-only. Live Typesense: read-only queries only; it may still be 503 — if so, skip Typesense parity gracefully and validate against raw JSONL instead, and say so in the report.
+- Territory: you own new files under `scripts/` (builder, validation). READ any package you need, but do not edit `packages/**` — other workers own `packages/cli` and `packages/system-bus`. No new deps; use `bun:sqlite`.
+- Do not commit. Never touch the inflated collection.
+
+## The work
+
+1. Build the session FTS5 database (suggested `~/.joelclaw/search/sessions.db`) from the manifest keep-set (`~/.joelclaw/analysis/run-manifest-2026-07-19.jsonl`, 134,013 Runs) reading raw JSONL. Reuse the existing parser/chunker semantics (read the `run_chunks` projection code in `packages/system-bus`/`packages/memory` to match them); chunk IDs stay `${run_id}:${chunk_idx}`. Preserve divergent siblings and lineage for skipped prefix snapshots.
+2. Design (document, don't wire) the incremental append path from the patched capture pipeline — wiring into system-bus happens at cutover, not this step.
+3. Validate: random samples against raw JSONL, latest-timestamp checks, FTS queries for known content, raw ripgrep fallback exercised; Typesense parity only if `/health` is green.
+4. Measure restart cost: process open to first successful query. This number goes in the report — it is the argument for the whole design.
+
+## Deliverables
+
+Builder + validation scripts under `scripts/` (uncommitted); a validation report asset at `.brain/projects/typesense-reboot-recovery/session-index-validation.svx` (`type: "asset"`, `parent: "./build-compacted-collection.svx"`). Fill your step's `## Result`, flip status closed with `closed_at`, add one brief ledger line. Work autonomously. Do not commit. Print a DONE summary.

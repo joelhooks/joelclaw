@@ -1,0 +1,27 @@
+---
+title: "Worker task: port critical search to SQLite"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: port critical search to SQLite
+
+You are a worker on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step: [Port Critical Search to SQLite](../projects/typesense-reboot-recovery/port-critical-search-to-sqlite.svx). Read the brief, your step, and the Result section of [the availability decision](../projects/typesense-reboot-recovery/decide-availability-shape.svx) first — the decision defines the shape you are building.
+
+## Hard containment rules
+
+- `~/.joelclaw/runs-dev` is read-only. Live Typesense: read-only queries only (it may still be 503 mid-recovery — degrade gracefully, never restart or reconfigure it).
+- Territory: you own `packages/cli/**` and new files under `scripts/`. Do NOT touch `packages/system-bus/**` (another worker owns it), `pnpm-lock.yaml`, or any `package.json` — no new workspace packages; use `bun:sqlite`.
+- Do not commit.
+
+## The work
+
+1. Build `critical.db` (SQLite FTS5, suggested home `~/.joelclaw/search/critical.db`) containing the critical projection: observations (observer layer, with Run-ID backlinks), memory recall documents, knowledge/vault. Find the current sources by reading the Typesense adapters (`packages/cli/src/capabilities/adapters/typesense-recall.ts` and kin) and `scripts/archive-memory-observations.ts`. Flagg is the only writer; make the builder idempotent and re-runnable.
+2. Port the recall and knowledge adapters to read SQLite first, with results carrying freshness metadata. Keep the Typesense path intact until parity is proven — no removals this step.
+3. Parity: real queries against both paths where Typesense answers; where it 503s, validate against source data and say so.
+4. Prove zero-rebuild: restart the reading process, measure time-to-first-answer, record it.
+
+## Deliverables
+
+Code + tests in your territory (uncommitted); `bunx tsc --noEmit` and targeted Biome over touched files pass. Fill your step's `## Result`, flip status to closed with `closed_at`, add one brief ledger line. Work autonomously. Do not commit. Print a DONE summary.
