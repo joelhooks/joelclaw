@@ -3,7 +3,8 @@ title: "Add Cumulative-Prefix Growth and Startup-Budget Alerts"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "pi (flagg, herdr pane wY:p1R, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./patch-capture-and-replay.svx"]
@@ -29,14 +30,16 @@ Added 2026-07-20 after adversarial verification:
 
 ## Result (2026-07-20)
 
-Closed with two host-worker Inngest checks and fixture tests.
+Implemented two host-worker Inngest checks and a truthful HTTP health route.
 
-- `search/capture-prefix-growth-alert` consumes `memory/run.captured` independently of Typesense indexing. It keeps a bounded Redis range ledger per `source_identity` and alerts once when distinct Run IDs overlap. Detection is on-ingest because the validated offsets are already present and an independent consumer remains available while Typesense is rebuilding.
-- `search/typesense-startup-budget` probes Typesense `/health` each minute. It persists the first unavailable observation, compares the duration with configurable `TYPESENSE_STARTUP_BUDGET_MS` (15 minutes by default), alerts once per outage, and clears state after recovery. The budget contract names both engine and target so SQLite indexes can use the same transition later. Typesense only exposes process-level readiness, so the acting target is truthfully `typesense:process`, not a guessed collection.
-- Both hard alerts call `joelclaw notify send --kind alert --priority high`, then require a confirmed delivery state and platform message ID from `joelclaw notify wait`. Stable UUIDs make crash-window retries idempotent; Redis records confirmation only after terminal delivery.
-- `/api/runs/health` now includes the persisted startup-budget state plus session-search freshness and raw Run provenance: engine, index, Run ID, source identity, byte range, JSONL hash, and JSONL path. A current outage or a health snapshot older than two minutes marks the persisted search result stale.
+- `search/capture-prefix-growth-alert` consumes `memory/run.captured` independently of Typesense indexing. Overlaps are grouped into one incident per `source_identity`. The first overlap sends one hard alert. Later overlapping Runs only refresh that incident. A non-overlapping valid capture explicitly clears it; one hour without another overlap also starts a new incident. The incident stores one stable UUID before delivery, so a worker crash retries the same message instead of losing or duplicating it.
+- The capture ledger policy is explicit: one Redis ledger key per active source, at most 2,048 segments in that key, and 90-day expiry after the source becomes idle. Incident state uses one additional source-scoped key with the same idle expiry. There is no global key cap; the 90-day idle expiry is the eviction policy.
+- `search/typesense-startup-budget` tracks `typesense:runs_dev`, not process readiness. Each minute it checks `/health`, then queries `runs_dev`. The outage clock clears only after that projection query succeeds. Process health `200` plus collection query `503` remains an outage and alerts at the configured budget. The state shape still names `engine` and `target`, so a SQLite index can reuse it later.
+- `TYPESENSE_STARTUP_BUDGET_MS` accepts only a complete safe integer string, clamps valid values to at least 60 seconds, and otherwise falls back to 15 minutes. Partial values such as `120000oops` are rejected.
+- Both hard alerts call `joelclaw notify send --kind alert --priority high`, then require a confirmed delivery state and platform message ID from `joelclaw notify wait`.
+- `/api/runs/health` includes the collection outage state, search freshness, and raw Run provenance. Fresh state returns top-level `ok: true` with HTTP 200. Stale, empty, active-outage, and monitor-store-error states return top-level `ok: false` with HTTP 503.
 
-Verification: 18 focused Bun tests pass, including interrupted-delivery and reverse-order replay fixtures; targeted Biome passes; `bunx tsc --noEmit -p packages/system-bus/tsconfig.json` passes. No live alerts, Typesense writes, raw Run mutations, worker restart, deploy, or commit occurred.
+Fixture-only verification covers alert storms, explicit and quiet-period resets, delayed interrupted delivery, same-Run recurrence after reset, process-ready/collection-503 behavior, complete budget parsing, provenance, and all five HTTP route shapes. The focused suite passes 25 tests with 107 assertions; TypeScript and targeted Biome pass. Final adversarial review is CLEAN. No live alert, Typesense write, Redis write, raw Run mutation, worker restart, deploy, or commit occurred.
 
 ## Verification (2026-07-20)
 

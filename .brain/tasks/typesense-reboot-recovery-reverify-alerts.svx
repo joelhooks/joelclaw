@@ -1,0 +1,20 @@
+---
+title: "Worker task: re-verify the reworked alerts"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: re-verify the reworked alerts
+
+You are a fresh adversarial re-verifier on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). The alerts step was refuted once ([first verdict](../projects/typesense-reboot-recovery/alerts-verification.svx)) and reworked — read the step's updated Result (`../projects/typesense-reboot-recovery/add-growth-and-budget-alerts.svx`). Re-attack ONLY the previously refuted claims plus regressions; the first verifier's confirmed claims stand unless the rework touched their code paths.
+
+1. Storm test: fixture A `[0,100)`, B `[0,200)`, C `[0,300)` same `source_identity` — exactly ONE alert. Then a non-overlapping valid capture clears the incident; a later overlap opens a NEW incident (one more alert). Then quiet-period expiry path.
+2. Collection clock: process `/health` 200 + `runs_dev` query 503 must keep the outage clock running and alert at budget. Clock clears only on projection query success.
+3. Budget parsing: `garbage`, `120000oops`, `-5`, `1e6`, `30000` (clamp), `120000` — complete-integer-only semantics per the Result.
+4. Health route: all five shapes (fresh / stale / empty / active-outage / store-error) — top-level `ok` and HTTP status truthful per the Result's contract.
+5. Regression sweep: the first verifier's confirmed claims (July 19 signature fires, patched paths quiet, argv parses, registrations coexist with the message-event hunks), plus `bunx tsc --noEmit` and the full focused test suite.
+
+Containment: fixtures only — no live alerts, no production Redis keys, no Typesense writes, `~/.joelclaw/runs-dev` read-only, no worker restart, do not commit.
+
+Deliverable: append a `## Re-verification (2026-07-20)` section to `.brain/projects/typesense-reboot-recovery/alerts-verification.svx` with CONFIRMED/REFUTED per item and evidence. Do not edit the step file. Work autonomously. Do not commit. Print a DONE summary.
