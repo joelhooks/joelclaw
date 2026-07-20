@@ -1,0 +1,27 @@
+---
+title: "Build the Run Manifest"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi (flagg, herdr pane wY:p1M, 2026-07-19)"
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: []
+created_at: "2026-07-19"
+---
+
+# Build the Run Manifest
+
+## Step
+
+Groundwork the compaction decision waits on: a read-only manifest of every Run in `~/.joelclaw/runs-dev` (148,023 JSONL files, ~29.2 GB).
+
+Resolved when a manifest exists with one record per Run — Run ID, deterministic source identity (conversation), byte range, content hash, and prefix-coverage verdict (exact duplicate / strict prefix of a named later Run / unique tail / divergent sibling) — and a summary asset in this effort dir reports totals that reconcile with the diagnosis estimates (~13,914 strict-prefix files, ~85% redundant bytes).
+
+Constraints:
+
+- Strictly read-only on `~/.joelclaw/runs-dev`. Raw JSONL is immutable.
+- Manifest output lives outside the repo (e.g. `~/.joelclaw/analysis/`), not in `.brain/data`.
+- Prefix proof is byte comparison or hash-chain, never heuristics — the compacted collection will be built from this.
+
+## Result (YYYY-MM-DD)

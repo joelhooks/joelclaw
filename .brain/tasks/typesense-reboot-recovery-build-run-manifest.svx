@@ -1,0 +1,31 @@
+---
+title: "Worker task: build the Run manifest"
+type: "task"
+created_at: "2026-07-19"
+privacy: "private"
+---
+
+# Worker task: build the Run manifest
+
+You are a worker on the effort [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step is [Build the Run Manifest](../projects/typesense-reboot-recovery/build-run-manifest.svx) — read both files first, plus the diagnosis at `.brain/projects/typesense-reboot-recovery/diagnosis.svx` (section "Session-capture growth root cause" for the numbers your output must reconcile with).
+
+## Hard containment rules (violating any of these is a failed task)
+
+- `~/.joelclaw/runs-dev` is STRICTLY read-only. No writes, no renames, no deletes, no "cleanup".
+- Do not touch Typesense at all — this step is filesystem analysis only.
+- Do not commit. The steering session reviews and commits.
+
+## The work
+
+1. Scan all ~148,023 JSONL+metadata pairs in `~/.joelclaw/runs-dev`.
+2. Emit one manifest record per Run to `~/.joelclaw/analysis/run-manifest-2026-07-19.jsonl`: Run ID, deterministic source identity (conversation), byte range, `jsonl_sha256`, and a prefix-coverage verdict — `exact_duplicate` / `strict_prefix` (naming the covering Run) / `unique_tail` / `divergent_sibling`. Prefix proof is byte or hash-chain comparison, never heuristics: the compacted collection will be built from this file.
+3. Write the analysis script somewhere durable under `scripts/` so the manifest is reproducible.
+4. Reconcile totals against the diagnosis (~13,914 strict-prefix files, ~85.02% redundant bytes, ~4,629 conversations). Explain any delta.
+
+## Deliverables (file edits, not chat)
+
+- The manifest JSONL outside the repo at the path above, plus the reproducible script in the working tree.
+- A summary asset at `.brain/projects/typesense-reboot-recovery/run-manifest-summary.svx` (frontmatter: `type: "asset"`, `parent: "./build-run-manifest.svx"`, `title`, `created_at: "2026-07-19"`, `privacy: "private"`): totals, reconciliation table, keep/skip counts, anything surprising.
+- Fill the `## Result (2026-07-19)` section of your step file, flip `status` to `"closed"`, add `closed_at: "2026-07-19"`, and append one ledger line to the brief's `## Decision ledger`.
+
+Work autonomously. Do not commit. Print a DONE summary when finished.

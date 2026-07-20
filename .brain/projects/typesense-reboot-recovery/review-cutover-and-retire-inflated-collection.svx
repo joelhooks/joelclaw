@@ -1,0 +1,19 @@
+---
+title: "Review the Cutover and Retire the Inflated Collection"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: ["./build-compacted-collection.svx"]
+created_at: "2026-07-19"
+---
+
+# Review the Cutover and Retire the Inflated Collection
+
+## Step
+
+Joel reviews the validation report, approves switching readers to the compacted collection, and approves retiring the inflated `run_chunks_dev` — with an explicit rollback plan first (diagnosis § Repair the projection). Resolved when readers point at the compacted collection, the rollback plan is written, and Joel has said "retire it" out loud.
+
+## Result (YYYY-MM-DD)

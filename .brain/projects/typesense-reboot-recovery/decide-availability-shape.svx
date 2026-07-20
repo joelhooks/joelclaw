@@ -1,0 +1,25 @@
+---
+title: "Decide the Availability Shape Within Tailnet Resources"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: []
+created_at: "2026-07-19"
+---
+
+# Decide the Availability Shape Within Tailnet Resources
+
+## Step
+
+Critical search must survive a Flagg reboot using only flagg, panda, and the two NAS machines. Grill Joel to a decision among (diagnosis § Restore critical availability):
+
+1. A bounded critical operator-search projection served from an always-on host (panda or a NAS) that does not reboot with Flagg, with session search in a separate bounded index.
+2. A real three-node Typesense cluster across the tailnet (flagg + panda + NAS) with health-aware clients. Two nodes are not HA.
+3. Defer engine replacement unless the bounded split misses the restart budget (stays latent).
+
+Settle in the same grilling: what "critical search" contains as a bounded document set, which host serves it, and who maintains it after the effort closes. Stress-test with the concrete scenario: Flagg reboots at 14:28, what does operator search do at 14:29?
+
+## Result (YYYY-MM-DD)

@@ -1,0 +1,32 @@
+---
+title: "Worker task: patch capture client and make replay canonical"
+type: "task"
+created_at: "2026-07-19"
+privacy: "private"
+---
+
+# Worker task: patch capture client and make replay canonical
+
+You are a worker on the effort [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step is [Patch the Capture Client and Make Replay Canonical](../projects/typesense-reboot-recovery/patch-capture-and-replay.svx) — read both files first, plus the diagnosis at `.brain/projects/typesense-reboot-recovery/diagnosis.svx` (sections "Session-capture growth root cause" and "Prevent recurrence").
+
+## Hard containment rules (violating any of these is a failed task)
+
+- NEVER run any replay against real outbox backlogs or the live Typesense on flagg. Tests use fixtures only.
+- NEVER write to `~/.joelclaw/runs-dev` — raw Run JSONL is immutable.
+- NEVER restart, signal, or reconfigure the running Typesense process. It is mid-recovery.
+- Do not commit. The steering session reviews and commits.
+
+## The work
+
+1. Find the capture client (the code that does `full.slice(lastOffset)` and posts Runs) and the generic replay in `scripts/agent-session-audit-backup.ts`. Read `scripts/lib/capture-outbox-replay.ts` — its prefix-aware grouping becomes the only replay implementation.
+2. Implement the four done-conditions in the step file: offset/hash/source-identity fields on captures; one coalesced pending segment per stale cursor; canonical replay only; tests for stale-cursor coalescing, prefix grouping, and idempotent redelivery.
+3. Validate: `bunx tsc --noEmit` and `pnpm biome check packages/ apps/` pass; new tests pass.
+
+## Deliverables (file edits, not chat)
+
+- The code and test changes, left uncommitted in the working tree.
+- Fill the `## Result (2026-07-19)` section of your step file: what changed (files), how each done-condition is met, how it was tested. Flip `status: "open"` → `"closed"` and add `closed_at: "2026-07-19"`.
+- Append one ledger line to the brief's `## Decision ledger`.
+- Leave clear receipts: an adversarial verifier will review your diff after you finish.
+
+Work autonomously. Do not commit. Print a DONE summary when finished.

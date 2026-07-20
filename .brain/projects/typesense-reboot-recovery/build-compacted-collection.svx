@@ -1,0 +1,26 @@
+---
+title: "Build and Validate the Compacted Collection"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: ["./build-run-manifest.svx", "./patch-capture-and-replay.svx"]
+created_at: "2026-07-19"
+---
+
+# Build and Validate the Compacted Collection
+
+## Step
+
+Build a new compacted collection from the manifest's non-redundant Runs (~447,609 expected chunks vs 4.6M inflated). Resolved when:
+
+1. The compacted collection is fully indexed alongside the inflated one (no cutover yet).
+2. Divergent siblings and lineage for skipped prefix snapshots are preserved.
+3. Validation passes: conversation search parity, latest timestamps, random samples against raw JSONL, raw fallback exercised.
+4. A validation report asset exists for the cutover review.
+
+The inflated collection is not touched — retirement happens only through [Review the Cutover](./review-cutover-and-retire-inflated-collection.svx).
+
+## Result (YYYY-MM-DD)

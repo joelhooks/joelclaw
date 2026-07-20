@@ -1,0 +1,19 @@
+---
+title: "Verify the Reboot Acceptance Gate With a Real Reboot"
+type: "step"
+kind: "task"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: ["./implement-availability-shape.svx", "./add-growth-and-budget-alerts.svx"]
+created_at: "2026-07-19"
+---
+
+# Verify the Reboot Acceptance Gate With a Real Reboot
+
+## Step
+
+The finish line is tested, not asserted. With Joel present (a Flagg reboot is disruptive), reboot Flagg and verify every finish-line condition: critical search up before/during/after, session index inside its measured startup ceiling, raw fallback during rebuild, alerts armed, freshness and provenance in health output. Resolved when the measured results are recorded here and the brief flips to done — or the gaps become new steps.
+
+## Result (YYYY-MM-DD)

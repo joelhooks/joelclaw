@@ -1,0 +1,52 @@
+---
+title: "Typesense Reboot Recovery"
+type: "brief"
+status: "active"
+created_at: "2026-07-19"
+privacy: "private"
+---
+
+# Typesense Reboot Recovery
+
+## Finish line
+
+The effort ends when all of these hold, on existing tailnet hardware only (flagg, panda, and the two NAS machines — no new nodes, no cloud):
+
+1. The capture abuse is stopped. Captures carry `from_offset`, `to_offset`, `jsonl_sha256`, and deterministic source identity. A stale cursor coalesces one pending outbox segment instead of growing cumulative bodies. `scripts/lib/capture-outbox-replay.ts` is the only replay implementation.
+2. The inflated `run_chunks_dev` collection is replaced by a validated compacted collection. Raw Run JSONL stays immutable and untouched.
+3. Critical operator search succeeds before, during, and after a Flagg reboot, and never waits on the session index.
+4. The session index has a measured minutes-scale startup ceiling, with working raw fallback while it rebuilds.
+5. Maintenance is enforced, not hoped for: a hard alert fires on cumulative-prefix growth and on collection startup budget, and health output shows search freshness and source provenance.
+
+## Vocabulary
+
+- **Run** — one captured session-transcript body posted to Typesense, identified by a random Run ID.
+- **prefix Run** — a Run whose bytes are entirely a prefix of a later Run from the same conversation; redundant by proof, not by guess.
+- **canonical replay path** — `scripts/lib/capture-outbox-replay.ts`; after this effort, the only allowed outbox replay implementation.
+- **inflated collection** — the current `run_chunks_dev`: ~4.6M projected chunks, ~90% proven redundant.
+- **compacted collection** — the replacement collection built from non-redundant Runs via the manifest.
+- **critical search** — the bounded operator-search projection that must survive a Flagg reboot; distinct from session search.
+- **session index** — the bounded session-search index (successor to `run_chunks_dev`); allowed to rebuild after restart if raw fallback covers the gap.
+- **tailnet resources** — flagg, panda, and the two NAS machines; the entire hardware budget for any availability shape.
+
+## Notes
+
+- Domain: Typesense v30.2 on flagg, session-capture pipeline, Inngest system-bus. Diagnosis with full evidence: [Typesense reboot recovery diagnosis](./diagnosis.svx).
+- Skills to consult: `session-search`, `flagg-workloads`, `tailnet-topology`, `diagnose`.
+- **Execution authorized** (Joel, 2026-07-19): "I want this done right regardless of the brief." Task steps build; grilling steps still gate the cutover and the availability shape.
+- Fan-out runs as herdr pi workers, ultracode-style — implementer plus adversarial verifier on risky steps (Joel, 2026-07-19).
+- Standing containment calls (from the diagnosis, 2026-07-19): never run the generic `agent-session-audit-backup.ts --replay-outbox` against backlogs; keep the currently-recovering Typesense process running until an explicit recovery decision; raw Run JSONL is immutable source of truth.
+
+## Decision ledger
+
+- [Typesense reboot recovery diagnosis](./diagnosis.svx) — restart index rebuild is documented Typesense behavior; the catastrophe came from replay inflating `run_chunks_dev` with ~90% redundant prefix copies; committed a99aa938.
+
+## Latent
+
+- A search engine with durable on-disk indexes — only if the bounded Typesense split still misses the restart budget after compaction.
+- What "critical search" must contain, exactly, as a bounded document set — sharpens inside the availability-shape grilling.
+- Startup-ceiling measurement methodology for the session index — sharpens once the compacted collection exists.
+
+## Out of scope
+
+- The seven legacy `.brain/tasks/*.md` files blocking `pi-notes brain check` — repo hygiene unrelated to this effort's finish line.

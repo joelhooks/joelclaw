@@ -1,0 +1,27 @@
+---
+title: "Patch the Capture Client and Make Replay Canonical"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi (flagg, herdr pane wY:p1K, 2026-07-19)"
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: []
+created_at: "2026-07-19"
+---
+
+# Patch the Capture Client and Make Replay Canonical
+
+## Step
+
+Stop the abuse at the source. Resolved when:
+
+1. Each capture carries `from_offset`, `to_offset`, `jsonl_sha256`, and a deterministic source identity (diagnosis § Prevent recurrence).
+2. A failed capture coalesces into one pending outbox segment per stale cursor — later turns update that segment instead of minting a new random Run ID with a larger cumulative body (the `full.slice(lastOffset)` bug, diagnosis § Session-capture growth root cause).
+3. `scripts/lib/capture-outbox-replay.ts` is the only replay implementation; the generic replay path in `agent-session-audit-backup.ts --replay-outbox` is removed or hard-wired through it.
+4. Tests cover: stale-cursor coalescing, prefix-aware replay grouping, and idempotent re-delivery under the same Run ID.
+5. Type check and lint pass (`bunx tsc --noEmit`, `pnpm biome check packages/ apps/`).
+
+Containment holds throughout: no replay against real backlogs, raw JSONL untouched, current Typesense process left alone.
+
+## Result (YYYY-MM-DD)

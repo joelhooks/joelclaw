@@ -1,0 +1,19 @@
+---
+title: "Implement the Chosen Availability Shape"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: ["./decide-availability-shape.svx", "./review-cutover-and-retire-inflated-collection.svx"]
+created_at: "2026-07-19"
+---
+
+# Implement the Chosen Availability Shape
+
+## Step
+
+Build whatever [Decide the Availability Shape](./decide-availability-shape.svx) settles, on existing tailnet hardware. Resolved when critical search is served per the decision, clients are health-aware, and the serving host survives a Flagg reboot without operator intervention. The concrete done-conditions get rewritten from the decision's result before work starts.
+
+## Result (YYYY-MM-DD)
