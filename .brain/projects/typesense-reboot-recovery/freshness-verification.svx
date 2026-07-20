@@ -1,0 +1,195 @@
+---
+title: "Freshness Scheduling and Alerts Verification"
+type: "asset"
+parent: "./keep-critical-db-fresh.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Freshness Scheduling and Alerts Verification
+
+## Verdict
+
+**REFUTED:** the implementation protects the build timestamp and live observation high-water, but it does not prove that `critical.db` cannot silently rot.
+
+The staleness alert reads the builder's metadata, but it evaluates a smaller freshness contract than the search port. A stale Brain, Vault, or knowledge source can make the port report `stale` while the alert remains green. Scheduled rebuild failures also lack the incident lifecycle used by the growth and staleness alerts.
+
+## 1. Schedule truth
+
+### CONFIRMED: the six-hour function invokes the hardened builder
+
+`criticalDbScheduledRebuild` is registered with `17 */6 * * *` and calls:
+
+```text
+bun scripts/build-critical-search-db.ts
+```
+
+It does not pass `--allow-degraded-sources`. The script delegates to `buildCriticalDb`; it does not reimplement the builder. Evidence:
+
+- `packages/system-bus/src/inngest/functions/critical-db-maintenance.ts:225-250,266-307`
+- `scripts/build-critical-search-db.ts:16-49`
+- `packages/cli/src/lib/critical-search.ts:535-696`
+
+The builder takes an exclusive `<db>.build-lock`, validates required sources, runs `PRAGMA integrity_check`, and atomically renames the completed temporary database.
+
+### CONFIRMED: exit 1 and lock contention reach the hard-alert path
+
+A temporary fixture set `JOELCLAW_CRITICAL_DB` to `/tmp`, held its build lock, and invoked the scheduled function. The real builder exited 1. The fixture then invoked the function's terminal `onFailure` handler with mocked alert and OTEL adapters. It observed one `critical-db-rebuild-failure` hard alert and one `search.critical_db.rebuild.failed` event.
+
+```text
+3 pass, 0 fail
+- registration uses the stated cron schedules
+- build and observation budget boundaries classify correctly
+- held builder lock exits nonzero and invokes the hard-alert path
+```
+
+The fixture was deleted after the run. It sent no real alert and emitted no real telemetry.
+
+A concurrent manual builder therefore makes the scheduled run fail loudly. It is not treated as a benign skip.
+
+### REFUTED: scheduled rebuild failures use incident-level deduplication
+
+The failure handler derives its event ID from the current error text:
+
+```text
+stableAlertId(`critical-db-rebuild-failed:${detail}`)
+```
+
+There is no stored rebuild incident, confirmation state, or recovery clear in `critical-db-maintenance.ts:266-291`.
+
+Consequences:
+
+- identical error text reuses one event ID, even after a real recovery and later recurrence;
+- changed paths, counts, timestamps, or truncated output create new event IDs every six hours;
+- the behavior does not match the source-scoped incident lifecycle used by growth alerts or the recovery-cleared lifecycle used by freshness alerts.
+
+A permanently failing rebuild can either storm when details change or suppress a later distinct incident when details remain identical.
+
+## 2. Budget arithmetic
+
+### CONFIRMED: the arithmetic classifies the requested boundaries
+
+The temporary fixture read a real SQLite metadata table through `inspectCriticalDbFreshness`.
+
+- Build age `7h59m`: no alert condition.
+- Build age `8h01m`: stale for build age.
+- Observation age `23h59m`: no alert condition.
+- Observation age `24h01m`: stale for observation high-water.
+
+Production uses strict `>` comparisons. Exact equality at 8 or 24 hours is healthy.
+
+### CONFIRMED: freshness incidents alert once and clear on recovery
+
+`processCriticalDbFreshness` stores one pending incident, confirms it only after notification succeeds, suppresses repeats after confirmation, and deletes the incident on recovery. Checked-in fixtures cover alert-once, retry after interrupted delivery, and recovery followed by a new incident:
+
+- `packages/system-bus/src/inngest/functions/critical-db-maintenance.ts:173-203`
+- `packages/system-bus/src/inngest/functions/critical-db-maintenance.test.ts:102-159`
+
+### REFUTED: the checked-in fixture suite covers the boundary and builder-failure claims
+
+The checked-in maintenance test has four cases. It does not contain 7h59m, 8h01m, 23h59m, 24h01m, lock contention, builder exit 1, or terminal `onFailure` coverage.
+
+The independent temporary verifier proved the current runtime behavior, but that proof will not survive as a regression test.
+
+## 3. Zero-gap claim
+
+### CONFIRMED: the legacy archive is complete and has no June rows
+
+Independent read-only inspection of:
+
+```text
+/Volumes/three-body/backups/typesense/retired-memory-observations/memory_observations-20260717T203650Z.jsonl
+```
+
+found:
+
+```text
+parsed rows: 28,050
+unique IDs: 28,050
+duplicate IDs: 0
+bad JSON: 0
+minimum timestamp: 2026-02-18T15:42:00Z
+high-water: 2026-05-31T03:30:53Z
+sha256: d2f3038d2e2242bffd79aeb0d81d6fa9afa5aa512d2ada1ce0b831c00927db39
+```
+
+`wc -l` reports 28,049 because the final JSONL record has no trailing newline. Parsing confirms 28,050 records. The digest matches the verified archive receipt.
+
+The live Typesense collection list contains 24 collections and no `memory_observations`. A direct read of `/collections/memory_observations` returned HTTP 404. The July 17 retirement receipt records that Typesense returned the deleted schema after archive verification:
+
+- `.brain/projects/memory-system-cleanup/execute-legacy-retirement.svx:130-143`
+- archive receipt `archivedAt: 2026-07-17T20:37:39.305Z`
+
+No evidence contradicts the narrow claim: the retired legacy collection itself contained no June-onward observations. New observations must come from the Brain observer pages, not from a missing legacy gap export.
+
+## 4. Freshness semantics
+
+### CONFIRMED: alert and port read the same stored metadata
+
+Both paths read `metadata.built_at` and `metadata.sources_json`. The alert reads `sources_json["files:observations"].highWaterAt`, which is written by the same builder and returned by the search port.
+
+The live database at verification had:
+
+```text
+built_at: 2026-07-20T05:18:49.015Z
+files:observations status: ok
+files:observations count: 1,028
+files:observations high-water: 2026-07-20T05:18:10.000Z
+archive count: 28,050
+archive high-water: 2026-05-31T03:30:53.000Z
+document_count: 29,929
+degraded_override: false
+```
+
+This confirms steering's successful builder publish after the five malformed pages were fixed.
+
+### REFUTED: alert and port implement one freshness contract
+
+The two paths interpret the metadata independently:
+
+- Alert: build age over 8 hours, `files:observations.status`, and observation high-water over 24 hours.
+- Port: all required file-source statuses, `degraded_override`, and a seven-day stale threshold for every source.
+
+Evidence:
+
+- `packages/system-bus/src/inngest/functions/critical-db-maintenance.ts:117-155`
+- `packages/cli/src/lib/critical-search.ts:8-11,797-829`
+
+This creates a real silent-rot path. A successful rebuild can refresh `built_at` while Brain, Vault, or knowledge high-water remains older than seven days. The port then reports `stale`, but the alert reports healthy because observations remain fresh. An explicit degraded-source build can also make the port report `degraded` without a matching alert when the degraded source is not `files:observations`.
+
+## 5. Regression sweep
+
+### CONFIRMED: requested checks pass
+
+```text
+bun test critical-db-maintenance.test.ts typesense-recovery-alerts.test.ts
+12 pass, 0 fail, 49 expect() calls
+
+bunx tsc --noEmit
+exit 0
+
+pnpm biome check <targeted freshness files>
+Checked 5 files. No fixes applied.
+
+git diff --check
+exit 0
+```
+
+The 12 tests include four critical-db freshness tests and eight existing growth/startup alert tests. Both new functions coexist with the uncommitted message-event imports and registrations in `index.host.ts` and `index.ts`; TypeScript accepted the combined tree.
+
+## Containment receipt
+
+- No production Redis key was read or written.
+- No alert was sent.
+- No Typesense document or collection was mutated.
+- `~/.joelclaw/runs-dev` was not modified.
+- The production `critical.db` was opened read-only for metadata and hashing only.
+- The production builder lock was absent and untouched.
+- No worker was restarted.
+- No commit was created.
+
+## Required rework
+
+1. Give scheduled rebuild failure its own stored incident lifecycle with delivery confirmation and recovery clear.
+2. Make the alert consume the port's canonical freshness evaluation, or extract one shared evaluator used by both paths.
+3. Add permanent fixtures for both budget boundaries, held-lock exit 1, terminal failure alerting, and rebuild incident recovery/deduplication.

@@ -21,4 +21,27 @@ created_at: "2026-07-20"
 3. A staleness budget alert fires when `critical.db`'s high-water source timestamp exceeds its budget — through the same alert delivery path as the growth alerts.
 4. A failed scheduled rebuild is itself loud, not a silent skip.
 
-## Result (YYYY-MM-DD)
+Added 2026-07-20 after adversarial verification:
+
+5. Rebuild failures use the same stored-incident lifecycle as the growth alerts — one alert per incident regardless of error-text drift, recovery clears it, a later distinct failure opens a new incident. Never derive the alert ID from error text.
+6. The boundary and failure proofs are checked-in regression tests: 7h59m/8h01m, 23h59m/24h01m, lock contention, builder exit 1, terminal `onFailure`.
+7. One freshness contract: the alert and the port read the same rule — any required source (observations, Brain, Vault, knowledge) past its staleness threshold alerts, and a degraded-source publish alerts regardless of which source degraded. No state where the port reports stale/degraded and the alert reports healthy.
+
+## Result (2026-07-20)
+
+Added two host-role Inngest functions in `packages/system-bus/src/inngest/functions/critical-db-maintenance.ts`:
+
+- `search/critical-db-rebuild` runs the existing hardened builder at minute 17 every six hours (`17 */6 * * *`). It never passes `--allow-degraded-sources`. A terminal rebuild failure sends a hard alert through `sendHardAlert` and emits `search.critical_db.rebuild.failed`; a successful build emits `search.critical_db.rebuild.completed`.
+- `search/critical-db-staleness` runs hourly at minute 7 (`7 * * * *`). It reads `critical.db` metadata directly and alerts once per incident when the file build age exceeds 8 hours or the live `files:observations` high-water age exceeds 24 hours. Redis confirmation happens only after delivery, so interrupted sends retry. The production file was fresh at verification: build age 4,857,506 ms and observation age 7,087,523 ms.
+
+Added `scripts/export-critical-memory-gap.ts`. It searches Typesense read-only, excludes embeddings, deduplicates by document ID, and writes a new cumulative archive snapshot. It never edits an existing archive. The expected June-onward legacy gap does not exist: the complete 28,050-document collection snapshot taken before retirement on 2026-07-17 has a `2026-05-31T03:30:53Z` high-water, and the collection was then intentionally dropped. The live server now returns HTTP 404 for `memory_observations`, so the export count is 0 and no archive file changed. New observations land as Brain observer pages under `~/.brain/observations`; the builder scanned 1,022 current observer documents and their high-water drives the 24-hour alert. Archived legacy hits keep their truthful May freshness.
+
+The hardened builder was invoked without Typesense writes and exited 1 on its source gate. It found the same five malformed observer pages and left the healthy database byte-identical (`e00c9074…4344792`). These pages remain for Joel:
+
+- `2026-07-15-189bf975447b.svx`
+- `2026-07-15-80bee5060046.svx`
+- `2026-07-15-d7eac1bfd797.svx`
+- `2026-07-16-586659049029.svx`
+- `2026-07-16-c59d5a62fa17.svx`
+
+Validation passed: 12 alert fixture tests, `bunx tsc --noEmit`, targeted Biome, and `git diff --check`. `pi-notes brain check` reached 350 pages and stopped only on the seven pre-existing `.brain/tasks/*.md` files already outside this effort. No alert was sent, no worker was restarted, and no commit was made.
