@@ -94,6 +94,7 @@ function parseArgs(): {
   mode: "dry-run" | "apply";
   manifestPath: string;
   acceptScan: boolean;
+  allFunctions: boolean;
 } {
   const dryRun = process.argv.includes("--dry-run");
   const apply = process.argv.includes("--apply");
@@ -103,10 +104,18 @@ function parseArgs(): {
   const manifestPath = process.argv[manifestIndex + 1];
   if (manifestIndex < 0 || !manifestPath) usage();
 
+  const allFunctions = process.argv.includes("--all-functions");
+  const acceptScan = process.argv.includes("--accept-scan");
+  // --all-functions widens the fence to every envID-less item regardless of
+  // function (Joel, 2026-07-20: bounce-minting lands on whatever was in
+  // flight). It only makes sense under window-scoped authorization.
+  if (allFunctions && !acceptScan) usage();
+
   return {
     mode: apply ? "apply" : "dry-run",
     manifestPath: resolve(manifestPath),
-    acceptScan: process.argv.includes("--accept-scan"),
+    acceptScan,
+    allFunctions,
   };
 }
 
@@ -142,7 +151,10 @@ function isMissingEnvID(item: QueueItem): boolean {
   return value === null || value === "" || value === ZERO_UUID;
 }
 
-async function loadQueueItems(redis: Redis): Promise<Array<{ item: QueueItem; prefix: string }>> {
+async function loadQueueItems(
+  redis: Redis,
+  allFunctions: boolean,
+): Promise<Array<{ item: QueueItem; prefix: string }>> {
   const selected: Array<{ item: QueueItem; prefix: string }> = [];
   let cursor = "0";
 
@@ -158,7 +170,7 @@ async function loadQueueItems(redis: Redis): Promise<Array<{ item: QueueItem; pr
       if (item.id !== field) {
         throw new Error(`Queue item field/id mismatch: ${field} != ${item.id}`);
       }
-      const prefix = targetPrefix(item.wfID);
+      const prefix = targetPrefix(item.wfID) ?? (allFunctions ? item.wfID.slice(0, 8) : null);
       if (prefix && isMissingEnvID(item)) selected.push({ item, prefix });
     }
   } while (cursor !== "0");
@@ -299,13 +311,14 @@ function authorizationConditionMet(
   items: ManifestItem[],
   counts: Record<string, number>,
   acceptScan: boolean,
+  allFunctions: boolean,
 ): boolean {
   const countOk = acceptScan
     ? items.length > 0 && items.length <= ACCEPT_SCAN_CEILING
     : items.length === EXPECTED_COUNT;
-  if (!countOk || Object.keys(counts).length > TARGET_FUNCTION_PREFIXES.length) {
-    return false;
-  }
+  if (!countOk) return false;
+  if (allFunctions) return true;
+  if (Object.keys(counts).length > TARGET_FUNCTION_PREFIXES.length) return false;
   return Object.keys(counts).every((functionID) =>
     TARGET_FUNCTION_PREFIXES.some((prefix) => functionID.startsWith(prefix)),
   );
@@ -349,7 +362,7 @@ ${JSON.stringify(manifest, null, 2)}
 }
 
 async function main(): Promise<void> {
-  const { mode, manifestPath, acceptScan } = parseArgs();
+  const { mode, manifestPath, acceptScan, allFunctions } = parseArgs();
   const version = installedVersion();
   const dequeueLua = await readFile(DEQUEUE_LUA, "utf8");
   const redis = new Redis(REDIS_URL, {
@@ -363,12 +376,12 @@ async function main(): Promise<void> {
     const [lastSave, queueItemCount, selected] = await Promise.all([
       redis.lastsave(),
       redis.hlen(QUEUE_ITEM_KEY),
-      loadQueueItems(redis),
+      loadQueueItems(redis, allFunctions),
     ]);
     const backlogKeys = await resolveBacklogKeys(redis, selected);
     const items = manifestItems(selected, backlogKeys);
     const counts = countsByFunctionID(items);
-    const authorized = authorizationConditionMet(items, counts, acceptScan);
+    const authorized = authorizationConditionMet(items, counts, acceptScan, allFunctions);
 
     const manifest: Manifest = {
       tool: "inngest-v127-purge",
