@@ -3,7 +3,8 @@ title: "Replicate the Critical DB to Both NAS Boxes"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "blocked"
+blocked_on: ["interactive Docker elevation on both NAS hosts"]
 assignee: "pi (flagg, herdr pane wY:p1Z, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./port-critical-search-to-sqlite.svx"]
@@ -23,4 +24,25 @@ Make critical search answer while flagg is dark. One mechanism, twice, per [the 
 5. The fallback path is exercised continuously, not just at the gate (failure mode #2, 2026-07-20 grilling): a scheduled synthetic read hits each NAS replica directly on a cadence and alerts on failure or staleness over budget.
 6. Replicas are served from each NAS's local disk — replication is file copy; SQLite is never served over NFS/SMB.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+Implementation and replication are live; read serving is blocked on one interactive elevation step per NAS.
+
+**Mechanism:** plain authenticated SSH file sync, once per NAS. This fits the chosen immutable-file shape, avoids adding critical-search objects or credentials to Garage, and keeps the same path on both appliances. Flagg hashes the complete source snapshot, reads the precise SQLite `built_at` generation, uploads to a unique incoming path, then publishes under a portable atomic lock. An older generation cannot replace a newer one. Equal generations with different checksums fail closed.
+
+**Hosts and local-disk custody:**
+
+- NAS-A: `three-body` (ASUSTOR), local Btrfs `/volume1`, container `joelclaw-critical-search-three-body`.
+- NAS-B: `maturin` (Synology), local Btrfs `/volume1`, container `joelclaw-critical-search-maturin`.
+- Both use a new host-local `joelclaw/critical-search-replica` directory. No Garage path, existing share, existing container, NFS, or SMB path was touched.
+- Both replicas match source SHA-256 `02dc3c59bee89e24…`. Database and state files are mode `0640`; directories are `0750`.
+
+**Cadence and freshness:** user LaunchAgent `com.joelclaw.critical-search-replicate` runs every 60 seconds and currently exits `0`. The first measured copy lag was 285 seconds (4m45s) because deployment began after the source build; steady-state unchanged checks complete in 0–2 seconds. Health rejects a missing sync heartbeat or a heartbeat/replica lag above the 300-second budget.
+
+**Serving and client:** `infra/critical-search-replica/**` defines one read-only Python/SQLite FTS5 container twice. It runs as the NAS owner UID/GID, mounts local `data/` read-only, drops all capabilities, and requires a generated bearer token for health and search. The CLI now walks Flagg-local SQLite, NAS-A, then NAS-B; stale or unhealthy replicas are skipped. Recall and knowledge responses include `servedBy` with the replica name, endpoint, sync heartbeat age, and measured lag.
+
+**Continuous exercise:** LaunchAgent `com.joelclaw.critical-search-synthetic` runs every 120 seconds. It hits recall and knowledge directly on each NAS, checks the 300-second budget, records transitions, and sends one high-priority alert on failure and one on recovery. It currently exits `1` truthfully because neither NAS container is started.
+
+**Proof completed:** 26 targeted tests pass, including the real authenticated Python shim, compiled recall and knowledge fallback, missing-heartbeat rejection, synthetic failure/recovery transitions, concurrent publication, stale-lock recovery, and equal-generation checksum conflict. `bunx tsc --noEmit` and targeted Biome pass. A local hardened container returned `401` without auth and `200` with auth against the 29,929-document replica. Live host receipts prove the database is on each NAS's local disk and continuous sync is running.
+
+**Remaining blocker:** both NAS Docker sockets require interactive elevation. Files, private `.env`, token, compose config, and database are staged. Run the two installer-reported `sudo ... compose up -d --build` commands on the NAS hosts, then rerun the outage proof with Flagg-local search disabled. Do not close this step until both direct synthetic reads pass and the compiled recall and knowledge commands report a NAS in `servedBy`.

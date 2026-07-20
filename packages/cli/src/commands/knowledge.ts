@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { Inngest } from "../inngest"
-import { searchCriticalDb } from "../lib/critical-search"
+import { searchCriticalProjection } from "../lib/critical-search"
 import { respond, respondError } from "../response"
 import { resolveTypesenseApiKey } from "../typesense-auth"
 
@@ -415,9 +415,9 @@ const searchCmd = Command.make(
   ({ query, type, limit }) =>
     Effect.gen(function* () {
       const typeValue = type._tag === "Some" ? type.value : undefined
-      const sqlite = yield* Effect.sync(() => {
+      const sqlite = yield* Effect.promise(async () => {
         try {
-          return searchCriticalDb({
+          return await searchCriticalProjection({
             query,
             limit,
             collections: ["system_knowledge", "vault_notes"],
@@ -435,6 +435,7 @@ const searchCmd = Command.make(
             found: sqlite.found,
             backend: "sqlite-fts5",
             freshness: sqlite.freshness,
+            servedBy: sqlite.servedBy,
             queryDurationMs: sqlite.durationMs,
             dbPath: sqlite.dbPath,
             hits: sqlite.hits.map((hit) => ({

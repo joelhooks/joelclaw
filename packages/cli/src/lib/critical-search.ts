@@ -60,12 +60,41 @@ export type CriticalFreshness = {
   coverageGaps: string[]
 }
 
+export type CriticalSearchSource = {
+  name: string
+  kind: "local" | "replica"
+  endpoint: string
+  checkedAt: string
+  syncCheckAgeSeconds: number | null
+  replicaLagSeconds: number | null
+}
+
 export type CriticalSearchResult = {
   dbPath: string
   hits: CriticalSearchHit[]
   found: number
   freshness: CriticalFreshness
   durationMs: number
+  servedBy?: CriticalSearchSource
+}
+
+export type CriticalReplica = {
+  name: string
+  url: string
+  maxStalenessSeconds?: number
+  token?: string
+}
+
+export type CriticalProjectionSearchInput = {
+  query: string
+  limit?: number
+  collections?: CriticalCollection[]
+  type?: string
+  dbPath?: string
+  now?: Date
+  replicas?: CriticalReplica[]
+  skipLocal?: boolean
+  timeoutMs?: number
 }
 
 export class CriticalDbUnavailableError extends Error {
@@ -822,4 +851,139 @@ export function readFreshness(dbPath = process.env.JOELCLAW_CRITICAL_DB ?? DEFAU
   } finally {
     db.close()
   }
+}
+
+function configuredReplicas(): CriticalReplica[] {
+  const fromEnv = process.env.JOELCLAW_CRITICAL_SEARCH_REPLICAS?.trim()
+  if (fromEnv) {
+    const token = process.env.JOELCLAW_CRITICAL_SEARCH_TOKEN?.trim()
+    return fromEnv.split(",").map((entry, index) => {
+      const [name, ...urlParts] = entry.trim().split("=")
+      const url = urlParts.length > 0 ? urlParts.join("=") : name
+      return {
+        name: urlParts.length > 0 ? name : `nas-${index + 1}`,
+        url: url.replace(/\/$/u, ""),
+        ...(token ? { token } : {}),
+      }
+    }).filter((replica) => replica.url.length > 0)
+  }
+
+  const configPath = process.env.JOELCLAW_CRITICAL_SEARCH_CONFIG
+    ?? join(homedir(), ".config", "joelclaw", "critical-search-replicas.json")
+  if (!existsSync(configPath)) return []
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as { replicas?: CriticalReplica[]; tokenFile?: string }
+    const token = parsed.tokenFile ? readFileSync(resolve(parsed.tokenFile), "utf8").trim() : undefined
+    return (parsed.replicas ?? []).filter((replica) => replica.name?.trim() && replica.url?.trim()).map((replica) => ({
+      ...replica,
+      name: replica.name.trim(),
+      url: replica.url.trim().replace(/\/$/u, ""),
+      ...(replica.token?.trim() ? { token: replica.token.trim() } : token ? { token } : {}),
+    }))
+  } catch (error) {
+    throw new CriticalDbUnavailableError(
+      `critical-search replica config is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
+function isCriticalSearchResult(value: unknown): value is CriticalSearchResult {
+  if (!value || typeof value !== "object") return false
+  const candidate = value as Partial<CriticalSearchResult>
+  return Array.isArray(candidate.hits)
+    && typeof candidate.found === "number"
+    && typeof candidate.durationMs === "number"
+    && Boolean(candidate.freshness && typeof candidate.freshness === "object")
+}
+
+async function searchReplica(
+  replica: CriticalReplica,
+  input: CriticalProjectionSearchInput,
+  timeoutMs: number,
+): Promise<CriticalSearchResult> {
+  if (!replica.token?.trim()) throw new Error("replica authentication token is missing")
+  const headers = { authorization: `Bearer ${replica.token.trim()}` }
+  const healthResponse = await fetch(`${replica.url}/health`, {
+    headers,
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  if (!healthResponse.ok) throw new Error(`health HTTP ${healthResponse.status}`)
+  const health = await healthResponse.json() as {
+    ok?: boolean
+    checkedAt?: string
+    syncCheckAgeSeconds?: number | null
+    replicaLagSeconds?: number | null
+  }
+  if (!health.ok) throw new Error("health reported unavailable")
+  const maxStalenessSeconds = replica.maxStalenessSeconds
+    ?? Number(process.env.JOELCLAW_CRITICAL_SEARCH_MAX_STALENESS_SECONDS ?? 300)
+  if (!Number.isFinite(health.syncCheckAgeSeconds)) throw new Error("sync check age is missing or invalid")
+  if ((health.syncCheckAgeSeconds as number) > maxStalenessSeconds) {
+    throw new Error(`sync check is ${health.syncCheckAgeSeconds}s old; budget is ${maxStalenessSeconds}s`)
+  }
+  if (health.replicaLagSeconds !== null && health.replicaLagSeconds !== undefined
+    && health.replicaLagSeconds > maxStalenessSeconds) {
+    throw new Error(`replica lag is ${health.replicaLagSeconds}s; budget is ${maxStalenessSeconds}s`)
+  }
+
+  const response = await fetch(`${replica.url}/search`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({
+      query: input.query,
+      limit: input.limit,
+      collections: input.collections,
+      type: input.type,
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  if (!response.ok) throw new Error(`search HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`)
+  const result = await response.json()
+  if (!isCriticalSearchResult(result)) throw new Error("search returned an invalid response")
+  return {
+    ...result,
+    servedBy: {
+      name: replica.name,
+      kind: "replica",
+      endpoint: replica.url,
+      checkedAt: health.checkedAt ?? new Date().toISOString(),
+      syncCheckAgeSeconds: health.syncCheckAgeSeconds ?? null,
+      replicaLagSeconds: health.replicaLagSeconds ?? null,
+    },
+  }
+}
+
+/** Ordered critical search: flagg-local SQLite, then NAS replicas in configured order. */
+export async function searchCriticalProjection(input: CriticalProjectionSearchInput): Promise<CriticalSearchResult> {
+  const failures: string[] = []
+  const skipLocal = input.skipLocal ?? process.env.JOELCLAW_CRITICAL_SEARCH_SKIP_LOCAL === "1"
+  if (!skipLocal) {
+    try {
+      const result = searchCriticalDb(input)
+      return {
+        ...result,
+        servedBy: {
+          name: "flagg",
+          kind: "local",
+          endpoint: result.dbPath,
+          checkedAt: new Date().toISOString(),
+          syncCheckAgeSeconds: 0,
+          replicaLagSeconds: 0,
+        },
+      }
+    } catch (error) {
+      failures.push(`flagg: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  const replicas = input.replicas ?? configuredReplicas()
+  const timeoutMs = input.timeoutMs ?? Number(process.env.JOELCLAW_CRITICAL_SEARCH_TIMEOUT_MS ?? 1_500)
+  for (const replica of replicas) {
+    try {
+      return await searchReplica(replica, input, timeoutMs)
+    } catch (error) {
+      failures.push(`${replica.name}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  throw new CriticalDbUnavailableError(`all critical-search sources failed${failures.length ? `:\n- ${failures.join("\n- ")}` : ": no replicas configured"}`)
 }

@@ -1,6 +1,6 @@
 import { typesenseRecallAdapter as legacyTypesenseRecallAdapter } from "@joelclaw/sdk"
 import { Effect } from "effect"
-import { searchCriticalDb } from "../../lib/critical-search"
+import { searchCriticalProjection } from "../../lib/critical-search"
 import type { AnyCapabilityPort } from "../contract"
 
 export { __recallTestUtils } from "@joelclaw/sdk"
@@ -22,8 +22,8 @@ type RecallResult = {
   payload?: Record<string, unknown>
 }
 
-function sqliteRecall(args: RecallArgs): RecallResult {
-  const result = searchCriticalDb({
+async function sqliteRecall(args: RecallArgs): Promise<RecallResult> {
+  const result = await searchCriticalProjection({
     query: args.query,
     limit: Math.min(Math.max(args.limit * 3, args.limit), 60),
   })
@@ -102,6 +102,7 @@ function sqliteRecall(args: RecallArgs): RecallResult {
       found: result.found,
       backend: "sqlite-fts5",
       freshness: result.freshness,
+      servedBy: result.servedBy,
       queryDurationMs: result.durationMs,
       dbPath: result.dbPath,
     },
@@ -117,7 +118,7 @@ export const typesenseRecallAdapter: AnyCapabilityPort = {
   ...legacy,
   execute(subcommand, rawArgs, context) {
     if (subcommand !== "query") return legacy.execute(subcommand, rawArgs, context)
-    return Effect.try({
+    return Effect.tryPromise({
       try: () => sqliteRecall(rawArgs as RecallArgs),
       catch: (error) => error,
     }).pipe(

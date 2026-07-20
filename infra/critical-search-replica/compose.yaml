@@ -1,0 +1,33 @@
+services:
+  critical-search-replica:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: joelclaw-critical-search-replica:local
+    container_name: ${CONTAINER_NAME:?set CONTAINER_NAME}
+    restart: unless-stopped
+    read_only: true
+    user: "${REPLICA_UID:?set REPLICA_UID}:${REPLICA_GID:?set REPLICA_GID}"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      REPLICA_NAME: ${REPLICA_NAME:?set REPLICA_NAME}
+      CRITICAL_DB_PATH: /data/critical.db
+      SYNC_STATE_PATH: /data/sync-state.json
+      HOST: 0.0.0.0
+      PORT: "7411"
+      CRITICAL_SEARCH_TOKEN: ${CRITICAL_SEARCH_TOKEN:?set CRITICAL_SEARCH_TOKEN}
+    ports:
+      - "${REPLICA_BIND_ADDR:?set REPLICA_BIND_ADDR}:7411:7411"
+    volumes:
+      - ./data:/data:ro
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os, urllib.request; request=urllib.request.Request('http://127.0.0.1:7411/health', headers={'authorization':'Bearer '+os.environ['CRITICAL_SEARCH_TOKEN']}); urllib.request.urlopen(request, timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

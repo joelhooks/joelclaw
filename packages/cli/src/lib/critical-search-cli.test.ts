@@ -18,8 +18,63 @@ beforeAll(async () => {
   expect(await build.exited).toBe(0)
   server = Bun.serve({
     port: 0,
-    fetch(request) {
-      if (new URL(request.url).pathname === "/multi_search") {
+    async fetch(request) {
+      const path = new URL(request.url).pathname
+      if (path === "/health") {
+        if (request.headers.get("authorization") !== "Bearer replica-test-token") {
+          return Response.json({ ok: false }, { status: 401 })
+        }
+        return Response.json({
+          ok: true,
+          checkedAt: new Date().toISOString(),
+          syncCheckAgeSeconds: 5,
+          replicaLagSeconds: 2,
+        })
+      }
+      if (path === "/search") {
+        if (request.headers.get("authorization") !== "Bearer replica-test-token") {
+          return Response.json({ ok: false }, { status: 401 })
+        }
+        const body = await request.json() as { collections?: string[] }
+        const knowledge = body.collections?.includes("system_knowledge")
+        return Response.json({
+          dbPath: "/data/critical.db",
+          found: 1,
+          durationMs: 2,
+          freshness: {
+            builtAt: new Date().toISOString(),
+            ageSeconds: 5,
+            newestSourceAt: new Date().toISOString(),
+            sourceAgeSeconds: 5,
+            documentCount: 1,
+            status: "ok",
+            sources: {},
+            coverageGaps: [],
+          },
+          hits: [{
+            id: knowledge ? "replica-knowledge" : "replica-recall",
+            collection: knowledge ? "system_knowledge" : "observations",
+            type: knowledge ? "adr" : "observation",
+            title: knowledge ? "Replica knowledge" : "Replica recall",
+            content: "Critical search replica result",
+            source: "fixture",
+            sourceKey: "fixture",
+            privacy: "private",
+            payload: {},
+            rank: -1,
+            score: 1,
+            snippet: "Critical search replica result",
+            sourceFreshness: {
+              sourceKey: "fixture",
+              highWaterAt: null,
+              ageSeconds: 5,
+              status: "fresh",
+              documentAgeSeconds: 5,
+            },
+          }],
+        })
+      }
+      if (path === "/multi_search") {
         return Response.json({
           results: [
             {
@@ -81,6 +136,28 @@ describe("compiled critical-search fallback", () => {
       expect(stdout).toContain('"from": "sqlite-fts5"')
     })
   }
+
+  test("compiled recall surfaces the answering replica", async () => {
+    const [exit, stdout, stderr] = await run(["recall", "critical replica", "--limit", "1"], {
+      JOELCLAW_CRITICAL_DB: join(root, "missing-replica-recall.db"),
+      JOELCLAW_CRITICAL_SEARCH_REPLICAS: `nas-a=http://127.0.0.1:${server.port}`,
+      JOELCLAW_CRITICAL_SEARCH_TOKEN: "replica-test-token",
+    })
+    expect(exit, stderr).toBe(0)
+    expect(stdout).toContain('"name": "nas-a"')
+    expect(stdout).toContain("replica-recall")
+  })
+
+  test("compiled knowledge surfaces the answering replica", async () => {
+    const [exit, stdout, stderr] = await run(["knowledge", "search", "critical replica", "--limit", "1"], {
+      JOELCLAW_CRITICAL_DB: join(root, "missing-replica-knowledge.db"),
+      JOELCLAW_CRITICAL_SEARCH_REPLICAS: `nas-a=http://127.0.0.1:${server.port}`,
+      JOELCLAW_CRITICAL_SEARCH_TOKEN: "replica-test-token",
+    })
+    expect(exit, stderr).toBe(0)
+    expect(stdout).toContain('"name": "nas-a"')
+    expect(stdout).toContain("replica-knowledge")
+  })
 
   test("knowledge reports credential failure without crashing", async () => {
     const [exit, stdout, stderr] = await run(["knowledge", "search", "credential failure"], {

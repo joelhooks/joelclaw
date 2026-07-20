@@ -1,15 +1,38 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { __sqliteRecallTestUtils } from "../capabilities/adapters/typesense-recall"
-import { buildCriticalDb, CriticalDbUnavailableError, readFreshness, searchCriticalDb } from "./critical-search"
+import {
+  buildCriticalDb,
+  CriticalDbUnavailableError,
+  readFreshness,
+  searchCriticalDb,
+  searchCriticalProjection,
+} from "./critical-search"
 
 const roots: string[] = []
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
+
+async function freePort(): Promise<number> {
+  return await new Promise((resolvePort, reject) => {
+    const server = createServer()
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      if (!address || typeof address === "string") {
+        server.close()
+        reject(new Error("failed to allocate test port"))
+        return
+      }
+      server.close(() => resolvePort(address.port))
+    })
+  })
+}
 
 function fixture() {
   const root = join(tmpdir(), `critical-search-${crypto.randomUUID()}`)
@@ -123,7 +146,7 @@ describe("critical search database", () => {
     const previous = process.env.JOELCLAW_CRITICAL_DB
     process.env.JOELCLAW_CRITICAL_DB = paths.db
     try {
-      const result = __sqliteRecallTestUtils.sqliteRecall({
+      const result = await __sqliteRecallTestUtils.sqliteRecall({
         query: "opens rebuilding index",
         limit: 5,
         minScore: 0,
@@ -196,6 +219,143 @@ describe("critical search database", () => {
       memoryArchivePath: missing,
     })).rejects.toThrow("refusing to replace critical.db with degraded sources")
     expect(readFileSync(paths.db)).toEqual(before)
+  })
+
+  test("walks replicas in order, skips stale health, and surfaces the answering replica", async () => {
+    const paths = fixture()
+    await buildCriticalDb({
+      dbPath: paths.db,
+      observationsDir: paths.observations,
+      brainRoots: [paths.brain],
+      vaultDir: paths.vault,
+      skillsDir: paths.skills,
+      memoryArchivePath: paths.archive,
+      allowNonFlagg: true,
+    })
+    const replicaResult = searchCriticalDb({ query: "SQLite critical index", dbPath: paths.db })
+    const requests: string[] = []
+    const stale = Bun.serve({
+      port: 0,
+      fetch(request) {
+        requests.push(`stale:${new URL(request.url).pathname}`)
+        return Response.json({ ok: true, syncCheckAgeSeconds: 900, replicaLagSeconds: 12 })
+      },
+    })
+    const healthy = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const path = new URL(request.url).pathname
+        requests.push(`healthy:${path}`)
+        if (path === "/health") {
+          return Response.json({ ok: true, checkedAt: new Date().toISOString(), syncCheckAgeSeconds: 10, replicaLagSeconds: 4 })
+        }
+        if (path === "/search") return Response.json(replicaResult)
+        return new Response("not found", { status: 404 })
+      },
+    })
+    try {
+      const result = await searchCriticalProjection({
+        query: "SQLite critical index",
+        skipLocal: true,
+        replicas: [
+          { name: "nas-a", url: `http://127.0.0.1:${stale.port}`, maxStalenessSeconds: 300, token: "test-token" },
+          { name: "nas-b", url: `http://127.0.0.1:${healthy.port}`, maxStalenessSeconds: 300, token: "test-token" },
+        ],
+      })
+      expect(requests).toEqual(["stale:/health", "healthy:/health", "healthy:/search"])
+      expect(result.servedBy).toEqual(expect.objectContaining({
+        name: "nas-b",
+        kind: "replica",
+        syncCheckAgeSeconds: 10,
+        replicaLagSeconds: 4,
+      }))
+      expect(result.found).toBeGreaterThan(0)
+    } finally {
+      stale.stop(true)
+      healthy.stop(true)
+    }
+  })
+
+  test("rejects a replica whose sync heartbeat is missing", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return Response.json({ ok: true, syncCheckAgeSeconds: null, replicaLagSeconds: null })
+      },
+    })
+    try {
+      await expect(searchCriticalProjection({
+        query: "unverified snapshot",
+        skipLocal: true,
+        replicas: [{ name: "nas-a", url: `http://127.0.0.1:${server.port}`, token: "test-token" }],
+      })).rejects.toThrow("sync check age is missing or invalid")
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("queries the real authenticated read-only Python shim", async () => {
+    const python = Bun.which("python3")
+    if (!python) return
+    const paths = fixture()
+    await buildCriticalDb({
+      dbPath: paths.db,
+      observationsDir: paths.observations,
+      brainRoots: [paths.brain],
+      vaultDir: paths.vault,
+      skillsDir: paths.skills,
+      memoryArchivePath: paths.archive,
+      allowNonFlagg: true,
+    })
+    const statePath = join(paths.root, "sync-state.json")
+    writeFileSync(statePath, JSON.stringify({
+      checkedAt: new Date().toISOString(),
+      copiedAt: new Date().toISOString(),
+      sourceMtime: new Date().toISOString(),
+      sha256: "fixture-sha",
+    }))
+    const token = "a".repeat(64)
+    const port = await freePort()
+    const child = Bun.spawn([python, "infra/critical-search-replica/server.py"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        CRITICAL_DB_PATH: paths.db,
+        SYNC_STATE_PATH: statePath,
+        CRITICAL_SEARCH_TOKEN: token,
+        REPLICA_NAME: "python-shim",
+        HOST: "127.0.0.1",
+        PORT: String(port),
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    })
+    try {
+      let ready = false
+      for (let attempt = 0; attempt < 30; attempt++) {
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/health`, {
+            headers: { authorization: `Bearer ${token}` },
+          })
+          if (response.ok) {
+            ready = true
+            break
+          }
+        } catch {}
+        await Bun.sleep(50)
+      }
+      expect(ready).toBe(true)
+      const result = await searchCriticalProjection({
+        query: "SQLite critical index",
+        skipLocal: true,
+        replicas: [{ name: "python-shim", url: `http://127.0.0.1:${port}`, token }],
+      })
+      expect(result.found).toBeGreaterThan(0)
+      expect(result.servedBy).toEqual(expect.objectContaining({ name: "python-shim", kind: "replica" }))
+    } finally {
+      child.kill()
+      await child.exited
+    }
   })
 
   test("reports local parse failures and refuses publication", async () => {
