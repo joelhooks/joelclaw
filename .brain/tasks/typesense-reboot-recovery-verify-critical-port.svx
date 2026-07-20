@@ -1,0 +1,23 @@
+---
+title: "Worker task: adversarially verify the critical-search SQLite port"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: adversarially verify the critical-search SQLite port
+
+You are an adversarial verifier on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). A worker built and closed [Port Critical Search to SQLite](../projects/typesense-reboot-recovery/port-critical-search-to-sqlite.svx) — read its Result first. Artifacts: `~/.joelclaw/search/critical.db` (274 MB, 29,900 docs), uncommitted `scripts/build-critical-search-db.ts`, `packages/cli/src/lib/critical-search.ts`, and adapter changes in `packages/cli`. Try to refute the claim that operator-critical search can now ride this file.
+
+Attack angles, minimum:
+
+1. Coverage: does `critical.db` actually contain what `joelclaw recall` and `joelclaw knowledge search` served before? Count archived `memory_observations` source rows yourself and reconcile against the 28,050 claim; probe for observation types or date ranges that silently dropped out.
+2. Behavior: run real recall/knowledge queries through the changed adapters. Check the SQLite-first/Typesense-fallback ordering — what happens with `critical.db` present, missing, corrupt (copy it, truncate the copy, point the adapter at it via env/config if possible — NEVER corrupt the real file)? Does freshness metadata tell the truth?
+3. Builder: rerun `scripts/build-critical-search-db.ts` — is it idempotent (same doc count, stable IDs), atomic (no reader window where the file is partial), and single-writer safe?
+4. CLI crash test per repo law: `bun build packages/cli/src/cli.ts --compile --outfile /tmp/joelclaw-verify && /tmp/joelclaw-verify status` — plus `recall` and `knowledge search` through the compiled binary.
+5. Observer backlinks: pick observation docs, verify `runId`/`runBacklink` resolve to real Runs in `~/.joelclaw/runs-dev` (read-only).
+6. Containment audit: no writes to `runs-dev`, no Typesense mutations, no Typesense path removed.
+
+Containment for you: `~/.joelclaw/runs-dev` strictly read-only; never modify the real `critical.db` in place (the builder rerun in angle 3 is the exception — it is the builder's job); live Typesense read-only; do not commit.
+
+Deliverable: `.brain/projects/typesense-reboot-recovery/critical-port-verification.svx` (`type: "asset"`, `parent: "./port-critical-search-to-sqlite.svx"`) with CONFIRMED/REFUTED per claim and evidence. Do not edit the step file. Work autonomously. Do not commit. Print a DONE summary.
