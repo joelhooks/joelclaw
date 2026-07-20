@@ -1,0 +1,22 @@
+---
+title: "Worker task: unify the freshness rule into one shared module"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: unify the freshness rule into one shared module
+
+You are a worker on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step: [Unify the Freshness Rule Into One Shared Module](../projects/typesense-reboot-recovery/unify-freshness-rule.svx). Read it plus the freshness verification asset (`../projects/typesense-reboot-recovery/freshness-verification.svx`) — the duplication it found is what you are deleting.
+
+## Hard containment rules
+
+- Territory: `packages/memory/**` (the shared module's likely home), `packages/cli/src/lib/critical-search.ts` (the port's copy), `packages/system-bus/src/inngest/functions/critical-db-maintenance.ts` (the alert's copy), and their tests. Leave the message-event hunks in `index.*`/`client.ts`/`package.json` untouched.
+- Behavior must not change: both existing fixture suites (port + maintenance) pass UNCHANGED against the shared implementation — if a test needs editing, that's a behavior change and a refutation of your own work.
+- Do not commit; no worker restart.
+
+## The work
+
+One implementation of the freshness rule (staleness thresholds, required-source set, degraded handling), exported from one module, imported by both call sites; the duplicated copies deleted; `bunx tsc --noEmit` and targeted Biome green.
+
+Fill your step `## Result`, flip status closed with `closed_at`, one brief ledger line. Work autonomously. Do not commit. Print a DONE summary.

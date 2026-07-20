@@ -4,7 +4,7 @@ type: "step"
 kind: "task"
 interaction: "AFK"
 status: "open"
-assignee: ""
+assignee: "pi (flagg, herdr pane wY:p2E, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./key-capture-conflicts-on-source-cursor.svx"]
 created_at: "2026-07-20"
