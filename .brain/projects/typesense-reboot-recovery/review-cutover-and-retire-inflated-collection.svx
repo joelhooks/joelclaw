@@ -21,6 +21,8 @@ Preconditions before the review, from [adversarial verification of the index](./
 1. The append consumer is wired into the patched capture path, with `sessions.db` flipped to WAL mode (it currently sits in `journal_mode=delete`).
 2. `joelclaw sessions search` (and any other reader) actually opens `sessions.db`.
 3. Typesense parity runs once `/health` is green — or Joel explicitly accepts raw-JSONL-as-truth validation in its place.
+4. A grep-proven inventory of every `run_chunks_dev` reader (CLI, web app, Inngest functions) exists, and each is switched or consciously excepted — no reader retired from memory (failure mode #5, 2026-07-20 grilling).
+5. The append consumer is proven idempotent under real Inngest at-least-once redelivery and step retries, not just in unit fixtures.
 
 Resolved when readers point at the SQLite index, the rollback plan is written, and Joel has said "retire it" out loud.
 

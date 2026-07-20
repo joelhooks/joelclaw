@@ -1,0 +1,23 @@
+---
+title: "Deploy the Patched Capture Clients Fleet-Wide"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+---
+
+# Deploy the Patched Capture Clients Fleet-Wide
+
+## Step
+
+The patched capture clients are live on flagg, but capture also runs from other machines (failure mode #4, 2026-07-20 grilling): a stale client elsewhere keeps minting cumulative Runs under fresh IDs. The server contains the damage and the growth alert makes it loud, but the fix is not deployed until every capture source runs it. Resolved when:
+
+1. Every machine that runs pi/claude/codex capture (blaine at minimum; verify the actual set from Run metadata `machine_id` values) has pulled the patched clients.
+2. Proof by provenance: fresh captures from each machine arrive at flagg carrying `from_offset`/`to_offset`/`jsonl_sha256`/`source_identity`.
+3. The machine list and how each was updated is recorded here for the next time.
+
+## Result (YYYY-MM-DD)

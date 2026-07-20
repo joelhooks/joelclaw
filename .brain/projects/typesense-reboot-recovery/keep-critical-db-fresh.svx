@@ -1,0 +1,24 @@
+---
+title: "Keep the Critical DB Fresh"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: ["./port-critical-search-to-sqlite.svx"]
+created_at: "2026-07-20"
+---
+
+# Keep the Critical DB Fresh
+
+## Step
+
+`critical.db` must not rot into a museum (failure mode #1, 2026-07-20 grilling): the observation archive ends 2026-05-31, and nothing scheduled refreshes the file. Resolved when:
+
+1. A scheduled workload rebuilds `critical.db` on a stated cadence, using the hardened builder (post-rework: honest source status, swap-abort on degraded sources, single-writer lock).
+2. June-onward observations flow in — export the gap from Typesense `memory_observations` once it is healthy, and define where new observations land going forward.
+3. A staleness budget alert fires when `critical.db`'s high-water source timestamp exceeds its budget — through the same alert delivery path as the growth alerts.
+4. A failed scheduled rebuild is itself loud, not a silent skip.
+
+## Result (YYYY-MM-DD)

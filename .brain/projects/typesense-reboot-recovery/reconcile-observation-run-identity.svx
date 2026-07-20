@@ -1,0 +1,23 @@
+---
+title: "Reconcile Observation and Run Identity"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: ["./port-critical-search-to-sqlite.svx"]
+created_at: "2026-07-20"
+---
+
+# Reconcile Observation and Run Identity
+
+## Step
+
+Verification found 0 of 64 observation `run_id` values resolve in `~/.joelclaw/runs-dev` — two identity namespaces exist, and the observer layer's link to full transcripts is currently fiction (failure mode #3, 2026-07-20 grilling). The two-tier session-search design depends on this bridge being real. Resolved when:
+
+1. The namespace mismatch is explained: what the observer's `run_id` actually identifies, and why it never matches capture Run IDs. (The port rework's condition 8 produces the first analysis — start from its Result.)
+2. A real mapping exists (observation → capture Run(s), even if via conversation/time-window join), or the design is honestly amended and the brief's **observer layer** vocabulary updated to match reality.
+3. Tier-1 → tier-2 navigation is proven end to end: pick observations, follow their links, land in the right transcripts in the session index.
+
+## Result (YYYY-MM-DD)

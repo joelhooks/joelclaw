@@ -20,5 +20,7 @@ Make critical search answer while flagg is dark. One mechanism, twice, per [the 
 2. Each NAS serves the file read-only through a small shim container. No writes anywhere but flagg, no quorum, no leader election.
 3. Clients walk the ordered fallback flagg → NAS-A → NAS-B, health-aware, and surface which replica answered plus its freshness.
 4. Proven by test: with flagg's serving process stopped, a recall query and a knowledge query answer from a NAS replica.
+5. The fallback path is exercised continuously, not just at the gate (failure mode #2, 2026-07-20 grilling): a scheduled synthetic read hits each NAS replica directly on a cadence and alerts on failure or staleness over budget.
+6. Replicas are served from each NAS's local disk — replication is file copy; SQLite is never served over NFS/SMB.
 
 ## Result (YYYY-MM-DD)
