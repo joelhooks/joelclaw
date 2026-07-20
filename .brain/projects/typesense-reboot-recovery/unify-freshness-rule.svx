@@ -1,0 +1,21 @@
+---
+title: "Unify the Freshness Rule Into One Shared Module"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: ["./replicate-critical-db-to-nas.svx"]
+created_at: "2026-07-20"
+---
+
+# Unify the Freshness Rule Into One Shared Module
+
+## Step
+
+Re-verification of [Keep the Critical DB Fresh](./keep-critical-db-fresh.svx) confirmed the alert and the port agree behaviorally but hold duplicate copies of the freshness rule — `packages/cli/src/lib/critical-search.ts` and `packages/system-bus`'s maintenance path each implement it. The duplication exists because worker territories forbade crossing; it is a drift risk, not a live bug. Resolved when one shared implementation (likely `packages/memory`) is imported by both, the duplicated copies are deleted, and the existing fixture suites on both sides pass unchanged against the shared module.
+
+Blocked on the NAS replication step because it currently owns `packages/cli`.
+
+## Result (YYYY-MM-DD)

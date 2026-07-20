@@ -41,6 +41,10 @@ export { conversationAnnotate } from "./conversation-annotate";
 export { conversationThreadAggregate } from "./conversation-thread-aggregate";
 export { conversationThreadEnrich } from "./conversation-thread-enrich";
 export { conversationThreadStaleSweep } from "./conversation-thread-stale-sweep";
+export {
+  criticalDbScheduledRebuild,
+  criticalDbStalenessCheck,
+} from "./critical-db-maintenance";
 export { dailyDigest } from "./daily-digest";
 export { discoveryCapture } from "./discovery-capture";
 export { docsIngest } from "./docs-ingest";

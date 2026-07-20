@@ -193,3 +193,89 @@ The 12 tests include four critical-db freshness tests and eight existing growth/
 1. Give scheduled rebuild failure its own stored incident lifecycle with delivery confirmation and recovery clear.
 2. Make the alert consume the port's canonical freshness evaluation, or extract one shared evaluator used by both paths.
 3. Add permanent fixtures for both budget boundaries, held-lock exit 1, terminal failure alerting, and rebuild incident recovery/deduplication.
+
+## Re-verification (2026-07-20)
+
+### 1. Rebuild failure incident lifecycle — CONFIRMED
+
+The stored incident ID is generated from the fixed seed plus incident start time. Failure detail is not part of the ID. The same stored ID survives changing error text, notification confirmation suppresses repeats, and a successful scheduled rebuild deletes the incident before completion telemetry. A later failure therefore opens a new incident with a new ID.
+
+Evidence:
+
+- `packages/system-bus/src/inngest/functions/critical-db-maintenance.ts:243-264,285-300,404-432`
+- `packages/system-bus/src/inngest/functions/critical-db-maintenance.test.ts:242-308`
+- `rg -n "stableAlertId|errorText|detail" packages/system-bus/src/inngest/functions/critical-db-maintenance.ts` found one ID construction at line 252. It uses the fixed event seed plus `input.now`. Error detail only flows into notification and telemetry.
+
+The checked-in fixture changed `"first path"` to `"different count"` and observed one alert. It then cleared the incident and observed one later alert with a different ID. A separate `InngestTestEngine` fixture proved that successful scheduled execution clears the stored failure incident.
+
+Residual risk: incident state uses separate Redis `get` and `set` calls. The scheduled function's concurrency limit of one contains its normal execution path, but a future second caller could race.
+
+### 2. Checked-in regression coverage — CONFIRMED
+
+The checked-in suite contains and ran all required cases:
+
+- 7h59m and 8h01m build age: `critical-db-maintenance.test.ts:113-127`
+- 23h59m and 24h01m observation age: `critical-db-maintenance.test.ts:113-127`
+- held builder lock with real builder exit 1: `critical-db-maintenance.test.ts:229-240`
+- drifting detail, recovery clear, and later reopen: `critical-db-maintenance.test.ts:242-290`
+- terminal `onFailure` hard-alert adapter: `critical-db-maintenance.test.ts:311-341`
+
+Command:
+
+```text
+bun test packages/system-bus/src/inngest/functions/critical-db-maintenance.test.ts packages/system-bus/src/inngest/functions/typesense-recovery-alerts.test.ts packages/cli/src/lib/critical-search.test.ts
+43 pass, 0 fail, 130 expect() calls
+```
+
+### 3. One freshness contract — REFUTED
+
+The required behavior fixtures pass today:
+
+- The parameterized stale-source fixture includes `files:brain` eight days stale while observations remain current. The port reports `stale`, and the alert evaluator returns `stale: true`: `critical-db-maintenance.test.ts:129-144`.
+- The degraded-source fixture includes every non-observation required source. The port reports `degraded`, and the alert evaluator returns `stale: true`: `critical-db-maintenance.test.ts:146-159`.
+- `degraded_override` also makes both paths degraded: `critical-db-maintenance.test.ts:161-171`.
+
+No current stored-metadata fixture produced a healthy alert with a stale or degraded port. That is not enough to confirm the claim because the implementation does not use a shared rule.
+
+System-bus independently defines and evaluates the contract:
+
+- `REQUIRED_SOURCES` and `SOURCE_STALE_AFTER_MS`: `critical-db-maintenance.ts:12-27`
+- source freshness and port status: `critical-db-maintenance.ts:138-220`
+
+The CLI port separately defines and evaluates the same concepts:
+
+- `SOURCE_STALE_AFTER_SECONDS` and `REQUIRED_FILE_SOURCES`: `packages/cli/src/lib/critical-search.ts:10,497-503`
+- `freshnessFromMetadata`: `packages/cli/src/lib/critical-search.ts:804-835`
+
+The tests prove current agreement for enumerated examples. They do not make drift impossible. A future source-list or threshold edit in only one copy can recreate the original healthy-alert/stale-port state without a type error. The step's requirement says both paths read the same rule, so this remains refuted.
+
+### 4. Regression sweep — CONFIRMED
+
+```text
+bun test <maintenance + recovery-alerts + critical-search suites>
+43 pass, 0 fail, 130 expect() calls
+
+bunx tsc --noEmit
+exit 0
+
+pnpm biome check <8 targeted freshness, port, test, and registration files>
+Checked 8 files. No fixes applied.
+
+git diff --check
+exit 0
+```
+
+Registrations remain intact beside the message-event hunks:
+
+- Host imports and function definitions: `packages/system-bus/src/inngest/functions/index.host.ts:44-47,89,241,259-262`
+- Combined exports: `packages/system-bus/src/inngest/functions/index.ts:44-47,94-97`
+
+### Containment receipt
+
+- Fixtures used `/tmp` paths only.
+- No alert was sent.
+- No production Redis key was read or written.
+- No worker was restarted.
+- Production `critical.db` was not opened or changed.
+- The step file was not edited.
+- No commit was created.

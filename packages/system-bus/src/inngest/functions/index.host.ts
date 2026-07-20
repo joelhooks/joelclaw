@@ -41,6 +41,10 @@ import { conversationAnnotate } from "./conversation-annotate";
 import { conversationThreadAggregate } from "./conversation-thread-aggregate";
 import { conversationThreadEnrich } from "./conversation-thread-enrich";
 import { conversationThreadStaleSweep } from "./conversation-thread-stale-sweep";
+import {
+  criticalDbScheduledRebuild,
+  criticalDbStalenessCheck,
+} from "./critical-db-maintenance";
 import { dailyDigest } from "./daily-digest";
 import { dailyTokenUsageReport } from "./daily-token-usage-report";
 import { discoveryCapture } from "./discovery-capture";
@@ -252,6 +256,8 @@ export const hostFunctionDefinitions = [
   memoryRunCaptured,
   capturePrefixGrowthAlert,
   typesenseStartupBudgetCheck,
+  criticalDbScheduledRebuild,
+  criticalDbStalenessCheck,
   echoFizzle,
   taskTriage,
   checkSessions,
