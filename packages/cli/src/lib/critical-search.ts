@@ -3,11 +3,14 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, extname, join, relative, resolve } from "node:path"
+import {
+  CRITICAL_DB_REQUIRED_SOURCES,
+  evaluateCriticalDbFreshness,
+} from "@joelclaw/memory"
 
 export const DEFAULT_CRITICAL_DB_PATH = join(homedir(), ".joelclaw", "search", "critical.db")
 export const CRITICAL_SCHEMA_VERSION = "2"
 const SOURCE_REGRESSION_RATIO = 0.8
-const SOURCE_STALE_AFTER_SECONDS = 7 * 24 * 60 * 60
 
 const CRITICAL_COLLECTIONS = [
   "observations",
@@ -494,14 +497,6 @@ function insertDocuments(db: Database, documents: CriticalDocument[]): number {
   return documents.length
 }
 
-const REQUIRED_FILE_SOURCES = [
-  "files:observations",
-  "files:brain",
-  "files:vault",
-  "files:knowledge",
-  "archive:memory_observations",
-] as const
-
 function existingSourceReports(dbPath: string): Record<string, BuildSourceReport> | null {
   if (!existsSync(dbPath)) return null
   try {
@@ -521,7 +516,7 @@ function validateRequiredSources(
   previous: Record<string, BuildSourceReport> | null,
 ): string[] {
   const failures: string[] = []
-  for (const source of REQUIRED_FILE_SOURCES) {
+  for (const source of CRITICAL_DB_REQUIRED_SOURCES) {
     const current = sources[source]
     if (!current || current.status !== "ok" || current.count === 0) {
       failures.push(`${source} is ${current?.status ?? "missing"} (${current?.count ?? 0} documents)${current?.detail ? `: ${current.detail}` : ""}`)
@@ -811,18 +806,18 @@ function freshnessFromMetadata(db: Database, now = new Date()): CriticalFreshnes
   const newestSeconds = asNumber(newest?.value)
   const nowSeconds = Math.floor(now.getTime() / 1_000)
   const rawSources = JSON.parse(metadata.get("sources_json") ?? "{}") as Record<string, BuildSourceReport>
-  const sources = Object.fromEntries(Object.entries(rawSources).map(([key, source]) => {
-    const water = source.highWaterAt ? Math.floor(Date.parse(source.highWaterAt) / 1_000) : undefined
-    const ageSeconds = water && Number.isFinite(water) ? Math.max(0, nowSeconds - water) : null
-    const freshness = source.status !== "ok" ? source.status : ageSeconds !== null && ageSeconds > SOURCE_STALE_AFTER_SECONDS ? "stale" : "fresh"
-    return [key, { ...source, ageSeconds, freshness }]
+  const evaluated = evaluateCriticalDbFreshness({
+    sources: rawSources,
+    degradedOverride: metadata.get("degraded_override") === "true",
+    nowMs: now.getTime(),
+    ageResolutionMs: 1_000,
+    zeroTimestampIsMissing: true,
+  })
+  const sources = Object.fromEntries(Object.entries(evaluated.sources).map(([key, source]) => {
+    const { ageMs, ...report } = source
+    return [key, { ...report, ageSeconds: ageMs === null ? null : ageMs / 1_000 }]
   })) as CriticalFreshness["sources"]
-  const required = REQUIRED_FILE_SOURCES.map((source) => sources[source])
-  const status = metadata.get("degraded_override") === "true" || required.some((source) => !source || source.status !== "ok")
-    ? "degraded"
-    : required.some((source) => source.freshness === "stale")
-      ? "stale"
-      : "ok"
+  const status = evaluated.status
   return {
     builtAt,
     ageSeconds: Math.max(0, Math.floor((now.getTime() - Date.parse(builtAt)) / 1_000)),

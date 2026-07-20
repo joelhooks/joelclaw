@@ -17,6 +17,7 @@
     "@joelclaw/agent-execution": "workspace:*",
     "@joelclaw/endpoint-resolver": "workspace:*",
     "@joelclaw/inference-router": "workspace:*",
+    "@joelclaw/memory": "workspace:*",
     "@joelclaw/message-journal": "workspace:*",
     "@joelclaw/queue": "workspace:*",
     "@joelclaw/restate": "workspace:*",

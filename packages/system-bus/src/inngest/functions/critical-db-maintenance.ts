@@ -1,5 +1,10 @@
 import { Database } from "bun:sqlite";
 import { resolve } from "node:path";
+import {
+  CRITICAL_DB_REQUIRED_SOURCES,
+  CRITICAL_DB_SOURCE_STALE_AFTER_MS,
+  evaluateCriticalDbFreshness,
+} from "@joelclaw/memory";
 import { getRedisClient } from "../../lib/redis";
 import { sendHardAlert, stableAlertId } from "../../lib/search-maintenance";
 import { emitOtelEvent } from "../../observability/emit";
@@ -9,13 +14,6 @@ const REPO_ROOT = resolve(import.meta.dir, "../../../../..");
 const DEFAULT_DB_PATH = resolve(process.env.JOELCLAW_CRITICAL_DB || `${process.env.HOME}/.joelclaw/search/critical.db`);
 const CRITICAL_DB_FRESHNESS_STATE_KEY = "search-maintenance:critical-db:freshness-incident";
 const CRITICAL_DB_REBUILD_STATE_KEY = "search-maintenance:critical-db:rebuild-incident";
-const REQUIRED_SOURCES = [
-  "files:observations",
-  "files:brain",
-  "files:vault",
-  "files:knowledge",
-  "archive:memory_observations",
-] as const;
 const CRITICAL_DB_BUILD_BUDGET_MS = parseBudget(
   "CRITICAL_DB_BUILD_STALENESS_BUDGET_MS",
   8 * 60 * 60_000,
@@ -24,7 +22,6 @@ const CRITICAL_DB_OBSERVATION_BUDGET_MS = parseBudget(
   "CRITICAL_DB_OBSERVATION_STALENESS_BUDGET_MS",
   24 * 60 * 60_000,
 );
-const SOURCE_STALE_AFTER_MS = 7 * 24 * 60 * 60_000;
 const INCIDENT_TTL_SECONDS = 90 * 24 * 60 * 60;
 const MAX_SUBPROCESS_OUTPUT = 8_000;
 const BUILDER_TIMEOUT_MS = 30 * 60_000;
@@ -143,7 +140,7 @@ export function inspectCriticalDbFreshness(input: {
   sourceStaleAfterMs?: number;
 }): CriticalDbFreshness {
   const dbPath = resolve(input.dbPath);
-  const sourceStaleAfterMs = input.sourceStaleAfterMs ?? SOURCE_STALE_AFTER_MS;
+  const sourceStaleAfterMs = input.sourceStaleAfterMs ?? CRITICAL_DB_SOURCE_STALE_AFTER_MS;
   const base = {
     checkedAt: new Date(input.now).toISOString(),
     dbPath,
@@ -167,24 +164,19 @@ export function inspectCriticalDbFreshness(input: {
         string,
         { highWaterAt?: unknown; status?: unknown }
       >;
-      const sources = Object.fromEntries(Object.entries(rawSources).map(([key, source]) => {
-        const highWaterAt = typeof source.highWaterAt === "string" ? source.highWaterAt : null;
-        const sourceAgeMs = ageMs(highWaterAt, input.now);
-        const status = typeof source.status === "string" ? source.status : "unknown";
-        const freshness = status !== "ok"
-          ? status
-          : sourceAgeMs !== null && sourceAgeMs > sourceStaleAfterMs
-            ? "stale"
-            : "fresh";
-        return [key, { status, highWaterAt, ageMs: sourceAgeMs, freshness }];
-      })) as Record<string, CriticalDbSourceFreshness>;
-      const required = REQUIRED_SOURCES.map((source) => sources[source]);
+      const sourceMetadata = Object.fromEntries(Object.entries(rawSources).map(([key, source]) => [key, {
+        status: typeof source.status === "string" ? source.status : "unknown",
+        highWaterAt: typeof source.highWaterAt === "string" ? source.highWaterAt : null,
+      }]));
       const degradedOverride = metadata.get("degraded_override") === "true";
-      const portStatus = degradedOverride || required.some((source) => !source || source.status !== "ok")
-        ? "degraded"
-        : required.some((source) => source.freshness === "stale")
-          ? "stale"
-          : "ok";
+      const evaluated = evaluateCriticalDbFreshness({
+        sources: sourceMetadata,
+        degradedOverride,
+        nowMs: input.now,
+        sourceStaleAfterMs,
+      });
+      const sources = evaluated.sources as Record<string, CriticalDbSourceFreshness>;
+      const portStatus = evaluated.status;
       const observationSource = sources["files:observations"];
       const builtAgeMs = ageMs(builtAt, input.now);
       const observationHighWaterAt = observationSource?.highWaterAt ?? null;
@@ -199,7 +191,7 @@ export function inspectCriticalDbFreshness(input: {
         reasons.push(`observation high-water age ${observationAgeMs}ms exceeds ${input.observationBudgetMs}ms`);
       }
       if (degradedOverride) reasons.push("critical.db was published with degraded_override=true");
-      for (const sourceName of REQUIRED_SOURCES) {
+      for (const sourceName of CRITICAL_DB_REQUIRED_SOURCES) {
         const source = sources[sourceName];
         if (!source) reasons.push(`${sourceName} is missing`);
         else if (source.status !== "ok") reasons.push(`${sourceName} status is ${source.status}`);
@@ -217,7 +209,7 @@ export function inspectCriticalDbFreshness(input: {
         degradedOverride,
         portStatus,
         sources,
-        stale: reasons.length > 0,
+        stale: portStatus !== "ok" || reasons.length > 0,
         reasons,
       };
     } finally {
@@ -471,6 +463,6 @@ export const criticalDbStalenessCheck = inngest.createFunction(
 export const __criticalDbMaintenanceTestUtils = {
   CRITICAL_DB_FRESHNESS_STATE_KEY,
   CRITICAL_DB_REBUILD_STATE_KEY,
-  REQUIRED_SOURCES,
-  SOURCE_STALE_AFTER_MS,
+  REQUIRED_SOURCES: CRITICAL_DB_REQUIRED_SOURCES,
+  SOURCE_STALE_AFTER_MS: CRITICAL_DB_SOURCE_STALE_AFTER_MS,
 };

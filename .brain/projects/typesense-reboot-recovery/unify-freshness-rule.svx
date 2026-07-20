@@ -3,7 +3,8 @@ title: "Unify the Freshness Rule Into One Shared Module"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "pi (flagg, herdr pane wY:p2F, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./replicate-critical-db-to-nas.svx"]
@@ -18,4 +19,8 @@ Re-verification of [Keep the Critical DB Fresh](./keep-critical-db-fresh.svx) co
 
 Blocked on the NAS replication step because it currently owns `packages/cli`.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+Closed. `@joelclaw/memory` now exports the required-source set, seven-day threshold, and one `evaluateCriticalDbFreshness` implementation for source age, degraded handling, and port status. The CLI port and system-bus alert both import it; their duplicate rules are deleted. The CLI builder also uses the shared required-source set for publication validation.
+
+The existing port and maintenance fixtures passed unchanged: 45 tests, 0 failures, 134 expectations across the maintenance, recovery-alert, and critical-search suites. `bunx tsc --noEmit`, targeted Biome, and `git diff --check` passed. No worker restart or commit occurred.

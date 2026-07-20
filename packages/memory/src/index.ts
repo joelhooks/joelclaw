@@ -1,4 +1,5 @@
 export * from "./chunking";
+export * from "./critical-db-freshness";
 export * from "./nas";
 export * from "./ollama-embeddings";
 export * from "./schemas/machines";

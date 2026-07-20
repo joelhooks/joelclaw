@@ -62,6 +62,7 @@ The effort ends when all of these hold, on existing tailnet hardware only (flagg
 - Accepted limitation (2026-07-20 failure-mode grilling): alerts ride the flagg messaging gateway, so during a flagg reboot they deliver late — alerting buys postmortem speed, not availability.
 
 - [Replicate the Critical DB to Both NAS Boxes](./replicate-critical-db-to-nas.svx) — closed 2026-07-20: generation-guarded 60s sync to three-body and maturin, hardened token-auth shims on local Btrfs, ordered fallback proven live (`servedBy: three-body` with flagg-local skipped); one Dockerfile chmod fix and one keep-alive flake fixed en route.
+- [Unify the Freshness Rule Into One Shared Module](./unify-freshness-rule.svx) — closed 2026-07-20: `@joelclaw/memory` now owns the required sources, seven-day threshold, degraded handling, and port-status evaluation used by both the CLI port and system-bus alert; all existing fixtures pass unchanged.
 
 ## Latent
 
