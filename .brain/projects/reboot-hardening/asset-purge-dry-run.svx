@@ -7,28 +7,24 @@ date: "2026-07-20"
 
 # Inngest v1.27.0 queue purge dry-run manifest
 
-## Preflight backup receipt
-
-`redis-cli -u redis://127.0.0.1:6379 BGSAVE` returned `Background saving started` before queue inspection. The immediate `LASTSAVE` was `1784558609`; the completed background save advanced it to `1784558622` with `rdb_last_bgsave_status:ok`. The final dry-run read `LASTSAVE=1784558927`.
-
 - Mode: `dry-run`
 - Installed binary: `1.27.0-781c91d3c`
 - Pinned source: `inngest/inngest@v1.27.0` / `781c91d3c5c21852e84ee575d6d36b1ad9dcde1a`
 - Redis: `redis://127.0.0.1:6379`
-- Redis `LASTSAVE`: `1784558927`
-- Queue items scanned: **1821**
-- Selected items: **595**
+- Redis `LASTSAVE`: `1784561100`
+- Queue items scanned: **1867**
+- Selected items: **597**
 - Expected items: **595**
-- Authorization condition met: **yes**
+- Authorization condition met: **no**
 
 ## Counts by function
 
 | Function ID | Items |
 | --- | ---: |
 | `155f899f-3c23-5c49-a142-649c64764b70` | 74 |
-| `6489b63e-41e8-5b9d-a3cc-0f9d58817a82` | 342 |
+| `6489b63e-41e8-5b9d-a3cc-0f9d58817a82` | 343 |
 | `6d5d880e-a170-5ce9-8266-24fb48b29419` | 7 |
-| `8f5e3d9e-e60b-5a49-8762-5127ee2597e7` | 162 |
+| `8f5e3d9e-e60b-5a49-8762-5127ee2597e7` | 163 |
 | `ce6c53eb-e67b-5052-b8dd-7af0814dfcf4` | 10 |
 
 ## Manifest
@@ -37,7 +33,7 @@ date: "2026-07-20"
 {
   "tool": "inngest-v127-purge",
   "mode": "dry-run",
-  "generatedAt": "2026-07-20T14:49:13.358Z",
+  "generatedAt": "2026-07-20T15:25:32.053Z",
   "inngest": {
     "expectedVersion": "1.27.0",
     "installedVersion": "1.27.0-781c91d3c",
@@ -47,13 +43,13 @@ date: "2026-07-20"
   },
   "redis": {
     "url": "redis://127.0.0.1:6379",
-    "lastSave": 1784558927,
-    "queueItemCount": 1821
+    "lastSave": 1784561100,
+    "queueItemCount": 1867
   },
   "selection": {
     "expectedCount": 595,
-    "actualCount": 595,
-    "authorizationConditionMet": true,
+    "actualCount": 597,
+    "authorizationConditionMet": false,
     "targetFunctionPrefixes": [
       "155f899f",
       "8f5e3d9e",
@@ -63,9 +59,9 @@ date: "2026-07-20"
     ],
     "countsByFunctionID": {
       "155f899f-3c23-5c49-a142-649c64764b70": 74,
-      "6489b63e-41e8-5b9d-a3cc-0f9d58817a82": 342,
+      "6489b63e-41e8-5b9d-a3cc-0f9d58817a82": 343,
       "6d5d880e-a170-5ce9-8266-24fb48b29419": 7,
-      "8f5e3d9e-e60b-5a49-8762-5127ee2597e7": 162,
+      "8f5e3d9e-e60b-5a49-8762-5127ee2597e7": 163,
       "ce6c53eb-e67b-5052-b8dd-7af0814dfcf4": 10
     }
   },
@@ -197,6 +193,16 @@ date: "2026-07-20"
       "runID": "01KXYDHW4PACDY0PFPVK4DSKC1",
       "kind": "start",
       "atMS": 1784506020000,
+      "envID": "00000000-0000-0000-0000-000000000000",
+      "backlogKey": "{queue}:backlog:sorted:fn:6489b63e-41e8-5b9d-a3cc-0f9d58817a82"
+    },
+    {
+      "jobID": "11qn6yejrocpc",
+      "functionID": "6489b63e-41e8-5b9d-a3cc-0f9d58817a82",
+      "functionPrefix": "6489b63e",
+      "runID": "01KY01JN6GS72BA7AXE8Z8WHTE",
+      "kind": "start",
+      "atMS": 1784560560000,
       "envID": "00000000-0000-0000-0000-000000000000",
       "backlogKey": "{queue}:backlog:sorted:fn:6489b63e-41e8-5b9d-a3cc-0f9d58817a82"
     },
@@ -3329,6 +3335,16 @@ date: "2026-07-20"
       "atMS": 1784511120000,
       "envID": "00000000-0000-0000-0000-000000000000",
       "backlogKey": "{queue}:backlog:sorted:fn:6489b63e-41e8-5b9d-a3cc-0f9d58817a82"
+    },
+    {
+      "jobID": "31r50io76t2eb",
+      "functionID": "8f5e3d9e-e60b-5a49-8762-5127ee2597e7",
+      "functionPrefix": "8f5e3d9e",
+      "runID": "00000000000000000000000000",
+      "kind": "cron",
+      "atMS": 1784561399995,
+      "envID": "00000000-0000-0000-0000-000000000000",
+      "backlogKey": "{queue}:backlog:sorted:fn:8f5e3d9e-e60b-5a49-8762-5127ee2597e7"
     },
     {
       "jobID": "31tlzycvzpbfs",

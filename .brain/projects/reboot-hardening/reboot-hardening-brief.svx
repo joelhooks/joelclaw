@@ -28,7 +28,7 @@ After any reboot of flagg, within 15 minutes: Inngest is up, the dispatcher can 
 - Owning repos: `joelclaw` (system-bus, wake registry, Inngest infra), `observer-release` (dispatcher extension), `aihero-support` (the affected chains and their runbooks).
 - Skills to consult: `pane-scheduling` (verbs, late-fire doctrine, receipt rule), `herdr-orchestration`, `flagg-workloads`.
 - **Execution authorization (Joel, 2026-07-20): task steps run without re-asking.** Sudo, service restarts, and customer-visible actions stay gated — with one explicit exception below.
-- **Purge authorization (Joel, 2026-07-20): full purge authorized**, including the `launchctl bootout`/`bootstrap` bounce of `com.joelclaw.central.inngest`, conditional on the dry-run selecting exactly 595 items across the five known function IDs (`155f899f`, `8f5e3d9e`, `ce6c53eb`, `6d5d880e`, `6489b63e`). A dry-run mismatch voids the authorization — stop and bring the numbers to Joel.
+- **Purge authorization (Joel, 2026-07-20): full purge authorized**, including the `launchctl bootout`/`bootstrap` bounce of `com.joelclaw.central.inngest`, conditional on the dry-run selecting exactly 595 items across the five known function IDs (`155f899f`, `8f5e3d9e`, `ce6c53eb`, `6d5d880e`, `6489b63e`). A dry-run mismatch voids the authorization — stop and bring the numbers to Joel. **VOIDED 2026-07-20 15:30Z: post-bounce dry-run selected 597 — bounces themselves mint poisoned items. Joel chose fix-the-minter-first; re-authorization at a fresh stable count required before any apply.**
 - Observer window model (Joel, 2026-07-20): the gate fix is enough; no managed-window or headless-sizing work. See Out of scope.
 - Diagnosis receipts: `aihero-support/.brain/tasks/diagnose-pulse-chain-break.svx`, `aihero-support/.brain/tasks/diagnose-inngest-poison-and-cli-drift.svx`, dispatcher receipts at `~/.joelclaw/observer-dispatcher-decisions.jsonl:684,707`.
 
@@ -36,6 +36,9 @@ After any reboot of flagg, within 15 minutes: Inngest is up, the dispatcher can 
 
 - [Verify the notify-wait drift is resolved](./verify-notify-wait-resolved.svx) — stale installed binary, rebuilt 2026-07-19 22:56; `notify wait` present; next `learner-flow/action` run is the proof.
 - [Explain the 8-hour Inngest boot gap](./explain-inngest-boot-gap.svx) — no boot gap: Inngest started 18 seconds after boot; `session-index-health` force-replaced it 54 times because partial worker-recovery failures never advanced the cooldown.
+- [Fix the dispatcher pane-viability fallback](./fix-dispatcher-pane-viability.svx) — 40x10 floor + only-burn-on-success + 3-attempt latch; commit 2e456f98 promoted; proven live by the 15:20Z daily-flow spawn at 54x23.
+- [Add the wake-registry late-fire reconciler](./add-wake-registry-reconciler.svx) — pane/schedule.reconcile (cron */5 + startup); commit d1a37e89; drained de16dde1 live at 15:30:42Z after a manual re-registration (dead-binding via purge-window outage).
+- [Late-fire the backlog and revive both chains](./late-fire-backlog-and-revive-chains.svx) — pulse chain self-sustaining again (successor armed 16:00Z), daily-flow audited late + tomorrow armed, registry drained to zero overdue.
 
 ## Latent
 
