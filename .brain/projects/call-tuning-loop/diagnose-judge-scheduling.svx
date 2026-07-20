@@ -3,11 +3,12 @@ title: "Diagnose Judge Scheduling — Runs Never Spawn"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+assignee: "claude/voice-workroom"
 parent: "./call-tuning-loop-brief.svx"
 blockers: []
 created_at: "2026-07-16"
+closed_at: "2026-07-20"
 ---
 
 # Diagnose Judge Scheduling — Runs Never Spawn
@@ -31,3 +32,46 @@ changes is a FEATURE — likely replace with idempotency on event id or drop
 it), fix, and prove: one re-driven event → one completed run → one analysis
 row readable via callTelemetry:sessionDetail. Blocks the retro build and the
 A/B (both need judged receipts).
+
+## Result (2026-07-20)
+
+Hypothesis CONFIRMED from the Inngest server's own event history, with one
+correction: scheduling was never broken. Every observation resolves to
+room-keyed idempotency (24h dedupe window) plus a flapping GQL API that hid
+successful runs from the CLI.
+
+The receipts, from `eventsV2` with per-event `runs`:
+
+- 2026-07-13: 39 judge.requested events. The first 9 (unique rooms) spawned
+  runs. The 30-event re-drive the same day got NO-RUN across the board —
+  per-room dedupe.
+- 2026-07-16 16:33: the 30-event backfill re-drive spawned 30 COMPLETED runs
+  (the 24h keys from 07-13 had expired). The CLI was flapping
+  (GQL ConnectionRefused), so the session that emitted them read "zero runs"
+  and chartered this step.
+- 2026-07-16 17:19 + 17:23: two probe events for
+  `pubcall-_+13603894321_4fbZCx3R7Ec8` — a room judged 46 minutes earlier —
+  got NO-RUN. That pair next to the same room's COMPLETED run is the smoking
+  gun.
+- 2026-07-18 14:07: organic `voice/public-call.completed` spawned both
+  voice-public-call-analyze and voice-call-judge, both COMPLETED; signed
+  analysis row (mean 3.5, gpt-5.4-mini, needs-attention) readable via
+  `callTelemetry:sessionDetail`. The earlier "no analyses persisted" claim was
+  a reader bug: sessionDetail returns `analysis` (singular).
+
+Fix: removed `idempotency: "event.data.room"` from voice-call-judge
+(re-judging after rubric changes is a feature; each call emits exactly one
+completion event; `concurrency: {limit: 2}` caps the blast radius). Host
+worker respawned by worker-supervisor, re-registered.
+
+Proof: bounded synthetic `voice/call.judge.requested` for
+`pubcall-_+15052637507_QtJgHH3a6CfY` (transcript from the saved file — the
+judge.requested path requires `data.transcript`; a transcript-less probe
+fails fast with NonRetriableError, run 01KY0EFE62SPM16E12BCFW5YTN). Event
+01KY0EJ88046NDQZBM10321MZH spawned run 01KY0EJ8CAARKPA8N651SCSWM9 for the
+SAME room ~90s after the prior run — an event the old config would have
+swallowed. Run COMPLETED (mean 3.71, gpt-5.4-mini, needs-attention); analysis
+row createdAt 1784574252721 confirmed via `callTelemetry:sessionDetail`.
+Acceptance met: one re-driven event → one completed run → one analysis row.
+
+Unblocks: build-daily-call-retro, run-fast-model-ab.

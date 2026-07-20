@@ -398,7 +398,12 @@ export const voiceCallJudge = inngest.createFunction(
     name: "Voice Call → Signed Rubric Judge",
     retries: 2,
     concurrency: { limit: 2 },
-    idempotency: "event.data.room",
+    // No idempotency key: re-judging a room after rubric/prompt changes is a
+    // feature of the tuning loop, and room-keyed idempotency silently swallowed
+    // judge.requested re-drives within Inngest's 24h dedupe window (2026-07-16
+    // receipts in .brain/projects/call-tuning-loop/diagnose-judge-scheduling.svx).
+    // Each call emits exactly one completion event, so organic dupes are rare
+    // and the concurrency limit caps the blast radius.
     timeouts: { finish: "10m" },
     onFailure: async ({ event, error, step }) => {
       await step.run("emit-judge-failed-otel", () =>

@@ -7,7 +7,6 @@ status: "open"
 assignee: ""
 parent: "./call-tuning-loop-brief.svx"
 blockers:
-  - "./diagnose-judge-scheduling.svx"
   - "./build-judge-function.svx"
   - "./define-autoapply-surface.svx"
 created_at: "2026-07-13"
