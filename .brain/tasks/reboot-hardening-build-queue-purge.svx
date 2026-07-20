@@ -1,0 +1,12 @@
+---
+title: "Worker task: build inngest-v127-purge and dry-run it"
+date: 2026-07-20
+---
+
+Read `/Users/joel/Code/joelhooks/joelclaw/.brain/projects/reboot-hardening/reboot-hardening-brief.svx` (the working brief) and your claimed step `/Users/joel/Code/joelhooks/joelclaw/.brain/projects/reboot-hardening/build-and-run-queue-purge.svx`. First stamp yourself as `assignee` in the step frontmatter per the claim format (agent, machine flagg, your pane id, 2026-07-20).
+
+Scope for THIS session: build the tool and run the dry-run only. Pin against the installed Inngest v1.27.0 (`/Users/Shared/joelclaw/opt/inngest/1.27.0/`); source for its queue internals is the open-source inngest repo — vendor or reimplement the minimal `DequeueByJobID` path, never raw HDEL. Redis is at `redis://127.0.0.1:6379`. Run `redis-cli BGSAVE` before anything else and record LASTSAVE. The dry-run must emit a manifest and item count; the authorization condition is exactly 595 items across the five function IDs listed in the brief's Notes.
+
+Hard stops: do NOT run `--apply`, do NOT touch launchctl, do NOT delete or mutate any Redis key. The apply + Inngest bounce happens in the steering session under Joel's standing authorization only after your dry-run output is reviewed.
+
+Deliverables: the tool under `tools/` or wherever repo conventions place operational helpers (check existing layout), the dry-run manifest + count written to an asset `asset-purge-dry-run.svx` in the effort directory (`type: "asset"`, `parent: "./build-and-run-queue-purge.svx"`), and a `## Result` note in the step file describing tool location and dry-run outcome — leave `status: "open"` since apply remains. Work autonomously, do not commit, print a DONE summary.

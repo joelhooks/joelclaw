@@ -1,0 +1,17 @@
+---
+title: "Fix the Dispatcher Pane-Viability Fallback"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "claude (flagg, herdr pane w1P:p1, 2026-07-20)"
+parent: "./reboot-hardening-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+---
+
+# Fix the Dispatcher Pane-Viability Fallback
+
+## Step
+
+In `observer-release/.pi/extensions/dispatcher/index.ts` `createScheduledPane()`: lower the hard 80x24 gate to a 40x10 floor for the fresh-tab fallback (pi runs fine small; warn in the receipt), and stop recording failed spawns as executed — a final spawn failure must re-arm or explicitly fail with an alert, never silently consume the schedule. Evidence: dispatcher receipts lines 684 (2026-07-19T16:00Z, killed the pulse chain) and 707 (2026-07-20T14:30Z, killed today's daily-flow run), both "scheduled pane too small: 54x23". Resolved when a spawn at 54x23 succeeds and a forced spawn failure leaves the schedule recoverable. In flight via the `reboot-automation-fixes` workflow (run `wf_a79ef492-610`), steering session 2026-07-20.

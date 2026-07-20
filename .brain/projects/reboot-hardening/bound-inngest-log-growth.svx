@@ -1,0 +1,17 @@
+---
+title: "Truncate the 30.9 GB Error Log and Bound Its Growth"
+type: "step"
+kind: "task"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./reboot-hardening-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+---
+
+# Truncate the 30.9 GB Error Log and Bound Its Growth
+
+## Step
+
+`/Users/Shared/joelclaw/logs/inngest/launchd.err.log` is 30.9 GB of lease-failure spam. Sample what matters (error-type census, first/last timestamps) into an asset, then truncate in place (`sudo truncate -s 0`, keeps launchd's inode — no restart; skip the 30 GB incident copy unless disk headroom is proven), and install a `newsyslog.d` rule bounding both Inngest launchd logs. HITL because every command here is sudo (gated per the brief's Notes): produce the exact commands and run them with Joel present or hand them to him. Resolved when the log is under 10 MB and a rotation rule exists.

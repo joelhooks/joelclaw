@@ -1,0 +1,17 @@
+---
+title: "Explain the 8-Hour Inngest Boot Gap"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./reboot-hardening-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+---
+
+# Explain the 8-Hour Inngest Boot Gap
+
+## Step
+
+flagg booted 2026-07-19 ~21:28Z; the Inngest process now running started 2026-07-20 05:26Z (22:26 PDT) — yet a function-finish was recorded at 21:34Z, so something served the port in between. Establish the actual service timeline from boot to now (`log show --predicate` for launchd events on `com.joelclaw.central.inngest`, process accounting, the launchd.out.log), determine whether KeepAlive restarted a crashing process, someone restarted it manually, or the daemon definition delays it — and audit KeepAlive/RunAtLoad across the `com.joelclaw.central.*` daemons. Produces an asset: the boot-to-healthy timeline and any daemon-config defects found.

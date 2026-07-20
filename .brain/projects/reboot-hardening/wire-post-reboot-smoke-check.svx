@@ -1,0 +1,17 @@
+---
+title: "Wire the Post-Reboot Smoke Check"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./reboot-hardening-brief.svx"
+blockers: ["./fix-dispatcher-pane-viability.svx", "./add-wake-registry-reconciler.svx"]
+created_at: "2026-07-20"
+---
+
+# Wire the Post-Reboot Smoke Check
+
+## Step
+
+A boot-time check (launchd `RunAtLoad`, delay ~10 minutes) that asserts the finish line mechanically: Inngest healthy on :8288, a dispatcher test-spawn succeeds and is cleaned up, and the wake registry holds no overdue entries. On any failure it DMs Joel via `joelclaw notify send` with the failing assertion. Blocked by the dispatcher fix (test-spawn must be able to pass) and the reconciler (defines the no-overdue-entries check). Observability is a launch gate: the check itself logs one structured line per assertion. Resolved when a simulated failure of each assertion produces a DM and a receipt.

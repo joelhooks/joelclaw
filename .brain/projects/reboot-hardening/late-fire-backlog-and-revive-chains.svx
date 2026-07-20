@@ -1,0 +1,17 @@
+---
+title: "Late-Fire the Backlog and Revive Both Chains"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "claude (flagg, herdr pane w1P:p1, 2026-07-20)"
+parent: "./reboot-hardening-brief.svx"
+blockers: ["./fix-dispatcher-pane-viability.svx"]
+created_at: "2026-07-20"
+---
+
+# Late-Fire the Backlog and Revive Both Chains
+
+## Step
+
+Once the dispatcher fix is live: (1) revive the campaign-pulse chain — `joelclaw wake at` spawn of the hourly pulse runbook (`aihero-support/.brain/projects/campaign-pulse/asset-hourly-pulse-runbook.svx`), due ~15 minutes ahead, NORMAL mode, and verify the spawned pane actually runs and schedules a successor; (2) run today's lost daily-flow-agent audit (schedule `c2dfabdb` was consumed by the failed 14:30Z spawn) as a late fire, receipt labeled `late`; (3) drain or cancel the orphaned neat-memory entry `de16dde1` — late-fire it if the reconciler is live, else `joelclaw wake cancel` with a receipt. Joel directly ordered the pulse revive this session (2026-07-20). Resolved when a pulse receipt lands, its successor schedule appears in `wake list`, and the registry holds no overdue entries.

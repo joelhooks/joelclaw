@@ -1,0 +1,17 @@
+---
+title: "Add the Wake-Registry Late-Fire Reconciler"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "claude (flagg, herdr pane w1P:p1, 2026-07-20)"
+parent: "./reboot-hardening-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+---
+
+# Add the Wake-Registry Late-Fire Reconciler
+
+## Step
+
+New Inngest function in `packages/system-bus`: every ~5 minutes and on startup, read pending registry entries, re-emit `pane.schedule.due` with the existing `scheduleId` for entries past due (grace window; `late: true` beyond 5 minutes), idempotent by `scheduleId`, delete only after confirmed delivery; plus `onFailure` on `pane/schedule` as observability only. Design per Clodpool's diagnosis: `pane-schedule.ts:12-64` has no onFailure and deletes only on success; `sleep.ts:306-320` shows everything as pending. Evidence: schedule `de16dde1` failed terminally 2026-07-19T21:34Z and sits pending forever. Resolved when an overdue entry (de16dde1 is the live test case) gets re-emitted as a late fire and drains. In flight via the `reboot-automation-fixes` workflow (run `wf_a79ef492-610`), steering session 2026-07-20.

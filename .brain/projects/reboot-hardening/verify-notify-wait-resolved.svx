@@ -1,0 +1,22 @@
+---
+title: "Verify the notify-wait Drift Is Resolved"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "closed"
+assignee: "claude (flagg, herdr pane w1P:p1, 2026-07-20)"
+parent: "./reboot-hardening-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+closed_at: "2026-07-20"
+---
+
+# Verify the notify-wait Drift Is Resolved
+
+## Step
+
+`system-bus-host-learner-flow/action` failed 2026-07-19T17:03Z on `joelclaw notify wait` "Invalid subcommand". Determine whether source or binary drift and whether it is fixed.
+
+## Result (2026-07-20)
+
+Stale installed binary, not source drift. The source (`learner-flow-actions.ts:246-268`) and CLI registration (`notify.ts:195-259`) were already correct; the installed `~/.bun/bin/joelclaw` predated the command. It was rebuilt 2026-07-19 22:56 (per the retry-storm incident receipt in `.brain/projects/messaging-stabilization/`) and now lists `notify wait` — verified live this session. Residual proof: the next `learner-flow/action` run completing without the error. No code change needed.

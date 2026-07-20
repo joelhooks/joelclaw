@@ -1,0 +1,10 @@
+---
+title: "Worker task: explain the 8-hour Inngest boot gap"
+date: 2026-07-20
+---
+
+Read `/Users/joel/Code/joelhooks/joelclaw/.brain/projects/reboot-hardening/reboot-hardening-brief.svx` (the working brief) and your claimed step `/Users/joel/Code/joelhooks/joelclaw/.brain/projects/reboot-hardening/explain-inngest-boot-gap.svx`. First stamp yourself as `assignee` in the step frontmatter per the claim format in the brief's conventions (agent, machine flagg, your pane id, 2026-07-20).
+
+Do the research the step describes. Deliverables are file edits: write the boot-to-healthy timeline as an asset file `asset-inngest-boot-timeline.svx` in the effort directory (frontmatter `type: "asset"`, `parent: "./explain-inngest-boot-gap.svx"`), add a `## Result (2026-07-20)` section to the step file, flip its `status` to `closed` with `closed_at`, and append one ledger line to the brief's Decision ledger.
+
+Do not restart, bootout, or modify any service. Read-only investigation. Work autonomously, do not commit, print a DONE summary.

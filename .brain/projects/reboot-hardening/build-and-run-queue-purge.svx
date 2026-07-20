@@ -1,0 +1,17 @@
+---
+title: "Build the v1.27-Pinned Queue Purge and Run It"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./reboot-hardening-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+---
+
+# Build the v1.27-Pinned Queue Purge and Run It
+
+## Step
+
+Build `inngest-v127-purge`: a helper pinned to Inngest v1.27.0 internals that removes the 595 poisoned (missing-`envID`) queue items via `DequeueByJobID` — raw Redis `HDEL` would corrupt queue indexes. Sequence per the diagnosis: `redis-cli BGSAVE` first; `--dry-run` must select exactly 595 items across the five function IDs in the brief's Notes; then `--apply` between `sudo launchctl bootout` / `bootstrap` of `com.joelclaw.central.inngest`. **Full purge pre-authorized by Joel (2026-07-20) conditional on the exact-595 dry-run match — a mismatch voids the authorization.** Resolved when the lease-failure spam stops (verify: no new "acquiring capacity lease failed" lines for 30 minutes) and all five functions still run on schedule.

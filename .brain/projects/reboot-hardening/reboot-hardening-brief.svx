@@ -1,0 +1,48 @@
+---
+title: "Reboot Hardening for the Flagg Automation Stack"
+type: "brief"
+status: "active"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Reboot Hardening for the Flagg Automation Stack
+
+Chartered from the 2026-07-20 diagnosis of the 2026-07-19 reboot fallout: the campaign-pulse chain and daily-flow-agent spawns died on the observer dispatcher's pane-size gate (not the reboot itself), the wake registry has no late-fire recovery, and the Inngest queue carries 595 poisoned items spamming a 30.9 GB error log.
+
+## Finish line
+
+After any reboot of flagg, within 15 minutes: Inngest is up, the dispatcher can spawn a real pane, the wake registry holds no overdue entries (late fires executed, not dropped), both chains (campaign-pulse, daily-flow) demonstrably resume, Inngest log growth is bounded, and the 595 poisoned queue items are gone. Confirmed by Joel 2026-07-20.
+
+## Vocabulary
+
+- **due signal** — the Inngest emission at a schedule's `at` time; the dispatcher executes the verb on receipt.
+- **late fire** — a due signal delivered >5 minutes past `at`; doctrine: execute anyway, label the receipt `late`, never drop.
+- **chain** — a self-rescheduling loop where each run schedules its own successor; one missed link kills it silently.
+- **pane-viability gate** — the observer dispatcher's minimum-size check in `createScheduledPane()`; the old hard 80x24 gate could never pass in an 80-col window with a 26-col sidebar.
+- **poisoned item** — a Redis queue item lacking `envID` that fails capacity lease forever (`maxAtts` never drains it); 595 exist across five function IDs.
+- **executed ok:false** — the dispatcher defect of recording a failed spawn as executed, which deletes the schedule and kills its chain.
+
+## Notes
+
+- Owning repos: `joelclaw` (system-bus, wake registry, Inngest infra), `observer-release` (dispatcher extension), `aihero-support` (the affected chains and their runbooks).
+- Skills to consult: `pane-scheduling` (verbs, late-fire doctrine, receipt rule), `herdr-orchestration`, `flagg-workloads`.
+- **Execution authorization (Joel, 2026-07-20): task steps run without re-asking.** Sudo, service restarts, and customer-visible actions stay gated — with one explicit exception below.
+- **Purge authorization (Joel, 2026-07-20): full purge authorized**, including the `launchctl bootout`/`bootstrap` bounce of `com.joelclaw.central.inngest`, conditional on the dry-run selecting exactly 595 items across the five known function IDs (`155f899f`, `8f5e3d9e`, `ce6c53eb`, `6d5d880e`, `6489b63e`). A dry-run mismatch voids the authorization — stop and bring the numbers to Joel.
+- Observer window model (Joel, 2026-07-20): the gate fix is enough; no managed-window or headless-sizing work. See Out of scope.
+- Diagnosis receipts: `aihero-support/.brain/tasks/diagnose-pulse-chain-break.svx`, `aihero-support/.brain/tasks/diagnose-inngest-poison-and-cli-drift.svx`, dispatcher receipts at `~/.joelclaw/observer-dispatcher-decisions.jsonl:684,707`.
+
+## Decision ledger
+
+- [Verify the notify-wait drift is resolved](./verify-notify-wait-resolved.svx) — stale installed binary, rebuilt 2026-07-19 22:56; `notify wait` present; next `learner-flow/action` run is the proof.
+
+## Latent
+
+- The 2026-07-19 pulse-log entries at 17:27Z and 18:26Z have no identified trigger — the chain broke at 16:00Z, so something else ran those snapshots.
+- The registry entry is deleted after due-signal emission even when the dispatcher reports `ok:false` — delivery confirmation semantics may need to include dispatcher ack, beyond what the reconciler covers.
+- The observer session holds 70 tabs / 70 panes — hoarding that predates this effort; may deserve its own sweep policy.
+
+## Out of scope
+
+- Managed local terminal window or headless virtual sizing for the observer — Joel ruled the pane-viability gate fix sufficient (2026-07-20).
+- Fleet-wide post-reboot smoke checks beyond flagg — finish line is flagg's automation stack only.
