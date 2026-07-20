@@ -1,0 +1,26 @@
+---
+title: "Key Capture Conflicts on Source Identity and Cursor"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi (flagg, herdr pane wY:p27, 2026-07-20)"
+parent: "./typesense-reboot-recovery-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+---
+
+# Key Capture Conflicts on Source Identity and Cursor
+
+## Step
+
+Extends [Patch the Capture Client and Make Replay Canonical](./patch-capture-and-replay.svx): the reboot-fallout session proved ack-loss after server commit defeats run-keyed conflict detection ([root cause](../reboot-hardening/asset-capture-replay-root-cause.svx), `32e6e13a`) — the client, having no pending entry, retries the wider range under a fresh `run_id` and the overlap is stored. Our growth alert caught it live (~90 sources). Resolved when:
+
+1. `run-capture.ts` keys conflict detection on `(source_identity, from_offset)`: any post matching an existing blob's start takes the prefix-resync path regardless of `run_id` — existing-prefix answers ok + existing `to_offset` (client advances, re-sends remainder); non-prefix mismatch stays a hard conflict.
+2. The ack-ambiguous client path is hardened too: a timeout/lost-ack writes the pending entry so a retained `run_id` rides retries (belt to the server's braces). If a client path truly cannot know, document why.
+3. The `memory/run.captured` consumer (session-index append) treats `(source_identity, from_offset)` as identity so a duplicate overlapping Run can never re-inflate `sessions.db` even if one slips through.
+4. Fixture tests replay the exact live failure: commit → lost ack → wider retry under fresh `run_id` → server answers resync, index stores once. Plus the legitimate flows (suffix Runs, `accepted_prefix`) stay green.
+
+Containment as always: raw JSONL immutable, no live backlog replay in this step, no worker restart (steering deploys), do not commit.
+
+## Result (YYYY-MM-DD)

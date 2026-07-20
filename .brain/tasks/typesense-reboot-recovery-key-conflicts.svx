@@ -1,0 +1,24 @@
+---
+title: "Worker task: key capture conflicts on source identity and cursor"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: key capture conflicts on source identity and cursor
+
+You are a worker on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). Your step: [Key Capture Conflicts on Source Identity and Cursor](../projects/typesense-reboot-recovery/key-capture-conflicts-on-source-cursor.svx). Read it, then the root-cause asset `.brain/projects/reboot-hardening/asset-capture-replay-root-cause.svx` — it names the exact failure chain, file lines (`run-capture.ts:156-199`, `memory-capture/index.ts:210`), and a live example (source `7278ac87…`, overlapping ranges `[1291304, 1293694)` / `[1291304, 1355673)`).
+
+## Hard containment rules
+
+- `~/.joelclaw/runs-dev` and `~/.joelclaw/outbox` are read-only. No live replay, no backfill — that is the next step's job.
+- Territory: `packages/system-bus/src/routes/run-capture.ts` (+ its test), `packages/pi-extensions/memory-capture/**`, the claude/codex capture scripts if the ack-ambiguous hole exists there too, `packages/memory/src/session-index.ts` for the consumer identity, and their tests. Leave the message-event hunks in `index.*`/`client.ts`/`package.json` untouched.
+- Fixtures only; do not restart the worker; do not commit.
+
+## The work
+
+The four done-conditions in your step file. The heart is condition 1: `(source_identity, from_offset)` lookup before blob-identity checks, prefix-resync regardless of `run_id`. Condition 4's core fixture is the live chain replayed exactly: server commits `[X,Y)`, ack lost, client posts `[X,Z)` with a fresh `run_id`, server answers resync with existing `to_offset`, client advances and sends `[Y,Z)`, index holds exactly one copy of every byte. An adversarial verifier will replay your fixtures and hunt for the next bypass — leave receipts.
+
+## Deliverables
+
+Code + tests uncommitted; `bunx tsc --noEmit` + targeted Biome pass; step `## Result` filled, status closed with `closed_at`, one brief ledger line. Work autonomously. Do not commit. Print a DONE summary.
