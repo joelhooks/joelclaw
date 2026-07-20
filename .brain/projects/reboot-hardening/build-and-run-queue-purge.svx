@@ -3,7 +3,8 @@ title: "Build the v1.27-Pinned Queue Purge and Run It"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "pi (flagg, herdr pane w1P:p5, 2026-07-20)"
 parent: "./reboot-hardening-brief.svx"
 blockers: []
@@ -23,3 +24,7 @@ Built `scripts/inngest-v127-purge.ts` with the expanded v1.27.0 `DequeueByJobID`
 The dry-run selected exactly **595** items: 74 for `155f899f`, 162 for `8f5e3d9e`, 10 for `ce6c53eb`, 7 for `6d5d880e`, and 342 for `6489b63e`. The authorization condition passed. Full item receipts are in [`asset-purge-dry-run.svx`](./asset-purge-dry-run.svx). No apply, launchctl action, or Redis key mutation ran. Status remains open for the steering session's apply, Inngest bounce, and 30-minute verification.
 
 **Update (2026-07-20, steering): first apply attempt failed and the authorization is now void.** The steering session handed Joel `--expect 595 --apply` but the built tool's interface is `--apply --manifest <path>`; the usage error broke the chain mid-bounce (Inngest sat down until a manual bootstrap). A correct dry-run afterward selected **597** — two new poisoned items minted across the bounce itself (message/event-consumer 342→343, system-heartbeat 162→163). Finding: **bounces mint envID-less items**, which is how the 54-restart storm poisoned the queue at scale. Joel chose fix-the-minter-first; the scoped-recovery fix landed as commit `e40dd493` (deploy: `sudo bash infra/central/native/install-session-index-health.sh`). Purge remains blocked on: minter fix installed → fresh dry-run count stable → re-authorization at the exact fresh count → regenerate manifest → bootout, `bun scripts/inngest-v127-purge.ts --apply --manifest <fresh-manifest>`, bootstrap.
+
+## Result (2026-07-20)
+
+Done across two windows under the window-scoped authorization. Window 1 (19:0xZ): 597 items dequeued via the audited v1.27-pinned `DequeueByJobID` path — full take, zero resurrection. The bounce itself minted 9 fresh envID-less items on arbitrary functions, confirming the minting mechanism; Joel widened the fence (`--all-functions`, commit `70ffa78f`) and window 2 dequeued all 9. Verification: **0 lease-failure lines in the 10 minutes after the window-2 restore** (down from ~23k/10min pre-purge), 194 function runs in the first two minutes post-restore, and the reconciler recovered the pulse link that missed its 19:00Z fire during the extended window (Joel's bootstrap was delayed ~1h; the self-healing loop handled it). Manifest/receipts regenerated in `asset-purge-dry-run.svx`. Residue policy: each future bounce may mint 1-3 items — purge them opportunistically at the next deliberate window (`--accept-scan --all-functions`); see the `inngest-bounces-mint-poisoned-items` memory.
