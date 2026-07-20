@@ -24,7 +24,11 @@ const STARTUP_BUDGET_STATE_KEY = "search-maintenance:startup-budget:typesense-ru
 const SEARCH_HEALTH_KEY = "search-maintenance:health:runs-dev";
 const CAPTURE_LEDGER_TTL_SECONDS = 90 * 24 * 60 * 60;
 const CAPTURE_ALERT_TTL_SECONDS = 90 * 24 * 60 * 60;
-const CAPTURE_INCIDENT_QUIET_MS = 60 * 60_000;
+// 24h, not 60m: during a bulk replay (~90 sources, 2026-07-20) hourly
+// re-alerts produced sustained DM spam at ~1.5/min. Detection still records
+// every finding (incident store + fatal OTEL); the DM fires once per source
+// per day until the replay source is fixed.
+const CAPTURE_INCIDENT_QUIET_MS = 24 * 60 * 60_000;
 const MAX_CAPTURE_SEGMENTS_PER_SOURCE = 2_048;
 const TYPESENSE_STARTUP_BUDGET_MS = parseStartupBudgetMs(
   process.env.TYPESENSE_STARTUP_BUDGET_MS,
