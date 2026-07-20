@@ -3,7 +3,8 @@ title: "Port Critical Search to SQLite"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20"
 assignee: "pi (flagg, herdr pane wY:p1P, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: []
@@ -46,4 +47,20 @@ Validation passed: 18 targeted Bun tests, root `bunx tsc --noEmit`, and targeted
 
 ## Verification (2026-07-20)
 
-Adversarial verification ([receipts](./critical-port-verification.svx)) **refuted the close**: the SQLite-first happy path, atomicity, archive counts, and containment are confirmed, but recall crashes instead of falling back when `critical.db` is missing or corrupt (`Effect.try({ catch: () => null })` at `typesense-recall.ts:110-139`), the builder replaces a healthy db with an empty one when sources fail, two builders clobber each other, aggregate freshness makes stale memory look current, and `runBacklink` values have zero intersection with `runs-dev`. Step reopened with conditions 5–8; worker re-engaged in the same pane.
+Adversarial verification ([receipts](./critical-port-verification.svx)) **refuted the first close**: the SQLite-first happy path, atomicity, archive counts, and containment were confirmed, but recall crashed instead of falling back when `critical.db` was missing or corrupt, the builder replaced a healthy db with an empty one when sources failed, two builders clobbered each other, aggregate freshness made stale memory look current, and `runBacklink` values had zero intersection with `runs-dev`.
+
+### Remediation after refutation
+
+Recall now uses `Effect.catchAll` to invoke the legacy adapter after any SQLite open, corruption, or schema failure. A compiled CLI suite proves fallback for missing, truncated, unreadable, and schema-mismatched databases against a successful read-only Typesense mock. The same compiled suite proves knowledge fallback catches credential and rejected-network failures and returns `KNOWLEDGE_SEARCH_FAILED` instead of crashing.
+
+The builder now holds an exclusive filesystem lock, reports missing, empty, malformed, and failed sources honestly, and refuses publication when any required source fails or falls below 80% of its prior count. Only `--allow-degraded-sources` bypasses the gate. Tests prove concurrent builders serialize, malformed local/archive input fails, a count collapse fails, and a healthy database remains byte-identical after a rejected build.
+
+The source gate found five malformed observation pages in the live source tree. A final normal rebuild refused publication and left the healthy 29,906-document schema-v2 database untouched. Those private source files are outside this step's containment; no degraded override ran.
+
+Freshness is now per source and per hit. The archive high-water is `2026-05-31T03:30:53Z`, so archived memory reports stale even when Brain changed recently. The database reports overall `stale` and records three cutover gaps: memory after May 31 is absent, dynamic knowledge types `turn_note` and `failed_target` are absent while Typesense cannot export, and observer Run IDs do not resolve into `~/.joelclaw/runs-dev`.
+
+The API no longer emits `runBacklink`. It emits `observerRunId` plus `observerRunReference: { kind: "source-label", resolvableInRunsDev: false }`, which explains the verified 0/64 intersection without pretending the label is navigable.
+
+Recall parity is explicit rather than implied: SQLite keeps OR token-drop matching and payload trust filters, uses FTS5 BM25 scores that are not comparable with Typesense, disables inference rewrite on the availability path, and searches the full five-collection critical projection. The payload exposes this as `queryContract`, and tests lock the token behavior. Live Typesense parity remains a cutover-review gap because `/health` is still false and read-only search still returns HTTP 503.
+
+Final validation: 31 targeted tests passed, including six compiled-binary failure tests; `bunx tsc --noEmit` passed; targeted Biome passed; compiled healthy recall and knowledge both returned `backend: sqlite-fts5`, `freshness.status: stale`, and per-hit `sourceFreshness`; SQLite `PRAGMA integrity_check` returned `ok`; mode remains `0600`. `~/.joelclaw/runs-dev` and Typesense remained read-only. No commit was made.
