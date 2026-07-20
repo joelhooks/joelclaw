@@ -1,0 +1,23 @@
+---
+title: "Worker task: adversarially verify the source-cursor conflict keying"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: adversarially verify the source-cursor conflict keying
+
+You are an adversarial verifier on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). A worker closed [Key Capture Conflicts on Source Identity and Cursor](../projects/typesense-reboot-recovery/key-capture-conflicts-on-source-cursor.svx) — read its Result, the root cause (`../reboot-hardening/asset-capture-replay-root-cause.svx`), and the diff (uncommitted, in `packages/system-bus/src/routes/run-capture.ts`, capture clients, `packages/memory/src/session-index.ts`, tests). Try to refute the claim that ack-loss can no longer inflate the index.
+
+Attack angles, minimum:
+
+1. Replay the live chain yourself with variations: ack lost on the FIRST post of a source (from_offset 0); ack lost twice in a row (X→Y lost, X→Z lost, X→W posted); ack lost then client crashes and a fresh session resumes the same source. Every variant: exactly one copy of every byte in the index.
+2. The resync answer: when the server answers ok + existing `to_offset`, verify the client actually advances and re-sends only the remainder — through the real client code, not a mock of it.
+3. False positives: two GENUINELY different sources with colliding `from_offset` (both 0 is the common case!) must not resync into each other — prove `source_identity` scoping is airtight, including the legacy no-conversation fallback identities.
+4. Ordering races: two concurrent posts same `(source, from_offset)` different bytes — exactly one wins, the loser gets a truthful conflict, nothing interleaves.
+5. The consumer guard: force a duplicate overlapping Run THROUGH (bypass the route, emit `memory/run.captured` directly twice with overlapping ranges under distinct run_ids) — `sessions.db` must hold one copy.
+6. Regression: legitimate flows (accepted_prefix, suffix Runs with `parent_run_id`, idempotent same-Run redelivery) stay green; full capture/replay/session-index suites; `bunx tsc --noEmit`.
+
+Containment: fixtures only; `~/.joelclaw/runs-dev` and `~/.joelclaw/outbox` read-only; live Typesense untouched; real `sessions.db` untouched (temp DBs); no worker restart; do not commit.
+
+Deliverable: `.brain/projects/typesense-reboot-recovery/keying-verification.svx` (`type: "asset"`, `parent: "./key-capture-conflicts-on-source-cursor.svx"`) with CONFIRMED/REFUTED per claim and evidence. Do not edit the step file. Work autonomously. Do not commit. Print a DONE summary.

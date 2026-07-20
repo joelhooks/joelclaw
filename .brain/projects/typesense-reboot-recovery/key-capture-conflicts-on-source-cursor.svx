@@ -3,7 +3,8 @@ title: "Key Capture Conflicts on Source Identity and Cursor"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20T22:54:54Z"
 assignee: "pi (flagg, herdr pane wY:p27, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: []
@@ -23,4 +24,10 @@ Extends [Patch the Capture Client and Make Replay Canonical](./patch-capture-and
 
 Containment as always: raw JSONL immutable, no live backlog replay in this step, no worker restart (steering deploys), do not commit.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+- `/api/runs` now claims `(user_id, source_identity, from_offset)` before Run-ID blob lookup. Claims use atomic hard links, recover malformed records, serialize same-process races, and release poisoned cross-cursor claims. A fresh-ID wider retry receives `accepted_prefix` with the canonical Run ID and stored `to_offset`; shorter or divergent bytes remain `409` conflicts.
+- Pi, Claude Code, and Codex now write their pending envelope atomically before POST. Pi keeps that pending file when cursor-state persistence fails. A lost acknowledgement or client death therefore retains the Run ID for retry.
+- `appendSessionCapture()` now validates both Run identity and source-cursor identity inside `BEGIN IMMEDIATE`. Exact or proven prefix-related cursor replay cannot add rows or chunks; divergent bytes and cross-cursor Run reuse fail hard. A non-unique source-cursor index keeps lookup bounded without rejecting historical duplicate rows.
+- The live failure fixture uses offset `1291304`: commit `[X,Y)`, fresh-ID retry `[X,Z)`, prefix resync to `Y`, then suffix `[Y,Z)`. SQLite ends with two adjacent ranges and one copy of each byte. Exact, wider-prefix, shorter, divergent, and cross-cursor cases are covered.
+- Verification: 19 targeted Bun tests passed; `bunx tsc --noEmit` passed; targeted Biome passed on nine files; final adversarial review returned `CLEAN`. No live replay, backlog mutation, worker restart, commit, or push occurred.
