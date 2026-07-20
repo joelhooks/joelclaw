@@ -1,0 +1,186 @@
+---
+title: "Adversarial verification of the compacted session index"
+type: "asset"
+parent: "./build-compacted-collection.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Adversarial verification of the compacted session index
+
+## Verdict
+
+**REFUTED as a replacement for `run_chunks_dev` today.** The static SQLite database is internally sound and matches the current manifest and raw Run store. It is not wired into capture or search. Required Typesense search parity remains untested. The database is a valid rebuild artifact, not yet a working replacement.
+
+| Claim | Verdict | Evidence |
+| --- | --- | --- |
+| The database contains the manifest keep-set | **CONFIRMED** | 134,013 kept Runs, 14,010 skipped Runs, and 447,609 unique chunks reconcile exactly. |
+| Every skipped Run is covered by retained raw bytes | **CONFIRMED** | Independently read and hashed all 14,010 skipped bodies: 24,853,552,678 bytes. All were exact duplicates or strict byte prefixes of 2,955 named kept Runs. |
+| Chunk text matches raw JSONL | **CONFIRMED** | An independent parser checked 60 Runs and 7,049 chunks exactly, including 40 new random Runs, all 19 legacy no-conversation Runs, and the largest/multi-byte-heavy Run. |
+| Builder chunking matches `packages/memory/src/chunking.ts` | **CONFIRMED** | The builder imports and calls `parseJsonl`, `detectFormat`, `extractTurns`, and `chunkTurns` directly at `scripts/build-session-index.ts:15-20,237-239`. No separate chunker exists in the builder. |
+| Divergent siblings are preserved | **CONFIRMED for this manifest only** | The manifest and database contain zero `divergent_sibling` records. There was nothing to lose, but future divergent-sibling behavior is unproven. |
+| SQLite and FTS are consistent | **CONFIRMED** | `PRAGMA integrity_check` and `quick_check` returned `ok`. FTS5's external-content `integrity-check` returned `ok` on an APFS clone. Raw-derived terms resolved to their expected Runs. |
+| A fresh process answers in about 21 ms | **CONFIRMED for a warm OS page cache** | Ten fresh Bun processes took 18.499-22.583 ms wall time, median 20.565 ms. Child open-to-result took 4.480-5.438 ms. |
+| A cold reboot/open answers in about 21 ms | **REFUTED as tested evidence** | The verifier could not evict macOS disk buffers: `/usr/sbin/purge` returned `Operation not permitted`. The recorded measurement is process-cold, not OS-cache-cold or reboot-cold. |
+| The WAL append design is idempotent under redelivery | **CONFIRMED as a design** | `run_id` plus SHA-256, `BEGIN IMMEDIATE`, and one transaction handle exact event redelivery and crash-after-commit replay. Capture tests confirm duplicate events and accepted-prefix redelivery. |
+| New Runs append in steady state | **REFUTED** | No adapter or consumer opens `sessions.db`; repository search found the database only in the builder and validator. The database reports `journal_mode=delete`, not WAL. The step itself says wiring is deferred. |
+| Search parity with `run_chunks_dev` passed | **REFUTED** | The prior report skipped Typesense parity on HTTP 503. Three non-empty SQLite queries do not establish result, ranking, latest-timestamp, or conversation parity. |
+| The index can replace `run_chunks_dev` now | **REFUTED** | No capture writer, no search reader, no tested Typesense parity, and no reboot-cold receipt exist. |
+| Raw Run and database containment held | **CONFIRMED** | Before and after: 296,046 Run-store files, 29,305,024,826 bytes, max mtime/ctime `1784492302`. `sessions.db` SHA-256 stayed unchanged. |
+
+## Independent sample
+
+The verifier used reservoir sampling with seed `0x20260720`, not the validator's fixed seed `0x05e55104`.
+
+- New random kept Runs: **40**
+- Legacy Runs with no `conversation_id`: **19 of 19**
+- Unique Runs after adding edge cases: **60**
+- Exact independently reconstructed chunks: **7,049**
+- Raw-derived FTS terms resolved to expected Runs: **32**
+- Sample failures: **0**
+
+Random Run IDs:
+
+```text
+7dc4d898496b4069b43aa83a38 8f625b42631f4c9a91adfc23f5
+f142405e39ad431a9941922717 dcfcc91fb0a54390a3d7accd4b
+b3005efc11c54446bd66a4a394 67dd799a6d924432a57b2768b3
+1d31639cb46d4064b48b0b7720 077694e0efd340f18d3af49b03
+011a0c8cf64d4bada4ea4f538c 11222b8bf91d46fea9c6c7821e
+ab5d0c17eb05416d836e661cb2 cc8a365fdbf54504b753c9bdc0
+dbef3cfd36f14478863b7b5ff0 005e49a1552a4da2a117e0db6d
+b79f77f06587435cb6fcf48e16 ce78a763bcbb4b12b91068104a
+b98c5a3f7a934220ab68630534 831a12ff8ab64a97989dd85f57
+44dc6abadaae4e1083b5ba2c63 d2dae3675ad04bee9595de5bdb
+442f37acc0d343ca8ab67d570e 01c7832db54f4531b42c214931
+7040caf6d1bf4b0c8db384941f 739192b32ee14f999257505348
+54cc054abf1d49c3b96dd3965d bd53640c46f442bda9180ad31a
+d303fdc24dd24480b9fa9efa76 4d212ceceb5c41c2859554f388
+1bde04ffd4f24a69b5cdbb4b49 79ce48e8944d44a1a6fe979160
+96f2fc77e7ce4c4098eb295d37 71c4a11d302b424c80f531b098
+61543f97fec94dc68e83d48476 b15b3e66e9e74c91b0d5603b29
+c4cbe6faf4b74028abbd065309 9f8bec1789944a86a40d72e3bc
+33fd279f1b3b4c888b2ffd894a 8a25e7a7631a4894b3ae350e0a
+41301b1d2fb842879102a7b8ac 2347cd1f427d4b1da04b511afa
+```
+
+### Edge Runs
+
+The largest kept Run was also the strongest multi-byte candidate among 159 candidates:
+
+- Run: `6eceee466e58c3c4ce347148e5`
+- Raw bytes: **35,851,352**
+- Independently matched chunks: **6,840**
+- Non-ASCII code points: **62,270**
+- Extra UTF-8 bytes above decoded code-point count: **133,770**
+
+All 19 deterministic Run-ID fallback records were present and matched raw chunks. The manifest has no divergent siblings, so that edge cannot be exercised with this dataset.
+
+## Completeness and lineage
+
+The verifier parsed all 148,023 manifest records and compared each database `runs` and `skipped_runs` row with manifest path, byte count, SHA-256, and covering Run ID.
+
+| Measure | Result |
+| --- | ---: |
+| Manifest records | 148,023 |
+| Kept Runs | 134,013 |
+| Skipped Runs | 14,010 |
+| Strict prefixes | 13,914 |
+| Exact duplicates | 96 |
+| Distinct chunk IDs | 447,609 |
+| FTS rows | 447,609 |
+| Missing covering Runs | 0 |
+| Orphan chunks | 0 |
+| Lineage groups | 2,955 |
+| Skipped raw bytes independently read | 24,853,552,678 |
+| Unique covering raw bytes independently read | 445,156,708 |
+| Failed byte-coverage proofs | 0 |
+
+All manifest `jsonl_path` values resolved inside `~/.joelclaw/runs-dev`. No path escaped the configured Run store.
+
+## Chunking parity
+
+The builder does not reimplement chunking. It imports the production functions and calls them directly. The database records the parser path, but not its source hash. At verification time:
+
+- `packages/memory/src/chunking.ts`: `cbbf815c31a2d682f95b3058da1fd149b5e861d9b73de45ba25debacf73fb7fc`
+- `scripts/build-session-index.ts`: `a812bdf59800d32971f1ab25754bfeeef1c2e286302562d2654a19ef9b39ed85`
+- `scripts/validate-session-index.ts`: `e2158a65002294cc091249915bd72fa0776a2a9f4a34a8670a6836aaeb129db0`
+
+The adversarial verifier separately implemented format detection, text extraction, JavaScript UTF-16 slicing, token estimation, 32,000-code-unit clipping, 8,000-token splitting, 400-character overlap, and chunk indexes. Its 7,049 expected rows matched every selected database row exactly.
+
+The prior validator is not independent for this claim. It calls the same production chunker at `scripts/validate-session-index.ts:249-253`. The separate parser closes that gap for the sample.
+
+One future risk remains in the shared production semantics: oversized turns use `idx * 1000 + subIdx`, while normal turns use `idx` (`packages/memory/src/chunking.ts:202-232`). A sufficiently long Run can produce an index collision. The current full build proves that no current kept Run hits that collision. It does not prove future appends cannot hit it.
+
+## SQLite and FTS checks
+
+The source database was always opened read-only or immutable. The FTS mutation-style consistency command ran only against an APFS clone in `/tmp`, then the clone was removed.
+
+```text
+PRAGMA integrity_check: ok
+PRAGMA quick_check: ok
+FTS5 external-content integrity-check: ok
+runs: 134013
+skipped_runs: 14010
+chunks: 447609
+chunk_fts: 447609
+distinct chunk_id: 447609
+```
+
+The verifier extracted search tokens from independently parsed raw bodies. It required each token to match an FTS row belonging to the same Run, rather than accepting any global hit.
+
+## Restart measurement
+
+The original query, `Typesense Reboot Recovery`, ran in ten new Bun processes:
+
+| Measure | Min | Median | Max |
+| --- | ---: | ---: | ---: |
+| Parent-observed process wall time | 18.499 ms | 20.565 ms | 22.583 ms |
+| Child process start to first result | 4.480 ms | 5.063 ms | 5.438 ms |
+
+A harder query, `run_chunks_dev`, took 23.871-28.522 ms parent wall time and 8.456-10.417 ms inside the child.
+
+This confirms tens-of-milliseconds fresh-process startup. It does not confirm reboot-cold startup. The full lineage scan had already warmed filesystem caches, and macOS denied an unprivileged cache purge. The availability ceiling is still safe by several orders of magnitude, but the report must call the measurement what it is.
+
+## Append contract under redelivery
+
+The proposed transaction is sound for the tested capture behavior:
+
+1. Exact same-Run/same-byte delivery emits `memory/run.captured` again. A committed `run_id` plus matching SHA returns a no-op.
+2. A larger retry under an already stored Run ID emits `accepted_prefix` with the stored path and stored SHA. The same database row remains a no-op.
+3. A divergent same-Run payload returns HTTP 409 and emits no event.
+4. `BEGIN IMMEDIATE` serializes writers. A crash before commit leaves no Run, chunks, or FTS rows. A retry after commit sees the same Run and SHA.
+
+The relevant 18 capture, storage, replay, and stale-cursor tests passed.
+
+The implementation claim is still false. No code opens this database for append after `memory/run.captured`. No search path reads it. The built database currently reports `journal_mode=delete`; WAL is only prose. This is why the static artifact cannot replace the live collection yet.
+
+Before wiring, the adapter must also define two details omitted from the prose contract:
+
+- Store one canonical path form. Rebuild rows use paths relative to the Run store, while capture events carry absolute paths.
+- Reject same-Run/same-SHA metadata drift when source identity, offsets, runtime, or conversation identity differs. A SHA-only no-op silently keeps the first provenance.
+
+## Containment
+
+Before and after all checks:
+
+```text
+Run-store files: 296046
+Run-store bytes: 29305024826
+Maximum mtime: 1784492302
+Maximum ctime: 1784492302
+sessions.db bytes: 1692884992
+sessions.db SHA-256: 4d23c1be278a16509a4f15d23a9070c44731a46cdf34be434bdc0d3f5852179f
+```
+
+The builder's Run-store code path uses only `readFileSync`. Its write operations target the output directory and temporary database. The independent verifier performed only reads against `~/.joelclaw/runs-dev` and `sessions.db`. Live Typesense was untouched.
+
+## Required before cutover
+
+1. Implement the single SQLite append adapter and its event consumer.
+2. Route a real search reader to `sessions.db` behind an explicit fallback.
+3. Add transaction tests for duplicate delivery, crash-before-commit, crash-after-commit, accepted-prefix delivery, provenance conflict, and chunk-index collision.
+4. Run Typesense/SQLite parity while Typesense is green. Compare result sets, conversation grouping, ranking expectations, and newest timestamps.
+5. Measure first query after an actual reboot or an authorized disk-cache eviction.
+
+Until these pass, keep `run_chunks_dev` and raw fallback available. Do not call this database the replacement yet.

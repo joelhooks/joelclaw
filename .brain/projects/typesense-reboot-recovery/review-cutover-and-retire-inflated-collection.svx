@@ -14,6 +14,14 @@ created_at: "2026-07-19"
 
 ## Step
 
-Joel reviews the session-index validation report, approves switching `joelclaw sessions search` and other readers to the SQLite session index, and approves dropping `run_chunks_dev` from Typesense entirely (per [the availability decision](./decide-availability-shape.svx), session search leaves Typesense). An explicit rollback plan comes first (diagnosis § Repair the projection) — note the raw JSONL plus manifest can always rebuild the index, so the rollback story should be cheap. Resolved when readers point at the SQLite index, the rollback plan is written, and Joel has said "retire it" out loud.
+Joel reviews the session-index validation report, approves switching `joelclaw sessions search` and other readers to the SQLite session index, and approves dropping `run_chunks_dev` from Typesense entirely (per [the availability decision](./decide-availability-shape.svx), session search leaves Typesense). An explicit rollback plan comes first (diagnosis § Repair the projection) — note the raw JSONL plus manifest can always rebuild the index, so the rollback story should be cheap.
+
+Preconditions before the review, from [adversarial verification of the index](./session-index-verification.svx) (2026-07-20):
+
+1. The append consumer is wired into the patched capture path, with `sessions.db` flipped to WAL mode (it currently sits in `journal_mode=delete`).
+2. `joelclaw sessions search` (and any other reader) actually opens `sessions.db`.
+3. Typesense parity runs once `/health` is green — or Joel explicitly accepts raw-JSONL-as-truth validation in its place.
+
+Resolved when readers point at the SQLite index, the rollback plan is written, and Joel has said "retire it" out loud.
 
 ## Result (YYYY-MM-DD)
