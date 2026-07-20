@@ -1,0 +1,27 @@
+---
+title: "Asset: capture replay root cause — ack-loss defeats run_id-keyed conflict detection"
+type: "asset"
+parent: "./reboot-hardening-brief.svx"
+date: "2026-07-20"
+privacy: "private"
+---
+
+# Capture replay root cause (handoff to the Typesense-recovery effort)
+
+The cumulative-prefix alerts are TRUE positives: the session index really is ingesting duplicate overlapping segments. Diagnosed 2026-07-20 by the reboot-fallout steering session; fix deliberately left to the effort that owns `run-capture.ts`.
+
+## Failure chain
+
+1. `memory-capture` (pi extension, `packages/pi-extensions/memory-capture/index.ts`) posts delta `[X, Y)`; the server (`packages/system-bus/src/routes/run-capture.ts`) commits the blob and emits `memory/run.captured` — then the **ack is lost** (client timeout, worker restart, bus bounce; 2026-07-20 produced these in bulk).
+2. The client correctly refuses to advance `last_byte_offset` (data unacknowledged) and, because the failure path that writes the outbox never ran, has **no pending entry** — so the next `turn_end` posts the wider `[X, Z)` with a **fresh run_id** (index.ts:210: `pending?.run_id ?? newRunId()`).
+3. `RunBlobConflictError` detection keys on the run/blob identity, so the fresh run_id bypasses the prefix-resync path (run-capture.ts:156-199) that would have answered `ok + existing to_offset`. The overlapping blob is stored, `memory/run.captured` fires for `[X, Z)`, and `capturePrefixGrowthAlert` correctly detects two runs sharing a start offset (e.g. source `7278ac87…`, runs `0dcfd6a7…`/`f1bc3b30…`, ranges `[1291304, 1293694)` and `[1291304, 1355673)`).
+
+## Proposed fix shape
+
+Conflict detection keyed on `source_identity + from_offset` (not blob/run identity): any post whose `(source, from_offset)` matches an existing blob takes the prefix-resync path regardless of run_id — existing-prefix case answers ok + existing `to_offset` so the client advances and re-sends only the remainder; non-prefix mismatch stays an error. Client side is already correct and needs no change. Dedupe/idempotency downstream of `memory/run.captured` should also treat `(source, from_offset)` as the identity, or the index keeps the historical dupes — a backfill-dedupe pass may be worth pairing with the fix.
+
+## Interim state
+
+- DM spam muted: `CAPTURE_INCIDENT_QUIET_MS` 60m → 24h (`482473ae`); detection + fatal OTEL unchanged.
+- Historical dupes from 2026-07-20's outage/bounces are in the index now (~90 sources alerted).
+- The static 978-file `~/.joelclaw/outbox` backlog predates today and is the same effort's territory.
