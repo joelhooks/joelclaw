@@ -123,6 +123,17 @@ export const typesenseRecallAdapter: AnyCapabilityPort = {
       catch: (error) => error,
     }).pipe(
       Effect.catchAll((sqliteError) => legacy.execute(subcommand, rawArgs, context).pipe(
+        Effect.catchAll((legacyError) => {
+          // Total failure: SQLite projection (local + both NAS replicas) AND
+          // Typesense all failed. Shell automation must see a nonzero exit,
+          // and the envelope must keep the full failure chain.
+          process.exitCode = 1
+          const sqliteDetail = sqliteError instanceof Error ? sqliteError.message : String(sqliteError)
+          const legacyDetail = legacyError instanceof Error ? legacyError.message : String(legacyError)
+          return Effect.fail(new Error(
+            `all recall backends failed — critical projection: ${sqliteDetail}; typesense: ${legacyDetail}`
+          ))
+        }),
         Effect.map((fallback) => {
           const value = fallback as RecallResult
           if (!value.payload) return value

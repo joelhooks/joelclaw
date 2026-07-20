@@ -118,19 +118,50 @@ const config = readJson<{ replicas?: Replica[]; tokenFile?: string }>(configPath
 const sharedToken = config.tokenFile ? readFileSync(config.tokenFile, "utf8").trim() : undefined
 const replicas = (config.replicas ?? []).map((replica) => ({ ...replica, token: replica.token ?? sharedToken }))
 if (replicas.length !== 2) throw new Error(`expected exactly two configured replicas in ${configPath}`)
-const previous = readJson<{ overall?: "ok" | "failed" }>(statePath, {})
+interface SyntheticState {
+  overall?: "ok" | "failed"
+  /** Consecutive checks observing the same overall state. */
+  streak?: number
+  /** Last state we actually alerted about. */
+  alertedState?: "ok" | "failed"
+  /** Epoch ms of the last alert, per direction quiet floor. */
+  lastAlertAt?: number
+}
+
+// Flap damping: today's real container-rebuild arc produced 7 transition
+// alerts. A transition must hold for CONFIRM_CHECKS consecutive runs before
+// it alerts, and same-direction alerts respect a quiet floor.
+const CONFIRM_CHECKS = 2
+const QUIET_FLOOR_MS = 30 * 60 * 1000
+
+const previous = readJson<SyntheticState>(statePath, {})
 const results = await Promise.all(replicas.map(probe))
 const overall = results.every((result) => result.ok) ? "ok" : "failed"
 const checkedAt = new Date().toISOString()
-mkdirSync(dirname(statePath), { recursive: true })
-writeFileSync(statePath, `${JSON.stringify({ checkedAt, overall, results }, null, 2)}\n`, { mode: 0o600 })
+const streak = previous.overall === overall ? (previous.streak ?? 1) + 1 : 1
+let alertedState = previous.alertedState ?? "ok"
+let lastAlertAt = previous.lastAlertAt ?? 0
 
-if (overall === "failed" && previous.overall !== "failed") {
-  const failures = results.filter((result) => !result.ok).map((result) => `${result.name}: ${result.error}`).join("; ")
-  notify(`Critical-search replica synthetic failed: ${failures}`)
-} else if (overall === "ok" && previous.overall === "failed") {
-  notify("Critical-search replica synthetic recovered: both NAS replicas answer recall and knowledge queries.")
+const confirmed = streak >= CONFIRM_CHECKS
+const changedSinceAlert = overall !== alertedState
+const pastQuietFloor = Date.now() - lastAlertAt >= QUIET_FLOOR_MS
+if (confirmed && changedSinceAlert && (overall === "failed" ? pastQuietFloor : true)) {
+  if (overall === "failed") {
+    const failures = results.filter((result) => !result.ok).map((result) => `${result.name}: ${result.error}`).join("; ")
+    notify(`Critical-search replica synthetic failed: ${failures}`)
+  } else {
+    notify("Critical-search replica synthetic recovered: both NAS replicas answer recall and knowledge queries.")
+  }
+  alertedState = overall
+  lastAlertAt = Date.now()
 }
+
+mkdirSync(dirname(statePath), { recursive: true })
+writeFileSync(
+  statePath,
+  `${JSON.stringify({ checkedAt, overall, streak, alertedState, lastAlertAt, results }, null, 2)}\n`,
+  { mode: 0o600 }
+)
 
 console.log(JSON.stringify({ ok: overall === "ok", checkedAt, results }, null, 2))
 if (overall !== "ok") process.exitCode = 1

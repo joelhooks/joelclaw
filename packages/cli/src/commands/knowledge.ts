@@ -456,6 +456,9 @@ const searchCmd = Command.make(
 
       const fallback = yield* Effect.promise(() => searchKnowledgeTypesense(query, typeValue, limit))
       if (!fallback.ok) {
+        // Every backend failed: local SQLite, both NAS replicas, and Typesense.
+        // Shell automation must see this without parsing JSON.
+        process.exitCode = 1
         yield* Console.log(respondError(
           "knowledge search",
           `SQLite was unavailable; Typesense fallback failed: ${fallback.detail}`,

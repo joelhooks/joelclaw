@@ -1,0 +1,204 @@
+---
+title: "Adversarial verification of critical-search NAS replication"
+type: "asset"
+parent: "./replicate-critical-db-to-nas.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Adversarial verification of critical-search NAS replication
+
+## Verdict
+
+The core availability claim is **CONFIRMED** for a Flagg-local outage plus one failed NAS: the compiled CLI skipped local search, failed NAS-A, and served both recall and knowledge from NAS-B with truthful `servedBy: maturin`.
+
+The complete operational claim is **REFUTED** in two places:
+
+1. An all-sources failure returns an `ok: false` JSON envelope but exits with status `0`. Shell automation cannot detect the outage from process status.
+2. The synthetic monitor did not produce one failure alert and one recovery alert. Today's real journal contains seven logical notification flows: three failure alerts and four recovery alerts.
+
+No real container, LaunchAgent, database, replica file, or Run source was stopped, restarted, or modified. The generation test used a temporary fixture directory on three-body and removed only its known fixture files.
+
+## Claim results
+
+| # | Claim | Verdict |
+|---|---|---|
+| 1 | Ordered fallback is truthful, and total failure is loud | **REFUTED** |
+| 2 | Staleness fields match reality and the client rejects a wedged sync | **CONFIRMED** |
+| 3 | The generation guard rejects older and conflicting snapshots | **CONFIRMED** |
+| 4 | The synthetic monitor alerts once on failure and once on recovery | **REFUTED** |
+| 5 | Health and search require auth; secret files are private | **CONFIRMED** |
+| 6 | The Bun fetch path has no keep-alive socket regression | **CONFIRMED** |
+
+## 1. Ordered fallback and total-failure honesty — REFUTED
+
+### Partial failure is correct
+
+I ran the installed compiled binary at `/Users/joel/.bun/bin/joelclaw` with:
+
+- `JOELCLAW_CRITICAL_SEARCH_SKIP_LOCAL=1`
+- NAS-A overridden to a dead loopback port
+- NAS-B left at the live maturin endpoint
+
+Both commands succeeded:
+
+- `joelclaw recall "memory observation" --limit 1`
+- `joelclaw knowledge search "SQLite critical search" --limit 1`
+
+Both returned:
+
+```json
+{
+  "servedBy": {
+    "name": "maturin",
+    "kind": "replica",
+    "syncCheckAgeSeconds": 15,
+    "replicaLagSeconds": 19
+  }
+}
+```
+
+The recall query found 10,869 rows. The knowledge query found 680 rows. NAS-A was attempted first and did not block NAS-B.
+
+### Total failure is not loud to a shell
+
+I then pointed both replicas and Typesense at dead loopback ports. Recall and knowledge each returned an honest JSON error envelope:
+
+- recall: `ok: false`, `code: "ConnectionRefused"`
+- knowledge: `ok: false`, `code: "KNOWLEDGE_SEARCH_FAILED"`
+
+Both processes still exited with status `0` and wrote nothing to stderr. The recall envelope also lost the per-replica failure list and only exposed the final Typesense connection refusal.
+
+When only both replicas were dead and local Typesense remained live, both commands fell back to Typesense. Recall preserved the two replica failures in `result.fallback.reason`; knowledge only reported the generic reason `critical.db unavailable or unreadable`.
+
+The JSON contract is machine-readable, but process status is not an outage signal. This fails the task's “loud and honest” requirement as stated.
+
+## 2. Staleness honesty — CONFIRMED
+
+At the verification point, Flagg's source and both NAS files had the same SHA-256:
+
+```text
+b26a8f87a1c2f8cb71a83108b51a21b6e1e168221f4888b19007d66c92fe55a6
+```
+
+The source mtime was `2026-07-20T18:17:36Z`. Both replica state files reported that exact `sourceMtime`. Both reported `copiedAt: 2026-07-20T18:17:55Z`, which gives the advertised `replicaLagSeconds: 19`.
+
+Live health at about `22:57Z` reported:
+
+| Replica | SHA matches source | `syncCheckAgeSeconds` | `replicaLagSeconds` |
+|---|---:|---:|---:|
+| three-body | yes | 31 | 19 |
+| maturin | yes | 32 | 19 |
+
+`replicaLagSeconds` measures the delay between the source mtime and the successful copy. `syncCheckAgeSeconds` measures whether the 60-second sync loop is still checking the source. Together, these values match the actual state.
+
+I also put a fixture replica first in the compiled client walk. Its health returned `syncCheckAgeSeconds: 301` against a 300-second budget. The client made one health request, made zero search requests to the stale fixture, and answered from maturin. A wedged heartbeat is rejected before search.
+
+## 3. Generation guard — CONFIRMED
+
+I ran the deployed `publish-replica.sh` on three-body against a temporary directory under Joel's home. The real replica directory was not an argument.
+
+Results:
+
+```text
+older_status=3
+older_preserved=true
+older_message=skipped older snapshot source_version=2026-07-20T19:00:00Z current=2026-07-20T20:00:00Z
+
+conflict_status=4
+conflict_preserved=true
+conflict_message=refusing equal-version snapshot with different checksum
+```
+
+After both attacks, the fixture database checksum and state generation still matched the newer snapshot.
+
+## 4. Synthetic monitor — REFUTED
+
+The LaunchAgent is loaded, runs every 120 seconds, and currently has `last exit code = 0`. Its current state file is mode `0600` and reports both replicas healthy.
+
+The append log contains 527 parsed probe runs. Its long outage began at `2026-07-20T05:23:25.867Z`. The first green scheduled result appeared at `2026-07-20T22:50:27.607Z`.
+
+The message journal proves seven logical alert flows after grouping `message.outbound.requested` and `message.outbound.confirmed` records by `flow_id`:
+
+| UTC time | Logical transition |
+|---|---|
+| 05:23:29 | failed |
+| 22:50:06 | recovered |
+| 22:50:06 | failed |
+| 22:50:28 | recovered |
+| 22:51:37 | recovered |
+| 22:51:41 | failed |
+| 22:51:56 | recovered |
+
+All seven flows reached `message.outbound.confirmed`.
+
+The later failure alerts came from the keep-alive socket flake. The extra recovery events show that the single state file is not enough to serialize concurrent or rapid checks. `scripts/check-critical-search-replicas.ts` writes state without a lock and alerts on one observed edge. It has no consecutive-failure threshold, incident key, or recovery confirmation window.
+
+The unit test confirms one failure and one recovery only for a serial fixture. It does not cover concurrent monitor runs or rapid green/red flaps. The real arc refutes the no-storm claim.
+
+## 5. Authentication and file modes — CONFIRMED
+
+Bare requests returned `401` on both replicas:
+
+```text
+three-body /health 401
+three-body /search 401
+maturin /health 401
+maturin /search 401
+```
+
+Each body was `{"ok":false,"error":"unauthorized"}`.
+
+File modes:
+
+| File | three-body | maturin | flagg |
+|---|---:|---:|---:|
+| replica `.env` | `0600` | `0600` | n/a |
+| replica `critical.db` | `0640` | `0640` | n/a |
+| replica data directory | `0750` | `0750` | n/a |
+| token file | n/a | n/a | `0600` |
+| client config | n/a | n/a | `0600` |
+| replication config | n/a | n/a | `0600` |
+
+No token or `.env` value was printed.
+
+## 6. Bun fetch keep-alive regression — CONFIRMED
+
+I ran 20 sequential authenticated health-plus-search cycles against each live replica through Bun fetch with the production `connection: close` header.
+
+| Replica | Iterations | Requests | Socket or HTTP errors |
+|---|---:|---:|---:|
+| three-body | 20 | 40 | 0 |
+| maturin | 20 | 40 | 0 |
+
+Each search response also had a numeric `found` field. No socket reuse error occurred.
+
+## Test receipt
+
+The targeted test set first produced **21 pass / 5 fail** because `packages/cli/src/lib/critical-search-cli.test.ts` inherited the operator's live default replica config from `~/.config/joelclaw/critical-search-replicas.json`. Tests that expected a local/Typesense failure instead reached a live NAS.
+
+With `JOELCLAW_CRITICAL_SEARCH_CONFIG` pointed at a nonexistent fixture path, the same command produced **26 pass / 0 fail**:
+
+```text
+bun test \
+  packages/cli/src/lib/critical-search.test.ts \
+  packages/cli/src/lib/critical-search-cli.test.ts \
+  infra/critical-search-replica/publish-replica.test.ts \
+  scripts/check-critical-search-replicas.test.ts
+```
+
+This is a test-isolation defect. The production behavior tested above remains valid.
+
+## Required follow-up
+
+1. Make synthetic state updates single-writer and flap-resistant. A small persisted state machine should distinguish `healthy`, `suspect`, `failed`, and `recovering`; alert only on confirmed incident edges.
+2. Give each synthetic incident a stable key so repeated processes cannot create duplicate failure or recovery flows.
+3. Decide whether `ok: false` CLI envelopes must also set a nonzero process exit. If exit `0` is deliberate, document that every shell caller must parse `ok`.
+4. Make compiled CLI tests set an explicit replica config path. Tests must never inherit the operator's live home config.
+
+## Steering remediation (2026-07-20)
+
+Both refuted claims fixed the same evening:
+
+1. Total failure is now loud to shells: recall sets exit 1 when the critical projection AND Typesense all fail, with the full failure chain in one message; knowledge sets exit 1 on its total-failure path. Proven: dead replicas + dead Typesense exits 1.
+2. The synthetic monitor debounces: a transition must hold 2 consecutive checks (both directions) and failure alerts respect a 30-minute quiet floor. The regression test now encodes the flap case: one healthy check mid-flap does not alert.

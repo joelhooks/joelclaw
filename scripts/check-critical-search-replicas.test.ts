@@ -74,6 +74,10 @@ describe("critical-search replica synthetic", () => {
       expect(await run()).toBe(1)
       expect(readFileSync(notifyLog, "utf8").trim().split("\n")).toHaveLength(1)
       healthy = true
+      // Recovery also needs CONFIRM_CHECKS consecutive healthy runs — a
+      // single ok mid-flap must not alert (the 2026-07-20 storm class).
+      expect(await run()).toBe(0)
+      expect(readFileSync(notifyLog, "utf8").trim().split("\n")).toHaveLength(1)
       expect(await run()).toBe(0)
       const notifications = readFileSync(notifyLog, "utf8").trim().split("\n")
       expect(notifications).toHaveLength(2)

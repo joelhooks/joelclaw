@@ -1,0 +1,100 @@
+---
+title: "Keying verification"
+type: "asset"
+parent: "./key-capture-conflicts-on-source-cursor.svx"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Keying verification
+
+Independent QA result for [Key Capture Conflicts on Source Identity and Cursor](./key-capture-conflicts-on-source-cursor.svx).
+
+## Verdict
+
+The source-cursor fix is **CONFIRMED** for retries that reuse the same `(source_identity, from_offset)`. The stronger consumer claim that an overlapping Run can never re-inflate `sessions.db` is **NOT PROVEN**. A direct consumer fixture refutes that claim when the overlap starts at a different offset.
+
+## Claims
+
+### 1. Lost-acknowledgement retry variants — CONFIRMED
+
+`packages/system-bus/src/routes/run-capture.keying-verification.test.ts` runs the real Claude capture client in a fresh process for each invocation. The fixture server commits through the real `/api/runs` route, then replaces selected acknowledgements with HTTP 503 responses.
+
+Confirmed cases:
+
+- first source post at `from_offset=0` loses its acknowledgement;
+- two acknowledgements are lost in sequence: `[X,Y)` commits, `[X,Z)` is unacknowledged, `[X,W)` resyncs, then `[Y,W)` posts;
+- every retry is a client restart against the same source identity.
+
+In each case, the test appends emitted events to a temporary `sessions.db`. The ordered stored ranges are adjacent. Their byte count and reconstructed content equal the source exactly.
+
+### 2. Existing-`to_offset` resync in a real client — CONFIRMED
+
+The Claude client accepts the server's canonical `to_offset`, persists that offset, clears the stale pending segment, and sends only the remaining bytes on its next process invocation.
+
+The two-lost-ack fixture observed request starts `[0, 0, 0, Y]`. The final request contained only `[Y,W)` and used the canonical prior Run as `parent_run_id`.
+
+The Pi and Codex fixtures separately confirm that both clients write one stable pending envelope before every POST and retain one Run ID across repeated failures. This verification did not independently exercise their accepted-prefix cursor advancement path.
+
+### 3. Distinct-source isolation — CONFIRMED
+
+Two explicit source identities both posted successfully from offset `0`. Two legacy posts with neither `source_identity` nor `conversation_id` also remained separate.
+
+The session index stored the explicit identities unchanged. It assigned the legacy rows `legacy-run:<run_id>` identities. Four inputs produced four rows with no cross-source conflict.
+
+### 4. Simultaneous divergent posts — CONFIRMED
+
+Two concurrent requests used one `(source_identity, from_offset)` and different bytes. Exactly one returned `202`. The other returned `409 run_blob_conflict` with the truthful message `source cursor already exists with different JSONL bytes`.
+
+Only one `memory/run.captured` event was emitted. The stored blob matched the winning request. This proves request concurrency inside the real route process. It does not simulate two independent server processes sharing the Run store.
+
+### 5. Consumer-level overlap guard — NOT PROVEN
+
+Same-start replay is covered: two Run IDs with the same source and `from_offset` produce one row when one body is a prefix of the other.
+
+Different-start overlap still inflates the index. The independent fixture calls the real `memoryRunCaptured` function twice with one source:
+
+- first segment: `[0, first + repeated)`;
+- second segment: `[first, repeated + final)`.
+
+Both appends succeed because `appendSessionCapture()` looks up only exact `(source_identity, from_offset)` matches. The temporary index contains two Runs, four chunks, and two copies of the `repeated` chunk.
+
+Therefore this Result claim is false as written: "a duplicate overlapping Run can never re-inflate `sessions.db` even if one slips through." The implemented guard prevents same-start replay. It does not prevent arbitrary range overlap.
+
+### 6. Legitimate-flow regression suite — CONFIRMED
+
+The full capture, canonical replay, route, and session-index suites passed. Covered behavior includes:
+
+- `accepted_prefix`;
+- suffix Runs with `parent_run_id`;
+- same-Run same-byte redelivery;
+- stale-cursor coalescing;
+- replay trimming and reparenting;
+- Inngest retry after the SQLite side effect commits.
+
+`bunx tsc --noEmit` also passed.
+
+## Evidence
+
+Independent test file:
+
+- `packages/system-bus/src/routes/run-capture.keying-verification.test.ts`
+
+Commands:
+
+```sh
+bun test packages/system-bus/src/routes/run-capture.keying-verification.test.ts
+bun test \
+  packages/system-bus/src/routes/run-capture.keying-verification.test.ts \
+  packages/system-bus/src/routes/run-capture.test.ts \
+  scripts/joelclaw-capture-session.test.ts \
+  scripts/pi-codex-capture-clients.test.ts \
+  scripts/lib/capture-outbox-replay.test.ts \
+  scripts/replay-capture-outbox.test.ts \
+  packages/system-bus/src/inngest/functions/memory/run-captured.test.ts \
+  packages/system-bus/src/inngest/functions/discovery-capture.test.ts
+pnpm biome check packages/system-bus/src/routes/run-capture.keying-verification.test.ts
+bunx tsc --noEmit
+```
+
+All fixtures used temporary directories and temporary SQLite databases. No live Typesense collection, real `sessions.db`, outbox backlog, Run store, or worker process was touched. No commit was created.
