@@ -3,7 +3,8 @@ title: "Dedupe the Session Index and Drain the Legacy Outbox"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-20T23:20:50Z"
 assignee: "pi (flagg, herdr pane wY:p2E, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./key-capture-conflicts-on-source-cursor.svx"]
@@ -21,4 +22,14 @@ Clean up what the ack-loss bug left behind, after the keying fix lands. Resolved
 3. `CAPTURE_INCIDENT_QUIET_MS` returns from the interim 24h to its normal 60m once a drained-and-deduped day passes without a true positive.
 4. Receipts: before/after chunk and Run counts, alert state, and a validation query pass.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+- Added `scripts/dedupe-session-index.ts` plus a focused integration test. The tool plans first, verifies both raw Run SHA-256 values and the exact covering slice, refuses partial/divergent overlaps, locks SQLite, checkpoints WAL, copies `sessions.db`, verifies the copy SHA, and deletes only Run/chunk/FTS rows in one transaction. Raw `~/.joelclaw/runs-dev` stayed untouched.
+- Backup: `~/.joelclaw/search/sessions.db.pre-dedupe-2026-07-20`, 1,755,082,752 bytes. Locked source and backup SHA-256 both equal `67daf944f86e2f0cd1b642b9c89dd2889a17f261693c69a80f705699fc1b0b70`.
+- Dedupe changed 136,371 Runs / 465,483 chunks to 136,280 Runs / 464,440 chunks. It removed 91 proved Runs and 1,043 chunks across 24 source identities. The live alert case resolved exactly: `58ee1ff8…` `[582856,586897)` is byte-for-byte the first 4,041 bytes of covering Run `3fe3a124…` `[582856,648676)` for `sha256:ee2cabd9…`.
+- The alert ledger contains 24 distinct overlapping sources, not ~90. All 24 now have zero overlap pairs. The earlier estimate matches the 91 removed Runs more closely than a distinct-source count.
+- Canonical outbox planning classified 977 files as 911 redundant, 59 already covered representatives, and seven suffix representatives. Replay ran only through `scripts/replay-capture-outbox.ts` in bounded batches. Two live-client races returned accepted-prefix while replay waited for the larger SHA; the tool stopped without resend, replanned from SQLite, and indexed the derived suffixes. The final reconciliation batch attempted zero posts and stopped cleanly because every replay key was already checkpointed as indexed.
+- Physical outbox count remains 977 by design: the canonical replay tool explicitly never deletes, moves, or rewrites source payloads. Outstanding unchecked replay work is zero. Removing those retained files would violate this step's only-replay-tool containment rule, so the remainder is recorded rather than manually deleted.
+- Post-pass receipts: zero overlap pairs/sources; `PRAGMA integrity_check=ok`; FTS queries for `Typesense Reboot Recovery`, `run_chunks_dev`, and `ShitRat` returned 25 hits each; 25 raw Runs / 40 chunks matched; restart probe reached the first result in 7.75 ms process time (22.75 ms wall); raw fallback found 1,824 files in 4.02 s.
+- `TYPESENSE_URL=http://127.0.0.1:1 bun scripts/validate-session-index.ts` passed with no failures. Typesense parity was intentionally skipped because `run_chunks_dev` is retired and this step forbids Typesense work. `bun test scripts/dedupe-session-index.test.ts`, `bunx tsc --noEmit`, and targeted Biome checks passed.
+- `CAPTURE_INCIDENT_QUIET_MS` remains 24h. The index and backlog are ready for steering to restore 60m after one clean drained-and-deduped day. No commit was created.
