@@ -1,0 +1,23 @@
+---
+title: "Worker task: adversarially verify the NAS replication"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: adversarially verify the NAS replication
+
+You are an adversarial verifier on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). The replication step is closed — read [its Result and Completion](../projects/typesense-reboot-recovery/replicate-critical-db-to-nas.svx). Live infra: containers `joelclaw-critical-search-three-body` and `joelclaw-critical-search-maturin` on :7411, 60s sync LaunchAgent `com.joelclaw.critical-search-replicate`, synthetic LaunchAgent `com.joelclaw.critical-search-synthetic`. Try to refute the claim that critical search survives a flagg outage.
+
+Attack angles, minimum:
+
+1. Fallback ordering under partial failure: with `JOELCLAW_CRITICAL_SEARCH_SKIP_LOCAL=1` and NAS-A's URL pointed at a dead port (env/config override — NEVER stop the real containers), does the compiled CLI answer from NAS-B (maturin) with truthful `servedBy`? With both replicas unreachable, is the failure loud and honest?
+2. Staleness honesty: replica health reports `replicaLagSeconds` and `syncCheckAgeSeconds` — verify against reality (compare replica SHA-256 to flagg's live file and its mtime). Would a wedged sync actually trip the 300s budget rejection in the client walk?
+3. Generation guard: run the publisher at an older generation against a replica holding newer (fixture dirs on flagg or a temp path on the NAS via ssh as joel, non-sudo) — prove older cannot replace newer, and equal-generation different-checksum fails closed.
+4. Synthetic monitor: does `com.joelclaw.critical-search-synthetic` actually alert on failure AND recovery (check its state file transitions from today's real outage-to-recovery arc), once each, no storm?
+5. Auth: no unauthenticated read path — health and search both 401 bare; the token file permissions on flagg and the `.env` on each NAS are not world-readable.
+6. Keep-alive regression: hammer each replica with 20 sequential authenticated requests through Bun fetch (the fixed client path) — zero socket errors.
+
+Containment: never stop/restart the real containers or LaunchAgents; NAS access as joel without sudo only; `~/.joelclaw/runs-dev` read-only; the real `critical.db` and replica data untouched (fixtures for guard tests); do not commit.
+
+Deliverable: `.brain/projects/typesense-reboot-recovery/replication-verification.svx` (`type: "asset"`, `parent: "./replicate-critical-db-to-nas.svx"`) with CONFIRMED/REFUTED per claim and evidence. Do not edit the step file. Work autonomously. Do not commit. Print a DONE summary.
