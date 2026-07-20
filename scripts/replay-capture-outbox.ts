@@ -13,8 +13,8 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   statSync,
   writeFileSync,
@@ -45,7 +45,7 @@ type PlanEntry = CatalogEntry & {
 };
 
 type PlanArtifact = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   generatedAt: string;
   outbox: string;
   sourceCount: number;
@@ -154,6 +154,8 @@ function scanSource(path: string): { body: CaptureBody; entry: CatalogEntry } {
       runtime: body.agent_runtime,
       conversationId: body.conversation_id,
       parentRunId: body.parent_run_id,
+      sourceIdentity: body.source_identity,
+      fromOffset: body.from_offset,
       startedAt: body.started_at,
       jsonlChars: body.jsonl.length,
       jsonlBytes: Buffer.byteLength(body.jsonl, "utf8"),
@@ -207,6 +209,9 @@ async function capturedSiblings(body: CaptureBody): Promise<CapturedSibling[]> {
   if (body.parent_run_id) {
     filters.push(`parent_run_id:=\`${filterEscape(body.parent_run_id)}\``);
   }
+  if (body.source_identity) {
+    filters.push(`source_identity:=\`${filterEscape(body.source_identity)}\``);
+  }
   const siblings: CapturedSibling[] = [];
   let page = 1;
   let found = 0;
@@ -217,7 +222,7 @@ async function capturedSiblings(body: CaptureBody): Promise<CapturedSibling[]> {
       filter_by: filters.join(" && "),
       page: String(page),
       per_page: "250",
-      include_fields: "id,parent_run_id,jsonl_path,jsonl_sha256",
+      include_fields: "id,parent_run_id,source_identity,jsonl_path,jsonl_sha256",
     });
     const response = await typesense(`/collections/runs_dev/documents/search?${params}`);
     if (!response.ok)
@@ -228,6 +233,7 @@ async function capturedSiblings(body: CaptureBody): Promise<CapturedSibling[]> {
         document: {
           id: string;
           parent_run_id?: string;
+          source_identity?: string;
           jsonl_path?: string;
           jsonl_sha256?: string;
         };
@@ -237,6 +243,7 @@ async function capturedSiblings(body: CaptureBody): Promise<CapturedSibling[]> {
     for (const hit of payload.hits ?? []) {
       const doc = hit.document;
       if ((doc.parent_run_id ?? undefined) !== (body.parent_run_id ?? undefined)) continue;
+      if (body.source_identity && doc.source_identity !== body.source_identity) continue;
       if (!doc.jsonl_path || !existsSync(doc.jsonl_path)) continue;
       siblings.push(
         verifiedCapturedSibling(doc.id, readFileSync(doc.jsonl_path, "utf8"), doc.jsonl_sha256),
@@ -281,7 +288,7 @@ async function plan(): Promise<void> {
   }
 
   const artifact: PlanArtifact = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     outbox,
     sourceCount: classified.length,
@@ -358,7 +365,7 @@ async function run(): Promise<void> {
   const token = (JSON.parse(readFileSync(authPath, "utf8")) as { token?: string }).token;
   if (!token) throw new Error("capture auth token missing");
   const artifact = JSON.parse(readFileSync(catalogPath, "utf8")) as PlanArtifact;
-  if (artifact.schemaVersion !== 1 || resolve(artifact.outbox) !== outbox) {
+  if (artifact.schemaVersion !== 2 || resolve(artifact.outbox) !== outbox) {
     throw new Error("catalog schema/outbox does not match this run");
   }
   const realOutbox = realpathSync(outbox);
@@ -408,15 +415,16 @@ async function run(): Promise<void> {
       continue;
     }
 
-    const key = replayKey(source.run_id, entry.bodySha256, derivation.replaySha256);
+    const targetRunId = derivation.body.run_id;
+    const key = replayKey(targetRunId, entry.bodySha256, derivation.replaySha256);
     const prior = latest.get(key);
-    if (prior && !canAttemptReplay(prior.status, source.run_id, retryFailedRun)) {
+    if (prior && !canAttemptReplay(prior.status, targetRunId, retryFailedRun)) {
       if (prior.status === "indexed" || prior.status === "covered") continue;
-      const indexed = await waitForIndex(source.run_id, derivation.replaySha256);
+      const indexed = await waitForIndex(targetRunId, derivation.replaySha256);
       if (indexed === "indexed") {
         const row = checkpoint({
           key,
-          runId: source.run_id,
+          runId: targetRunId,
           status: "indexed",
           sourceSha256: entry.bodySha256,
           replaySha256: derivation.replaySha256,
@@ -429,21 +437,21 @@ async function run(): Promise<void> {
       }
       const retryHint =
         prior.status === "failed"
-          ? ` Use --retry-failed-run ${source.run_id} only after review.`
+          ? ` Use --retry-failed-run ${targetRunId} only after review.`
           : "";
       throw new Error(
-        `run ${source.run_id} is ${prior.status} but not indexed; refusing automatic resend (${indexed}).${retryHint}`,
+        `run ${targetRunId} is ${prior.status} but not indexed; refusing automatic resend (${indexed}).${retryHint}`,
       );
     }
 
-    const existing = await exactRun(source.run_id);
+    const existing = await exactRun(targetRunId);
     if (existing) {
       if (existing.jsonl_sha256 !== derivation.replaySha256) {
-        throw new Error(`run_id conflict for ${source.run_id}; refusing overwrite`);
+        throw new Error(`run_id conflict for ${targetRunId}; refusing overwrite`);
       }
       const row = checkpoint({
         key,
-        runId: source.run_id,
+        runId: targetRunId,
         status: "indexed",
         sourceSha256: entry.bodySha256,
         replaySha256: derivation.replaySha256,
@@ -457,7 +465,7 @@ async function run(): Promise<void> {
 
     let row = checkpoint({
       key,
-      runId: source.run_id,
+      runId: targetRunId,
       status: "inflight",
       sourceSha256: entry.bodySha256,
       replaySha256: derivation.replaySha256,
@@ -467,7 +475,7 @@ async function run(): Promise<void> {
     if (stopRequested || existsSync(stopFile)) {
       row = checkpoint({
         key,
-        runId: source.run_id,
+        runId: targetRunId,
         status: "failed",
         sourceSha256: entry.bodySha256,
         replaySha256: derivation.replaySha256,
@@ -493,7 +501,7 @@ async function run(): Promise<void> {
     if (!response.ok) {
       row = checkpoint({
         key,
-        runId: source.run_id,
+        runId: targetRunId,
         status: "failed",
         sourceSha256: entry.bodySha256,
         replaySha256: derivation.replaySha256,
@@ -507,7 +515,7 @@ async function run(): Promise<void> {
     }
     row = checkpoint({
       key,
-      runId: source.run_id,
+      runId: targetRunId,
       status: "accepted",
       sourceSha256: entry.bodySha256,
       replaySha256: derivation.replaySha256,
@@ -515,15 +523,15 @@ async function run(): Promise<void> {
     });
     latest.set(key, row);
     receipt.rows.push(row);
-    const indexed = await waitForIndex(source.run_id, derivation.replaySha256);
+    const indexed = await waitForIndex(targetRunId, derivation.replaySha256);
     if (indexed !== "indexed") {
       throw new Error(
-        `accepted run ${source.run_id} did not index safely (${indexed}); stopping without resend`,
+        `accepted run ${targetRunId} did not index safely (${indexed}); stopping without resend`,
       );
     }
     row = checkpoint({
       key,
-      runId: source.run_id,
+      runId: targetRunId,
       status: "indexed",
       sourceSha256: entry.bodySha256,
       replaySha256: derivation.replaySha256,

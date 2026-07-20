@@ -3,11 +3,14 @@ import {
   type CaptureBody,
   type CatalogEntry,
   canAttemptReplay,
+  captureSourceIdentity,
   catalogEntryMatches,
   classifyPrefixGroup,
+  coalescePendingCapture,
   deriveReplayBody,
   isPathInside,
   parseCaptureBody,
+  pendingCaptureFileName,
   replayKey,
   sha256,
   verifiedCapturedSibling,
@@ -50,7 +53,34 @@ describe("capture outbox replay", () => {
     );
   });
 
-  test("keeps only the largest growing delta in a logical group", () => {
+  test("coalesces a stale cursor into one stable pending segment", () => {
+    const identity = captureSourceIdentity(["pi", "machine", "conversation", "/session.jsonl"]);
+    const first = body({
+      run_id: "a".repeat(26),
+      source_identity: identity,
+      from_offset: 10,
+      to_offset: 14,
+      jsonl: "one\n",
+      jsonl_sha256: sha256("one\n"),
+    });
+    const later = body({
+      run_id: "b".repeat(26),
+      source_identity: identity,
+      from_offset: 10,
+      to_offset: 18,
+      jsonl: "one\ntwo\n",
+      jsonl_sha256: sha256("one\ntwo\n"),
+    });
+
+    const coalesced = coalescePendingCapture(first, later);
+    expect(coalesced.run_id).toBe(first.run_id);
+    expect(coalesced.started_at).toBe(first.started_at);
+    expect(coalesced.to_offset).toBe(18);
+    expect(coalesced.jsonl).toBe("one\ntwo\n");
+    expect(pendingCaptureFileName(identity, 10)).toBe(pendingCaptureFileName(identity, 10));
+  });
+
+  test("keeps only the largest growing delta in a prefix-aware logical group", () => {
     const small = entry("a".repeat(26), "one\n", 1);
     const medium = entry("b".repeat(26), "one\ntwo\n", 2);
     const large = entry("c".repeat(26), "one\ntwo\nthree\n", 3);
@@ -73,7 +103,14 @@ describe("capture outbox replay", () => {
   });
 
   test("trims the longest captured prefix and reparents the replay", () => {
-    const result = deriveReplayBody(body({ jsonl: "one\ntwo\nthree\n" }), [
+    const identity = captureSourceIdentity(["pi", "machine", "conversation", "/session.jsonl"]);
+    const result = deriveReplayBody(body({
+      jsonl: "one\ntwo\nthree\n",
+      source_identity: identity,
+      from_offset: 5,
+      to_offset: 19,
+      jsonl_sha256: sha256("one\ntwo\nthree\n"),
+    }), [
       { runId: "short", jsonl: "one\n" },
       { runId: "long", jsonl: "one\ntwo\n" },
     ]);
@@ -81,7 +118,28 @@ describe("capture outbox replay", () => {
     if (result.status !== "suffix") throw new Error("expected suffix replay");
     expect(result.body.jsonl).toBe("three\n");
     expect(result.body.parent_run_id).toBe("long");
+    expect(result.body.from_offset).toBe(13);
+    expect(result.body.to_offset).toBe(19);
+    expect(result.body.jsonl_sha256).toBe(sha256("three\n"));
     expect(result.body.tags).toContain("prefix-trimmed");
+  });
+
+  test("uses a deterministic new Run ID when an accepted prefix has the source Run ID", () => {
+    const source = body({ run_id: "a".repeat(26), jsonl: "one\ntwo\n" });
+    const first = deriveReplayBody(source, [
+      { runId: source.run_id, jsonl: "one\n", jsonlSha256: sha256("one\n") },
+    ]);
+    const second = deriveReplayBody(source, [
+      { runId: source.run_id, jsonl: "one\n", jsonlSha256: sha256("one\n") },
+    ]);
+    expect(first.status).toBe("suffix");
+    expect(second.status).toBe("suffix");
+    if (first.status !== "suffix" || second.status !== "suffix") {
+      throw new Error("expected suffix replay");
+    }
+    expect(first.body.run_id).not.toBe(source.run_id);
+    expect(first.body.run_id).toBe(second.body.run_id);
+    expect(first.body.parent_run_id).toBe(source.run_id);
   });
 
   test("replay key binds run id, source bytes, and transformed bytes", () => {

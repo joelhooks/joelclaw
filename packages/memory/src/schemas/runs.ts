@@ -39,6 +39,9 @@ export function runsSchema(
       { name: "jsonl_path", type: "string", optional: true },
       { name: "jsonl_bytes", type: "int32", optional: true },
       { name: "jsonl_sha256", type: "string", optional: true },
+      { name: "from_offset", type: "int64", optional: true },
+      { name: "to_offset", type: "int64", optional: true },
+      { name: "source_identity", type: "string", facet: true, optional: true },
     ],
     default_sorting_field: "started_at",
   };

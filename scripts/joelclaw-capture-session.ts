@@ -21,12 +21,14 @@
  *   - On success: state advances to current EOF; Claude can continue.
  *   - Noop (nothing new since last capture) is a silent exit 0.
  */
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -109,11 +111,39 @@ async function readHookContext(): Promise<HookContext> {
   return JSON.parse(raw) as HookContext;
 }
 
-function writeToOutbox(runId: string, body: unknown): string {
+function sha256(value: string | Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function sourceIdentity(machineId: string, sessionId: string, transcriptPath: string): string {
+  return `sha256:${sha256(JSON.stringify([RUNTIME, machineId, sessionId, transcriptPath]))}`;
+}
+
+function pendingOutboxPath(identity: string, fromOffset: number): string {
+  return join(OUTBOX_DIR, `pending-${sha256(`${identity}:${fromOffset}`).slice(0, 26)}.json`);
+}
+
+function readPending(path: string): Record<string, unknown> | undefined {
+  try {
+    if (!existsSync(path)) return undefined;
+    return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeToOutbox(path: string, body: unknown): string {
   mkdirSync(OUTBOX_DIR, { recursive: true });
-  const outboxPath = join(OUTBOX_DIR, `${runId}.json`);
-  writeFileSync(outboxPath, JSON.stringify(body));
-  return outboxPath;
+  writeFileSync(path, JSON.stringify(body));
+  return path;
+}
+
+function clearPending(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
 
 function newRunId(): string {
@@ -186,8 +216,9 @@ async function main() {
 
   // Read only the delta. Bun.file().slice() would be ideal but .text() reads
   // the whole file; for now accept the O(n) read and slice in memory.
-  const fullText = readFileSync(transcriptPath, "utf8");
-  const delta = fullText.slice(lastOffset);
+  const full = readFileSync(transcriptPath);
+  const deltaBytes = full.subarray(lastOffset);
+  const delta = deltaBytes.toString("utf8");
   if (!delta.trim()) {
     process.exit(0);
   }
@@ -199,13 +230,20 @@ async function main() {
     process.exit(0);
   }
 
-  const runId = newRunId();
+  const identity = sourceIdentity(auth.machine_id, sessionId, transcriptPath);
+  const outboxPath = pendingOutboxPath(identity, lastOffset);
+  const pending = readPending(outboxPath);
+  const runId = typeof pending?.run_id === "string" ? pending.run_id : newRunId();
   const body: Record<string, unknown> = {
     run_id: runId,
     agent_runtime: RUNTIME,
     tags: ["captured", `basename:${basename(transcriptPath)}`, `session:${sessionId}`],
-    started_at: Date.now(),
+    started_at: typeof pending?.started_at === "number" ? pending.started_at : Date.now(),
     conversation_id: sessionId,
+    source_identity: identity,
+    from_offset: lastOffset,
+    to_offset: currentSize,
+    jsonl_sha256: sha256(deltaBytes),
     jsonl: delta,
   };
   if (prior?.last_run_id) {
@@ -223,26 +261,36 @@ async function main() {
     });
     if (!res.ok) {
       const errText = await res.text();
-      const outbox = writeToOutbox(runId, body);
+      const outbox = writeToOutbox(outboxPath, body);
       log(
         `POST failed ${res.status} for session=${sessionId}; outboxed to ${outbox}: ${errText.slice(0, 200)}`,
       );
       process.exit(0); // outbox drained later; don't block
     }
-    const resp = (await res.json()) as { run_id?: string };
+    const resp = (await res.json()) as { run_id?: string; to_offset?: number };
+    const acceptedOffset =
+      Number.isSafeInteger(resp.to_offset) &&
+      (resp.to_offset as number) >= lastOffset &&
+      (resp.to_offset as number) <= currentSize
+        ? (resp.to_offset as number)
+        : currentSize;
+    const acceptedTurns = countTurns(
+      deltaBytes.subarray(0, acceptedOffset - lastOffset).toString("utf8"),
+    );
     allState[sessionId] = {
-      last_byte_offset: currentSize,
+      last_byte_offset: acceptedOffset,
       last_run_id: resp.run_id ?? runId,
       last_captured_at: new Date().toISOString(),
-      turn_count: (prior?.turn_count ?? 0) + turnCount,
+      turn_count: (prior?.turn_count ?? 0) + acceptedTurns,
     };
     saveAllState(allState);
+    clearPending(outboxPath);
     log(
       `captured run_id=${resp.run_id} session=${sessionId} delta_bytes=${delta.length} turns=${turnCount}`,
     );
     process.exit(0);
   } catch (err) {
-    const outbox = writeToOutbox(runId, body);
+    const outbox = writeToOutbox(outboxPath, body);
     log(`network error for session=${sessionId}; outboxed to ${outbox}: ${(err as Error).message}`);
     process.exit(0);
   }

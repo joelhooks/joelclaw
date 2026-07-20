@@ -886,6 +886,9 @@ export type Events = {
       parent_run_id?: string;
       conversation_id?: string;
       tags?: string[];
+      from_offset?: number;
+      to_offset?: number;
+      source_identity?: string;
       /** Raw jsonl content, inline for small Runs. Omit if jsonl_path on NAS. */
       jsonl_inline?: string;
     };

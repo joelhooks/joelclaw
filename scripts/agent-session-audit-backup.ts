@@ -47,14 +47,7 @@ type SourceReport = {
 };
 
 type OutboxReport = {
-  before: number;
-  replayAttempted: number;
-  replayed: number;
-  failed: number;
-  skippedLarge: number;
-  after: number;
-  childExitCode: number | null;
-  error?: string;
+  files: number;
 };
 
 type HostReport = {
@@ -107,9 +100,11 @@ const centralUrl = String(
 ).replace(/\/$/, "");
 const repairEnv = Boolean(args.get("repair-env"));
 const sync = args.get("sync") !== false && args.get("sync") !== "false";
-const replayOutbox = Boolean(args.get("replay-outbox"));
-const replayLimit = Number(args.get("replay-limit") || 0);
-const replayMaxBytes = Number(args.get("replay-max-bytes") || 10 * 1024 * 1024);
+if (args.has("replay-outbox") || args.has("replay-limit") || args.has("replay-max-bytes")) {
+  throw new Error(
+    "Outbox replay was removed from this audit. Use scripts/replay-capture-outbox.ts for the canonical prefix-aware replay.",
+  );
+}
 const requestedStatTimeoutMs = Number(args.get("stat-timeout-ms") || 120_000);
 const statTimeoutMs =
   Number.isFinite(requestedStatTimeoutMs) && requestedStatTimeoutMs > 0
@@ -280,60 +275,8 @@ function countOutbox(host: HostConfig): number {
   return Number(result.stdout.trim()) || 0;
 }
 
-function replayOutboxForHost(host: HostConfig): OutboxReport {
-  const before = countOutbox(host);
-  if (!replayOutbox || replayLimit <= 0 || before === 0) {
-    return {
-      before,
-      replayAttempted: 0,
-      replayed: 0,
-      failed: 0,
-      skippedLarge: 0,
-      after: before,
-      childExitCode: null,
-    };
-  }
-  const script = `python3 - <<'PY'\nimport json, os, urllib.request, pathlib, shutil\nlimit=int(os.environ.get('REPLAY_LIMIT','0'))\nmax_bytes=int(os.environ.get('REPLAY_MAX_BYTES','10485760'))\ncentral=os.environ['CENTRAL_URL'].rstrip('/')\nauth_path=pathlib.Path.home()/'.joelclaw'/'auth.json'\nif not auth_path.exists():\n print(json.dumps({'attempted':0,'replayed':0,'failed':0,'skippedLarge':0,'error':'missing auth'})); raise SystemExit(0)\ntry:\n token=json.loads(auth_path.read_text()).get('token')\nexcept Exception as exc:\n print(json.dumps({'attempted':0,'replayed':0,'failed':0,'skippedLarge':0,'error':f'{type(exc).__name__}: {exc}'})); raise SystemExit(0)\nif not token:\n print(json.dumps({'attempted':0,'replayed':0,'failed':0,'skippedLarge':0,'error':'missing auth token'})); raise SystemExit(0)\nroot=pathlib.Path.home()/'.joelclaw'/'outbox'\nsent=pathlib.Path.home()/'.joelclaw'/'outbox-sent'\nsent.mkdir(parents=True, exist_ok=True)\nattempted=replayed=failed=skipped=0\nfirst_error=None\nfiles=sorted(root.glob('*.json'), key=lambda p: (p.stat().st_size, p.stat().st_mtime))\nfor path in files:\n if attempted>=limit: break\n try:\n  if max_bytes > 0 and path.stat().st_size > max_bytes:\n   skipped += 1\n   continue\n except OSError as exc:\n  first_error=first_error or f'{type(exc).__name__}: {exc}'\n  continue\n attempted+=1\n try:\n  body=path.read_bytes()\n  req=urllib.request.Request(central+'/api/runs', data=body, method='POST', headers={'content-type':'application/json','authorization':'Bearer '+token})\n  with urllib.request.urlopen(req, timeout=60) as res:\n   ok=200 <= res.status < 300\n  if ok:\n   shutil.move(str(path), str(sent/path.name)); replayed+=1\n  else:\n   failed+=1\n   first_error=first_error or f'HTTP status {res.status}'\n except Exception as exc:\n  failed+=1\n  first_error=first_error or f'{type(exc).__name__}: {exc}'\nresult={'attempted':attempted,'replayed':replayed,'failed':failed,'skippedLarge':skipped,'maxBytes':max_bytes}\nif first_error: result['error']=first_error\nprint(json.dumps(result))\nPY`;
-  const envPrefix = `CENTRAL_URL=${q(centralUrl)} REPLAY_LIMIT=${q(String(replayLimit))} REPLAY_MAX_BYTES=${q(String(replayMaxBytes))}`;
-  const result = hostShell(host, `${envPrefix} ${script}`, Math.max(60_000, replayLimit * 35_000));
-  let attempted = 0;
-  let replayed = 0;
-  let failed = 0;
-  let skippedLarge = 0;
-  let error =
-    result.code === 0 ? undefined : describeRunFailure(`replay child for ${host.name}`, result);
-  const childOutput = result.stdout.trim().split("\n").at(-1);
-  if (childOutput) {
-    try {
-      const parsed = JSON.parse(childOutput) as Record<string, unknown>;
-      attempted = Number(parsed.attempted) || 0;
-      replayed = Number(parsed.replayed) || 0;
-      failed = Number(parsed.failed) || 0;
-      skippedLarge = Number(parsed.skippedLarge) || 0;
-      if (typeof parsed.error === "string" && parsed.error.trim()) {
-        error = appendError(error, compactError(parsed.error));
-      }
-    } catch (parseError) {
-      const detail = parseError instanceof Error ? parseError.message : String(parseError);
-      error = appendError(
-        error,
-        `invalid replay child output: ${compactError(detail)}; output=${compactError(childOutput)}`,
-      );
-    }
-  } else {
-    error = appendError(error, "replay child produced no JSON output");
-  }
-  const after = countOutbox(host);
-  return {
-    before,
-    replayAttempted: attempted,
-    replayed,
-    failed,
-    skippedLarge,
-    after,
-    childExitCode: result.code,
-    ...(error ? { error } : {}),
-  };
+function inspectOutbox(host: HostConfig): OutboxReport {
+  return { files: countOutbox(host) };
 }
 
 function auditHost(hostName: HostName): HostReport {
@@ -403,13 +346,7 @@ function auditHost(hostName: HostName): HostReport {
     });
   }
 
-  const outbox = replayOutboxForHost(host);
-  if (outbox.error) {
-    errors.push(`joelclaw-outbox replay failed: ${outbox.error}`);
-  }
-  if (replayOutbox && outbox.after > 0) {
-    errors.push(`joelclaw-outbox: ${outbox.after} files remain after bounded replay`);
-  }
+  const outbox = inspectOutbox(host);
   return {
     host: hostName,
     reachable,
@@ -430,9 +367,6 @@ const report = {
   centralUrl,
   repairEnv,
   sync,
-  replayOutbox,
-  replayLimit,
-  replayMaxBytes,
   statTimeoutMs,
   hosts: hostList.map(auditHost),
 };

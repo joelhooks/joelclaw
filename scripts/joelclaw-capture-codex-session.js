@@ -17,13 +17,14 @@
  * - outboxes failed POST bodies to ~/.joelclaw/outbox/
  * - advances byte-offset state only after Central accepts the run
  */
-const { randomUUID } = require("node:crypto");
+const { createHash, randomUUID } = require("node:crypto");
 const {
   appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } = require("node:fs");
 const { homedir, hostname } = require("node:os");
@@ -77,15 +78,38 @@ function loadAuth() {
   return auth;
 }
 
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function sourceIdentity(machineId, sessionId, transcriptPath) {
+  return `sha256:${sha256(JSON.stringify([RUNTIME, machineId, sessionId, transcriptPath]))}`;
+}
+
+function pendingOutboxPath(identity, fromOffset) {
+  return join(OUTBOX_DIR, `pending-${sha256(`${identity}:${fromOffset}`).slice(0, 26)}.json`);
+}
+
+function readPending(path) {
+  return loadJson(path, undefined);
+}
+
 function newRunId() {
   return randomUUID().replace(/-/g, "").slice(0, 26);
 }
 
-function writeToOutbox(runId, body) {
+function writeToOutbox(path, body) {
   mkdirSync(OUTBOX_DIR, { recursive: true });
-  const outboxPath = join(OUTBOX_DIR, `${runId}.json`);
-  writeFileSync(outboxPath, JSON.stringify(body));
-  return outboxPath;
+  writeFileSync(path, JSON.stringify(body));
+  return path;
+}
+
+function clearPending(path) {
+  try {
+    unlinkSync(path);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
 }
 
 function countSubstantiveLines(jsonlDelta) {
@@ -146,10 +170,12 @@ async function main() {
     return;
   }
 
+  let deltaBytes;
   let delta;
   try {
-    const full = readFileSync(transcriptPath, "utf8");
-    delta = full.slice(lastOffset);
+    const full = readFileSync(transcriptPath);
+    deltaBytes = full.subarray(lastOffset);
+    delta = deltaBytes.toString("utf8");
   } catch (err) {
     log(`read failed: ${err.message}`);
     respond();
@@ -162,7 +188,10 @@ async function main() {
   }
 
   const lineCount = countSubstantiveLines(delta);
-  const runId = newRunId();
+  const identity = sourceIdentity(auth.machine_id, sessionId, transcriptPath);
+  const outboxPath = pendingOutboxPath(identity, lastOffset);
+  const pending = readPending(outboxPath);
+  const runId = typeof pending?.run_id === "string" ? pending.run_id : newRunId();
   const body = {
     run_id: runId,
     agent_runtime: RUNTIME,
@@ -174,8 +203,12 @@ async function main() {
       `basename:${basename(transcriptPath)}`,
       `session:${sessionId}`,
     ],
-    started_at: Date.now(),
+    started_at: typeof pending?.started_at === "number" ? pending.started_at : Date.now(),
     conversation_id: sessionId,
+    source_identity: identity,
+    from_offset: lastOffset,
+    to_offset: currentSize,
+    jsonl_sha256: sha256(deltaBytes),
     jsonl: delta,
   };
   if (ctx.cwd) body.cwd = String(ctx.cwd);
@@ -195,7 +228,7 @@ async function main() {
 
     if (!res.ok) {
       const text = await res.text();
-      const outbox = writeToOutbox(runId, body);
+      const outbox = writeToOutbox(outboxPath, body);
       log(
         `POST failed status=${res.status} session=${sessionId}; outboxed=${outbox}; ${text.slice(0, 200)}`,
       );
@@ -205,21 +238,31 @@ async function main() {
 
     const payload = await res.json().catch(() => ({}));
     const acceptedRunId = payload.run_id || runId;
+    const acceptedOffset =
+      Number.isSafeInteger(payload.to_offset) &&
+      payload.to_offset >= lastOffset &&
+      payload.to_offset <= currentSize
+        ? payload.to_offset
+        : currentSize;
+    const acceptedLineCount = countSubstantiveLines(
+      deltaBytes.subarray(0, acceptedOffset - lastOffset).toString("utf8"),
+    );
     allState[key] = {
-      last_byte_offset: currentSize,
+      last_byte_offset: acceptedOffset,
       last_run_id: acceptedRunId,
       last_captured_at: new Date().toISOString(),
-      line_count: (prior?.line_count || 0) + lineCount,
+      line_count: (prior?.line_count || 0) + acceptedLineCount,
       transcript_path: transcriptPath,
       session_id: sessionId,
     };
     saveJson(STATE_PATH, allState);
+    clearPending(outboxPath);
     log(
       `captured run=${acceptedRunId} session=${sessionId} delta=${delta.length}B lines=${lineCount}`,
     );
     respond();
   } catch (err) {
-    const outbox = writeToOutbox(runId, body);
+    const outbox = writeToOutbox(outboxPath, body);
     log(`network error session=${sessionId}; outboxed=${outbox}; ${err.message}`);
     respond();
   }

@@ -8,6 +8,10 @@ export type CaptureBody = {
   started_at: number;
   tags?: string[];
   jsonl: string;
+  from_offset?: number;
+  to_offset?: number;
+  jsonl_sha256?: string;
+  source_identity?: string;
   [key: string]: unknown;
 };
 
@@ -20,6 +24,8 @@ export type CatalogEntry = {
   runtime: CaptureBody["agent_runtime"];
   conversationId?: string;
   parentRunId?: string;
+  sourceIdentity?: string;
+  fromOffset?: number;
   startedAt: number;
   jsonlChars: number;
   jsonlBytes: number;
@@ -69,12 +75,67 @@ export function parseCaptureBody(value: unknown): CaptureBody {
   if (typeof body.jsonl !== "string" || !body.jsonl.trim()) {
     throw new Error("capture body has empty jsonl");
   }
+  const segmentFields = [body.from_offset, body.to_offset, body.jsonl_sha256, body.source_identity];
+  if (segmentFields.some((field) => field !== undefined)) {
+    if (
+      !Number.isSafeInteger(body.from_offset) ||
+      !Number.isSafeInteger(body.to_offset) ||
+      (body.from_offset as number) < 0 ||
+      (body.to_offset as number) < (body.from_offset as number)
+    ) {
+      throw new Error("capture body has invalid byte offsets");
+    }
+    if (body.to_offset - body.from_offset !== Buffer.byteLength(body.jsonl, "utf8")) {
+      throw new Error("capture body byte range does not match jsonl");
+    }
+    if (typeof body.jsonl_sha256 !== "string" || body.jsonl_sha256 !== sha256(body.jsonl)) {
+      throw new Error("capture body jsonl_sha256 mismatch");
+    }
+    if (typeof body.source_identity !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(body.source_identity)) {
+      throw new Error("capture body has invalid source_identity");
+    }
+  }
   return body as CaptureBody;
 }
 
+export function captureSourceIdentity(parts: readonly string[]): string {
+  return `sha256:${sha256(JSON.stringify(parts))}`;
+}
+
+export function pendingCaptureFileName(sourceIdentity: string, fromOffset: number): string {
+  return `pending-${sha256(`${sourceIdentity}:${fromOffset}`).slice(0, 26)}.json`;
+}
+
+export function coalescePendingCapture(
+  pending: CaptureBody | undefined,
+  next: CaptureBody,
+): CaptureBody {
+  if (!pending) return next;
+  if (
+    pending.source_identity !== next.source_identity ||
+    pending.from_offset !== next.from_offset ||
+    pending.agent_runtime !== next.agent_runtime ||
+    pending.conversation_id !== next.conversation_id
+  ) {
+    throw new Error("pending capture does not match stale cursor");
+  }
+  return {
+    ...next,
+    run_id: pending.run_id,
+    started_at: pending.started_at,
+    parent_run_id: pending.parent_run_id,
+  };
+}
+
 export function logicalGroupKey(
-  value: Pick<CatalogEntry, "runtime" | "conversationId" | "parentRunId">,
+  value: Pick<
+    CatalogEntry,
+    "runtime" | "conversationId" | "parentRunId" | "sourceIdentity" | "fromOffset"
+  >,
 ): string {
+  if (value.sourceIdentity !== undefined && value.fromOffset !== undefined) {
+    return JSON.stringify([value.sourceIdentity, value.fromOffset]);
+  }
   return JSON.stringify([value.runtime, value.conversationId ?? null, value.parentRunId ?? null]);
 }
 
@@ -116,6 +177,8 @@ export function catalogEntryMatches(expected: CatalogEntry, actual: CatalogEntry
     expected.runtime === actual.runtime &&
     expected.conversationId === actual.conversationId &&
     expected.parentRunId === actual.parentRunId &&
+    expected.sourceIdentity === actual.sourceIdentity &&
+    expected.fromOffset === actual.fromOffset &&
     expected.startedAt === actual.startedAt &&
     expected.jsonlChars === actual.jsonlChars &&
     expected.jsonlBytes === actual.jsonlBytes &&
@@ -186,10 +249,29 @@ export function deriveReplayBody(
 
   const suffix = source.jsonl.slice(longestPrefix.jsonl.length);
   if (!suffix.trim()) return { status: "covered", capturedRunId: longestPrefix.runId };
+  const removedPrefixBytes = Buffer.byteLength(longestPrefix.jsonl, "utf8");
+  const suffixRunId =
+    longestPrefix.runId === source.run_id
+      ? sha256(
+          JSON.stringify([
+            source.run_id,
+            source.from_offset ?? null,
+            removedPrefixBytes,
+            sha256(suffix),
+          ]),
+        ).slice(0, 26)
+      : source.run_id;
   const body: CaptureBody = {
     ...source,
+    run_id: suffixRunId,
     parent_run_id: longestPrefix.runId,
     jsonl: suffix,
+    ...(source.from_offset !== undefined
+      ? {
+          from_offset: source.from_offset + removedPrefixBytes,
+          jsonl_sha256: sha256(suffix),
+        }
+      : {}),
     tags: [...new Set([...(source.tags ?? []), "outbox-replay", "prefix-trimmed"])],
   };
   return {
@@ -197,7 +279,7 @@ export function deriveReplayBody(
     body,
     replaySha256: sha256(suffix),
     capturedRunId: longestPrefix.runId,
-    removedPrefixBytes: Buffer.byteLength(longestPrefix.jsonl, "utf8"),
+    removedPrefixBytes,
   };
 }
 

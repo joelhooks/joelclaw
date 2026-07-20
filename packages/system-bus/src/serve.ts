@@ -1,14 +1,10 @@
 import { execSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type InboxResult, isSandboxExecutionResult } from "@joelclaw/agent-execution";
-import {
-  type AgentRuntime,
-  MACHINES_COLLECTION,
-  writeRunBlob,
-} from "@joelclaw/memory";
+import { MACHINES_COLLECTION, writeRunBlob } from "@joelclaw/memory";
 import { Hono } from "hono";
 import { connect as inngestConnect } from "inngest/connect";
 import { serve as inngestServe } from "inngest/hono";
@@ -72,6 +68,7 @@ import {
 } from "./inngest/functions/index.host";
 import { enqueueRegisteredQueueEvent } from "./lib/queue";
 import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
+import { type MemoryIdentity, registerRunCaptureRoute } from "./routes/run-capture";
 
 const app = new Hono();
 const OTEL_EMIT_TOKEN = process.env.OTEL_EMIT_TOKEN;
@@ -84,37 +81,7 @@ const INTERNAL_AGENT_ACK_DIR = join(INTERNAL_AGENT_INBOX_DIR, "ack");
 const INTERNAL_AGENT_POLL_MS = 2_000;
 const INTERNAL_AGENT_MAX_TIMEOUT_MS = 60 * 60_000;
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
-const VALID_RUN_RUNTIMES: AgentRuntime[] = [
-  "pi",
-  "claude-code",
-  "codex",
-  "loop",
-  "workload-stage",
-  "gateway",
-  "other",
-];
-
 type WorkerRole = "host" | "cluster";
-type MemoryIdentity = {
-  user_id: string;
-  machine_id: string;
-  did: string | null;
-};
-
-type RunIngestRequest = {
-  run_id?: string;
-  agent_runtime?: AgentRuntime;
-  started_at?: number;
-  parent_run_id?: string | null;
-  conversation_id?: string | null;
-  tags?: string[];
-  jsonl?: string;
-};
-
-type ParsedRunIngestRequest = RunIngestRequest & {
-  agent_runtime: AgentRuntime;
-  jsonl: string;
-};
 type FunctionDefinition = { opts?: { id?: string } };
 
 function parseWorkerRole(value: string | undefined): WorkerRole {
@@ -257,10 +224,6 @@ function sha256(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
-function newRunId(): string {
-  return randomUUID().replace(/-/g, "").slice(0, 26);
-}
-
 async function lookupMemoryIdentity(token: string): Promise<MemoryIdentity | null> {
   if (token === "dev-joel-panda") {
     return {
@@ -309,89 +272,10 @@ async function authenticateRunCapture(c: any): Promise<MemoryIdentity | null> {
   return lookupMemoryIdentity(token);
 }
 
-function parseRunBody(value: unknown): ParsedRunIngestRequest | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const body = value as RunIngestRequest;
-  if (!body.jsonl || typeof body.jsonl !== "string") return null;
-  if (!body.agent_runtime || !VALID_RUN_RUNTIMES.includes(body.agent_runtime)) return null;
-  return body as ParsedRunIngestRequest;
-}
-
-app.post("/api/runs", async (c) => {
-  const auth = await authenticateRunCapture(c);
-  if (!auth) {
-    return c.json({ ok: false, error: { code: "unauthorized" } }, 401);
-  }
-
-  const body = parseRunBody(await c.req.json().catch(() => null));
-  if (!body) {
-    return c.json(
-      {
-        ok: false,
-        error: {
-          code: "invalid_run_capture",
-          message: "Body must include jsonl string and valid agent_runtime",
-        },
-      },
-      400,
-    );
-  }
-
-  const runId = body.run_id ?? newRunId();
-  const startedAt = body.started_at ?? Date.now();
-  const tags = Array.isArray(body.tags) ? body.tags.filter((tag) => typeof tag === "string") : [];
-  const { jsonl_path, jsonl_bytes, jsonl_sha256 } = writeRunBlob(
-    auth.user_id,
-    runId,
-    startedAt,
-    body.jsonl,
-    {
-      run_id: runId,
-      user_id: auth.user_id,
-      machine_id: auth.machine_id,
-      agent_runtime: body.agent_runtime,
-      parent_run_id: body.parent_run_id ?? null,
-      conversation_id: body.conversation_id ?? null,
-      tags,
-      started_at: startedAt,
-      captured_at: Date.now(),
-    },
-  );
-
-  await inngest.send({
-    name: "memory/run.captured",
-    data: {
-      run_id: runId,
-      user_id: auth.user_id,
-      machine_id: auth.machine_id,
-      agent_runtime: body.agent_runtime,
-      jsonl_path,
-      jsonl_bytes,
-      jsonl_sha256,
-      started_at: startedAt,
-      parent_run_id: body.parent_run_id ?? undefined,
-      conversation_id: body.conversation_id ?? undefined,
-      tags,
-    },
-  });
-
-  return c.json(
-    {
-      ok: true,
-      run_id: runId,
-      user_id: auth.user_id,
-      machine_id: auth.machine_id,
-      jsonl_path,
-      jsonl_bytes,
-      jsonl_sha256,
-      status: "accepted",
-      _links: {
-        self: `/api/runs/${runId}`,
-        search: "/api/runs/search",
-      },
-    },
-    202,
-  );
+registerRunCaptureRoute(app, {
+  authenticate: authenticateRunCapture,
+  writeRunBlob,
+  sendCaptured: (event) => inngest.send(event),
 });
 
 app.get("/api/runs/health", (c) =>

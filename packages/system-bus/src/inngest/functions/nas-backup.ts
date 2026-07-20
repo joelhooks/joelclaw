@@ -4,6 +4,7 @@ import { createWriteStream } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
+import { buildAgentSessionBackupCommand } from "../../lib/agent-session-backup-command";
 import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
 import { infer } from "../../lib/inference";
 import { assertAllowedModel } from "../../lib/models";
@@ -1827,13 +1828,7 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
     const hosts = typeof eventData.hosts === "string" && eventData.hosts.trim().length > 0
       ? eventData.hosts.trim()
       : "flagg,blaine,panda";
-    const replayLimit = typeof eventData.replayLimit === "number"
-      ? Math.max(0, Math.floor(eventData.replayLimit))
-      : 250;
     const repairEnv = eventData.repairEnv !== false;
-    const replayMaxBytes = typeof eventData.replayMaxBytes === "number"
-      ? Math.max(0, Math.floor(eventData.replayMaxBytes))
-      : 10 * 1024 * 1024;
     const centralUrl = typeof eventData.centralUrl === "string" && eventData.centralUrl.trim().length > 0
       ? eventData.centralUrl.trim()
       : AGENT_SESSION_CENTRAL_URL;
@@ -1841,9 +1836,7 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
     const metadata: Record<string, unknown> = {
       schedule: event.name === "inngest/scheduled.timer" ? "daily_515am_pt" : "manual",
       hosts,
-      replayLimit,
       repairEnv,
-      replayMaxBytes,
       centralUrl,
       backupRoot: AGENT_SESSION_BACKUP_ROOT,
     };
@@ -1862,25 +1855,14 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
         const receiptPath = await step.run("run-agent-session-audit-backup", async () => {
           const stamp = new Date().toISOString().replace(/[:.]/g, "");
           const receipt = `${AGENT_SESSION_BACKUP_ROOT}/receipts/agent-session-audit-${stamp}.json`;
-          const proc = Bun.spawnSync([
-            "bun",
-            AGENT_SESSION_BACKUP_SCRIPT,
-            "--hosts",
+          const proc = Bun.spawnSync(buildAgentSessionBackupCommand({
+            scriptPath: AGENT_SESSION_BACKUP_SCRIPT,
             hosts,
-            "--backup-root",
-            AGENT_SESSION_BACKUP_ROOT,
-            "--central-url",
+            backupRoot: AGENT_SESSION_BACKUP_ROOT,
             centralUrl,
-            "--sync=true",
-            "--replay-outbox",
-            "--replay-limit",
-            String(replayLimit),
-            "--replay-max-bytes",
-            String(replayMaxBytes),
-            "--receipt",
-            receipt,
-            ...(repairEnv ? ["--repair-env"] : []),
-          ], {
+            receiptPath: receipt,
+            repairEnv,
+          }), {
             cwd: JOELCLAW_REPO_ROOT,
             env: process.env,
             stdout: "pipe",
@@ -1897,7 +1879,7 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
         });
 
         metadata.receiptPath = receiptPath;
-        return { receiptPath, hosts, replayLimit, replayMaxBytes, repairEnv, centralUrl };
+        return { receiptPath, hosts, repairEnv, centralUrl };
       }
     );
   }

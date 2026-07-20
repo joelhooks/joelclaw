@@ -156,6 +156,9 @@ export const memoryRunCaptured = inngest.createFunction(
       parent_run_id,
       conversation_id,
       tags,
+      from_offset,
+      to_offset,
+      source_identity,
       jsonl_inline,
     } = event.data;
 
@@ -231,6 +234,9 @@ export const memoryRunCaptured = inngest.createFunction(
           jsonl_path,
           jsonl_bytes,
           jsonl_sha256,
+          from_offset,
+          to_offset,
+          source_identity,
         };
 
         await upsertRunDocument(run);

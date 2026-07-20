@@ -43,6 +43,9 @@ export interface Run {
   jsonl_path: string;
   jsonl_bytes: number;
   jsonl_sha256: string;
+  from_offset?: number;
+  to_offset?: number;
+  source_identity?: string;
 }
 
 export interface Chunk {
