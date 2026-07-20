@@ -1204,6 +1204,11 @@ export type Events = {
       cancelledAt: string;
     };
   };
+  "pane/schedule.reconcile.requested": {
+    data: {
+      reason?: string;
+    };
+  };
   "message/inbound.reaction": {
     data: InboundReactionEventType;
   };

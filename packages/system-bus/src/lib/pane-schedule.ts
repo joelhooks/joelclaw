@@ -1,6 +1,14 @@
 export const PANE_SCHEDULE_VERSION = 1 as const;
 export const PANE_SCHEDULE_REGISTRY_KEY = "pane:schedules:pending";
 export const PANE_SCHEDULE_LATE_AFTER_MS = 5 * 60_000;
+export const PANE_SCHEDULE_FAILURES_KEY = "pane:schedules:failures";
+export const PANE_SCHEDULE_DEAD_KEY = "pane:schedules:dead";
+/**
+ * How long past `at` a pending registry entry must be before the reconciler
+ * treats it as orphaned. Deliberately larger than PANE_SCHEDULE_LATE_AFTER_MS
+ * so a healthy-but-slow step.sleepUntil wake never races the reconciler.
+ */
+export const PANE_SCHEDULE_RECONCILE_GRACE_MS = 10 * 60_000;
 
 export type PaneScheduleVerb = "wake" | "spawn" | "revive";
 
@@ -89,4 +97,12 @@ export function validatePaneSchedule(input: unknown): PaneScheduleEntry {
 
 export function isPaneScheduleLate(at: string, firedAtMs: number): boolean {
   return firedAtMs - Date.parse(at) > PANE_SCHEDULE_LATE_AFTER_MS;
+}
+
+export function isPaneScheduleOverdue(
+  at: string,
+  nowMs: number,
+  graceMs: number = PANE_SCHEDULE_RECONCILE_GRACE_MS,
+): boolean {
+  return Date.parse(at) <= nowMs - graceMs;
 }

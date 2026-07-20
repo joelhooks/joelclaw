@@ -105,6 +105,7 @@ import { noiseRateGuard } from "./noise-rate-guard";
 import { o11yTriage } from "./o11y-triage";
 import { observeSessionNoted } from "./observe-session-noted";
 import { paneSchedule } from "./pane-schedule";
+import { paneScheduleReconcile } from "./pane-schedule-reconcile";
 import { selfHealingGatewayBridge } from "./self-healing-gateway-bridge";
 import { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
 import { selfHealingInvestigator } from "./self-healing-investigator";
@@ -290,6 +291,7 @@ export const hostFunctionDefinitions = [
   sleepModeRequested,
   wakeModeRequested,
   paneSchedule,
+  paneScheduleReconcile,
   signalReminder,
   typesenseVaultSyncQueue,
   typesenseVaultSync,

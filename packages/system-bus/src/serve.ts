@@ -810,6 +810,15 @@ if (duplicateFunctionIds.length > 0) {
 setTimeout(() => {
   void fetch("http://127.0.0.1:3111/api/inngest", { method: "PUT" }).catch(() => {});
 }, 5_000);
+// Startup sweep of the pane-schedule pending registry: a reboot terminally
+// fails in-flight pane/schedule runs, so ask the reconciler to recover any
+// orphaned entries as soon as the worker is back. Fire-and-forget; the */5
+// cron trigger covers the case where the Inngest server is not up yet.
+setTimeout(() => {
+  void inngest
+    .send({ name: "pane/schedule.reconcile.requested", data: { reason: "startup" } })
+    .catch(() => {});
+}, 10_000);
 void emitOtelEvent({
   level: "info",
   source: "worker",
