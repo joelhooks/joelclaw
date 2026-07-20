@@ -1,0 +1,17 @@
+---
+title: "Fix the session-index-health Recovery Transaction"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./reboot-hardening-brief.svx"
+blockers: []
+created_at: "2026-07-20"
+---
+
+# Fix the session-index-health Recovery Transaction
+
+## Step
+
+`session-index-health`'s `recover()` force-restarts Inngest (`launchctl kickstart -k`), then the GUI worker, and advances `last-recovery-epoch` only if both succeed — so a failing worker kick (exit 125/113 in the 2026-07-19/20 storms) leaves the cooldown expired and kills healthy Inngest every 60-second pass. 54 forced replacements post-reboot; evidence in [the boot timeline asset](./asset-inngest-boot-timeline.svx). Two fixes: (1) make the recovery transactional per target — advance the cooldown after ANY forced restart happens, and track worker-kick failure separately instead of retrying the whole pair; (2) scope triggers — `worker_unavailable` and `index_lag_exceeded` point at the worker/indexer and must not restart the event server. Resolved when a simulated worker-kick failure produces exactly one Inngest restart per cooldown window (not per pass) and an index-lag condition restarts only the worker.

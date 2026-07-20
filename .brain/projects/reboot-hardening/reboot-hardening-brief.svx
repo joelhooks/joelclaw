@@ -35,12 +35,14 @@ After any reboot of flagg, within 15 minutes: Inngest is up, the dispatcher can 
 ## Decision ledger
 
 - [Verify the notify-wait drift is resolved](./verify-notify-wait-resolved.svx) — stale installed binary, rebuilt 2026-07-19 22:56; `notify wait` present; next `learner-flow/action` run is the proof.
+- [Explain the 8-hour Inngest boot gap](./explain-inngest-boot-gap.svx) — no boot gap: Inngest started 18 seconds after boot; `session-index-health` force-replaced it 54 times because partial worker-recovery failures never advanced the cooldown.
 
 ## Latent
 
 - The 2026-07-19 pulse-log entries at 17:27Z and 18:26Z have no identified trigger — the chain broke at 16:00Z, so something else ran those snapshots.
 - The registry entry is deleted after due-signal emission even when the dispatcher reports `ok:false` — delivery confirmation semantics may need to include dispatcher ack, beyond what the reconciler covers.
 - The observer session holds 70 tabs / 70 panes — hoarding that predates this effort; may deserve its own sweep policy.
+- No readiness ordering exists for Inngest after Postgres/Valkey — this reboot happened to work; a slower dependency boot can still fail the start (boot-timeline asset, LaunchDaemon audit).
 
 ## Out of scope
 

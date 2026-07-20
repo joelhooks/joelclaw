@@ -4,7 +4,7 @@ type: "step"
 kind: "task"
 interaction: "AFK"
 status: "open"
-assignee: ""
+assignee: "pi (flagg, herdr pane w1P:p5, 2026-07-20)"
 parent: "./reboot-hardening-brief.svx"
 blockers: []
 created_at: "2026-07-20"
@@ -15,3 +15,9 @@ created_at: "2026-07-20"
 ## Step
 
 Build `inngest-v127-purge`: a helper pinned to Inngest v1.27.0 internals that removes the 595 poisoned (missing-`envID`) queue items via `DequeueByJobID` — raw Redis `HDEL` would corrupt queue indexes. Sequence per the diagnosis: `redis-cli BGSAVE` first; `--dry-run` must select exactly 595 items across the five function IDs in the brief's Notes; then `--apply` between `sudo launchctl bootout` / `bootstrap` of `com.joelclaw.central.inngest`. **Full purge pre-authorized by Joel (2026-07-20) conditional on the exact-595 dry-run match — a mismatch voids the authorization.** Resolved when the lease-failure spam stops (verify: no new "acquiring capacity lease failed" lines for 30 minutes) and all five functions still run on schedule.
+
+## Result
+
+Built `scripts/inngest-v127-purge.ts` with the expanded v1.27.0 `DequeueByJobID` Lua path vendored at `scripts/vendor/inngest-v1.27.0/queue-dequeue.lua`. The helper verifies the installed binary is `1.27.0-781c91d3c`, scans the queue without mutation, and refuses apply unless the selection is exactly 595 items across all five authorized function IDs.
+
+The dry-run selected exactly **595** items: 74 for `155f899f`, 162 for `8f5e3d9e`, 10 for `ce6c53eb`, 7 for `6d5d880e`, and 342 for `6489b63e`. The authorization condition passed. Full item receipts are in [`asset-purge-dry-run.svx`](./asset-purge-dry-run.svx). No apply, launchctl action, or Redis key mutation ran. Status remains open for the steering session's apply, Inngest bounce, and 30-minute verification.

@@ -1,0 +1,79 @@
+---
+title: "Asset: Inngest Boot-to-Healthy Timeline"
+type: "asset"
+parent: "./explain-inngest-boot-gap.svx"
+date: "2026-07-20"
+privacy: "private"
+---
+
+# Inngest Boot-to-Healthy Timeline
+
+There was no eight-hour boot gap. Inngest started 18 seconds after macOS boot and served the recorded function finish. A health daemon later replaced that process 54 times.
+
+Times below use UTC, with local Pacific Daylight Time (PDT) in parentheses.
+
+## Timeline
+
+| Time | Evidence | Meaning |
+|---|---|---|
+| 2026-07-19 21:28:29Z (14:28:29 PDT) | `sysctl kern.boottime`; `last reboot` | Flagg booted. |
+| 21:28:45Z (14:28:45 PDT) | `ps -o lstart`; current launchd accounting | Postgres PID 327, Valkey PID 330, Typesense PID 333, and the other long-running Central daemons started. |
+| 21:28:47Z (14:28:47 PDT) | unified log: `Successfully spawned central-inngest[325] because speculative` | `RunAtLoad` started Inngest 18 seconds after boot. The plist did not delay it. |
+| about 21:34Z (14:34 PDT) | recorded function-finish cited by the claimed step | PID 325 served Inngest during this interval. The finish is consistent with the launchd timeline. |
+| 21:30Z through 21:38Z | `session-index-health.out.log` | The session-index health job saw `worker_unavailable`. Its persisted 900-second cooldown temporarily blocked recovery. Inngest itself remained available. |
+| 21:40:21Z (14:40:21 PDT) | health log plus unified launchd log | The cooldown expired. `session-index-health` ran `launchctl kickstart -k` against healthy Inngest, then failed to kick the GUI worker with exit 125. PID 325 exited and PID 27688 started. |
+| 21:40Z through 22:46Z (14:40 through 15:46 PDT) | unified launchd log; health log | The job repeated the same partial recovery on almost every 60-second pass. It started 50 replacement Inngest processes. The deployed script never wrote a new cooldown timestamp because the worker half failed. |
+| 22:46:14Z (15:46:14 PDT) | unified log: PID 96851 start | The first restart storm ended. The worker became reachable. Health changed to non-actionable `index_freshness_unknown`, then to `healthy` at 2026-07-20 04:05Z. PID 96851 stayed up for about 6 hours 34 minutes. |
+| 2026-07-20 05:16Z (22:16 PDT) | health log | Index lag exceeded 300 seconds. The monitor again treated this as a reason to restart both Inngest and the worker. |
+| 05:19:51Z, 05:22:06Z, 05:24:22Z, 05:26:15Z | health log plus unified launchd log | Four more `kickstart -k` attempts replaced Inngest. The worker kick failed with exit 113. PID 46227 is the fourth replacement, not the first post-boot process. |
+| 05:27:25Z onward | health log; live probes on 2026-07-20 | Index lag returned to zero. Restarts stopped. `GET 127.0.0.1:8288/health` and `GET 127.0.0.1:3111/api/inngest` both returned HTTP 200 during this investigation. |
+
+Current launchd accounting reported `runs = 55`: one boot start plus 54 forced replacements. It reported `last exit code = 0`, which fits `kickstart -k`, not a crash loop.
+
+## Root cause
+
+`session-index-health` caused both restart storms. Its `recover()` function does this in order:
+
+1. Force-restart system Inngest with `launchctl kickstart -k`.
+2. Try to force-restart the user GUI worker.
+3. Update the cooldown and reset failures only if both commands succeed.
+
+The GUI worker command failed. The Inngest command succeeded. The function returned failure before updating `last-recovery-epoch`, so every later check considered the cooldown expired and killed healthy Inngest again.
+
+The second storm exposed another boundary error. `index_lag_exceeded` points at run indexing or the host worker. It does not justify restarting the event server.
+
+This was automated recovery, not manual operator action. Unified logs show launchd starts that align exactly with `session-index-health.out.log`. The daemon plist has no delayed-start key.
+
+## LaunchDaemon audit
+
+Actual deployed files under `/Library/LaunchDaemons`:
+
+| Label group | `RunAtLoad` | `KeepAlive` | Schedule | Finding |
+|---|---:|---|---:|---|
+| `central.inngest`, `central.postgres`, `central.redis`, `central.typesense`, `central.ds4`, `central.executor`, `central.executor-dashboard` | true | `{ SuccessfulExit = false }` | none | They start at boot and restart after non-zero exits. A clean unexpected exit can stay down. |
+| `central.nas-mounts` | true | false | 60 seconds | Correct timer-job shape. |
+| `central.session-index-health` | true | absent | 60 seconds | Correct timer-job shape, but its recovery transaction is defective. |
+
+No long-running daemon has an explicit `ThrottleInterval`; launchd used its normal minimum-runtime behavior. That did not create the observed timing.
+
+All long-running services started within two seconds of each other. There is no dependency or readiness ordering for Inngest after Postgres and Valkey. This reboot happened to work, but a slower dependency boot can still cause an avoidable failed start.
+
+## Defects to carry forward
+
+1. **Confirmed:** split the Inngest and worker recovery receipts and cooldowns. A failed worker kick must not erase a successful Inngest recovery.
+2. **Confirmed:** do not restart Inngest for `worker_unavailable` or `index_lag_exceeded` while `/health` is already good.
+3. **Confirmed:** a system LaunchDaemon cannot reliably kick the GUI worker with the current command. The worker recovery path needs the correct launchd domain or a separate owner.
+4. **Latent:** use unconditional `KeepAlive` for true always-on daemons, or document why clean exit means stop. The current condition leaves clean exits down.
+5. **Latent:** add bounded dependency readiness before Inngest starts, rather than relying on same-second launch order.
+
+## Receipts
+
+- `/Library/LaunchDaemons/com.joelclaw.central.*.plist`
+- `/Users/Shared/joelclaw/bin/session-index-health`
+- `/Users/Shared/joelclaw/logs/session-index-health.out.log`
+- `/Users/Shared/joelclaw/logs/inngest/launchd.out.log`
+- `infra/central/native/session-index-health.sh`
+- `launchctl print system/com.joelclaw.central.inngest`
+- `log show --start '2026-07-19 14:25:00' --end '2026-07-19 22:35:00' --predicate 'process == "launchd" AND eventMessage CONTAINS[c] "com.joelclaw.central.inngest"'`
+
+The deployed health script and repository source had the same SHA-256 during this investigation.
