@@ -1,0 +1,22 @@
+---
+title: "Worker task: adversarially verify the freshness scheduling and alerts"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: adversarially verify the freshness scheduling and alerts
+
+You are an adversarial verifier on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). A worker built and closed [Keep the Critical DB Fresh](../projects/typesense-reboot-recovery/keep-critical-db-fresh.svx) — read its Result. Uncommitted changes live in `packages/system-bus/**` (scheduled rebuild function + staleness alerts) and possibly new `scripts/export-*`. Note: steering has since fixed the five malformed observer pages (dark-wizard `362e662`) and proven a live builder publish. Try to refute the claim that `critical.db` cannot silently rot.
+
+Attack angles, minimum:
+
+1. Schedule truth: the 6-hour rebuild function — does it actually invoke the hardened builder binary/script (not a reimplementation), and is a builder exit 1 LOUD (alert fired via fixture) rather than a swallowed step failure? What happens when the builder's lock is held by a concurrent manual run?
+2. Budget arithmetic: the 8-hour build budget and 24-hour high-water budget — fixture the boundary cases (7h59m no alert, 8h01m alert once, recovery clears). Same incident-dedup discipline as the growth alerts — no storm on a permanently failing rebuild.
+3. The zero-gap claim: independently verify `memory_observations` was archived complete (28,050 rows, high-water 2026-05-31) and dropped July 17 — check the archive file and Typesense collection list yourself. If any evidence contradicts "no June gap", refute.
+4. Freshness semantics: with the builder now publishing (steering's live run), does the alert read the same freshness metadata the port emits — or a parallel notion that can drift?
+5. Regression sweep: the 12 fixture tests, `bunx tsc --noEmit`, targeted Biome; registrations coexist with the message-event hunks.
+
+Containment: fixtures only — no real alert sends, no production Redis keys, no Typesense mutations, `~/.joelclaw/runs-dev` read-only, never modify `critical.db` outside the builder's own path, do not restart the worker, do not commit.
+
+Deliverable: `.brain/projects/typesense-reboot-recovery/freshness-verification.svx` (`type: "asset"`, `parent: "./keep-critical-db-fresh.svx"`) with CONFIRMED/REFUTED per claim and evidence. Do not edit the step file. Work autonomously. Do not commit. Print a DONE summary.
