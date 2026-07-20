@@ -1,0 +1,135 @@
+---
+title: "Typesense reboot recovery diagnosis"
+status: active
+privacy: private
+updated: 2026-07-19
+source:
+  - https://github.com/typesense/typesense/issues/1795
+  - https://typesense.org/docs/guide/faqs.html
+  - https://typesense.org/docs/guide/high-availability.html
+---
+
+# Typesense reboot recovery diagnosis
+
+## Verdict
+
+The Flagg restart exposed two separate failures.
+
+1. Typesense v30.2 does not persist ready text, facet, sort, or HNSW indexes. Every node reconstructs them from stored RocksDB documents after a restart. This is documented behavior, not a missing local setting.
+2. Our session-capture replay path inflated `run_chunks_dev` with cumulative prefix copies. The derived collection now contains millions of redundant chunks, making the expected Typesense restart behavior operationally catastrophic.
+
+A reboot-safe system cannot rely on this single Typesense node as the only critical search path.
+
+## Typesense evidence
+
+Audited Typesense version: v30.2, commit `d45d46baf3996d1de8bf96a87f375cfb43691560`.
+
+- `src/collection_manager.cpp:2031-2099` scans every stored document and calls `batch_index_in_memory()` during startup.
+- `src/index.cpp:64-117` creates empty text, facet, sort, and vector index structures.
+- `src/index.cpp:1010-1083` calls HNSW `addPoint()` for stored vectors.
+- `src/raft_server.cpp:556-641` stores RocksDB checkpoints and batched-indexer state in Raft snapshots.
+- `src/raft_server.cpp:664-741` restores the checkpoint and then runs the complete collection load.
+- No v30.2 source path calls HNSW `saveIndex()` or `loadIndex()`.
+
+The official Typesense FAQ says a restarted process reads stored data and rebuilds its in-memory indexes. It returns HTTP 503 until the rebuild completes.
+
+Open issue [typesense/typesense#1795](https://github.com/typesense/typesense/issues/1795) asks for durable indexes and faster restarts. A maintainer wrote on 2025-03-14: “Making the restarts faster will require adding some form of index persistence, which we plan to consider in the future.” The issue remains open.
+
+Typesense's supported availability answer is at least three nodes with rolling restarts. One recovering node still rebuilds and returns 503. The other nodes remain available.
+
+## Flagg recovery evidence
+
+The 2026-07-19 reboot followed the normal recovery path.
+
+- 13:32:36 to 13:32:39: snapshot succeeded at Raft index 140588.
+- 14:27:41: Typesense received the planned stop.
+- 14:27:59: graceful shutdown completed with `Bye`.
+- 14:28:29: macOS booted.
+- 14:28:51: launchd started Typesense 30.2.
+- 14:28:54 to 14:28:58: Typesense restored snapshot 140588 and copied its RocksDB checkpoint.
+- 14:28:58: Typesense found 25 collections and began rebuilding eight concurrently.
+- 15:26:39: 24 of 25 collections were ready.
+- `run_chunks_dev` remained the sole blocker and kept `/health` at HTTP 503.
+
+This was not corruption, WAL replay, or a crash loop. The snapshot matched the pre-shutdown committed index.
+
+A June 22 restart rebuilt about 232,335 `run_chunks_dev` documents in about 42 minutes. The current collection passed 2.3 million documents and was still loading after more than four hours. The behavior scales with collection size.
+
+## Session-capture growth root cause
+
+Read-only scan of `~/.joelclaw/runs-dev`:
+
+| Measure | Result |
+| --- | ---: |
+| JSONL files | 148,023 |
+| Metadata files | 148,023 |
+| JSONL bytes | 29,231,843,868 |
+| Unique conversations | 4,629 |
+| Mean Runs per conversation | 31.97 |
+| p95 Runs per conversation | 134 |
+| Maximum Runs for one conversation | 1,419 |
+| Strict-prefix files | 13,914 |
+| Proven prefix or exact redundant bytes | 24,853,552,678 |
+| Raw bytes covered by a later body | 85.02% |
+
+The current parser and chunker produce these estimates:
+
+| Index shape | Expected chunks |
+| --- | ---: |
+| Every stored Run | 4,638,347 |
+| Remove only proven prefix and exact redundancy | 447,609 |
+| Proven redundant chunks | 4,190,738 |
+| Reduction | 90.35% |
+
+The capture client normally sends `full.slice(lastOffset)`. The offset advances only after success. When capture fails, later turns start from the same stale offset. Each turn creates a new random Run ID and a larger cumulative body.
+
+The generic satellite replay path posts every saved body unchanged. It does not apply the prefix-aware grouping already implemented in `scripts/lib/capture-outbox-replay.ts`.
+
+On July 19, the generic satellite drain replayed about 4,602 delayed envelopes. Raw metadata for the same period contains 4,608 delayed Runs, 17.34 GB of JSONL, and an estimated 3.01 million chunks. This caused the immediate collection explosion.
+
+Chunk IDs use `${run_id}:${chunk_idx}`. Upsert is idempotent only for repeated delivery of the same Run ID. Equal or cumulative content under a new random Run ID becomes new Typesense documents.
+
+## Required fixes
+
+### Immediate containment
+
+- Do not run the generic `agent-session-audit-backup.ts --replay-outbox` path against remaining backlogs.
+- Keep the current Typesense process running until an explicit recovery decision. Restarting discards completed reconstruction work.
+- Keep raw Run JSONL immutable. It is the durable source of truth.
+
+### Repair the projection
+
+- Build a manifest with Run ID, source identity, byte range, content hash, and prefix coverage.
+- Build a new compacted collection from non-redundant Runs.
+- Preserve divergent siblings and lineage for skipped prefix snapshots.
+- Validate conversation search, latest timestamps, random samples, and raw fallback before switching readers.
+- Retire the inflated collection only after explicit review and a rollback plan.
+
+### Prevent recurrence
+
+- Add `from_offset`, `to_offset`, `jsonl_sha256`, and deterministic source identity to each capture.
+- Coalesce one pending outbox segment per stale cursor instead of creating a fresh growing body each turn.
+- Make `scripts/lib/capture-outbox-replay.ts` the only replay implementation.
+- Add a hard alert for cumulative-prefix growth and collection startup budget.
+
+### Restore critical availability
+
+A single Typesense node cannot satisfy the availability requirement.
+
+Smallest safe system shape:
+
+1. Serve a bounded critical operator-search projection from an always-on host that does not reboot with Flagg.
+2. Keep session search in a separate, bounded stream index with raw local or SSH fallback.
+3. If Typesense itself must remain the critical store, use a real three-host Typesense cluster and health-aware clients. Two nodes are not HA because losing one loses quorum.
+4. Evaluate an engine with durable on-disk indexes only if the bounded Typesense split still misses the restart budget.
+
+## Reboot acceptance gate
+
+Do not claim Flagg reboot recovery until:
+
+1. Critical search succeeds before, during, and after the Flagg reboot.
+2. Critical search does not wait for `run_chunks_dev`.
+3. The session index has a measured minutes-scale startup ceiling.
+4. Raw session fallback works while the session index recovers.
+5. Replay deduplication is enforced by one canonical path.
+6. Search freshness and source provenance appear in health output.
