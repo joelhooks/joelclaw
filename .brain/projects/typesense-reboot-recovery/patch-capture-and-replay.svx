@@ -3,8 +3,7 @@ title: "Patch the Capture Client and Make Replay Canonical"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "closed"
-closed_at: "2026-07-19"
+status: "open"
 assignee: "pi (flagg, herdr pane wY:p1K, 2026-07-19)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: []
@@ -21,7 +20,8 @@ Stop the abuse at the source. Resolved when:
 2. A failed capture coalesces into one pending outbox segment per stale cursor — later turns update that segment instead of minting a new random Run ID with a larger cumulative body (the `full.slice(lastOffset)` bug, diagnosis § Session-capture growth root cause).
 3. `scripts/lib/capture-outbox-replay.ts` is the only replay implementation; the generic replay path in `agent-session-audit-backup.ts --replay-outbox` is removed or hard-wired through it.
 4. Tests cover: stale-cursor coalescing, prefix-aware replay grouping, and idempotent re-delivery under the same Run ID.
-5. Type check and lint pass (`bunx tsc --noEmit`, `pnpm biome check packages/ apps/`).
+5. Type check passes (`bunx tsc --noEmit`) and targeted Biome over every file this step touches reports no diagnostics. (Narrowed from full `pnpm biome check packages/ apps/` by steering on 2026-07-19: 56 pre-existing import-order diagnostics in `apps/web/**` and `packages/world-restate/**` predate this effort and are outside its finish line.)
+6. Every production caller of the old replay flags is migrated — the scheduled backup path in `packages/system-bus/src/inngest/functions/nas-backup.ts` runs without the removed flags, with a fixture test executing the scheduled command shape. (Added 2026-07-19 after adversarial verification found the caller migration incomplete.)
 
 Containment holds throughout: no replay against real backlogs, raw JSONL untouched, current Typesense process left alone.
 
@@ -33,19 +33,24 @@ Implemented the capture and replay guardrails without touching a live backlog, `
 
 - `packages/pi-extensions/memory-capture/index.ts`, `scripts/joelclaw-capture-session.ts`, and `scripts/joelclaw-capture-codex-session.js` now send byte-accurate `from_offset`, `to_offset`, `jsonl_sha256`, and hashed `source_identity` fields.
 - The three capture clients derive one deterministic pending filename from `source_identity + stale offset`. Later failures overwrite that pending segment and retain its Run ID instead of creating cumulative Runs under new IDs.
-- `packages/system-bus/src/serve.ts` validates the segment range, hash, and source identity. It persists the provenance in raw metadata and forwards it through `memory/run.captured`.
-- `packages/memory/src/nas.ts` makes same-Run/same-bytes delivery idempotent and rejects same-Run/different-bytes delivery. Raw Run JSONL is no longer overwritten by redelivery.
+- `packages/system-bus/src/serve.ts` validates the segment range, hash, and source identity. It persists the provenance and forwards it through `memory/run.captured`. If an accepted response was lost, the server re-emits the stored prefix and returns its accepted offset so the client advances without dropping the remaining suffix.
+- `packages/memory/src/nas.ts` adds a per-user Run-ID locator. Same-Run/same-bytes delivery is idempotent across month paths, while same-Run/different-bytes delivery is rejected. Raw Run JSONL is no longer overwritten by redelivery.
 - `packages/memory/src/types.ts`, `packages/memory/src/schemas/runs.ts`, `packages/system-bus/src/inngest/client.ts`, and `packages/system-bus/src/inngest/functions/memory/run-captured.ts` carry the provenance into the Run projection.
-- `scripts/lib/capture-outbox-replay.ts` validates the new envelope, groups new captures by source identity and stale cursor, and updates offsets and hashes when it trims a captured prefix. `scripts/replay-capture-outbox.ts` catalogs the new grouping fields.
+- `scripts/lib/capture-outbox-replay.ts` validates the new envelope, groups new captures by source identity and stale cursor, and updates offsets and hashes when it trims a captured prefix. A suffix gets a deterministic new Run ID when the accepted prefix already owns the source Run ID. `scripts/replay-capture-outbox.ts` catalogs the new grouping fields and constrains captured-sibling lookup to the same source identity.
 - `scripts/agent-session-audit-backup.ts` no longer contains a replay implementation. Legacy replay flags fail closed and point to `scripts/replay-capture-outbox.ts`.
-- `scripts/joelclaw-capture-session.test.ts`, `scripts/lib/capture-outbox-replay.test.ts`, and `packages/memory/__tests__/nas.test.ts` cover actual stale-cursor coalescing, prefix-aware grouping and suffix derivation, and idempotent same-Run redelivery with divergent-byte rejection.
+- `scripts/joelclaw-capture-session.test.ts`, `scripts/replay-capture-outbox.test.ts`, `scripts/lib/capture-outbox-replay.test.ts`, and `packages/memory/__tests__/nas.test.ts` cover actual stale-cursor coalescing, ambiguous-response prefix reconciliation, source-scoped replay queries, prefix-aware grouping and suffix derivation, cross-month same-Run redelivery, and divergent-byte rejection.
 
 ### Validation
 
-- `bun test scripts/joelclaw-capture-session.test.ts scripts/lib/capture-outbox-replay.test.ts` — 11 passed.
+- `bun test scripts/joelclaw-capture-session.test.ts scripts/replay-capture-outbox.test.ts scripts/lib/capture-outbox-replay.test.ts` — 14 passed.
 - `packages/memory/node_modules/.bin/vitest run packages/memory/__tests__/nas.test.ts` — 2 passed.
 - `bunx tsc --noEmit --pretty false` — passed.
 - Targeted `pnpm biome check` over all 15 changed code/test files — passed.
 - `pnpm biome check packages/ apps/` — blocked by 56 unrelated pre-existing import-order diagnostics in `apps/web/**` and `packages/world-restate/**`; this patch added no targeted Biome diagnostics.
 - `git diff --check` — passed.
 - A fixture-only legacy-flag check proved `agent-session-audit-backup.ts --replay-outbox` fails closed before host or backlog work.
+
+## Verification (2026-07-19)
+
+Adversarial verification ([receipts](./patch-verification.svx)) confirmed conditions 1–4 under multi-byte and repeated-stale-cursor attack, but **refuted the close**: `nas-backup.ts:1864-1882` still passes the removed replay flags, so the scheduled `system.agent_session.capture_backup.verify` run fails closed before doing backup work. Step reopened; condition 5 narrowed to targeted scope and condition 6 added for the caller migration plus coverage gaps (Pi/Codex fixture integration tests, endpoint-level tests for exact redelivery, `accepted_prefix`, and divergent 409). Worker re-engaged in the same pane.
+- A final fresh-context adversarial review returned `CLEAN` after three replay and immutability blockers were fixed.

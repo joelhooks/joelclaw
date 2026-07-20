@@ -1,0 +1,115 @@
+---
+title: "Adversarial verification of the capture/replay patch"
+type: "asset"
+parent: "./patch-capture-and-replay.svx"
+created_at: "2026-07-19"
+privacy: "private"
+---
+
+# Adversarial verification of the capture/replay patch
+
+## Verdict
+
+**REFUTED overall.** Four done-conditions hold in the final working-tree snapshot. Done-condition 5 does not hold because the required repository-wide Biome check still fails. I also found one production regression: the scheduled session backup still passes removed replay flags, so it now fails closed before doing its backup work.
+
+The working tree changed during verification. The final snapshot includes the deterministic suffix Run-ID fix in `scripts/lib/capture-outbox-replay.ts`. I reran the focused tests and type check after that change appeared.
+
+## Done-conditions
+
+### 1. Capture provenance — CONFIRMED
+
+All three capture clients use byte buffers for slicing and hashing. Each sends `from_offset`, `to_offset`, `jsonl_sha256`, and a deterministic `source_identity`:
+
+- Pi: `packages/pi-extensions/memory-capture/index.ts:195-220`
+- Claude: `scripts/joelclaw-capture-session.ts:219-247`
+- Codex: `scripts/joelclaw-capture-codex-session.js:173-212`
+
+The server validates the complete field set, byte-range length, SHA-256, and source-identity format at `packages/system-bus/src/serve.ts:317-337`.
+
+Fixture-only adversarial tests used `🧀`, `第二`, and `café`. All three clients preserved byte-accurate ranges and hashes.
+
+### 2. One pending segment per stale cursor — CONFIRMED
+
+Each client derives the pending filename from `source_identity + from_offset`, reads any existing pending body, and reuses its Run ID. The later failure overwrites that one file with the larger suffix from the unchanged cursor:
+
+- Pi: `packages/pi-extensions/memory-capture/index.ts:206-220`
+- Claude: `scripts/joelclaw-capture-session.ts:233-247`
+- Codex: `scripts/joelclaw-capture-codex-session.js:191-212`
+
+A fixture-only test forced three consecutive failed sends for each client. Each outbox retained one file and one Run ID. The final body covered the complete UTF-8 byte range.
+
+The ambiguous-response path also advances only to Central's returned `to_offset`, then captures the remaining suffix under a new Run ID. The committed Claude fixture proves this at `scripts/joelclaw-capture-session.test.ts:84-143`.
+
+### 3. Canonical replay path — CONFIRMED, with a production regression
+
+`scripts/agent-session-audit-backup.ts:103-106` fails closed when any legacy replay flag appears. A fixture-only invocation exited 1, printed the canonical replay instruction, and created no backup directory.
+
+The canonical replay derives byte-correct suffix ranges at `scripts/lib/capture-outbox-replay.ts:235-283`. When the captured prefix already owns the source Run ID, it derives a deterministic new Run ID instead of conflicting with immutable stored bytes at lines 253-267.
+
+A fixture-only plan-and-execute test proved the canonical script:
+
+- found a multi-byte captured prefix;
+- posted only the remaining suffix;
+- used a deterministic 26-character new Run ID;
+- retained the captured Run as `parent_run_id`;
+- preserved the original `to_offset` and advanced `from_offset` by prefix bytes.
+
+**Defect:** `packages/system-bus/src/inngest/functions/nas-backup.ts:1864-1882` still invokes the audit script with `--replay-outbox`, `--replay-limit`, and `--replay-max-bytes`. Every scheduled or manual `system.agent_session.capture_backup.verify` run now fails before backup work. Replay is canonical, but the caller migration is incomplete.
+
+### 4. Required behavioral tests — CONFIRMED, with gaps
+
+The checked-in tests cover the required seams:
+
+- actual Claude stale-cursor coalescing and ambiguous-response recovery: `scripts/joelclaw-capture-session.test.ts:45-143`;
+- prefix grouping, suffix derivation, and deterministic replacement Run IDs: `scripts/lib/capture-outbox-replay.test.ts:83-143`;
+- same Run ID plus same raw bytes is idempotent; different raw bytes throw: `packages/memory/__tests__/nas.test.ts:21-57`.
+
+`writeRunBlob` compares SHA-256 over stored bytes and incoming UTF-8 bytes at `packages/memory/src/nas.ts:61-120`. It does not compare parsed JSON content.
+
+The API has one deliberate exception. A larger body under the same Run ID can receive `202 accepted_prefix` when the stored body is its proven prefix and source/cursor match (`packages/system-bus/src/serve.ts:380-431`). The larger bytes are not written. Central returns the already accepted offset so the client can send the remainder under a new Run ID. Other divergent bytes return 409 at lines 433-442.
+
+Coverage gaps:
+
+- No checked-in integration test executes the Pi or Codex clients. Fixture-only adversarial tests passed for both.
+- No endpoint-level test locks the `accepted_prefix` exception and 409 behavior.
+- `coalescePendingCapture` is tested directly but is not called by any production client. The actual Claude integration test prevents this from being only an implementation echo.
+
+### 5. Type check and lint — REFUTED
+
+- `bunx tsc --noEmit --pretty false` — passed.
+- Targeted `pnpm biome check` over 16 changed capture/replay files — passed.
+- `git diff --check` over the patch files — passed.
+- `pnpm biome check packages/ apps/` — failed with 56 diagnostics. The failures are pre-existing import-order errors in `apps/web/**` and `packages/world-restate/**`, but the done-condition says the full command must pass. It does not.
+
+## Test receipts
+
+Final focused run after the concurrent suffix-Run-ID change:
+
+```text
+bun test scripts/joelclaw-capture-session.test.ts \
+  scripts/lib/capture-outbox-replay.test.ts \
+  scripts/replay-capture-outbox.test.ts \
+  /tmp/adversarial-capture-clients.test.ts
+
+17 passed, 0 failed, 105 assertions
+```
+
+```text
+packages/memory/node_modules/.bin/vitest run packages/memory/__tests__/nas.test.ts
+
+2 passed, 0 failed
+```
+
+```text
+bun test /tmp/replay-prefix-recovery.test.ts
+
+1 passed, 0 failed, 8 assertions
+```
+
+No command touched `~/.joelclaw/runs-dev`, a real outbox, live Typesense, or raw Run JSONL.
+
+## Defects and next action
+
+1. **High:** Remove the stale replay flags from `nas-backup.ts`, or split backup and canonical replay into explicit steps. Add a fixture test that executes the scheduled command shape.
+2. **Required gate:** Decide whether the full Biome condition is literal. If it is, clear the 56 repository diagnostics before closing the step. If it is not, rewrite the done-condition to name the targeted files.
+3. **Coverage:** Add fixture integration tests for Pi and Codex, plus an endpoint test for exact redelivery, `accepted_prefix`, and divergent 409 behavior.
