@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
@@ -8,6 +9,7 @@ import {
   buildCriticalDb,
   CriticalDbUnavailableError,
   readFreshness,
+  resolveObservationReference,
   searchCriticalDb,
   searchCriticalProjection,
 } from "./critical-search"
@@ -50,13 +52,49 @@ schemaVersion: 1
 title: SQLite recovery receipt
 slug: sqlite-recovery
 privacy: private
-runId: run-123
+identityKind: capture-conversation
+captureConversationId: session-456
+producerRunId: producer-123
 sessionId: session-456
+windowFrom: 1784505600000
+windowTo: 1784509200000
 started: 2026-07-20T00:00:00Z
 ---
 # SQLite recovery
 
 Critical search opens without rebuilding an index.
+`)
+  writeFileSync(join(observations, "legacy-epoch.svx"), `---
+type: observation
+schemaVersion: 1
+title: Legacy epoch bridge
+slug: legacy-epoch
+privacy: private
+sessionId: session-456
+started: 2026-07-20T00:00:00Z
+ended: 2026-07-20T01:00:00Z
+---
+# Legacy epoch bridge
+
+Old pages keep their bare sessionId.
+`)
+  writeFileSync(join(observations, "unresolved-epoch.svx"), `---
+type: observation
+schemaVersion: 1
+title: Unresolved epoch bridge
+slug: unresolved-epoch
+privacy: private
+identityKind: capture-conversation
+captureConversationId: missing-conversation
+sessionId: missing-conversation
+windowFrom: 1784505600000
+windowTo: 1784509200000
+started: 2026-07-20T00:00:00Z
+ended: 2026-07-20T01:00:00Z
+---
+# Unresolved epoch bridge
+
+This reference must report false after the exact lookup.
 `)
   writeFileSync(join(brain, "availability.svx"), `---
 title: Availability shape
@@ -69,6 +107,17 @@ Use ordered fallback across flagg and both NAS boxes.
 `)
   writeFileSync(join(vault, "docs", "decisions", "0200-critical-search.md"), "# Critical search\n\nSQLite FTS5 is the durable critical index.\n")
   writeFileSync(join(skills, "session-search", "SKILL.md"), "---\ndescription: Search sessions safely.\n---\n# Session search\n")
+  const sessionsDb = join(root, "sessions.db")
+  const sessions = new Database(sessionsDb, { create: true, strict: true })
+  sessions.exec(`
+    CREATE TABLE runs (run_id TEXT PRIMARY KEY, conversation_id TEXT, started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL, chunk_count INTEGER NOT NULL) STRICT;
+    CREATE TABLE chunks (chunk_id TEXT NOT NULL UNIQUE, run_id TEXT NOT NULL, chunk_idx INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, started_at INTEGER NOT NULL, token_count INTEGER NOT NULL) STRICT;
+  `)
+  sessions.query("INSERT INTO runs VALUES (?, ?, ?, ?, ?)").run("capture-a", "session-456", 1784505600100, 1784509199000, 1)
+  sessions.query("INSERT INTO runs VALUES (?, ?, ?, ?, ?)").run("capture-b", "session-456", 1784505600200, 1784509199000, 1)
+  sessions.query("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?)").run("chunk-a", "capture-a", 0, "assistant", "Critical search opens", 1784505600200, 3)
+  sessions.query("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?)").run("chunk-b", "capture-b", 0, "user", "without rebuilding", 1784505600300, 3)
+  sessions.close()
   const archive = join(root, "memory.jsonl")
   writeFileSync(archive, `${JSON.stringify({
     id: "memory-1",
@@ -85,11 +134,11 @@ Use ordered fallback across flagg and both NAS boxes.
     updated_at: "2026-07-17T10:01:29Z",
     session_id: "session-memory",
   })}\n`)
-  return { root, observations, brain, vault, skills, archive, db: join(root, "critical.db") }
+  return { root, observations, brain, vault, skills, archive, sessionsDb, db: join(root, "critical.db") }
 }
 
 describe("critical search database", () => {
-  test("build is repeatable and preserves observer Run-ID source labels", async () => {
+  test("build is repeatable and namespaces producer Runs", async () => {
     const paths = fixture()
     const options = {
       dbPath: paths.db,
@@ -106,10 +155,71 @@ describe("critical search database", () => {
     expect(second.documentCount).toBe(first.documentCount)
 
     const result = searchCriticalDb({ query: "opens rebuilding index", dbPath: paths.db, now: new Date("2026-07-20T01:05:00Z") })
-    expect(result.hits[0]?.runId).toBe("run-123")
-    expect(result.hits[0]?.content).toContain("Run-ID: run-123")
+    expect(result.hits[0]?.producerRunId).toBe("producer-123")
+    expect(result.hits[0]?.content).toContain("Producer Run-ID: producer-123")
     expect(result.freshness.ageSeconds).toBe(300)
     expect(result.freshness.documentCount).toBe(first.documentCount)
+  })
+
+  test("resolves old bare-sessionId pages through started and ended bounds", async () => {
+    const paths = fixture()
+    await buildCriticalDb({
+      dbPath: paths.db,
+      observationsDir: paths.observations,
+      brainRoots: [paths.brain],
+      vaultDir: paths.vault,
+      skillsDir: paths.skills,
+      memoryArchivePath: paths.archive,
+      allowNonFlagg: true,
+    })
+    const result = searchCriticalDb({ query: "Legacy epoch bridge", dbPath: paths.db, sessionsDbPath: paths.sessionsDb })
+    expect(result.hits[0]?.observerSessionReference).toMatchObject({
+      kind: "capture-conversation",
+      value: "session-456",
+      resolvableInSessionsDb: true,
+      candidateRuns: [{ runId: "capture-a" }, { runId: "capture-b" }],
+    })
+  })
+
+  test("marks an unresolved hit false only after its exact sessions.db lookup", async () => {
+    const paths = fixture()
+    await buildCriticalDb({
+      dbPath: paths.db,
+      observationsDir: paths.observations,
+      brainRoots: [paths.brain],
+      vaultDir: paths.vault,
+      skillsDir: paths.skills,
+      memoryArchivePath: paths.archive,
+      allowNonFlagg: true,
+    })
+    const result = searchCriticalDb({ query: "Unresolved epoch bridge", dbPath: paths.db, sessionsDbPath: paths.sessionsDb })
+    expect(result.hits[0]?.observerSessionReference).toEqual({
+      kind: "capture-conversation",
+      value: "missing-conversation",
+      resolvableInSessionsDb: false,
+      candidateRuns: [],
+      window: { from: 1784505600000, to: 1784509200000 },
+    })
+  })
+
+  test("resolves every Run with chunks inside (windowFrom, windowTo]", () => {
+    const paths = fixture()
+    expect(resolveObservationReference({
+      captureConversationId: "session-456",
+      windowFrom: 1784505600000,
+      windowTo: 1784509200000,
+      sessionsDbPath: paths.sessionsDb,
+    })).toEqual({
+      kind: "capture-conversation",
+      value: "session-456",
+      resolvableInSessionsDb: true,
+      candidateRuns: [
+        { runId: "capture-a", startedAt: 1784505600100, endedAt: 1784509199000, chunkCount: 1 },
+        { runId: "capture-b", startedAt: 1784505600200, endedAt: 1784509199000, chunkCount: 1 },
+      ],
+      window: { from: 1784505600000, to: 1784509200000 },
+    })
+    expect(resolveObservationReference({ captureConversationId: "missing", sessionsDbPath: paths.sessionsDb }).resolvableInSessionsDb).toBe(false)
   })
 
   test("searches knowledge and vault documents with collection filters", async () => {
@@ -144,8 +254,10 @@ describe("critical search database", () => {
       allowNonFlagg: true,
     })
     const previous = process.env.JOELCLAW_CRITICAL_DB
+    const previousSessionsDb = process.env.JOELCLAW_SESSIONS_DB
     process.env.JOELCLAW_CRITICAL_DB = paths.db
     try {
+      process.env.JOELCLAW_SESSIONS_DB = paths.sessionsDb
       const result = await __sqliteRecallTestUtils.sqliteRecall({
         query: "opens rebuilding index",
         limit: 5,
@@ -163,10 +275,22 @@ describe("critical search database", () => {
         rewrite: "disabled on the critical availability path",
       }))
       const hit = (result.payload?.hits as Array<Record<string, unknown>>)[0]
-      expect(hit?.observerRunId).toBe("run-123")
-      expect(hit?.runBacklink).toBeUndefined()
-      expect(hit?.observerRunReference).toEqual({ kind: "source-label", value: "run-123", resolvableInRunsDev: false })
+      expect(hit?.producerRunId).toBe("producer-123")
+      expect(hit?.observerRunId).toBeUndefined()
+      expect(hit?.observerRunReference).toBeUndefined()
+      expect(hit?.observerSessionReference).toEqual({
+        kind: "capture-conversation",
+        value: "session-456",
+        resolvableInSessionsDb: true,
+        candidateRuns: [
+          { runId: "capture-a", startedAt: 1784505600100, endedAt: 1784509199000, chunkCount: 1 },
+          { runId: "capture-b", startedAt: 1784505600200, endedAt: 1784509199000, chunkCount: 1 },
+        ],
+        window: { from: 1784505600000, to: 1784509200000 },
+      })
     } finally {
+      if (previousSessionsDb === undefined) delete process.env.JOELCLAW_SESSIONS_DB
+      else process.env.JOELCLAW_SESSIONS_DB = previousSessionsDb
       if (previous === undefined) delete process.env.JOELCLAW_CRITICAL_DB
       else process.env.JOELCLAW_CRITICAL_DB = previous
     }

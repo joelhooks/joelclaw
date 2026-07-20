@@ -3,12 +3,14 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, extname, join, relative, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import {
   CRITICAL_DB_REQUIRED_SOURCES,
   evaluateCriticalDbFreshness,
 } from "@joelclaw/memory"
 
 export const DEFAULT_CRITICAL_DB_PATH = join(homedir(), ".joelclaw", "search", "critical.db")
+export const DEFAULT_SESSIONS_DB_PATH = join(homedir(), ".joelclaw", "search", "sessions.db")
 export const CRITICAL_SCHEMA_VERSION = "2"
 const SOURCE_REGRESSION_RATIO = 0.8
 
@@ -31,7 +33,7 @@ export type CriticalDocument = {
   source: string
   sourceKey?: string
   path?: string
-  runId?: string
+  producerRunId?: string
   sessionId?: string
   privacy?: string
   createdAt?: number
@@ -39,10 +41,26 @@ export type CriticalDocument = {
   payload?: Record<string, unknown>
 }
 
+export type ObservationCandidateRun = {
+  runId: string
+  startedAt: number
+  endedAt: number
+  chunkCount: number
+}
+
+export type ObserverSessionReference = {
+  kind: "capture-conversation"
+  value: string
+  resolvableInSessionsDb: boolean
+  candidateRuns: ObservationCandidateRun[]
+  window: { from: number; to: number } | null
+}
+
 export type CriticalSearchHit = CriticalDocument & {
   rank: number
   score: number
   snippet: string
+  observerSessionReference?: ObserverSessionReference
   sourceFreshness: {
     sourceKey: string
     highWaterAt: string | null
@@ -98,6 +116,7 @@ export type CriticalProjectionSearchInput = {
   replicas?: CriticalReplica[]
   skipLocal?: boolean
   timeoutMs?: number
+  sessionsDbPath?: string
 }
 
 export class CriticalDbUnavailableError extends Error {
@@ -154,6 +173,126 @@ function asEpochSeconds(value: unknown): number | undefined {
   if (typeof value !== "string") return undefined
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? Math.floor(parsed / 1_000) : undefined
+}
+
+function asEpochMilliseconds(value: unknown): number | undefined {
+  const numeric = asNumber(value)
+  if (numeric !== undefined) return numeric < 10_000_000_000 ? Math.floor(numeric * 1_000) : Math.floor(numeric)
+  if (typeof value !== "string") return undefined
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function openSessionsDbReadOnly(dbPath: string): Database | undefined {
+  if (!existsSync(dbPath)) return undefined
+  const uri = `${pathToFileURL(resolve(dbPath)).href}?mode=ro`
+  const db = new Database(uri, { readonly: true, strict: true })
+  db.exec("PRAGMA query_only = ON")
+  return db
+}
+
+function resolveObservationReferenceWithDb(input: {
+  db: Database
+  captureConversationId: string
+  windowFrom?: unknown
+  windowTo?: unknown
+}): ObserverSessionReference {
+  const value = input.captureConversationId.trim()
+  const exact = input.db.query("SELECT 1 AS found FROM runs WHERE conversation_id = ? LIMIT 1").get(value) as { found?: number } | null
+  const from = asEpochMilliseconds(input.windowFrom)
+  const to = asEpochMilliseconds(input.windowTo)
+  const window = from !== undefined && to !== undefined && from < to ? { from, to } : null
+  const candidateRuns = !exact || !window
+    ? []
+    : input.db.query(`
+        SELECT DISTINCT r.run_id, r.started_at, r.ended_at, r.chunk_count
+        FROM runs r
+        JOIN chunks c ON c.run_id = r.run_id
+        WHERE r.conversation_id = ? AND c.started_at > ? AND c.started_at <= ?
+        ORDER BY r.started_at, r.run_id
+      `).all(value, window.from, window.to).map((row) => {
+        const candidate = row as { run_id: string; started_at: number; ended_at: number; chunk_count: number }
+        return {
+          runId: candidate.run_id,
+          startedAt: candidate.started_at,
+          endedAt: candidate.ended_at,
+          chunkCount: candidate.chunk_count,
+        }
+      })
+  return {
+    kind: "capture-conversation",
+    value,
+    resolvableInSessionsDb: Boolean(exact),
+    candidateRuns,
+    window,
+  }
+}
+
+export function resolveObservationReference(input: {
+  captureConversationId: string
+  windowFrom?: unknown
+  windowTo?: unknown
+  sessionsDbPath?: string
+}): ObserverSessionReference {
+  const value = input.captureConversationId.trim()
+  const from = asEpochMilliseconds(input.windowFrom)
+  const to = asEpochMilliseconds(input.windowTo)
+  const fallback: ObserverSessionReference = {
+    kind: "capture-conversation",
+    value,
+    resolvableInSessionsDb: false,
+    candidateRuns: [],
+    window: from !== undefined && to !== undefined && from < to ? { from, to } : null,
+  }
+  let db: Database | undefined
+  try {
+    db = openSessionsDbReadOnly(input.sessionsDbPath ?? process.env.JOELCLAW_SESSIONS_DB ?? DEFAULT_SESSIONS_DB_PATH)
+    return db ? resolveObservationReferenceWithDb({ db, ...input, captureConversationId: value }) : fallback
+  } catch {
+    return fallback
+  } finally {
+    db?.close()
+  }
+}
+
+function isSyntheticObservationIdentity(value: string): boolean {
+  return /^(?:telemetry(?::|-)|reflector-|external-context-|session-noted:|dedup:|otel:)/u.test(value)
+}
+
+function observationConversationValue(document: CriticalDocument): string | undefined {
+  if (document.collection !== "observations") return undefined
+  const explicitKind = asString(document.payload?.identityKind)
+  if (explicitKind === "capture-run" || explicitKind === "work-state-pass") return undefined
+  const explicit = asString(document.payload?.captureConversationId)
+  if (explicitKind === "capture-conversation") return explicit
+  const hasEpoch = asEpochMilliseconds(document.payload?.windowFrom ?? document.payload?.started) !== undefined
+    && asEpochMilliseconds(document.payload?.windowTo ?? document.payload?.ended) !== undefined
+  return hasEpoch && document.sessionId && !isSyntheticObservationIdentity(document.sessionId)
+    ? document.sessionId
+    : undefined
+}
+
+function attachObservationReferences(hits: CriticalSearchHit[], sessionsDbPath?: string): CriticalSearchHit[] {
+  let db: Database | undefined
+  try {
+    db = openSessionsDbReadOnly(sessionsDbPath ?? process.env.JOELCLAW_SESSIONS_DB ?? DEFAULT_SESSIONS_DB_PATH)
+  } catch {
+    db = undefined
+  }
+  try {
+    return hits.map((hit) => {
+      const value = observationConversationValue(hit)
+      if (!value) return hit
+      const windowFrom = hit.payload?.windowFrom ?? hit.payload?.started
+      const windowTo = hit.payload?.windowTo ?? hit.payload?.ended
+      const observerSessionReference = db
+        ? resolveObservationReferenceWithDb({ db, captureConversationId: value, windowFrom, windowTo })
+        : resolveObservationReference({ captureConversationId: value, windowFrom, windowTo, sessionsDbPath })
+      return { ...hit, observerSessionReference }
+    })
+  } finally {
+    db?.close()
+  }
 }
 
 function highWaterAt(documents: CriticalDocument[]): string | undefined {
@@ -223,18 +362,24 @@ function localObservationDocuments(root: string): DocumentLoad {
     }
     if (frontmatter.type !== "observation") continue
     const id = asString(frontmatter.slug) ?? basename(path, ".svx")
-    const runId = asString(frontmatter.runId) ?? asString(frontmatter.run_id)
-    const sessionId = asString(frontmatter.sessionId) ?? asString(frontmatter.session_id)
+    const producerRunId = asString(frontmatter.producerRunId)
+      ?? asString(frontmatter.producer_run_id)
+      ?? asString(frontmatter.runId)
+      ?? asString(frontmatter.run_id)
+    const sessionId = asString(frontmatter.captureConversationId)
+      ?? asString(frontmatter.capture_conversation_id)
+      ?? asString(frontmatter.sessionId)
+      ?? asString(frontmatter.session_id)
     const started = asString(frontmatter.started)
     documents.push({
       id,
       collection: "observations",
       type: "observation-page",
       title: asString(frontmatter.title) ?? titleFromBody(body, id),
-      content: compactText([body, runId ? `Run-ID: ${runId}` : undefined]),
+      content: compactText([body, producerRunId ? `Producer Run-ID: ${producerRunId}` : undefined]),
       source: path,
       path,
-      runId,
+      producerRunId,
       sessionId,
       privacy: asString(frontmatter.privacy) ?? "private",
       createdAt: started ? Math.floor(Date.parse(started) / 1_000) : fileUpdatedAt(path),
@@ -365,8 +510,8 @@ function documentFromTypesense(collection: CriticalCollection, raw: Record<strin
     content,
     source: asString(raw.source) ?? asString(raw.url) ?? `${collection}:${id}`,
     path: asString(raw.path),
-    runId: asString(raw.run_id) ?? asString(raw.runId),
-    sessionId: asString(raw.session_id) ?? asString(raw.sessionId),
+    producerRunId: asString(raw.producer_run_id) ?? asString(raw.producerRunId) ?? asString(raw.run_id) ?? asString(raw.runId),
+    sessionId: asString(raw.capture_conversation_id) ?? asString(raw.captureConversationId) ?? asString(raw.session_id) ?? asString(raw.sessionId),
     privacy: asString(raw.privacy) ?? "private",
     createdAt: created,
     sourceUpdatedAt: updated,
@@ -484,7 +629,7 @@ function insertDocuments(db: Database, documents: CriticalDocument[]): number {
         document.source,
         document.sourceKey ?? `collection:${document.collection}`,
         document.path ?? null,
-        document.runId ?? null,
+        document.producerRunId ?? null,
         document.sessionId ?? null,
         document.privacy ?? "private",
         document.createdAt ?? null,
@@ -649,7 +794,7 @@ export async function buildCriticalDb(options: BuildOptions = {}): Promise<Criti
       ...(["turn_note", "failed_target"].filter((type) => !knowledgeTypes.has(type)).length > 0
         ? [`system_knowledge is missing dynamic types: ${["turn_note", "failed_target"].filter((type) => !knowledgeTypes.has(type)).join(", ")}`]
         : []),
-      "observer run IDs are source labels; they do not resolve into ~/.joelclaw/runs-dev",
+      "observation producer Runs are namespaced as producerRunId; capture conversations resolve through sessions.db",
       ...(sourceFailures.length > 0 ? sourceFailures.map((failure) => `override: ${failure}`) : []),
     ]
 
@@ -742,7 +887,7 @@ export function searchCriticalDb(input: {
       ORDER BY rank ASC, COALESCE(d.source_updated_at, d.created_at, 0) DESC
       LIMIT ?
     `).all(...params, limit) as Array<Record<string, unknown>>
-    const hits = rows.map((row) => {
+    const rawHits: CriticalSearchHit[] = rows.map((row) => {
       const rank = asNumber(row.rank) ?? 0
       const sourceKey = String(row.source_key)
       const sourceFreshness = freshness.sources[sourceKey]
@@ -756,7 +901,7 @@ export function searchCriticalDb(input: {
         source: String(row.source),
         sourceKey,
         path: asString(row.path),
-        runId: asString(row.run_id),
+        producerRunId: asString(row.run_id),
         sessionId: asString(row.session_id),
         privacy: asString(row.privacy),
         createdAt: asNumber(row.created_at),
@@ -776,6 +921,7 @@ export function searchCriticalDb(input: {
         },
       }
     })
+    const hits = attachObservationReferences(rawHits, input.sessionsDbPath)
     const countRow = db.query(`
       SELECT count(*) AS count
       FROM documents_fts JOIN documents d ON d.rowid = documents_fts.rowid
@@ -977,7 +1123,8 @@ export async function searchCriticalProjection(input: CriticalProjectionSearchIn
   const timeoutMs = input.timeoutMs ?? Number(process.env.JOELCLAW_CRITICAL_SEARCH_TIMEOUT_MS ?? 1_500)
   for (const replica of replicas) {
     try {
-      return await searchReplica(replica, input, timeoutMs)
+      const result = await searchReplica(replica, input, timeoutMs)
+      return { ...result, hits: attachObservationReferences(result.hits, input.sessionsDbPath) }
     } catch (error) {
       failures.push(`${replica.name}: ${error instanceof Error ? error.message : String(error)}`)
     }

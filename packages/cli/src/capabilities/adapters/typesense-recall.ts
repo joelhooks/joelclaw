@@ -89,10 +89,8 @@ async function sqliteRecall(args: RecallArgs): Promise<RecallResult> {
         categoryConfidence: typeof hit.payload?.category_confidence === "number" ? hit.payload.category_confidence : 0,
         privacy: hit.privacy ?? "private",
         path: hit.path,
-        observerRunId: hit.runId,
-        observerRunReference: hit.runId
-          ? { kind: "source-label", value: hit.runId, resolvableInRunsDev: false }
-          : undefined,
+        producerRunId: hit.producerRunId,
+        observerSessionReference: hit.observerSessionReference,
         sourceFreshness: hit.sourceFreshness,
         session: hit.sessionId ?? "unknown",
         timestamp: hit.createdAt ? new Date(hit.createdAt * 1_000).toISOString() : "unknown",

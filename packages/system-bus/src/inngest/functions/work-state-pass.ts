@@ -580,7 +580,8 @@ slug: ${yamlString(`${params.completedAt.slice(0, 10)}-slack-work-state-pass-${s
 privacy: sensitive
 sensitiveReason: ${yamlString("Third-party Slack identity and work-request metadata")}
 sourceKind: slack-work-state-pass
-runId: ${yamlString(params.runId)}
+identityKind: work-state-pass
+producerRunId: ${yamlString(params.runId)}
 machine: ${yamlString(hostname().split(".")[0] ?? hostname())}
 started: ${yamlString(params.startedAt)}
 ended: ${yamlString(params.completedAt)}

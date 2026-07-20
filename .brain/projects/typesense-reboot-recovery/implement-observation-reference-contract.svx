@@ -3,11 +3,12 @@ title: "Implement the Observation Reference Contract"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi (flagg, herdr pane wY:p2G, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./reconcile-observation-run-identity.svx"]
 created_at: "2026-07-20"
+closed_at: "2026-07-20"
 ---
 
 # Implement the Observation Reference Contract
@@ -21,4 +22,12 @@ Apply the patch plan from [Observation and capture identity findings](./observat
 3. A read-time resolver joins `sessions.db` by `conversation_id` narrowed by `(windowFrom, windowTo]`, returning all candidate Runs for the epoch.
 4. The 822-page high-confidence population resolves through the shipped path; tests lock the contract.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+Closed. New transcript pages now mint `identityKind: capture-conversation`, `captureConversationId`, and optional `captureRunIds`; legacy no-conversation chunks mint `identityKind: capture-run`. Slack work-state pages now use `identityKind: work-state-pass` and `producerRunId` instead of generic `runId`.
+
+Critical search and SQLite-first recall now verify each capture-conversation reference against read-only `file:...sessions.db?mode=ro`. The resolver joins exact `conversation_id`, narrows chunks with `(windowFrom, windowTo]`, and returns every candidate Run in the epoch. Old pages with bare `sessionId` resolve through their explicit window or `started`/`ended` fallback. Producer Runs stay separate and no `observerRunReference` is emitted.
+
+The shipped resolver measured **827 / 827** current high-confidence conversation-window pages with at least one candidate Run and zero failures. This contains the findings' original **822-page** population plus five pages minted since that measurement.
+
+Verification: `bunx tsc --noEmit`; targeted Biome; 28 joelclaw tests; 93 observer tests; full live-tree resolver measurement.

@@ -260,6 +260,9 @@ describe("observation page", () => {
 
     expect(page).toContain("privacy: sensitive");
     expect(page).toContain("sourceKind: slack-work-state-pass");
+    expect(page).toContain("identityKind: work-state-pass");
+    expect(page).toContain('producerRunId: "seeded-run"');
+    expect(page).not.toMatch(/^runId:/mu);
     expect(page.includes("slack.conversations.history")).toBe(false);
     expect(page).toContain("seeded-proof");
     expect(page).toContain("## Observations");
