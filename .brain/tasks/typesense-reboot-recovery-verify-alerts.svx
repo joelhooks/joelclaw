@@ -1,0 +1,24 @@
+---
+title: "Worker task: adversarially verify the growth and budget alerts"
+type: "task"
+created_at: "2026-07-20"
+privacy: "private"
+---
+
+# Worker task: adversarially verify the growth and budget alerts
+
+You are an adversarial verifier on [Typesense Reboot Recovery](../projects/typesense-reboot-recovery/typesense-reboot-recovery-brief.svx). A worker built and closed [Add Cumulative-Prefix Growth and Startup-Budget Alerts](../projects/typesense-reboot-recovery/add-growth-and-budget-alerts.svx) — read its Result first. The uncommitted changes live in `packages/system-bus/**` (new Inngest functions `search/capture-prefix-growth-alert` and `search/typesense-startup-budget`, plus `/api/runs/health` additions). Try to refute the claim that recurrence of the July 19 failure would be loud.
+
+Attack angles, minimum:
+
+1. True positive: fixture-replay the actual July 19 signature — same `source_identity`, overlapping byte ranges under distinct random Run IDs — and prove the alert fires.
+2. False positives: the patched capture path legitimately produces same-Run growth (`accepted_prefix`) and suffix Runs with `parent_run_id` and adjacent, non-overlapping ranges. Prove neither alerts. If the detector can't tell adjacency from overlap, that's a refutation.
+3. Alert discipline: exactly once per condition (no re-alert storm each ingest), and the Redis range ledger is actually bounded — what's the eviction story for 4,600 conversations?
+4. Delivery: the code calls `joelclaw notify send --kind alert --priority high` then `notify wait` — verify those flags and subcommands exist in the current CLI (`packages/cli`), because an alert that dies on argv parsing is a log nobody reads with extra steps. Fixture-only: never send a real alert.
+5. Startup budget: state machine through 503 → still-503 past budget → recovery → clear; only one alert per outage; `TYPESENSE_STARTUP_BUDGET_MS` parsing including garbage values.
+6. Registration: the worker edited `index.host.ts`/`index.ts` alongside another session's uncommitted message-event hunks — verify both registrations coexist intact and `bunx tsc --noEmit` passes.
+7. Health: `/api/runs/health` shape — freshness and provenance fields present and truthful against a fixture.
+
+Containment: fixture tests only — no real notify sends, no live Typesense mutations, no Redis writes against production keys (use a fixture/namespaced key or mock), `~/.joelclaw/runs-dev` read-only, do not restart the running worker, do not commit.
+
+Deliverable: `.brain/projects/typesense-reboot-recovery/alerts-verification.svx` (`type: "asset"`, `parent: "./add-growth-and-budget-alerts.svx"`) with CONFIRMED/REFUTED per claim and evidence. Do not edit the step file. Work autonomously. Do not commit. Print a DONE summary.
