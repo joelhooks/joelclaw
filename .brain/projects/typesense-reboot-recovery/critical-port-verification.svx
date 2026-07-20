@@ -1,0 +1,123 @@
+---
+title: "Critical-search SQLite port verification"
+type: "asset"
+parent: "./port-critical-search-to-sqlite.svx"
+created_at: "2026-07-20"
+privacy: "private"
+verdict: "refuted"
+---
+
+# Critical-search SQLite port verification
+
+## Verdict
+
+**REFUTED.** The file works while it is healthy and present. It does not yet satisfy the recovery claim.
+
+Two blockers break the availability boundary:
+
+1. `joelclaw recall` crashes when `critical.db` is missing or corrupt. Its Typesense fallback never runs.
+2. The builder can replace a healthy database with an empty projection. It also permits concurrent writers on flagg.
+
+The live database remains usable. The verification rebuild finished with `PRAGMA integrity_check = ok`, mode `0600`, and 29,902 documents.
+
+## Claim matrix
+
+| Claim | Verdict | Evidence |
+|---|---|---|
+| The archived `memory_observations` count is 28,050 | **CONFIRMED** | The archive contains 28,050 JSON objects, 28,050 unique IDs, zero malformed rows, zero missing IDs, and zero empty searchable records. `wc -l` reports 28,049 because the last record has no trailing newline. |
+| The database covers the prior critical recall and knowledge surfaces | **REFUTED** | All five Typesense exports were unavailable during both builds. The memory archive ends at 2026-05-31. `system_knowledge` contains only 100 skills and 2 ADRs, while the existing command can also write and search dynamic types such as `turn_note` and `failed_target`. Live parity was impossible because Typesense returned HTTP 503 `Not Ready or Lagging`. |
+| SQLite-first recall works with a healthy file | **CONFIRMED** | Source and compiled binaries returned `backend: sqlite-fts5` for real queries. `Typesense reboot recovery` returned 503 matches and three results. Raw recall also returned content. |
+| SQLite-first knowledge search works with a healthy file | **CONFIRMED** | The compiled binary returned `backend: sqlite-fts5`; `Typesense reboot recovery` returned 39 matches. |
+| Recall falls back to Typesense when SQLite is unavailable | **REFUTED** | Missing and truncated database probes both exited 1 with `TypeError: null is not an object (evaluating 'error.code')`. A successful mock Typesense server did not change this result. `Effect.try({ catch: () => null })` creates a failed Effect with error `null`; the following `flatMap` never receives `null`, so `legacy.execute(...)` never runs. See `packages/cli/src/capabilities/adapters/typesense-recall.ts:110-139`. |
+| Knowledge search falls back to Typesense | **CONFIRMED, with a failure-mode gap** | With a mock read-only Typesense server and missing SQLite, the compiled binary returned `backend: typesense`, the expected fallback metadata, and one hit. Live Typesense returned a structured HTTP 503 error. Credential resolution and rejected `fetch()` calls are not locally caught. |
+| Freshness metadata tells the operator what is fresh | **REFUTED** | A February memory hit reported `newestSourceAt` from a July Brain page and `sourceAgeSeconds` near zero. The archive source is only marked `ok`; it has no archive high-water timestamp or age. The aggregate freshness can therefore make stale memory look current. |
+| Sequential builds are idempotent | **CONFIRMED for static inputs** | Two fixed-time fixture rebuilds returned one document each and identical ordered stable-ID hashes. The production rerun changed 29,900 to 29,902 because two Brain pages appeared between builds, not because IDs duplicated. |
+| Publication is atomic for readers | **CONFIRMED** | During the production rebuild, 11 read-only count probes saw 29,900 rows. There were zero open errors and zero partial counts. The rename then exposed the completed 29,902-row file. |
+| The builder is single-writer safe | **REFUTED** | Two separate builder processes targeted one temporary database. Both exited 0. The final database contained only the last finisher's fixture. The hostname check limits the machine; it does not serialize processes. |
+| A failed or incomplete source set cannot replace a healthy file | **REFUTED** | A fixture database with one valid document was rebuilt with nonexistent roots, no archive, and no API key. The builder exited successfully and replaced it with zero documents. Missing roots were recorded as `status: ok, count: 0`. |
+| The compiled CLI does not crash | **REFUTED** | Build, `status`, healthy `recall`, and healthy `knowledge search` passed. Compiled `recall` crashed for both missing and corrupt SQLite. |
+| Observer `runBacklink` values resolve in `~/.joelclaw/runs-dev` | **REFUTED** | SQLite contains 64 distinct observation `run_id` values. `runs-dev` contains 148,023 distinct metadata run IDs. Their exact intersection is zero. The generated `run:<id>` strings are labels, not verified backlinks to the named Run store. |
+| Typesense and Runs containment held | **CONFIRMED** | All Typesense requests were GET/search requests. No Typesense mutation endpoint ran. `~/.joelclaw/runs-dev` was read only. The legacy recall adapter and knowledge Typesense paths remain in source. No source commit was made. |
+
+## Coverage receipts
+
+The retired archive is:
+
+`/Volumes/three-body/backups/typesense/retired-memory-observations/memory_observations-20260717T203650Z.jsonl`
+
+Archive breakdown:
+
+- 28,050 valid and unique records.
+- Date range: 2026-02-18T15:42:00Z through 2026-05-31T03:30:53Z.
+- Types: 16,451 `o11y-triage`; 9,404 `o11y-pattern-proposal`; 1,354 without an explicit type; 532 `segment_fact`; 163 `observation_text`; 146 `segment_narrative`.
+- Write verdicts: 26,178 `allow`; 93 `discard`; 80 `hold`; 1,699 missing.
+- No archived memory row has a `run_id`. All 28,050 have a session ID.
+
+Current live database reconciliation after the verification rebuild:
+
+| Collection | Documents |
+|---|---:|
+| `memory_observations` | 28,050 |
+| `observations` | 1,013 |
+| `brain_pages` | 715 |
+| `system_knowledge` | 102 |
+| `vault_notes` | 22 |
+| **Total** | **29,902** |
+
+The observation source reports 1,020 files but produces 1,013 documents. Seven archived/prototype file pairs share a slug. Stable-ID deduplication collapses each pair. The source metadata reports pre-deduplication counts, so source counts do not sum to `document_count`.
+
+The prior recall adapter searched only `observations` and `brain_pages` through Typesense. The SQLite adapter searches all five collections. This is a behavior change, not parity. The SQLite query builder joins tokens with `OR`, so common multi-word queries are broad: `message event log` matched 1,899 recall documents and 75 of 124 knowledge/vault documents. The previous query rewrite, trust ranking, age decay, usage boost, and budget behavior are disabled on the SQLite path.
+
+## Builder receipts
+
+Production rebuild command:
+
+```sh
+bun scripts/build-critical-search-db.ts --skip-typesense
+```
+
+Result:
+
+- Duration: 1,728.88 ms.
+- Before: 29,900 documents.
+- After: 29,902 documents.
+- Size: 274,714,624 bytes.
+- Integrity: `ok`.
+- Mode: `-rw-------`.
+- Stable-ID change: two new Brain documents appeared between builds.
+- Reader probes during build: 11 successful, 0 errors, 0 partial counts.
+
+The builder publishes any internally consistent SQLite file. `PRAGMA integrity_check` proves SQLite structure, not projection completeness. A required-source gate and an exclusive writer lock are both missing from `packages/cli/src/lib/critical-search.ts`.
+
+## CLI receipts
+
+Required compile and smoke checks:
+
+```sh
+bun build packages/cli/src/cli.ts --compile --outfile /tmp/joelclaw-verify
+/tmp/joelclaw-verify status
+/tmp/joelclaw-verify recall 'Typesense reboot recovery' --limit 3
+/tmp/joelclaw-verify knowledge search 'Typesense reboot recovery' --limit 3
+```
+
+All four commands passed with the healthy production file. The compiled missing/corrupt probes produced the recall crash described above. Knowledge fallback succeeded against a local read-only mock server.
+
+Additional validation:
+
+```sh
+bun test packages/cli/src/lib/critical-search.test.ts
+bunx tsc --noEmit
+pnpm biome check scripts/build-critical-search-db.ts packages/cli/src/lib/critical-search.ts packages/cli/src/lib/critical-search.test.ts packages/cli/src/capabilities/adapters/typesense-recall.ts packages/cli/src/commands/knowledge.ts
+```
+
+Results: 4 tests passed; TypeScript passed; Biome passed.
+
+## Required fixes before closure
+
+1. Replace the recall `Effect.try(... catch: () => null)` control flow with an Effect error recovery operator that actually invokes the legacy adapter. Add missing, corrupt, and schema-mismatch CLI tests.
+2. Add an exclusive builder lock. A second builder must fail or wait.
+3. Refuse publication when required sources disappear, regress below a safe count, or fail parsing. Never replace a healthy file with a zero-document build.
+4. Record per-source high-water timestamps and an overall degraded/stale state. Do not derive memory freshness from the newest unrelated Brain page.
+5. Define and test recall parity. Decide whether SQLite should preserve query rewrite, ranking, token matching, trust filters, score semantics, and budget behavior.
+6. Store a resolvable Run identity or stop emitting `runBacklink` as if it resolves into `~/.joelclaw/runs-dev`.
+7. Re-run live Typesense parity after Typesense becomes readable.

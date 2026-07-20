@@ -3,8 +3,7 @@ title: "Port Critical Search to SQLite"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "closed"
-closed_at: "2026-07-20"
+status: "open"
 assignee: "pi (flagg, herdr pane wY:p1P, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: []
@@ -24,6 +23,13 @@ Build the critical projection as one SQLite FTS5 database on flagg, per [the ava
 
 Typesense keeps its non-critical collections untouched. The replication of `critical.db` to the NAS boxes is the next step, not this one.
 
+Added 2026-07-20 after adversarial verification:
+
+5. Failure modes hold in the compiled binary: a missing, truncated, or unreadable `critical.db` falls back cleanly (no crash); knowledge fallback catches credential and network failures locally.
+6. The builder can never replace a healthy database with a degraded one: failed or empty sources report honest status and abort the swap (explicit override only); concurrent builders are serialized by a real lock.
+7. Freshness is per-source truthful — a hit carries its own source's age, the archive gets a high-water timestamp, and stale data can never report near-zero age.
+8. `runBacklink` either verifiably resolves into `~/.joelclaw/runs-dev` or is renamed to stop claiming it does; the 0/64 intersection is explained. The 2026-05-31 archive end and the dynamic knowledge types (`turn_note`, `failed_target`) are reconciled or recorded as explicit gaps for the cutover review.
+
 ## Result (2026-07-20)
 
 Built `~/.joelclaw/search/critical.db` with `scripts/build-critical-search-db.ts` and the SQLite FTS5 implementation in `packages/cli/src/lib/critical-search.ts`. The builder is single-writer on flagg, writes a temporary database, runs `PRAGMA integrity_check`, sets mode `0600`, and atomically replaces the live file. A repeatable fixture test proves reruns replace stable IDs without duplicates.
@@ -37,3 +43,7 @@ Live Typesense parity could not run: `/health` returned `{"ok":false}` and a rea
 Zero-rebuild proof used five fresh Bun reader processes. The first cold file-cache answer took 0.42 s wall / 394.53 ms inside SQLite; the next four took 0.02 s wall each / 10.45–11.51 ms inside SQLite. Every process opened the existing file and answered without an index build.
 
 Validation passed: 18 targeted Bun tests, root `bunx tsc --noEmit`, and targeted Biome over all touched code.
+
+## Verification (2026-07-20)
+
+Adversarial verification ([receipts](./critical-port-verification.svx)) **refuted the close**: the SQLite-first happy path, atomicity, archive counts, and containment are confirmed, but recall crashes instead of falling back when `critical.db` is missing or corrupt (`Effect.try({ catch: () => null })` at `typesense-recall.ts:110-139`), the builder replaces a healthy db with an empty one when sources fail, two builders clobber each other, aggregate freshness makes stale memory look current, and `runBacklink` values have zero intersection with `runs-dev`. Step reopened with conditions 5–8; worker re-engaged in the same pane.
