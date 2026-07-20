@@ -3,8 +3,9 @@ title: "Review the Cutover and Retire the Inflated Collection"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-20"
+assignee: "claude (flagg, herdr pane wY:p1, 2026-07-20)"
 parent: "./typesense-reboot-recovery-brief.svx"
 blockers: ["./build-compacted-collection.svx", "./wire-session-index-cutover.svx"]
 created_at: "2026-07-19"
@@ -26,4 +27,10 @@ Preconditions before the review, from [adversarial verification of the index](./
 
 Resolved when readers point at the SQLite index, the rollback plan is written, and Joel has said "retire it" out loud.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-20)
+
+Joel reviewed the [cutover packet](./cutover-review-packet.svx) and approved: "approved get it done." All preconditions were satisfied before the ask: append consumer live and proven by canary, readers switched, catch-up at zero pending, real parity measured (449,220 vs 3,570,503 chunks), rollback plan written, reader inventory grep-proven.
+
+Retirement executed in order: the writer's `index-chunks` Typesense import removed and `ensureCollections` stopped recreating the collection (commit `2dd747de`), worker bounced onto the retired path (health 200), then `run_chunks_dev` dropped — 3,570,566 documents, 25 → 24 collections. A post-drop canary capture appended to `sessions.db` with zero worker errors. Pre-drop safety: `sessions.db` SHA-256 saved at `~/.joelclaw/search/sessions.db.sha256.pre-retirement`; raw JSONL and manifest remain authoritative; `backfill-run-typesense.ts` retained as the rebuild path.
+
+The Typesense restart-time receipt was NOT measured — the process runs under another user and steering has no sudo. It rides [the reboot gate](./verify-reboot-gate.svx), or `sudo launchctl kickstart -k system/com.joelclaw.central.typesense` any time Joel wants the number.
