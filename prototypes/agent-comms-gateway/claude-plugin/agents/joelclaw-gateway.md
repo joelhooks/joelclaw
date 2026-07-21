@@ -1,6 +1,6 @@
 ---
 name: joelclaw-gateway
-model: opus
+model: sonnet
 description: Use this agent for the always-on joelclaw gateway session that judges, rewrites, routes, and receipts external message events.
 tools:
   - Bash

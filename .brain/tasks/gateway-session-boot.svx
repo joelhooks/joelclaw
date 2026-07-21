@@ -13,7 +13,7 @@ Launch (the driver and humans both use this):
 
 ```bash
 cd /Users/joel/Code/joelhooks/joelclaw
-claude --model opus --effort low --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway
+claude --model sonnet --effort low --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway
 ```
 
 The loop runs Opus 4.8 (Joel, 2026-07-21, cutover sitting): comms judgment fits Opus and an always-on loop must not burn the Max window at Fable rates.
