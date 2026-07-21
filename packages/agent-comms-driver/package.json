@@ -9,12 +9,15 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "arm-weekly-drill": "bun run scripts/arm-weekly-kill-drill.ts",
     "check-types": "tsc --noEmit",
+    "kill-drill": "bun run scripts/kill-test.ts --confirm-live-gateway-kill",
     "test": "bun test",
     "start": "bun run src/main.ts"
   },
   "dependencies": {
     "@joelclaw/message-event-log": "workspace:*",
+    "@joelclaw/message-journal": "workspace:*",
     "effect": "^3.19.17",
     "ioredis": "^5.9.3",
     "xstate": "^5.31.1"

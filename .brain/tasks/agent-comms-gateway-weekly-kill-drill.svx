@@ -1,0 +1,27 @@
+---
+title: "Run the weekly Agent Comms Gateway kill drill"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Run the weekly Agent Comms Gateway kill drill
+
+This is the live weekly **kill drill** for the Agent Comms Gateway. Run only after the supervised cutover has configured `GATEWAY_AGENT_TARGET` and `GATEWAY_SUCCESSOR_BRIEF_PATH`.
+
+1. From `/Users/joel/Code/joelhooks/joelclaw`, run:
+
+   ```sh
+   pnpm --filter @joelclaw/agent-comms-driver kill-drill
+   ```
+
+2. The command must pass all eight assertions. A non-zero exit is a failed drill. Do not hide or retry a failed assertion.
+3. After a pass, arm the next weekly run:
+
+   ```sh
+   pnpm --filter @joelclaw/agent-comms-driver arm-weekly-drill
+   ```
+
+4. Report the fallback `flowId`, recovery `flowId`, Telegram platform message ID, and the next `scheduleId`.
+
+The drill closes the real gateway pane and sends a real DM. The delivered message must be exactly `⚠️ fallback: weekly kill-test drill <date>`. There is no drill flag, test channel, or mock transport.

@@ -265,6 +265,9 @@ importers:
       '@joelclaw/message-event-log':
         specifier: workspace:*
         version: link:../message-event-log
+      '@joelclaw/message-journal':
+        specifier: workspace:*
+        version: link:../message-journal
       effect:
         specifier: ^3.19.17
         version: 3.19.17

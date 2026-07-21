@@ -2,8 +2,9 @@
 title: "Build the kill-test script and weekly drill"
 type: "step"
 kind: "task"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: ["./build-transport-slim-down.svx", "./build-driver.svx"]
 created_at: "2026-07-21"
@@ -18,3 +19,33 @@ The fallback contract's eight-step scripted check (`design-fallback-contract.svx
 Binds: real session kill, real DM, self-identified text (`⚠️ fallback: weekly kill-test drill <date>`). No drill flag, no test channel, no mock — a drill-aware fallback is a fallback with policy in it. The weekly ping is itself the receipt.
 
 Resolved when the script passes against a live gateway + driver in rehearsal, the weekly schedule is wired through existing scheduling machinery (plus on-demand after any gateway deploy), and the cutover sitting can run it as probe (c).
+
+## Result (2026-07-21)
+
+Closed as code-complete and ready for the supervised cutover sitting. The real gateway session does not exist yet, so no pane was killed, no real DM was sent, the production heartbeat key was untouched, and the weekly schedule remains unarmed.
+
+Delivered:
+
+- `packages/agent-comms-driver/src/kill-test.ts` — an XState lifecycle that runs the fallback contract's eight assertions in order. Stream replay proves `fallback.delivered` and the recovery decision by `flowId`. ClickHouse journal readback proves the confirmed platform receipt and exact text `⚠️ fallback: weekly kill-test drill <date>`. Any missing evidence exits non-zero.
+- `packages/agent-comms-driver/src/kill-test-live.ts` — injectable live adapters for Herdr pane closure, Redis heartbeat existence, `joelclaw notify send`, stream trace, journal trace, wake-registry restart, receipt persistence, and weekly schedule admission.
+- `packages/agent-comms-driver/scripts/kill-test.ts` — refuses to run without `--confirm-live-gateway-kill`; the package's `kill-drill` command supplies that confirmation for the supervised sitting. A post-stop failure requests an emergency successor before returning non-zero.
+- `packages/agent-comms-driver/scripts/arm-weekly-kill-drill.ts` plus `.brain/tasks/agent-comms-gateway-weekly-kill-drill.svx` — ready-but-unarmed weekly recurrence through the existing wake registry. The arm path checks for an existing marked schedule, verifies new admission by readback, and cancels plus verifies removal when readback fails.
+- `packages/agent-comms-driver/__tests__/kill-test.test.ts` — deterministic injected-seam coverage for all eight assertions, missing evidence, emergency restart, exact drill text, receipt directory creation, schedule idempotency, cancellation, and cancellation readback.
+
+One-command arm step, only after the supervised live drill passes:
+
+```sh
+pnpm --filter @joelclaw/agent-comms-driver arm-weekly-drill
+```
+
+Validation receipts:
+
+- `bun test packages/agent-comms-driver` — 24 passed, 0 failed, 69 assertions.
+- `pnpm --filter @joelclaw/agent-comms-driver check-types` — passed.
+- `bunx tsc --noEmit` — passed.
+- `pnpm exec biome check packages/agent-comms-driver` — passed.
+- `pnpm exec oxlint packages/agent-comms-driver/src packages/agent-comms-driver/scripts packages/agent-comms-driver/__tests__` — passed.
+- Direct guard probe exited 2 before reading live configuration or touching runtime state.
+- Fresh-context review found emergency-restart, receipt-directory, and schedule-reconciliation gaps. All were fixed. Follow-up review found one cancellation-readback gap; it was fixed and covered by tests.
+- `pnpm biome check packages/ apps/` — blocked by 56 pre-existing import-order diagnostics outside this package.
+- `pi-notes brain check` — blocked by seven pre-existing `.brain/tasks/*.md` support files; this task added only `.svx` Brain prose.
