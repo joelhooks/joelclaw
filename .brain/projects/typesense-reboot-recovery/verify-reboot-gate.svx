@@ -12,6 +12,8 @@ created_at: "2026-07-19"
 
 # Verify the Reboot Acceptance Gate With a Real Reboot
 
+Scheduled: WAKE `e68609e4-42de-42d9-bddb-3f6d8a51a921` fires at 2026-07-21 17:00 (Joel: "put the reboot on todo list for EOD probably") targeting the steering pane. Confirmed via `joelclaw wake list`.
+
 ## Step
 
 The finish line is tested, not asserted. With Joel present (a Flagg reboot is disruptive), reboot Flagg and verify every finish-line condition: critical search up before/during/after, session index inside its measured startup ceiling, raw fallback during rebuild, alerts armed, freshness and provenance in health output. Resolved when the measured results are recorded here and the brief flips to done — or the gaps become new steps.
