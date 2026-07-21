@@ -1,0 +1,19 @@
+---
+title: "Worker task: build the kill-test script and weekly drill"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Worker task: build the kill-test script and weekly drill
+
+You are a build worker for the **Agent Comms Gateway** effort. Execution is granted (Joel, cutover grilling, 2026-07-21).
+
+1. Read the brief: `.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` — Vocabulary binds you, especially **kill drill** and **fallback**.
+2. Read your step: `.brain/projects/agent-comms-gateway/build-kill-test.svx` and follow its scope exactly. Claim it: set `assignee: "pi (flagg, herdr worker pane, 2026-07-21)"`.
+3. Your inputs: the fallback contract's eight-assertion sequence (`design-fallback-contract.svx` Result §4), the driver's states and receipts (`packages/agent-comms-driver`), the slim transport's fallback sender (`packages/gateway/src/transport-slim.ts`), and the stream read API (`packages/message-event-log`).
+4. **Guards**: the script must be buildable and testable now, but the real gateway session does not exist yet — every assertion runs against injectable seams in tests. Do NOT run the drill live: no killing sessions, no real Telegram/DM sends, no writes to the real heartbeat key (`gateway:agent:heartbeat`), no schedule registration against the production wake registry. The first live run belongs to the supervised cutover sitting; the weekly schedule arms then.
+5. The script must satisfy the fallback contract exactly: every assertion reads the stream and receipts, exit non-zero on any missing piece, the drill message self-identifies (`⚠️ fallback: weekly kill-test drill <date>`), no drill flags in the fallback path itself.
+6. Deliverables as file edits: the script + tests in the location your step names; the schedule wiring ready-but-unarmed with a one-command arm step documented; a `## Result (2026-07-21)` section in the step file with receipts; flip `status` to `closed` + `closed_at`; one ledger line in the brief.
+
+Work autonomously, do not commit, print a DONE summary.
