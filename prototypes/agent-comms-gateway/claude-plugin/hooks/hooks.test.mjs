@@ -13,6 +13,12 @@ test("SessionStart orders advisory handoff before authoritative replay and fresh
         latestHandoff: { payload: { note: "advisory note" } },
         pending: [{ _id: "input-1", kind: "message.requested" }],
       }),
+      readSince: async () => ({
+        events: [
+          { kind: "inbound.received", recordedAt: 1, payload: { content: { data: { text: "bing bong" } } } },
+          { kind: "gateway.decision.recorded", recordedAt: 2, payload: { rewrite: "pong" } },
+        ],
+      }),
     },
     herdr: { snapshot: async () => ({ agents: [{ pane_id: "p1" }] }) },
   });
