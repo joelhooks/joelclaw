@@ -17,7 +17,49 @@ export type LiveAdapterOptions = {
   receiptPath?: string;
   spawnDelay?: string;
   successorIdentity?: string;
+  /** herdr workspace that hosts the gateway session's pane (successor spawns land here). */
+  herdrWorkspace?: string;
+  /** Shell command that boots a gateway session inside a fresh pane. */
+  successorCommand?: string;
 };
+
+export const DEFAULT_SUCCESSOR_COMMAND =
+  "cd /Users/joel/Code/joelhooks/joelclaw && claude --model opus --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway";
+
+/**
+ * herdr-native successor spawn shared by the driver and the kill drill: if a
+ * pane already carries the target label it IS the pending successor;
+ * otherwise open a pane, label it, and boot the gateway command in it.
+ */
+export async function spawnGatewaySuccessorPane(
+  runCommand: (argv: string[]) => Promise<{ stdout: string; stderr: string }>,
+  opts: { target: string; herdrWorkspace?: string; successorCommand?: string },
+): Promise<{ spawned: boolean; paneId: string }> {
+  const paneResult = await runCommand(["herdr", "pane", "list"]);
+  const panes = resultList(paneResult.stdout, "panes");
+  const existing = panes.find((entry) => matchesTarget(entry, opts.target));
+  if (existing && typeof existing.pane_id === "string") {
+    return { spawned: false, paneId: existing.pane_id };
+  }
+  const workspace = opts.herdrWorkspace?.trim();
+  const createArgs = workspace
+    ? ["herdr", "tab", "create", "--workspace", workspace, "--label", "📨 gateway loop"]
+    : ["herdr", "workspace", "create", "--label", "[jc] gateway agent"];
+  const created = object(JSON.parse((await runCommand(createArgs)).stdout));
+  const result = object(created?.result);
+  const rootPane = object(result?.root_pane);
+  const paneId = typeof rootPane?.pane_id === "string" ? rootPane.pane_id : null;
+  if (!paneId) throw new Error(`herdr spawn returned no root pane: ${JSON.stringify(created)}`);
+  await runCommand(["herdr", "pane", "rename", paneId, opts.target]);
+  await runCommand([
+    "herdr",
+    "pane",
+    "run",
+    paneId,
+    opts.successorCommand ?? DEFAULT_SUCCESSOR_COMMAND,
+  ]);
+  return { spawned: true, paneId };
+}
 
 type CommandResult = { stdout: string; stderr: string };
 type CommandRunner = (argv: string[]) => Promise<CommandResult>;
@@ -233,6 +275,15 @@ export function makeLiveDriverPorts(
     if (options.receiptPath) await appendFile(options.receiptPath, line, "utf8");
   };
 
+  // The target may be a stable pane label that outlives respawns; herdr's
+  // prompt command wants a pane id or agent name, so resolve per call.
+  const resolveCliTarget = async (): Promise<string> => {
+    const paneResult = await runCommand(["herdr", "pane", "list"]);
+    const panes = resultList(paneResult.stdout, "panes");
+    const pane = panes.find((entry) => matchesTarget(entry, options.target));
+    return typeof pane?.pane_id === "string" ? pane.pane_id : options.target;
+  };
+
   return {
     now: Date.now,
     inspectAgent: async () => {
@@ -242,8 +293,14 @@ export function makeLiveDriverPorts(
       ]);
       const agents = resultList(agentResult.stdout, "agents");
       const panes = resultList(paneResult.stdout, "panes");
-      const agent = agents.find((entry) => matchesTarget(entry, options.target));
-      const pane = panes.find((entry) => matchesTarget(entry, options.target))
+      // The target may be a pane label agents don't carry: resolve the pane
+      // first, then find its occupant by pane id.
+      const labeledPane = panes.find((entry) => matchesTarget(entry, options.target));
+      const agent = agents.find((entry) => matchesTarget(entry, options.target))
+        ?? (labeledPane && typeof labeledPane.pane_id === "string"
+          ? agents.find((entry) => entry.pane_id === labeledPane.pane_id)
+          : undefined);
+      const pane = labeledPane
         ?? (agent && typeof agent.pane_id === "string"
           ? panes.find((entry) => entry.pane_id === agent.pane_id)
           : undefined);
@@ -261,7 +318,7 @@ export function makeLiveDriverPorts(
         "herdr",
         "agent",
         "prompt",
-        options.target,
+        await resolveCliTarget(),
         text,
         "--wait",
         "--until",
@@ -287,34 +344,14 @@ export function makeLiveDriverPorts(
       await redis.set(key, value, "PX", ttlMs);
     },
     requestSuccessor: async () => {
-      if (await hasPendingSuccessor(redis, options.successorBriefPath, successorMarker)) return;
-      let result: CommandResult;
-      try {
-        result = await runCommand([
-          "joelclaw",
-          "wake",
-          "in",
-          options.spawnDelay ?? "1s",
-          "--verb",
-          "spawn",
-          "--brief",
-          options.successorBriefPath,
-          "--prompt",
-          successorPrompt,
-          "--format",
-          "json",
-        ]);
-      } catch (error) {
-        if (await hasPendingSuccessor(redis, options.successorBriefPath, successorMarker)) return;
-        throw error;
-      }
-      try {
-        const envelope = object(JSON.parse(result.stdout));
-        if (envelope?.ok !== true) throw new Error("wake registry did not return ok: true");
-      } catch (error) {
-        if (await hasPendingSuccessor(redis, options.successorBriefPath, successorMarker)) return;
-        throw new Error(`wake registry rejected SPAWN: ${result.stdout}`, { cause: error });
-      }
+      // herdr-native spawn (Joel, cutover sitting 2026-07-21): the driver opens
+      // the successor pane directly instead of routing through the wake
+      // registry — one hop, observable, no pipeline dependency.
+      await spawnGatewaySuccessorPane(runCommand, {
+        target: options.target,
+        ...(options.herdrWorkspace ? { herdrWorkspace: options.herdrWorkspace } : {}),
+        ...(options.successorCommand ? { successorCommand: options.successorCommand } : {}),
+      });
     },
     recordReceipt,
     close: async () => {

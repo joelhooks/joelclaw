@@ -35,14 +35,22 @@ try {
     date,
     heartbeatTtlMs: Number(process.env.GATEWAY_HEARTBEAT_TTL_MS ?? 60_000),
     assertionTimeoutMs: Number(process.env.GATEWAY_KILL_DRILL_TIMEOUT_MS ?? 120_000),
+    recoveryTimeoutMs: Number(process.env.GATEWAY_KILL_DRILL_RECOVERY_TIMEOUT_MS ?? 420_000),
     pollIntervalMs: Number(process.env.GATEWAY_KILL_DRILL_POLL_MS ?? 1_000),
   });
   console.log(JSON.stringify({ ok: true, command: "agent-comms kill-drill", result }, null, 2));
 } catch (error) {
+  const chain: string[] = [];
+  let current: unknown = error;
+  while (current) {
+    chain.push(current instanceof Error ? `${current.name}: ${current.message}` : String(current));
+    current = current instanceof Error ? current.cause : undefined;
+  }
   console.error(JSON.stringify({
     ok: false,
     command: "agent-comms kill-drill",
-    error: error instanceof Error ? error.message : String(error),
+    error: chain.join(" | cause: "),
+    stack: error instanceof Error ? error.stack?.split("\n").slice(0, 8) : undefined,
   }, null, 2));
   process.exitCode = 1;
 } finally {

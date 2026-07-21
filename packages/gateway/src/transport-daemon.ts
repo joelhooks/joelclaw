@@ -16,6 +16,8 @@ import {
 } from "./chat-sdk/notify-stream";
 import { registerChatSdkActingInbound } from "./chat-sdk-inbound/acting";
 import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
+import { sendExplicitTransport } from "./chat-sdk/explicit-send";
+import { drainDeliverDecisions } from "./gateway-decision-executor";
 
 const SESSION_ID = "gateway";
 const SESSIONS_SET = "joelclaw:gateway:sessions";
@@ -193,6 +195,33 @@ export async function startSlimTransportDaemon(): Promise<void> {
     });
   });
   await drain();
+
+  // Mechanical executor for recorded deliver decisions: the agent decides,
+  // the transport executes the receipt. Decisions are appended by the MCP
+  // plugin without a Redis notify, so this polls its own stream cursor.
+  const executorRecipient = process.env.TELEGRAM_USER_ID?.trim();
+  let executorDraining = false;
+  const drainExecutor = async (): Promise<void> => {
+    if (!executorRecipient || executorDraining) return;
+    executorDraining = true;
+    try {
+      await drainDeliverDecisions({
+        eventLog,
+        recipientId: executorRecipient,
+        send: sendExplicitTransport,
+        log: (message, detail) => console.log(message, detail ?? {}),
+      });
+    } catch (error) {
+      console.error("[gateway:executor] drain failed", { error: String(error) });
+    } finally {
+      executorDraining = false;
+    }
+  };
+  const executorTimer = setInterval(() => {
+    void drainExecutor();
+  }, 5_000);
+  executorTimer.unref?.();
+  await drainExecutor();
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log("[gateway:transport] shutting down", { signal });

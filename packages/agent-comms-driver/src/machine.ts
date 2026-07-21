@@ -140,6 +140,12 @@ export const driverMachine = setup({
         OBSERVED: [
           { target: "spawning", guard: "paneOrSessionMissing" },
           { target: "poking", guard: "shouldPoke", actions: "beginPoke" },
+          // A healthy idle session has no poke outstanding — that is recovery
+          // evidence. Without this, one failed poke latches unhealthy forever
+          // when the queue is empty (absorbing-state bug, caught by the live
+          // kill drill 2026-07-21). A truly wedged session fails its next
+          // real poke and re-enters unhealthy with fresh evidence.
+          { target: "ready", guard: "healthyIdleSession" },
         ],
       },
     },

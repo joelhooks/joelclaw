@@ -4,7 +4,7 @@ type: "step"
 kind: "task"
 interaction: "HITL"
 status: "open"
-assignee: ""
+assignee: "claude (flagg, herdr pane w28:p1, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: ["./build-transport-slim-down.svx", "./build-gateway-plugin.svx", "./build-driver.svx", "./build-kill-test.svx"]
 created_at: "2026-07-21"
@@ -25,3 +25,25 @@ The full plan is the Result of [Plan the full cutover](./plan-full-cutover.svx);
 **Week one**: daily self-digest from the gateway to Joel; corrections ride the inbound path as agent-made prompt edits with `promptRevision` bumps; one mid-week external receipts audit (harden the prototype's every-input-exactly-once validator into the audit script); revive and bus-by-flowId round-trips demonstrated, provoked if needed; week closes on the first automated kill drill, rollback trigger retires.
 
 Resolved when the done-evidence table in the plan Result is complete (deletion grep gate, three inbound receipt chains, untouched-producer diff + flowId proof, live + first weekly drill), the brief's four finish-line conditions are checked, and messaging-stabilization is declared subsumed and closed with its item dispositions recorded.
+
+## Sitting record (2026-07-21) — cutover executed, week one open
+
+**The flip happened and held.** Pre-flight: supervised restart on today's code (deployed the priority-lane patch); `pre-gateway-cutover` pinned at `bfd8e58e`; entrypoint backed up (`~/.joelclaw/scripts/gateway-start.sh.pre-cutover`) with restore proven; rollback scripted (`scripts/gateway-cutover-rollback.sh` — restore-backup + restart, simpler than the planned git revert because the entrypoint lives outside the repo). Flip: `DAEMON` → `transport-daemon.ts` + `GATEWAY_TRANSPORT_SLIM_DOWN=1`; slim transport ready (fallback channel telegram).
+
+**Probes.** (a) Untouched producer `joelclaw notify send` → stream → agent `deliver` decision → mechanical executor → `delivery.confirmed` in Joel's DM. (b) Joel's reply "nice" → `inbound.received` → route receipt → gateway delivered the routing to the origin herdr pane. (c) Kill drill **passed 8/8 live**: session+driver killed, TTL lapsed, raw fallback delivered, receipts asserted, herdr-native restart, heartbeat returned, recovery probe decided end-to-end. Unprompted bonus: the gateway aggregated a real health-check storm (open → close-deliver) minutes after going live, and post-drill it dropped the drill's own machine receipts with written reasons.
+
+**Mid-sitting defects found and fixed** (each now in code + tests):
+
+1. Convex semanticKey validator required prefix==source, rejecting every real writer — decoupled (joelclaw-api `54795b7`), appends proven.
+2. `stream_advance_own_output` checked producer strings — now recognizes gateway-authored kinds; cursor wedge cleared.
+3. No bridge from `deliver` decisions to the send seam — `gateway-decision-executor.ts` executes deliver + aggregate close-deliver receipts mechanically (its own stream cursor).
+4. Driver spawn via wake registry vanished into the pipeline — replaced with herdr-native spawn (Joel's call); stable pane label `📨 gateway loop` is the target identity; drill restart likewise.
+5. Driver couldn't see agents by pane label — pane→occupant resolution.
+6. Kill drill vs self-heal: the kill now takes down session+driver (pidfile-precise); recovery gets a 420s window; poke deadline 300s to match measured Opus turn times.
+7. **Absorbing-state latch**: one failed poke + empty queue = unhealthy forever, heartbeat withheld on a healthy session. Fixed with a `healthyIdleSession` recovery transition. Caught only because the drill runs real kills.
+
+**Standing calls landed mid-sitting**: the loop runs **Opus 4.8** (`--model opus`); driver env: `GATEWAY_POKE_DEADLINE_MS=300000`, `GATEWAY_HERDR_WORKSPACE`, target by pane label.
+
+**Named gap (follow-up)**: `MESSAGE_JOURNAL_READER` credentials were never provisioned on flagg — `joelclaw messages trace` fails for everyone; drill assertion 5 runs in recorded degraded mode (stream-payload verification) until provisioned.
+
+**Week one open**: weekly drill armed (`bdb54454`, fires 2026-07-28 — note its wake-registry SPAWN execution path is the one that failed for driver spawns; watch its first firing). Remaining: daily self-digest steering, mid-week receipts audit, revive + bus-by-flowId round-trips, routing-table deletion grep gate after stability, then finish-line check and messaging-stabilization closure.

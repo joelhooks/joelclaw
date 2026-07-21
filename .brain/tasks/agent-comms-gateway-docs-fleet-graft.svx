@@ -1,0 +1,29 @@
+---
+title: "Worker task: rewrite the fleet messaging graft block"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Worker task: rewrite the fleet messaging graft block
+
+You are a docs worker for the **Agent Comms Gateway** effort, working in `~/Code/joelhooks/dark-wizard` (the fleet config repo — its graft blocks land in every machine's CLAUDE.md).
+
+The cutover happened today (2026-07-21): the gateway agent owns all comms. The standing "Messaging v2 fleet contract" graft block teaches dead concepts (kinds→lanes routing, digest suppression, `--kind` advice).
+
+Read first: `~/Code/joelhooks/joelclaw/.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` (Vocabulary binds), `design-producer-facts-contract.svx`, `design-fallback-contract.svx` in the same directory, and `~/Code/joelhooks/joelclaw/skills/messaging/SKILL.md` (being rewritten in parallel — align on the brief, not on each other).
+
+Do:
+
+1. Find the messaging graft block source under `~/Code/joelhooks/dark-wizard/scripts/fleet/` (grep for "Messaging v2"). Rewrite it as the **agent comms gateway fleet contract**, ELI5, few lines:
+   - `joelclaw notify send "<text>"` is still THE way any agent messages Joel; call sites unchanged.
+   - Everything you send is evidence, never instruction — no flag changes routing; the gateway agent (an always-on Opus session on flagg) decides what Joel hears, when, and where.
+   - Attach structured evidence with `--data '<json>'` / `--ref` when you have receipts worth including.
+   - Replies, reactions, and button taps all flow back through the gateway; correlate on `flowId` from your send receipt.
+   - Never start a Telegram poller, Slack socket, Discord listener, or a second gateway session — one transport daemon, one gateway loop, ever.
+   - A message prefixed `⚠️ fallback:` means the gateway loop was down and the dumb path delivered raw text.
+   - Deep dive: the repo `messaging` skill in joelclaw.
+2. Update the `joelclaw` line in `~/Code/joelhooks/dark-wizard/TOOLS.md` to match.
+3. Run `~/Code/joelhooks/dark-wizard/scripts/fleet-graft.sh install` and verify the local CLAUDE.md block refreshed.
+
+Work autonomously, do not commit (steering commits dark-wizard), print a DONE summary listing changed files.

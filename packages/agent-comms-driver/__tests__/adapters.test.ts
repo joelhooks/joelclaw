@@ -177,34 +177,42 @@ describe("live adapters", () => {
     await ports.close();
   });
 
-  test("reconciles ambiguous SPAWN acceptance by stable registry marker", async () => {
+  test("spawns the successor pane via herdr and treats a labeled pane as pending", async () => {
     const stream = streamFake();
     const redis = redisFake();
-    let wakeCalls = 0;
+    const calls: string[][] = [];
+    let paneListPayload = '{"result":{"panes":[]}}';
     const runCommand = async (argv: string[]) => {
-      if (argv[0] !== "joelclaw") return { stdout: '{"result":{"agents":[],"panes":[]}}', stderr: "" };
-      wakeCalls += 1;
-      const promptIndex = argv.indexOf("--prompt");
-      redis.schedules["schedule-1"] = JSON.stringify({
-        verb: "spawn",
-        briefPath: "/tmp/scratch.svx",
-        prompt: argv[promptIndex + 1],
-      });
-      throw new Error("response lost after registry acceptance");
+      calls.push(argv);
+      if (argv[0] === "herdr" && argv[1] === "pane" && argv[2] === "list") {
+        return { stdout: paneListPayload, stderr: "" };
+      }
+      if (argv[0] === "herdr" && argv[1] === "tab" && argv[2] === "create") {
+        return { stdout: '{"result":{"tab":"wT:t2","root_pane":{"pane_id":"wT:p9"}}}', stderr: "" };
+      }
+      return { stdout: '{"result":{}}', stderr: "" };
     };
     const ports = makeLiveDriverPorts(
       {
-        target: "gateway",
+        target: "📨 gateway loop",
         successorBriefPath: "/tmp/scratch.svx",
-        successorIdentity: "test-driver",
+        herdrWorkspace: "wT",
+        successorCommand: "echo boot",
       },
       { stream: stream.client, redis: redis.client, runCommand },
     );
 
     await ports.requestSuccessor();
+    const rename = calls.find((argv) => argv[1] === "pane" && argv[2] === "rename");
+    const run = calls.find((argv) => argv[1] === "pane" && argv[2] === "run");
+    expect(rename).toEqual(["herdr", "pane", "rename", "wT:p9", "📨 gateway loop"]);
+    expect(run).toEqual(["herdr", "pane", "run", "wT:p9", "echo boot"]);
+
+    // A pane already carrying the target label is the pending successor.
+    paneListPayload = '{"result":{"panes":[{"pane_id":"wT:p9","label":"📨 gateway loop"}]}}';
+    const before = calls.length;
     await ports.requestSuccessor();
-    expect(wakeCalls).toBe(1);
-    expect(redis.schedules["schedule-1"]).toContain("[driver-spawn:test-driver]");
+    expect(calls.slice(before).filter((argv) => argv[2] === "create")).toHaveLength(0);
     await ports.close();
   });
 

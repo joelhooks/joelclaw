@@ -1,0 +1,27 @@
+---
+title: "Worker task: rewrite repo messaging docs for the gateway agent"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Worker task: rewrite repo messaging docs for the gateway agent
+
+You are a docs worker for the **Agent Comms Gateway** effort. The cutover happened today: the gateway agent now owns all comms policy. The fleet's repo docs must tell the new truth.
+
+Authoritative sources (read before writing):
+
+- `.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` — Vocabulary binds your words.
+- `.brain/projects/agent-comms-gateway/design-producer-facts-contract.svx` — the producer contract.
+- `.brain/projects/agent-comms-gateway/design-fallback-contract.svx` — the fallback.
+- `~/Vault/docs/decisions/0249-agent-comms-gateway-decision-loop.md` — the loop.
+- `prototypes/agent-comms-gateway/claude-plugin/README.md` — the plugin.
+- Live amendments from the sitting (2026-07-21): the loop runs **Opus 4.8** (`claude --model opus --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway`); the driver spawns successors **herdr-native** (no wake-registry hop), target = stable pane label `📨 gateway loop`; transport runs `packages/gateway/src/transport-daemon.ts` behind `GATEWAY_TRANSPORT_SLIM_DOWN=1`; recorded deliver / close-deliver decisions are executed mechanically by `packages/gateway/src/gateway-decision-executor.ts`.
+
+Rewrite these files to the new contract, keeping what is still true and deleting what is dead (kinds routing tables, lanes, digest suppression, priority mappings as policy):
+
+1. `skills/messaging/SKILL.md` — the fleet-facing skill. Producers: `joelclaw notify send "<text>"` unchanged, everything (kind, priority, `--data`) is evidence, never instruction; no deprecation nagging; the agent decides delivery, timing, formatting, platform; every decision has a stream receipt (`joelclaw messages trace <flowId>` still works); the dead-simple fallback marks `⚠️ fallback:` messages; single-poller doctrine survives (one transport, one gateway session — never spawn a listener or a second gateway).
+2. `docs/gateway.md` — operations: transport daemon (slim), the gateway session + driver panes in workspace `[jc] gateway agent`, heartbeat key `gateway:agent:heartbeat`, kill drill, rollback script `scripts/gateway-cutover-rollback.sh`.
+3. `docs/cli.md` — the notify section only.
+
+Do not touch `.brain/projects/**` step files or the plugin prompts. Work autonomously, do not commit, print a DONE summary.

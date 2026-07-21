@@ -9,7 +9,14 @@ import {
   DEFAULT_SUCCESSOR_DEADLINE_MS,
 } from "./driver";
 
+const DRIVER_PID_FILE = "/tmp/joelclaw/agent-comms-driver.pid";
+
 const main = Effect.gen(function* () {
+  yield* Effect.promise(async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir("/tmp/joelclaw", { recursive: true });
+    await writeFile(DRIVER_PID_FILE, `${process.pid}\n`, "utf8");
+  });
   const target = yield* Config.string("GATEWAY_AGENT_TARGET");
   const successorBriefPath = yield* Config.string("GATEWAY_SUCCESSOR_BRIEF_PATH");
   const redisUrl = yield* Config.string("REDIS_URL").pipe(
@@ -34,7 +41,20 @@ const main = Effect.gen(function* () {
     Config.withDefault("/tmp/joelclaw/agent-comms-driver.jsonl"),
   );
 
-  const ports = makeLiveDriverPorts({ target, successorBriefPath, redisUrl, receiptPath });
+  const herdrWorkspace = yield* Config.string("GATEWAY_HERDR_WORKSPACE").pipe(
+    Config.withDefault(""),
+  );
+  const successorCommand = yield* Config.string("GATEWAY_SUCCESSOR_COMMAND").pipe(
+    Config.withDefault(""),
+  );
+  const ports = makeLiveDriverPorts({
+    target,
+    successorBriefPath,
+    redisUrl,
+    receiptPath,
+    ...(herdrWorkspace ? { herdrWorkspace } : {}),
+    ...(successorCommand ? { successorCommand } : {}),
+  });
   const driver = new AgentCommsDriver(ports, {
     heartbeatKey,
     heartbeatTtlMs,

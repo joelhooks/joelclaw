@@ -13,6 +13,7 @@ import {
 import { Effect, Layer } from "effect";
 import Redis from "ioredis";
 
+import { spawnGatewaySuccessorPane } from "./adapters";
 import { DEFAULT_HEARTBEAT_KEY } from "./driver";
 import {
   KILL_DRILL_SOURCE,
@@ -114,6 +115,14 @@ function findWeeklySchedule(value: unknown, briefPath: string): Record<string, u
 
 async function resolvePaneId(runCommand: CommandRunner, target: string): Promise<string> {
   if (/^w[^:]+:p[^:]+$/u.test(target)) return target;
+  // Pane labels outlive respawns; agents don't carry them, so check panes first.
+  const paneList = parseEnvelope((await runCommand(["herdr", "pane", "list"])).stdout);
+  const resultObject = (paneList as { result?: { panes?: unknown[] } }).result;
+  const panes = Array.isArray(resultObject?.panes)
+    ? (resultObject.panes as Record<string, unknown>[])
+    : [];
+  const labeled = panes.find((pane) => pane.label === target);
+  if (labeled && typeof labeled.pane_id === "string") return labeled.pane_id;
   const result = await runCommand(["herdr", "agent", "get", target]);
   const paneId = findString(parseEnvelope(result.stdout), "pane_id");
   if (!paneId) throw new Error(`Herdr agent ${target} has no pane_id`);
@@ -261,9 +270,28 @@ export function makeLiveKillDrillPorts(
     now: Date.now,
     wait: (milliseconds) => Bun.sleep(milliseconds),
     stopAgent: async () => {
+      // The kill must take down the whole agent side: session AND driver.
+      // A running driver self-heals a closed pane faster than the heartbeat
+      // TTL lapses (proven live 2026-07-21), so pane-only death never reaches
+      // the fallback this drill exists to prove.
+      // Kill exactly the driver via its pidfile — a name-pattern pkill would
+      // match this drill's own pnpm/bun processes and kill the drill mid-run.
+      let driverStopped = false;
+      try {
+        const pid = Number.parseInt(
+          (await Bun.file("/tmp/joelclaw/agent-comms-driver.pid").text()).trim(),
+          10,
+        );
+        if (Number.isSafeInteger(pid) && pid > 1) {
+          process.kill(pid, "SIGTERM");
+          driverStopped = true;
+        }
+      } catch {
+        driverStopped = false;
+      }
       const paneId = await resolvePaneId(runCommand, options.agentTarget);
       const result = parseEnvelope((await runCommand(["herdr", "pane", "close", paneId])).stdout);
-      return { paneId, herdr: result };
+      return { paneId, herdr: result, driverStopped };
     },
     heartbeatExists: async () => {
       await ensureRedis();
@@ -287,23 +315,42 @@ export function makeLiveKillDrillPorts(
     traceStream: (flowId): Promise<MessageEventTraceResult> => stream.trace(flowId),
     tracePlatform: traceJournal,
     restartAgent: async () => {
-      const result = parseEnvelope((await runCommand([
-        "joelclaw",
-        "wake",
-        "in",
-        options.restartDelay ?? "1s",
-        "--verb",
-        "spawn",
-        "--brief",
-        options.successorBriefPath,
-        "--prompt",
-        "[kill-drill-restart] Restart the gateway from authoritative stream replay after the supervised kill drill.",
-        "--format",
-        "json",
-      ])).stdout);
-      const scheduleId = findString(result, "scheduleId");
-      if (!scheduleId) throw new Error("gateway restart SPAWN returned no scheduleId");
-      return { scheduleId, wake: result };
+      // herdr-native restart (Joel, cutover sitting 2026-07-21): restart the
+      // driver, which spawns the gateway session itself — the same self-heal
+      // path production uses. GATEWAY_DRIVER_PANE names the driver's pane;
+      // without it the driver runs as a detached child.
+      const workspace = process.env.GATEWAY_HERDR_WORKSPACE?.trim();
+      const driverEnv = [
+        `GATEWAY_AGENT_TARGET='${options.agentTarget}'`,
+        workspace ? `GATEWAY_HERDR_WORKSPACE='${workspace}'` : "",
+        `GATEWAY_SUCCESSOR_BRIEF_PATH='${options.successorBriefPath}'`,
+      ].filter(Boolean).join(" ");
+      const driverCommand = `${driverEnv} pnpm --filter @joelclaw/agent-comms-driver start`;
+      const driverPane = process.env.GATEWAY_DRIVER_PANE?.trim();
+      let driverRestart: Record<string, unknown>;
+      if (driverPane) {
+        // `herdr pane run` types into the pane and prints nothing on success.
+        const runOut = await runCommand(["herdr", "pane", "run", driverPane, driverCommand]);
+        driverRestart = { pane: driverPane, stdout: runOut.stdout.trim() };
+      } else {
+        const child = Bun.spawn(["sh", "-c", driverCommand], {
+          stdout: "ignore",
+          stderr: "ignore",
+          cwd: "/Users/joel/Code/joelhooks/joelclaw",
+        });
+        child.unref();
+        driverRestart = { detachedPid: child.pid };
+      }
+      // Also spawn the gateway pane directly so recovery does not wait a full
+      // driver observation cycle; the label check makes the race idempotent.
+      const spawned = await spawnGatewaySuccessorPane(runCommand, {
+        target: options.agentTarget,
+        ...(workspace ? { herdrWorkspace: workspace } : {}),
+        ...(process.env.GATEWAY_SUCCESSOR_COMMAND?.trim()
+          ? { successorCommand: process.env.GATEWAY_SUCCESSOR_COMMAND.trim() }
+          : {}),
+      });
+      return { herdr: spawned, driver: driverRestart };
     },
     recordReceipt: options.receiptPath
       ? makeKillDrillReceiptRecorder(options.receiptPath)
