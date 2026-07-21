@@ -54,6 +54,7 @@ Standing calls (Joel, 2026-07-21, charter grilling):
 - Full replacement — no shadow window, no staged cutover. The fallback and source-control rollback are the safety story.
 - A custom Claude plugin likely packages the gateway loop's tooling (mid-charter, on the plugin-surface question).
 - One inbound contract: every event from Joel — free text, reaction, button tap — is the same envelope in the stream, interpreted by the agent. No mechanical fast path (producer-facts grilling).
+- The prototype must have a clear iteration path to production if it proves out: real seams (stream replay, plugin packaging, receipt shapes), throwaway glue only at the edges.
 
 Execution is not yet authorized. Steps produce decisions; build authorization lands when [Plan the full cutover](./plan-full-cutover.svx) closes.
 

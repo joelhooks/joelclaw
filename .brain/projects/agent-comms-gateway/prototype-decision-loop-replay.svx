@@ -16,7 +16,9 @@ created_at: "2026-07-21"
 
 Cheapest touchable artifact: a throwaway Fable loop fed a real day of joelclaw message traffic (replayed from the stream/journal, not live), producing what it *would have sent* — rewrites in one voice, storm aggregations, hold/deliver choices with one-line reasons.
 
-This is an alignment instrument, not a cutover gate. Joel ruled out a shadow window; full replacement stands. The prototype exists so Joel can react to the agent's actual judgment and voice before the decision-loop design closes — a reaction beats a discussion. Build it with the `prototype` skill: throwaway, no production wiring.
+This is an alignment instrument, not a cutover gate. Joel ruled out a shadow window; full replacement stands. The prototype exists so Joel can react to the agent's actual judgment and voice before the decision-loop design closes — a reaction beats a discussion.
+
+Standing call (Joel, 2026-07-21): fine with a prototype **as long as it has a clear iteration path to production if it proves out**. So build on the real seams, not a mock rig: replay through the real stream read API (the seam map's paginated replay), package the loop the way the plugin-surface map recommends (Claude plugin), and write decision receipts in the shapes the design will keep. Harness glue and the review surface may be throwaway; the loop core, its tooling, and its prompt files are the seed of the production container. The result section must name the iteration path: what hardens, what gets discarded, what the next slice is.
 
 Joel touches the output (a rendered before/after of a real day) and grills: is the voice right, are the aggregations right, what did it wrongly hold or wrongly deliver.
 
