@@ -1,0 +1,17 @@
+---
+title: "Assert Function Registration and Recent Runs"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./reboot-hardening-brief.svx"
+blockers: []
+created_at: "2026-07-21"
+---
+
+# Assert Function Registration and Recent Runs
+
+## Step
+
+The reconciler dead-bound on deploy because the worker's self-registration PUT fired into a down Inngest and was silently lost (2026-07-20; recovered by manual `PUT /api/inngest`). "Verify runs, not registration" is memory doctrine — mechanize it: a startup-and-hourly check in the system-bus worker that (1) every function exported by `serve.ts` exists in Inngest's functions table, re-issuing the registration PUT with retry/backoff if not, and (2) every cron-triggered function has a run newer than 2× its cadence, raising a hard alert (with the incident-latch semantics, not per-pass spam) naming the dead function. Fold into or alongside the post-reboot smoke check ([step](./wire-post-reboot-smoke-check.svx)) — one owner for both is fine. Resolved when killing a registration (test env) produces automatic re-registration, and a paused cron function produces one latched alert.

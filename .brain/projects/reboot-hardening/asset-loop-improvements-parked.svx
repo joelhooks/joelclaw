@@ -1,0 +1,20 @@
+---
+title: "Asset: parked loop-improvement list for the resilience-engineering grilling"
+type: "asset"
+parent: "./reboot-hardening-brief.svx"
+date: "2026-07-21"
+privacy: "private"
+---
+
+# Parked loop improvements (2026-07-21)
+
+Joel funded the top three from the 2026-07-21 loop-improvement review: funnel canary + liveness staleness alarms (chartered in aihero-support `.brain/projects/learner-flow-loops/`) and the registration/runs assertion ([step](./assert-function-registration-and-runs.svx)). The rest is parked here for the resilience-engineering grilling to absorb, with the incident that earned each item:
+
+1. **Boundary-loop doctrine.** Every external boundary (Kit, GA, future Stripe) gets fast-path event + bounded reconciler + per-run receipt as the stated build pattern, not a retrofit. Earned by: wake schedules, capture acks, Kit confirmation — three retrofits in three days.
+2. **Classifier-gap drain.** `stuck > 0` beyond N hours pages with the learner's stage; the classifier files a "what I couldn't classify and why" receipt. Earned by: one learner unclassifiable for 25+ hours dragging fleet metrics.
+3. **Ban aggregate-join metrics in DMs.** Funnel claims come from per-person joins or are labeled as rates. Earned by: "97 signed up, 97 got the welcome email" hiding a 60% leak; 1712 sextuple-counted deferrals.
+4. **Distributions over extremes.** Oldest + p50 + count-over-threshold for age metrics. Earned by: `oldestUnservedAgeHours 25.5` being one learner in a trench coat.
+5. **Incident-semantics library.** One shared latch (key, quiet window, attempt cap, final notice) for every `sendHardAlert` caller. Earned by: capture-alert spam (~90 sources × hourly) and the dispatcher urgent-DM spam finding, same bug solved twice in two codebases.
+6. **Chain successor assertions.** A self-scheduling run's last act is asserting its successor exists, in its receipt. Earned by: the pulse chain dying silently twice.
+
+Context pack for the grilling: `~/Code/joelhooks/joelclaw/.brain/tasks/grill-master-resilience-engineering-context.svx`.
