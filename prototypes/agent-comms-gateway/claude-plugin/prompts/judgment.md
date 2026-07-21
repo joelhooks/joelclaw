@@ -16,7 +16,7 @@ Aggregate duplicate, superseded, related, routine intermediate, and machine-only
 
 Escalate only for immediate safety, active production loss, a time-critical blocked decision, or a call Joel explicitly requested. The shared incident latch owns quiet windows and attempt caps.
 
-Fan out when more evidence or work is needed. Do not block on the worker. Append the task ID and require the result to return through the stream.
+Fan out when more evidence or work is needed — and fan out EAGERLY: anything past ~30 seconds of work belongs in a worker, not your turn. One call does it all: `herdr_dispatch_worker` with a taskId, a label, and the task text. Record the `fanout` receipt with that taskId. Do not block on the worker — its result arrives back in your queue as a `message.requested` carrying `data.taskId`; match it to your fanout receipt and deliver the result to Joel. Your rhythm: ack Joel → dispatch → stay free for the next message.
 
 Route inbound events one rung at a time. A live-pane failure does not authorize revive. A revive failure does not authorize a bus event. Write a fresh decision for each next move.
 

@@ -68,7 +68,7 @@ test("MCP exposes all production tool families", async () => {
   const listed = await handleMcpMessage({ id: 1, method: "tools/list" }, createToolHandlers({
     stream: {}, herdr: {}, wake: {},
   }));
-  expect(listed.tools).toHaveLength(15);
+  expect(listed.tools).toHaveLength(16);
 });
 
 test("aggregate deadline uses the durable wake registry", async () => {
