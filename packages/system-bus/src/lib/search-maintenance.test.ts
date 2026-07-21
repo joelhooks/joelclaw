@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import type { IncidentLatch } from "@joelclaw/incident-latch";
+import { Effect } from "effect";
 import {
   assessStartupBudget,
   type CaptureSegment,
@@ -6,7 +8,49 @@ import {
   detectCaptureGrowth,
   parseStartupBudgetMs,
   sendHardAlert,
+  stableAlertId,
 } from "./search-maintenance";
+
+const alwaysOpenLatch: IncidentLatch = {
+  check: (key, options) => Effect.succeed({
+    key,
+    speak: true,
+    kind: "first",
+    attempt: 1,
+    firstSeenAt: 100,
+    checkedAt: 100,
+    quietWindowMs: options.quietWindowMs,
+    attemptCap: options.attemptCap,
+    latchAvailable: true,
+    detail: null,
+  }),
+  resolve: (key, options) => Effect.succeed({
+    key,
+    resolved: true,
+    speakAllClear: options?.allClear === true,
+    resolvedAt: 100,
+    latchAvailable: true,
+    detail: null,
+  }),
+};
+
+function latchWith(kind: "repeat-silenced" | "final-notice"): IncidentLatch {
+  return {
+    ...alwaysOpenLatch,
+    check: (key, options) => Effect.succeed({
+      key,
+      speak: kind === "final-notice",
+      kind,
+      attempt: 3,
+      firstSeenAt: 100,
+      checkedAt: 300,
+      quietWindowMs: options.quietWindowMs,
+      attemptCap: options.attemptCap,
+      latchAvailable: true,
+      detail: null,
+    }),
+  };
+}
 
 const first: CaptureSegment = {
   runId: "run-a",
@@ -129,6 +173,11 @@ describe("hard alert delivery", () => {
       eventId: "fixture-alert",
       source: "fixture",
       message: "fixture message",
+      latchKey: "fixture",
+      quietWindowMs: 60_000,
+      attemptCap: 3,
+      latch: alwaysOpenLatch,
+      emitEvent: async () => undefined,
       runCommand: async (args) => {
         (commands as string[][]).push([...args]);
         const result = args[2] === "send"
@@ -147,11 +196,66 @@ describe("hard alert delivery", () => {
     ]);
   });
 
+  test("does not invoke notification commands for a silenced repeat", async () => {
+    const receipt = await sendHardAlert({
+      eventId: "fixture-alert",
+      source: "fixture",
+      message: "fixture message",
+      latchKey: "fixture",
+      quietWindowMs: 60_000,
+      attemptCap: 3,
+      latch: latchWith("repeat-silenced"),
+      emitEvent: async () => undefined,
+      runCommand: async () => {
+        throw new Error("must not send");
+      },
+    });
+
+    expect(receipt).toMatchObject({
+      sent: false,
+      receiptDetail: "silenced by incident latch",
+      latch: { kind: "repeat-silenced", attempt: 3 },
+    });
+  });
+
+  test("adds the required final notice and uses a distinct event id", async () => {
+    const commands: string[][] = [];
+    const finalEventId = stableAlertId("fixture-alert:final-notice");
+    const receipt = await sendHardAlert({
+      eventId: "fixture-alert",
+      source: "fixture",
+      message: "fixture message",
+      latchKey: "fixture",
+      quietWindowMs: 60_000,
+      attemptCap: 3,
+      latch: latchWith("final-notice"),
+      emitEvent: async () => undefined,
+      runCommand: async (args) => {
+        commands.push([...args]);
+        const result = args[2] === "send"
+          ? { eventId: finalEventId }
+          : { deliveryState: "confirmed", platformMessageId: "telegram-final" };
+        return { exitCode: 0, stdout: JSON.stringify({ ok: true, result }), stderr: "" };
+      },
+    });
+
+    expect(commands[0]).toContain(finalEventId);
+    expect(commands[0]?.at(-1)).toBe(
+      "fixture message\nStill broken. Alert cap reached; stopped trying until recovery.",
+    );
+    expect(receipt).toMatchObject({ sent: true, latch: { kind: "final-notice" } });
+  });
+
   test("receipt timeout does not throw after a successful send", async () => {
     const receipt = await sendHardAlert({
       eventId: "fixture-alert",
       source: "fixture",
       message: "fixture message",
+      latchKey: "fixture",
+      quietWindowMs: 60_000,
+      attemptCap: 3,
+      latch: alwaysOpenLatch,
+      emitEvent: async () => undefined,
       runCommand: async (args) => {
         if (args[2] === "send") {
           return {

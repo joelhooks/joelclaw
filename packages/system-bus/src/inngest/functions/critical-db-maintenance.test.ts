@@ -8,7 +8,6 @@ import {
   __criticalDbMaintenanceTestUtils,
   type CriticalDbFreshness,
   type CriticalDbScheduledRebuildDependencies,
-  type CriticalDbStateStore,
   clearCriticalDbRebuildFailure,
   createCriticalDbScheduledRebuildFunction,
   inspectCriticalDbFreshness,
@@ -25,22 +24,6 @@ const DAY = 24 * HOUR;
 afterEach(async () => {
   await Promise.all(fixtureRoots.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
-
-function memoryStore(initial: Record<string, string> = {}): CriticalDbStateStore & {
-  values: Map<string, string>;
-} {
-  const values = new Map(Object.entries(initial));
-  return {
-    values,
-    get: async (key) => values.get(key) ?? null,
-    set: async (key, value) => {
-      values.set(key, value);
-    },
-    delete: async (key) => {
-      values.delete(key);
-    },
-  };
-}
 
 function freshness(overrides: Partial<CriticalDbFreshness> = {}): CriticalDbFreshness {
   return {
@@ -170,16 +153,19 @@ describe("critical.db freshness contract", () => {
     expect(overrideAlert).toMatchObject({ portStatus: "degraded", stale: true });
   });
 
-  test("alerts once per stale incident and clears after recovery", async () => {
-    const store = memoryStore();
+  test("delegates stale observations to the latch adapter and resolves on recovery", async () => {
     const eventIds: string[] = [];
+    let resolutions = 0;
     let current = freshness({ stale: true, reasons: ["source stale"], portStatus: "stale" });
     let now = 100;
     const dependencies = {
-      store,
       inspect: async () => current,
       notify: async (_snapshot: CriticalDbFreshness, eventId: string) => {
         eventIds.push(eventId);
+        return eventIds.length === 1;
+      },
+      resolve: async () => {
+        resolutions += 1;
       },
       now: () => now,
     };
@@ -189,19 +175,13 @@ describe("critical.db freshness contract", () => {
     expect((await processCriticalDbFreshness(dependencies)).alerted).toBe(false);
     current = freshness();
     await processCriticalDbFreshness(dependencies);
-    expect(store.values.has(__criticalDbMaintenanceTestUtils.CRITICAL_DB_FRESHNESS_STATE_KEY)).toBe(false);
-    current = freshness({ stale: true, reasons: ["source stale again"], portStatus: "stale" });
-    now = 300;
-    expect((await processCriticalDbFreshness(dependencies)).alerted).toBe(true);
+    expect(resolutions).toBe(1);
     expect(eventIds).toHaveLength(2);
-    expect(new Set(eventIds).size).toBe(2);
   });
 
   test("keeps a freshness incident pending when delivery fails", async () => {
-    const store = memoryStore();
     let attempts = 0;
     const dependencies = {
-      store,
       inspect: async () => freshness({ stale: true, reasons: ["source stale"], portStatus: "stale" }),
       notify: async () => {
         attempts += 1;
@@ -239,42 +219,37 @@ describe("critical.db scheduled rebuild failures", () => {
     })).rejects.toThrow(/builder exited 1:.*builder lock is held/u);
   });
 
-  test("deduplicates detail drift, clears on recovery, and reopens later failure", async () => {
-    const store = memoryStore();
+  test("delegates rebuild failures and recovery to the latch adapter", async () => {
     const eventIds: string[] = [];
+    let resolved = false;
     let now = 100;
     const dependencies = {
-      store,
       notify: async (_detail: string, eventId: string) => {
         eventIds.push(eventId);
+        return eventIds.length === 1;
       },
       now: () => now,
     };
     expect((await processCriticalDbRebuildFailure("first path", dependencies)).alerted).toBe(true);
     now = 200;
     expect((await processCriticalDbRebuildFailure("different count", dependencies)).alerted).toBe(false);
-    expect(eventIds).toHaveLength(1);
-
-    await clearCriticalDbRebuildFailure(store);
-    now = 300;
-    expect((await processCriticalDbRebuildFailure("first path", dependencies)).alerted).toBe(true);
     expect(eventIds).toHaveLength(2);
-    expect(new Set(eventIds).size).toBe(2);
+
+    await clearCriticalDbRebuildFailure(async () => {
+      resolved = true;
+    });
+    expect(resolved).toBe(true);
   });
 
   test("a successful scheduled rebuild clears the prior failure incident", async () => {
-    const store = memoryStore({
-      [__criticalDbMaintenanceTestUtils.CRITICAL_DB_REBUILD_STATE_KEY]: JSON.stringify({
-        eventId: "prior",
-        startedAt: 1,
-        confirmedAt: 2,
-      }),
-    });
     const completed: string[] = [];
+    let resolved = false;
     const fn = createCriticalDbScheduledRebuildFunction({
       runBuilder: async () => ({ stdout: "published", stderr: "" }),
-      store: () => store,
       notifyFailure: async () => undefined,
+      resolveFailure: async () => {
+        resolved = true;
+      },
       emitFailure: async () => undefined,
       emitCompleted: async (stdout) => {
         completed.push(stdout);
@@ -287,14 +262,12 @@ describe("critical.db scheduled rebuild failures", () => {
     }).execute();
     expect(execution.result).toEqual({ stdout: "published", stderr: "" });
     expect(completed).toEqual(["published"]);
-    expect(store.values.has(__criticalDbMaintenanceTestUtils.CRITICAL_DB_REBUILD_STATE_KEY)).toBe(false);
+    expect(resolved).toBe(true);
   });
 
   test("keeps a rebuild incident pending when delivery fails", async () => {
-    const store = memoryStore();
     let attempts = 0;
     const dependencies = {
-      store,
       notify: async () => {
         attempts += 1;
         if (attempts === 1) throw new Error("delivery interrupted");
@@ -309,17 +282,16 @@ describe("critical.db scheduled rebuild failures", () => {
   });
 
   test("terminal onFailure invokes the stored incident and hard-alert adapter", async () => {
-    const store = memoryStore();
     const alerts: Array<{ detail: string; eventId: string }> = [];
     const failures: Array<{ detail: string; alerted: boolean }> = [];
     const dependencies: CriticalDbScheduledRebuildDependencies = {
       runBuilder: async () => {
         throw new Error("builder exited 1");
       },
-      store: () => store,
       notifyFailure: async (detail, eventId) => {
         alerts.push({ detail, eventId });
       },
+      resolveFailure: async () => undefined,
       emitFailure: async (detail, alerted) => {
         failures.push({ detail, alerted });
       },

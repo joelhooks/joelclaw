@@ -2,8 +2,17 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  type IncidentLatch,
+  type IncidentLatchDecision,
+  type IncidentLatchResolution,
+  makeIncidentLatch,
+  makeRedisIncidentLatchStore,
+} from "@joelclaw/incident-latch";
 import { RUNS_COLLECTION } from "@joelclaw/memory";
+import { Effect } from "effect";
 import { emitOtelEvent } from "../observability/emit";
+import { getRedisClient } from "./redis";
 
 export type CaptureSegment = {
   runId: string;
@@ -314,41 +323,102 @@ export function captureGrowthIncidentAlertId(
 }
 
 export interface HardAlertReceipt {
-  sent: true;
+  sent: boolean;
   receiptConfirmed: boolean;
   receiptDetail: string | null;
+  latch: IncidentLatchDecision;
+}
+
+const defaultIncidentLatch = makeIncidentLatch(
+  makeRedisIncidentLatchStore(getRedisClient(), { prefix: "joelclaw:incident-latch" }),
+);
+
+type AlertTelemetryEmitter = (
+  input: Parameters<typeof emitOtelEvent>[0],
+) => Promise<unknown>;
+
+async function emitLatchDecision(
+  input: { eventId: string; source: string },
+  decision: IncidentLatchDecision,
+  emitEvent: AlertTelemetryEmitter,
+): Promise<void> {
+  try {
+    await emitEvent({
+      level: decision.latchAvailable ? "info" : "error",
+      source: "system-bus",
+      component: "incident-latch",
+      action: "alert.latch.checked",
+      success: decision.latchAvailable,
+      error: decision.detail ?? undefined,
+      metadata: { eventId: input.eventId, alertSource: input.source, ...decision },
+    });
+  } catch {
+    // Alert delivery must not depend on telemetry availability.
+  }
 }
 
 /**
- * Sends the alert, then waits for the terminal delivery receipt. A failed or
- * missing receipt must NOT throw: the platform message already went out, and a
- * throw makes retrying callers re-send the same alert (2026-07-20 Telegram
- * spam incident). Only a failed send throws.
+ * Checks the shared incident latch, sends an authorized alert, then waits for
+ * the terminal delivery receipt. Redis failures fail open and remain visible in
+ * both the returned receipt and OTEL. Only a failed send throws.
  */
 export async function sendHardAlert(input: {
   eventId: string;
   source: string;
   message: string;
+  latchKey: string;
+  quietWindowMs: number;
+  attemptCap: number;
   runCommand?: CommandRunner;
+  latch?: IncidentLatch;
+  emitEvent?: AlertTelemetryEmitter;
 }): Promise<HardAlertReceipt> {
+  const latch = input.latch ?? defaultIncidentLatch;
+  const emitEvent = input.emitEvent ?? emitOtelEvent;
+  const decision = await Effect.runPromise(latch.check(input.latchKey, {
+    quietWindowMs: input.quietWindowMs,
+    attemptCap: input.attemptCap,
+  }));
+  await emitLatchDecision(input, decision, emitEvent);
+  if (!decision.speak) {
+    return {
+      sent: false,
+      receiptConfirmed: false,
+      receiptDetail: "silenced by incident latch",
+      latch: decision,
+    };
+  }
+
   const runCommand = input.runCommand ?? defaultCommandRunner;
-  const sent = await runCommand([
-    "joelclaw",
-    "notify",
-    "send",
-    "--kind",
-    "alert",
-    "--priority",
-    "high",
-    "--source",
-    input.source,
-    "--event-id",
-    input.eventId,
-    input.message,
-  ]);
-  const sendEnvelope = requireCommandSuccess(sent, "joelclaw notify send");
-  if (sendEnvelope.result?.eventId !== input.eventId) {
-    throw new Error("joelclaw notify send returned the wrong eventId");
+  const eventId = decision.kind === "final-notice"
+    ? stableAlertId(`${input.eventId}:final-notice`)
+    : input.eventId;
+  const message = decision.kind === "final-notice"
+    ? `${input.message}\nStill broken. Alert cap reached; stopped trying until recovery.`
+    : input.message;
+
+  try {
+    const sent = await runCommand([
+      "joelclaw",
+      "notify",
+      "send",
+      "--kind",
+      "alert",
+      "--priority",
+      "high",
+      "--source",
+      input.source,
+      "--event-id",
+      eventId,
+      message,
+    ]);
+    const sendEnvelope = requireCommandSuccess(sent, "joelclaw notify send");
+    if (sendEnvelope.result?.eventId !== eventId) {
+      throw new Error("joelclaw notify send returned the wrong eventId");
+    }
+  } catch (error) {
+    await Effect.runPromise(latch.resolve(input.latchKey));
+    throw error;
   }
 
   try {
@@ -356,7 +426,7 @@ export async function sendHardAlert(input: {
       "joelclaw",
       "notify",
       "wait",
-      input.eventId,
+      eventId,
       "--source",
       input.source,
       "--timeout",
@@ -368,29 +438,68 @@ export async function sendHardAlert(input: {
       typeof waitEnvelope.result.platformMessageId !== "string" ||
       waitEnvelope.result.platformMessageId.length === 0
     ) {
-      return unconfirmedReceipt(input, "notify wait did not confirm a platform message");
+      return unconfirmedReceipt(
+        { eventId, source: input.source },
+        decision,
+        "notify wait did not confirm a platform message",
+        emitEvent,
+      );
     }
-    return { sent: true, receiptConfirmed: true, receiptDetail: null };
+    return { sent: true, receiptConfirmed: true, receiptDetail: null, latch: decision };
   } catch (error) {
-    return unconfirmedReceipt(input, String(error).slice(0, 300));
+    return unconfirmedReceipt(
+      { eventId, source: input.source },
+      decision,
+      String(error).slice(0, 300),
+      emitEvent,
+    );
   }
+}
+
+export async function resolveHardAlert(input: {
+  latchKey: string;
+  allClear?: boolean;
+  latch?: IncidentLatch;
+}): Promise<IncidentLatchResolution> {
+  const latch = input.latch ?? defaultIncidentLatch;
+  const resolution = await Effect.runPromise(latch.resolve(input.latchKey, {
+    allClear: input.allClear,
+  }));
+  if (!resolution.latchAvailable) {
+    try {
+      await emitOtelEvent({
+        level: "error",
+        source: "system-bus",
+        component: "incident-latch",
+        action: "alert.latch.resolve_failed",
+        success: false,
+        error: resolution.detail ?? undefined,
+        metadata: { ...resolution },
+      });
+    } catch {
+      // Recovery work must not depend on telemetry availability.
+    }
+  }
+  return resolution;
 }
 
 async function unconfirmedReceipt(
   input: { eventId: string; source: string },
+  latch: IncidentLatchDecision,
   detail: string,
+  emitEvent: AlertTelemetryEmitter,
 ): Promise<HardAlertReceipt> {
   try {
-    await emitOtelEvent({
+    await emitEvent({
       level: "warn",
       source: "system-bus",
       component: "search-maintenance",
       action: "alert.receipt.unconfirmed",
       success: false,
-      metadata: { eventId: input.eventId, alertSource: input.source, detail },
+      metadata: { eventId: input.eventId, alertSource: input.source, detail, latch },
     });
   } catch {
     // Telemetry must never turn a delivered alert into a retry storm.
   }
-  return { sent: true, receiptConfirmed: false, receiptDetail: detail };
+  return { sent: true, receiptConfirmed: false, receiptDetail: detail, latch };
 }

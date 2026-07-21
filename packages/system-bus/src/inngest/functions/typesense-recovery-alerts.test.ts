@@ -37,10 +37,17 @@ describe("capture prefix growth alert", () => {
   test("alerts once for a distinct growing Run on the same source and cursor", async () => {
     const store = memoryStore();
     const alerts: string[] = [];
+    let latched = false;
     const dependencies = {
       store,
       notify: async (finding: { current: { runId: string } }) => {
+        if (latched) return false;
+        latched = true;
         alerts.push(finding.current.runId);
+        return true;
+      },
+      resolve: async () => {
+        latched = false;
       },
       now: () => 100,
     };
@@ -61,14 +68,21 @@ describe("capture prefix growth alert", () => {
     expect(alerts).toEqual(["run-b"]);
   });
 
-  test("deduplicates one source incident until recovery or a quiet period", async () => {
+  test("delegates dedupe to the shared latch and resolves on recovery", async () => {
     const store = memoryStore();
     const alerts: string[] = [];
+    let latched = false;
     let now = 100;
     const dependencies = {
       store,
       notify: async (_finding: unknown, eventId: string) => {
+        if (latched) return false;
+        latched = true;
         alerts.push(eventId);
+        return true;
+      },
+      resolve: async () => {
+        latched = false;
       },
       now: () => now,
     };
@@ -89,8 +103,8 @@ describe("capture prefix growth alert", () => {
 
     now += __typesenseRecoveryAlertTestUtils.CAPTURE_INCIDENT_QUIET_MS + 1;
     await processCaptureGrowth(capture("run-f", 0, 600), dependencies);
-    expect(alerts).toHaveLength(4);
-    expect(new Set(alerts).size).toBe(4);
+    expect(alerts).toHaveLength(3);
+    expect(new Set(alerts).size).toBe(3);
   });
 
   test("retries delivery after a notifier failure without leaving a false claim", async () => {
@@ -117,7 +131,7 @@ describe("capture prefix growth alert", () => {
     now += __typesenseRecoveryAlertTestUtils.CAPTURE_INCIDENT_QUIET_MS + 1;
     expect((await processCaptureGrowth(capture("run-b", 0, 200), dependencies)).alerted).toBe(true);
     expect(attempts).toBe(2);
-    expect(new Set(eventIds).size).toBe(1);
+    expect(new Set(eventIds).size).toBe(2);
   });
 
   test("does not alert for adjacent ranges or incomplete provenance", async () => {
@@ -179,8 +193,8 @@ describe("Typesense startup budget monitor", () => {
     now = 61_000;
     expect((await processStartupBudget(dependencies)).assessment.shouldAlert).toBe(true);
     now = 121_000;
-    expect((await processStartupBudget(dependencies)).assessment.shouldAlert).toBe(false);
-    expect(alerts).toEqual([60_000]);
+    expect((await processStartupBudget(dependencies)).assessment.shouldAlert).toBe(true);
+    expect(alerts).toEqual([60_000, 120_000]);
 
     healthy = true;
     const recovered = await processStartupBudget(dependencies);
@@ -222,7 +236,7 @@ describe("Typesense startup budget monitor", () => {
     expect(alerts).toEqual(["typesense:runs_dev"]);
     expect(JSON.parse(store.values.get(stateKey) ?? "{}")).toMatchObject({
       unavailableSince: 1_000,
-      alertedAt: 61_000,
+      alertedAt: null,
     });
   });
 

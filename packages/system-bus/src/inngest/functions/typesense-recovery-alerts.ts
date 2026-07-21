@@ -8,6 +8,7 @@ import {
   detectCaptureGrowth,
   parseStartupBudgetMs,
   readSearchProjectionHealth,
+  resolveHardAlert,
   type SearchProjectionHealth,
   type StartupBudgetAssessment,
   type StartupBudgetState,
@@ -19,16 +20,12 @@ import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
 const CAPTURE_LEDGER_PREFIX = "search-maintenance:capture-ledger:";
-const CAPTURE_ALERT_PREFIX = "search-maintenance:capture-alert:";
 const STARTUP_BUDGET_STATE_KEY = "search-maintenance:startup-budget:typesense-runs-dev";
 const SEARCH_HEALTH_KEY = "search-maintenance:health:runs-dev";
 const CAPTURE_LEDGER_TTL_SECONDS = 90 * 24 * 60 * 60;
-const CAPTURE_ALERT_TTL_SECONDS = 90 * 24 * 60 * 60;
-// 24h, not 60m: during a bulk replay (~90 sources, 2026-07-20) hourly
-// re-alerts produced sustained DM spam at ~1.5/min. Detection still records
-// every finding (incident store + fatal OTEL); the DM fires once per source
-// per day until the replay source is fixed.
 const CAPTURE_INCIDENT_QUIET_MS = 24 * 60 * 60_000;
+const STARTUP_INCIDENT_QUIET_MS = 24 * 60 * 60_000;
+const HARD_ALERT_ATTEMPT_CAP = 3;
 const MAX_CAPTURE_SEGMENTS_PER_SOURCE = 2_048;
 const TYPESENSE_STARTUP_BUDGET_MS = parseStartupBudgetMs(
   process.env.TYPESENSE_STARTUP_BUDGET_MS,
@@ -42,22 +39,17 @@ export interface SearchMaintenanceStateStore {
 
 export interface CaptureGrowthDependencies {
   store: SearchMaintenanceStateStore;
-  notify: (finding: CaptureGrowthFinding, eventId: string) => Promise<void>;
+  notify: (finding: CaptureGrowthFinding, eventId: string) => Promise<boolean | void>;
+  resolve?: (sourceIdentity: string) => Promise<void>;
   now: () => number;
 }
-
-type CaptureGrowthIncident = {
-  eventId: string;
-  startedAt: number;
-  lastOverlapAt: number;
-  confirmedAt: number | null;
-};
 
 export interface StartupBudgetDependencies {
   store: SearchMaintenanceStateStore;
   probe: () => Promise<{ healthy: boolean; status: number | null; detail: string }>;
   readProjection: () => Promise<SearchProjectionHealth>;
-  notify: (assessment: StartupBudgetAssessment, detail: string) => Promise<void>;
+  notify: (assessment: StartupBudgetAssessment, detail: string) => Promise<boolean | void>;
+  resolve?: () => Promise<void>;
   now: () => number;
   budgetMs: number;
 }
@@ -125,46 +117,15 @@ export async function processCaptureGrowth(
     .slice(-MAX_CAPTURE_SEGMENTS_PER_SOURCE);
   await dependencies.store.set(ledgerKey, JSON.stringify(next), CAPTURE_LEDGER_TTL_SECONDS);
 
-  const incidentKey = `${CAPTURE_ALERT_PREFIX}${keySuffix}`;
   if (!finding) {
-    await dependencies.store.delete(incidentKey);
+    await dependencies.resolve?.(current.sourceIdentity);
     return { checked: true, finding: null, alerted: false };
   }
 
   const now = dependencies.now();
-  const previousIncident = parseJson<CaptureGrowthIncident | null>(
-    await dependencies.store.get(incidentKey),
-    null,
-  );
-  const sameIncident = previousIncident !== null
-    && (
-      previousIncident.confirmedAt === null ||
-      now - previousIncident.lastOverlapAt < CAPTURE_INCIDENT_QUIET_MS
-    );
-  const incident: CaptureGrowthIncident = sameIncident
-    ? { ...previousIncident, lastOverlapAt: now }
-    : {
-        eventId: captureGrowthIncidentAlertId(current.sourceIdentity, now, current.runId),
-        startedAt: now,
-        lastOverlapAt: now,
-        confirmedAt: null,
-      };
-  await dependencies.store.set(
-    incidentKey,
-    JSON.stringify(incident),
-    CAPTURE_ALERT_TTL_SECONDS,
-  );
-  if (incident.confirmedAt !== null) {
-    return { checked: true, finding, alerted: false };
-  }
-
-  await dependencies.notify(finding, incident.eventId);
-  await dependencies.store.set(
-    incidentKey,
-    JSON.stringify({ ...incident, confirmedAt: now }),
-    CAPTURE_ALERT_TTL_SECONDS,
-  );
-  return { checked: true, finding, alerted: true };
+  const eventId = captureGrowthIncidentAlertId(current.sourceIdentity, now, current.runId);
+  const notified = await dependencies.notify(finding, eventId);
+  return { checked: true, finding, alerted: notified !== false };
 }
 
 export async function processStartupBudget(
@@ -206,20 +167,17 @@ export async function processStartupBudget(
   });
 
   if (assessment.nextState) {
-    const durableState = assessment.shouldAlert
-      ? { ...assessment.nextState, alertedAt: null }
-      : assessment.nextState;
-    await dependencies.store.set(STARTUP_BUDGET_STATE_KEY, JSON.stringify(durableState));
-  } else {
-    await dependencies.store.delete(STARTUP_BUDGET_STATE_KEY);
-  }
-
-  if (assessment.shouldAlert) {
-    await dependencies.notify(assessment, availabilityDetail);
     await dependencies.store.set(
       STARTUP_BUDGET_STATE_KEY,
-      JSON.stringify({ ...assessment.nextState, alertedAt: checkedAt }),
+      JSON.stringify({ ...assessment.nextState, alertedAt: null }),
     );
+  } else {
+    await dependencies.store.delete(STARTUP_BUDGET_STATE_KEY);
+    await dependencies.resolve?.();
+  }
+
+  if (assessment.exceeded) {
+    await dependencies.notify(assessment, availabilityDetail);
   }
 
   return { probe, assessment, projection, collectionHealthy, availabilityDetail };
@@ -254,7 +212,7 @@ async function probeTypesenseHealth(): Promise<{
 async function notifyCaptureGrowth(
   finding: CaptureGrowthFinding,
   eventId: string,
-): Promise<void> {
+): Promise<boolean> {
   const message = [
     "🚨 Cumulative-prefix capture growth detected",
     `Source: ${finding.current.sourceIdentity}`,
@@ -263,17 +221,21 @@ async function notifyCaptureGrowth(
     `Overlap: ${finding.overlapBytes} bytes`,
     "Capture replay may be inflating the session index. Stop replay and inspect the source cursor.",
   ].join("\n");
-  await sendHardAlert({
+  const receipt = await sendHardAlert({
     eventId,
     source: "typesense-recovery-capture-growth",
     message,
+    latchKey: `typesense-recovery:capture-growth:${finding.current.sourceIdentity}`,
+    quietWindowMs: CAPTURE_INCIDENT_QUIET_MS,
+    attemptCap: HARD_ALERT_ATTEMPT_CAP,
   });
+  return receipt.sent;
 }
 
 async function notifyStartupBudget(
   assessment: StartupBudgetAssessment,
   detail: string,
-): Promise<void> {
+): Promise<boolean> {
   const eventId = stableAlertId(
     `search-startup-budget:${assessment.target}:${assessment.unavailableSince}`,
   );
@@ -286,11 +248,15 @@ async function notifyStartupBudget(
     `Probe: ${detail}`,
     "Raw Run JSONL remains the source of truth. Use the raw fallback while the index recovers.",
   ].join("\n");
-  await sendHardAlert({
+  const receipt = await sendHardAlert({
     eventId,
     source: "typesense-recovery-startup-budget",
     message,
+    latchKey: `typesense-recovery:startup-budget:${assessment.target}`,
+    quietWindowMs: STARTUP_INCIDENT_QUIET_MS,
+    attemptCap: HARD_ALERT_ATTEMPT_CAP,
   });
+  return receipt.sent;
 }
 
 export async function readTypesenseRecoveryHealth(
@@ -345,6 +311,11 @@ export const capturePrefixGrowthAlert = inngest.createFunction(
       processCaptureGrowth(event.data as Record<string, unknown>, {
         store: stateStore(),
         notify: notifyCaptureGrowth,
+        resolve: async (sourceIdentity) => {
+          await resolveHardAlert({
+            latchKey: `typesense-recovery:capture-growth:${sourceIdentity}`,
+          });
+        },
         now: Date.now,
       })
     );
@@ -374,6 +345,11 @@ export const typesenseStartupBudgetCheck = inngest.createFunction(
         probe: probeTypesenseHealth,
         readProjection: () => readSearchProjectionHealth(typesense.typesenseRequest),
         notify: notifyStartupBudget,
+        resolve: async () => {
+          await resolveHardAlert({
+            latchKey: "typesense-recovery:startup-budget:typesense:runs_dev",
+          });
+        },
         now: Date.now,
         budgetMs: TYPESENSE_STARTUP_BUDGET_MS,
       })
@@ -394,7 +370,6 @@ export const typesenseStartupBudgetCheck = inngest.createFunction(
 
 export const __typesenseRecoveryAlertTestUtils = {
   CAPTURE_LEDGER_PREFIX,
-  CAPTURE_ALERT_PREFIX,
   CAPTURE_INCIDENT_QUIET_MS,
   STARTUP_BUDGET_STATE_KEY,
   SEARCH_HEALTH_KEY,

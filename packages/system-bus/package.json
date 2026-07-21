@@ -19,6 +19,7 @@
     "@joelclaw/email": "workspace:^",
     "@joelclaw/endpoint-resolver": "workspace:*",
     "@joelclaw/inference-router": "workspace:*",
+    "@joelclaw/incident-latch": "workspace:*",
     "@joelclaw/mdx-pipeline": "workspace:^",
     "@joelclaw/memory": "workspace:*",
     "@joelclaw/message-contract": "workspace:*",

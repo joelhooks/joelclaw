@@ -5,15 +5,16 @@ import {
   CRITICAL_DB_SOURCE_STALE_AFTER_MS,
   evaluateCriticalDbFreshness,
 } from "@joelclaw/memory";
-import { getRedisClient } from "../../lib/redis";
-import { sendHardAlert, stableAlertId } from "../../lib/search-maintenance";
+import {
+  resolveHardAlert,
+  sendHardAlert,
+  stableAlertId,
+} from "../../lib/search-maintenance";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
 const REPO_ROOT = resolve(import.meta.dir, "../../../../..");
 const DEFAULT_DB_PATH = resolve(process.env.JOELCLAW_CRITICAL_DB || `${process.env.HOME}/.joelclaw/search/critical.db`);
-const CRITICAL_DB_FRESHNESS_STATE_KEY = "search-maintenance:critical-db:freshness-incident";
-const CRITICAL_DB_REBUILD_STATE_KEY = "search-maintenance:critical-db:rebuild-incident";
 const CRITICAL_DB_BUILD_BUDGET_MS = parseBudget(
   "CRITICAL_DB_BUILD_STALENESS_BUDGET_MS",
   8 * 60 * 60_000,
@@ -22,15 +23,10 @@ const CRITICAL_DB_OBSERVATION_BUDGET_MS = parseBudget(
   "CRITICAL_DB_OBSERVATION_STALENESS_BUDGET_MS",
   24 * 60 * 60_000,
 );
-const INCIDENT_TTL_SECONDS = 90 * 24 * 60 * 60;
+const INCIDENT_QUIET_WINDOW_MS = 24 * 60 * 60_000;
+const HARD_ALERT_ATTEMPT_CAP = 3;
 const MAX_SUBPROCESS_OUTPUT = 8_000;
 const BUILDER_TIMEOUT_MS = 30 * 60_000;
-
-export interface CriticalDbStateStore {
-  get(key: string): Promise<string | null>;
-  set(key: string, value: string, ttlSeconds?: number): Promise<void>;
-  delete(key: string): Promise<void>;
-}
 
 export type CriticalDbSourceFreshness = {
   status: string;
@@ -57,29 +53,22 @@ export interface CriticalDbFreshness {
   reasons: string[];
 }
 
-type StoredIncident = {
-  eventId: string;
-  startedAt: number;
-  confirmedAt: number | null;
-};
-
 export interface CriticalDbFreshnessDependencies {
-  store: CriticalDbStateStore;
   inspect: () => Promise<CriticalDbFreshness>;
-  notify: (freshness: CriticalDbFreshness, eventId: string) => Promise<void>;
+  notify: (freshness: CriticalDbFreshness, eventId: string) => Promise<boolean | void>;
+  resolve?: () => Promise<void>;
   now: () => number;
 }
 
 export interface CriticalDbRebuildFailureDependencies {
-  store: CriticalDbStateStore;
-  notify: (detail: string, eventId: string) => Promise<void>;
+  notify: (detail: string, eventId: string) => Promise<boolean | void>;
   now: () => number;
 }
 
 export interface CriticalDbScheduledRebuildDependencies {
   runBuilder: () => Promise<{ stdout: string; stderr: string }>;
-  store: () => CriticalDbStateStore;
-  notifyFailure: (detail: string, eventId: string) => Promise<void>;
+  notifyFailure: (detail: string, eventId: string) => Promise<boolean | void>;
+  resolveFailure: () => Promise<void>;
   emitFailure: (detail: string, alerted: boolean) => Promise<unknown>;
   emitCompleted: (stdout: string) => Promise<unknown>;
   now: () => number;
@@ -93,37 +82,6 @@ function parseBudget(name: string, fallback: number): number {
     throw new Error(`${name} must be a positive integer number of milliseconds`);
   }
   return value;
-}
-
-function stateStore(): CriticalDbStateStore {
-  const redis = getRedisClient();
-  return {
-    get: (key) => redis.get(key),
-    set: async (key, value, ttlSeconds) => {
-      if (ttlSeconds === undefined) await redis.set(key, value);
-      else await redis.set(key, value, "EX", ttlSeconds);
-    },
-    delete: async (key) => {
-      await redis.del(key);
-    },
-  };
-}
-
-function parseIncident(value: string | null): StoredIncident | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as Partial<StoredIncident>;
-    if (
-      typeof parsed.eventId === "string" &&
-      typeof parsed.startedAt === "number" &&
-      (typeof parsed.confirmedAt === "number" || parsed.confirmedAt === null)
-    ) {
-      return parsed as StoredIncident;
-    }
-  } catch {
-    // A malformed incident must not suppress a fresh alert.
-  }
-  return null;
 }
 
 function ageMs(timestamp: string | null, now: number): number | null {
@@ -232,70 +190,36 @@ export function inspectCriticalDbFreshness(input: {
   }
 }
 
-async function processStoredIncident(input: {
-  key: string;
-  store: CriticalDbStateStore;
-  notify: (eventId: string) => Promise<void>;
-  now: number;
-  eventSeed: string;
-}): Promise<boolean> {
-  const existing = parseIncident(await input.store.get(input.key));
-  const incident = existing ?? {
-    eventId: stableAlertId(`${input.eventSeed}:${input.now}`),
-    startedAt: input.now,
-    confirmedAt: null,
-  };
-  await input.store.set(input.key, JSON.stringify(incident), INCIDENT_TTL_SECONDS);
-  if (incident.confirmedAt !== null) return false;
-  await input.notify(incident.eventId);
-  await input.store.set(
-    input.key,
-    JSON.stringify({ ...incident, confirmedAt: input.now }),
-    INCIDENT_TTL_SECONDS,
-  );
-  return true;
-}
-
 export async function processCriticalDbFreshness(
   dependencies: CriticalDbFreshnessDependencies,
 ): Promise<{ freshness: CriticalDbFreshness; alerted: boolean }> {
   const freshness = await dependencies.inspect();
   if (!freshness.stale) {
-    await dependencies.store.delete(CRITICAL_DB_FRESHNESS_STATE_KEY);
+    await dependencies.resolve?.();
     return { freshness, alerted: false };
   }
-  const alerted = await processStoredIncident({
-    key: CRITICAL_DB_FRESHNESS_STATE_KEY,
-    store: dependencies.store,
-    notify: (eventId) => dependencies.notify(freshness, eventId),
-    now: dependencies.now(),
-    eventSeed: "critical-db-stale",
-  });
-  return { freshness, alerted };
+  const eventId = stableAlertId(`critical-db-stale:${dependencies.now()}`);
+  const notified = await dependencies.notify(freshness, eventId);
+  return { freshness, alerted: notified !== false };
 }
 
 export async function processCriticalDbRebuildFailure(
   detail: string,
   dependencies: CriticalDbRebuildFailureDependencies,
 ): Promise<{ alerted: boolean }> {
-  const alerted = await processStoredIncident({
-    key: CRITICAL_DB_REBUILD_STATE_KEY,
-    store: dependencies.store,
-    notify: (eventId) => dependencies.notify(detail, eventId),
-    now: dependencies.now(),
-    eventSeed: "critical-db-rebuild-failure",
-  });
-  return { alerted };
+  const eventId = stableAlertId(`critical-db-rebuild-failure:${dependencies.now()}`);
+  const notified = await dependencies.notify(detail, eventId);
+  return { alerted: notified !== false };
 }
 
-export async function clearCriticalDbRebuildFailure(store: CriticalDbStateStore): Promise<void> {
-  await store.delete(CRITICAL_DB_REBUILD_STATE_KEY);
+export async function clearCriticalDbRebuildFailure(resolve: () => Promise<void>): Promise<void> {
+  await resolve();
 }
 
 async function notifyCriticalDbStale(
   freshness: CriticalDbFreshness,
   eventId: string,
-): Promise<void> {
+): Promise<boolean> {
   const message = [
     "🚨 Critical search database is stale",
     `Database: ${freshness.dbPath}`,
@@ -305,23 +229,31 @@ async function notifyCriticalDbStale(
     ...freshness.reasons.map((reason) => `Reason: ${reason}`),
     "The scheduled builder never uses --allow-degraded-sources. Inspect and repair the source before replacing critical.db.",
   ].join("\n");
-  await sendHardAlert({
+  const receipt = await sendHardAlert({
     eventId,
     source: "critical-db-staleness",
     message,
+    latchKey: "critical-db:staleness",
+    quietWindowMs: INCIDENT_QUIET_WINDOW_MS,
+    attemptCap: HARD_ALERT_ATTEMPT_CAP,
   });
+  return receipt.sent;
 }
 
-async function notifyCriticalDbRebuildFailure(detail: string, eventId: string): Promise<void> {
-  await sendHardAlert({
+async function notifyCriticalDbRebuildFailure(detail: string, eventId: string): Promise<boolean> {
+  const receipt = await sendHardAlert({
     eventId,
     source: "critical-db-rebuild-failure",
+    latchKey: "critical-db:rebuild-failure",
+    quietWindowMs: INCIDENT_QUIET_WINDOW_MS,
+    attemptCap: HARD_ALERT_ATTEMPT_CAP,
     message: [
       "🚨 Scheduled critical.db rebuild failed",
       detail,
       "The existing database was not replaced. The builder source gate is intentional; do not use --allow-degraded-sources automatically.",
     ].join("\n"),
   });
+  return receipt.sent;
 }
 
 export async function runCriticalDbBuilder(options: {
@@ -371,8 +303,10 @@ function errorText(error: unknown): string {
 
 const defaultScheduledDependencies: CriticalDbScheduledRebuildDependencies = {
   runBuilder: runCriticalDbBuilder,
-  store: stateStore,
   notifyFailure: notifyCriticalDbRebuildFailure,
+  resolveFailure: async () => {
+    await resolveHardAlert({ latchKey: "critical-db:rebuild-failure" });
+  },
   emitFailure: (detail, alerted) => emitOtelEvent({
     level: "fatal",
     source: "system-bus",
@@ -404,7 +338,6 @@ export function createCriticalDbScheduledRebuildFunction(
         const detail = errorText(error).slice(0, MAX_SUBPROCESS_OUTPUT);
         await step.run("alert-critical-db-rebuild-failed", async () => {
           const result = await processCriticalDbRebuildFailure(detail, {
-            store: dependencies.store(),
             notify: dependencies.notifyFailure,
             now: dependencies.now,
           });
@@ -417,7 +350,7 @@ export function createCriticalDbScheduledRebuildFunction(
     async ({ step }) => {
       const result = await step.run("run-hardened-critical-db-builder", dependencies.runBuilder);
       await step.run("clear-critical-db-rebuild-failure", () =>
-        clearCriticalDbRebuildFailure(dependencies.store())
+        clearCriticalDbRebuildFailure(dependencies.resolveFailure)
       );
       await step.run("emit-critical-db-rebuild-completed", () =>
         dependencies.emitCompleted(result.stdout)
@@ -435,7 +368,6 @@ export const criticalDbStalenessCheck = inngest.createFunction(
   async ({ step }) => {
     const result = await step.run("check-critical-db-source-high-water", () =>
       processCriticalDbFreshness({
-        store: stateStore(),
         inspect: async () => inspectCriticalDbFreshness({
           dbPath: DEFAULT_DB_PATH,
           now: Date.now(),
@@ -443,6 +375,9 @@ export const criticalDbStalenessCheck = inngest.createFunction(
           observationBudgetMs: CRITICAL_DB_OBSERVATION_BUDGET_MS,
         }),
         notify: notifyCriticalDbStale,
+        resolve: async () => {
+          await resolveHardAlert({ latchKey: "critical-db:staleness" });
+        },
         now: Date.now,
       })
     );
@@ -461,8 +396,6 @@ export const criticalDbStalenessCheck = inngest.createFunction(
 );
 
 export const __criticalDbMaintenanceTestUtils = {
-  CRITICAL_DB_FRESHNESS_STATE_KEY,
-  CRITICAL_DB_REBUILD_STATE_KEY,
   REQUIRED_SOURCES: CRITICAL_DB_REQUIRED_SOURCES,
   SOURCE_STALE_AFTER_MS: CRITICAL_DB_SOURCE_STALE_AFTER_MS,
 };
