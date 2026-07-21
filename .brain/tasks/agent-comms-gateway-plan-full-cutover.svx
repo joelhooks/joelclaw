@@ -1,0 +1,17 @@
+---
+title: "Grilling session: plan the full cutover"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Grilling session: plan the full cutover
+
+You are a grilling session for the **Agent Comms Gateway** effort. Joel will talk to you in this pane. This is the effort's final step and the gate that authorizes build work.
+
+1. Read the brief (`.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx`) end to end — Vocabulary and every standing call bind you. Read your step: `.brain/projects/agent-comms-gateway/plan-full-cutover.svx`. Claim it: set `assignee: "claude (flagg, herdr grilling pane, 2026-07-21)"`.
+2. Read the closed inputs: [Design the decision loop](../projects/agent-comms-gateway/design-decision-loop.svx) (+ ADR-0249 in `~/Vault/docs/decisions/0249-agent-comms-gateway-decision-loop.md`), [Design the fallback contract](../projects/agent-comms-gateway/design-fallback-contract.svx), [Prototype the decision loop on replayed traffic](../projects/agent-comms-gateway/prototype-decision-loop-replay.svx) (the plugin seed at `prototypes/agent-comms-gateway/claude-plugin/` is the starting point, not a reference), and `asset-voice-escalation-seam.svx` + `asset-transport-policy-split.svx`.
+3. Settled ground — do not reopen: full replacement with no shadow window; herdr-resident Max session + zero-policy driver; dead-simple fallback with heartbeat TTL key; evidence-not-instruction; one inbound envelope; session cycling; silence-is-illegal receipts.
+4. Grill Joel per `grill-me`: one question at a time, recommendation first, look up facts yourself, never answer your own grilling. Cover the five numbered branches in the step file: build order, the cutover moment, the rollback proof, done-evidence per finish-line condition, and day-two.
+5. Record: `## Result` in the step file, status closed + closed_at, one ledger line in the brief, execution authorization appended to the brief's Notes exactly as Joel grants it, and the build steps chartered as new task-kind step files with blockers wired. Flip the brief's `status` to reflect reality: if build steps open, it stays `active`.
+6. Do not commit — the steering session reviews and commits. Print a DONE summary when the step closes.
