@@ -1,0 +1,26 @@
+---
+title: "Build the voice escalation adapter"
+type: "step"
+kind: "task"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: ["./execute-cutover.svx"]
+created_at: "2026-07-21"
+---
+
+# Build the voice escalation adapter
+
+## Step
+
+Day-two, deliberately **not a cutover gate**: the host-resident agent invokes today's `call-joel` CLI at cutover with today's proof level. Chartered behind cutover so it is not lost (Joel: "we want voice so don't lose it").
+
+Spec is the proposed interface in [`asset-voice-escalation-seam.svx`](./asset-voice-escalation-seam.svx): one host-side adapter on flagg wrapping the existing `call-joel.sh` mechanics into an idempotent, correlated action —
+
+- `CallJoel({ escalationId, reason, origin })` → `answered | unanswered | failed` with typed failure stage.
+- Truthful `answered` requires both facts: SIP leg answered **and** the voice worker joined the same room (worker appends the join with the same `escalationId`).
+- Participant attributes carry `escalationId`, `call_reason`, origin correlation; lifecycle facts append to the stream.
+- New semantic contract (e.g. `voice/escalation.requested`) — never overload `notification/call.requested` (one-way TeXML + SMS). `call-joel` CLI survives as a wrapper over the same adapter.
+- The adapter owns mechanics only; urgency, retry, timing, wording, and fallback stay agent judgments. Reject duplicate `escalationId`; redact numbers/secrets from receipts.
+
+Resolved when a gateway-initiated escalation produces the full correlated lifecycle in the stream (requested → answered-with-worker-join → completed) on a real call, and `call-joel` rides the adapter.

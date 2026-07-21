@@ -1,0 +1,20 @@
+---
+title: "Build the kill-test script and weekly drill"
+type: "step"
+kind: "task"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: ["./build-transport-slim-down.svx", "./build-driver.svx"]
+created_at: "2026-07-21"
+---
+
+# Build the kill-test script and weekly drill
+
+## Step
+
+The fallback contract's eight-step scripted check (`design-fallback-contract.svx` §4), every assertion reading the stream and receipts, exit non-zero on any missing piece: kill the session → wait past TTL → `joelclaw notify send` an alert → assert `fallback.delivered` by flowId → assert platform receipt → restart → assert heartbeat returns → assert a fresh message gets an agent decision end-to-end.
+
+Binds: real session kill, real DM, self-identified text (`⚠️ fallback: weekly kill-test drill <date>`). No drill flag, no test channel, no mock — a drill-aware fallback is a fallback with policy in it. The weekly ping is itself the receipt.
+
+Resolved when the script passes against a live gateway + driver in rehearsal, the weekly schedule is wired through existing scheduling machinery (plus on-demand after any gateway deploy), and the cutover sitting can run it as probe (c).

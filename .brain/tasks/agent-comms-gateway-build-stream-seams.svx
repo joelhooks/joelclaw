@@ -1,0 +1,19 @@
+---
+title: "Worker task: build the gateway stream seams"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Worker task: build the gateway stream seams
+
+You are a build worker for the **Agent Comms Gateway** effort. Execution is granted (Joel, cutover grilling, 2026-07-21).
+
+1. Read the brief: `.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` — Vocabulary and standing calls bind you.
+2. Read your step: `.brain/projects/agent-comms-gateway/build-stream-seams.svx` and follow its scope exactly. Claim it: set `assignee: "pi (flagg, herdr worker pane, 2026-07-21)"`.
+3. Read the seam map (`.brain/projects/agent-comms-gateway/asset-stream-seam-map.svx`) and the cutover plan's ground truth (`plan-full-cutover.svx` Result §1): `@joelclaw/message-event-log` today has append/pending/materialize/trace only.
+4. Your surface is `packages/message-event-log/**` (plus its tests). Do not touch `packages/gateway`, `packages/message-contract`, `packages/sdk`, or `packages/cli` — another actor is landing a stash across those packages in this same checkout.
+5. Validate per repo law: `bunx tsc --noEmit` scoped to the package, package tests, `pnpm biome check` scoped.
+6. Deliverables as file edits: the code; a `## Result (2026-07-21)` section in the step file with receipts (what was built, test output summary, the delivered ask-list items); flip `status` to `closed` + `closed_at`; one ledger line in the brief; record the delivered-from-outside note in the stream effort's brief per your step.
+
+Work autonomously, do not commit, print a DONE summary.

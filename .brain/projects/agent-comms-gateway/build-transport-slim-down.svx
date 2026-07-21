@@ -1,0 +1,24 @@
+---
+title: "Build the transport slim-down"
+type: "step"
+kind: "task"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: ["./build-stream-seams.svx", "./land-priority-lane-stash.svx"]
+created_at: "2026-07-21"
+---
+
+# Build the transport slim-down
+
+## Step
+
+The map is `asset-transport-policy-split.svx` — 67 modules classified transport/policy/seam. Deliver on a bookmark, **not merged to main**: the slimmed daemon first runs at the cutover restart. Landing it early means any unplanned daemon restart (crash, tripwire) is a surprise cutover.
+
+1. **Ingress**: notify ingress appends producer facts + origin record to the stream first, then checks `gateway:agent:heartbeat` **existence** per message. Fresh → transport does nothing else. Absent → fallback.
+2. **Fallback**: `sendRawTelegramFallback({ text, flowId, origin })` via the canonical Chat SDK Telegram adapter directly (never `telegram-outbound-policy.ts`, `chat-sdk/outbound.ts` routing, `sendTelegramMessage()`, or the legacy queue). Verbatim text, `⚠️ fallback:` prefix, no `--data`, send-then-append `fallback.delivered`, no automatic retry on ambiguous post-send failure.
+3. **Demolition**: delete `message-contract/src/routing.ts` from the transport path, `telegram-outbound-policy.ts`, `operator-relay.ts`, and the policy module list per the asset. Cut the four mixed files (`daemon.ts`, `channels/redis.ts`, `chat-sdk/outbound.ts`, platform runtimes) per the seam tables. The agent's send boundary is an explicit target + postable content + origin/flow IDs.
+4. **Incident sweep**: locate the callback retry-storm staged source fix (`messaging-stabilization/incident-callback-receipt-retry-storm.svx`) and verify it is in-tree; record where.
+5. **Seam proofs**: the four end-to-end tests from the asset — producer append, agent-authored send, inbound reply/reaction correlation, stale-heartbeat raw fallback.
+
+Resolved when the bookmark is code-complete with types, lint, and the seam suite green, and the cutover step can merge it without another architecture decision.

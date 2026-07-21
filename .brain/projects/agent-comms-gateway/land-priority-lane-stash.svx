@@ -1,0 +1,22 @@
+---
+title: "Land the priority-lane removal stash"
+type: "step"
+kind: "task"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-21"
+---
+
+# Land the priority-lane removal stash
+
+## Step
+
+**Steering session work, not a worker** — it touches git state the whole shared checkout depends on; handing a stash pop to a worker is how the stash got stranded the first time.
+
+Pop `stash@{0}` (`priority-lane WIP (p1A)`, 25 files, 2026-07-19), reconcile against today's tree, run the verification checklist in `.brain/projects/messaging-stabilization/follow-up-remove-priority-lanes.svx`, and commit. The transport/policy asset binds: "Do not reimplement that patch independently. Recover or reconcile it first."
+
+Guard (Joel, cutover grilling): landing this is **not a standalone win** — the transport slim-down step exists and is blocker-wired on this one so it cannot silently drop off the map.
+
+Resolved when the patch is committed with its checklist green and messaging-stabilization's `follow-up-remove-priority-lanes` is marked closed with a receipt.

@@ -1,0 +1,18 @@
+---
+title: "Worker task: build herdr protocol 17 agent.prompt"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Worker task: build herdr protocol 17 agent.prompt
+
+You are a build worker for the **Agent Comms Gateway** effort. Execution is granted (Joel, cutover grilling, 2026-07-21).
+
+1. Read the brief: `~/Code/joelhooks/joelclaw/.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` — Vocabulary and standing calls bind you.
+2. Read your step: `~/Code/joelhooks/joelclaw/.brain/projects/agent-comms-gateway/build-herdr-agent-prompt.svx` and follow its scope exactly. Claim it: set `assignee: "pi (flagg, herdr worker pane, 2026-07-21)"`.
+3. Read the plugin-surface asset (`asset-plugin-surface-map.svx` in the same directory) for the protocol-17 context, and ADR-0249 §6 for what the driver needs `agent.prompt` to do.
+4. Your surface is the herdr repo: `~/Code/joelhooks/herdr` (verified 0.7.4 / protocol 16 today). Follow that repo's own conventions and test suite. Do not restart the live herdr-server without a receipt in your DONE summary saying you did and why it was safe.
+5. Deliverables as file edits: the implementation in the herdr repo; a `## Result (2026-07-21)` section in the joelclaw step file with receipts (protocol bump, API shape, test output, whether it is proven live on flagg); flip `status` to `closed` + `closed_at`; one ledger line in the brief.
+
+Work autonomously, do not commit in either repo, print a DONE summary.

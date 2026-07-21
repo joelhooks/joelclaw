@@ -1,0 +1,25 @@
+---
+title: "Build the gateway stream seams"
+type: "step"
+kind: "task"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-21"
+---
+
+# Build the gateway stream seams
+
+## Step
+
+Extend `@joelclaw/message-event-log` (package + Convex functions) with exactly the gateway's ask list. This effort builds these seams directly (ruled in the cutover grilling); record delivery in the stream effort's brief as delivered-from-outside. Scope boundary: the ask list only — no stream-effort demolition work.
+
+1. **Gateway event kinds**: `gateway.decision.recorded`, `gateway.handoff`, `aggregate.deadline.reached`, `fallback.delivered`, plus the raw-inbound/interpretation kinds from the stream seam map (`asset-stream-seam-map.svx`).
+2. **Typed origin record** on append: producer, machine, herdr pane/session, flowId.
+3. **Named multi-consumer cursors**: the gateway holds its own durable cursor, independent of the Inngest consumer.
+4. **Paginated replay**: `readSince(recordedAt, limit, cursor)` matching the contract the prototype's throwaway adapter already implements (`prototypes/agent-comms-gateway/claude-plugin/`).
+
+Decision-receipt envelope binds per ADR-0249 §5: `inputEventIds`, `reason`, `promptRevision`, `decisionSeq`, semantic key `gateway:<firstInputEventId>:<decisionSeq>`.
+
+Resolved when the shapes are exported and typed, the Convex functions are live, `readSince` is proven against the real log (the prototype adapter is swappable), tests pass, and the stream effort's brief carries the delivered-from-outside line.

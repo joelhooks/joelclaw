@@ -1,0 +1,20 @@
+---
+title: "Build herdr protocol 17: agent.prompt"
+type: "step"
+kind: "task"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-21"
+---
+
+# Build herdr protocol 17: agent.prompt
+
+## Step
+
+External repo: `~/Code/joelhooks/herdr`. Verified at grilling time: herdr 0.7.4 has `agent send` but no `agent prompt`; protocol 17 is not installed. The driver pokes the gateway session via `agent.prompt`, so this is a hard cutover gate (ADR-0249 §7: "must be installed and proven").
+
+Per the plugin surface map (`asset-plugin-surface-map.svx`): `agent.prompt` drives a full turn in a target agent session, distinct from `agent send`'s literal-text write.
+
+Resolved when protocol 17 is installed on flagg and proven: `herdr agent prompt` drives a turn in a live Claude Code session, receipt (command + observed turn) recorded here.

@@ -1,0 +1,24 @@
+---
+title: "Build the joelclaw-gateway plugin"
+type: "step"
+kind: "task"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: ["./build-stream-seams.svx"]
+created_at: "2026-07-21"
+---
+
+# Build the joelclaw-gateway plugin
+
+## Step
+
+Harden the prototype seed at `prototypes/agent-comms-gateway/claude-plugin/` into the production `joelclaw-gateway` Claude Code plugin (ADR-0249 §7). The seed is the starting point, not a reference — prompts (identity, vocabulary, judgment), the replay contract, and the receipt shapes with every-input-exactly-once validation harden in place. The judgment spine stands as approved: "use the smallest interruption that preserves truth."
+
+1. Swap the throwaway journal-spool adapter for the real `readSince` from the stream seams. Delete the replay-only review renderer.
+2. MCP tool families: stream (with ADR §5 receipt appends), herdr, wake (revive + aggregate-deadline timer).
+3. `SessionStart` hook implementing the boot sequence: prompt files → latest `gateway.handoff` note (advisory, replay wins) → mechanical replay from the gateway's own cursor → fresh herdr snapshot. Crash path is the same minus the note.
+4. `PostCompact` hook appending the silent-backstop receipt (telemetry, never a page).
+5. The retire path is loop-owned, no hook. No policy in any herdr plugin; prose files are the only steering surface.
+
+Resolved when a session with the plugin boots clean against the real stream in replay-only rehearsal and every receipt it writes validates against the seam shapes.

@@ -1,0 +1,27 @@
+---
+title: "Execute the cutover and hold week one"
+type: "step"
+kind: "task"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: ["./build-transport-slim-down.svx", "./build-gateway-plugin.svx", "./build-driver.svx", "./build-kill-test.svx"]
+created_at: "2026-07-21"
+---
+
+# Execute the cutover and hold week one
+
+## Step
+
+The full plan is the Result of [Plan the full cutover](./plan-full-cutover.svx); this step executes it. One supervised sitting; steering supervises, Joel on call for the two probe touches only.
+
+**Pre-flight**: all blockers harvested; protocol 17 proven; plugin boots clean in replay-only rehearsal; pin `pre-gateway-cutover` at the running daemon's boot rev; one supervised `joelclaw gateway restart` on today's code; clean `revert --no-commit` dry-run of the pending merge; rollback script exists (stop driver → retire agent → revert merge → restart → probe → confirm receipt); rollback criteria predeclared.
+
+**The sitting**: start gateway agent (heartbeat appears, agent idles) → start driver (inert) → merge slim-down bookmark + `joelclaw gateway restart` (the flip) → probe set: (a) outbound via an untouched real producer, (b) inbound reply from Joel, (c) live kill test.
+
+**Rollback authority**: steering, armed one week. Triggers: probe-set failure without an in-sitting fix, or a week-one delivery-affecting defect prompt-file edits can't fix. Judgment defects are prose edits, never rollback.
+
+**Week one**: daily self-digest from the gateway to Joel; corrections ride the inbound path as agent-made prompt edits with `promptRevision` bumps; one mid-week external receipts audit (harden the prototype's every-input-exactly-once validator into the audit script); revive and bus-by-flowId round-trips demonstrated, provoked if needed; week closes on the first automated kill drill, rollback trigger retires.
+
+Resolved when the done-evidence table in the plan Result is complete (deletion grep gate, three inbound receipt chains, untouched-producer diff + flowId proof, live + first weekly drill), the brief's four finish-line conditions are checked, and messaging-stabilization is declared subsumed and closed with its item dispositions recorded.

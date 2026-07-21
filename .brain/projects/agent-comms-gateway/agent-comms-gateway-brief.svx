@@ -68,7 +68,7 @@ Standing calls (Joel, 2026-07-21, charter grilling):
 - Fallback channel is one static deploy-time config value (`FALLBACK_CHANNEL`), default Telegram; SMS is the most visible surface to Joel and the desired eventual default via the existing Telnyx stack — add after the kill test repeats, then flip the config (fallback grilling).
 - The kill test runs as a real weekly drill: kill the production agent container, deliver a real raw message to Joel's DM. No drill flags, no test channels, no mocks (fallback grilling).
 
-Execution is not yet authorized. Steps produce decisions; build authorization lands when [Plan the full cutover](./plan-full-cutover.svx) closes.
+**Execution authorized** (Joel, 2026-07-21, cutover grilling): "yes, execution granted ultracode with /herdr-orchestration." Build steps run as ultracode multi-agent work through herdr orchestration (pi workers by default, worker choice delegated to steering per slice; the stash landing stays in steering). Conditions carried from the grilling: the transport slim-down must not be neglected after the stash lands (blocker-wired); the voice adapter stays chartered behind cutover so it is not lost.
 
 ## Decision ledger
 
@@ -82,6 +82,7 @@ _(charter settlements live in Finish line, Vocabulary, and Notes)_
 - [Design the decision loop](./design-decision-loop.svx) — ADR-0249: herdr-resident Claude Code session on Max auth (only sanctioned subscription surface) poked by a zero-policy driver; session cycling with stream replay instead of compaction; agent-owned storm clocks with immutable aggregates; fire-and-receipt fan-out; exhaustive decision receipts with mandatory `drop`; judgment at every rung of the inbound ladder; the Claude plugin bundle holds.
 - [Design the fallback contract](./design-fallback-contract.svx) — heartbeat is a Redis TTL key checked per message with no latch; fallback sends producer text verbatim to one statically configured channel (default Telegram, SMS latent); send-then-append `fallback.delivered` marking with recovery reconciliation left to agent judgment; a weekly real-container, real-DM kill drill is the repeatable proof.
 - [Prototype the decision loop on replayed traffic](./prototype-decision-loop-replay.svx) — proved out on a real day (100 messages → 13 decisions) and Joel approved judgment and voice as-is; the Claude plugin seed, prompts, replay contract, and receipt shapes harden into production; the journal-spool adapter and review renderer are the discarded edges.
+- [Plan the full cutover](./plan-full-cutover.svx) — nine build steps in three tracks (stream seams built by this effort, stash lands first in steering, slim-down merges inside the sitting); one supervised cutover sitting agent → driver → transport restart → probe set; scripted rollback with steering authority, armed one week; done evidence staged across week one with all three inbound rungs required; heartbeat amended to driver-verified refresh; messaging-stabilization declared subsumed at finish-line check. Execution granted.
 
 ## Latent
 

@@ -1,0 +1,24 @@
+---
+title: "Build the driver"
+type: "step"
+kind: "task"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: ["./build-herdr-agent-prompt.svx", "./build-stream-seams.svx"]
+created_at: "2026-07-21"
+---
+
+# Build the driver
+
+## Step
+
+The zero-policy host process from ADR-0249 §1. It says *there is work*, never what to do:
+
+1. Watches the stream; pokes the gateway pane (`herdr agent prompt`) when unhandled events exist and the session is idle.
+2. Fires `aggregate.deadline.reached` into the stream when a self-chosen `holdUntil` passes (dumb timer; the agent decides what it means).
+3. **Heartbeat, amended semantics** (cutover grilling, resolves fallback-contract vs ADR wording): the driver writes `gateway:agent:heartbeat` (~15 s refresh, 60 s TTL) **only while** (a) pane and session exist per herdr, (b) the last poke was answered within its deadline, (c) no poke is outstanding past deadline. Wedge, crash, or Max-window exhaustion ⇒ refresh stops ⇒ TTL lapses ⇒ per-message fallback. No latch.
+4. SPAWNs a successor session via the wake registry when the pane dies or the loop retires.
+5. Zero policy: no message content decisions, ever. House style binds: XState v5 for the lifecycle, Effect for the service.
+
+Resolved when the driver runs against a live plugin session end-to-end: poke on unhandled event, deadline fire, heartbeat lapse on a deliberately wedged session, SPAWN on pane kill — each with a receipt.

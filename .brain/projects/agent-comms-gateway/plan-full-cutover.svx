@@ -3,8 +3,9 @@ title: "Plan the full cutover"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "claude (flagg, herdr grilling pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: ["./design-decision-loop.svx", "./design-fallback-contract.svx", "./prototype-decision-loop-replay.svx", "./map-voice-escalation-seam.svx"]
 created_at: "2026-07-21"
@@ -25,3 +26,44 @@ Grill Joel on:
 5. **Day-two** — heartbeat/staleness wiring, what the first week of steering looks like, and when messaging-stabilization is declared subsumed and closed.
 
 Resolved when the plan is recorded here, execution authorization is appended to the brief's Notes, and the build steps are chartered as task steps with blockers wired.
+
+## Result (2026-07-21)
+
+Grilled live, all five branches. Ground truth verified at grilling time: the stream gate is unmet (`@joelclaw/message-event-log` has append/pending/materialize/trace only — no `readSince` pagination, no named cursors, no typed origin, none of the gateway kinds); the herdr gate is unmet (0.7.4 has `agent send`, no `agent prompt`); the priority-lane patch lives in `stash@{0}`, not the tree; the daemon runs from the live checkout (`bun run src/daemon.ts`), restarted via `joelclaw gateway restart`.
+
+### 1. Build order — nine chartered steps, three tracks
+
+Track A (sequential): [stream seams](./build-stream-seams.svx) built **by this effort** directly into `message-event-log`, scoped to the gateway ask list, recorded in the stream effort's brief as delivered-from-outside → [land `stash@{0}`](./land-priority-lane-stash.svx) (steering session, not a worker — shared-checkout git state) → [transport slim-down](./build-transport-slim-down.svx), code-complete and tested but **not deployed**; it merges to main inside the cutover sitting, because landing it early means any unplanned daemon restart is a surprise cutover.
+
+Track B (parallel): [herdr protocol 17 `agent.prompt`](./build-herdr-agent-prompt.svx) in the herdr repo, proven on flagg.
+
+Track C (parallel): [plugin hardening](./build-gateway-plugin.svx) from the prototype seed → [driver](./build-driver.svx) (blocked on protocol 17).
+
+Then [kill-test script + weekly drill](./build-kill-test.svx) → [the cutover sitting + week one](./execute-cutover.svx) → [voice escalation adapter](./build-voice-escalation-adapter.svx) (day-two, **not a cutover gate** — the host-resident agent invokes today's `call-joel` CLI at cutover; the correlated adapter is chartered behind cutover so it is not lost, per Joel).
+
+Worker choice is delegated: ultracode via herdr orchestration, pi workers by default, steering picks per slice.
+
+### 2. The cutover moment
+
+One supervised sitting: pre-flight → start gateway agent (heartbeat appears; old daemon still routes; agent idles safely) → start driver (inert: fresh heartbeat, no events) → merge slim-down + `joelclaw gateway restart` (the flip) → immediate probe set: (a) outbound via an untouched real producer, (b) inbound reply from Joel, (c) live kill test. Steering supervises; Joel is on call for the two probe touches only ("not gonna hawk it"). Agent-before-transport ordering means no window where a missing heartbeat storms Telegram with raw fallback.
+
+### 3. Rollback
+
+Pin `pre-gateway-cutover` at the running daemon's boot rev. Rollback script: stop driver → retire agent session → revert the cutover merge → `joelclaw gateway restart` → probe through the restored routing table → confirm receipt. Proof before cutting (pre-flight): one supervised restart on today's code, a clean `revert --no-commit` dry-run, and the steps in a script, not a head. **Steering calls rollback**, criteria predeclared: probe-set failure without an in-sitting fix, or a delivery-affecting defect in week one that prompt-file edits can't fix (judgment defects are steered in prose and are not rollback triggers). Armed one week; retires after the first automated kill drill passes.
+
+### 4. Done evidence per finish-line condition
+
+1. **Routing table dead** — the cutover merge deletes `message-contract/src/routing.ts` from the transport path; grep gate proves zero references to `resolveMessageRoute`/`ROUTING_TABLE_V2`; merge rev + grep output recorded.
+2. **Inbound round-trip** — all three rungs, staged: live-pane round-trip in the sitting; revive and bus-by-flowId within week one, deliberately provoked if traffic doesn't produce them. Receipt chain per rung (inbound event → `route` decision → outcome); condition unchecked until all three chains exist.
+3. **Untouched producer** — probe (a) uses a real existing producer; empty diff over producer call sites against the pin; flowId ties the call to the agent-decided delivery.
+4. **Kill test** — passes live in the sitting, then its first scheduled weekly run.
+
+### 5. Day-two
+
+**Heartbeat amendment** (resolves a conflict between the fallback contract's "agent refreshes" and ADR-0249's "driver emits"): the **driver writes** `gateway:agent:heartbeat` (~15 s refresh, 60 s TTL), but only while (a) pane and session exist per herdr, (b) the last poke was answered within deadline, (c) no poke is outstanding past deadline. Wedge, crash, or Max-window exhaustion ⇒ refresh stops ⇒ TTL lapses ⇒ per-message fallback, no latch. An idle interactive session cannot refresh a key; an unconditional driver refresh attests only the driver. Everything else in the fallback contract stands.
+
+**Week one:** the gateway's first standing judgment is a daily "what I handled and why" digest to Joel; corrections ride the inbound path and land as agent-made prompt-file edits with `promptRevision` bumps. One mid-week external receipts audit by steering (the prototype's every-input-exactly-once validator hardens into the audit script) checks the failures receipts can't self-report. Week closes on the first automated kill drill; rollback trigger retires; finish line checked.
+
+**messaging-stabilization** is declared subsumed and closed when this effort's finish line checks. Dispositions: priority-lanes follow-up closes when the stash lands; `run-shadow-window-cutover` closes **now** as superseded by the full-replacement ruling; the Pulse/Daily button-composer spec is subsumed (fixed composers are presentation policy that moves to agent judgment; intent survives in prompt files); the callback retry-storm's staged source fix gets located and verified in-tree during the slim-down.
+
+**Execution granted** (Joel): "yes, execution granted ultracode with /herdr-orchestration" — appended to the brief's Notes verbatim with the two carried conditions (slim-down must not be neglected after the stash lands; voice adapter stays chartered).
