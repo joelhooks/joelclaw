@@ -2,8 +2,9 @@
 title: "Build the gateway stream seams"
 type: "step"
 kind: "task"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: []
 created_at: "2026-07-21"
@@ -23,3 +24,25 @@ Extend `@joelclaw/message-event-log` (package + Convex functions) with exactly t
 Decision-receipt envelope binds per ADR-0249 §5: `inputEventIds`, `reason`, `promptRevision`, `decisionSeq`, semantic key `gateway:<firstInputEventId>:<decisionSeq>`.
 
 Resolved when the shapes are exported and typed, the Convex functions are live, `readSince` is proven against the real log (the prototype adapter is swappable), tests pass, and the stream effort's brief carries the delivered-from-outside line.
+
+## Result (2026-07-21)
+
+Built and deployed the gateway stream seams.
+
+- `@joelclaw/message-event-log` now exports the six requested kinds: `gateway.decision.recorded`, `gateway.handoff`, `aggregate.deadline.reached`, `fallback.delivered`, `inbound.received`, and `inbound.interpreted`.
+- The package exports typed payloads for all six kinds, the ADR-0249 decision union, the required receipt fields (`inputEventIds`, `reason`, `promptRevision`, `decisionSeq`), and `gatewayDecisionSemanticKey()` implementing `gateway:<firstInputEventId>:<decisionSeq>`.
+- Append accepts the typed origin record `{ producer, machineId, paneId?, sessionId? }`; `flowId` remains the top-level correlation field.
+- Named consumers now read from independent durable cursors through `pendingForConsumer(consumer, limit)` and advance them through `advanceCursor(consumer, eventId)`. The existing Inngest materializer keeps its named cursor unchanged.
+- `readSince(recordedAt, limit, cursor)` now returns `{ events, nextCursor, source }` from the canonical `recordedAt` index without moving any consumer cursor.
+- Convex schema and functions were deployed successfully to the local canonical deployment at `http://127.0.0.1:3210` (`Schema validation complete`, `Deployed Convex functions`).
+- Live proof appended `inbound.received` event `mx77r7prap4xbxhkhf1e9mph8h8aypg0`, replayed its typed origin, paged to an empty second page with `nextCursor: null`, and durably advanced `proof/gateway-stream-seams-2026-07-21` to sequence 1.
+- Live decision proof appended `gateway.decision.recorded` event `mx7cb059d3vad7dg062qtrhdr18az184`; a Convex trace returned both proof kinds in order.
+
+Validation receipts:
+
+- `bun test packages/message-event-log`: 3 pass, 0 fail.
+- `bunx tsc -p packages/message-event-log/tsconfig.json --noEmit`: pass.
+- `pnpm biome check packages/message-event-log`: pass, 4 files checked.
+- `cd ../joelclaw-api && bun test ./test/messageEvents.test.ts`: 5 pass, 0 fail.
+- `cd ../joelclaw-api && bun run typecheck`: pass.
+- Targeted `ultracite check` remains red on pre-existing filename, sort-key, inline-comment, and complexity rules in the outside repo; no type or test failure remains.

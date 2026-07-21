@@ -5,6 +5,7 @@ import {
   executeMessagesAudit,
   executeMessagesTrace,
   formatJournalEvent,
+  formatMessageEvent,
   messagesCmd,
   normalizeMessagesLimit,
   parseMessagesSince,
@@ -166,6 +167,54 @@ describe("messages CLI", () => {
     expect(output).toContain("source confirmed");
     expect(output).toContain('"state":"confirmed"');
     expect(output).toContain('"outcome":"dismissed"');
+  });
+
+  test("renders the Convex flow view as the default trace shape", async () => {
+    const event = {
+      _id: "message-event-1",
+      _creationTime: 1,
+      schemaVersion: 1,
+      sequence: 1,
+      semanticKey: "proof:event-1",
+      kind: "message.requested" as const,
+      source: "proof",
+      payload: { text: "canonical body" },
+      occurredAt: 1,
+      recordedAt: 2,
+      flowId: "flow-proof-1",
+    };
+    const envelope = await Effect.runPromise(
+      executeMessagesTrace("flow-proof-1", {
+        auditMessages: () => Effect.succeed([]),
+        traceMessage: () =>
+          Effect.succeed({
+            kind: "trace" as const,
+            source: "convex" as const,
+            flowId: "flow-proof-1",
+            projection: {
+              flowId: "flow-proof-1",
+              eventCount: 1,
+              firstOccurredAt: 1,
+              lastOccurredAt: 1,
+              latestEventId: "message-event-1",
+              latestKind: "message.requested" as const,
+              updatedAt: 2,
+            },
+            events: [event],
+            consumerReceipts: [],
+            truncated: false,
+          }),
+      }),
+    );
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.result).toMatchObject({
+      kind: "trace",
+      source: "convex",
+      flowId: "flow-proof-1",
+      eventCount: 1,
+      events: [formatMessageEvent(event)],
+    });
   });
 
   test("returns candidates and ID-only follow-ups for ambiguous Telegram message IDs", async () => {

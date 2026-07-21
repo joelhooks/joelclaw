@@ -13,7 +13,7 @@ tags:
 
 # Messaging v2
 
-joelclaw messaging uses Vercel Chat SDK as the Discord, Telegram, and Slack adapter layer behind joelclaw policy. The SDK owns platform mechanics. joelclaw still owns authorization, routing, suppression, durable queueing, journaling, receipts, health, and transport ownership.
+joelclaw messaging uses Vercel Chat SDK as the Discord, Telegram, and Slack adapter layer behind joelclaw policy. The SDK owns platform mechanics. joelclaw still owns authorization, routing, durable queueing, journaling, receipts, health, and transport ownership. Signal policy may suppress non-contract telemetry. Contract-v2 messages never end in suppression.
 
 ## When to use
 
@@ -30,21 +30,25 @@ Also load `gateway` for daemon operations, `inngest-events` for bus consumers, `
 
 ## Send from scripts and agents: keep `notify send`
 
-Existing callers keep using:
-
-```bash
-joelclaw notify send "<message>" --priority high
-```
-
-The CLI shape is unchanged. The gateway compatibility shim maps the legacy request to contract v2 and sends through Chat SDK. `--channel` and `--telegram-only` remain accepted compatibility inputs, but contract v2 routing is authoritative; do not use those flags as new policy.
-
-Declare meaning with `--kind` (added 2026-07-18). Without it, the shim infers kind from priority/source, and low/normal-priority sends become `digest` — which the Telegram digest lane may batch or **silently suppress**:
+Send with an explicit semantic kind:
 
 ```bash
 joelclaw notify send "Here is the list you asked for" --kind ask
 ```
 
-`--kind` accepts `memory | alert | digest | ask | receipt` and overrides inference. Use `ask`/`alert`/`memory` for anything Joel must actually see (operator lane, always delivers). After sending, verify terminal delivery with `joelclaw otel search "<eventId>" --hours 1` — it must show `notify.compat_v2.confirmed`; a queued event with a drained gateway queue is not delivery.
+`--kind` accepts `memory | alert | digest | ask | receipt`. The routing table maps that kind to a platform, delivery mode, and formatting profile. `--channel`, `--telegram-only`, and `--priority` remain accepted only for compatibility. They have no contract-v2 routing authority.
+
+When `--kind` is absent, the temporary compatibility table applies:
+
+| legacy priority | compatibility kind |
+|---|---|
+| `low` | `digest` |
+| `normal` or omitted | `memory` |
+| `high`, `urgent`, or `critical` | `alert` |
+
+The gateway emits one deprecation OTEL row with the exact `--kind` replacement. It never infers kind from source text. `ask` and `receipt` always require explicit kinds.
+
+After sending, use `joelclaw notify wait <eventId> --source <source>` or inspect OTEL. A `confirmed` receipt has a platform message ID. A `digested` receipt means a durable batch accepted the item. When batching is unavailable, `digest` falls back to immediate delivery instead of disappearing.
 
 Use `notify send` for simple text from shell scripts, satellites, skills, and packages that do not own the gateway composition root. Do not import gateway internals across package boundaries.
 
@@ -84,23 +88,23 @@ Every successful or terminal call returns a HATEOAS receipt with `flowId`, route
 
 ## Kinds and current routing table
 
-Producers declare meaning. They do not declare platform, lane, urgency, or formatting.
+Producers declare meaning. They do not declare platform, delivery mode, urgency, or formatting.
 
 | kind | use it for | current route |
 |---|---|---|
-| `memory` | a surfaced memory or taste-learning prompt | Telegram, operator lane, normal |
-| `alert` | an actionable failure or urgent operator signal | Telegram, operator lane, critical |
-| `digest` | batched or low-urgency information | Telegram, digest lane, low |
-| `ask` | a decision, approval, or direct question | Telegram, operator lane, high |
-| `receipt` | an automation/mutation result | Slack, automation lane, normal |
+| `memory` | a surfaced memory or taste-learning prompt | Telegram, immediate |
+| `alert` | an actionable failure or urgent operator signal | Telegram, immediate |
+| `digest` | information that can enter a visible batch | Telegram, batch with immediate fallback |
+| `ask` | a decision, approval, or direct question | Telegram, immediate |
+| `receipt` | an automation/mutation result | Slack, immediate |
 
 Source of truth: `packages/message-contract/src/routing.ts`. If the desired destination changes, edit and version the routing table. Do not teach every producer a new set of flags.
 
 ### The alert-vs-memory suppression lesson
 
-A neat-memory DM originally used low priority and Telegram-only flags. Low priority entered the gateway agent-prompt lane and policy suppressed it. The producer was forced to reverse-engineer routing from flags.
+A neat-memory DM originally used low priority and Telegram-only flags. Priority leaked into several routing layers, and signal policy silently suppressed the message. The producer had to reverse-engineer delivery from flags.
 
-Contract v2 fixes that: call a memory `memory`, an alert `alert`, and an approval `ask`. Routing policy decides the lane. Do not encode meaning as `priority`, `channel`, or `telegramOnly` in new producers.
+Contract v2 fixes that: call a memory `memory`, an alert `alert`, and an approval `ask`. The routing table owns delivery mechanics. Do not encode meaning as `priority`, `channel`, or `telegramOnly` in new producers. A contract-v2 digest is durably batched or immediately delivered. It is never silently suppressed.
 
 ## Button callbacks and replies by flowId
 
@@ -128,7 +132,7 @@ Target data:
 
 The existing Chat SDK `callback_query` owner must answer the callback, authorize Joel, resolve the platform message to `flowId`, verify the action was declared on that flow, then publish the request. Consumers subscribe by `flowId` and `actionId`. They emit a truthful receipt only after their append, schedule, or mutation has been read back.
 
-The button-native source path uses `kind: "callback"`, stable `learner-flow.*` IDs, and `message/action.requested`. It is not earned live truth until the gateway and host worker are deployed and one `Seen` tap reaches the `learner-flow/action` receipt. Never treat a reaction event, queue acceptance, or Telegram spinner acknowledgement as button proof. Design source: `.brain/projects/messaging-stabilization/design-button-native-interactions.svx`.
+The button-native source path uses `kind: "callback"`, stable `learner-flow.*` IDs, and `message/action.requested`. The one-time `Seen` canary passed on 2026-07-19 and authorized retirement of the old Campaign Pulse reaction consumer. Routine buttons must perform real actions; acknowledgment buttons are only for load-bearing one-time proofs. Never treat a reaction event, queue acceptance, or Telegram spinner acknowledgement as action completion. Design source: `.brain/projects/messaging-stabilization/design-button-native-interactions.svx`.
 
 `message/reply.received` exists in the contract, but verify an acting publisher/live canary before building a critical consumer around replies.
 
@@ -154,7 +158,7 @@ Historical cutover receipts: `.brain/projects/messaging-stabilization/run-shadow
 - One gateway process and one listener owner per platform.
 - `command-queue` is the only path into the Pi session.
 - Chat SDK publishes observe-only bus copies; only the canonical dispatcher executes.
-- Producers use kinds; the routing table owns platforms and lanes.
+- Producers use kinds; the routing table owns platforms, delivery modes, and formatting.
 - Store and correlate by `flowId`.
 - A receipt without visible delivery is a rollback trigger, not success.
 - Pin all Chat SDK packages to the same exact release and re-run platform canaries on upgrades.

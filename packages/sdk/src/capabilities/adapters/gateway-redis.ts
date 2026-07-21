@@ -2,7 +2,7 @@ import { createChannelDeliveryAudit, emitGatewayOtel } from "@joelclaw/telemetry
 import { Effect, ParseResult, Schema } from "effect"
 import { type CapabilityPort, capabilityError } from "../contract"
 
-const PRIORITIES = ["low", "normal", "high", "urgent"] as const
+const PRIORITIES = ["low", "normal", "high", "urgent", "critical"] as const
 const MESSAGE_KINDS = ["memory", "alert", "digest", "ask", "receipt"] as const
 
 const NotifySendArgsSchema = Schema.Struct({
@@ -51,7 +51,7 @@ const NotifyWaitResultSchema = Schema.Struct({
   correlationId: Schema.String,
   platform: Schema.String,
   platformMessageId: Schema.NullOr(Schema.String),
-  deliveryState: Schema.Literal("confirmed", "failed", "suppressed", "digested"),
+  deliveryState: Schema.Literal("confirmed", "failed", "digested"),
   declaredActions: Schema.Array(NotifyCallbackActionSchema),
   confirmedAt: Schema.NullOr(Schema.String),
 })
@@ -81,6 +81,25 @@ type RedisClient = {
 
 type NotifyPriority = (typeof PRIORITIES)[number]
 
+export function createNotifyCompatibilityPayload(input: {
+  readonly message: string
+  readonly context: Record<string, unknown>
+  readonly audit: Record<string, unknown>
+  readonly priority?: NotifyPriority
+  readonly kind?: (typeof MESSAGE_KINDS)[number]
+  readonly telegramOnly?: boolean
+}): Record<string, unknown> {
+  return {
+    prompt: input.message,
+    message: input.message,
+    context: input.context,
+    audit: input.audit,
+    ...(input.priority ? { priority: input.priority } : {}),
+    ...(input.kind ? { kind: input.kind } : {}),
+    ...(input.telegramOnly === true ? { telegramOnly: true } : {}),
+  }
+}
+
 function decodeArgs<K extends keyof typeof commands>(
   subcommand: K,
   args: unknown,
@@ -94,12 +113,6 @@ function decodeArgs<K extends keyof typeof commands>(
       )
     )
   )
-}
-
-function priorityToLevel(priority: NotifyPriority): "info" | "warn" | "fatal" {
-  if (priority === "high") return "warn"
-  if (priority === "urgent") return "fatal"
-  return "info"
 }
 
 function normalizeChannel(channel: string | undefined): string {
@@ -140,7 +153,7 @@ export interface NotifyTerminalReceipt {
   readonly correlationId: string
   readonly platform: string
   readonly platformMessageId: string | null
-  readonly deliveryState: "confirmed" | "failed" | "suppressed" | "digested"
+  readonly deliveryState: "confirmed" | "failed" | "digested"
   readonly declaredActions: ReadonlyArray<{
     readonly kind: "callback"
     readonly id: "learner-flow.ack" | "learner-flow.run" | "learner-flow.investigate"
@@ -151,10 +164,8 @@ export interface NotifyTerminalReceipt {
 
 export function notifyTerminalFailureCode(
   state: Exclude<NotifyTerminalReceipt["deliveryState"], "confirmed">,
-): "NOTIFY_DELIVERY_FAILED" | "NOTIFY_SUPPRESSED" | "NOTIFY_DIGESTED" {
-  if (state === "failed") return "NOTIFY_DELIVERY_FAILED"
-  if (state === "suppressed") return "NOTIFY_SUPPRESSED"
-  return "NOTIFY_DIGESTED"
+): "NOTIFY_DELIVERY_FAILED" | "NOTIFY_DIGESTED" {
+  return state === "failed" ? "NOTIFY_DELIVERY_FAILED" : "NOTIFY_DIGESTED"
 }
 
 export async function waitForNotifyTerminalReceipt(
@@ -261,17 +272,14 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
             eventId,
             route: `gateway:${normalizedChannel}`,
           })
-          const payload: Record<string, unknown> = {
-            prompt: message,
+          const payload = createNotifyCompatibilityPayload({
             message,
-            priority,
-            level: priorityToLevel(priority),
             context: args.context ?? {},
             audit,
-            immediateTelegram: priority === "high" || priority === "urgent",
-            ...(args.kind ? { kind: args.kind } : {}),
-            ...(args.telegramOnly === true ? { telegramOnly: true } : {}),
-          }
+            priority: args.priority,
+            kind: args.kind,
+            telegramOnly: args.telegramOnly,
+          })
 
           const event = {
             id: eventId,
@@ -350,7 +358,7 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
             metadata: {
               ...audit,
               channel: normalizedChannel,
-              priority,
+              legacyPriority: args.priority ?? "omitted",
               queuedLists,
               notifyChannels,
               deduplicated,

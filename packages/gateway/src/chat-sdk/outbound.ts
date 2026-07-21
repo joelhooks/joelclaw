@@ -73,7 +73,7 @@ export interface OutboundTerminalReceipt {
   readonly correlationId: string;
   readonly platform: MessagePlatformType;
   readonly platformMessageId: string | null;
-  readonly deliveryState: "confirmed" | "failed" | "suppressed" | "digested";
+  readonly deliveryState: "confirmed" | "failed" | "digested";
   readonly declaredActions: ReadonlyArray<MessageActionType>;
   readonly confirmedAt: string | null;
 }
@@ -252,26 +252,19 @@ const defaultTelegramPolicy: TelegramPolicyPort = {
       originSystemId: intent.correlationId,
       eventId: intent.correlationId,
       requestedAtMs: Date.now(),
-      route: `${route.lane}:${route.urgency}:${route.formatting}`,
+      route: `${route.delivery}:${route.formatting}`,
       ...(Number.isSafeInteger(inReplyToMessageId) ? { inReplyToMessageId } : {}),
     });
-    // Contract v2 already resolved semantic kind -> lane. The legacy policy
-    // must not demote an operator-lane memory or ask merely because its urgency
-    // is normal. Only the explicit digest lane enters the digest policy path.
-    const operatorImmediate = route.lane === "operator";
     return routeTelegramOutbound({
       chatId,
       content: intent.content,
       audit,
       contentKind: intent.kind,
       transportText: intent.content,
+      contractDelivery: route.delivery,
       policy: {
-        sourceEventType: operatorImmediate
-          ? "message-contract/operator"
-          : `message-contract/${intent.kind}`,
+        sourceEventType: `message-contract/${intent.kind}`,
         sourceClassification: intent.kind,
-        priority: route.urgency === "critical" ? "urgent" : route.urgency,
-        level: route.urgency === "critical" ? "error" : "info",
         ...(replyAnchor ? { exemption: telegramConversationReplyExemption(chatId) } : {}),
       },
     });
@@ -342,7 +335,7 @@ function journalInput(input: {
     producer: "chat-sdk-outbound-v1",
     originSystemId: input.intent.correlationId,
     sourceRef: input.intent.replyTo ?? "",
-    route: `${input.route.lane}:${input.route.urgency}:${input.route.formatting}`,
+    route: `${input.route.delivery}:${input.route.formatting}`,
     telegramChatId: input.threadId ? telegramChatId(input.threadId) : 0,
     telegramMessageId: Number.isSafeInteger(messageId) ? messageId : null,
     text: input.intent.content,
@@ -665,11 +658,9 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
         }
         const policy = dependencies.telegramPolicy ?? defaultTelegramPolicy;
         const decision = await policy.route({ chatId, intent, flowId, route, replyAnchor });
-        if (decision.disposition !== "deliver") {
+        if (decision.disposition === "digest" && route.delivery === "batch") {
           const terminalAt = now().toISOString();
-          const deliveryState = decision.disposition === "digest"
-            ? "digested"
-            : "suppressed";
+          const deliveryState = "digested" as const;
           const terminalJournal = await dependencies.journal.record(journalInput({
             intent,
             flowId,
@@ -679,17 +670,20 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
             eventType: `message.outbound.${decision.disposition}`,
             deliveryState,
           }));
-          if (terminalJournal.persisted) {
-            await rememberTerminal(dependencies.journal, {
-              flowId,
-              correlationId: intent.correlationId,
-              platform: route.platform,
-              platformMessageId: null,
-              deliveryState,
-              declaredActions: intent.actions ?? [],
-              confirmedAt: null,
-            });
+          if (!terminalJournal.persisted) {
+            throw new Error(
+              `${route.platform} digest was queued but its terminal receipt was not durably journaled`,
+            );
           }
+          await rememberTerminal(dependencies.journal, {
+            flowId,
+            correlationId: intent.correlationId,
+            platform: route.platform,
+            platformMessageId: null,
+            deliveryState,
+            declaredActions: intent.actions ?? [],
+            confirmedAt: null,
+          });
           return createDeliveryReceipt({
             flowId,
             correlationId: intent.correlationId,
@@ -700,8 +694,7 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
             platformMessageId: null,
             threadId: null,
             route: {
-              lane: route.lane,
-              urgency: route.urgency,
+              delivery: route.delivery,
               formatting: route.formatting,
             },
           });
@@ -769,8 +762,7 @@ export function makeOutboundSender(dependencies: OutboundSenderDependencies) {
         platformMessageId: anchor.platformMessageId,
         threadId: anchor.threadId,
         route: {
-          lane: route.lane,
-          urgency: route.urgency,
+          delivery: route.delivery,
           formatting: route.formatting,
         },
       });

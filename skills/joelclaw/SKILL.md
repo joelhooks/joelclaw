@@ -114,9 +114,11 @@ joelclaw secrets env --dry-run
 ### Notify
 
 ```bash
-joelclaw notify send "Worker restarted and healthy" --priority normal
-joelclaw notify send "Immediate action required" --priority urgent --telegram-only
+joelclaw notify send "Worker restarted and healthy" --kind receipt
+joelclaw notify send "Immediate action required" --kind alert
 ```
+
+`--priority` is deprecated compatibility metadata. Use `--kind`; the versioned routing table owns delivery.
 
 ### Capability Adapter Paths (ADR-0169 phase 4)
 

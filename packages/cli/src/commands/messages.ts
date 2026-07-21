@@ -1,5 +1,11 @@
 import { Args, Command, Options } from "@effect/cli";
 import {
+  getMessageEventLogClient,
+  type MessageEventDocument,
+  MessageEventLogError,
+  type MessageEventTraceResult,
+} from "@joelclaw/message-event-log";
+import {
   type AuditMessagesInput,
   auditMessages,
   clickHouseClientLayer,
@@ -8,7 +14,6 @@ import {
   messageJournalQueryLayer,
   parseDuration,
   resolveMessageJournalConnection,
-  traceMessage,
 } from "@joelclaw/message-journal";
 import { Console, Effect, Layer, Option } from "effect";
 import {
@@ -18,13 +23,15 @@ import {
   type NextAction,
 } from "../response";
 
+type TraceResult = MessageTraceResult | MessageEventTraceResult;
+
 type MessagesDependencies = {
   readonly auditMessages: (
     input: AuditMessagesInput,
   ) => Effect.Effect<ReadonlyArray<JournalEvent>, unknown>;
   readonly traceMessage: (
-    lookup: string | number,
-  ) => Effect.Effect<MessageTraceResult, unknown>;
+    lookup: string,
+  ) => Effect.Effect<TraceResult, unknown>;
 };
 
 type JournalMetadata = Record<string, unknown>;
@@ -136,6 +143,32 @@ export function formatJournalEvent(row: JournalEvent) {
   };
 }
 
+export function formatMessageEvent(event: MessageEventDocument) {
+  return {
+    eventId: event._id,
+    schemaVersion: event.schemaVersion,
+    sequence: event.sequence,
+    semanticKey: event.semanticKey,
+    kind: event.kind,
+    source: event.source,
+    occurredAt: event.occurredAt,
+    recordedAt: event.recordedAt,
+    flowId: event.flowId ?? null,
+    correlationId: event.correlationId ?? null,
+    rawSourceId: event.rawSourceId ?? null,
+    deliveryId: event.deliveryId ?? null,
+    platform: event.platform ?? null,
+    platformMessageId: event.platformMessageId ?? null,
+    payload: event.payload,
+  };
+}
+
+function isConvexTrace(
+  result: TraceResult,
+): result is Extract<MessageEventTraceResult, { kind: "trace" }> {
+  return result.kind === "trace" && "source" in result && result.source === "convex";
+}
+
 export function parseMessagesSince(value: string): number {
   return parseDuration(value);
 }
@@ -147,11 +180,11 @@ export function normalizeMessagesLimit(value = 100): number {
 function auditNextActions(): readonly NextAction[] {
   return [
     {
-      command: "messages trace <message-id-or-flow-id>",
-      description: "Trace one message lifecycle",
+      command: "messages trace <flow-id>",
+      description: "Trace one message flow",
       params: {
-        "message-id-or-flow-id": {
-          description: "Telegram message ID or journal flow ID",
+        "flow-id": {
+          description: "Canonical message flow ID",
           required: true,
         },
       },
@@ -159,7 +192,7 @@ function auditNextActions(): readonly NextAction[] {
   ];
 }
 
-function traceNextActions(result: MessageTraceResult): readonly NextAction[] {
+function traceNextActions(result: TraceResult): readonly NextAction[] {
   if (result.kind === "trace") {
     return [
       {
@@ -211,6 +244,14 @@ function errorDetails(error: unknown): {
   const tag = typeof record._tag === "string" ? record._tag : "";
   const code = typeof record.code === "string" ? record.code : "MESSAGE_JOURNAL_QUERY_FAILED";
 
+  if (tag === "MessageEventLogError" || error instanceof MessageEventLogError) {
+    return {
+      message: `Convex message event ${typeof record.operation === "string" ? record.operation : "trace"} failed`,
+      code: typeof record.code === "string" ? record.code : "MESSAGE_EVENT_TRACE_FAILED",
+      fix: "Check the local Convex deployment on 127.0.0.1:3210 and retry.",
+    };
+  }
+
   if (tag === "MessageJournalConfigError") {
     const missing = Array.isArray(record.missing)
       ? record.missing.filter((value): value is string => typeof value === "string")
@@ -248,9 +289,12 @@ const defaultDependencies: MessagesDependencies = {
       auditMessages(input).pipe(Effect.provide(queryLayer(connection))),
     ),
   traceMessage: (lookup) =>
-    Effect.flatMap(resolveMessageJournalConnection("reader"), (connection) =>
-      traceMessage(lookup).pipe(Effect.provide(queryLayer(connection))),
-    ),
+    Effect.tryPromise({
+      try: () => getMessageEventLogClient().trace(lookup),
+      catch: (error) => error instanceof MessageEventLogError
+        ? error
+        : new MessageEventLogError("trace", "MESSAGE_EVENT_TRACE_FAILED", error),
+    }),
 };
 
 export function executeMessagesAudit(
@@ -356,12 +400,24 @@ export function executeMessagesTrace(
         buildSuccessEnvelope(
           "messages trace",
           result.kind === "trace"
-            ? {
-                kind: result.kind,
-                flowId: result.flowId,
-                eventCount: result.events.length,
-                events: result.events.map(formatJournalEvent),
-              }
+            ? isConvexTrace(result)
+              ? {
+                  kind: result.kind,
+                  source: result.source,
+                  flowId: result.flowId,
+                  projection: result.projection,
+                  eventCount: result.events.length,
+                  events: result.events.map(formatMessageEvent),
+                  consumerReceipts: result.consumerReceipts,
+                  truncated: result.truncated,
+                }
+              : {
+                  kind: result.kind,
+                  source: "legacy-clickhouse",
+                  flowId: result.flowId,
+                  eventCount: result.events.length,
+                  events: result.events.map(formatJournalEvent),
+                }
             : result.kind === "ambiguous"
               ? {
                   kind: result.kind,
@@ -423,8 +479,8 @@ const auditCmd = Command.make(
     }),
 ).pipe(Command.withDescription("Audit recent private channel messages"));
 
-const lookupArgument = Args.text({ name: "message-id-or-flow-id" }).pipe(
-  Args.withDescription("Telegram message ID or journal flow ID"),
+const lookupArgument = Args.text({ name: "flow-id" }).pipe(
+  Args.withDescription("Canonical message flow ID"),
 );
 
 const traceCmd = Command.make(
@@ -435,9 +491,9 @@ const traceCmd = Command.make(
       const envelope = yield* executeMessagesTrace(lookup);
       yield* Console.log(JSON.stringify(envelope, null, 2));
     }),
-).pipe(Command.withDescription("Trace one message, delivery, and button lifecycle"));
+).pipe(Command.withDescription("Trace one canonical message flow from Convex"));
 
 export const messagesCmd = Command.make("messages").pipe(
-  Command.withDescription("Private message journal"),
+  Command.withDescription("Canonical message traces and legacy private audit"),
   Command.withSubcommands([auditCmd, traceCmd]),
 );

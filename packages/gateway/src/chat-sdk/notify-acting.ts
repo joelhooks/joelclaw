@@ -5,6 +5,7 @@ import {
   type MessageKindType,
   type OutboundIntent,
 } from "@joelclaw/message-contract";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { mapNotifySendToIntent } from "./notify-compat";
 
 export interface NotifyCompatGatewayEvent {
@@ -14,9 +15,18 @@ export interface NotifyCompatGatewayEvent {
   readonly payload: Record<string, unknown>;
 }
 
+export interface NotifyCompatDeprecation {
+  readonly eventId: string;
+  readonly source: string;
+  readonly legacyPriority: "low" | "normal" | "high" | "urgent" | "critical" | "omitted";
+  readonly mappedKind: MessageKindType;
+  readonly fix: string;
+}
+
 export interface NotifyCompatRouteDependencies {
   readonly isTransportReady?: () => boolean;
   readonly send: (intent: OutboundIntent) => Promise<DeliveryReceiptEnvelope>;
+  readonly emitDeprecation?: (input: NotifyCompatDeprecation) => void | Promise<void>;
 }
 
 export class NotifyCompatDeliveryError extends Error {
@@ -34,7 +44,6 @@ export class NotifyCompatDeliveryError extends Error {
 export type NotifyCompatDisposition =
   | "confirmed"
   | "digested"
-  | "suppressed"
   | "failed";
 
 export type NotifyCompatRouteResult =
@@ -90,9 +99,16 @@ function messageFrom(event: NotifyCompatGatewayEvent): string {
 
 function priorityFrom(
   value: unknown,
-): "low" | "normal" | "high" | "critical" | undefined {
-  if (value === "urgent") return "critical";
-  if (value === "low" || value === "normal" || value === "high") return value;
+): "low" | "normal" | "high" | "urgent" | "critical" | undefined {
+  if (
+    value === "low"
+    || value === "normal"
+    || value === "high"
+    || value === "urgent"
+    || value === "critical"
+  ) {
+    return value;
+  }
   return undefined;
 }
 
@@ -159,12 +175,42 @@ function terminalDisposition(
   return deliveryState;
 }
 
+const emittedDeprecations = new Set<string>();
+const MAX_DEPRECATION_KEYS = 2_000;
+
+function emitImplicitKindDeprecation(
+  input: NotifyCompatDeprecation,
+): void {
+  if (emittedDeprecations.has(input.eventId)) return;
+  emittedDeprecations.add(input.eventId);
+  if (emittedDeprecations.size > MAX_DEPRECATION_KEYS) {
+    const oldest = emittedDeprecations.values().next().value;
+    if (oldest) emittedDeprecations.delete(oldest);
+  }
+  void emitGatewayOtel({
+    level: "warn",
+    component: "notify-compat",
+    action: "notify.compat_v2.implicit_kind",
+    success: true,
+    metadata: { ...input },
+  });
+}
+
 /**
  * Routes the Redis envelope created by `joelclaw notify send` through the
  * contract-v2 compatibility mapper after the canonical Chat SDK transport is
  * ready. Returning handled=true tells the Redis bridge not to also prompt/send
  * through the agent lane.
  */
+export const __notifyCompatTestUtils = {
+  clearDeprecations(): void {
+    emittedDeprecations.clear();
+  },
+  deprecationCount(): number {
+    return emittedDeprecations.size;
+  },
+};
+
 export async function routeNotifySendCompat(
   event: NotifyCompatGatewayEvent,
   dependencies: NotifyCompatRouteDependencies,
@@ -185,12 +231,14 @@ export async function routeNotifySendCompat(
   const replyTo = contextRecord?.replyTo;
   let intent: OutboundIntent;
   try {
+    const explicitKind = kindFrom(event.payload.kind);
+    const legacyPriority = priorityFrom(event.payload.priority);
     intent = mapNotifySendToIntent({
       message,
       correlationId: event.id,
       source: event.source,
-      kind: kindFrom(event.payload.kind),
-      priority: priorityFrom(event.payload.priority),
+      kind: explicitKind,
+      priority: legacyPriority,
       telegramOnly: event.payload.telegramOnly === true,
       channel:
         typeof contextRecord?.channel === "string"
@@ -199,6 +247,18 @@ export async function routeNotifySendCompat(
       replyTo: typeof replyTo === "string" ? (replyTo as OutboundIntent["replyTo"]) : undefined,
       actions: actionsFrom(contextRecord?.actions),
     });
+    if (!explicitKind) {
+      const deprecation: NotifyCompatDeprecation = {
+        eventId: event.id,
+        source: event.source,
+        legacyPriority: legacyPriority ?? "omitted",
+        mappedKind: intent.kind,
+        fix: `Pass --kind ${intent.kind}; --priority is deprecated and has no routing authority.`,
+      };
+      await Promise.resolve(
+        (dependencies.emitDeprecation ?? emitImplicitKindDeprecation)(deprecation),
+      ).catch(() => undefined);
+    }
     const receipt = await dependencies.send(intent);
     const disposition = terminalDisposition(receipt);
     return { handled: true, intent, receipt, disposition };

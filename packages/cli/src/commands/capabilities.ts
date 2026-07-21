@@ -69,12 +69,12 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
         },
       },
       {
-        command: "notify send <message> [--priority <priority>] [--channel <channel>] [--context <json>]",
-        description: "Send canonical gateway notification to operator session",
+        command: "notify send <message> --kind <kind> [--priority <deprecated>] [--context <json>]",
+        description: "Send a semantic contract-v2 message through the versioned route",
         params: {
           message: { description: "Notification text", required: true },
-          priority: { description: "Escalation level", value: "normal", enum: ["low", "normal", "high", "urgent"] },
-          channel: { description: "Gateway channel route", value: "gateway", enum: ["gateway", "main", "all"] },
+          kind: { description: "Message meaning", value: "memory", enum: ["memory", "alert", "digest", "ask", "receipt"] },
+          priority: { description: "Deprecated compatibility metadata", enum: ["low", "normal", "high", "urgent", "critical"] },
           json: { description: "JSON context payload", value: "{\"scope\":\"capability\"}" },
         },
       },
@@ -453,11 +453,11 @@ export const capabilitiesCmd = Command.make(
             { command: "heal list", description: "List deterministic heal runbooks" },
             { command: "secrets status", description: "Check capability backend readiness for secrets/log/notify/deploy/heal flows" },
             {
-              command: "notify send <message> [--priority <priority>]",
-              description: "Send canonical gateway notification",
+              command: "notify send <message> --kind <kind>",
+              description: "Send a semantic contract-v2 gateway message",
               params: {
                 message: { description: "Notification text", required: true },
-                priority: { description: "Priority", value: "normal", enum: ["low", "normal", "high", "urgent"] },
+                kind: { description: "Message meaning", value: "memory", enum: ["memory", "alert", "digest", "ask", "receipt"] },
               },
             },
           ]

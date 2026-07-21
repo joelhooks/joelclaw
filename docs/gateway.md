@@ -6,8 +6,10 @@ Canonical notes for the always-on gateway daemon (`packages/gateway`) and its au
 
 Chat SDK is the canonical platform-adapter layer for Telegram and Slack. It runs inside the existing gateway process behind joelclaw authorization, routing, signal suppression, durable command queue, journal, receipt, health, and error-budget wrappers. Discord and iMessage remain on their existing channel owners.
 
-- `joelclaw notify send ...` is unchanged for callers. The compatibility shim maps legacy inputs to a contract-v2 kind and sends through Chat SDK.
-- Rich intents use `kind: memory | alert | digest | ask | receipt`; `packages/message-contract/src/routing.ts` owns platform and lane selection.
+- `joelclaw notify send ...` remains the compatibility front door. New callers pass `--kind`; `--priority` is deprecated and has no routing authority.
+- Rich intents use `kind: memory | alert | digest | ask | receipt`; `packages/message-contract/src/routing.ts` owns platform, delivery mode, and formatting.
+- Legacy priority maps only through the fixed table: `low → digest`, `normal` or omitted `→ memory`, and `high|urgent|critical → alert`. Explicit kind wins. Source substrings never select kind.
+- Contract-v2 `digest` resolves to `batch`. It returns `digested` only after durable queueing. If the batch assembler is unavailable or queueing fails, the original message delivers immediately. Contract-v2 messages never return `suppressed`; non-contract signal policy may still suppress telemetry noise.
 - Every rich send returns a `flowId`. Reactions return as `message/reaction.received`; replies use `message/reply.received` when the publisher is wired.
 - Chat SDK starts directly as the only Telegram poller and Slack Socket Mode owner. Never launch a second platform listener or standalone Chat SDK process.
 - Telegram-specific commands, callbacks, media intake, journaling, formatting, and streaming live in `telegram-runtime.ts`, a non-polling companion fed by SDK events.

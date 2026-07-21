@@ -677,7 +677,8 @@ joelclaw secrets env --dry-run [--ttl 1h] [--force]
 
 joelclaw log write --action <action> --tool <tool> --detail <detail> [--reason <reason>] [--session <session>] [--system <system>]
 
-joelclaw notify send "<message>" [--priority low|normal|high|urgent] [--channel gateway|main|all] [--context '{"k":"v"}']
+joelclaw notify send "<message>" [--kind memory|alert|digest|ask|receipt] [--priority low|normal|high|urgent|critical] [--channel gateway|main|all] [--context '{"k":"v"}']
+joelclaw notify wait <event-id> --source <source> [--timeout 15s]
 
 joelclaw heal {list|run}
 
@@ -708,8 +709,9 @@ Semantics:
 - `log` writes structured system entries (slog backend).
 - `log write` now accepts explicit `--session` / `--system` provenance flags and also falls back to `SLOG_SESSION_ID` / `SLOG_SYSTEM_ID` env vars before handing off to the slog backend.
 - `logs` reads/analyzes runtime logs.
-- `notify` is the canonical simple operator message command; `gateway push` remains transport/debug. Callers keep the same CLI shape. The gateway maps the request to a contract-v2 kind and returns Chat SDK telemetry with a `flowId`; legacy channel flags are compatibility inputs, not routing authority.
-- Rich producers that need `replyTo`, reaction/reply correlation, or an explicit `memory|alert|digest|ask|receipt` kind use the contract-v2 gateway `send()` seam instead of adding CLI routing flags.
+- `notify` is the canonical simple operator message command; `gateway push` remains transport/debug. New callers pass `--kind memory|alert|digest|ask|receipt`. The gateway returns Chat SDK telemetry with a `flowId`.
+- `--priority` is deprecated compatibility metadata, not routing authority. Without `--kind`, `low` maps to `digest`, `normal` or omitted maps to `memory`, and `high|urgent|critical` maps to `alert`. The gateway emits one deprecation row with the exact replacement. Source text never selects kind.
+- Rich producers that need `replyTo`, action/reply correlation, or an explicit kind use the contract-v2 gateway `send()` seam instead of adding CLI routing flags. Contract-v2 digests batch durably or fall back to immediate delivery; they never end as `suppressed`.
 - `messages trace <flowId>` reads the private message journal lifecycle; `message/reaction.received` consumers correlate on that same `flowId`.
 - `deploy`, `heal`, `log`, `notify`, `secrets`, `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while executing through capability registry adapters (`scripted-deploy`, `runbook-heal`, `slog-cli`, `gateway-redis`, `agent-secrets-cli`, `mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
 - `typesense-otel`, `typesense-recall`, `scripted-deploy`, `runbook-heal`, `slog-cli`, `agent-secrets-cli`, `gateway-redis`, `mcp-agent-mail`, and `redis-subscriptions` adapter logic is canonical in `@joelclaw/sdk` (`packages/sdk/src/capabilities/adapters/*`); CLI adapter files are thin re-exports.

@@ -2,8 +2,9 @@
 title: "Land the priority-lane removal stash"
 type: "step"
 kind: "task"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "claude (flagg, herdr pane w28:p1, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: []
 created_at: "2026-07-21"
@@ -20,3 +21,19 @@ Pop `stash@{0}` (`priority-lane WIP (p1A)`, 25 files, 2026-07-19), reconcile aga
 Guard (Joel, cutover grilling): landing this is **not a standalone win** — the transport slim-down step exists and is blocker-wired on this one so it cannot silently drop off the map.
 
 Resolved when the patch is committed with its checklist green and messaging-stabilization's `follow-up-remove-priority-lanes` is marked closed with a receipt.
+
+## Progress (2026-07-21, steering)
+
+Popped `stash@{0}` (25 files; sole conflict was a trivial dependency-union in `packages/cli/package.json` — upstream added `@joelclaw/memory`, stash adds `@joelclaw/message-event-log`; kept both). Stash entry dropped after apply. Checklist run:
+
+- `bun test` (message-contract, gateway, gateway-redis, notify): **208 pass, 0 fail**
+- `bunx tsc --noEmit` × message-contract, gateway, sdk, cli: clean
+- `pnpm oxlint`: 0 errors (80 pre-existing warnings)
+- `git diff --check`: clean
+- `pnpm biome check`: errors exist but all are pre-existing `organizeImports` in files the patch does not touch (fleet commands, otel-ingest)
+
+Commit is deliberately held: the patch depends on `@joelclaw/message-event-log`, an uncommitted workspace package the stream-seams build worker is editing right now. Committing the stash + lockfile alone would push a repo referencing a package git doesn't have. The stash landing commits atomically with the stream-seams harvest; this step closes then.
+
+## Result (2026-07-21)
+
+Landed. The 25-file patch is committed together with the stream-seams package it depends on, plus `packages/system-bus/package.json` (a one-line dep declaration another session added; the lockfile embeds it, so it rides for frozen-install consistency). Union validation after merge: cli typecheck clean; message-event-log + notify + messages tests 13 pass, 0 fail (on top of the earlier 208-pass checklist run). Stash entry dropped after apply. messaging-stabilization's `follow-up-remove-priority-lanes` is marked closed with a receipt pointing here. The transport slim-down step remains blocker-wired on this one per the guard.

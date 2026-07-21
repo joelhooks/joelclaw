@@ -1,18 +1,16 @@
 import { Schema } from "effect";
 import { MessageRouteNotFoundError } from "./errors";
 import {
-  DeliveryLane,
   FormattingProfile,
   MESSAGE_CONTRACT_VERSION,
+  MessageDeliveryMode,
   type MessageKind,
   MessagePlatform,
-  MessageUrgency,
 } from "./kinds";
 
 export const MessageRoute = Schema.Struct({
   platform: MessagePlatform,
-  lane: DeliveryLane,
-  urgency: MessageUrgency,
+  delivery: MessageDeliveryMode,
   formatting: FormattingProfile,
 });
 export interface MessageRoute extends Schema.Schema.Type<typeof MessageRoute> {}
@@ -32,11 +30,11 @@ export interface RoutingTableV2 extends Schema.Schema.Type<typeof RoutingTableV2
 export const ROUTING_TABLE_V2: RoutingTableV2 = Schema.decodeUnknownSync(RoutingTableV2)({
   version: MESSAGE_CONTRACT_VERSION,
   routes: {
-    memory: { platform: "telegram", lane: "operator", urgency: "normal", formatting: "markdown" },
-    alert: { platform: "telegram", lane: "operator", urgency: "critical", formatting: "markdown" },
-    digest: { platform: "telegram", lane: "digest", urgency: "low", formatting: "markdown" },
-    ask: { platform: "telegram", lane: "operator", urgency: "high", formatting: "markdown" },
-    receipt: { platform: "slack", lane: "automation", urgency: "normal", formatting: "markdown" },
+    memory: { platform: "telegram", delivery: "immediate", formatting: "markdown" },
+    alert: { platform: "telegram", delivery: "immediate", formatting: "markdown" },
+    digest: { platform: "telegram", delivery: "batch", formatting: "markdown" },
+    ask: { platform: "telegram", delivery: "immediate", formatting: "markdown" },
+    receipt: { platform: "slack", delivery: "immediate", formatting: "markdown" },
   },
 });
 

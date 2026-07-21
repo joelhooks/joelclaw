@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createNotifyCompatibilityPayload,
   notifyTerminalFailureCode,
   waitForNotifyTerminalReceipt,
 } from "./gateway-redis";
@@ -72,8 +73,36 @@ describe("notify terminal receipt wait", () => {
 
   test("keeps terminal non-delivery states distinct", () => {
     expect(notifyTerminalFailureCode("failed")).toBe("NOTIFY_DELIVERY_FAILED");
-    expect(notifyTerminalFailureCode("suppressed")).toBe("NOTIFY_SUPPRESSED");
     expect(notifyTerminalFailureCode("digested")).toBe("NOTIFY_DIGESTED");
+  });
+
+  test("keeps legacy priority as optional compatibility metadata only", () => {
+    const base = {
+      message: "Visible message",
+      context: {},
+      audit: { flowId: "notify:event-1" },
+    };
+    expect(createNotifyCompatibilityPayload(base)).toEqual({
+      prompt: "Visible message",
+      message: "Visible message",
+      context: {},
+      audit: { flowId: "notify:event-1" },
+    });
+    expect(createNotifyCompatibilityPayload({
+      ...base,
+      priority: "high",
+      kind: "memory",
+    })).toEqual({
+      prompt: "Visible message",
+      message: "Visible message",
+      context: {},
+      audit: { flowId: "notify:event-1" },
+      priority: "high",
+      kind: "memory",
+    });
+    const payload = createNotifyCompatibilityPayload({ ...base, priority: "urgent" });
+    expect(payload.level).toBeUndefined();
+    expect(payload.immediateTelegram).toBeUndefined();
   });
 
   test("rejects malformed terminal projections", async () => {

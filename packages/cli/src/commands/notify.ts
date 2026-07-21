@@ -4,7 +4,7 @@ import type { CapabilityError } from "../capabilities/contract"
 import { executeCapabilityCommand } from "../capabilities/runtime"
 import { respond, respondError } from "../response"
 
-const NOTIFY_PRIORITIES = ["low", "normal", "high", "urgent"] as const
+const NOTIFY_PRIORITIES = ["low", "normal", "high", "urgent", "critical"] as const
 const NOTIFY_KINDS = ["memory", "alert", "digest", "ask", "receipt"] as const
 
 type NotifyPriority = (typeof NOTIFY_PRIORITIES)[number]
@@ -52,8 +52,10 @@ const channelOption = Options.text("channel").pipe(
 )
 
 const priorityOption = Options.choice("priority", NOTIFY_PRIORITIES).pipe(
-  Options.withDescription("Notification priority (controls escalation metadata)"),
-  Options.withDefault("normal"),
+  Options.withDescription(
+    "Deprecated compatibility input. Use --kind; priority has no routing authority."
+  ),
+  Options.optional,
 )
 
 const contextOption = Options.text("context").pipe(
@@ -73,13 +75,13 @@ const sourceOption = Options.text("source").pipe(
 
 const kindOption = Options.choice("kind", NOTIFY_KINDS).pipe(
   Options.withDescription(
-    "Contract-v2 message kind; controls routing lane. ask/alert/memory deliver to Telegram operator lane; digest may batch or suppress; receipt goes to Slack. Default: inferred from priority/source"
+    "Contract-v2 semantic kind. The versioned routing table owns platform, delivery mode, and formatting."
   ),
   Options.optional,
 )
 
 const telegramOnlyOption = Options.boolean("telegram-only").pipe(
-  Options.withDescription("Mark notification for immediate Telegram delivery only"),
+  Options.withDescription("Deprecated compatibility marker; contract-v2 routing ignores it"),
   Options.withDefault(false),
 )
 
@@ -150,7 +152,9 @@ const notifySend = Command.make(
         args: {
           message,
           channel,
-          priority: priority as NotifyPriority,
+          priority: priority._tag === "Some"
+            ? (priority.value as NotifyPriority)
+            : undefined,
           context: parsedContext,
           type: parseOptionalText(type),
           source: parseOptionalText(source),
@@ -171,7 +175,7 @@ const notifySend = Command.make(
             fixOrFallback(error, "Verify Redis/gateway health and retry."),
             [
               { command: "joelclaw gateway status", description: "Check gateway daemon and Redis bridge health" },
-              { command: "joelclaw notify send <message> --priority high", description: "Retry with explicit priority" },
+              { command: "joelclaw notify send <message> --kind alert", description: "Retry with an explicit semantic kind" },
             ]
           )
         )
@@ -185,7 +189,7 @@ const notifySend = Command.make(
           [
             { command: "joelclaw otel search \"<eventId>\" --hours 1", description: "Verify terminal delivery state (notify.compat_v2.confirmed) — queue entry alone is not delivery" },
             { command: "joelclaw gateway status", description: "Verify gateway session is healthy" },
-            { command: "joelclaw notify send \"<message>\" --kind ask", description: "Route to the Telegram operator lane (always delivers; digest kind may suppress)" },
+            { command: "joelclaw notify send \"<message>\" --kind ask", description: "Send a decision or direct question through the versioned route" },
           ]
         )
       )

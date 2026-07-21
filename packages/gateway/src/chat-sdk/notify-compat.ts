@@ -16,21 +16,16 @@ export interface NotifySendCompatInput {
   readonly actions?: OutboundIntent["actions"];
 }
 
-function inferKind(input: NotifySendCompatInput): MessageKindType {
-  if (input.kind) return input.kind;
-  const source = input.source?.toLowerCase() ?? "";
-  if (source.includes("memory")) return "memory";
-  if (source.includes("ask") || source.includes("approval")) return "ask";
-  if (source.includes("receipt")) return "receipt";
-  if (
-    source.includes("digest") ||
-    input.priority === "low" ||
-    input.priority === "normal" ||
-    input.priority === undefined
-  ) {
-    return "digest";
+export type LegacyNotifyPriority = NonNullable<NotifySendCompatInput["priority"]>;
+
+export function compatibilityKindForPriority(
+  priority: LegacyNotifyPriority | undefined,
+): MessageKindType {
+  if (priority === "low") return "digest";
+  if (priority === "high" || priority === "urgent" || priority === "critical") {
+    return "alert";
   }
-  return "alert";
+  return "memory";
 }
 
 /**
@@ -40,7 +35,7 @@ function inferKind(input: NotifySendCompatInput): MessageKindType {
 export function mapNotifySendToIntent(input: NotifySendCompatInput): OutboundIntent {
   const intent: OutboundIntent = {
     contractVersion: MESSAGE_CONTRACT_VERSION,
-    kind: inferKind(input),
+    kind: input.kind ?? compatibilityKindForPriority(input.priority),
     content: input.message,
     correlationId: input.source
       ? `${input.source}:${input.correlationId}`

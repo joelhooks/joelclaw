@@ -1,10 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   createDeliveryReceipt,
   type DeliveryReceiptEnvelope,
   mintFlowId,
+  type OutboundIntent,
 } from "@joelclaw/message-contract";
 import {
+  __notifyCompatTestUtils,
   notifyCompatTelemetry,
   routeNotifySendCompat,
 } from "../notify-acting";
@@ -23,7 +25,7 @@ function receiptWith(
     platform: "telegram",
     platformMessageId,
     threadId: platformMessageId ? "telegram:7718912466" : null,
-    route: { lane: "operator", urgency: "high", formatting: "plain" },
+    route: { delivery: "immediate", formatting: "plain" },
   });
 }
 
@@ -43,6 +45,10 @@ const event = {
   },
 };
 
+afterEach(() => {
+  __notifyCompatTestUtils.clearDeprecations();
+});
+
 describe("notify send contract-v2 acting route", () => {
   test("names OTEL after the real terminal disposition", () => {
     expect(notifyCompatTelemetry("confirmed")).toEqual({
@@ -52,11 +58,6 @@ describe("notify send contract-v2 acting route", () => {
     });
     expect(notifyCompatTelemetry("digested")).toEqual({
       action: "notify.compat_v2.digested",
-      level: "info",
-      success: true,
-    });
-    expect(notifyCompatTelemetry("suppressed")).toEqual({
-      action: "notify.compat_v2.suppressed",
       level: "info",
       success: true,
     });
@@ -93,9 +94,9 @@ describe("notify send contract-v2 acting route", () => {
     ]);
   });
 
-  test("maps all four legacy priorities onto approved contract-v2 kinds", async () => {
+  test("maps every legacy priority onto the explicit compatibility kind", async () => {
     const kinds: string[] = [];
-    for (const priority of ["low", "normal", "high", "urgent"] as const) {
+    for (const priority of ["low", "normal", "high", "urgent", "critical"] as const) {
       await routeNotifySendCompat(
         {
           ...event,
@@ -115,11 +116,53 @@ describe("notify send contract-v2 acting route", () => {
         },
       );
     }
-    expect(kinds).toEqual(["digest", "digest", "alert", "alert"]);
+    expect(kinds).toEqual(["digest", "memory", "alert", "alert", "alert"]);
   });
 
-  test("an explicit payload.kind overrides priority/source inference", async () => {
+  test("omitted priority maps to memory and emits one actionable deprecation row", async () => {
+    const { priority: _priority, ...payload } = event.payload;
+    const deprecations: unknown[] = [];
+    const intents: OutboundIntent[] = [];
+
+    await routeNotifySendCompat(
+      { ...event, id: "notify-omitted", payload },
+      {
+        isTransportReady: () => true,
+        emitDeprecation: (input) => {
+          deprecations.push(input);
+        },
+        send: async (intent) => {
+          intents.push(intent);
+          return receipt;
+        },
+      },
+    );
+
+    expect(intents[0]?.kind).toBe("memory");
+    expect(deprecations).toEqual([{
+      eventId: "notify-omitted",
+      source: "cli/notify",
+      legacyPriority: "omitted",
+      mappedKind: "memory",
+      fix: "Pass --kind memory; --priority is deprecated and has no routing authority.",
+    }]);
+  });
+
+  test("bounds the default deprecation emitter to one row per event", async () => {
+    const dependencies = {
+      isTransportReady: () => true,
+      send: async () => receipt,
+    };
+
+    await routeNotifySendCompat(event, dependencies);
+    await routeNotifySendCompat(event, dependencies);
+
+    expect(__notifyCompatTestUtils.deprecationCount()).toBe(1);
+  });
+
+  test("an explicit payload.kind overrides priority and emits no deprecation", async () => {
     const kinds: string[] = [];
+    const deprecations: unknown[] = [];
     for (const kind of ["memory", "alert", "digest", "ask", "receipt"] as const) {
       await routeNotifySendCompat(
         {
@@ -134,6 +177,9 @@ describe("notify send contract-v2 acting route", () => {
         },
         {
           isTransportReady: () => true,
+          emitDeprecation: (input) => {
+            deprecations.push(input);
+          },
           send: async (intent) => {
             kinds.push(intent.kind);
             return receipt;
@@ -142,9 +188,10 @@ describe("notify send contract-v2 acting route", () => {
       );
     }
     expect(kinds).toEqual(["memory", "alert", "digest", "ask", "receipt"]);
+    expect(deprecations).toEqual([]);
   });
 
-  test("rejects an invalid payload.kind instead of guessing a lane", async () => {
+  test("rejects an invalid payload.kind instead of guessing semantics", async () => {
     const sent: unknown[] = [];
     let caught: unknown;
     try {
@@ -288,29 +335,37 @@ describe("notify send contract-v2 acting route", () => {
     });
   });
 
-  test("reports the real hot-dog journal disposition as digested, not confirmed", async () => {
-    const hotDogEvent = {
-      ...event,
-      id: "hot-dog-neat-memory",
-      source: "memory/observe-session",
-      payload: {
-        ...event.payload,
-        prompt: "The hot-dog propagation demo came back flat twice.",
-        message: "The hot-dog propagation demo came back flat twice.",
-        priority: "normal",
-        audit: { flowId: "notify:hot-dog-neat-memory" },
-      },
-    };
-    const result = await routeNotifySendCompat(hotDogEvent, {
-        isTransportReady: () => true,
-      send: async () => receiptWith("digested", null),
-    });
+  test("ignores source substrings when mapping legacy inputs", async () => {
+    const intents: OutboundIntent[] = [];
+    for (const source of ["memory/observe-session", "approval/request", "daily-digest", "build-receipt"]) {
+      await routeNotifySendCompat(
+        {
+          ...event,
+          id: `source-${source}`,
+          source,
+          payload: {
+            ...event.payload,
+            priority: "normal",
+            audit: { flowId: `notify:source-${source}` },
+          },
+        },
+        {
+          isTransportReady: () => true,
+          emitDeprecation: () => {},
+          send: async (intent) => {
+            intents.push(intent);
+            return receipt;
+          },
+        },
+      );
+    }
 
-    expect(result).toMatchObject({
-      handled: true,
-      disposition: "digested",
-      receipt: { data: { deliveryState: "digested", platformMessageId: null } },
-    });
+    expect(intents.map((intent) => intent.kind)).toEqual([
+      "memory",
+      "memory",
+      "memory",
+      "memory",
+    ]);
   });
 
   test("preserves a failed terminal receipt instead of confirming it", async () => {

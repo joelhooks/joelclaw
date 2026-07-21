@@ -88,11 +88,14 @@ describe("message contract v2", () => {
     expect(ROUTING_TABLE_V2.version).toBe(2);
     expect(resolveMessageRoute("memory")).toEqual({
       platform: "telegram",
-      lane: "operator",
-      urgency: "normal",
+      delivery: "immediate",
       formatting: "markdown",
     });
-    expect(resolveMessageRoute("receipt").platform).toBe("slack");
+    expect(resolveMessageRoute("digest").delivery).toBe("batch");
+    expect(resolveMessageRoute("receipt")).toMatchObject({
+      platform: "slack",
+      delivery: "immediate",
+    });
   });
 
   test("creates a HATEOAS delivery receipt", () => {
@@ -106,10 +109,31 @@ describe("message contract v2", () => {
       platform: "telegram",
       platformMessageId: "42",
       threadId: "telegram:7",
-      route: { lane: "operator", urgency: "normal", formatting: "markdown" },
+      route: { delivery: "immediate", formatting: "markdown" },
     });
     expect(receipt._links.flow.href).toContain(flowId);
     expect(receipt.data.platformMessageId).toBe("42");
+    expect(receipt.data.route).toEqual({
+      delivery: "immediate",
+      formatting: "markdown",
+    });
+    expect("lane" in receipt.data.route).toBe(false);
+    expect("urgency" in receipt.data.route).toBe(false);
+  });
+
+  test("rejects silent suppression as a contract-v2 terminal state", () => {
+    const flowId = mintFlowId(() => UUID);
+    expect(() => createDeliveryReceipt({
+      flowId,
+      correlationId: "canary-suppressed",
+      requestedAt: "2026-07-16T20:00:00.000Z",
+      confirmedAt: null,
+      deliveryState: "suppressed",
+      platform: "telegram",
+      platformMessageId: null,
+      threadId: null,
+      route: { delivery: "batch", formatting: "markdown" },
+    } as never)).toThrow();
   });
 
   test("validates callback-native action request events", () => {

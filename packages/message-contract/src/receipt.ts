@@ -1,18 +1,16 @@
 import { Schema } from "effect";
 import { FlowId } from "./flow-id";
 import {
-  DeliveryLane,
   FormattingProfile,
   MESSAGE_CONTRACT_VERSION,
+  MessageDeliveryMode,
   MessagePlatform,
-  MessageUrgency,
 } from "./kinds";
 
 export const DeliveryState = Schema.Literal(
   "requested",
   "confirmed",
   "failed",
-  "suppressed",
   "digested",
 );
 export type DeliveryState = typeof DeliveryState.Type;
@@ -35,8 +33,7 @@ export const DeliveryReceiptEnvelopeV2 = Schema.Struct({
     platformMessageId: Schema.NullOr(Schema.NonEmptyTrimmedString),
     threadId: Schema.NullOr(Schema.NonEmptyTrimmedString),
     route: Schema.Struct({
-      lane: DeliveryLane,
-      urgency: MessageUrgency,
+      delivery: MessageDeliveryMode,
       formatting: FormattingProfile,
     }),
   }),

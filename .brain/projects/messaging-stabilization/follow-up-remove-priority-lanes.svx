@@ -1,0 +1,159 @@
+---
+title: "Follow-up: remove messaging priority lanes"
+type: "implementation-plan"
+status: "closed"
+created_at: "2026-07-19"
+parent: "./design-button-native-interactions.svx"
+privacy: "private"
+owner: "messaging-stabilization"
+---
+
+# Follow-up: remove messaging priority lanes
+
+> Steering ruling, Joel, 2026-07-19: “telegram priority lanes are bullshit antipattern in practice, nothing but grief and weird bugs.”
+
+This is the next messaging slice **after** the button-native Telegram canary passes. It does not change, unstage, or block the current callback slice.
+
+## Decision
+
+Kinds are the only producer-facing meaning. Producers do not select priority, urgency, delivery lane, channel, batching mechanics, or suppression policy.
+
+The versioned routing table maps each kind to a platform, delivery mode, and formatting profile. Replace `lane` plus `urgency` with an explicit delivery mode:
+
+- `immediate`: deliver now;
+- `batch`: enter a visible batch that is guaranteed to assemble and deliver, or fall back to immediate delivery when batching is unavailable.
+
+No contract-v2 message may end in silent suppression. A digest may be visibly batched or delivered immediately. It may not disappear because a signal classifier guessed it was noise.
+
+## Legacy compatibility
+
+Keep `--priority` temporarily as a deprecated CLI input. It has one explicit mapping to kinds and no routing authority:
+
+| legacy priority | compatibility kind |
+| --- | --- |
+| `low` | `digest` |
+| `normal` or omitted | `memory` |
+| `high` | `alert` |
+| `urgent` / `critical` | `alert` |
+
+`ask` and `receipt` cannot be inferred from priority. Callers must pass those kinds explicitly.
+
+An explicit `--kind` always wins. When the compatibility shim receives no explicit kind, emit one bounded deprecation log/OTEL row containing the legacy priority, mapped kind, source, and event ID. The line must tell the caller to pass `--kind <mapped-kind>`. Do not infer kind from source substrings.
+
+Remove `immediateTelegram`, priority-derived log levels, and priority-derived policy context from the contract-v2 path. Priority may remain in the legacy queue envelope only long enough to perform the compatibility mapping and produce the deprecation receipt.
+
+## Digest guarantee
+
+For `kind: "digest"`:
+
+1. resolve `delivery: "batch"` from the routing table;
+2. queue the digest with a durable receipt;
+3. if queueing fails, deliver the original message immediately and emit a fallback receipt;
+4. when batching succeeds, the assembled digest must use the ordinary confirmed-delivery path;
+5. never return `suppressed` for a contract-v2 digest.
+
+The general signal classifier may keep suppression for non-contract telemetry. Contract-v2 messaging bypasses that suppression decision because the producer already declared the semantic kind.
+
+## Patch file list
+
+### Contract
+
+- `packages/message-contract/src/kinds.ts`
+  - remove `DeliveryLane` and `MessageUrgency` from the producer/receipt contract;
+  - add `MessageDeliveryMode` with `immediate | batch`.
+- `packages/message-contract/src/routing.ts`
+  - map kinds to platform, delivery mode, and formatting only.
+- `packages/message-contract/src/receipt.ts`
+  - expose delivery mode instead of lane/urgency in terminal receipts.
+- `packages/message-contract/src/index.ts`
+  - update exports.
+- `packages/message-contract/__tests__/outbound.test.ts`
+  - prove kinds resolve delivery without priority/lane semantics.
+
+### CLI and compatibility envelope
+
+- `packages/cli/src/commands/notify.ts`
+  - describe `--kind` as the semantic input;
+  - mark `--priority` deprecated and stop claiming it controls escalation.
+- `packages/cli/src/commands/notify.test.ts`
+  - cover explicit kind and deprecated priority syntax.
+- `packages/sdk/src/capabilities/adapters/gateway-redis.ts`
+  - stop deriving `level` and `immediateTelegram` from priority;
+  - preserve explicit-vs-omitted priority for compatibility logging.
+- `packages/sdk/src/capabilities/adapters/gateway-redis.test.ts`
+  - prove priority is metadata only and never a delivery instruction.
+- `packages/gateway/src/chat-sdk/notify-compat.ts`
+  - replace source/priority inference with the explicit compatibility table.
+- `packages/gateway/src/chat-sdk/notify-acting.ts`
+  - emit the bounded deprecation line/OTEL row when kind is absent.
+- `packages/gateway/src/chat-sdk/__tests__/notify-acting.test.ts`
+  - test every legacy mapping, explicit-kind precedence, no source guessing, and one deprecation row.
+
+### Routing and visible batching
+
+- `packages/gateway/src/chat-sdk/outbound.ts`
+  - route from kind-derived delivery mode without lane/urgency policy inputs.
+- `packages/gateway/src/chat-sdk/__tests__/outbound.test.ts`
+  - prove immediate kinds deliver and digest cannot suppress.
+- `packages/gateway/src/telegram-outbound-policy.ts`
+  - make contract-v2 digest batching explicit;
+  - fall back to immediate delivery when the batch queue fails;
+  - retain suppression only for non-contract signal traffic.
+- `packages/gateway/src/telegram-outbound-policy.test.ts`
+  - prove batch success, batch failure fallback, and zero contract-v2 suppression.
+
+### Operating docs
+
+- `skills/messaging/SKILL.md`
+- `docs/gateway.md`
+- `docs/cli.md`
+
+Remove advice that teaches priority as meaning, “operator lane,” or silent digest suppression. Document kinds, routing-table ownership, visible batching, and the temporary compatibility mapping.
+
+## Acceptance criteria
+
+- No producer-facing contract type or receipt exposes `lane` or `urgency`.
+- Explicit `kind` alone determines the contract route.
+- The compatibility shim has a total priority-to-kind table and no source-substring inference.
+- Every implicit-kind send emits one bounded deprecation row.
+- A contract-v2 digest is either durably batched or immediately delivered.
+- No contract-v2 test expects `deliveryState: "suppressed"`.
+- Existing non-contract signal suppression behavior remains unchanged.
+- Button callback tests and the one-owner Telegram canary stay green.
+
+## Verification
+
+```bash
+bun test packages/message-contract packages/gateway packages/sdk/src/capabilities/adapters/gateway-redis.test.ts packages/cli/src/commands/notify.test.ts
+bunx tsc --noEmit -p packages/message-contract/tsconfig.json
+bunx tsc --noEmit -p packages/gateway/tsconfig.json
+bunx tsc --noEmit -p packages/sdk/tsconfig.json
+bunx tsc --noEmit -p packages/cli/tsconfig.json
+pnpm biome check packages/cli packages/gateway packages/message-contract packages/sdk
+pnpm oxlint packages/cli packages/gateway packages/message-contract packages/sdk
+git diff --check
+```
+
+## Implementation receipt
+
+Implemented on 2026-07-19 without staging because the message-event log worker shared this checkout.
+
+- `MessageDeliveryMode` replaces producer-facing lane and urgency types.
+- The routing table now owns `platform`, `delivery`, and `formatting`.
+- Compatibility mapping is fixed: `low → digest`, `normal|omitted → memory`, `high|urgent|critical → alert`; source text is ignored and explicit kind wins.
+- Implicit-kind sends emit one bounded `notify.compat_v2.implicit_kind` OTEL row with the exact replacement.
+- The SDK preserves whether priority was explicit, but no longer derives `level` or `immediateTelegram` from it.
+- Contract-v2 immediate routes bypass signal suppression.
+- Contract-v2 batch routes return `digested` only when an injected durable queue succeeds. The live default reports the missing verified assembler and falls back to immediate delivery. No current consumer drains contract-v2 queue items, so the default does not pretend batching exists.
+- Contract-v2 delivery receipts no longer admit `suppressed`.
+- Non-contract signal suppression remains unchanged.
+
+Verification at implementation time: 64 targeted tests passed; full message-contract tests passed (13); full gateway tests passed (187); message-contract, gateway, SDK, and CLI TypeScript checks passed; scoped Biome and Oxlint passed; focused reviewer returned `CLEAN` after the queue/journal duplicate-delivery guard was added.
+
+## Start gate
+
+Completed. The deployed button-native canary passed, `campaign-pulse/reaction` was retired in `cd87f9be`, and steering authorized this slice.
+
+## Landing receipt (2026-07-21)
+
+The implementation sat in `stash@{0}` after being pulled from the live daemon path during the 2026-07-19 Telegram outage. The agent-comms-gateway effort recovered and landed it — reconciliation, checklist re-run (208 pass), and commit receipts in [Land the priority-lane removal stash](../agent-comms-gateway/land-priority-lane-stash.svx). Deploys at the next `joelclaw gateway restart`. This note is closed; the messaging-stabilization effort's remaining dispositions are recorded in the gateway effort's [cutover plan](../agent-comms-gateway/plan-full-cutover.svx) §5.

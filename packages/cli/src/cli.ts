@@ -176,7 +176,7 @@ const root = Command.make("joelclaw", {}, () =>
             gateway:
               "joelclaw gateway {doctor [--live]|status|events|push|drain|test|restart|stream|diagnose|review|known-issues|mute|unmute}",
             notify:
-              "joelclaw notify send <message> [--channel <channel>] [--priority <priority>] [--context <json>]",
+              "joelclaw notify send <message> [--kind memory|alert|digest|ask|receipt] [--priority <deprecated>] [--context <json>]",
             secrets: "joelclaw secrets {status|lease|revoke|audit|env}",
             sleep:
               "joelclaw sleep [--for <duration>] [--reason <reason>] | joelclaw sleep status",
@@ -271,7 +271,7 @@ const root = Command.make("joelclaw", {}, () =>
           },
           {
             command:
-              'joelclaw notify send "System check complete" --priority normal',
+              'joelclaw notify send "System check complete" --kind receipt',
             description: "Send canonical gateway notification",
           },
           {

@@ -113,15 +113,14 @@ describe("Telegram outbound policy routing", () => {
     });
   });
 
-  test("explicitly delivers contract-v2 operator-lane messages at normal urgency", async () => {
+  test("contract-v2 immediate delivery bypasses signal suppression", async () => {
     const routed = await routeTelegramOutbound(
       {
-        ...input("message-contract/operator", "A surfaced memory"),
+        ...input("message-contract/memory", "A surfaced memory"),
+        contractDelivery: "immediate",
         policy: {
-          sourceEventType: "message-contract/operator",
+          sourceEventType: "health.probe.ok",
           sourceClassification: "memory",
-          priority: "normal",
-          level: "info",
         },
       },
       noOpDependencies,
@@ -131,7 +130,52 @@ describe("Telegram outbound policy routing", () => {
       disposition: "deliver",
       decision: {
         category: "action",
-        reason: "deliver.explicit.message-contract-operator-lane",
+        reason: "deliver.message-contract.immediate",
+      },
+    });
+  });
+
+  test("contract-v2 batch delivery returns a visible digest receipt after durable queueing", async () => {
+    const queued: string[] = [];
+    const routed = await routeTelegramOutbound(
+      {
+        ...input("message-contract/digest", "A bounded digest"),
+        contractDelivery: "batch",
+      },
+      {
+        ...noOpDependencies,
+        queueDigest: async (_input, decision) => {
+          queued.push(decision.reason);
+        },
+      },
+    );
+
+    expect(queued).toEqual(["digest.message-contract.batch"]);
+    expect(routed).toMatchObject({
+      disposition: "digest",
+      decision: { reason: "digest.message-contract.batch" },
+    });
+  });
+
+  test("contract-v2 batch failure falls back to immediate delivery", async () => {
+    const routed = await routeTelegramOutbound(
+      {
+        ...input("message-contract/digest", "A digest that must not disappear"),
+        contractDelivery: "batch",
+      },
+      {
+        ...noOpDependencies,
+        queueDigest: async () => {
+          throw new Error("batch unavailable");
+        },
+      },
+    );
+
+    expect(routed).toMatchObject({
+      disposition: "deliver",
+      decision: {
+        category: "action",
+        reason: "deliver.message-contract.batch-unavailable",
       },
     });
   });

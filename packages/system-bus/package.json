@@ -23,6 +23,7 @@
     "@joelclaw/mdx-pipeline": "workspace:^",
     "@joelclaw/memory": "workspace:*",
     "@joelclaw/message-contract": "workspace:*",
+    "@joelclaw/message-event-log": "workspace:*",
     "@joelclaw/message-journal": "workspace:*",
     "@joelclaw/queue": "workspace:*",
     "@joelclaw/telemetry": "workspace:*",

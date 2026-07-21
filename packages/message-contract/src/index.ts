@@ -58,17 +58,15 @@ export {
 } from "./events";
 export { FlowId, type FlowId as FlowIdType, mintFlowId } from "./flow-id";
 export {
-  DeliveryLane,
-  type DeliveryLane as DeliveryLaneType,
   FormattingProfile,
   type FormattingProfile as FormattingProfileType,
   MESSAGE_CONTRACT_VERSION,
+  MessageDeliveryMode,
+  type MessageDeliveryMode as MessageDeliveryModeType,
   MessageKind,
   type MessageKind as MessageKindType,
   MessagePlatform,
   type MessagePlatform as MessagePlatformType,
-  MessageUrgency,
-  type MessageUrgency as MessageUrgencyType,
 } from "./kinds";
 export {
   CallbackActionId,

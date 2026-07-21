@@ -392,7 +392,7 @@ describe("Chat SDK outbound v1", () => {
     expect(posted).toEqual({ raw: "curator fallback" });
   });
 
-  test("runs Telegram policy before the adapter and returns suppression", async () => {
+  test("never lets signal policy suppress a contract-v2 message", async () => {
     const journal = makeJournal();
     let posts = 0;
     const send = makeOutboundSender({
@@ -411,15 +411,15 @@ describe("Chat SDK outbound v1", () => {
       telegramPolicy: { route: async () => ({ disposition: "suppress" }) },
     });
     const receipt = await send(intent());
-    expect(posts).toBe(0);
-    expect(receipt.data.deliveryState).toBe("suppressed");
+    expect(posts).toBe(1);
+    expect(receipt.data.deliveryState).toBe("confirmed");
     expect(journal.rows.map((row) => row.eventType)).toEqual([
       "message.outbound.requested",
-      "message.outbound.suppress",
+      "message.outbound.confirmed",
     ]);
   });
 
-  test("delivers a real notify-memory shape because contract operator lane is authoritative", async () => {
+  test("delivers a real notify-memory shape because kind-derived delivery is authoritative", async () => {
     const journal = makeJournal();
     let posts = 0;
     const send = makeOutboundSender({
@@ -449,7 +449,34 @@ describe("Chat SDK outbound v1", () => {
     });
   });
 
-  test("returns digested instead of confirmed when Telegram policy digests", async () => {
+  test("falls back to immediate delivery when no verified contract batch assembler exists", async () => {
+    const journal = makeJournal();
+    let posts = 0;
+    const send = makeOutboundSender({
+      adapters: {
+        telegram: {
+          openDM: async () => "telegram:7",
+          postMessage: async (threadId) => {
+            posts += 1;
+            return { id: "7:42", threadId };
+          },
+        },
+      },
+      journal,
+      resolveTarget: () => "7",
+      mintFlowId: () => flow(0),
+    });
+
+    const receipt = await send(intent("digest"));
+    expect(posts).toBe(1);
+    expect(receipt.data).toMatchObject({
+      deliveryState: "confirmed",
+      platformMessageId: "7:42",
+      route: { delivery: "batch" },
+    });
+  });
+
+  test("returns digested after the Telegram policy durably batches a digest", async () => {
     const journal = makeJournal();
     const send = makeOutboundSender({
       adapters: {
@@ -464,13 +491,52 @@ describe("Chat SDK outbound v1", () => {
       telegramPolicy: { route: async () => ({ disposition: "digest" }) },
     });
 
-    const receipt = await send(intent("memory"));
+    const receipt = await send(intent("digest"));
     expect(receipt.data.deliveryState).toBe("digested");
     expect(receipt.data.platformMessageId).toBeNull();
     expect(journal.rows.at(-1)).toMatchObject({
       eventType: "message.outbound.digest",
       deliveryState: "digested",
     });
+  });
+
+  test("does not fall back to immediate after a digest was queued but receipt journaling failed", async () => {
+    const journal = makeJournal();
+    const failingJournal: OutboundJournalPort = {
+      ...journal,
+      async record(row) {
+        const result = await journal.record(row);
+        return row.eventType === "message.outbound.digest"
+          ? { ...result, persisted: false, storage: "failed" as const }
+          : result;
+      },
+    };
+    let posts = 0;
+    const send = makeOutboundSender({
+      adapters: {
+        telegram: {
+          openDM: async () => "telegram:7",
+          postMessage: async (threadId) => {
+            posts += 1;
+            return { id: "7:42", threadId };
+          },
+        },
+      },
+      journal: failingJournal,
+      resolveTarget: () => "7",
+      mintFlowId: () => flow(0),
+      telegramPolicy: { route: async () => ({ disposition: "digest" }) },
+    });
+
+    await expect(send(intent("digest"))).rejects.toMatchObject({
+      _tag: "MessageDeliveryError",
+    });
+    expect(posts).toBe(0);
+    expect(journal.rows.map((row) => row.eventType)).toEqual([
+      "message.outbound.requested",
+      "message.outbound.digest",
+      "message.outbound.failed",
+    ]);
   });
 
   test("refuses confirmation when the platform id could not be journaled", async () => {
@@ -618,7 +684,7 @@ describe("Chat SDK outbound v1", () => {
     expect(journal.rows.at(-1)?.errorCode).toBe("REPLY_ANCHOR_NOT_FOUND");
   });
 
-  test("compat shim maps semantics and ignores old channel flags", () => {
+  test("compat shim maps legacy priority and ignores source and channel flags", () => {
     expect(mapNotifySendToIntent({
       message: "memory ready",
       correlationId: "legacy-1",
@@ -628,7 +694,7 @@ describe("Chat SDK outbound v1", () => {
       channel: "telegram",
     })).toEqual({
       contractVersion: 2,
-      kind: "memory",
+      kind: "alert",
       content: "memory ready",
       correlationId: "neat-memory:legacy-1",
     });

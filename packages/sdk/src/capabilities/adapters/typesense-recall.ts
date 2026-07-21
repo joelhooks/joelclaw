@@ -1212,8 +1212,13 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
     const startedAt = Date.now()
     const budgetPlan = resolveBudgetPlan(args.budget, args.query)
     const resolvedCategory = normalizeCategoryFilter(args.category)
-    // Category flags remain accepted for CLI compatibility, but the new projections
-    // do not share the legacy taxonomy schema. Do not turn a valid recall into a 400.
+    if (args.category.trim()) {
+      return yield* Effect.fail(capabilityError(
+        "RECALL_CATEGORY_UNSUPPORTED",
+        "Brain and observation projections do not share the retired memory category taxonomy.",
+        "Remove --category and filter the returned Brain provenance fields instead.",
+      ))
+    }
     const categoryFilterBy: string | undefined = undefined
     const rewrite = yield* Effect.promise(() => runRewriteQueryWith(args.query, {
       rewriteEnabled: budgetPlan.rewriteEnabled,
@@ -1248,7 +1253,7 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
       }))
 
       const categoryFilterApplied = false
-      const categoryFilterReason = resolvedCategory ? "unsupported_on_brain_projection" : "none"
+      const categoryFilterReason = "none"
 
       const result = yield* Effect.tryPromise({
         try: () => searchTypesense(rewrite.rewrittenQuery, args.limit, apiKey, {

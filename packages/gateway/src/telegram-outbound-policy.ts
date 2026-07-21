@@ -56,6 +56,7 @@ type RouteInput = {
   audit: ChannelDeliveryAudit;
   contentKind?: string;
   transportText?: string;
+  contractDelivery?: "immediate" | "batch";
   policy?: TelegramOutboundPolicyContext;
 };
 
@@ -75,7 +76,6 @@ const DEFAULT_INVESTIGATION_BUDGETS: InvestigationBudgets = {
 const MAX_ACTIVE_INVESTIGATIONS = 500;
 const TELEGRAM_EXPLICIT_DELIVER_EVENT_TYPES = new Set([
   "signal/digest.assembled",
-  "message-contract/operator",
 ]);
 const activeInvestigations = new Map<
   string,
@@ -175,11 +175,32 @@ function explicitDeliverDecision(
   return {
     disposition: "deliver",
     category: "action",
-    reason: candidate.sourceEventType === "message-contract/operator"
-      ? "deliver.explicit.message-contract-operator-lane"
-      : "deliver.explicit.signal-digest-assembled",
+    reason: "deliver.explicit.signal-digest-assembled",
     producer: candidate.producer,
   };
+}
+
+function contractDeliveryDecision(
+  input: RouteInput,
+  candidate: OutboundCandidate,
+): PolicyDecision | undefined {
+  if (input.contractDelivery === "immediate") {
+    return {
+      disposition: "deliver",
+      category: "action",
+      reason: "deliver.message-contract.immediate",
+      producer: candidate.producer,
+    };
+  }
+  if (input.contractDelivery === "batch") {
+    return {
+      disposition: "digest",
+      category: "memory",
+      reason: "digest.message-contract.batch",
+      producer: candidate.producer,
+    };
+  }
+  return undefined;
 }
 
 function exemptionDecision(
@@ -278,6 +299,12 @@ async function queueDigest(
   input: RouteInput,
   decision: PolicyDecision,
 ): Promise<void> {
+  if (input.contractDelivery === "batch") {
+    // No verified consumer currently drains this queue for contract-v2 items.
+    // Fail closed to immediate delivery until an assembler can prove the
+    // ordinary confirmed-delivery path end to end.
+    throw new Error("message_contract_digest_assembler_unavailable");
+  }
   const { getRedisClient } = await import("./channels/redis");
   const redis = getRedisClient();
   if (!redis) throw new Error("telegram_policy_digest_queue_unavailable");
@@ -335,9 +362,11 @@ export async function routeTelegramOutbound(
   const exemption = input.policy?.exemption;
   const exemptionMatchesTarget = exemption?.kind === "specialized-ui"
     || (exemption?.kind === "conversation-reply" && exemption.chatId === input.chatId);
-  const decision = exemption && exemptionMatchesTarget
+  let decision = exemption && exemptionMatchesTarget
     ? exemptionDecision(input, exemption)
-    : explicitDeliverDecision(candidate) ?? telegramOutboundPolicy(candidate);
+    : contractDeliveryDecision(input, candidate)
+      ?? explicitDeliverDecision(candidate)
+      ?? telegramOutboundPolicy(candidate);
 
   let lifecycleState: string | undefined;
   try {
@@ -349,18 +378,32 @@ export async function routeTelegramOutbound(
       await dependencies.journalSuppression(input, decision);
     }
   } catch (error) {
+    const failedDecision = decision;
+    const contractBatchFallback = input.contractDelivery === "batch"
+      && failedDecision.disposition === "digest";
+    decision = contractBatchFallback
+      ? {
+          disposition: "deliver",
+          category: "action",
+          reason: "deliver.message-contract.batch-unavailable",
+          producer: candidate.producer,
+        }
+      : decision;
     void emitGatewayOtel({
       level: "error",
       component: "telegram-outbound-policy",
-      action: `telegram.policy.${decision.disposition}.failed`,
+      action: contractBatchFallback
+        ? "telegram.policy.contract_batch.fallback_immediate"
+        : `telegram.policy.${failedDecision.disposition}.failed`,
       success: false,
       error: error instanceof Error ? error.name : "TelegramPolicyRouteError",
       metadata: {
         flowId: input.audit.flowId,
         producer: input.audit.producer,
-        disposition: decision.disposition,
-        category: decision.category,
-        reason: decision.reason,
+        disposition: failedDecision.disposition,
+        category: failedDecision.category,
+        reason: failedDecision.reason,
+        ...(contractBatchFallback ? { fallbackDisposition: "deliver" } : {}),
       },
     });
   }
