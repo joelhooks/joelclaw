@@ -3,7 +3,8 @@ title: "Design the decision loop"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
+status: "closed"
+closed_at: "2026-07-21"
 assignee: "claude (flagg, herdr grilling pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: ["./map-herdr-and-plugin-surface.svx", "./map-stream-seam.svx"]
@@ -24,3 +25,16 @@ The core architecture decision: how the always-on Fable loop actually runs. Gril
 6. **Packaging** — whether the custom Claude plugin recommendation from the surface map holds.
 
 Resolved when the loop design is recorded here (with the ADR linked) and someone could build the container without another architecture decision.
+
+## Result (2026-07-21)
+
+Grilled live, all six branches. Full decisions in **ADR-0249** (`~/Vault/docs/decisions/0249-agent-comms-gateway-decision-loop.md`). The loop in one paragraph: a herdr-resident Claude Code session on Max auth, poked by a zero-policy driver, remembering nothing the stream doesn't hold, and writing down every judgment before it moves on.
+
+1. **Lifecycle — session cycling with stream replay, not compaction.** The loop retires at ~150k tokens or a quiet moment; a fresh session boots from prompt files → advisory `gateway.handoff` note (capped ~2k, replay wins on disagreement) → mechanical replay from its own cursor → herdr snapshot. Crash path is the same minus the note. Harness compaction is a silent backstop (receipt + telemetry, no page — Joel: "don't want to be paged for context"). Retirement waits for the in-flight decision only; open storms hand over via the stream. XState v5 sketch in the ADR: `booting → active (idle ⇄ deciding) → retiring → exited`.
+2. **Storms — agent-owned clocks, immutable aggregates.** Opening an aggregate is a receipt with a self-chosen `holdUntil`; a dumb timer fires `aggregate.deadline.reached` back into the stream; extensions capped (~30 min) so holding always yields at least a summary. Closed aggregates never re-open — stragglers start successor aggregates with `follows` linkage, rendered as platform replies. No mechanical correlation key anywhere; member-event-ID lists are the lineage. The digest tier is just an aggregate with a slow clock (storm → digest → drop).
+3. **Fan-out — fire-and-receipt, never block.** Dispatch is a `fanout` receipt with a `taskId`; the worker appends its result to the stream as its last act; `agent.wait` is demoted to a watchdog that appends a truthful harvest receipt. Pending fan-outs survive cycling for free. Tier selection is prose in `judgment.md`.
+4. **Receipts — exhaustive verbs, silence is illegal.** One kind `gateway.decision.recorded`, tagged union `deliver | aggregate(open/join/extend/close-deliver) | escalate | fanout | route | drop`; every consumed event gets exactly one receipt (verb + one-sentence reason + `promptRevision` + `decisionSeq`) before the cursor advances; semantic key `gateway:<firstInputEventId>:<decisionSeq>`.
+5. **Inbound — judgment at every rung.** Live pane → revive → bus stays ordered, but failures never auto-descend: each refusal is evidence, the next move is a fresh decision. Unresolved replies replay on every boot until closed — the honest failure mode is "ask Joel," never silence.
+6. **Packaging — plugin holds, harness pivots.** The `joelclaw-gateway` Claude Code plugin bundle stands (prompts, MCP stream/herdr/wake tools, SessionStart boot hook, PostCompact receipt hook). The harness is a long-lived interactive Claude Code session in a dedicated herdr workspace on flagg — verified (Anthropic policy, Feb–Mar 2026): subscription OAuth is restricted to Claude Code/claude.ai, so this is the only Max-billed surface; Agent SDK and `claude -p` are API-key-only and rejected. A zero-policy **driver** provides wake mechanics: stream poking, deadline firing, heartbeat, SPAWN via wake registry, fallback tripping. This amends the resilience-engineering "container service" call; the kill test becomes "kill the gateway session." Max-window exhaustion is a first-class fallback trigger. Deleted gaps: container socket path, herdr host bridge.
+
+Consequences for later steps: [Design the fallback contract](./design-fallback-contract.svx) must treat window exhaustion as equal to process death; [Plan the full cutover](./plan-full-cutover.svx) keeps the protocol-17 and stream-seam gates; the stream effort's ask list gains `gateway.handoff` and `aggregate.deadline.reached` kinds.

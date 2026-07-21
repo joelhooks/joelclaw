@@ -10,7 +10,7 @@ privacy: "private"
 
 An always-on gateway agent that fully replaces joelclaw messaging. All fleet agents talk to Joel through it. It owns the conversation surface in both directions: voice, formatting, system context, reply routing, reactions, and intent. It replaces deterministic routing (kinds tables, lanes, suppression) with judgment.
 
-Inheritance: [charter context](../../tasks/grill-master-agent-comms-gateway-context.svx). Sibling effort: `messaging-stabilization` (priority-lane removal is implemented and awaiting steering). The resilience-engineering brief pinned this workload's shape: container service riding the bus and wake registry.
+Inheritance: [charter context](../../tasks/grill-master-agent-comms-gateway-context.svx). Sibling effort: `messaging-stabilization` (priority-lane removal is implemented and awaiting steering). The resilience-engineering brief pinned this workload's shape as a container service riding the bus and wake registry; ADR-0249 (decision-loop grilling) amended it to a herdr-resident Claude Code session on Max auth plus a zero-policy driver.
 
 ## Finish line
 
@@ -50,7 +50,11 @@ Skills every session should consult: `messaging`, `herdr-orchestration`, `pane-s
 Standing calls (Joel, 2026-07-21, charter grilling):
 
 - LLM in the path of every message. No artificial latency budget.
-- Harness: Claude Fable agent loop. Compact context before 250k tokens.
+- Harness: Claude Fable agent loop. ~~Compact context before 250k tokens~~ Amended by ADR-0249 (decision-loop grilling): a long-lived interactive Claude Code session in a dedicated herdr workspace on flagg, Max auth (verified: subscription OAuth is restricted to Claude Code/claude.ai; Agent SDK and `claude -p` are API-key-only). Renewal is session cycling with stream replay; harness compaction is a silent backstop — receipt and telemetry, never a page.
+- A zero-policy **driver** provides wake mechanics (stream poking, aggregate deadlines, heartbeat, SPAWN via wake registry, fallback trip). This amends the resilience-engineering "container service" shape; the kill drill's "kill the production agent container" reads as "kill the gateway session + driver restart path" (decision-loop grilling).
+- Max-window exhaustion is a first-class fallback trigger, equal to process death (decision-loop grilling).
+- Silence is illegal: every consumed event gets exactly one decision receipt (verb + reason) before the cursor advances; `drop` must be written down (decision-loop grilling).
+- Closed aggregates are immutable; stragglers open successor aggregates with `follows` linkage; no mechanical correlation key exists anywhere (decision-loop grilling).
 - The agent fans out to herdr-based pi subagents, choosing model and reasoning tier per task.
 - Transport stays dumb; the agent owns all policy.
 - Steering lives in the agent's own system prompt — its AGENTS.md/CLAUDE.md plus gateway Brain and system Brain — always plain ELI5 language written like Joel. The agent edits its own files when told.
