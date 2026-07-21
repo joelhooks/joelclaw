@@ -27,7 +27,9 @@ Maintained by the container-service reliability contract from the workload-class
 
 - **gateway agent** — the always-on Claude Fable agent loop in a container service; owns all comms policy in both directions.
 - **transport** — the existing gateway daemon reduced to platform mechanics (Chat SDK adapters, single pollers, delivery); zero policy.
-- **fallback** — the dead-simple path: transport delivers raw text to Telegram when the agent's heartbeat is stale; every fallback delivery is marked in the stream.
+- **fallback** — the dead-simple path: when the agent's heartbeat key is absent, transport delivers the producer's text verbatim to one statically configured channel (default Telegram, SMS latent); every fallback delivery is marked in the stream.
+- **heartbeat** — a Redis key with TTL the agent refreshes (~15 s refresh, 60 s TTL); transport checks existence per message at ingress — no latch, no fallback mode.
+- **kill drill** — the weekly scheduled run of the kill test against the real container and Joel's real DM; the raw ping is the receipt.
 - **stream** — the event-sourcing message event log; the agent's only durable memory; the container holds no state that matters.
 - **origin record** — producer, machine, herdr pane/session, flowId, appended with every outbound message; makes reply routing mechanical.
 - **rewrite** — the gateway authors every operator-facing message in one voice; producers hand over facts, not prose.
@@ -39,7 +41,7 @@ Maintained by the container-service reliability contract from the workload-class
 
 Domain: joelclaw messaging (`skills/messaging/SKILL.md`), gateway daemon (`packages/gateway/`), message event stream (`packages/message-event-log/`, effort `message-event-stream`), herdr orchestration, wake registry (`pane-scheduling`), voice agent (`infra/voice-agent/`, `call-joel`).
 
-Skills every session should consult: `messaging`, `herdr-orchestration`, `pane-scheduling`, `effect`. House style binds: XState v5 for lifecycles, Inngest for durable multi-step work, Effect for TypeScript services. Observability doctrine: staleness signals are the killer feature. The five resilience contract clauses bind (boundary-loop doctrine, successor assertions, distributions-over-extremes, aggregate-join ban, unhandled-work receipts).
+Skills every session should consult: `messaging`, `herdr-orchestration`, `pane-scheduling`, `effect`. House style binds: XState v5 for lifecycles, Inngest for durable multi-step work, Effect for TypeScript services. Observability doctrine: staleness signals are the killer feature. The five resilience contract clauses bind (boundary-loop doctrine, successor assertions, distributions-over-extremes, aggregate-join ban, unhandled-work receipts) — plus the sixth, binding as of 2026-07-21: hard alerts go through the shared incident-semantics latch (`@joelclaw/incident-latch`). The gateway agent is a hard-alert path; the decision-loop design must ride or deliberately supersede the latch, not duplicate it.
 
 Standing calls (Joel, 2026-07-21, charter grilling):
 
@@ -55,6 +57,8 @@ Standing calls (Joel, 2026-07-21, charter grilling):
 - A custom Claude plugin likely packages the gateway loop's tooling (mid-charter, on the plugin-surface question).
 - One inbound contract: every event from Joel — free text, reaction, button tap — is the same envelope in the stream, interpreted by the agent. No mechanical fast path (producer-facts grilling).
 - The prototype must have a clear iteration path to production if it proves out: real seams (stream replay, plugin packaging, receipt shapes), throwaway glue only at the edges.
+- Fallback channel is one static deploy-time config value (`FALLBACK_CHANNEL`), default Telegram; SMS is the most visible surface to Joel and the desired eventual default via the existing Telnyx stack — add after the kill test repeats, then flip the config (fallback grilling).
+- The kill test runs as a real weekly drill: kill the production agent container, deliver a real raw message to Joel's DM. No drill flags, no test channels, no mocks (fallback grilling).
 
 Execution is not yet authorized. Steps produce decisions; build authorization lands when [Plan the full cutover](./plan-full-cutover.svx) closes.
 
@@ -67,6 +71,7 @@ _(charter settlements live in Finish line, Vocabulary, and Notes)_
 - [Map the message event stream seam](./map-stream-seam.svx) — the log kernel is sound, but gateway memory needs typed origin and decision events plus independent paginated replay.
 - [Map the herdr and Claude plugin surface](./map-herdr-and-plugin-surface.svx) — package the Fable loop as a Claude plugin over Herdr protocol 17; add a host bridge only if the container socket canary fails.
 - [Inventory the transport/policy split](./inventory-transport-policy-split.svx) — keep platform mechanics, normalization, journaling, correlation, delivery, and receipts in transport; move routing, suppression, batching, rewrite, and formatting policy to the gateway agent.
+- [Design the fallback contract](./design-fallback-contract.svx) — heartbeat is a Redis TTL key checked per message with no latch; fallback sends producer text verbatim to one statically configured channel (default Telegram, SMS latent); send-then-append `fallback.delivered` marking with recovery reconciliation left to agent judgment; a weekly real-container, real-DM kill drill is the repeatable proof.
 
 ## Latent
 

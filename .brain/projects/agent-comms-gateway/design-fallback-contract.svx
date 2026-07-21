@@ -3,8 +3,9 @@ title: "Design the fallback contract"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "claude (flagg, herdr grilling pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: ["./inventory-transport-policy-split.svx"]
 created_at: "2026-07-21"
@@ -22,3 +23,48 @@ Finish-line condition 4 with Joel's constraint: dead simple. Grill Joel on:
 4. **The kill test** — the exact scripted test proving condition 4: stop container, send alert, observe delivery, restart, prove no loss. This becomes a repeatable check, not a one-time demo (boundary-loop doctrine: fast path + reconciler + receipt from day one).
 
 Resolved when the fallback contract and kill-test script spec are recorded here and the dead-simple property is defensible: someone reading it can verify no judgment, no batching, no suppression exists on the fallback path.
+
+## Result
+
+Grilled with Joel 2026-07-21 (flagg, herdr pane). All four branches settled.
+
+### 1. Trigger
+
+- The agent refreshes a Redis key (`gateway:agent:heartbeat`) every ~15 s with a 60 s TTL.
+- Transport checks key **existence** per message at notify ingress, after the stream append. Key absent → fallback.
+- No latch, no fallback "mode", no flap logic. Each message is an independent, stateless check. Recovery mid-outage just means new messages route to the agent again.
+- The watcher is the transport daemon: it is outside the agent container (per the container-service contract), decides per message, and already holds Redis. The old `watchdog.ts` failure-count/grace design is retired with the latched model it served.
+
+### 2. Behavior
+
+- One channel per deploy, chosen by a single static config value read at transport startup (`FALLBACK_CHANNEL`), default `telegram`. Never per-message or conditional selection, never fan-out.
+- SMS is the surface most visible to Joel and the desired eventual default. It is latent-but-near: the Telnyx stack exists (`infra/voice-agent/`), so add a `sendRawSmsFallback` adapter after the kill test is a repeatable check, then flip the config. The kill test reuses unchanged.
+- Delivery is the producer's text field **verbatim**: plain text, no Markdown parse mode, no buttons, prefixed with the fixed literal `⚠️ fallback:`. A constant prefix is not policy.
+- `--data` never rides along; it stays in the stream for the recovered agent. No phone, no Slack on this path.
+- Implementation path per the transport/policy asset: new `sendRawTelegramFallback({ text, flowId, origin })` using the canonical Chat SDK Telegram adapter directly. Never through `telegram-outbound-policy.ts`, `chat-sdk/outbound.ts`'s routing, `sendTelegramMessage()`, or the legacy daemon queue.
+
+### 3. Marking
+
+- Order is send-then-append. After the platform send, transport journals the receipt and appends `fallback.delivered` to the stream: same `flowId`, platform message ID, staleness evidence, `fallback: true`.
+- The contract obligates the recovered agent to exactly one thing: treat `fallback.delivered` as "Joel already saw the raw text" and never redeliver it. Follow-up rewrites are its ordinary judgment, outside this contract.
+- Crash window (Telegram send succeeded, append did not): the recovered agent sees a producer event with no delivery marker and no decision of its own, and uses judgment — biased toward delivery. A rare duplicate alert is acceptable; a silent gap is the failure this path exists to prevent. Append-then-send is rejected because it converts crashes into loss disguised as bookkeeping.
+- No automatic retry in transport on ambiguous post-send failure (`NotifyCompatDeliveryError` duplicate-guard precedent). Reconciliation belongs to the agent reading the stream, not a retry loop.
+
+### 4. Kill test — repeatable check
+
+Scripted, every assertion reads the stream and receipts, exit non-zero on any missing piece:
+
+1. Stop the agent container.
+2. Wait past heartbeat TTL (key expires).
+3. `joelclaw notify send` an alert-class message.
+4. Assert `fallback.delivered` with the matching `flowId` appears in the stream within the threshold window.
+5. Assert the platform delivery receipt exists.
+6. Restart the container (`restart: unless-stopped` covers the real case).
+7. Assert the heartbeat key returns.
+8. Send a fresh message; assert the agent processes it end-to-end (agent decision event in the stream).
+
+Cadence: weekly on schedule via existing scheduling machinery, plus on demand after any gateway deploy. It kills the **real** agent container and delivers a **real** raw message to Joel's actual DM, self-identified in its text (`⚠️ fallback: weekly kill-test drill <date>`). No drill flag, no test channel, no mock Telegram — a drill-aware fallback is a fallback with policy in it. The weekly ping is itself the receipt; boundary-loop doctrine satisfied (fast path + reconciler + receipt from day one).
+
+### Dead-simple defensibility
+
+The fallback path contains exactly two conditionals: "does the heartbeat key exist" and "which channel does the static config name." No judgment, no batching, no suppression, no formatting profile, no escalation ladder. Everything smart lives on the agent side of the seam.
