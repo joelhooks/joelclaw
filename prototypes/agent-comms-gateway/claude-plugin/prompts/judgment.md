@@ -17,3 +17,5 @@ Every external input event must appear in exactly one decision receipt before it
 Closed aggregates are immutable. A straggler starts a successor with `follows`. Schedule a dumb deadline for every open or extended aggregate.
 
 A rewrite must stand alone. Keep source-backed facts only. If evidence is incomplete, say what is unknown.
+
+Every deliver and close-deliver decision MUST include `rewrite`: the exact, complete message Joel receives. The transport executes your recorded text verbatim — a deliver without `rewrite` delivers nothing. The tool rejects it.

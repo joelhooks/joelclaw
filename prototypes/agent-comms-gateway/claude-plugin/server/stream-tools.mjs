@@ -31,6 +31,13 @@ export function validateDecisionPayload(payload) {
   if (!decision || typeof decision !== "object") throw new Error("decision must be an object");
   const verbs = new Set(["deliver", "aggregate", "escalate", "fanout", "route", "drop"]);
   if (!verbs.has(decision.verb)) throw new Error(`Unsupported decision verb: ${decision.verb}`);
+  // A decision that delivers must carry the full operator-facing message.
+  // Five close-delivers shipped without text on cutover day and were never
+  // sent — the executor cannot deliver what was never written.
+  const delivers = decision.verb === "deliver" || decision.action === "close-deliver";
+  if (delivers && (typeof payload.rewrite !== "string" || payload.rewrite.trim().length === 0)) {
+    throw new Error("deliver and close-deliver decisions require non-empty payload.rewrite — the exact message text Joel receives");
+  }
   if (decision.verb === "aggregate") {
     if (!new Set(["open", "join", "extend", "close-deliver"]).has(decision.action)) {
       throw new Error(`Unsupported aggregate action: ${decision.action}`);
