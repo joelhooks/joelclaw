@@ -324,6 +324,11 @@ export function makeLiveKillDrillPorts(
         `GATEWAY_AGENT_TARGET='${options.agentTarget}'`,
         workspace ? `GATEWAY_HERDR_WORKSPACE='${workspace}'` : "",
         `GATEWAY_SUCCESSOR_BRIEF_PATH='${options.successorBriefPath}'`,
+        // Carry timing config through restarts — losing it once regressed the
+        // poke deadline to a value that flapped the heartbeat (2026-07-21).
+        process.env.GATEWAY_POKE_DEADLINE_MS?.trim()
+          ? `GATEWAY_POKE_DEADLINE_MS='${process.env.GATEWAY_POKE_DEADLINE_MS.trim()}'`
+          : "",
       ].filter(Boolean).join(" ");
       const driverCommand = `${driverEnv} pnpm --filter @joelclaw/agent-comms-driver start`;
       const driverPane = process.env.GATEWAY_DRIVER_PANE?.trim();

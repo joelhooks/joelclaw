@@ -6,7 +6,9 @@ import { type AgentObservation, type DriverState, driverMachine } from "./machin
 export const DEFAULT_HEARTBEAT_KEY = "gateway:agent:heartbeat";
 export const DEFAULT_HEARTBEAT_REFRESH_MS = 15_000;
 export const DEFAULT_HEARTBEAT_TTL_MS = 60_000;
-export const DEFAULT_POKE_DEADLINE_MS = 120_000;
+// Measured live 2026-07-21: real gateway turns run 1-3 minutes. A 120s
+// deadline scored healthy turns as failures and flapped the heartbeat.
+export const DEFAULT_POKE_DEADLINE_MS = 300_000;
 export const DEFAULT_SUCCESSOR_DEADLINE_MS = 120_000;
 export const DRIVER_POKE_TEXT = "Unhandled gateway stream work exists. Read the authoritative stream and decide it.";
 
