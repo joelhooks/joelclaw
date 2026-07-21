@@ -1,0 +1,24 @@
+---
+title: "Design the fallback contract"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: ["./inventory-transport-policy-split.svx"]
+created_at: "2026-07-21"
+---
+
+# Design the fallback contract
+
+## Step
+
+Finish-line condition 4 with Joel's constraint: dead simple. Grill Joel on:
+
+1. **Trigger** — heartbeat staleness threshold; who watches (outside the container, per the container-service contract); flap behavior when the agent recovers mid-fallback.
+2. **Behavior** — raw text to Telegram, no policy. What "raw" means for producer payloads that are facts-not-prose. Does anything else (phone, Slack) exist in fallback, or is Telegram-only the whole story?
+3. **Marking** — every fallback delivery appended to the stream so the recovered agent knows what Joel already saw.
+4. **The kill test** — the exact scripted test proving condition 4: stop container, send alert, observe delivery, restart, prove no loss. This becomes a repeatable check, not a one-time demo (boundary-loop doctrine: fast path + reconciler + receipt from day one).
+
+Resolved when the fallback contract and kill-test script spec are recorded here and the dead-simple property is defensible: someone reading it can verify no judgment, no batching, no suppression exists on the fallback path.

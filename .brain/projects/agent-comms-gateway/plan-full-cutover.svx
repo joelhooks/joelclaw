@@ -1,0 +1,27 @@
+---
+title: "Plan the full cutover"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: ["./design-decision-loop.svx", "./design-fallback-contract.svx", "./prototype-decision-loop-replay.svx", "./map-voice-escalation-seam.svx"]
+created_at: "2026-07-21"
+---
+
+# Plan the full cutover
+
+## Step
+
+Joel's ruling: full replacement, no shadow window, no staged cutover. This step turns that into an executable plan and is the gate that authorizes build work (the brief's Notes grant execution when this closes).
+
+Grill Joel on:
+
+1. **Build order** — the slices that produce the container, the transport slim-down, and the fallback, and which land in which session/worker.
+2. **The cutover moment** — the supervised restart sequence: what flips, in what order, what the first live messages are, who's watching.
+3. **Rollback** — the exact source-control revert + restart that restores today's behavior; prove it's a real path before cutting, not a hope.
+4. **Done evidence** — how each finish-line condition is demonstrated: the dead routing table (condition 1), a live inbound round-trip through pane/revive/bus routing (condition 2), an untouched producer call site delivering (condition 3), and the kill test (condition 4).
+5. **Day-two** — heartbeat/staleness wiring, what the first week of steering looks like, and when messaging-stabilization is declared subsumed and closed.
+
+Resolved when the plan is recorded here, execution authorization is appended to the brief's Notes, and the build steps are chartered as task steps with blockers wired.

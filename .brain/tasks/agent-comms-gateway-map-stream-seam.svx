@@ -1,0 +1,22 @@
+---
+title: "Worker task: map the message event stream seam"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Worker task: map the message event stream seam
+
+You are a research worker for the **Agent Comms Gateway** effort.
+
+1. Read the brief: `.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx`. Its Vocabulary binds your words.
+2. Claim your step before any work: in `.brain/projects/agent-comms-gateway/map-stream-seam.svx`, set `assignee: "pi (flagg, herdr worker pane, 2026-07-21)"`.
+3. Do the step exactly as its `## Step` section states. Every claim needs a file receipt (path, symbol, or line). Note: `packages/message-event-log/` and the consumer are uncommitted work in the shared checkout — read, never modify them.
+
+Deliverables, all as file edits:
+
+- `.brain/projects/agent-comms-gateway/asset-stream-seam-map.svx` — the asset (`type: "asset"`, `parent: "./map-stream-seam.svx"`, plus `title`/`created_at`/`privacy: "private"`).
+- A `## Result (2026-07-21)` section in the step file summarizing findings and linking the asset; flip `status` to `closed` and add `closed_at: "2026-07-21"`.
+- One ledger line in the brief's `## Decision ledger`: `- [Map the message event stream seam](./map-stream-seam.svx) — <one-line gist>`.
+
+Work autonomously, do not commit, print a DONE summary.

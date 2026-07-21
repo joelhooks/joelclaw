@@ -1,0 +1,26 @@
+---
+title: "Design the decision loop"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: ["./map-herdr-and-plugin-surface.svx", "./map-stream-seam.svx"]
+created_at: "2026-07-21"
+---
+
+# Design the decision loop
+
+## Step
+
+The core architecture decision: how the always-on Fable loop actually runs. Grill Joel (add `grill-with-docs` — this should accrete an ADR) across:
+
+1. **Loop lifecycle** — one persistent conversation compacting before 250k, or session cycling with stream replay? What survives compaction (XState v5 sketch for the lifecycle states)?
+2. **Storm aggregation mechanics** — how a burst becomes one delivery: debounce window, correlation keys, when an aggregate re-opens.
+3. **Subagent fan-out** — when the loop delegates to herdr-based pi subagents, how it picks model/reasoning tier, and how their results return (informed by the plugin-surface map).
+4. **Decision receipts** — the exact shape appended to the stream per decision (deliver/hold/aggregate/escalate + reason), satisfying the unhandled-work-receipts clause.
+5. **Inbound interpretation** — the three-tier routing contract (live pane → `herdr agent send`; dead → wake-registry revive; headless → bus event by flowId) made concrete against the mapped APIs.
+6. **Packaging** — whether the custom Claude plugin recommendation from the surface map holds.
+
+Resolved when the loop design is recorded here (with the ADR linked) and someone could build the container without another architecture decision.

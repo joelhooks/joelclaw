@@ -1,0 +1,22 @@
+---
+title: "Map the herdr and Claude plugin surface"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-21"
+---
+
+# Map the herdr and Claude plugin surface
+
+## Step
+
+Two plugin surfaces could wire the gateway into the system natively; inventory both.
+
+1. **herdr side**: read `~/Code/joelhooks/herdr` (server socket protocol, client API) and `~/Code/joelhooks/herdr-janitor` (the plugin precedent). What can a first-class herdr client/plugin do today: pane discovery, `agent send/read/wait`, spawn, lifecycle events, plugin registration? What would gateway-native herdr tooling look like — a plugin that exposes pane state to the gateway and delivers replies into panes? What is missing from herdr's API that this effort would need added?
+2. **Claude plugin side**: Joel's standing call — a custom Claude plugin likely packages the gateway loop's tooling. Inventory what a Claude Code plugin can carry (skills, agents, hooks, MCP servers) and sketch what a `joelclaw-gateway` plugin would bundle for the Fable loop: stream append/read tools, herdr client tools, wake-registry tools, prompt files.
+
+Resolved when an asset (`asset-plugin-surface-map.svx`) records: herdr's current client/plugin capabilities with file receipts, the gap list, what a Claude plugin can package, and a recommendation for how the gateway loop gets its tooling. Feeds [Design the decision loop](./design-decision-loop.svx).

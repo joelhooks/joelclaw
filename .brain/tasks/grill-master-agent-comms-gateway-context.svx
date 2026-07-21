@@ -1,0 +1,45 @@
+---
+title: "Context inheritance: charter the agent comms gateway"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Context inheritance: charter the agent comms gateway
+
+You are chartering a new grill-master effort. Joel is at the keyboard. This file is your inheritance from the resilience-engineering steering session (2026-07-21).
+
+## Joel's mandate (his words, lightly cleaned)
+
+> I wish Telegram was an always-on gateway agent that intelligently managed communications to me instead of deterministic bullshit — similar to the observer container/herdr agent but comms. No more "priority" or whatever. It would have full context and agent-session routing capabilities — know which herdr pane to respond to / revive, etc.
+
+Then, chartering this session:
+
+> Grill-master the agent comms gateway to FULLY replace the existing joelclaw approach such that ALL agents interact through the comms gateway, and the comms gateway manages my notifications/messages — voice, formatting, system context, reply routing, reactions, interpreting intent, etc.
+
+This is a **replacement** mandate, not an augmentation: every agent on the fleet talks to Joel through this thing, and it owns the whole conversation surface in both directions.
+
+## What exists today (the thing being replaced)
+
+- **Messaging v2 contract**: fleet messages ride `joelclaw notify send` through the gateway's embedded Chat SDK adapters; reactions return on the Inngest bus as `message/reaction.received` with the original `flowId`. Repo skill: `~/Code/joelhooks/joelclaw/skills/messaging/SKILL.md` — read it.
+- **Gateway daemon**: `com.joel.gateway` system LaunchDaemon on flagg owns the channel surfaces. Channels code: `packages/gateway/src/channels/`.
+- **Priority lanes are already condemned**: `.brain/projects/messaging-stabilization/follow-up-remove-priority-lanes.svx` — Joel's "no more priority" confirms it.
+- **Single-poller doctrine**: never start a second Telegram poller / Slack socket / Discord listener; duplicate listeners steal events. Any design must respect or deliberately restructure this.
+- **pi-discord-threads** (+watchdog): persistent Discord poller, currently a login agent, mapped to become a system daemon.
+
+## Standing decisions that bind this effort
+
+From the resilience-engineering effort (`~/Code/joelhooks/joelclaw-resilient/.brain/projects/resilience-engineering/`):
+
+- The [workload-class map](https://github.com/joelhooks/joelclaw-resilient/blob/main/.brain/projects/resilience-engineering/workload-class-map.svx) records this gateway agent as latent, shape: **container service** (long-lived container on the joelclaw engine, `restart: unless-stopped`, heartbeat, state on durable surfaces). Its reliability contract comes from that map — do not re-derive it.
+- Five binding contract clauses (boundary-loop doctrine, successor assertions, distributions-over-extremes, aggregate-join ban, unhandled-work receipts) plus the pending shared incident-semantics latch (`build-incident-semantics-library.svx`, ready step there — a likely dependency or collaborator of this gateway).
+- House style: XState v5 / actor model for lifecycles; don't rebuild Inngest — durable multi-step work rides Inngest; Effect for TypeScript services.
+- Observability doctrine: channel Charity Majors; staleness signals are the killer feature.
+
+## Charter instructions
+
+1. Invoke the `grill-master` skill and follow its charter flow exactly: pin the finish line with `grill-me`, one question at a time, recommendation first. Joel answers — never answer your own grilling.
+2. Effort directory: `~/Code/joelhooks/joelclaw/.brain/projects/agent-comms-gateway/` (it replaces joelclaw messaging, so it lives in joelclaw).
+3. Look up facts yourself (messaging skill, gateway channels code, the follow-up note) before putting anything to Joel. Put only decisions to him.
+4. Expect the hard questions to be: what "intelligent" means operationally (an LLM in the message path — latency, cost, failure mode when the model is down); the migration seam (how `joelclaw notify send` callers move without a flag-day); interrupt policy (what may wake Joel — the thing priority lanes faked); pane routing authority (how it knows which herdr pane to respond to/revive — wake registry? herdr socket?); voice; and what happens when the gateway agent itself is down (the deterministic fallback question).
+5. Commit as `shitratgit[bot]` and push via `shitrat push joelhooks/joelclaw --repo-dir ~/Code/joelhooks/joelclaw` when the charter lands.

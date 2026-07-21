@@ -1,0 +1,28 @@
+---
+title: "Map the voice escalation seam"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-21"
+---
+
+# Map the voice escalation seam
+
+## Step
+
+Standing call: the gateway owns phone escalation. This step maps how the phone path works today so the design can treat it as one more delivery surface.
+
+Read: `infra/voice-agent/` (including `main.py` and `verify-voice.sh`), the `call-joel` skill, and any `.brain/projects/voice-workroom/` or `call-tuning-loop/` notes that describe the calling pipeline.
+
+Answer with file receipts:
+
+1. How a call is placed today — trigger, transport (Twilio? SIP?), what connects Joel to the voice agent, where it runs.
+2. What context the voice agent receives and whether a caller can hand it a briefing ("you are calling because X").
+3. Reliability: what happens when a call fails, isn't answered, or the voice stack is down. Any receipts emitted?
+4. The seam: what minimal interface would let the gateway agent choose "call Joel" as a delivery decision with a stated reason, and get a truthful outcome receipt back.
+
+Resolved when an asset (`asset-voice-escalation-seam.svx`) records the current pipeline, its failure story, and the proposed interface. Feeds [Plan the full cutover](./plan-full-cutover.svx).

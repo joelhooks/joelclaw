@@ -1,0 +1,72 @@
+---
+title: "Agent Comms Gateway"
+type: "brief"
+status: "active"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Agent comms gateway
+
+An always-on gateway agent that fully replaces joelclaw messaging. All fleet agents talk to Joel through it. It owns the conversation surface in both directions: voice, formatting, system context, reply routing, reactions, and intent. It replaces deterministic routing (kinds tables, lanes, suppression) with judgment.
+
+Inheritance: [charter context](../../tasks/grill-master-agent-comms-gateway-context.svx). Sibling effort: `messaging-stabilization` (priority-lane removal is implemented and awaiting steering). The resilience-engineering brief pinned this workload's shape: container service riding the bus and wake registry.
+
+## Finish line
+
+1. The kind→routing-table path is dead code. Every outbound message reaches Joel because the gateway agent decided to deliver it — content, timing, format, and platform are its call.
+2. Every inbound message from Joel (reply, reaction, button, free text) is interpreted by the agent, and it routes the response to the correct target: a live herdr pane, a revived session, or a bus consumer.
+3. `joelclaw notify send` still exists as the wire format for producers, but it feeds the agent, not a routing table. No producer changed its call site.
+4. A kill test passes: stop the agent container, send an alert-class message, and the fallback still delivers it to Telegram. Restart the container, and the agent resumes from the stream with no lost messages.
+
+Constraint on 4: the fallback is dead simple — no policy, no batching, raw text to Telegram.
+
+Maintained by the container-service reliability contract from the workload-class map: `restart: unless-stopped`, heartbeat, staleness watched from outside the container. Judgment is maintained as prose files the agent edits under Joel's steering — no config surface to rot.
+
+## Vocabulary
+
+- **gateway agent** — the always-on Claude Fable agent loop in a container service; owns all comms policy in both directions.
+- **transport** — the existing gateway daemon reduced to platform mechanics (Chat SDK adapters, single pollers, delivery); zero policy.
+- **fallback** — the dead-simple path: transport delivers raw text to Telegram when the agent's heartbeat is stale; every fallback delivery is marked in the stream.
+- **stream** — the event-sourcing message event log; the agent's only durable memory; the container holds no state that matters.
+- **origin record** — producer, machine, herdr pane/session, flowId, appended with every outbound message; makes reply routing mechanical.
+- **rewrite** — the gateway authors every operator-facing message in one voice; producers hand over facts, not prose.
+- **storm** — a burst of related producer messages; aggregated into one delivery, never twenty pings.
+- **revive** — wake-registry SPAWN/REVIVE of a dead origin session, carrying Joel's reply and the original context.
+
+## Notes
+
+Domain: joelclaw messaging (`skills/messaging/SKILL.md`), gateway daemon (`packages/gateway/`), message event stream (`packages/message-event-log/`, effort `message-event-stream`), herdr orchestration, wake registry (`pane-scheduling`), voice agent (`infra/voice-agent/`, `call-joel`).
+
+Skills every session should consult: `messaging`, `herdr-orchestration`, `pane-scheduling`, `effect`. House style binds: XState v5 for lifecycles, Inngest for durable multi-step work, Effect for TypeScript services. Observability doctrine: staleness signals are the killer feature. The five resilience contract clauses bind (boundary-loop doctrine, successor assertions, distributions-over-extremes, aggregate-join ban, unhandled-work receipts).
+
+Standing calls (Joel, 2026-07-21, charter grilling):
+
+- LLM in the path of every message. No artificial latency budget.
+- Harness: Claude Fable agent loop. Compact context before 250k tokens.
+- The agent fans out to herdr-based pi subagents, choosing model and reasoning tier per task.
+- Transport stays dumb; the agent owns all policy.
+- Steering lives in the agent's own system prompt — its AGENTS.md/CLAUDE.md plus gateway Brain and system Brain — always plain ELI5 language written like Joel. The agent edits its own files when told.
+- The gateway owns the rewrite and the phone escalation.
+- Memory is an event-sourcing style stream.
+- Storms are aggregated.
+- Full replacement — no shadow window, no staged cutover. The fallback and source-control rollback are the safety story.
+- A custom Claude plugin likely packages the gateway loop's tooling (mid-charter, on the plugin-surface question).
+
+Execution is not yet authorized. Steps produce decisions; build authorization lands when [Plan the full cutover](./plan-full-cutover.svx) closes.
+
+## Decision ledger
+
+_(charter settlements live in Finish line, Vocabulary, and Notes; no closed steps yet)_
+
+## Latent
+
+- Facts-over-prose producer payloads beyond plain text — richer structured handoff once the rewrite proves itself (the contract step covers coexistence; full schema evolution is soft).
+- Linux-node migration affinity for the agent container — portable by construction; re-examine at Linux-node time.
+- iMessage stays hand-rolled under the transport; modernizing it is not this effort.
+- Discord-threads convergence — see Out of scope; Joel marked it "absolutely latent": expected to return as its own successor effort once the gateway earns trust.
+
+## Out of scope
+
+- pi-discord-threads (the interactive Discord steering surface) — different direction of conversation, mid-migration to a system daemon under resilience-engineering; folding it in couples Joel's steering ability to the newest thing in the fleet (Joel, 2026-07-21).
+- Rebuilding transport mechanics — Chat SDK adapters, single-poller ownership, and delivery receipts stay as they are.

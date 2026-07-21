@@ -1,0 +1,24 @@
+---
+title: "Design the producer facts contract"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-21"
+---
+
+# Design the producer facts contract
+
+## Step
+
+Standing calls in tension, deliberately: producers hand over facts, not prose (the gateway owns the rewrite) — but finish-line condition 3 says no producer changed its call site. Grill Joel on how these coexist:
+
+1. What the gateway does with today's prose-shaped `notify send` payloads — treat the text as the fact and rewrite freely?
+2. What a facts-shaped payload looks like for producers that opt in (structured fields the rewrite can use: what happened, receipts, links, origin) — and whether kinds survive as *semantic hints to the agent* or die entirely.
+3. Deprecation posture: is prose-in-`notify send` fine forever, or does a nudge (like the `--kind` deprecation rows) push producers toward facts over time?
+4. Reactions: Joel rejected emoji reactions as an action API (2026-07-19, buttons won); confirm how button actions flow once the agent owns policy — does the agent declare buttons, and does `message/action.requested` survive as-is?
+
+Resolved when the producer-facing contract is recorded here: what producers send, what the agent guarantees, and what (if anything) is deprecated.

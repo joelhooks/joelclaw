@@ -1,0 +1,27 @@
+---
+title: "Inventory the transport/policy split"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-21"
+---
+
+# Inventory the transport/policy split
+
+## Step
+
+Standing call: the existing gateway daemon survives as dumb transport; the agent owns all policy. This step produces the file-level split of `packages/gateway/` (plus `packages/message-contract/` and the notify path through `packages/sdk/` and `packages/cli/`).
+
+For each module, classify:
+
+- **transport (keeps)**: Chat SDK adapters, single-poller ownership, platform normalization, delivery mechanics, receipts, journaling.
+- **policy (moves to the agent)**: kinds routing, delivery modes, batching, digest assembly, suppression, formatting profiles, telegram-outbound-policy.
+- **seam (changes shape)**: the `send()` boundary, notify-compat shim, inbound event publication.
+
+Note where the priority-lane removal (`.brain/projects/messaging-stabilization/follow-up-remove-priority-lanes.svx`, implemented 2026-07-19) already moved things, so this effort doesn't fight that one. Also identify the minimal change that makes the fallback real: transport delivering raw text to Telegram when the agent heartbeat is stale — which existing code path is closest to that?
+
+Resolved when an asset (`asset-transport-policy-split.svx`) lists every relevant file with its classification and the fallback path recommendation. Feeds [Design the fallback contract](./design-fallback-contract.svx).
