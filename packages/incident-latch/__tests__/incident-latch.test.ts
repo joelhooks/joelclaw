@@ -134,3 +134,25 @@ describe("incident latch", () => {
     });
   });
 });
+
+import { makePromiseIncidentLatch } from "../src/index";
+
+describe("makePromiseIncidentLatch", () => {
+  test("mirrors the Effect API for non-Effect consumers", async () => {
+    const store = memoryStore();
+    const latch = makePromiseIncidentLatch(store);
+    const first = await latch.check("promise-key", { quietWindowMs: 60_000, attemptCap: 3 });
+    expect(first.kind).toBe("first");
+    expect(first.speak).toBe(true);
+    const second = await latch.check("promise-key", { quietWindowMs: 60_000, attemptCap: 3 });
+    expect(second.kind).toBe("repeat-silenced");
+    expect(second.speak).toBe(false);
+    const resolution = await latch.resolve("promise-key");
+    expect(resolution.resolved).toBe(true);
+  });
+
+  test("rejects on config errors like the Effect API fails", async () => {
+    const latch = makePromiseIncidentLatch(memoryStore());
+    await expect(latch.check("", { quietWindowMs: 60_000, attemptCap: 3 })).rejects.toThrow();
+  });
+});

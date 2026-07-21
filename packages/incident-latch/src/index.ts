@@ -252,3 +252,25 @@ export function makeIncidentLatch(
     }),
   };
 }
+
+export interface PromiseIncidentLatch {
+  readonly check: (
+    key: string,
+    options: IncidentLatchCheckOptions,
+  ) => Promise<IncidentLatchDecision>;
+  readonly resolve: (
+    key: string,
+    options?: IncidentLatchResolveOptions,
+  ) => Promise<IncidentLatchResolution>;
+}
+
+export function makePromiseIncidentLatch(
+  store: IncidentLatchStore,
+  options: { readonly now?: () => number } = {},
+): PromiseIncidentLatch {
+  const latch = makeIncidentLatch(store, options);
+  return {
+    check: (key, checkOptions) => Effect.runPromise(latch.check(key, checkOptions)),
+    resolve: (key, resolveOptions) => Effect.runPromise(latch.resolve(key, resolveOptions)),
+  };
+}
