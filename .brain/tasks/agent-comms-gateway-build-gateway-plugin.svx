@@ -1,0 +1,18 @@
+---
+title: "Worker task: build the joelclaw-gateway plugin"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Worker task: build the joelclaw-gateway plugin
+
+You are a build worker for the **Agent Comms Gateway** effort. Execution is granted (Joel, cutover grilling, 2026-07-21).
+
+1. Read the brief: `.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` — Vocabulary and standing calls bind you.
+2. Read your step: `.brain/projects/agent-comms-gateway/build-gateway-plugin.svx` and follow its scope exactly. Claim it: set `assignee: "pi (flagg, herdr worker pane, 2026-07-21)"`.
+3. Your inputs: the prototype seed at `prototypes/agent-comms-gateway/claude-plugin/` (the starting point, not a reference — harden it per the prototype step's iteration path), ADR-0249 (`~/Vault/docs/decisions/0249-agent-comms-gateway-decision-loop.md`), and the now-real stream seams in `packages/message-event-log` (readSince pagination, typed gateway events — proven live on local Convex).
+4. Surfaces: the plugin's own tree (your step names its production home) and read-only use of `packages/message-event-log`. Do not touch `packages/gateway` — the transport slim-down worker owns it in this same checkout.
+5. Deliverables as file edits: the hardened plugin; a `## Result (2026-07-21)` section in the step file with receipts (what hardened, test output, MCP tool list); flip `status` to `closed` + `closed_at`; one ledger line in the brief.
+
+Work autonomously, do not commit, print a DONE summary.
