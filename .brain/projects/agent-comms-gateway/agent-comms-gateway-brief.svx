@@ -25,7 +25,11 @@ Maintained by the container-service reliability contract from the workload-class
 
 ## Vocabulary
 
-- **gateway agent** — the always-on Claude Fable agent loop in a container service; owns all comms policy in both directions.
+- **gateway agent** — the always-on Claude Fable agent loop: a long-lived interactive Claude Code session in a dedicated herdr workspace on flagg (Max auth); owns all comms policy in both directions (ADR-0249 amended the container-service shape).
+- **driver** — the zero-policy host process that gives the session wake mechanics: pokes the pane when unhandled stream events exist, fires aggregate deadlines, watches the heartbeat, SPAWNs successors via the wake registry, trips the fallback. It says *there is work*, never what to do.
+- **cycle** — the loop's renewal: retire at ~150k tokens or a quiet moment, write a capped advisory `gateway.handoff` note, exit; the successor boots from prompt files + note + authoritative stream replay + herdr snapshot. Crash recovery is the same path minus the note.
+- **decision receipt** — `gateway.decision.recorded`: exactly one per consumed event, tagged verb (`deliver | aggregate | escalate | fanout | route | drop`) + one-sentence reason + prompt revision; the cursor never advances past an event without one.
+- **digest** — an aggregate with a slow clock: the daily/hourly "things I handled quietly" note, same machinery as storm aggregation, distinct from `drop`.
 - **transport** — the existing gateway daemon reduced to platform mechanics (Chat SDK adapters, single pollers, delivery); zero policy.
 - **fallback** — the dead-simple path: when the agent's heartbeat key is absent, transport delivers the producer's text verbatim to one statically configured channel (default Telegram, SMS latent); every fallback delivery is marked in the stream.
 - **heartbeat** — a Redis key with TTL the agent refreshes (~15 s refresh, 60 s TTL); transport checks existence per message at ingress — no latch, no fallback mode.
@@ -71,7 +75,9 @@ _(charter settlements live in Finish line, Vocabulary, and Notes)_
 - [Map the message event stream seam](./map-stream-seam.svx) — the log kernel is sound, but gateway memory needs typed origin and decision events plus independent paginated replay.
 - [Map the herdr and Claude plugin surface](./map-herdr-and-plugin-surface.svx) — package the Fable loop as a Claude plugin over Herdr protocol 17; add a host bridge only if the container socket canary fails.
 - [Inventory the transport/policy split](./inventory-transport-policy-split.svx) — keep platform mechanics, normalization, journaling, correlation, delivery, and receipts in transport; move routing, suppression, batching, rewrite, and formatting policy to the gateway agent.
+- [Design the decision loop](./design-decision-loop.svx) — ADR-0249: herdr-resident Claude Code session on Max auth (only sanctioned subscription surface) poked by a zero-policy driver; session cycling with stream replay instead of compaction; agent-owned storm clocks with immutable aggregates; fire-and-receipt fan-out; exhaustive decision receipts with mandatory `drop`; judgment at every rung of the inbound ladder; the Claude plugin bundle holds.
 - [Design the fallback contract](./design-fallback-contract.svx) — heartbeat is a Redis TTL key checked per message with no latch; fallback sends producer text verbatim to one statically configured channel (default Telegram, SMS latent); send-then-append `fallback.delivered` marking with recovery reconciliation left to agent judgment; a weekly real-container, real-DM kill drill is the repeatable proof.
+- [Prototype the decision loop on replayed traffic](./prototype-decision-loop-replay.svx) — proved out on a real day (100 messages → 13 decisions) and Joel approved judgment and voice as-is; the Claude plugin seed, prompts, replay contract, and receipt shapes harden into production; the journal-spool adapter and review renderer are the discarded edges.
 
 ## Latent
 

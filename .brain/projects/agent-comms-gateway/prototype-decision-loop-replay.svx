@@ -3,7 +3,8 @@ title: "Prototype the decision loop on replayed traffic"
 type: "step"
 kind: "prototype"
 interaction: "HITL"
-status: "open"
+status: "closed"
+closed_at: "2026-07-21"
 assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: ["./map-stream-seam.svx"]
@@ -52,3 +53,13 @@ node prototypes/agent-comms-gateway/claude-plugin/scripts/run-replay.mjs --day 2
 ```
 
 The step stays open. Joel still needs to react to the review before anyone writes `## Result`.
+
+## Result (2026-07-21)
+
+Joel reviewed the rendered 2026-07-20 replay (100 real producer messages → 13 decisions: 4 deliver, 2 hold, 6 aggregates covering 93 events, 1 escalate) and approved: "prototype looks gtg." No corrections to voice, aggregation, or hold/deliver judgment were raised — the judgment prompt's spine ("use the smallest interruption that preserves truth") stands as a design input for the production agent.
+
+Iteration path, per the standing call:
+
+- **Hardens in place**: the Claude plugin seed (`prototypes/agent-comms-gateway/claude-plugin/`), the prompt files (identity, vocabulary, judgment), the `readSince(recordedAt, limit, cursor)` replay contract, and the decision-receipt shapes with their every-input-exactly-once validation.
+- **Discarded edges**: the journal-spool adapter (replaced when the canonical stream ships its paginated time read) and the review renderer.
+- **Next slice**: owned by [Plan the full cutover](./plan-full-cutover.svx) — the prototype proved out, so the plugin seed is the starting point for the production container, not a reference.
