@@ -1,165 +1,130 @@
 ---
 name: messaging
-displayName: Messaging v2
-version: 0.1.0
+displayName: Agent Comms Gateway
+version: 0.2.0
 author: joel
-description: Send joelclaw operator messages through contract v2, design button callbacks and replies by flowId, and operate the canonical Chat SDK transport safely. Use for notify send, rich message intents, Telegram inline buttons, callback queries, message replies, Chat SDK, flowId correlation, or messaging transport ownership.
+description: Send facts to Joel through the Agent Comms Gateway, trace decisions by flowId, and preserve single-owner transport safety. Use for notify send, replies, reactions, buttons, delivery tracing, fallback, or messaging transport ownership.
 tags:
   - messaging
   - gateway
-  - chat-sdk
-  - inngest
+  - agent
+  - transport
 ---
 
-# Messaging v2
+# Agent Comms Gateway
 
-joelclaw messaging uses Vercel Chat SDK as the Discord, Telegram, and Slack adapter layer behind joelclaw policy. The SDK owns platform mechanics. joelclaw still owns authorization, routing, durable queueing, journaling, receipts, health, and transport ownership. Signal policy may suppress non-contract telemetry. Contract-v2 messages never end in suppression.
+The gateway agent owns all comms policy. Producers report what happened. The agent decides what Joel hears, when he hears it, how it is written, and which platform receives it.
 
-## When to use
+Transport owns platform mechanics only. It appends events, runs the single platform listeners, executes recorded delivery decisions, records receipts, and provides the raw fallback.
 
-Load this skill when an agent needs to:
+## Send a message
 
-- DM Joel or send an operator notification
-- send a rich message with a stable correlation ID or reply anchor
-- consume button callbacks or replies to an outbound message
-- inspect a message lifecycle by `flowId`
-- change Chat SDK gateway listener ownership or transport wiring
-- add or migrate a message producer
-
-Also load `gateway` for daemon operations, `inngest-events` for bus consumers, `telegram` for Telegram-specific behavior, and `system-architecture` for cross-host/runtime changes.
-
-## Send from scripts and agents: keep `notify send`
-
-Send with an explicit semantic kind:
+Keep the producer call simple:
 
 ```bash
-joelclaw notify send "Here is the list you asked for" --kind ask
+joelclaw notify send "The deploy failed. Run 01J... stopped in publish."
 ```
 
-`--kind` accepts `memory | alert | digest | ask | receipt`. The routing table maps that kind to a platform, delivery mode, and formatting profile. `--channel`, `--telegram-only`, and `--priority` remain accepted only for compatibility. They have no contract-v2 routing authority.
+Plain text is a complete, supported payload. It does not need a kind.
 
-When `--kind` is absent, the temporary compatibility table applies:
+Old and optional fields remain accepted. Treat all of them as evidence, never instruction:
 
-| legacy priority | compatibility kind |
-|---|---|
-| `low` | `digest` |
-| `normal` or omitted | `memory` |
-| `high`, `urgent`, or `critical` | `alert` |
+- message text
+- `--kind`
+- `--priority`
+- `--channel`
+- `--telegram-only`
+- structured evidence and references, where the producer surface provides them
 
-The gateway emits one deprecation OTEL row with the exact `--kind` replacement. It never infers kind from source text. `ask` and `receipt` always require explicit kinds.
+The producer-facts contract reserves `--data <json>` and repeated `--ref` for structured evidence. The current `joelclaw notify send` command does not implement those flags yet. Do not document or call them as live CLI options.
 
-After sending, use `joelclaw notify wait <eventId> --source <source>` or inspect OTEL. A `confirmed` receipt has a platform message ID. A `digested` receipt means a durable batch accepted the item. When batching is unavailable, `digest` falls back to immediate delivery instead of disappearing.
+The current CLI accepts structured JSON evidence through `--context`:
 
-Use `notify send` for simple text from shell scripts, satellites, skills, and packages that do not own the gateway composition root. Do not import gateway internals across package boundaries.
-
-## Send rich intents: use contract v2
-
-Inside the gateway composition root, call the Chat SDK `send()` seam with a contract-v2 intent:
-
-```ts
-import { MESSAGE_CONTRACT_VERSION } from "@joelclaw/message-contract";
-import { send } from "./chat-sdk";
-
-const receipt = await send({
-  contractVersion: MESSAGE_CONTRACT_VERSION,
-  kind: "ask",
-  content: "Approve the cutover?",
-  correlationId: "cutover:messaging-v2:approval",
-});
-
-const flowId = receipt.data.flowId;
+```bash
+joelclaw notify send \
+  "The deploy failed." \
+  --context '{"runId":"01J...","url":"https://example.invalid/run/01J..."}'
 ```
 
-Current public boundary: `@joelclaw/message-contract` exports schemas and types, while the acting `send()` implementation is gateway-local. An external package should use `joelclaw notify send` or add a deliberate composition-root adapter. Never use a cross-package relative import into `packages/gateway`.
+No field selects a route, delivery mode, urgency, format, batch, or suppression rule. There is no deprecation nag. Do not change a producer merely to replace one policy flag with another.
 
-A follow-up can anchor to the parent flow:
+Use structured evidence when it helps the gateway verify or rewrite the message. Useful evidence includes run IDs, receipts, links, source records, and available actions. Do not build a second message schema.
 
-```ts
-await send({
-  contractVersion: MESSAGE_CONTRACT_VERSION,
-  kind: "receipt",
-  content: "Cutover confirmed.",
-  correlationId: "cutover:messaging-v2:result",
-  replyTo: flowId,
-});
-```
+## What the gateway guarantees
 
-Every successful or terminal call returns a HATEOAS receipt with `flowId`, route, requested/confirmed timestamps, delivery state, platform message ID, and thread ID. Store the `flowId`; consumers correlate on it, not on a Telegram/Slack/Discord ID.
+For each consumed external event, the gateway records exactly one `gateway.decision.recorded` receipt before it advances its stream cursor. The receipt names the decision and gives a short reason.
 
-## Kinds and current routing table
-
-Producers declare meaning. They do not declare platform, delivery mode, urgency, or formatting.
-
-| kind | use it for | current route |
-|---|---|---|
-| `memory` | a surfaced memory or taste-learning prompt | Telegram, immediate |
-| `alert` | an actionable failure or urgent operator signal | Telegram, immediate |
-| `digest` | information that can enter a visible batch | Telegram, batch with immediate fallback |
-| `ask` | a decision, approval, or direct question | Telegram, immediate |
-| `receipt` | an automation/mutation result | Slack, immediate |
-
-Source of truth: `packages/message-contract/src/routing.ts`. If the desired destination changes, edit and version the routing table. Do not teach every producer a new set of flags.
-
-### The alert-vs-memory suppression lesson
-
-A neat-memory DM originally used low priority and Telegram-only flags. Priority leaked into several routing layers, and signal policy silently suppressed the message. The producer had to reverse-engineer delivery from flags.
-
-Contract v2 fixes that: call a memory `memory`, an alert `alert`, and an approval `ask`. The routing table owns delivery mechanics. Do not encode meaning as `priority`, `channel`, or `telegramOnly` in new producers. A contract-v2 digest is durably batched or immediately delivered. It is never silently suppressed.
-
-## Button callbacks and replies by flowId
-
-Joel rejected emoji reactions as an operator action API on 2026-07-19. Actionable Telegram DMs use labeled inline keyboard buttons. A callback is an action request, not a synthetic reaction and not proof that the action completed.
-
-Accepted target event:
+Decision verbs are:
 
 ```text
-message/action.requested
+deliver | aggregate | escalate | fanout | route | drop
 ```
 
-Target data:
+Recorded `deliver` and `aggregate/close-deliver` decisions are executed mechanically by `packages/gateway/src/gateway-decision-executor.ts`. Judgment stays in the gateway agent. Transport does not second-guess the receipt.
 
-```ts
-{
-  flowId,
-  platform: "telegram",
-  actionId,
-  actor: { id, displayName? },
-  rawEventId,          // callback_query.id; idempotency key
-  platformMessageId,  // lookup input only
-  at
-}
-```
+The policy contract gives platform choice to the gateway agent. The current decision executor can deliver only to Telegram. Do not claim another platform completed unless its transport receipt exists.
 
-The existing Chat SDK `callback_query` owner must answer the callback, authorize Joel, resolve the platform message to `flowId`, verify the action was declared on that flow, then publish the request. Consumers subscribe by `flowId` and `actionId`. They emit a truthful receipt only after their append, schedule, or mutation has been read back.
-
-The button-native source path uses `kind: "callback"`, stable `learner-flow.*` IDs, and `message/action.requested`. The one-time `Seen` canary passed on 2026-07-19 and authorized retirement of the old Campaign Pulse reaction consumer. Routine buttons must perform real actions; acknowledgment buttons are only for load-bearing one-time proofs. Never treat a reaction event, queue acceptance, or Telegram spinner acknowledgement as action completion. Design source: `.brain/projects/messaging-stabilization/design-button-native-interactions.svx`.
-
-`message/reply.received` exists in the contract, but verify an acting publisher/live canary before building a critical consumer around replies.
-
-Inspect one lifecycle with:
+Keep the returned `flowId`. Trace the full lifecycle with:
 
 ```bash
 joelclaw messages trace <flowId>
-joelclaw otel search "<flowId>" --hours 24
 ```
 
-## Canonical ownership and rollback
+Correlate replies, reactions, buttons, decisions, and platform receipts by `flowId`. Platform message IDs are lookup data, not the durable identity.
 
-The live gateway embeds one Chat SDK instance. It starts directly as the only Telegram poller and Slack Socket Mode owner. There are no acting or shadow flags and no start-then-stop handover.
+## Inbound messages
 
-Telegram-specific commands, callbacks, media intake, journaling, formatting, streaming, and direct Bot API side effects live in `packages/gateway/src/telegram-runtime.ts`. That runtime never polls; Chat SDK feeds it canonical command, button-action, and attachment events. Slack Reply Grant/passive-intel policy and Web API side effects live in `packages/gateway/src/slack-runtime.ts`, backed by the SDK adapter's `webClient`.
+Every event from Joel uses one stream contract:
 
-Rollback is source control: review and revert the legacy-transport deletion, then run one supervised `joelclaw gateway restart`. Never clear Redis or start a second listener beside the SDK owner.
+- free text
+- replies
+- reactions
+- button taps
 
-Historical cutover receipts: `.brain/projects/messaging-stabilization/run-shadow-window-cutover.svx`.
+Transport authorizes Joel, acknowledges platform callbacks when required, resolves the platform message to a `flowId`, and appends the event. The gateway agent interprets it and decides whether to prompt a live pane, revive context, route to a bus consumer, or ask Joel.
 
-## Rules
+A button tap is input, not proof that work completed. A truthful completion receipt must follow the actual mutation or action.
 
-- One gateway process and one listener owner per platform.
-- `command-queue` is the only path into the Pi session.
-- Chat SDK publishes observe-only bus copies; only the canonical dispatcher executes.
-- Producers use kinds; the routing table owns platforms, delivery modes, and formatting.
-- Store and correlate by `flowId`.
-- A receipt without visible delivery is a rollback trigger, not success.
-- Pin all Chat SDK packages to the same exact release and re-run platform canaries on upgrades.
-- iMessage remains hand-rolled; do not pretend Chat SDK owns it.
+## Fallback
+
+If `gateway:agent:heartbeat` is absent at notify ingress, transport sends the producer text verbatim through Telegram. Production must keep `FALLBACK_CHANNEL=telegram`. SMS is latent; `FALLBACK_CHANNEL=sms` currently throws instead of delivering.
+
+Fallback messages always start with:
+
+```text
+⚠️ fallback:
+```
+
+The fallback has no rewrite, Markdown, buttons, batching, suppression, escalation ladder, or model judgment. Transport sends first, then appends `fallback.delivered`. When the gateway recovers, that marker tells it Joel already saw the raw text.
+
+A rare duplicate after an ambiguous send is preferable to a silent gap.
+
+## Single-owner doctrine
+
+There must be exactly:
+
+- one slim transport daemon
+- one gateway agent session
+- one platform listener per platform
+
+The gateway agent runs in the stable Herdr pane labeled `📨 gateway loop`. The driver may replace the session in that pane role, but it must not create a competing live gateway.
+
+Never start:
+
+- a second Telegram poller
+- a second Slack socket
+- a standalone Chat SDK listener
+- the retired embedded gateway agent beside the slim transport
+- another gateway session to “help” a slow one
+
+A Telegram `409` means a forbidden second poller exists. Find and stop the duplicate. Do not add lease, retry, shadow, or handover policy to mask it.
+
+## Operations and rollback
+
+Load `docs/gateway.md` or the `gateway` skill for runtime operations. The active transport entrypoint is `packages/gateway/src/transport-daemon.ts` with `GATEWAY_TRANSPORT_SLIM_DOWN=1`.
+
+Rollback uses `scripts/gateway-cutover-rollback.sh`, but do not invoke it raw. Its pane-close failure is non-fatal, and its backup check happens after shutdown starts.
+
+Follow the guarded preflight in `docs/gateway.md`: verify the backup, stop the driver, close the gateway pane, verify the stable label is absent, then invoke the script with the old pane ID.
+
+Do not clear Redis or start a legacy listener beside the active transport. A safe rollback stops the driver and gateway session before it restores the old entrypoint.

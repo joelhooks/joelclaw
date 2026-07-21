@@ -25,7 +25,7 @@ Current contract:
   - `status()`
   - `deployWorker(options)`
   - `logWrite({ action, tool, detail, reason? })`
-  - `notifySend({ message, channel?, priority?, context?, type?, source?, telegramOnly? })` — compatibility surface mapped to contract v2 by the acting gateway
+  - `notifySend({ message, channel?, priority?, context?, type?, source?, telegramOnly? })` — producer-facts surface; every field is evidence for the gateway agent, never routing instruction
   - `secretsStatus/lease/revoke/audit/env`
   - `otelList/search/stats/emit`
   - `recall` / `recallRaw`
@@ -679,6 +679,7 @@ joelclaw log write --action <action> --tool <tool> --detail <detail> [--reason <
 
 joelclaw notify send "<message>" [--kind memory|alert|digest|ask|receipt] [--priority low|normal|high|urgent|critical] [--channel gateway|main|all] [--context '{"k":"v"}']
 joelclaw notify wait <event-id> --source <source> [--timeout 15s]
+joelclaw messages trace <flowId>
 
 joelclaw heal {list|run}
 
@@ -709,10 +710,11 @@ Semantics:
 - `log` writes structured system entries (slog backend).
 - `log write` now accepts explicit `--session` / `--system` provenance flags and also falls back to `SLOG_SESSION_ID` / `SLOG_SYSTEM_ID` env vars before handing off to the slog backend.
 - `logs` reads/analyzes runtime logs.
-- `notify` is the canonical simple operator message command; `gateway push` remains transport/debug. New callers pass `--kind memory|alert|digest|ask|receipt`. The gateway returns Chat SDK telemetry with a `flowId`.
-- `--priority` is deprecated compatibility metadata, not routing authority. Without `--kind`, `low` maps to `digest`, `normal` or omitted maps to `memory`, and `high|urgent|critical` maps to `alert`. The gateway emits one deprecation row with the exact replacement. Source text never selects kind.
-- Rich producers that need `replyTo`, action/reply correlation, or an explicit kind use the contract-v2 gateway `send()` seam instead of adding CLI routing flags. Contract-v2 digests batch durably or fall back to immediate delivery; they never end as `suppressed`.
-- `messages trace <flowId>` reads the private message journal lifecycle; `message/reaction.received` consumers correlate on that same `flowId`.
+- `notify` is the canonical producer command for messages to Joel; `gateway push` remains transport/debug. Plain text is a complete payload. Producers do not need to add or change flags for the Agent Comms Gateway.
+- Message text, `--kind`, `--priority`, `--channel`, `--telegram-only`, and structured evidence are evidence for the gateway agent. They never instruct routing, urgency, timing, formatting, batching, suppression, or platform choice. Old flags remain accepted without deprecation nagging.
+- The current CLI accepts structured JSON evidence through `--context`. The producer-facts contract reserves `--data <json>` and repeated `--ref`, but `joelclaw notify send` does not implement those flags yet. Add run IDs, receipts, links, or available actions only when they help the agent make or verify its decision.
+- The gateway agent records one `gateway.decision.recorded` receipt for each consumed external event before advancing its stream cursor. Recorded `deliver` and `aggregate/close-deliver` decisions are executed mechanically by the slim transport. The current decision executor delivers only to Telegram.
+- `messages trace <flowId>` reads the stream and delivery lifecycle. Correlate replies, reactions, button taps, decisions, and platform receipts by `flowId`.
 - `deploy`, `heal`, `log`, `notify`, `secrets`, `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while executing through capability registry adapters (`scripted-deploy`, `runbook-heal`, `slog-cli`, `gateway-redis`, `agent-secrets-cli`, `mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
 - `typesense-otel`, `typesense-recall`, `scripted-deploy`, `runbook-heal`, `slog-cli`, `agent-secrets-cli`, `gateway-redis`, `mcp-agent-mail`, and `redis-subscriptions` adapter logic is canonical in `@joelclaw/sdk` (`packages/sdk/src/capabilities/adapters/*`); CLI adapter files are thin re-exports.
 - `otel emit` accepts stdin JSON payloads (or convenience args/positional action), normalizes defaults (`id`, `timestamp`, `level=info`, `success=true`), and forwards to the worker ingest endpoint (`/observability/emit`). Provenance defaults are now role-aware: explicit event/session fields win, then `SLOG_SESSION_ID` / `SLOG_SYSTEM_ID`, then session handle envs when present, then role/hostname fallbacks (`gateway` or `JOELCLAW_ROLE`, system hostname stripped to `panda`).
