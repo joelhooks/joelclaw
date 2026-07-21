@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "joelclaw-gateway-replay": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/index.mjs"],
+      "env": {
+        "JOELCLAW_GATEWAY_REPLAY_ONLY": "1"
+      }
+    }
+  }
+}

@@ -4,7 +4,7 @@ type: "step"
 kind: "prototype"
 interaction: "HITL"
 status: "open"
-assignee: ""
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: ["./map-stream-seam.svx"]
 created_at: "2026-07-21"
@@ -23,3 +23,32 @@ Standing call (Joel, 2026-07-21): fine with a prototype **as long as it has a cl
 Joel touches the output (a rendered before/after of a real day) and grills: is the voice right, are the aggregations right, what did it wrongly hold or wrongly deliver.
 
 Resolved when Joel has reacted to at least one full replayed day and the reactions are recorded as design inputs in the result section. Feeds [Design the decision loop](./design-decision-loop.svx) and [Plan the full cutover](./plan-full-cutover.svx).
+
+## Build receipt (2026-07-21)
+
+Built the seed at [`prototypes/agent-comms-gateway/claude-plugin/`](../../../prototypes/agent-comms-gateway/claude-plugin/). This location follows the standing iteration path: the Claude plugin, prompt files, replay contract, and receipt validation can harden in place; only the journal-spool adapter and generated review surface are throwaway edges.
+
+- Replayed the full stored day `2026-07-20` read-only from `~/.joelclaw/spool/message-journal`, the real local journal fallback surface.
+- The canonical stream still lacks the seam map's independent paginated time read. The prototype's read-only adapter implements the requested `readSince(recordedAt, limit, cursor)` page shape so production can replace the edge without moving judgment code.
+- Read 206 unique journal lifecycle events and selected 100 outbound producer requests. Later lifecycle rows show 97 confirmed deliveries.
+- Pi inference (`openai-codex/gpt-5.6-sol`) produced 13 validated decision receipts: 4 deliver, 2 hold, 6 aggregate, and 1 escalate. The six storm receipts cover 93 inputs. Every one of the 100 input event IDs appears exactly once.
+- The plugin agent declares the production Fable harness. The replay runner keeps inference behind Pi, as required; it used no paid API key and no OpenRouter.
+- Nothing was sent. The runner has no transport tool and the MCP server refuses to start unless `JOELCLAW_GATEWAY_REPLAY_ONLY=1`.
+- Raw replay data and the generated review note are mode `0600` and locally excluded through `.git/info/exclude`. They contain private message traffic and must not be committed or published.
+
+Review: [Decision-loop replay review: 2026-07-20](./review-decision-loop-replay-2026-07-20.svx)
+
+Private machine receipts:
+
+- `.brain/data/agent-comms-gateway/replay-2026-07-20/input.json`
+- `.brain/data/agent-comms-gateway/replay-2026-07-20/decisions.jsonl`
+- `.brain/data/agent-comms-gateway/replay-2026-07-20/summary.json`
+- `.brain/data/agent-comms-gateway/replay-2026-07-20/status.json` — check for `state: "complete"` and a matching `runId` before reading the other artifacts.
+
+Regenerate:
+
+```bash
+node prototypes/agent-comms-gateway/claude-plugin/scripts/run-replay.mjs --day 2026-07-20
+```
+
+The step stays open. Joel still needs to react to the review before anyone writes `## Result`.
