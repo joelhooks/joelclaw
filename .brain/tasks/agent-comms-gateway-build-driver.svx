@@ -1,0 +1,18 @@
+---
+title: "Worker task: build the driver"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Worker task: build the driver
+
+You are a build worker for the **Agent Comms Gateway** effort. Execution is granted (Joel, cutover grilling, 2026-07-21).
+
+1. Read the brief: `.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` — Vocabulary and standing calls bind you, especially **driver** (zero policy: it says *there is work*, never what to do) and the day-two heartbeat amendment in the cutover plan (§5): the **driver writes** `gateway:agent:heartbeat` (~15 s / 60 s TTL) only while pane+session exist, the last poke was answered within deadline, and no poke is outstanding past deadline.
+2. Read your step: `.brain/projects/agent-comms-gateway/build-driver.svx` and follow its scope exactly. Claim it: set `assignee: "pi (flagg, herdr worker pane, 2026-07-21)"`.
+3. Your inputs: ADR-0249 §6 (`~/Vault/docs/decisions/0249-agent-comms-gateway-decision-loop.md`), the herdr protocol-17 result (`build-herdr-agent-prompt.svx` — flagg runs 0.7.5, `herdr agent prompt <target> <text> --wait --until <status> --timeout <ms>` is proven live), the stream seams (`packages/message-event-log`, readSince pagination), and the fallback contract (`design-fallback-contract.svx`).
+4. Guards: do not touch `packages/gateway` (slim-down worker owns it) or `prototypes/agent-comms-gateway/claude-plugin` (plugin worker owns it) — both are active in this same checkout. Do not start the driver against a live gateway session; prove it against a scratch pane/session only, and never write the real heartbeat key (`gateway:agent:heartbeat`) — use a test key for proofs.
+5. Deliverables as file edits: the driver code and its tests in the location your step names; a `## Result (2026-07-21)` section in the step file with receipts (poke loop, conditional heartbeat, deadline firing, SPAWN path, fallback trip — each proven or honestly marked unproven); flip `status` to `closed` + `closed_at`; one ledger line in the brief.
+
+Work autonomously, do not commit, print a DONE summary.
