@@ -129,7 +129,11 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
       const events = await scanAll({ stopWhen: (event) => event._id === eventId });
       const event = events.find((candidate) => candidate._id === eventId);
       if (!event) throw new Error(`Event not found: ${eventId}`);
-      if (event.source !== "joelclaw-gateway") throw new Error(`${eventId} is not gateway-owned output`);
+      const gatewayAuthoredKinds = new Set(["gateway.decision.recorded", "gateway.handoff"]);
+      const gatewaySources = new Set(["joelclaw-gateway", "gateway"]);
+      if (!gatewayAuthoredKinds.has(event.kind) && !gatewaySources.has(event.source)) {
+        throw new Error(`${eventId} is not gateway-owned output`);
+      }
       return client.advanceCursor(GATEWAY_MESSAGE_EVENT_CONSUMER, eventId);
     },
   };
