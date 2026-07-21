@@ -2,8 +2,9 @@
 title: "Build herdr protocol 17: agent.prompt"
 type: "step"
 kind: "task"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: []
 created_at: "2026-07-21"
@@ -18,3 +19,37 @@ External repo: `~/Code/joelhooks/herdr`. Verified at grilling time: herdr 0.7.4 
 Per the plugin surface map (`asset-plugin-surface-map.svx`): `agent.prompt` drives a full turn in a target agent session, distinct from `agent send`'s literal-text write.
 
 Resolved when protocol 17 is installed on flagg and proven: `herdr agent prompt` drives a turn in a live Claude Code session, receipt (command + observed turn) recorded here.
+
+## Result (2026-07-21)
+
+Closed. Flagg now runs Herdr **0.7.5 / protocol 17** from upstream `ogulcancelik/herdr` commit `0f161fa`. The requested checkout now exists at `~/Code/joelhooks/herdr`. Upstream already contained the complete `agent.prompt` implementation, so no redundant source patch was needed; the checkout is clean.
+
+API shape: `herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]` sends one atomic terminal submission. Its socket request is `agent.prompt` with `{ target, text, wait?: { until, timeout_ms } }`. The server rejects empty prompts, missing or unready agents, pending launches, and stale foreground-process ownership. With `--wait`, the wait is occupant-pinned and starts in the same request.
+
+Build and test receipts:
+
+- Installed missing build tools: Zig 0.15.2, `cargo-nextest` 0.9.140, and `just` 1.56.0.
+- `just test` with inherited Herdr environment variables cleared: **2,849 Rust tests passed**, plus **85 Python**, **15 integration-asset**, and **12 plugin-marketplace** tests.
+- `just build`: release build passed; binary reports `herdr 0.7.5`, protocol 17.
+- Installed binary: `~/.local/bin/herdr`; rollback copy: `~/.local/bin/herdr-0.7.4-protocol16.backup`.
+
+Live installation receipt: I replaced the running 0.7.4 / protocol-16 server through Herdr's experimental **live handoff**, not a cold stop. Command:
+
+```sh
+herdr server live-handoff \
+  --import-exe ~/.local/bin/herdr \
+  --expected-protocol 17 \
+  --expected-version 0.7.5
+```
+
+This was safe because the old server advertised `live_handoff: true`; the handoff transferred all **27 live panes** before the old process exited. The server log records `handoff import ready panes=27` and `live handoff completed`. Post-handoff `herdr status --json` reports client/server 0.7.5, protocol 17, `compatible: true`, and `restart_needed: false`.
+
+Live Claude Code proof on Flagg used a fresh Claude Max/Fable session in pane `w28:pD`:
+
+```sh
+herdr agent prompt w28:pD \
+  'Reply with exactly HERDR_PROMPT_TURN_2_OK and nothing else.' \
+  --wait --until done --timeout 120000
+```
+
+The command returned `type: "agent_prompted"`, status `done`, and `state_change_seq: 31`. `herdr pane read w28:pD` showed the submitted prompt followed by `HERDR_PROMPT_TURN_2_OK`. The protocol-17 cutover gate is proven live on Flagg.
