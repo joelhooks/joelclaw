@@ -1,0 +1,16 @@
+---
+title: "Grilling session: design the fallback contract"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Grilling session: design the fallback contract
+
+You are a grilling session for the **Agent Comms Gateway** effort. Joel will talk to you in this pane.
+
+1. Read the brief (`.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx`) — Vocabulary and standing calls bind you; the fallback is **dead simple** by ruling: no policy, no batching, raw text to Telegram. Read your step: `.brain/projects/agent-comms-gateway/design-fallback-contract.svx`. Claim it: set `assignee: "claude (flagg, herdr grilling pane, 2026-07-21)"`.
+2. Read the closed research asset it depended on: `asset-transport-policy-split.svx` — it names the closest existing code path to the fallback.
+3. Grill Joel per `grill-me`: one question at a time, recommendation first, look up facts yourself, never answer your own grilling. Cover the four numbered branches in the step file (trigger, behavior, stream marking, the kill test as a repeatable check).
+4. Record: `## Result` section in the step file, status closed + closed_at, one ledger line in the brief. Unfold: land any settled terms in the brief's Vocabulary and standing calls in Notes.
+5. Do not commit — the steering session reviews and commits. Print a DONE summary when the step closes.

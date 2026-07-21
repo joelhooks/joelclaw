@@ -1,0 +1,30 @@
+---
+title: "Worker task: build the decision-loop replay prototype"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Worker task: build the decision-loop replay prototype
+
+You are a build worker for the **Agent Comms Gateway** effort. Joel authorized this build ("build that shit", 2026-07-21) within the prototype step's own scope.
+
+1. Read the brief: `.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx`. Its Vocabulary and standing calls bind you.
+2. Read your step: `.brain/projects/agent-comms-gateway/prototype-decision-loop-replay.svx` — including the iteration-path standing call. Claim it: set `assignee: "pi (flagg, herdr worker pane, 2026-07-21)"`.
+3. Read all four research assets in the effort directory (`asset-*.svx`) — they name the seams you must build on: the stream read/replay gap, the Claude-plugin packaging recommendation, the transport/policy split, the voice seam.
+
+Build:
+
+- A Fable decision loop fed one real day of joelclaw message traffic, replayed from the real stream/journal surfaces (per `asset-stream-seam-map.svx`). Read-only against production data; never send a live message, never touch the live gateway.
+- The loop makes real decisions per message or storm: deliver / hold / aggregate / escalate, plus the rewrite in one voice per the brief. Every decision writes a receipt in the shape the design will keep.
+- Package the loop core the way `asset-plugin-surface-map.svx` recommends (Claude plugin direction). Throwaway glue only at the edges.
+- A review surface Joel can touch: a rendered before/after of the replayed day — what actually arrived vs. what the agent would have sent, with decision reasons. A Brain `.svx` or simple static page; his reaction is the point.
+- Inference rides pi — no paid API keys, no OpenRouter.
+
+Deliverables:
+
+- The prototype code (worker's choice of location, justified in one line against the iteration-path call).
+- The review artifact, linked from a `## Build receipt (2026-07-21)` section you append to the step file — receipts for what ran, the day replayed, message count, and how to regenerate.
+- Do NOT close the step and do NOT write its `## Result` — the step closes only after Joel reacts to the output.
+
+Work autonomously, do not commit, print a DONE summary.

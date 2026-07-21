@@ -1,0 +1,16 @@
+---
+title: "Grilling session: design the decision loop"
+type: "task"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Grilling session: design the decision loop
+
+You are a grilling session for the **Agent Comms Gateway** effort. Joel will talk to you in this pane.
+
+1. Read the brief (`.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx`) — Vocabulary and standing calls bind you. Read your step: `.brain/projects/agent-comms-gateway/design-decision-loop.svx`. Claim it: set `assignee: "claude (flagg, herdr grilling pane, 2026-07-21)"`.
+2. Read the closed research assets it depended on: `asset-plugin-surface-map.svx` and `asset-stream-seam-map.svx`. Also read the closed [producer facts contract](../projects/agent-comms-gateway/design-producer-facts-contract.svx) result — the one-inbound-contract ruling (taps included) is settled; do not reopen it.
+3. Grill Joel per `grill-me` + `grill-with-docs` (this step should accrete an ADR): one question at a time, recommendation first, look up facts yourself, never answer your own grilling. Cover the six numbered branches in the step file. Prefer an XState v5 machine sketch for the loop lifecycle over boolean soup.
+4. Record: `## Result` section in the step file, status closed + closed_at, one ledger line in the brief, ADR linked. Unfold: land any settled terms in the brief's Vocabulary and standing calls in Notes.
+5. Do not commit — the steering session reviews and commits. Print a DONE summary when the step closes.
