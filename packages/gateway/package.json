@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "bun --watch src/daemon.ts",
-    "start": "bun run src/daemon.ts"
+    "start": "bun run src/daemon.ts",
+    "start:transport-slim": "GATEWAY_TRANSPORT_SLIM_DOWN=1 bun run src/transport-daemon.ts"
   },
   "dependencies": {
     "@chat-adapter/discord": "4.34.0",
@@ -18,6 +19,7 @@
     "@joelclaw/inference-router": "workspace:*",
     "@joelclaw/markdown-formatter": "workspace:*",
     "@joelclaw/message-contract": "workspace:*",
+    "@joelclaw/message-event-log": "workspace:*",
     "@joelclaw/message-journal": "workspace:*",
     "@joelclaw/message-store": "workspace:*",
     "@joelclaw/model-fallback": "workspace:*",

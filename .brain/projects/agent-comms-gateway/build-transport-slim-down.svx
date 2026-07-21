@@ -2,8 +2,9 @@
 title: "Build the transport slim-down"
 type: "step"
 kind: "task"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: ["./build-stream-seams.svx", "./land-priority-lane-stash.svx"]
 created_at: "2026-07-21"
@@ -22,3 +23,45 @@ The map is `asset-transport-policy-split.svx` — 67 modules classified transpor
 5. **Seam proofs**: the four end-to-end tests from the asset — producer append, agent-authored send, inbound reply/reaction correlation, stale-heartbeat raw fallback.
 
 Resolved when the bookmark is code-complete with types, lint, and the seam suite green, and the cutover step can merge it without another architecture decision.
+
+## Result (2026-07-21)
+
+Built the slim transport as a separate, opt-in composition root. It is code-complete and not deployed.
+
+- `packages/gateway/src/transport-daemon.ts` owns Chat SDK listeners, Redis notify ingress, canonical stream append, flow correlation, and shutdown. It starts only through `start:transport-slim` with `GATEWAY_TRANSPORT_SLIM_DOWN=1`.
+- The default `start` command still runs `src/daemon.ts`. An unplanned restart therefore stays on the current daemon. No gateway restart or deployment command ran.
+- `transport-slim.ts` adds the explicit agent send boundary: target + postable content + origin/flow IDs. It also adds the separate raw Telegram fallback sender. The fallback never calls `telegram-outbound-policy.ts`, `chat-sdk/outbound.ts`, `sendTelegramMessage()`, or the legacy queue.
+- `chat-sdk/notify-stream.ts` appends producer text and all evidence first. Priority, channel, and Telegram-only inputs remain stream evidence and have no routing authority.
+- `chat-sdk-inbound/publish.ts` appends accepted messages, commands, reactions, and interactions as `inbound.received`. Telegram replies correlate through the real `reply_to_message.message_id`; reactions correlate through the reacted-to message ID.
+- The old policy modules remain on the unchanged legacy start path only. Physical deletion before cutover would violate this task's unplanned-restart guard. The slim composition source has zero references to `resolveMessageRoute`, `ROUTING_TABLE_V2`, `telegram-outbound-policy`, `operator-relay`, `command-queue`, `routeNotifySendCompat`, or `sendTelegramMessage`. The cutover can switch entrypoints without another architecture decision; legacy-file deletion follows the supervised flip.
+
+### Fallback two-conditional proof
+
+`packages/gateway/src/transport-slim.ts:369,378` contains the complete decision surface:
+
+1. `if (heartbeatExists)` — fresh key stops after stream append; absent key enters fallback.
+2. `if (dependencies.fallbackChannel !== "telegram")` — one static deploy-time channel selector; SMS remains deliberately unimplemented.
+
+The fallback posts `{ raw: "⚠️ fallback: <producer text>" }`, excludes `--data`, journals after the send, appends `fallback.delivered`, and classifies failures by whether Telegram may have accepted the send. Known pre-send failures remain retryable. Ambiguous/post-send failures never retry in transport.
+
+### Seam receipts
+
+- Producer append and fresh heartbeat: `transport-slim.test.ts`.
+- Explicit agent-authored send: `transport-slim.test.ts`.
+- Real Telegram reply plus reaction correlation: `transport-slim.test.ts`.
+- Stale-heartbeat verbatim fallback, send-then-append ordering, pre-send retry, ambiguous no-retry, and rejected-journal no-retry: `transport-slim.test.ts`.
+- Stream-only inbound stops before legacy policy and queue execution: `chat-sdk-inbound/acting.test.ts`.
+- Type checks: `bunx tsc --noEmit -p packages/gateway/tsconfig.json` and `bunx tsc --noEmit` passed.
+- Lint: `pnpm biome check packages/gateway/` passed. The broader `pnpm biome check packages/ apps/` still reports 56 unrelated existing import-order errors.
+- Tests: `bun test packages/gateway/src` passed: 197 tests, 0 failures.
+- Build checks: both `src/daemon.ts` and `src/transport-daemon.ts` bundled successfully for Bun. Importing `transport-daemon.ts` without its opt-in flag caused no startup side effects.
+- Brain check ran but remains blocked by seven existing `.brain/tasks/*.md` support files outside this task.
+
+### Callback retry-storm source fix
+
+Verified in-tree:
+
+- deterministic Inngest envelope ID: `packages/gateway/src/chat-sdk-inbound/acting.ts:207` (`message-action:${rawEventId}`);
+- seven-day post-publication Redis claim: `packages/gateway/src/daemon.ts:4871-4888`;
+- consumer idempotency: `packages/system-bus/src/inngest/functions/learner-flow-actions.ts:354`;
+- deterministic notification UUID from `rawEventId + actionId`: `packages/system-bus/src/inngest/functions/learner-flow-actions.ts:181-186`.

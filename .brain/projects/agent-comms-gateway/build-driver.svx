@@ -2,8 +2,9 @@
 title: "Build the driver"
 type: "step"
 kind: "task"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: ["./build-herdr-agent-prompt.svx", "./build-stream-seams.svx"]
 created_at: "2026-07-21"
@@ -22,3 +23,26 @@ The zero-policy host process from ADR-0249 §1. It says *there is work*, never w
 5. Zero policy: no message content decisions, ever. House style binds: XState v5 for the lifecycle, Effect for the service.
 
 Resolved when the driver runs against a live plugin session end-to-end: poke on unhandled event, deadline fire, heartbeat lapse on a deliberately wedged session, SPAWN on pane kill — each with a receipt.
+
+## Result (2026-07-21)
+
+Closed. The zero-policy driver now lives at `packages/agent-comms-driver/`. Its XState v5 machine has explicit `booting`, `ready`, `poking`, `unhealthy`, `spawning`, `awaitingSuccessor`, and `stopped` states. Effect owns the polling service and typed pass failures. Live adapters wrap the canonical message event log, Herdr protocol 17, Redis TTL heartbeat, and the existing `joelclaw wake` registry. The driver never reads producer text or makes a routing, delivery, grouping, suppression, or escalation choice.
+
+Receipts:
+
+- **Poke loop — proven against a scratch session.** A fresh Claude Max/Fable session ran in temporary Herdr pane `w28:pH`. The driver submitted a full `herdr agent prompt` turn and observed `DRIVER_SCRATCH_OK`. Its receipt order was `observed → poke.started → poke.answered → heartbeat.refreshed`. The scratch pane was closed after harvest. The production gateway target was never used.
+- **Conditional heartbeat — proven with a test key only.** The scratch proof wrote `test:gateway:agent:heartbeat:1784662859020` with a 2 s TTL only after the answered poke. No proof wrote `gateway:agent:heartbeat`. Blocked, working, booting, unhealthy, spawning, and successor-wait states withhold refreshes.
+- **Deadline firing — proven in deterministic tests.** A due agent-authored `holdUntil` produced one `aggregate.deadline.reached` append and an `aggregate.deadline.fired` driver receipt. The live adapter replays the canonical stream, tracks open/extended/closed aggregates mechanically, and uses `aggregate-deadline:<aggregateId>:<holdUntil>` for idempotency. No production stream event was inserted for the proof.
+- **SPAWN path — registry admission proven; destructive pane-kill execution not run.** Missing pane/session state requested one SPAWN and retried only after the successor deadline in tests. The live adapter submitted a disposable SPAWN to the real wake registry (`scheduleId: 3c492218-f4bd-49b2-b567-2018ceac9306`), read it back, then cancelled it before execution; cancellation returned Inngest status 200 and the registry no longer listed it. A real pane-kill-to-new-pane drill remains for the supervised cutover sitting.
+- **Fallback trip — heartbeat lapse proven; real transport delivery not run.** The scratch session deliberately exceeded a 1 s poke deadline. Herdr returned `timeout`; the driver entered `unhealthy`, emitted `poke.failed` and `heartbeat.withheld`, and the test heartbeat key expired (`EXISTS = 0`). The real raw Telegram fallback delivery remains owned by the later kill-test/cutover steps.
+
+Validation:
+
+- `bun test packages/agent-comms-driver` — 12 passed, 0 failed, 40 assertions. Adapter tests cover same-timestamp replay, join/extend lineage, Herdr envelope state, stable SPAWN reconciliation, and deadline semantic keys.
+- `pnpm --filter @joelclaw/agent-comms-driver check-types` — passed.
+- `pnpm exec biome check packages/agent-comms-driver` — passed.
+- `pnpm exec oxlint packages/agent-comms-driver/src packages/agent-comms-driver/__tests__` — passed.
+- `bunx tsc --noEmit` at repo root — passed.
+- Fresh-context review found five correctness gaps. The worker fixed all five. Reviewer readback then reported no remaining blockers or fixes worth doing now.
+- `pnpm biome check packages/ apps/` — failed on 56 pre-existing import-order diagnostics outside this package; no unrelated files were changed.
+- `pi-notes brain check` — blocked by seven pre-existing `.brain/tasks/*.md` support files; this task added no non-SVx Brain file.

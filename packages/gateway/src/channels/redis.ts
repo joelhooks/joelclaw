@@ -13,6 +13,10 @@ import {
   notifyCompatTelemetry,
   routeNotifySendCompat,
 } from "../chat-sdk/notify-acting";
+import {
+  routeNotifySendToSlimTransport,
+  SlimNotifyIngressError,
+} from "../chat-sdk/notify-stream";
 import { send as sendChatSdk } from "../chat-sdk/outbound";
 import {
   buildSignalDigestPrompt,
@@ -54,6 +58,7 @@ const REDIS_ERROR_MAX_DISTINCT_PER_WINDOW = 3;
 const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
   ? parseInt(process.env.TELEGRAM_USER_ID, 10)
   : undefined;
+const SLIM_TRANSPORT_ENABLED = process.env.GATEWAY_TRANSPORT_SLIM_DOWN === "1";
 
 const redisOpts = {
   host: process.env.REDIS_HOST ?? "localhost",
@@ -792,6 +797,30 @@ async function drainEvents(): Promise<void> {
     const compatHandledIds = new Set<string>();
     for (const event of events) {
       try {
+        if (SLIM_TRANSPORT_ENABLED) {
+          const result = await routeNotifySendToSlimTransport(event, {
+            heartbeatExists: async () => (await cmd!.exists("gateway:agent:heartbeat")) === 1,
+          });
+          if (!result.handled) continue;
+          compatHandledIds.add(event.id);
+          void emitGatewayOtel({
+            level: "info",
+            component: "redis-channel",
+            action: `notify.stream.${result.disposition}`,
+            success: true,
+            metadata: {
+              eventId: event.id,
+              flowId: result.flowId,
+              sourceEventId: result.sourceEventId,
+              disposition: result.disposition,
+              ...(result.disposition === "fallback"
+                ? { platformMessageId: result.platformMessageId }
+                : {}),
+            },
+          });
+          continue;
+        }
+
         const result = await routeNotifySendCompat(event, {
           send: sendChatSdk,
         });
@@ -810,19 +839,32 @@ async function drainEvents(): Promise<void> {
           },
         });
       } catch (error) {
-        if (error instanceof NotifyCompatDeliveryError) {
-          // The SDK may have delivered before a later journal/index failure.
-          // Never create a duplicate by falling through to legacy.
+        if (
+          error instanceof NotifyCompatDeliveryError
+          || (error instanceof SlimNotifyIngressError && error.handled)
+        ) {
+          // Either path may have crossed the platform-send boundary.
+          // Never create a duplicate by falling through to legacy policy.
           compatHandledIds.add(event.id);
         }
         void emitGatewayOtel({
           level: "error",
           component: "redis-channel",
-          action: "notify.compat_v2.failed",
+          action: SLIM_TRANSPORT_ENABLED
+            ? "notify.stream.failed"
+            : "notify.compat_v2.failed",
           success: false,
           error: summarizeChannelError(error),
           metadata: { eventId: event.id },
         });
+        if (
+          SLIM_TRANSPORT_ENABLED
+          && error instanceof SlimNotifyIngressError
+          && !error.handled
+        ) {
+          seenIds.delete(event.id);
+          throw error;
+        }
       }
     }
     if (compatHandledIds.size > 0) {

@@ -165,6 +165,35 @@ describe("Chat SDK acting inbound dispatcher", () => {
     ]);
   });
 
+  test("stream-only transport stops before legacy policy and agent enqueue", async () => {
+    const published: InboundEvent[] = [];
+    let enqueueCalls = 0;
+    let policyCalls = 0;
+    const dispatch = createActingInboundDispatcher({
+      enqueue: async () => {
+        enqueueCalls += 1;
+      },
+      publisher: {
+        publishEvent: async (event) => {
+          published.push(event);
+        },
+      },
+      resolveFlowId: async () => undefined,
+      publishReaction: async () => {},
+      dispatchPlatformPolicy: async () => {
+        policyCalls += 1;
+        return true;
+      },
+      transportOnly: true,
+    });
+    const event = inbound();
+
+    expect(await dispatch(event)).toEqual({ status: "observed" });
+    expect(published).toEqual([event]);
+    expect(enqueueCalls).toBe(0);
+    expect(policyCalls).toBe(0);
+  });
+
   test("allows the same event to retry after enqueue fails", async () => {
     let attempts = 0;
     const dispatch = createActingInboundDispatcher({

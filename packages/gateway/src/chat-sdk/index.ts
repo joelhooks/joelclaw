@@ -1,4 +1,8 @@
 export {
+  resolveExplicitPlatformMessageFlow,
+  sendExplicitTransport,
+} from "./explicit-send";
+export {
   CHAT_SDK_VERSION,
   type ChatSdkAdapters,
   type ChatSdkRuntime,

@@ -3,7 +3,8 @@ title: "Run the Shadow Window, then Cutover: diff evidence accumulates, Joel fli
 type: "step"
 kind: "task"
 interaction: "HITL"
-status: "open"
+status: "closed"
+closed_at: "2026-07-21"
 assignee: "pi worker via claude steering (flagg, herdr wB, 2026-07-16)"
 parent: "./messaging-stabilization-brief.svx"
 blockers: []
@@ -27,6 +28,10 @@ cutover go — the SDK path becomes the acting dispatcher via
 flips to the compat shim, and hand-rolled channel paths get deleted,
 not abandoned. Until then the shadow just runs; the kill switch is
 CHAT_SDK_INBOUND_SHADOW_ENABLED=0 + restart.
+
+## Result (2026-07-21)
+
+Closed as **superseded**, per the agent-comms-gateway cutover grilling (Joel aligned). Joel ruled full replacement with no shadow window in that effort's charter; the shadow-then-cutover plan this step describes is dead doctrine. The cutover now lives in [Plan the full cutover](../agent-comms-gateway/plan-full-cutover.svx) and executes via [Execute the cutover and hold week one](../agent-comms-gateway/execute-cutover.svx). messaging-stabilization will be declared subsumed when that effort's finish line checks.
 
 
 ## Joel's go — recorded 2026-07-16 ("cut over now lol")

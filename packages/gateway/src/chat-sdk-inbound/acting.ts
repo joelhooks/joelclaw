@@ -76,6 +76,8 @@ export interface ActingInboundDispatcherDependencies {
     readonly prompt?: string;
     readonly metadata?: Record<string, unknown>;
   }>;
+  /** Stream-only cutover: publish facts, then stop before any legacy policy or queue. */
+  readonly transportOnly?: boolean;
   readonly onError?: (error: unknown, phase: string, event: InboundEvent) => void;
 }
 
@@ -255,6 +257,15 @@ export function createActingInboundDispatcher(
       await dependencies.publisher.publishEvent(event);
     } catch (error) {
       dependencies.onError?.(error, "publish", event);
+      if (dependencies.transportOnly) throw error;
+    }
+
+    if (dependencies.transportOnly) {
+      remember(event.eventId);
+      return event.authorization.verdict === "accepted"
+        && event.authorization.reason === "authorized_joel"
+        ? { status: "observed" }
+        : { status: "rejected" };
     }
 
     if (isMessageCallbackAction(event)) {

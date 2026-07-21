@@ -52,6 +52,7 @@ import { registerChatSdkActingInbound } from "./chat-sdk-inbound/acting";
 import {
   createGatewayInboundBusClient,
   createObserveOnlyInboundPublisher,
+  createStreamInboundPublisher,
 } from "./chat-sdk-inbound/publish";
 import {
   drain,
@@ -4920,9 +4921,13 @@ try {
     });
   }
 
+  const slimTransportEnabled = process.env.GATEWAY_TRANSPORT_SLIM_DOWN === "1";
   registerChatSdkActingInbound(runtime, {
     enqueue: enqueueToGateway,
-    publisher: createObserveOnlyInboundPublisher(inboundBus),
+    publisher: slimTransportEnabled
+      ? createStreamInboundPublisher({ resolveFlowId: resolvePlatformMessageFlow })
+      : createObserveOnlyInboundPublisher(inboundBus),
+    transportOnly: slimTransportEnabled,
     resolveFlowId: resolvePlatformMessageFlow,
     resolveDeclaredActions: resolveDeclaredMessageActions,
     isActionPublished: isMessageActionPublished,

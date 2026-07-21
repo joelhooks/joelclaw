@@ -82,6 +82,12 @@ export type ChatSdkNormalizedInbound =
   | ChatSdkNormalizedInteraction
   | ChatSdkNormalizedReaction;
 
+const replyTargetByInboundEventId = new Map<string, string>();
+
+export function replyTargetForInboundEvent(eventId: string): string | undefined {
+  return replyTargetByInboundEventId.get(eventId);
+}
+
 export interface ChatSdkProjectionContext {
   readonly platform: InboundPlatform;
   readonly conversationId: string;
@@ -209,6 +215,18 @@ function scalar(value: unknown): string | undefined {
   return typeof value === "string" || typeof value === "number"
     ? String(value)
     : undefined;
+}
+
+function deriveReplyTargetMessageId(envelope: RawInboundEnvelope): string | undefined {
+  const raw = record(envelope.raw);
+  const message = record(raw?.message) ?? record(raw?.edited_message) ?? raw;
+  const telegramReply = record(message?.reply_to_message);
+  const discordReference = record(message?.message_reference);
+  const currentSlackTs = scalar(message?.ts) ?? scalar(raw?.ts);
+  const slackThreadTs = scalar(message?.thread_ts) ?? scalar(raw?.thread_ts);
+  return scalar(telegramReply?.message_id)
+    ?? scalar(discordReference?.message_id)
+    ?? (slackThreadTs && slackThreadTs !== currentSlackTs ? slackThreadTs : undefined);
 }
 
 function deriveRawAnchors(envelope: RawInboundEnvelope): InboundRawAnchors {
@@ -675,6 +693,15 @@ export function normalizeSdkInboundEvent(
     },
     authorization,
   };
+
+  const replyTargetMessageId = deriveReplyTargetMessageId(envelope);
+  if (replyTargetMessageId) {
+    replyTargetByInboundEventId.set(common.eventId, replyTargetMessageId);
+    if (replyTargetByInboundEventId.size > 5_000) {
+      const oldest = replyTargetByInboundEventId.keys().next().value;
+      if (oldest) replyTargetByInboundEventId.delete(oldest);
+    }
+  }
 
   switch (event.kind) {
     case "message":
