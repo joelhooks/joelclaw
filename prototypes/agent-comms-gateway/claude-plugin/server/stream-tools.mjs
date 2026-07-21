@@ -92,9 +92,9 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
       const latestHandoff = all.filter((event) => event.kind === "gateway.handoff").at(-1) ?? null;
       return { consumer: GATEWAY_MESSAGE_EVENT_CONSUMER, latestHandoff, pending, replayAuthoritative: true };
     },
-    recordDecision: async ({ payload, flowId, origin }) => {
+    recordDecision: async ({ payload, flowId, origin, advanceAfter }) => {
       const validated = validateDecisionPayload(payload);
-      return appendAndReadBack({
+      const appended = await appendAndReadBack({
         semanticKey: gatewayDecisionSemanticKey(validated),
         kind: "gateway.decision.recorded",
         source: "joelclaw-gateway",
@@ -102,6 +102,20 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         ...(flowId ? { flowId } : {}),
         ...(origin ? { origin } : {}),
       });
+      // Conversational fast path: decision + cursor advance in one tool call.
+      // Valid only for single-input decisions — the read-back above already
+      // proved the receipt exists, which is what advanceAfterDecision checks.
+      if (advanceAfter) {
+        if (validated.inputEventIds.length !== 1) {
+          throw new Error("advanceAfter requires exactly one inputEventId");
+        }
+        const cursor = await client.advanceCursor(
+          GATEWAY_MESSAGE_EVENT_CONSUMER,
+          validated.inputEventIds[0],
+        );
+        return { ...appended, cursor };
+      }
+      return appended;
     },
     appendGatewayEvent: async ({ semanticKey, kind, payload, flowId, origin }) => {
       const allowed = new Set(["gateway.handoff", "aggregate.deadline.reached", "inbound.interpreted"]);

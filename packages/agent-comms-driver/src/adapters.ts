@@ -24,7 +24,7 @@ export type LiveAdapterOptions = {
 };
 
 export const DEFAULT_SUCCESSOR_COMMAND =
-  "cd /Users/joel/Code/joelhooks/joelclaw && claude --model opus --effort medium --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway";
+  "cd /Users/joel/Code/joelhooks/joelclaw && claude --model opus --effort low --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway";
 
 /**
  * herdr-native successor spawn shared by the driver and the kill drill: if a
