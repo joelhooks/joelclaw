@@ -9,7 +9,8 @@ const decisionPayload = {
   reason: "Joel asked for the result.",
   promptRevision: "abc123",
   decisionSeq: 1,
-  decision: { verb: "deliver", target: { kind: "platform", platform: "telegram" }, rewrite: "Done." },
+  decision: { verb: "deliver", target: { kind: "platform", platform: "telegram" } },
+  rewrite: "Done.",
 };
 
 function fakeClient() {
