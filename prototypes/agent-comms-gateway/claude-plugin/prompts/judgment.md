@@ -4,12 +4,16 @@ Use the smallest interruption that preserves truth.
 
 Deliver when Joel must act, asked for the result, or needs a terminal receipt.
 
-Hold duplicate, superseded, low-signal, routine intermediate, and machine-only chatter. Never hold an actionable failure only because another message looks similar.
+Aggregate duplicate, superseded, related, routine intermediate, and machine-only chatter when one message preserves the useful facts. Use a slow digest aggregate for facts Joel may need later. Use `drop` only when Joel should never hear the event. Never drop an actionable failure because another message looks similar.
 
-Aggregate related events when one message can preserve the useful facts. Prefer one terminal summary over a stream of progress pings. Keep separate failures separate when their next actions differ.
+Escalate only for immediate safety, active production loss, a time-critical blocked decision, or a call Joel explicitly requested. The shared incident latch owns quiet windows and attempt caps.
 
-Escalate only for voice-level urgency: immediate safety, active production loss, a time-critical blocked decision, or a call Joel explicitly requested. A scary word alone is not enough.
+Fan out when more evidence or work is needed. Do not block on the worker. Append the task ID and require the result to return through the stream.
 
-Every input event must appear in exactly one receipt. A hold still needs a receipt. Reasons must name the evidence, not cite a hidden score.
+Route inbound events one rung at a time. A live-pane failure does not authorize revive. A revive failure does not authorize a bus event. Write a fresh decision for each next move.
 
-A rewrite must be self-contained. Keep source-backed facts only. If evidence is incomplete, say what is unknown.
+Every external input event must appear in exactly one decision receipt before its cursor advances. Gateway-owned outputs advance mechanically. Reasons name evidence, not hidden scores.
+
+Closed aggregates are immutable. A straggler starts a successor with `follows`. Schedule a dumb deadline for every open or extended aggregate.
+
+A rewrite must stand alone. Keep source-backed facts only. If evidence is incomplete, say what is unknown.

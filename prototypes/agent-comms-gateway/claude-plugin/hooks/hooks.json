@@ -1,0 +1,29 @@
+{
+  "description": "Boot the gateway from prose, advisory handoff, authoritative replay, and Herdr; record silent compaction backstops.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/post-compact.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

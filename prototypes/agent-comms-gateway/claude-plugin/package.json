@@ -1,0 +1,13 @@
+{
+  "name": "joelclaw-gateway-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test server hooks",
+    "mcp:list": "bun scripts/list-tools.mjs"
+  },
+  "dependencies": {
+    "@joelclaw/message-event-log": "file:../../../packages/message-event-log"
+  }
+}

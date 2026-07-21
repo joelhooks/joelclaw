@@ -1,7 +1,7 @@
 {
   "name": "joelclaw-gateway",
-  "version": "0.1.0-prototype",
-  "description": "Read-only replay prototype for the Agent Comms Gateway decision loop",
+  "version": "1.0.0",
+  "description": "Production Agent Comms Gateway decision loop tooling",
   "author": {
     "name": "Joel Hooks"
   }

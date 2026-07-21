@@ -2,8 +2,9 @@
 title: "Build the joelclaw-gateway plugin"
 type: "step"
 kind: "task"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: ["./build-stream-seams.svx"]
 created_at: "2026-07-21"
@@ -22,3 +23,44 @@ Harden the prototype seed at `prototypes/agent-comms-gateway/claude-plugin/` int
 5. The retire path is loop-owned, no hook. No policy in any herdr plugin; prose files are the only steering surface.
 
 Resolved when a session with the plugin boots clean against the real stream in replay-only rehearsal and every receipt it writes validates against the seam shapes.
+
+## Result (2026-07-21)
+
+Hardened the prototype seed in place into the production `joelclaw-gateway` Claude Code plugin.
+
+- Replaced the journal-spool adapter with the public `@joelclaw/message-event-log` client. The plugin now uses canonical `readSince`, the named `gateway/agent` cursor, typed appends, semantic decision keys, and append readback.
+- Enforced the no-silent-cursor rule. `stream_advance_after_decision` refuses to advance unless exactly one read-back `gateway.decision.recorded` event covers the external input. Gateway-owned output has a separate mechanical skip tool so the loop does not judge its own receipts.
+- Added the production MCP families: seven stream tools, four Herdr tools, and four wake tools. Wake supports durable REVIVE plus aggregate-deadline scheduling through the existing wake registry.
+- Added `SessionStart`: prompt files → latest advisory `gateway.handoff` → authoritative pending replay → fresh Herdr snapshot. A real-stream rehearsal booted clean with two pending events and 34,858 characters of injected context; it performed no stream mutation.
+- Added `PostCompact`: emits the silent `gateway.compaction.recorded` OTEL receipt and never pages. Live readback found event `c9762d62-e187-4300-bacd-9b7641aedfae` in ClickHouse.
+- Kept retirement loop-owned in `agents/joelclaw-gateway.md`. No hook or Herdr plugin contains judgment policy.
+- Deleted the prototype-only journal adapter, Pi replay runner, replay core, and review renderer.
+
+Validation receipts:
+
+- `bun test`: 7 pass, 0 fail.
+- `pnpm biome check prototypes/agent-comms-gateway/claude-plugin`: pass, 14 files checked.
+- `claude plugin validate prototypes/agent-comms-gateway/claude-plugin`: pass.
+- MCP stdio initialize + `tools/list`: pass, 15 tools.
+- Real `SessionStart` hook against local Convex and Herdr: pass; ordering markers present and two canonical pending events loaded.
+- Real `PostCompact` hook + `joelclaw otel search gateway.compaction.recorded --hours 1`: pass.
+
+MCP tool list:
+
+```text
+stream_bootstrap
+stream_read_since
+stream_pending
+stream_record_decision
+stream_append_gateway_event
+stream_advance_after_decision
+stream_advance_own_output
+herdr_snapshot
+herdr_read
+herdr_prompt
+herdr_wait
+wake_revive
+wake_schedule_aggregate_deadline
+wake_list
+wake_cancel
+```

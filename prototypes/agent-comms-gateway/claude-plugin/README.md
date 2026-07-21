@@ -1,12 +1,36 @@
-# Agent Comms Gateway replay plugin
+# joelclaw-gateway Claude Code plugin
 
-This directory is the production-shaped seed from the replay prototype.
+This is the production plugin for the long-lived Fable gateway session from ADR-0249.
 
-- `agents/` and `prompts/` hold Fable's judgment and voice.
-- `server/` exposes replay-only MCP tools over stdio.
-- `scripts/run-replay.mjs` reads one day from the real journal spool, invokes Pi for inference, validates receipts, and writes private Brain data.
-- `scripts/render-review.mjs` generates the Brain review surface.
+## Bundle
 
-The spool adapter is throwaway glue. The `readDayPage()` contract matches the stream seam's future independent paginated time read. Production replaces that adapter with `readSince(recordedAt, limit, cursor)` and adds append/readback tools.
+- `agents/joelclaw-gateway.md`: loop contract and retire path.
+- `prompts/`: the only comms-policy surface.
+- `server/`: one MCP server with stream, Herdr, and wake tool families.
+- `hooks/session-start.mjs`: prompt files → latest advisory handoff → authoritative gateway-cursor replay → fresh Herdr snapshot.
+- `hooks/post-compact.mjs`: silent `gateway.compaction.recorded` OTEL receipt. It never pages Joel.
 
-This prototype never sends messages and never mutates the gateway, stream, or journal.
+The plugin has no transport policy and no Herdr policy. It calls `@joelclaw/message-event-log` through its public package boundary.
+
+## Install dependencies
+
+```bash
+cd prototypes/agent-comms-gateway/claude-plugin
+bun install
+```
+
+## Validate
+
+```bash
+bun test
+bun run mcp:list
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | bun server/index.mjs
+```
+
+## Replay-only rehearsal
+
+Start Claude Code with this plugin and the `joelclaw-gateway` agent. The SessionStart hook reads the real stream but does not advance its cursor. Tool mutations happen only when the agent calls an append, route, wake, or cursor tool.
+
+Every external input needs exactly one read-back `gateway.decision.recorded` receipt before `stream_advance_after_decision` will move the gateway cursor. Gateway-authored output uses `stream_advance_own_output`.
+
+The old journal-spool adapter, Pi replay runner, and review renderer were prototype-only and are deleted.

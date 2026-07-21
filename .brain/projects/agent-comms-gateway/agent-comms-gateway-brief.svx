@@ -85,6 +85,7 @@ _(charter settlements live in Finish line, Vocabulary, and Notes)_
 - [Plan the full cutover](./plan-full-cutover.svx) — nine build steps in three tracks (stream seams built by this effort, stash lands first in steering, slim-down merges inside the sitting); one supervised cutover sitting agent → driver → transport restart → probe set; scripted rollback with steering authority, armed one week; done evidence staged across week one with all three inbound rungs required; heartbeat amended to driver-verified refresh; messaging-stabilization declared subsumed at finish-line check. Execution granted.
 - [Build Herdr protocol 17 `agent.prompt`](./build-herdr-agent-prompt.svx) — installed Herdr 0.7.5 / protocol 17 on Flagg through a 27-pane live handoff; full tests passed, and an occupant-pinned `agent.prompt --wait --until done` drove and observed a complete Claude Max/Fable turn.
 - [Build the gateway stream seams](./build-stream-seams.svx) — delivered the six gateway/inbound kinds, typed origin and receipt shapes, named durable cursors, and paginated `readSince`; deployed Convex and proved append → replay → cursor advance against the canonical log. (2026-07-21)
+- [Build the joelclaw-gateway plugin](./build-gateway-plugin.svx) — hardened the approved seed against the real stream: 15 stream/Herdr/wake MCP tools, exact receipt-before-cursor enforcement, ordered SessionStart replay, and a live-read-back PostCompact OTEL receipt; deleted the replay-only adapter and renderer. (2026-07-21)
 
 ## Latent
 
