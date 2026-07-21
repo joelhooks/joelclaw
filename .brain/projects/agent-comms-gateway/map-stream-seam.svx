@@ -3,8 +3,9 @@ title: "Map the message event stream seam"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: []
 created_at: "2026-07-21"
@@ -26,3 +27,7 @@ Answer with file receipts:
 4. Where the two efforts should share vs. diverge — is the gateway the log's first real consumer, and what should this effort ask of that one?
 
 Resolved when an asset (`asset-stream-seam-map.svx`) records current state, the gap list, and a proposed contract between the two efforts. Feeds [Design the decision loop](./design-decision-loop.svx) and [Prototype the decision loop on replayed traffic](./prototype-decision-loop-replay.svx).
+
+## Result (2026-07-21)
+
+[Message Event Stream Seam Map](./asset-stream-seam-map.svx) records the current append, ordering, idempotency, materialization, and replay contracts. The kernel is sound but not yet sufficient for gateway memory: it lacks typed origin records, gateway decision/fallback/inbound events, a named multi-consumer cursor, and paginated sequence/time replay. The gateway is the log's first policy-bearing application consumer; the stream keeps durability and generic reads while the gateway owns judgment. The map also records a source mismatch: the Convex trace API exists, but this checkout still wires `joelclaw messages trace` to `@joelclaw/message-journal`.

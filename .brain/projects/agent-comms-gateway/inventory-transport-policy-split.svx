@@ -3,9 +3,10 @@ title: "Inventory the transport/policy split"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
+closed_at: "2026-07-21"
 blockers: []
 created_at: "2026-07-21"
 ---
@@ -25,3 +26,13 @@ For each module, classify:
 Note where the priority-lane removal (`.brain/projects/messaging-stabilization/follow-up-remove-priority-lanes.svx`, implemented 2026-07-19) already moved things, so this effort doesn't fight that one. Also identify the minimal change that makes the fallback real: transport delivering raw text to Telegram when the agent heartbeat is stale — which existing code path is closest to that?
 
 Resolved when an asset (`asset-transport-policy-split.svx`) lists every relevant file with its classification and the fallback path recommendation. Feeds [Design the fallback contract](./design-fallback-contract.svx).
+
+## Result (2026-07-21)
+
+Completed the [file-level transport/policy inventory](./asset-transport-policy-split.svx).
+
+The durable transport core is Chat SDK ownership, platform normalization, delivery mechanics, journaling, flow correlation, bus publication, and receipts. Routing tables, suppression, digest assembly, format profiles, operator relay logic, and the old in-process agent runtime move to the gateway agent. The main cut seams are `daemon.ts`, `channels/redis.ts`, `chat-sdk/outbound.ts`, and the Telegram/Slack runtimes.
+
+The closest fallback ingress is notify handling in `channels/redis.ts`. The fallback should call a new raw-text Telegram function directly on the canonical Chat SDK adapter when the external agent heartbeat is stale. It must bypass routing, policy, formatting profiles, batching, and suppression, then append a marked fallback delivery receipt to the stream.
+
+Priority-lane removal is not in the current tree. Its implementation is preserved in stash commit `c272c940`; reconcile that patch before implementation so this effort does not duplicate or fight it.

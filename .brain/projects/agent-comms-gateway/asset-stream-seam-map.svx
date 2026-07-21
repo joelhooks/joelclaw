@@ -1,0 +1,130 @@
+---
+title: "Message Event Stream Seam Map"
+type: "asset"
+parent: "./map-stream-seam.svx"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Message event stream seam map
+
+## Verdict
+
+The stream has a sound append and materialization kernel, but it is not yet a usable memory boundary for the **gateway agent**. It can deduplicate and order events, materialize four projections, and trace one known `flowId`. It cannot replay recent conversation across flows, preserve a typed **origin record**, maintain an independent gateway cursor, or represent the gateway's decisions and inbound interpretations.
+
+The **gateway agent** would be the log's first policy-bearing application consumer. The existing Inngest consumer is infrastructure: it tails the log and builds disposable views. The two efforts should share the canonical envelope, append law, ordering, read/cursor APIs, retention rules, and replay semantics. They should not share policy. The stream owns durable facts; the gateway owns judgment, rewrite, aggregation, routing, and escalation.
+
+## Current append boundary
+
+### Accepted event shape
+
+`AppendMessageEventInput` requires:
+
+- `semanticKey`
+- `kind`
+- `source`
+- `payload`
+
+It optionally accepts `occurredAt`, `flowId`, `correlationId`, `rawSourceId`, `deliveryId`, `platform`, and `platformMessageId`. `payload` is `unknown` in the client and `v.any()` in Convex. The allowed kinds are:
+
+- `message.requested`
+- `message.composed`
+- `delivery.requested`
+- `delivery.confirmed`
+- `delivery.failed`
+- `message.batched`
+- `message.digested`
+- `message.suppressed`
+- `action.declared`
+- `action.received`
+- `reaction.received`
+
+Receipts: `packages/message-event-log/src/index.ts` (`MessageEventKind`, `AppendMessageEventInput`); `../joelclaw-api/convex/messageEventSchema.ts` (`MESSAGE_EVENT_KINDS`); `../joelclaw-api/convex/messageEvents.ts` (`appendArgs`, `append`).
+
+The semantic key is stronger than the TypeScript type suggests. The Convex model requires `source:stable-identity`, requires the key prefix to equal `source`, rejects whitespace in the stable identity, trims optional IDs, and requires a positive safe-integer `occurredAt`. The source itself must match `[a-z0-9][a-z0-9._/-]{0,63}`. Receipts: `../joelclaw-api/convex/messageEventModel.ts` (`validateSemanticKey`, `normalizeMessageEventInput`); `../joelclaw-api/test/messageEvents.test.ts` (`canonical message append boundary`).
+
+### Ordering
+
+Every fresh append gets one global numeric `sequence`. The append mutation reads and advances the singleton `messageEventLogState` row named `canonical` in the same Convex transaction as the insert. `pendingForConsumer` reads events after the durable cursor in ascending `sequence` order. The Inngest function has concurrency limit one, loads at most 50 events, and materializes them sequentially. Receipts: `../joelclaw-api/convex/schema.ts` (`messageEventLogState`, `messageEvents.by_sequence`); `../joelclaw-api/convex/messageEvents.ts` (`append`, `pendingForConsumer`); `packages/system-bus/src/inngest/functions/message-event-consumer.ts` (`createMessageEventConsumerFunction`).
+
+`occurredAt` does not control consumption order. It controls chronological flow projections and trace ordering through `by_flow_id_time`. Late events can update first/last flow times; the latest flow state changes only when their `occurredAt` is at least the current latest time. Receipt: `../joelclaw-api/convex/messageEvents.ts` (`materialize`).
+
+### Idempotency
+
+Append idempotency is global by `semanticKey`. A duplicate returns the original event ID and schema version with `deduplicated: true`; it does not replace the original payload. Materialization idempotency is `(eventId, consumer)`. A prior consumer receipt makes replay a no-op. The projection writes, consumer receipt, and cursor update occur in one Convex mutation. Receipts: `../joelclaw-api/convex/messageEvents.ts` (`append`, `materialize`); `../joelclaw-api/convex/messageEventModel.ts` (`decideMessageAppend`, `isMaterializationReplay`); `scripts/prove-message-event-log.ts` (`passed` invariants); `packages/system-bus/src/inngest/functions/message-event-consumer.test.ts`.
+
+The proof script asserts one stored event, one consumer receipt, one flow event count, and no extra work after re-append. That live proof has **not** run. The stream step remains blocked because the new Convex deployment stalls while uploading functions. Receipt: `.brain/projects/message-event-stream/build-the-log-and-append-boundary.svx` (`Work receipt — 2026-07-19`).
+
+## Gateway gaps
+
+| Needed fact | Present now | Gap and requested shape | Receipt |
+|---|---|---|---|
+| **origin record** | `source`, `flowId`, `correlationId`, and `rawSourceId` are flat optional fields. | Add a typed, immutable `origin` to every outbound fact: `{ producer, machineId, paneId?, sessionId? }`. Keep `flowId` top-level for correlation. `source` identifies the event author; `origin.producer` identifies the original producer after the gateway authors later events. | `packages/message-event-log/src/index.ts` (`AppendMessageEventInput`); `.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` (`Vocabulary: origin record`). |
+| Decision receipt | Existing kinds can say batched, digested, or suppressed, but no event records `deliver`, `hold`, `aggregate`, or `escalate` as one exhaustive decision. `reason` has no typed field. | Add `gateway.decision.recorded` with a tagged payload: decision, reason, input event IDs, optional aggregate ID, target/platform intent, and policy/prompt revision. A stable key must derive from input event plus decision revision. | `../joelclaw-api/convex/messageEventSchema.ts` (`MESSAGE_EVENT_KINDS`); `packages/message-event-log/src/index.ts` (`MessageEventKind`). |
+| Fallback marker | No fallback kind or fallback metadata exists. | The **transport** must append a fallback delivery fact because the gateway may be dead. At minimum record source event ID, stale-heartbeat observation, raw Telegram target, platform message ID, and confirmed/failed outcome. Use a stable key derived from the request and fallback attempt. | `packages/message-event-log/src/index.ts` (`MessageEventKind`, `AppendMessageEventInput`); `.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` (`Finish line 4`, `Vocabulary: fallback`). |
+| Raw inbound fact | Action and reaction kinds exist. Free-text reply/message input does not. | Add a raw inbound kind such as `inbound.received` that preserves platform event identity, actor, conversation/thread anchor, reply flow, and content packet before model judgment. | `../joelclaw-api/convex/messageEventSchema.ts` (`MESSAGE_EVENT_KINDS`); `skills/messaging/SKILL.md` (`message/reply.received`). |
+| Inbound interpretation | No kind records the gateway's interpretation or chosen target. | Add `inbound.interpreted` with the source inbound event ID, reason, and exhaustive target: live pane, revived session, or bus consumer. This is a decision receipt, not a mutable status. | `.brain/projects/agent-comms-gateway/design-decision-loop.svx` (`Inbound interpretation`). |
+| Storm lineage | `message.batched` exists, but the envelope has no aggregate identity or member list contract. | Put aggregate ID, member event IDs, open/close reason, and rewrite output in typed gateway payloads. Keep aggregation policy out of the log package. | `packages/message-event-log/src/index.ts` (`MessageEventKind`); `.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` (`Vocabulary: storm`). |
+
+The kind allowlist currently exists in both `packages/message-event-log/src/index.ts` and `../joelclaw-api/convex/messageEventSchema.ts`. Gateway additions will drift unless the stream effort gives both packages one generated or shared schema source.
+
+## Replay and read APIs
+
+### What exists
+
+`createMessageEventLogClient()` exposes:
+
+- `append(input)`
+- `pending(limit)`
+- `materialize({ eventId, inngestEventId })`
+- `trace(flowId, limit)`
+
+`traceByFlow` returns one known flow's projection, canonical events, and consumer receipts in ascending `occurredAt` order. The default limit is 100, the maximum is 500, and the response reports `truncated`. Four other Convex queries exist but are not exposed by `@joelclaw/message-event-log`: platform-message lookup, terminal receipt lookup, action declaration lookup, and the fixed materializer tail query. Receipts: `packages/message-event-log/src/index.ts` (`createMessageEventLogClient`, `MessageEventTraceResult`); `../joelclaw-api/convex/messageEvents.ts` (`traceByFlow`, `lookupPlatformMessage`, `getTerminalReceipt`, `getActionDeclaration`).
+
+### Can the gateway rebuild conversational context today?
+
+No.
+
+It can reconstruct the events for one known `flowId` if producers included useful content in the untyped payload. It cannot rebuild a recent conversation window because there is no public read API by global sequence, recorded time, origin, session, or pane. `traceByFlow` has no pagination cursor. `pending()` is not a general replay API: it is tied to the single hard-coded materializer consumer and its cursor. A gateway using it would race or inherit the materializer's checkpoint instead of owning its own replay position. Receipts: `../joelclaw-api/convex/messageEvents.ts` (`pendingForConsumer`, `traceByFlow`); `../joelclaw-api/convex/schema.ts` (`messageConsumerCursors.consumer` literal); `packages/message-event-log/src/index.ts` (`pending`).
+
+The source checkout also contradicts the stream step's claim that `joelclaw messages trace` now defaults to Convex. `packages/cli/src/commands/messages.ts` still imports `traceMessage` from `@joelclaw/message-journal`; `packages/cli/package.json` does not depend on `@joelclaw/message-event-log`; and repo search finds the new client only in the materializer and proof script. The Convex trace API exists, but the CLI wiring is not present in this checkout. Receipts: `packages/cli/src/commands/messages.ts` (`MessagesDependencies`, `defaultDependencies`, `executeMessagesTrace`); `packages/cli/package.json`; `.brain/projects/message-event-stream/build-the-log-and-append-boundary.svx` (`Work receipt — 2026-07-19`).
+
+## Proposed contract between efforts
+
+### The message-event-stream effort owns
+
+1. One versioned canonical event envelope and one append boundary.
+2. Global sequence allocation and semantic-key idempotency.
+3. A typed **origin record** in the shared envelope.
+4. Multi-consumer tailing: each consumer owns a named cursor and acknowledges only after its durable side effects and output appends succeed.
+5. Replay reads independent of consumer state:
+   - `readAfterSequence(sequence, limit)` with pagination.
+   - `readSince(recordedAt, limit, cursor)` for cold start and the one-day prototype.
+   - `traceFlow(flowId, cursor)` with pagination.
+   - Optional origin filters for pane/session recovery.
+6. Disposable generic views and their rebuild path.
+7. Retention and replay rules from `grill-retention-replay-and-views.svx`.
+8. Live deployment proof and truthful CLI trace wiring.
+
+### The Agent Comms Gateway effort owns
+
+1. The gateway event payload schemas for decisions, inbound interpretations, rewrites, storms, and escalation.
+2. Stable semantic-key recipes for those events.
+3. The gateway's XState lifecycle and independent stream cursor.
+4. Judgment: deliver, hold, aggregate, rewrite, route, revive, or escalate.
+5. Transport commands and fallback policy. The transport appends fallback facts but owns no other policy.
+6. Context-window selection and compaction. The canonical log remains truth.
+
+### Concrete ask to the message-event-stream effort
+
+Before gateway implementation starts, that effort should provide:
+
+- typed `origin` fields without forcing gateway-specific decisions into the base envelope;
+- extensible or shared event-kind schemas so the client and Convex validator cannot drift;
+- a named multi-consumer cursor contract;
+- paginated sequence/time replay APIs that do not mutate a cursor;
+- live append→consume→view→dedupe proof;
+- Convex-backed `joelclaw messages trace` wiring, or a correction to its work receipt;
+- settled retention and safe replay semantics.
+
+The gateway should not wait for every legacy lane to move. It can become the log's first policy-bearing consumer once these seams exist, then append its own decisions beside current traffic. Full replacement still waits for the Agent Comms Gateway cutover plan.

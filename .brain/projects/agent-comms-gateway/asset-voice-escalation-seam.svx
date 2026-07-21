@@ -1,0 +1,97 @@
+---
+title: "Voice escalation seam"
+type: "asset"
+parent: "./map-voice-escalation-seam.svx"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Voice escalation seam
+
+## Current outbound pipeline
+
+The interactive phone path is `call-joel`, not `notification/call.requested`.
+
+1. A fleet agent invokes `call-joel "<reason>"` on flagg. Other machines SSH to flagg. The skill permits calls only when Joel directs one or voice-level urgency warrants one, limits an unanswered retry to one, and says to fall back to notify or SMS. Receipts: `/Users/joel/.agents/skills/dark-wizard/call-joel/SKILL.md`; [`infra/voice-agent/call-joel.sh:1-11`](../../../infra/voice-agent/call-joel.sh).
+2. The script leases LiveKit credentials and Joel's phone number. It creates a unique LiveKit room and runs `lk sip participant create` against the LiveKit outbound SIP trunk. `wait_until_answered: true` makes the command block until the phone leg answers or the CLI fails. The stated reason travels as the SIP participant attribute `call_reason`. Receipts: [`infra/voice-agent/call-joel.sh:13-47`](../../../infra/voice-agent/call-joel.sh).
+3. LiveKit Cloud dispatches the Python voice worker into the room. LiveKit SIP reaches Joel through the Telnyx outbound trunk. The worker runs on flagg as the Joel-user LaunchAgent `com.joel.voice-agent`; `start.sh` executes `run.sh start`, which leases the LiveKit, Telnyx, model, speech, and tool credentials before registering the worker. Receipts: [`infra/voice-agent/start.sh`](../../../infra/voice-agent/start.sh), [`infra/voice-agent/run.sh`](../../../infra/voice-agent/run.sh), [dial-tone resolution](../voice-workroom/restore-dial-tone-via-livekit-cloud.svx).
+4. After the SIP participant joins, the worker validates caller identity and starts the private `AgentSession`. The media and model stack is LiveKit Cloud + Telnyx SIP, Deepgram speech-to-text, OpenRouter-backed LLM, and ElevenLabs text-to-speech. Receipts: [`infra/voice-agent/main.py:1566-1650`](../../../infra/voice-agent/main.py), [`infra/voice-agent/main.py:1680-1701`](../../../infra/voice-agent/main.py), [`infra/voice-agent/main.py:105-146`](../../../infra/voice-agent/main.py).
+
+`notification/call.requested` is a different, older path. It asks Telnyx TeXML to speak the message with the `alice` voice and hang up. Its Inngest function waits 30 seconds, checks call status, then sends SMS when the call was not answered. It does **not** connect Joel to the voice agent. Reusing that event unchanged would silently choose the wrong product behavior. Receipts: [`packages/system-bus/src/lib/telnyx.ts:191-209`](../../../packages/system-bus/src/lib/telnyx.ts), [`packages/system-bus/src/inngest/functions/telnyx-notify.ts:39-99`](../../../packages/system-bus/src/inngest/functions/telnyx-notify.ts).
+
+## Briefing and context
+
+A caller can hand the voice agent a briefing today. `call-joel.sh` puts the full reason string in `participant_attributes.call_reason`. `main.py` reads that attribute and creates the first model prompt from:
+
+- the stated reason;
+- fast local context loaded before the greeting;
+- slow recall, calendar, and alert context injected after the greeting;
+- the voice worker's system instructions built from its soul files and voice rules.
+
+When `call_reason` is present, the worker tells the model to lead with it and keep the opener tight. The reason is free text only. It has no schema, size limit, source identity, `flowId`, origin record, or durable correlation ID. It also does not appear in the completion event. Receipts: [`infra/voice-agent/main.py:147-231`](../../../infra/voice-agent/main.py), [`infra/voice-agent/main.py:1711-1755`](../../../infra/voice-agent/main.py), [`infra/voice-agent/main.py:1760-1786`](../../../infra/voice-agent/main.py).
+
+## Current outcome and failure story
+
+### What the caller learns
+
+`call-joel.sh` has `set -euo pipefail` and returns the raw `lk sip participant create` exit status. A lease failure or SIP CLI failure is non-zero. A successful return proves that LiveKit reported the phone leg answered. It does not prove that the worker joined, spoke the reason, or completed a conversation. The output is human CLI text, not a typed receipt. Receipt: [`infra/voice-agent/call-joel.sh`](../../../infra/voice-agent/call-joel.sh).
+
+The script has no retry, fallback, timeout, idempotency key, or event append of its own. The `call-joel` skill supplies only operator policy: no more than one retry when unanswered, then notify or SMS. Receipt: `/Users/joel/.agents/skills/dark-wizard/call-joel/SKILL.md`.
+
+### What the voice stack records
+
+Once the private session starts, the worker writes fail-soft Convex telemetry for session start, five-second heartbeats, turn latency, and session end. These writes have a one-second deadline, are silently dropped after failures, and open a short circuit after three consecutive failures. They are useful telemetry, not a delivery receipt. Receipts: [`infra/voice-agent/call_tracker.py:1-10`](../../../infra/voice-agent/call_tracker.py), [`infra/voice-agent/call_tracker.py:50-109`](../../../infra/voice-agent/call_tracker.py).
+
+On session close, the worker saves a local transcript and sends `voice/call.completed` when the history has at least two lines. That event carries room, transcript, timestamp, and turn count. It does not carry the escalation reason, gateway `flowId`, origin record, dial result, or answer time. The helper that sends the event swallows command failures into a string, so the close handler can log a saved transcript even when the event was not accepted. Receipts: [`infra/voice-agent/main.py:263-276`](../../../infra/voice-agent/main.py), [`infra/voice-agent/main.py:1757-1788`](../../../infra/voice-agent/main.py), [`packages/system-bus/src/inngest/functions/voice-call-completed.ts`](../../../packages/system-bus/src/inngest/functions/voice-call-completed.ts).
+
+### How stack failures surface
+
+The source has external detection, but it is not correlated to an individual `call-joel` request:
+
+- `voice-worker-canary` probes LiveKit dispatch every five minutes, pages once per cause per 30 minutes, and emits a recovery notice. Receipt: [`packages/system-bus/src/inngest/functions/voice-worker-canary.ts`](../../../packages/system-bus/src/inngest/functions/voice-worker-canary.ts).
+- `voice-synthetic-call` runs daily through the outbound trunk and the DID. It treats `wait_until_answered` as its assertion and separates low Telnyx balance from a generic synthetic-call failure. Receipt: [`packages/system-bus/src/inngest/functions/voice-synthetic-call.ts`](../../../packages/system-bus/src/inngest/functions/voice-synthetic-call.ts).
+- `voice-missed-call` waits 45 seconds for a matching Telnyx answer webhook, then pages through both the old call path and gateway urgent notification. This protects inbound calls, not gateway-initiated outbound calls. Receipt: [`packages/system-bus/src/inngest/functions/voice-missed-call.ts`](../../../packages/system-bus/src/inngest/functions/voice-missed-call.ts).
+- `verify-voice.sh` checks launchd, secrets, LiveKit worker dispatch, recent fatal logs, dependencies, Telnyx balance, and caller configuration. On hard failure it sends both a call request and an urgent notify. Receipt: [`infra/voice-agent/verify-voice.sh:152-172`](../../../infra/voice-agent/verify-voice.sh).
+
+The voice-workroom receipt records a live worker-kill test that paged in 4m05s and a synthetic call that answered in three seconds on 2026-07-12. It also records that the old number died after the Telnyx balance lapsed. These are dated reliability receipts, not proof that today's runtime is healthy. Receipt: [fail-loud canaries resolution](../voice-workroom/build-fail-loud-canaries.svx).
+
+One known gap remains open: restarting the LaunchAgent can drop a live call because graceful drain has not been proven. Receipt: [Add Graceful Drain to Voice Worker Restarts](../voice-workroom/add-graceful-drain-voice-worker.svx).
+
+## Proposed gateway interface
+
+Give the gateway agent one judgment-level action:
+
+```ts
+type CallJoel = (request: {
+  escalationId: string
+  reason: string
+  origin: OriginRecord
+}) => Promise<{
+  escalationId: string
+  room: string
+  outcome: "answered" | "unanswered" | "failed"
+  answeredAt?: string
+  failure?: {
+    stage: "lease" | "dispatch" | "dial" | "agent_join"
+    code: string
+    detail: string
+  }
+}>
+```
+
+The adapter belongs on flagg beside the existing voice worker and secrets. The gateway agent chooses whether to call and authors `reason`. The adapter owns mechanics only: create the room, attach `escalationId`, `call_reason`, and origin correlation as participant attributes, invoke LiveKit SIP, and append lifecycle facts to the stream.
+
+A truthful `answered` result must require both facts:
+
+1. the SIP phone leg answered;
+2. the voice worker joined the same room and started the private session.
+
+The current `lk` exit proves only the first fact. The worker must append the second with the same `escalationId`. A later `completed` stream event can carry disconnect time and the existing transcript receipt. `answered`, `unanswered`, and `failed` are the terminal delivery outcomes the gateway needs immediately; conversation completion is a later lifecycle fact.
+
+Use a new semantic event or tool contract such as `voice/escalation.requested`. Do not overload `notification/call.requested` while it still means one-way Telnyx TeXML plus SMS fallback. Preserve `call-joel` as the human CLI wrapper over the same adapter so fleet callers and the gateway cannot drift.
+
+The adapter must not decide urgency, retry, timing, wording, or fallback. Those are gateway-agent judgments. It should reject duplicate `escalationId` values, redact phone numbers and secrets from receipts, and return machine-readable failure details. The gateway can then append the outcome to the stream, choose at most one retry when warranted, or deliver the rewritten facts through another transport.
+
+## Design consequence
+
+The current path already has the hard media work and supports a stated reason. The missing seam is correlation and truthful lifecycle evidence. The smallest useful change is not another phone stack. It is one host-side adapter that turns the existing `call-joel.sh` mechanics into an idempotent, correlated action with a worker-join acknowledgment and stream receipts.

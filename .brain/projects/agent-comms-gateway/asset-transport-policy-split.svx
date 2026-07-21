@@ -1,0 +1,253 @@
+---
+title: "Asset: transport/policy split"
+type: "asset"
+parent: "./inventory-transport-policy-split.svx"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Transport/policy split
+
+## Scope and state
+
+This inventory covers every production TypeScript module under `packages/gateway/src/`, the message contract, and the notify path through the SDK and CLI. Tests follow the production module they protect.
+
+This is an inventory of the **current checkout**, not the intended state described by the priority-lane follow-up.
+
+The current checkout still contains lane, urgency, source inference, suppression, and priority-derived routing:
+
+- `packages/message-contract/src/kinds.ts:11-18` defines `DeliveryLane`, `MessageUrgency`, and `FormattingProfile`.
+- `packages/message-contract/src/routing.ts:12-38` maps kind to platform, lane, urgency, and formatting.
+- `packages/gateway/src/chat-sdk/notify-compat.ts:19-35` infers kind from source and priority.
+- `packages/sdk/src/capabilities/adapters/gateway-redis.ts:99-103,259-272` derives log level and `immediateTelegram` from priority.
+- `packages/cli/src/commands/notify.ts:54-78,183-189` still describes priority, operator lanes, and suppression as producer-facing behavior.
+
+The 2026-07-19 priority-lane work is **implemented but stashed**, not present in the working tree. Git receipt `c272c940` is `stash@{0}`: `priority-lane WIP (p1A) pulled from live daemon path during telegram outage 2026-07-19`. Its 25-file patch replaces lane/urgency with `delivery: immediate | batch`, removes contract-v2 suppression, makes priority a compatibility-only input, and adds batch-failure-to-immediate behavior. Do not reimplement that patch independently. Recover or reconcile it first.
+
+## Split rule
+
+- **Transport (keeps)** owns platform connections, the one poller/socket per platform, normalization, platform-safe encoding, delivery, receipts, correlation indexes, journaling, and bus publication.
+- **Policy (moves to the gateway agent)** owns whether, when, where, and how Joel sees a message. This includes kind routing, platform choice, delivery mode, batching, digest assembly, suppression, rewrite, format profile, button/card choice, and phone escalation.
+- **Seam (changes shape)** is code that currently mixes both sides or connects producers, the stream, the agent, and transport.
+
+## `packages/gateway/src`: transport keeps
+
+| File | Classification | Receipt and required boundary |
+| --- | --- | --- |
+| `callback-trace.ts` | transport | Keeps interaction delivery and timeout receipts. It tracks route lifecycle without deciding message meaning (`:133-312`). |
+| `channel-health.ts` | transport | Keeps channel health, recovery state, and repair mechanics. Alert wording and escalation move out (`:196-397`). |
+| `channels/discord.ts` | transport | Keeps Discord listener/send mechanics and the single owner (`DiscordChannel`, `:102-789`). Remove any presentation or routing choices that leak in. |
+| `channels/error-emission-budget.ts` | transport | Keeps bounded internal error emission so a broken adapter cannot flood logs (`:24-92`). This is service protection, not operator-message suppression. |
+| `channels/imessage.ts` | transport | Keeps socket reconnect, inbound normalization, send, and runtime state (`IMessageChannel`, `:80-578`). iMessage modernization remains out of scope. |
+| `chat-sdk/instance.ts` | transport | Canonical one-owner runtime. It starts Telegram polling, Slack sockets, and Discord gateway listeners (`:109-284`). |
+| `chat-sdk/telegram-adapter.ts` | transport | Keeps Telegram callback encoding, text bounds, MarkdownV2 failure fallback, and platform send (`:65-117`). |
+| `lib/inngest-event.ts` | transport | Keeps event API configuration/loading for inbound publication. |
+| `message-journal.ts` | transport | Keeps exact-text journaling, local outbox fallback, flow lookup, and action declaration lookup (`:158-337`). |
+| `telegram-markdown.ts` | transport | Keeps safe Telegram encoding and plain-text fallback (`prepareTelegramMarkdown`, `:48`). The agent chooses the authored form; transport only makes it postable. |
+| `discord-ui/helpers/button.ts` | transport | Keeps low-level Discord button construction. The agent chooses whether and which buttons exist. |
+| `discord-ui/helpers/v2-builders.ts` | transport | Keeps thin Chat SDK/Discord component builders. It must not select a UI profile. |
+| `discord-ui/slash-commands/register.ts` | transport | Keeps platform registration mechanics only. Command meaning and handlers move. |
+
+## `packages/gateway/src`: policy moves to the gateway agent
+
+| File or file group | Classification | Receipt and destination |
+| --- | --- | --- |
+| `command-queue.ts` | policy | Old in-process Pi session scheduling and source selection move to the gateway agent plus wake registry. It is not dumb transport. |
+| `commands/builtins.ts`, `commands/config.ts`, `commands/registry.ts`, `commands/skills.ts`, `commands/telegram-handler.ts`, `commands/worktree.ts`, `commands/mcq-adapter.ts`, `commands/discord-mcq-adapter.ts` | policy | Command semantics, model/thinking config, tool invocation, MCQ behavior, and worktree actions belong in the agent/plugin surface. Transport may only publish normalized commands and callbacks. |
+| `digest-gateway.ts` | policy | Digest composition and digest action behavior move. It composes and executes digest decisions (`:159-267`) and owns digest callbacks (`:310-464`). |
+| `discord-ui/components/approval-card.ts`, `discovery-card.ts`, `heartbeat-digest.ts`, `mcq-flow.ts`, `run-card.ts`, `search-result-card.ts`, `session-card.ts`, `status-container.ts` | policy | Fixed operator-facing presentation profiles move to the agent. |
+| `discord-ui/helpers/accent-color.ts`, `helpers/format.ts`, `helpers/truncate.ts`, `discord-ui/index.ts`, `discord-ui/slash-commands/handler.ts` | policy | Visual tone, truncation, formatting, exports, and command response choices move with the UI policy. |
+| `formatting/cli.ts`, `formatting/discord.ts`, `formatting/imessage.ts`, `formatting/telegram.ts`, `formatting/index.ts` | policy | These inject channel-specific prompt instructions. The new agent owns rewrite and format choice. Transport keeps only platform-safe encoding. |
+| `guardrails.ts` | policy | Tool budgets and deploy verification rules belong to the agent runtime, not transport (`:3-79`). |
+| `heartbeat.ts` | policy | This prompts the old gateway session and filters its answer (`startHeartbeatRunner`, `:218`). Replace it with the new container heartbeat contract; do not keep it as transport policy. |
+| `knowledge-turn.ts` | policy | Gateway knowledge-write decisions belong to the agent and its stream memory (`:98-237`). |
+| `lib/pi-process-pool.ts` | policy | Old Pi inference workers move or retire with the old in-process agent runtime (`createPiProcessPool`, `:46`). |
+| `lib/thread-tracker.ts` | policy | Conversation summaries and lifecycle memory move to the agent/stream model. Transport keeps only platform IDs and origin correlation. |
+| `maintenance-policy.ts` | policy | Compaction/rotation decisions move to the agent container lifecycle (`decideIdleGatewayMaintenance`, `:20`). |
+| `operator-relay.ts` | policy | This is the clearest policy blob: it scores signals, chooses immediate/batched/suppressed/ingested, and authors digest guidance (`:119-121,371-479`). Move it; do not wrap it. |
+| `outbound/format.ts` | policy | It rewrites text and injects Telegram style rules (`:36-53`). The gateway agent owns this. |
+| `outbound/router.ts` | policy | It selects a channel from source/context, applies formatting, suppresses heartbeat output, and routes the old session response (`:145-239`). Replace with an explicit agent-to-transport send request. |
+| `session-pressure.ts` | policy | Context compaction/rotation policy moves to the agent container (`:54-155`). |
+| `telegram-outbound-policy.ts` | policy | Move the whole decision layer: deliver/digest/suppress/investigate, digest queueing, and suppression journal (`:160-393`). Do not call it from fallback. |
+
+## `packages/gateway/src`: seams that change shape
+
+| File | Classification | Current mix and target shape |
+| --- | --- | --- |
+| `daemon.ts` | seam | It composes the old agent, channels, policy, Redis, Chat SDK, health, and legacy outbound queue. Chat SDK startup is at `:4982`; notify transport ingress is at `:5130-5450`. Split into a small transport composition root plus the separate gateway-agent container. |
+| `channels/types.ts` | seam | `SendOptions` mixes mechanics (`replyTo`, media, audit) with policy (`format`, `silent`, `noPreview`, `outboundPolicy`) at `:14-24`. Keep mechanical fields. Replace policy fields with an agent-authored postable payload and explicit fallback marker. |
+| `channels/redis.ts` | seam | Keeps Redis ingress/replay mechanics, but removes triage, batching, suppression, digest prompts, and old-agent enqueue. Current policy starts immediately after notify compatibility at `:795-906`; digest assembly is `:1296-1355`. The replacement appends to the message stream and invokes fallback only on stale agent heartbeat. |
+| `chat-sdk/index.ts` | seam | Public exports must separate transport API from compatibility and policy APIs. |
+| `chat-sdk/notify-compat.ts` | seam | Keep a temporary producer compatibility decoder. Remove source inference and routing authority. Its output becomes a facts/origin stream record, not an `OutboundIntent` whose kind selects a route. |
+| `chat-sdk/notify-acting.ts` | seam | Keep envelope recognition, terminal error handling, and compatibility telemetry. Replace direct contract-v2 policy delivery (`routeNotifySendCompat`, `:168-214`) with stream append plus terminal receipt lookup. |
+| `chat-sdk/outbound.ts` | seam | This is the current `send()` boundary (`makeOutboundSender`, `:536`; singleton `send`, `:813`). Keep adapters, target lookup, reply anchors, journaling, platform send, and receipts. Remove `resolveMessageRoute`, `ROUTING_TABLE_V2`, `TelegramPolicyPort`, kind-derived platform choice, and suppression/digest terminal states (`:539-709`). The agent must pass an explicit target, postable content, origin/flow IDs, and delivery intent. |
+| `chat-sdk-inbound/acting.ts` | seam | Keep Chat SDK handler registration, actor verification, normalization, dedupe, and correlation. Remove `dispatchPlatformPolicy`, `prepareInvoke`, and direct old-session enqueue (`:35-79,232-390`). Publish every accepted inbound event to the stream with its origin/flow references. |
+| `chat-sdk-inbound/normalize.ts` | seam | Platform normalization keeps. Embedded `InboundAuthorization.policyAction` and execution decisions must shrink to mechanical actor/auth facts; the agent interprets intent (`normalizeSdkInboundEvent`, `:621`). |
+| `chat-sdk-inbound/publish.ts` | seam | Bus publication keeps (`createGatewayInboundBusClient`, `:41`). Replace the observe-only/shadow contract with canonical stream append and a durable append receipt (`:63-89`). |
+| `slack-runtime.ts` | seam | Keep Slack send, socket/runtime state, and normalized events. Move reply grants, mention routing, passive-intel policy, and direct agent enqueue (`:742-1080`). |
+| `telegram-runtime.ts` | seam | Keep Bot API mechanics, chunking, editing, callbacks, receipts, and platform formatting fallback. Remove `routeTelegramOutbound` preflight (`:1574-1597,1971-1985`) and direct old-session enqueue (`:918-1153`). Add a narrow raw-text fallback send that bypasses policy and rich formatting. |
+| `telegram-stream.ts` | seam | Keep transport streaming/edit mechanics only if the new agent needs them. Remove policy resolution and suppression (`:212-252,592-616`). Stream delivery must start from an explicit agent send request. |
+| `watchdog.ts` | seam | Existing code detects dead old sessions after failures (`:1-35`). Replace its input with the gateway-agent container heartbeat/staleness signal. Keep the external watcher role and grace timing. |
+| `outbound/envelope.ts` | seam | Replace the old channel/format envelope with an explicit agent-authored transport request plus origin, flow, reply, and audit fields (`:3-21`). |
+
+## Exact gateway module index
+
+This compact index makes the 67 production-module classifications machine-checkable. Each file appears exactly once.
+
+### Transport
+
+- `packages/gateway/src/callback-trace.ts`
+- `packages/gateway/src/channel-health.ts`
+- `packages/gateway/src/channels/discord.ts`
+- `packages/gateway/src/channels/error-emission-budget.ts`
+- `packages/gateway/src/channels/imessage.ts`
+- `packages/gateway/src/chat-sdk/instance.ts`
+- `packages/gateway/src/chat-sdk/telegram-adapter.ts`
+- `packages/gateway/src/lib/inngest-event.ts`
+- `packages/gateway/src/message-journal.ts`
+- `packages/gateway/src/telegram-markdown.ts`
+- `packages/gateway/src/discord-ui/helpers/button.ts`
+- `packages/gateway/src/discord-ui/helpers/v2-builders.ts`
+- `packages/gateway/src/discord-ui/slash-commands/register.ts`
+
+### Policy
+
+- `packages/gateway/src/command-queue.ts`
+- `packages/gateway/src/commands/builtins.ts`
+- `packages/gateway/src/commands/config.ts`
+- `packages/gateway/src/commands/discord-mcq-adapter.ts`
+- `packages/gateway/src/commands/mcq-adapter.ts`
+- `packages/gateway/src/commands/registry.ts`
+- `packages/gateway/src/commands/skills.ts`
+- `packages/gateway/src/commands/telegram-handler.ts`
+- `packages/gateway/src/commands/worktree.ts`
+- `packages/gateway/src/digest-gateway.ts`
+- `packages/gateway/src/discord-ui/components/approval-card.ts`
+- `packages/gateway/src/discord-ui/components/discovery-card.ts`
+- `packages/gateway/src/discord-ui/components/heartbeat-digest.ts`
+- `packages/gateway/src/discord-ui/components/mcq-flow.ts`
+- `packages/gateway/src/discord-ui/components/run-card.ts`
+- `packages/gateway/src/discord-ui/components/search-result-card.ts`
+- `packages/gateway/src/discord-ui/components/session-card.ts`
+- `packages/gateway/src/discord-ui/components/status-container.ts`
+- `packages/gateway/src/discord-ui/helpers/accent-color.ts`
+- `packages/gateway/src/discord-ui/helpers/format.ts`
+- `packages/gateway/src/discord-ui/helpers/truncate.ts`
+- `packages/gateway/src/discord-ui/index.ts`
+- `packages/gateway/src/discord-ui/slash-commands/handler.ts`
+- `packages/gateway/src/formatting/cli.ts`
+- `packages/gateway/src/formatting/discord.ts`
+- `packages/gateway/src/formatting/imessage.ts`
+- `packages/gateway/src/formatting/index.ts`
+- `packages/gateway/src/formatting/telegram.ts`
+- `packages/gateway/src/guardrails.ts`
+- `packages/gateway/src/heartbeat.ts`
+- `packages/gateway/src/knowledge-turn.ts`
+- `packages/gateway/src/lib/pi-process-pool.ts`
+- `packages/gateway/src/lib/thread-tracker.ts`
+- `packages/gateway/src/maintenance-policy.ts`
+- `packages/gateway/src/operator-relay.ts`
+- `packages/gateway/src/outbound/format.ts`
+- `packages/gateway/src/outbound/router.ts`
+- `packages/gateway/src/session-pressure.ts`
+- `packages/gateway/src/telegram-outbound-policy.ts`
+
+### Seam
+
+- `packages/gateway/src/daemon.ts`
+- `packages/gateway/src/channels/types.ts`
+- `packages/gateway/src/channels/redis.ts`
+- `packages/gateway/src/chat-sdk/index.ts`
+- `packages/gateway/src/chat-sdk/notify-acting.ts`
+- `packages/gateway/src/chat-sdk/notify-compat.ts`
+- `packages/gateway/src/chat-sdk/outbound.ts`
+- `packages/gateway/src/chat-sdk-inbound/acting.ts`
+- `packages/gateway/src/chat-sdk-inbound/normalize.ts`
+- `packages/gateway/src/chat-sdk-inbound/publish.ts`
+- `packages/gateway/src/slack-runtime.ts`
+- `packages/gateway/src/telegram-runtime.ts`
+- `packages/gateway/src/telegram-stream.ts`
+- `packages/gateway/src/watchdog.ts`
+- `packages/gateway/src/outbound/envelope.ts`
+
+## Tests under `packages/gateway/src`
+
+Tests inherit their production classification. Preserve transport proofs, rewrite seam proofs, and move policy proofs with the agent:
+
+- **Transport tests keep:** `callback-trace.test.ts`, `channel-health.test.ts`, `channels/error-emission-budget.test.ts`, `message-journal.test.ts`, `telegram-markdown.test.ts`.
+- **Policy tests move:** `commands/config.test.ts`, `digest-gateway.test.ts`, `guardrails.test.ts`, `heartbeat.test.ts`, `knowledge-turn.test.ts`, `maintenance-policy.test.ts`, `operator-relay.test.ts`, `session-pressure.test.ts`, `telegram-outbound-policy.test.ts`.
+- **Seam tests change:** `chat-sdk-inbound/acting.test.ts`, `chat-sdk-inbound/cutover.e2e.test.ts`, `chat-sdk-inbound/inbound.test.ts`, `chat-sdk/__tests__/notify-acting.test.ts`, `chat-sdk/__tests__/outbound.test.ts`, `chat-sdk/__tests__/visible-delivery-canary.test.ts`, `command-queue.test.ts`, `slack-runtime.test.ts`, `telegram-runtime.test.ts`, `telegram-stream.test.ts`, `watchdog.test.ts`.
+
+The new seam suite needs four end-to-end proofs: producer append, agent-authored send, inbound reply/reaction correlation, and stale-heartbeat raw fallback.
+
+## `packages/message-contract/`
+
+| File | Classification | Required change |
+| --- | --- | --- |
+| `src/flow-id.ts` | transport | Keep minted flow IDs (`mintFlowId`, `:9`). |
+| `src/events.ts` | transport/seam | Keep reaction, action, and reply correlation schemas (`:6-82`). Expand origin records for pane/session/wake routing. |
+| `inbound-events.ts` | seam | Keep normalized platform facts. Remove `policyAction`, `shadow`, and observe-only execution semantics; these encode old transport policy (`:29-57,92-133`). |
+| `src/outbound.ts` | seam | Keep callback action bounds and message validation. Replace `kind`-driven `OutboundIntentV2` (`:37-47`) with facts/origin at producer ingress and a separate explicit agent-to-transport send contract. |
+| `src/receipt.ts` | transport/seam | Keep durable requested/confirmed/failed receipts and links. Remove policy outcomes `suppressed`/`digested` and route lane/urgency/formatting (`:11-44`). Add `fallback: true` or an equivalent stream event for fallback delivery. |
+| `src/errors.ts` | transport/seam | Keep adapter, target, reply anchor, and delivery errors. Retire route-table errors. |
+| `src/kinds.ts` | policy | Kind, lane, urgency, and formatting profile currently drive routing (`:5-18`). Producer kind may survive only as a fact/hint for compatibility. It cannot select delivery. |
+| `src/routing.ts` | policy | Delete from the transport path. It is the kind-to-platform/lane/urgency table the finish line kills (`:20-54`). |
+| `src/index.ts` | seam | Re-export the two explicit contracts: producer/stream append and agent/transport send. Stop exporting routing policy. |
+| `__tests__/inbound-events.test.ts` | seam test | Rewrite for normalized facts plus canonical stream append. |
+| `__tests__/outbound.test.ts` | seam test | Delete routing-table expectations. Prove explicit send requests and delivery/fallback receipts instead. |
+
+## Notify path through SDK and CLI
+
+| File | Classification | Required change |
+| --- | --- | --- |
+| `packages/sdk/src/capabilities/adapters/gateway-redis.ts` | seam | Keep `joelclaw notify send` queue/publish/idempotency and wait/readback. Stop deriving level, `immediateTelegram`, routing, or terminal suppression from priority (`:99-103,222-450`). Append producer facts and origin to the stream. |
+| `packages/sdk/src/capabilities/adapters/gateway-redis.test.ts` | seam test | Prove priority is compatibility metadata only, stream append is idempotent, and wait resolves confirmed/failed/fallback receipts. |
+| `packages/sdk/src/types.ts` | seam | `NotifySendInput` currently exposes priority/channel/telegramOnly and lacks `kind` (`:102-112`). Preserve those only for compatibility. Add origin facts. Do not add new producer routing controls. |
+| `packages/sdk/src/client.ts` | seam | `notifySend()` defaults priority to normal and does not forward CLI `kind` (`:319-378`). Keep the method name and wire format, but send facts to the stream. |
+| `packages/sdk/src/capabilities/runtime.ts` | transport | Keep capability-to-adapter registration (`notify: gatewayRedisNotifyAdapter`, `:23`). |
+| `packages/sdk/src/capabilities/index.ts` | transport | Keep adapter export. |
+| `packages/cli/src/commands/notify.ts` | seam | Keep `notify send` and `notify wait`. Deprecate routing flags, stop promising lane/suppression behavior, and describe the command as producer fact submission (`:54-78,105-259`). |
+| `packages/cli/src/commands/notify.test.ts` | seam test | Prove compatibility parsing and no producer routing authority. |
+| `packages/cli/src/cli.ts` | transport/seam | Keep command registration (`notifyCmd`, `:32,311`). Update help text that advertises priority (`:178-179,274`). |
+| `packages/cli/src/capabilities/config.ts` | transport | Keep the default `gateway-redis` adapter selection (`notify`, `:37`). |
+| `packages/cli/src/capabilities/runtime.ts` | transport | Keep capability dispatch. |
+
+## Priority-lane reconciliation
+
+The stashed `c272c940` patch already changed the correct **old architecture** files:
+
+- contract: `kinds.ts`, `routing.ts`, `receipt.ts`, `index.ts`;
+- compatibility: CLI notify, SDK Redis adapter, `notify-compat.ts`, `notify-acting.ts`;
+- delivery: `chat-sdk/outbound.ts`, `telegram-outbound-policy.ts`;
+- tests/docs around those files.
+
+Use it as migration evidence and test material, not as the final gateway architecture. It removes lane/urgency and contract-v2 suppression, which reduces conflict. It still leaves a kind-owned routing table and Telegram policy in the transport path. This effort must finish the split by removing those policy decisions from transport entirely.
+
+## Minimal real fallback
+
+### Closest existing path
+
+The closest ingress is `packages/gateway/src/channels/redis.ts:795-833`. It already recognizes `joelclaw notify send` envelopes before general triage and calls the Chat SDK send path. The closest policy-free platform primitive is the canonical Chat SDK Telegram adapter created in `chat-sdk/instance.ts:109-284`, specifically `openDM()` plus `postMessage()` through the adapter shape in `chat-sdk/outbound.ts:486-528`.
+
+Do **not** implement fallback through:
+
+- `telegram-outbound-policy.ts`, because it can digest, suppress, or investigate;
+- `chat-sdk/outbound.ts:536-709` as currently shaped, because it resolves kind through the routing table and invokes Telegram policy;
+- `telegram-runtime.ts:1558-1690` as currently shaped, because `sendTelegramMessage()` invokes policy and rich formatting;
+- the legacy queue in `daemon.ts:5130-5450`, because it contains channel routing and HTML/button behavior.
+
+### Smallest change
+
+1. Keep the external watcher role from `watchdog.ts`, but feed it the gateway-agent container heartbeat. The transport daemon must not infer staleness from its own process state.
+2. At notify ingress, append the producer event and origin record to the stream first.
+3. If the agent heartbeat is fresh, transport does nothing else. The agent consumes the stream and sends an explicit transport request.
+4. If the heartbeat is stale past the grace period, call a new `sendRawTelegramFallback({ text, flowId, origin })` transport function.
+5. That function uses the already-owned Chat SDK Telegram adapter directly: open Joel's DM and post `{ raw: text }`. It applies no rewrite, no routing table, no batching, no suppression, no Markdown profile, and no buttons.
+6. Journal the platform receipt and append a `fallback.delivered` stream event with the same `flowId`, platform message ID, staleness evidence, and `fallback: true`.
+7. On ambiguous post-send journal failure, do not retry automatically. The existing `NotifyCompatDeliveryError` duplicate guard is the right precedent (`chat-sdk/notify-acting.ts:168-214`).
+
+This is smaller and safer than teaching the ordinary sender a `bypassPolicy` flag. A bypass flag would keep policy and fallback coupled and make accidental policy-free sends representable.
+
+## Result
+
+The daemon can survive as transport, but only after four mixed files are cut apart: `daemon.ts`, `channels/redis.ts`, `chat-sdk/outbound.ts`, and the platform runtimes. The strongest existing keepers are Chat SDK ownership, normalization, message journaling, flow correlation, platform delivery, and receipts. The routing table, Telegram outbound policy, operator relay, digest assembly, format profiles, suppression, and old in-process agent runtime move out.

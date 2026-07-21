@@ -3,8 +3,9 @@ title: "Map the herdr and Claude plugin surface"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
+closed_at: "2026-07-21"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: []
 created_at: "2026-07-21"
@@ -20,3 +21,7 @@ Two plugin surfaces could wire the gateway into the system natively; inventory b
 2. **Claude plugin side**: Joel's standing call — a custom Claude plugin likely packages the gateway loop's tooling. Inventory what a Claude Code plugin can carry (skills, agents, hooks, MCP servers) and sketch what a `joelclaw-gateway` plugin would bundle for the Fable loop: stream append/read tools, herdr client tools, wake-registry tools, prompt files.
 
 Resolved when an asset (`asset-plugin-surface-map.svx`) records: herdr's current client/plugin capabilities with file receipts, the gap list, what a Claude plugin can package, and a recommendation for how the gateway loop gets its tooling. Feeds [Design the decision loop](./design-decision-loop.svx).
+
+## Result (2026-07-21)
+
+Mapped both extension surfaces in [the plugin surface asset](./asset-plugin-surface-map.svx). Herdr protocol 17 already has snapshot, lifecycle subscription, occupant-pinned waits, atomic `agent.prompt`, and agent start. Flagg still runs protocol 16, so the upgrade and a container-to-host socket canary are cutover blockers. Package the Fable loop as a Claude Code plugin with one MCP server for stream, herdr, and wake tools. Add a host-side herdr bridge only if direct socket access fails.

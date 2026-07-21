@@ -1,0 +1,182 @@
+---
+title: "Agent comms gateway: herdr and Claude plugin surface map"
+type: "asset"
+parent: "./map-herdr-and-plugin-surface.svx"
+created_at: "2026-07-21"
+privacy: "private"
+---
+
+# Agent comms gateway: herdr and Claude plugin surface map
+
+## Recommendation
+
+Package the Fable loop as a **Claude Code plugin**. Put judgment, tool descriptions, and the gateway agent prompt there.
+
+Use a small, typed herdr socket client behind the Claude plugin's MCP server. Do not put gateway policy in a herdr plugin. A herdr plugin is useful only as an optional host bridge when the container cannot reach the host socket safely.
+
+Do not use herdr event hooks as the gateway's event feed. They launch one command for each event and have a 32-command in-flight cap. The socket gives one bootstrap snapshot and one long-lived subscription instead. Receipts: `.agent_sources/github.com/ogulcancelik/herdr/src/app/api/plugins/runtime.rs::start_plugin_command`, `MAX_PLUGIN_COMMANDS_IN_FLIGHT`; `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:114-125,750-780`.
+
+## Evidence baseline
+
+The requested checkout `~/Code/joelhooks/herdr` was absent on Flagg. I added a read-only project source mirror at `.agent_sources/github.com/ogulcancelik/herdr/`; `.agent_sources/github.com/ogulcancelik/herdr/.agent-source.json` pins upstream commit `7c189003464fce851736096b309078aaff7640c7`.
+
+The running Flagg binary is Herdr `0.7.4`, protocol 16. The source mirror still declares package version `0.7.4`, but its wire protocol is 17 and includes unreleased client methods absent from the installed CLI. Receipts: `.agent_sources/github.com/ogulcancelik/herdr/Cargo.toml:3`; `.agent_sources/github.com/ogulcancelik/herdr/src/protocol/wire.rs:16`; live probe `herdr --version` and `herdr status` on 2026-07-21.
+
+This distinction matters. The design below uses the source protocol 17 surface. Cutover must first install a Herdr build that exposes and proves `agent.prompt`.
+
+## Herdr client surface
+
+### Discovery and identity
+
+A client can bootstrap from `session.snapshot`, then keep a local cache from resource events. The snapshot includes version and protocol data, focused workspace/tab/pane ids, workspaces, tabs, panes, layouts, and agents. Reconnect requires another snapshot. Receipt: `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:116-125`.
+
+`agent.list`, `agent.get`, `pane.list`, and `pane.get` expose the routing facts the gateway needs: `workspace_id`, `tab_id`, `pane_id`, `terminal_id`, agent status, current and foreground working directories, revision, and an optional native `agent_session`. Receipt: `.agent_sources/github.com/ogulcancelik/herdr/src/api/schema/agents.rs::AgentInfo`; `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:678-701`.
+
+The gateway must keep the **origin record** in the message **stream**. Herdr has no `flowId` or producer-origin index. Bind each live origin to at least `{paneId, terminalId, agentSession}`. Re-read the target before delivery so a recycled pane id cannot receive an old reply. Receipt for the available identity fields: `.agent_sources/github.com/ogulcancelik/herdr/src/api/schema/agents.rs::AgentInfo` and `AgentSessionInfo`.
+
+### Read and reply delivery
+
+`agent.read` reads terminal output from an agent target. `pane.read` provides the same visible, recent, recent-unwrapped, and detection sources at pane scope. Receipt: `.agent_sources/github.com/ogulcancelik/herdr/src/api/schema/agents.rs::AgentReadParams`; `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:785-800`.
+
+Protocol 17 adds `agent.prompt`. It submits prompt text as one terminal submission and can start an occupant-pinned wait in the same request. This removes the text-plus-Enter race. The handler rejects an empty prompt, a missing or unready agent, a pending launch, and a target whose agent no longer owns the pane foreground process. Receipts: `.agent_sources/github.com/ogulcancelik/herdr/src/api/schema/agents.rs::AgentPromptParams`; `.agent_sources/github.com/ogulcancelik/herdr/src/app/api/agents.rs::handle_agent_prompt`; `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:114-115`; `.agent_sources/github.com/ogulcancelik/herdr/src/api/wait.rs:184-320`.
+
+The installed protocol 16 binary exposes `agent send`, which writes literal text. It does not expose the atomic `agent.prompt` method in its CLI. This is a cutover blocker, not a reason to rebuild prompt delivery in the gateway.
+
+### Wait and lifecycle
+
+`agent.wait` is server-owned and event-driven. It pins the resolved occupant so a replacement agent cannot satisfy the wait. `AgentWaitParams` supports a set of terminal states and a timeout. Receipts: `.agent_sources/github.com/ogulcancelik/herdr/src/api/schema/agents.rs::AgentWaitParams`; `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:114-115`.
+
+`events.subscribe` supplies workspace, tab, pane, worktree, layout, and agent-status events over one newline-delimited JSON socket. The pane set includes create, update, close, focus, move, exit, detection, output match, status change, and scroll change. Receipts: `.agent_sources/github.com/ogulcancelik/herdr/src/api/schema/events.rs::Subscription`; `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:750-780`.
+
+Use the sequence below:
+
+1. Open the socket and call `session.snapshot`.
+2. Build the live-origin cache.
+3. Subscribe to lifecycle events.
+4. On disconnect, discard the cache and repeat from a new snapshot.
+
+Do not rebuild state from plugin-hook JSONL alone. The socket contract already defines bootstrap and reconnect. Receipt: `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:116-125`.
+
+### Spawn and revive
+
+Protocol 17 `agent.start` activates a named agent of a known kind in an existing shell pane. `AgentStartParams` carries `name`, `kind`, `pane_id`, agent arguments, and a bounded startup timeout. Pane topology is separate through `pane.split`, `tab.create`, or `workspace.create`. Receipts: `.agent_sources/github.com/ogulcancelik/herdr/src/api/schema/agents.rs::AgentStartParams`; `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/cli-reference.mdx:294-309`.
+
+Herdr does not own the gateway effort's **revive** contract. The wake registry already distinguishes **WAKE**, **SPAWN**, and **REVIVE**. Keep dead-origin recovery there. The gateway's wake tool should submit the original reply plus origin context, then wait for the new pane/session identity to appear. Receipt: `/Users/joel/.agents/skills/dark-wizard/pane-scheduling/SKILL.md:8-20,35-37`.
+
+## Herdr plugin surface
+
+A herdr plugin is an executable package, not an in-process SDK. Its commands can call the complete CLI or raw socket. Herdr validates the manifest, injects context, launches commands, and records logs. Receipt: `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/plugins.mdx:8-33`.
+
+The current manifest parser supports:
+
+- build commands;
+- startup commands;
+- actions;
+- event hooks;
+- managed terminal panes;
+- link handlers.
+
+Receipt: `.agent_sources/github.com/ogulcancelik/herdr/src/app/api/plugins/manifest.rs::RawPluginManifest`.
+
+Herdr injects socket, binary, plugin root, config directory, state directory, invocation context, and available workspace/tab/pane ids. Event hooks also receive the event name and JSON envelope. Receipts: `.agent_sources/github.com/ogulcancelik/herdr/src/app/api/plugins/runtime.rs::start_plugin_command`; `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/plugins.mdx:252-280`.
+
+The `herdr-janitor` precedent proves the practical shape:
+
+- `herdr-plugin.toml` registers lifecycle events and operator actions;
+- `bridge/hook.mjs` appends bounded event records and ensures one detached runner;
+- `src/herdr.mjs` wraps list/read/send/wait/close and metadata commands;
+- `src/queue.mjs::eventFromEnvironment` consumes Herdr's injected event and identity values.
+
+Receipts: `/Users/joel/Code/joelhooks/herdr-janitor/herdr-plugin.toml`; `/Users/joel/Code/joelhooks/herdr-janitor/bridge/hook.mjs`; `/Users/joel/Code/joelhooks/herdr-janitor/src/herdr.mjs`; `/Users/joel/Code/joelhooks/herdr-janitor/src/queue.mjs`.
+
+### What a gateway-native herdr plugin would do
+
+If the container cannot connect to the host socket, a `joelclaw-gateway-herdr` plugin can provide a host bridge:
+
+- bootstrap a local cache with `session.snapshot`;
+- subscribe to lifecycle events on one socket;
+- expose a narrow local RPC surface: `origins`, `read`, `prompt`, `start`, and `wait`;
+- validate `{paneId, terminalId, agentSession}` before `prompt`;
+- append bridge failures and stale-target refusals to the message **stream**;
+- provide `doctor` and `probe-origin` actions.
+
+The bridge owns mechanics only. It must not choose whether, when, or how Joel receives a message. That judgment stays in the **gateway agent**.
+
+Do not implement the bridge as one process per Herdr event. Do not rely on a startup hook to supervise it. Herdr says startup hooks are one-shot initialization commands, not supervised daemons. Receipt: `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/plugins.mdx:234-249`.
+
+The smaller path is better: mount or relay the Herdr socket into the gateway service and let the Claude plugin's MCP server speak protocol 17 directly. Add the herdr plugin only if the container boundary makes that unsafe or unreliable.
+
+## Claude Code plugin surface
+
+Claude Code plugins can auto-discover `commands/`, `agents/`, `skills/`, `hooks/hooks.json`, and `.mcp.json` from a plugin root. `${CLAUDE_PLUGIN_ROOT}` makes internal script and server paths portable. Receipts: `/Users/joel/.claude/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-structure/SKILL.md:24-35,338-348`; `/Users/joel/.claude/plugins/marketplaces/claude-plugins-official/plugins/example-plugin/.claude-plugin/plugin.json`.
+
+An agent Markdown body becomes that agent's system prompt. This is the right place for the **gateway agent** identity, vocabulary, policy, stop rules, and use of tools. Receipt: `/Users/joel/.claude/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/agent-development/SKILL.md:20-57,144`.
+
+A plugin can bundle MCP servers in `.mcp.json`. Claude Code starts those servers when the plugin is enabled and registers their tools. Receipt: `/Users/joel/.claude/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/mcp-integration/SKILL.md:23-38,220-235`; `/Users/joel/.claude/plugins/marketplaces/claude-plugins-official/plugins/example-plugin/.mcp.json`.
+
+Hooks can add deterministic session behavior. A plugin `SessionStart` hook can load the gateway's prompt files and stream cursor context. `PreCompact` and `PostCompact` hooks can checkpoint and restore the stream cursor around compaction. Receipt for plugin hook shape and portable paths: `/Users/joel/.claude/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/SKILL.md:64-97`; `/Users/joel/.claude/plugins/marketplaces/claude-plugins-official/plugins/explanatory-output-style/hooks/hooks.json`.
+
+### Proposed `joelclaw-gateway` bundle
+
+```text
+joelclaw-gateway/
+  .claude-plugin/plugin.json
+  agents/joelclaw-gateway.md
+  skills/gateway-operations/SKILL.md
+  hooks/hooks.json
+  .mcp.json
+  prompts/
+    identity.md
+    vocabulary.md
+    judgment.md
+    fallback-boundary.md
+  server/
+    index.ts
+    stream-tools.ts
+    herdr-tools.ts
+    wake-tools.ts
+  commands/
+    gateway-doctor.md
+    gateway-probe-origin.md
+```
+
+The MCP server should expose three small tool families:
+
+1. **Stream tools** — read the next unhandled event, append an interpreted decision, append delivery or fallback receipts, and advance a cursor only after readback.
+2. **Herdr tools** — snapshot origins, read a target, deliver with `agent.prompt`, wait for state, and start an agent in a prepared pane.
+3. **Wake tools** — submit and inspect WAKE/SPAWN/REVIVE work through the existing registry.
+
+Prompt files are plain source files read by the agent definition or `SessionStart` hook. Do not invent a second policy-config format.
+
+## Gap list
+
+### Must close before cutover
+
+1. **Protocol mismatch.** Flagg runs protocol 16. The safe reply primitive is protocol 17 `agent.prompt`. Upgrade Herdr and prove the exact method before gateway cutover. Receipts: `.agent_sources/github.com/ogulcancelik/herdr/src/protocol/wire.rs:16`; `.agent_sources/github.com/ogulcancelik/herdr/src/app/api/agents.rs::handle_agent_prompt`.
+2. **Container-to-host socket path.** The gateway container needs a tested, least-privilege route to the host Herdr socket. Herdr raw transport is a local Unix socket on macOS/Linux. Receipt: `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:600-637`.
+3. **Origin binding.** Herdr has pane and session identity but no `flowId` index. Define the stream's origin projection and stale-target refusal using `{paneId, terminalId, agentSession}`. Receipt for available fields: `.agent_sources/github.com/ogulcancelik/herdr/src/api/schema/agents.rs::AgentInfo`.
+4. **Reconnect behavior.** The MCP client needs snapshot-then-subscribe recovery, heartbeat, staleness, and explicit dropped-connection receipts. Receipt: `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:116-125,750-780`.
+5. **Revive handoff.** Herdr can start an agent, but the wake registry owns durable REVIVE. Define the reply payload and readback receipt between the gateway and that registry. Receipt: `/Users/joel/.agents/skills/dark-wizard/pane-scheduling/SKILL.md:8-20,102-106`.
+
+### Do not add to Herdr core yet
+
+- Do not add comms policy, `flowId`, or message-stream storage to Herdr.
+- Do not add a Herdr-managed daemon solely for this effort. Use the gateway service supervisor.
+- Do not add duplicate lifecycle hooks when `events.subscribe` already supplies the feed.
+- Do not add a generic plugin storage API. The gateway **stream** is the durable memory; Herdr plugin storage is explicitly plugin-owned. Receipt: `.agent_sources/github.com/ogulcancelik/herdr/docs/next/website/src/content/docs/socket-api.mdx:572-574`.
+
+If direct socket access fails in practice, the one justified Herdr addition is a supervised, scoped host bridge entrypoint. Prove that need with a container socket canary first.
+
+## Feed into decision-loop design
+
+The **gateway agent** decision loop should treat Herdr as a target registry, not memory:
+
+1. Read one unhandled message event from the **stream**.
+2. Interpret and decide.
+3. Resolve its **origin record** against the live Herdr snapshot.
+4. Use `agent.prompt` for a live target.
+5. Use wake-registry **revive** for a dead target.
+6. Append the decision and delivery receipt to the **stream**.
+7. Advance only after readback.
+
+That keeps the transport dumb, the stream durable, Herdr mechanical, and the Fable loop responsible for judgment.

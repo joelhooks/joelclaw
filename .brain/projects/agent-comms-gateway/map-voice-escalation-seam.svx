@@ -3,8 +3,9 @@ title: "Map the voice escalation seam"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+assignee: "pi (flagg, herdr worker pane, 2026-07-21)"
+closed_at: "2026-07-21"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: []
 created_at: "2026-07-21"
@@ -26,3 +27,9 @@ Answer with file receipts:
 4. The seam: what minimal interface would let the gateway agent choose "call Joel" as a delivery decision with a stated reason, and get a truthful outcome receipt back.
 
 Resolved when an asset (`asset-voice-escalation-seam.svx`) records the current pipeline, its failure story, and the proposed interface. Feeds [Plan the full cutover](./plan-full-cutover.svx).
+
+## Result (2026-07-21)
+
+Mapped the existing interactive path from `call-joel` through LiveKit Cloud and Telnyx SIP into the flagg voice worker. The path already accepts a spoken reason, but its CLI success proves only that the phone leg answered. It has no gateway correlation, worker-join acknowledgment, or typed outcome receipt. The old `notification/call.requested` event is a separate one-way Telnyx TeXML call with SMS fallback and must not be reused unchanged. Proposed one host-side, idempotent adapter that accepts `reason` plus the origin record, correlates by `escalationId`, and reports `answered | unanswered | failed` only after it combines the SIP answer with a matching voice-worker join.
+
+Asset: [Voice escalation seam](./asset-voice-escalation-seam.svx).

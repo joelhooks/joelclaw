@@ -31,6 +31,7 @@ Maintained by the container-service reliability contract from the workload-class
 - **stream** — the event-sourcing message event log; the agent's only durable memory; the container holds no state that matters.
 - **origin record** — producer, machine, herdr pane/session, flowId, appended with every outbound message; makes reply routing mechanical.
 - **rewrite** — the gateway authors every operator-facing message in one voice; producers hand over facts, not prose.
+- **evidence** — everything a producer sends (text, kind, priority, `--data`); it informs the agent's judgment, it never instructs routing.
 - **storm** — a burst of related producer messages; aggregated into one delivery, never twenty pings.
 - **revive** — wake-registry SPAWN/REVIVE of a dead origin session, carrying Joel's reply and the original context.
 
@@ -52,12 +53,19 @@ Standing calls (Joel, 2026-07-21, charter grilling):
 - Storms are aggregated.
 - Full replacement — no shadow window, no staged cutover. The fallback and source-control rollback are the safety story.
 - A custom Claude plugin likely packages the gateway loop's tooling (mid-charter, on the plugin-surface question).
+- One inbound contract: every event from Joel — free text, reaction, button tap — is the same envelope in the stream, interpreted by the agent. No mechanical fast path (producer-facts grilling).
 
 Execution is not yet authorized. Steps produce decisions; build authorization lands when [Plan the full cutover](./plan-full-cutover.svx) closes.
 
 ## Decision ledger
 
-_(charter settlements live in Finish line, Vocabulary, and Notes; no closed steps yet)_
+_(charter settlements live in Finish line, Vocabulary, and Notes)_
+
+- [Map the voice escalation seam](./map-voice-escalation-seam.svx) — keep the existing LiveKit/Telnyx phone stack, but put one correlated adapter in front of it because today's CLI proves a SIP answer, not that the voice worker joined and delivered the reason.
+- [Design the producer facts contract](./design-producer-facts-contract.svx) — producers report what happened, the agent decides what Joel hears: all metadata is evidence not instruction, origin auto-stamped + `--data` escape hatch, deprecation rows die, and every inbound event (taps included) rides the same stream envelope through the agent.
+- [Map the message event stream seam](./map-stream-seam.svx) — the log kernel is sound, but gateway memory needs typed origin and decision events plus independent paginated replay.
+- [Map the herdr and Claude plugin surface](./map-herdr-and-plugin-surface.svx) — package the Fable loop as a Claude plugin over Herdr protocol 17; add a host bridge only if the container socket canary fails.
+- [Inventory the transport/policy split](./inventory-transport-policy-split.svx) — keep platform mechanics, normalization, journaling, correlation, delivery, and receipts in transport; move routing, suppression, batching, rewrite, and formatting policy to the gateway agent.
 
 ## Latent
 

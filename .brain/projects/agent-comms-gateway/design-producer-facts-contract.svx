@@ -3,8 +3,9 @@ title: "Design the producer facts contract"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+closed_at: "2026-07-21"
+assignee: "claude (flagg, herdr pane w28:p1, 2026-07-21)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: []
 created_at: "2026-07-21"
@@ -22,3 +23,14 @@ Standing calls in tension, deliberately: producers hand over facts, not prose (t
 4. Reactions: Joel rejected emoji reactions as an action API (2026-07-19, buttons won); confirm how button actions flow once the agent owns policy — does the agent declare buttons, and does `message/action.requested` survive as-is?
 
 Resolved when the producer-facing contract is recorded here: what producers send, what the agent guarantees, and what (if anything) is deprecated.
+
+## Result (2026-07-21)
+
+Grilled live, all four branches. The contract in one sentence: **producers report what happened; the agent decides what you hear.**
+
+1. **Evidence, never instruction.** Everything a producer sends — text, `--kind`, `--priority`, `--data` — lands in the stream as fields the agent reads as evidence. No code path branches on them. The routing table, delivery modes, and kind→platform map die. The wire accepts the old flags forever (finish-line condition 3), stripped of authority.
+2. **Two wire additions, nothing else.** The CLI auto-stamps the origin record on every send (producer name, machine, herdr pane/session ID, flowId) — not opt-in; it is what makes reply routing mechanical. One escape hatch: optional `--data <json>` / repeated `--ref` for structured evidence (receipts, run IDs, links, available actions). No schema, no validation beyond parseable JSON. Plain prose stays a complete, first-class payload forever.
+3. **No deprecation machinery.** The `notify.compat_v2.implicit_kind` OTEL nag rows die with the routing table — they lobby for a dead concept. The only pressure toward richer payloads is organic: when a rewrite lacks a receipt, that producer gets `--data` the day it annoys Joel. Steering, not policy.
+4. **Buttons — agent all the way, and a tap is not special** (Joel: "agent mfer"; "taps are another event same as"). The agent declares buttons at rewrite time; producers list available actions in `--data` as evidence and the agent chooses whether and how to render them. There is one inbound contract: every event from Joel — free text, reaction, button tap — lands in the stream in the same envelope and the agent interprets it. No separate tap pipeline, no mechanical fast path. Transport keeps only platform mechanics: answer the callback, authorize Joel, resolve the platform message to flowId, append to the stream. The agent dispatches onward via the three-tier routing contract; `message/action.requested` remains available as its dispatch event to headless consumers, not as a parallel path. During agent downtime, inbound events queue in the stream until the loop resumes — the fallback stays outbound-only and dead simple.
+
+Consequences for later steps: the notify-compat shim collapses to "append to stream"; [Design the decision loop](./design-decision-loop.svx) item 5 now includes tap interpretation; [Inventory the transport/policy split](./inventory-transport-policy-split.svx) should classify the callback-answering path as transport and everything after the stream append as agent.
