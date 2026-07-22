@@ -1,0 +1,43 @@
+---
+title: "Context pack: grill-master charter for joelclaw resilience engineering"
+date: 2026-07-20
+status: active
+---
+
+# Charter input: k8s, agent containers, and joelclaw resilience from first principles
+
+You are a fresh Claude session on flagg. Joel wants you to run the `grill-master` skill and charter a working brief for **joelclaw resilience engineering**: k8s, containers for agent workers, and the reliability model, reasoned from first principles. Joel is at the keyboard — grill HIM for the finish line; do not answer your own grilling. This file is your context inheritance from the diagnosis session that ran earlier today.
+
+## What just happened (2026-07-19/20, receipts exist)
+
+flagg rebooted 2026-07-19 ~21:28Z. Fallout diagnosed and fixed today:
+
+1. **Terminal geometry killed automation chains.** The observer herdr session's window came back ~80 cols (54x23 usable content). The dispatcher's hard 80x24 pane gate could never pass, so scheduled spawns failed and were recorded "executed ok:false" — silently consuming one-shot schedules. The campaign-pulse chain died at 16:00Z 07-19 (5h BEFORE the reboot-adjacent window shrink was noticed) and the daily-flow-agent spawn died at 14:30Z 07-20. Fixed today: 40x10 floor + only-burn-on-success + 3-attempt latch (observer repo commit 2e456f98, promoted).
+2. **No late-fire recovery existed.** Schedule de16dde1 woke mid-reboot, hit "Unable to reach SDK URL", terminally failed, and sat "pending" forever. Fixed today: wake-registry reconciler, cron */5 + startup, re-emits overdue due-signals late:true (joelclaw commit d1a37e89).
+3. **`session-index-health` killed healthy Inngest 54 times.** Its recover() advances the cooldown only if BOTH Inngest and GUI-worker kicks succeed; the worker kick kept failing, so every 60s pass re-killed a healthy event server. Also: index-lag wrongly triggers event-server restarts. Open step: fix-session-index-health-recovery in the reboot-hardening brief.
+4. **595 poisoned Redis queue items** (missing envID) spammed 5.2M lease errors into a 30.9GB launchd err log. Purged today via a v1.27-pinned DequeueByJobID tool between an Inngest bounce.
+5. **LaunchDaemon audit findings:** KeepAlive={SuccessfulExit=false} leaves clean-exit services down; no readiness ordering (Inngest starts 2s after Postgres and got lucky); no log rotation.
+
+Existing charter (patch-level, mostly done): `/Users/joel/Code/joelhooks/joelclaw/.brain/projects/reboot-hardening/reboot-hardening-brief.svx` — read it. THIS new effort is the redesign that sits past that brief's finish line. Do not duplicate its steps.
+
+## Joel's musing that started this (2026-07-20, verbatim intent)
+
+Containers for agent workers and herdr panes could be "more sandboxed, safer, and easier to persist." The k8s rig on panda is more resilient than launchd on flagg (reconciliation loop, probes, restart backoff, readiness ordering, no GUI-session dependence).
+
+## The steering session's honest-friction list (stress-test these, don't assume them)
+
+- The panes exist for Joel's eyes: sandboxing workers is easy; preserving zoom/attach/interact is the design problem. Works only if herdr's client-server split attaches across the container boundary (socket mount or TCP). Needs a spike, not an assumption — this was proposed as the first prototype step.
+- The dispatcher's job is touching the host (panes, launchctl-adjacent, ~/.joelclaw). Proposed split: AFK work becomes container jobs (dispatcher gains a "spawn job" verb); HITL work stays as real flagg panes.
+- Secrets improve (scoped mounts per worker vs whole-$HOME) but `secrets` runtime + tailnet must be plumbed per cell deliberately.
+- macOS caveat: containers are Linux VMs; launchd/osascript/window-management workloads stay host-side by definition.
+- Containers don't fix app-level failures (the queue poison would have traveled with the app).
+
+## Seeds already in the fleet
+
+- `~/Code/joelhooks/sandbox-computer` (ghcr.io/joelhooks/sandbox-computer): standing sandbox image with herdr, pi, claude, codex, opencode preinstalled. Skill: `sandbox-computer`.
+- k8s placement: panda owns k8s (`~/Code/joelhooks/joelclaw/packages/endpoint-resolver/config/service-placement.json`). flagg is the Discord-driven Studio + Brain host; blaine is the laptop.
+- Fleet doctrine worth reading before grilling: `~/.brain/resources/operator-network-context.svx`, memory `herdr pi workers strongly preferred`, memory `Observability is a launch gate`.
+
+## Charter mechanics
+
+Follow grill-master's conventions exactly (`~/.claude/skills/grill-master/CONVENTIONS.md`). Suggested effort directory: `/Users/joel/Code/joelhooks/joelclaw/.brain/projects/resilience-engineering/` — confirm the name with Joel during the finish-line grilling. Commit via `git -c user.name='shitratgit[bot]' -c user.email='286405550+shitratgit[bot]@users.noreply.github.com'` and push with `shitrat push joelhooks/joelclaw --repo-dir /Users/joel/Code/joelhooks/joelclaw`.
