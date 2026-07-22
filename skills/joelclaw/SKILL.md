@@ -150,6 +150,20 @@ joelclaw gateway restart                   # Restart gateway daemon
 joelclaw gateway stream                    # Live stream gateway events
 ```
 
+### Observer
+
+`observer` is the canonical joelclaw Observer target. Do not guess panes from the default Herdr session, and do not treat it as a hidden special case. Resolve and manage it through the CLI first:
+
+```bash
+joelclaw observer status                   # Herdr protocol + Observer registry/session metadata
+joelclaw observer resolve observer         # Canonical target → named Herdr session + pane
+joelclaw observer resolve dispatcher       # Dispatcher pane in the Observer family
+joelclaw observer cycle                    # Dry-run safe named-session cycle plan
+joelclaw observer cycle --execute          # Cycle only the named observer Herdr server, then rotate Observer
+```
+
+Use `joelclaw observer resolve observer` before scheduling or waking the Observer. If it fails with `OBSERVER_TARGET_UNHEALTHY`, run `joelclaw observer status`; if the Herdr protocol drifted, run `joelclaw observer cycle --execute`. `joelclaw wake ... --target observer` is the right wake target once resolve is healthy.
+
 ### Workload Rig
 
 ```bash

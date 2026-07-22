@@ -32,6 +32,7 @@ import { noteCmd } from "./commands/note";
 import { notifyCmd } from "./commands/notify";
 import { o11yCmd } from "./commands/o11y";
 import { observationsCmd } from "./commands/observations";
+import { observerCmd } from "./commands/observer";
 import { otelCmd } from "./commands/otel";
 import { pdsCmd } from "./commands/pds";
 import { queueCmd } from "./commands/queue";
@@ -196,6 +197,8 @@ const root = Command.make("joelclaw", {}, () =>
             satellite:
               "joelclaw satellite {health|repair-request} [--notify] [--central-ssh joel@panda]",
             observations: "joelclaw observations index [--rebuild]",
+            observer:
+              "joelclaw observer {status|resolve [target]|cycle [--execute] [--no-rotate]}",
             sessions:
               "joelclaw sessions search <query> [--raw] [--source typesense|local|ssh|both] [--extract] [--machine host] [--ssh-target joel@flagg]",
             session:
@@ -237,6 +240,11 @@ const root = Command.make("joelclaw", {}, () =>
             command: "joelclaw jobs status",
             description:
               "Unified runtime workload snapshot across queue, Restate, Dkron, and Inngest",
+          },
+          {
+            command: "joelclaw observer resolve observer",
+            description:
+              "Resolve the canonical Observer target before scheduling or waking it",
           },
           {
             command:
@@ -344,6 +352,7 @@ const root = Command.make("joelclaw", {}, () =>
     otelCmd,
     o11yCmd,
     observationsCmd,
+    observerCmd,
     usageCmd,
     videoCmd,
     inngestCmd,
