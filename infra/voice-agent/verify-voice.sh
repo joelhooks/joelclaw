@@ -96,7 +96,10 @@ recall_tool_healthy() {
   grep -q 'async def recall_work' "$root/main.py" || return 1
   output="$(cd "$root" && uv run python - <<'PY'
 from voice_recall import MEMORY_DOWN, NOTHING_DISTILLED, run_recall_work
-result = run_recall_work("*", days=7, caller_verified=False)
+# This is an index/tool health check, not an unverified-caller privacy check.
+# The observation index may legitimately contain only sensitive recent hits;
+# verified Joel recall must still prove the tool can read a non-empty index.
+result = run_recall_work("*", days=7, caller_verified=True)
 if result in {MEMORY_DOWN, NOTHING_DISTILLED}:
     raise SystemExit(1)
 print(result)

@@ -889,7 +889,7 @@ class JoelclawVoiceAgent(Agent):
             data = json.loads(raw)
             hits = data.get("result", {}).get("hits", [])
             if self._caller_verified is not True:
-                hits = [h for h in hits if h.get("privacy") != "sensitive"]
+                hits = [h for h in hits if h.get("privacy") == "public"]
             if not hits:
                 return "No matching memories found."
             lines = []
