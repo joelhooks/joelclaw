@@ -54,7 +54,11 @@ export async function buildSessionStartContext({
     `\n## Latest gateway.handoff (advisory)\n${advisoryHandoff ?? "No handoff note exists. Treat this as a crash/new-cycle boot and rely on replay."}`,
     `\n## Recent conversation with Joel (last 24h, oldest first)\nThis is one continuous conversation you are already in — never greet Joel like a stranger, never re-explain what either of you already said.\n${conversation || "(no exchanges in the last 24h)"}`,
     `\n## Authoritative pending replay\n${JSON.stringify(bootstrap.pending)}`,
-    `\n## Fresh Herdr snapshot\n${JSON.stringify(snapshot)}`,
+    `\n## Fresh Herdr snapshot (trimmed: agents + pane labels only; use herdr_snapshot for full detail)\n${JSON.stringify({
+      agents: (snapshot.agents?.result?.agents ?? []).map((a) => ({ pane_id: a.pane_id, agent: a.agent, status: a.agent_status })),
+      panes: (snapshot.panes?.result?.panes ?? []).map((p) => ({ pane_id: p.pane_id, label: p.label, workspace: p.workspace_id })),
+      capturedAt: snapshot.capturedAt,
+    })}`,
     "\nFor each external pending event, append exactly one validated decision receipt before advancing the cursor. Mechanically skip gateway-owned output with stream_advance_own_output.",
   ].join("\n");
 }
