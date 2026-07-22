@@ -12,6 +12,7 @@ import {
 const originalFetch = globalThis.fetch;
 const {
   checkWebhooks,
+  checkGateway,
   checkFrontProjectionFreshness,
   checkKubernetes,
   selectLatestPlausibleTimestamp,
@@ -172,6 +173,77 @@ describe("check/system-health endpoint fallback", () => {
       "http://localhost:3111/webhooks",
       "http://10.10.10.10:3111/webhooks",
     ]);
+  });
+});
+
+describe("check/system-health slim gateway transport", () => {
+  const now = Date.parse("2026-07-22T17:00:00.000Z");
+  const readFiles = (files: Record<string, string>) => async (path: string) => {
+    const value = files[path];
+    if (value === undefined) throw new Error("ENOENT");
+    return value;
+  };
+
+  test("passes when the PID is alive and the heartbeat is fresh", async () => {
+    const result = await checkGateway({
+      readTextFile: readFiles({
+        "/tmp/joelclaw/gateway.pid": "4242\n",
+        "/tmp/joelclaw/last-heartbeat.ts": `export const lastHeartbeatTs = ${now - 60_000};\n`,
+      }),
+      isProcessAlive: (pid) => pid === 4242,
+      now: () => now,
+    });
+
+    expect(result).toEqual({
+      name: "Gateway",
+      ok: true,
+      detail: "PID 4242 alive; heartbeat fresh (60s old)",
+    });
+  });
+
+  test("fails when the PID file is missing or the process is dead", async () => {
+    expect(await checkGateway({
+      readTextFile: readFiles({}),
+      isProcessAlive: () => true,
+      now: () => now,
+    })).toMatchObject({ name: "Gateway", ok: false, detail: "no valid PID file" });
+
+    expect(await checkGateway({
+      readTextFile: readFiles({ "/tmp/joelclaw/gateway.pid": "4242\n" }),
+      isProcessAlive: () => false,
+      now: () => now,
+    })).toMatchObject({ name: "Gateway", ok: false, detail: "PID 4242 is dead" });
+  });
+
+  test("fails when the live process has no valid heartbeat", async () => {
+    const result = await checkGateway({
+      readTextFile: readFiles({ "/tmp/joelclaw/gateway.pid": "4242\n" }),
+      isProcessAlive: () => true,
+      now: () => now,
+    });
+
+    expect(result).toMatchObject({
+      name: "Gateway",
+      ok: false,
+      detail: "PID 4242 alive; no valid heartbeat",
+    });
+  });
+
+  test("fails when the live process heartbeat is older than 30 minutes", async () => {
+    const result = await checkGateway({
+      readTextFile: readFiles({
+        "/tmp/joelclaw/gateway.pid": "4242\n",
+        "/tmp/joelclaw/last-heartbeat.ts": `export const lastHeartbeatTs = ${now - 31 * 60_000};\n`,
+      }),
+      isProcessAlive: () => true,
+      now: () => now,
+    });
+
+    expect(result).toMatchObject({
+      name: "Gateway",
+      ok: false,
+      detail: "PID 4242 alive; heartbeat stale for 1860s",
+    });
   });
 });
 

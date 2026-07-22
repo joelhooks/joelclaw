@@ -5,6 +5,7 @@ import {
   type MessagePlatform,
 } from "@joelclaw/message-event-log";
 import Redis from "ioredis";
+import { sendExplicitTransport } from "./chat-sdk/explicit-send";
 import {
   getChatSdkRuntime,
   startChatSdkRuntime,
@@ -16,7 +17,6 @@ import {
 } from "./chat-sdk/notify-stream";
 import { registerChatSdkActingInbound } from "./chat-sdk-inbound/acting";
 import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
-import { sendExplicitTransport } from "./chat-sdk/explicit-send";
 import { drainDeliverDecisions } from "./gateway-decision-executor";
 
 const SESSION_ID = "gateway";
@@ -27,6 +27,8 @@ const NOTIFY_CHANNEL = "joelclaw:notify:gateway";
 const LEGACY_NOTIFY_CHANNEL = "joelclaw:notify:main";
 const PID_DIR = "/tmp/joelclaw";
 const PID_FILE = `${PID_DIR}/gateway.pid`;
+const HEARTBEAT_FILE = `${PID_DIR}/last-heartbeat.ts`;
+const HEARTBEAT_INTERVAL_MS = 15 * 60_000;
 
 function redisOptions() {
   return {
@@ -138,6 +140,15 @@ export async function startSlimTransportDaemon(): Promise<void> {
   await subscriber.subscribe(NOTIFY_CHANNEL, LEGACY_NOTIFY_CHANNEL);
   await mkdir(PID_DIR, { recursive: true });
   await writeFile(PID_FILE, `${process.pid}\n`, "utf8");
+  const writeHeartbeat = () =>
+    writeFile(HEARTBEAT_FILE, `export const lastHeartbeatTs = ${Date.now()};\n`, "utf8");
+  await writeHeartbeat();
+  const heartbeatTimer = setInterval(() => {
+    void writeHeartbeat().catch((error) => {
+      console.error("[gateway:transport] heartbeat write failed", { error: String(error) });
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+  heartbeatTimer.unref?.();
 
   let draining = false;
   let drainPending = false;
@@ -225,6 +236,8 @@ export async function startSlimTransportDaemon(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log("[gateway:transport] shutting down", { signal });
+    clearInterval(heartbeatTimer);
+    clearInterval(executorTimer);
     await Promise.allSettled([
       runtime.stop(),
       command.srem(SESSIONS_SET, SESSION_ID),

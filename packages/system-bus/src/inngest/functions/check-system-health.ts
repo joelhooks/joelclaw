@@ -705,39 +705,67 @@ async function checkWorker(): Promise<ServiceStatus> {
   };
 }
 
-async function checkGateway(): Promise<ServiceStatus> {
-  try {
-    // Check PID file — is the process alive?
-    const pidRaw = await readFile("/tmp/joelclaw/gateway.pid", "utf8").catch(() => "");
-    const pid = parseInt(pidRaw.trim(), 10);
-    if (!pid || isNaN(pid)) {
-      return { name: "Gateway", ok: false, detail: "no PID file" };
-    }
+const GATEWAY_HEARTBEAT_STALE_AFTER_MS = 30 * 60_000;
+const GATEWAY_HEARTBEAT_FUTURE_SKEW_MS = 5 * 60_000;
 
-    // Check process is alive (kill -0 doesn't actually kill)
+type GatewayHealthProbeOptions = {
+  readTextFile?: (path: string) => Promise<string>;
+  isProcessAlive?: (pid: number) => boolean;
+  now?: () => number;
+  heartbeatStaleAfterMs?: number;
+};
+
+async function checkGateway(options: GatewayHealthProbeOptions = {}): Promise<ServiceStatus> {
+  const readTextFile = options.readTextFile
+    ?? ((path: string) => readFile(path, "utf8"));
+  const isProcessAlive = options.isProcessAlive ?? ((pid: number) => {
     try {
       process.kill(pid, 0);
+      return true;
     } catch {
+      return false;
+    }
+  });
+  const now = options.now ?? Date.now;
+  const heartbeatStaleAfterMs = options.heartbeatStaleAfterMs
+    ?? GATEWAY_HEARTBEAT_STALE_AFTER_MS;
+
+  try {
+    const pidRaw = await readTextFile("/tmp/joelclaw/gateway.pid").catch(() => "");
+    const pid = Number.parseInt(pidRaw.trim(), 10);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return { name: "Gateway", ok: false, detail: "no valid PID file" };
+    }
+    if (!isProcessAlive(pid)) {
       return { name: "Gateway", ok: false, detail: `PID ${pid} is dead` };
     }
 
-    // Check WS server responds — read port, open WS, request status, close
-    const portRaw = await readFile("/tmp/joelclaw/gateway.ws.port", "utf8").catch(() => "");
-    const wsPort = parseInt(portRaw.trim(), 10);
-    if (!wsPort || isNaN(wsPort)) {
-      return { name: "Gateway", ok: false, detail: "no WS port file — daemon may not have WS server" };
+    const heartbeatRaw = await readTextFile("/tmp/joelclaw/last-heartbeat.ts").catch(() => "");
+    const heartbeatMatch = heartbeatRaw.match(/lastHeartbeatTs\s*=\s*(\d+)/);
+    const heartbeatObservedAt = heartbeatMatch?.[1]
+      ? Number.parseInt(heartbeatMatch[1], 10)
+      : Number.NaN;
+    if (!Number.isFinite(heartbeatObservedAt) || heartbeatObservedAt <= 0) {
+      return { name: "Gateway", ok: false, detail: `PID ${pid} alive; no valid heartbeat` };
     }
 
-    // Probe via HTTP upgrade attempt (Bun.serve returns 426 for non-WS)
-    const res = await fetch(`http://localhost:${wsPort}/`, { signal: AbortSignal.timeout(3000) }).catch(() => null);
-    if (!res) {
-      return { name: "Gateway", ok: false, detail: `WS port ${wsPort} not responding` };
+    const heartbeatAgeMs = now() - heartbeatObservedAt;
+    if (heartbeatAgeMs < -GATEWAY_HEARTBEAT_FUTURE_SKEW_MS) {
+      return { name: "Gateway", ok: false, detail: `PID ${pid} alive; heartbeat is future-dated` };
     }
-    // 426 = "Upgrade Required" = WS server is there and healthy
-    if (res.status === 426) {
-      return { name: "Gateway", ok: true };
+    if (heartbeatAgeMs > heartbeatStaleAfterMs) {
+      return {
+        name: "Gateway",
+        ok: false,
+        detail: `PID ${pid} alive; heartbeat stale for ${Math.floor(heartbeatAgeMs / 1000)}s`,
+      };
     }
-    return { name: "Gateway", ok: false, detail: `unexpected status ${res.status}` };
+
+    return {
+      name: "Gateway",
+      ok: true,
+      detail: `PID ${pid} alive; heartbeat fresh (${Math.max(0, Math.floor(heartbeatAgeMs / 1000))}s old)`,
+    };
   } catch (err) {
     return { name: "Gateway", ok: false, detail: String(err) };
   }
@@ -1866,6 +1894,7 @@ export const __checkSystemHealthTestUtils = {
   checkWorker,
   checkTypesense,
   checkWebhooks,
+  checkGateway,
   checkKubernetes,
   checkFrontProjectionFreshness,
   selectLatestPlausibleTimestamp,
