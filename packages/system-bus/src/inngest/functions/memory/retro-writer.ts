@@ -324,7 +324,7 @@ export async function runRetroWriter(
   }
 
   const inference = await dependencies.infer(buildCondenserPrompt(source), {
-    task: "summarization",
+    task: "summary",
     system: RETRO_SYSTEM_PROMPT,
     component: "memory-retro-writer",
     action: "memory.retro.condense",
