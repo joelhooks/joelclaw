@@ -95,3 +95,4 @@ infra/talon/target/
 .env*.local
 infra/firecracker/images/
 /tmp/firecracker-*.tgz
+.wzrrd/
