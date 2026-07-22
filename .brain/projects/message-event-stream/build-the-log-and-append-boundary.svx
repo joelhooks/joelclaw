@@ -3,7 +3,8 @@ title: "Build the Log and the Append Boundary"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "ready"
+status: "blocked"
+assignee: "pi (flagg, herdr pane wY:p1H, 2026-07-19)"
 parent: "./message-event-stream-brief.svx"
 created_at: "2026-07-19"
 ---
@@ -21,3 +22,15 @@ Resolved when the canonical log exists and the key law is mechanically enforced:
 5. Nothing cuts over yet: this step builds the primitives beside the live system. Cutover is the strangle step's job.
 
 Done-condition receipts: schema file, append function with tests (duplicate, malformed, replay), consumer proof run, trace command reading the view.
+
+## Work receipt — 2026-07-19
+
+Implementation is present but this step remains open because the live Convex proof is blocked.
+
+- `joelclaw-api/convex/schema.ts` now defines schema-v1 `messageEvents`, a serialized append sequence, four day-one views, consumer receipts, and a durable tail cursor.
+- `joelclaw-api/convex/messageEvents.ts` owns the only `messageEvents` insert. Duplicate semantic keys return the original row. The materializer writes views, receipt, and cursor in one transaction.
+- `packages/message-event-log/` is the shared Convex client boundary for producers, the Inngest consumer, and CLI trace reads.
+- `message/event-consumer` is registered on the live host worker with the `message/event.consume.requested` event and one-minute cron triggers. It acknowledges only after the Convex materialize mutation returns.
+- `joelclaw messages trace <flowId>` now defaults to the Convex flow view in source. Legacy ClickHouse remains only behind `messages audit`; no live lane was cut over.
+- Unit receipts pass: four append/model tests, three consumer tests, eight CLI message tests, `joelclaw-api` typecheck, message-event-log typecheck, CLI typecheck, host registry import, and targeted Biome checks.
+- Live blocker: `convex deploy` reaches `Uploading functions to Convex...` and then stalls past four minutes. A backend restart did not clear it. Garage `39100` is reachable and a credentialed module-bucket put/head/delete smoke passed. The new schema/functions are therefore not live, so the append→consumer→view→dedupe proof script has not run.

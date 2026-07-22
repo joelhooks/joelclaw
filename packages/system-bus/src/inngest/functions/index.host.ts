@@ -86,6 +86,7 @@ import { nightlyMaintenance } from "./memory/nightly-maintenance";
 import { memoryRetroWriter } from "./memory/retro-writer";
 import { memoryRunCaptured } from "./memory/run-captured";
 import { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
+import { messageEventConsumer } from "./message-event-consumer";
 import {
   messageReactionBridge,
   neatMemoryReactionGrade,
@@ -238,6 +239,7 @@ export const hostFunctionDefinitions = [
   vercelDeployCanceled,
   meetingAnalyze,
   meetingTranscriptIndex,
+  messageEventConsumer,
   messageReactionBridge,
   neatMemoryReactionGrade,
   learnerFlowAction,

@@ -1209,6 +1209,11 @@ export type Events = {
       reason?: string;
     };
   };
+  "message/event.consume.requested": {
+    data: {
+      reason?: string;
+    };
+  };
   "message/inbound.reaction": {
     data: InboundReactionEventType;
   };

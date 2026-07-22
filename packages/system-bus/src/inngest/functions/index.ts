@@ -92,6 +92,10 @@ export { memoryRetroWriter } from "./memory/retro-writer";
 export { memoryRunCaptured } from "./memory/run-captured";
 export { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 export {
+  createMessageEventConsumerFunction,
+  messageEventConsumer,
+} from "./message-event-consumer";
+export {
   createMessageReactionBridgeFunction,
   createNeatMemoryReactionGradeFunction,
   messageReactionBridge,

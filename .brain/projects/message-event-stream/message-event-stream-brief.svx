@@ -44,6 +44,7 @@ Fleet messaging becomes one append-only event log processed as a queue. Chartere
 - [Charter](message-event-stream-brief.svx) — semantic idempotency keys are law at the append boundary; duplicates are no-ops; derived-per-delivery identities banned. (Joel, 2026-07-19)
 
 - [Inventory Every Message Lane, Journal, and Identity](research-inventory-every-lane.svx) — 11 legacy lanes with kill conditions and receipts; two surprise journals (ClickHouse + local outbox); 6 schema consequences bind the build step. (2026-07-19)
+- **Delivered from outside:** [Agent Comms Gateway stream seams](../agent-comms-gateway/build-stream-seams.svx) added typed origin, six gateway/inbound kinds, independent named cursors, and paginated `readSince`; the gateway effort deployed and live-proved them without taking on this effort's demolition scope. (2026-07-21)
 
 ## Latent
 
