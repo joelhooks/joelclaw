@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto"
 import { createWriteStream, existsSync } from "node:fs"
 import { mkdir, rename, stat, unlink, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { resolveTypesenseApiKey } from "../packages/cli/src/typesense-auth"
@@ -84,7 +84,12 @@ async function main(): Promise<void> {
   }
 
   const execute = hasFlag("--execute")
-  const archiveRoot = option("--archive-root")?.trim() || DEFAULT_ARCHIVE_ROOT
+  const nasRoot = resolve(NAS_HDD_ROOT)
+  const archiveRoot = resolve(option("--archive-root")?.trim() || DEFAULT_ARCHIVE_ROOT)
+  const archiveRelativeToNas = relative(nasRoot, archiveRoot)
+  if (!archiveRelativeToNas || archiveRelativeToNas.startsWith("..") || isAbsolute(archiveRelativeToNas)) {
+    throw new Error(`Archive root must be a directory under the NAS root (${nasRoot}): ${archiveRoot}`)
+  }
   const apiKey = resolveTypesenseApiKey()
   const documentCount = await collectionCount(apiKey)
   const stamp = utcStamp()

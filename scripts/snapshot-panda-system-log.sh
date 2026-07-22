@@ -16,6 +16,10 @@ if [[ ! -d "$NAS_ROOT" ]]; then
 fi
 
 mkdir -p "$ARCHIVE_ROOT"
+if [[ -e "$SNAPSHOT" || -e "$RECEIPT" || -e "${SNAPSHOT}.partial" || -e "${RECEIPT}.partial" ]]; then
+  echo "Refusing to overwrite an existing snapshot or receipt for $STAMP" >&2
+  exit 1
+fi
 scp "$SOURCE" "$TMP"
 if [[ ! -s "$TMP" ]]; then
   echo "Panda system log copy is empty; refusing to archive" >&2
@@ -23,10 +27,16 @@ if [[ ! -s "$TMP" ]]; then
 fi
 
 DOC_COUNT="$(wc -l < "$TMP" | tr -d ' ')"
-BYTES="$(wc -c < "$TMP" | tr -d ' ')"
-SHA256="$(shasum -a 256 "$TMP" | awk '{print $1}')"
+SOURCE_BYTES="$(wc -c < "$TMP" | tr -d ' ')"
+SOURCE_SHA256="$(shasum -a 256 "$TMP" | awk '{print $1}')"
 install -m 600 "$TMP" "${SNAPSHOT}.partial"
 mv "${SNAPSHOT}.partial" "$SNAPSHOT"
+BYTES="$(wc -c < "$SNAPSHOT" | tr -d ' ')"
+SHA256="$(shasum -a 256 "$SNAPSHOT" | awk '{print $1}')"
+if [[ "$SHA256" != "$SOURCE_SHA256" || "$BYTES" != "$SOURCE_BYTES" ]]; then
+  echo "NAS snapshot verification failed" >&2
+  exit 1
+fi
 
 cat > "${RECEIPT}.partial" <<EOF
 {
