@@ -78,6 +78,42 @@ function getApplicationWebhookSecret(): string {
   return secret;
 }
 
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function stripHtmlToText(value: string): string {
+  return normalizeWhitespace(
+    value
+      .replace(/<br\s*\/?>/giu, "\n")
+      .replace(/<\/p>/giu, "\n")
+      .replace(/<script[\s\S]*?<\/script>/giu, " ")
+      .replace(/<style[\s\S]*?<\/style>/giu, " ")
+      .replace(/<[^>]+>/gu, " ")
+      .replace(/&nbsp;/gu, " ")
+      .replace(/&amp;/gu, "&")
+      .replace(/&lt;/gu, "<")
+      .replace(/&gt;/gu, ">"),
+  );
+}
+
+function deriveMessageText(messageData: Record<string, unknown>, attachmentCount: number): string {
+  const text = normalizeWhitespace(String(messageData.text ?? ""));
+  if (text) return text;
+
+  const blurb = normalizeWhitespace(String(messageData.blurb ?? ""));
+  if (blurb) return blurb;
+
+  const body = stripHtmlToText(String(messageData.body ?? ""));
+  if (body) return body;
+
+  if (attachmentCount > 0) {
+    return `[Attachment-only message: ${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}]`;
+  }
+
+  return "";
+}
+
 export const frontProvider: WebhookProvider = {
   id: "front",
   eventPrefix: "front",
@@ -131,7 +167,9 @@ export const frontProvider: WebhookProvider = {
     const source = (eventPayload.source ?? {}) as Record<string, unknown>;
     const target = (eventPayload.target ?? {}) as Record<string, unknown>;
     const targetData = (target.data ?? {}) as Record<string, unknown>;
-    const messageData = isApplicationWebhook ? eventPayload : targetData;
+    // Application webhooks wrap the same Front Event object used by Rules webhooks.
+    // The message resource is the event target, not the event object itself.
+    const messageData = targetData;
     const sourceData = (source.data ?? {}) as Record<string, unknown>;
 
     const conversationId = String(conversation.id ?? "");
@@ -152,6 +190,24 @@ export const frontProvider: WebhookProvider = {
       const fromRecipient = recipients.find((r) => r.role === "from");
       const toRecipients = recipients.filter((r) => r.role === "to");
       const author = (messageData.author ?? {}) as Record<string, unknown>;
+      const attachmentCount = Array.isArray(messageData.attachments)
+        ? messageData.attachments.length
+        : 0;
+      const normalizedText = deriveMessageText(messageData, attachmentCount);
+
+      if (!normalizedText) {
+        return [{
+          name: "message.quarantined",
+          data: {
+            conversationId,
+            messageId: String(messageData.id ?? ""),
+            eventType: type,
+            reason: "missing-message-text",
+            payloadKeys: Object.keys(messageData).sort(),
+          },
+          idempotencyKey,
+        }];
+      }
 
       return [{
         name: mappedName,
@@ -163,10 +219,10 @@ export const frontProvider: WebhookProvider = {
           to: toRecipients.map((r) => String(r.handle ?? "")),
           subject: String(messageData.subject ?? conversation.subject ?? ""),
           body: String(messageData.body ?? ""),
-          bodyPlain: String(messageData.text ?? ""),
-          preview: String(messageData.blurb ?? ""),
+          bodyPlain: normalizedText,
+          preview: normalizeWhitespace(String(messageData.blurb ?? "")) || normalizedText,
           isInbound: type === "inbound" || type === "inbound_received",
-          attachmentCount: Array.isArray(messageData.attachments) ? messageData.attachments.length : 0,
+          attachmentCount,
         },
         idempotencyKey,
       }];

@@ -43,15 +43,20 @@ describe("Front webhook normalization", () => {
       type: "inbound_received",
       ts: 1_783_970_793,
       payload: {
-        id: "msg_app_123",
+        id: "evt_app_123",
         conversation: { id: "cnv_app_123", subject: "Application webhook" },
-        recipients: [
-          { role: "from", handle: "sender@example.com", name: "Sender" },
-          { role: "to", handle: "support@example.com" },
-        ],
-        text: "hello from application webhook",
-        blurb: "hello",
-        attachments: [],
+        target: {
+          data: {
+            id: "msg_app_123",
+            recipients: [
+              { role: "from", handle: "sender@example.com", name: "Sender" },
+              { role: "to", handle: "support@example.com" },
+            ],
+            text: "hello from application webhook",
+            blurb: "hello",
+            attachments: [],
+          },
+        },
       },
     }, {});
 
@@ -68,7 +73,62 @@ describe("Front webhook normalization", () => {
         isInbound: true,
       },
     });
-    expect(event?.idempotencyKey).toBe("front-inbound_received-msg_app_123-1783970793");
+    expect(event?.idempotencyKey).toBe("front-inbound_received-evt_app_123-1783970793");
+  });
+
+  test("derives non-empty text from each supported message shape", () => {
+    const cases = [
+      { message: { text: "  plain text  " }, expected: "plain text" },
+      { message: { blurb: "  preview text  " }, expected: "preview text" },
+      {
+        message: { body: "<p>Hello <strong>from HTML</strong>&amp; friends</p>" },
+        expected: "Hello from HTML & friends",
+      },
+      {
+        message: { attachments: [{ id: "fil_123" }] },
+        expected: "[Attachment-only message: 1 attachment]",
+      },
+    ];
+
+    for (const [index, fixture] of cases.entries()) {
+      const [event] = frontProvider.normalizePayload({
+        type: "inbound_received",
+        ts: 1_783_970_800 + index,
+        payload: {
+          id: `evt_text_${index}`,
+          conversation: { id: `cnv_text_${index}` },
+          target: { data: { id: `msg_text_${index}`, ...fixture.message } },
+        },
+      }, {});
+
+      expect(event).toMatchObject({
+        name: "message.received",
+        data: { bodyPlain: fixture.expected },
+      });
+    }
+  });
+
+  test("quarantines message events without usable text", () => {
+    const [event] = frontProvider.normalizePayload({
+      type: "inbound_received",
+      ts: 1_783_970_804,
+      payload: {
+        id: "evt_blank_123",
+        conversation: { id: "cnv_blank_123" },
+        target: { data: { id: "msg_blank_123", unexpected: true } },
+      },
+    }, {});
+
+    expect(event).toMatchObject({
+      name: "message.quarantined",
+      data: {
+        conversationId: "cnv_blank_123",
+        messageId: "msg_blank_123",
+        eventType: "inbound_received",
+        reason: "missing-message-text",
+        payloadKeys: ["id", "unexpected"],
+      },
+    });
   });
 
   test("keeps normalizing rules inbound payloads", () => {
