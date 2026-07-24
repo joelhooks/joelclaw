@@ -17,7 +17,10 @@ const EXPECTED_COUNT = 595;
 // keeps the criteria fence (five prefixes + missing envID) and replaces the
 // exact count with a hard ceiling; anything above it means the criteria are
 // selecting more than the known poison population — stop and re-review.
-const ACCEPT_SCAN_CEILING = 650;
+// Raised 650→900 (Joel, 2026-07-24): v1.27.0 zero-EnvID minting plus the
+// 1.28.0 upgrade-restart bounce batch left 819 items; minting verified stopped
+// (stable across scans, docs-backlog-driver completing) before this purge.
+const ACCEPT_SCAN_CEILING = 900;
 const TARGET_FUNCTION_PREFIXES = [
   "155f899f",
   "8f5e3d9e",
