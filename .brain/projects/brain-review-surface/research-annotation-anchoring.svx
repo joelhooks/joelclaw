@@ -3,7 +3,8 @@ title: "Research How Annotation Systems Anchor Spans to Mutable Documents"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-24"
 assignee: "pi anchor-research (flagg, herdr pane w2M:p2, 2026-07-24)"
 parent: "./brain-review-surface-brief.svx"
 blockers: []
@@ -26,3 +27,7 @@ Survey at minimum:
 Deliverable: an asset file `annotation-anchoring-research.svx` in this directory (`type: "asset"`, `parent:` this step) summarizing each model, with a concrete recommendation for the receipt anchor shape: what a span pins to, how re-anchoring works after the note changes, and what an orphaned annotation renders as. The [Decide the Receipt Contract](./decide-receipt-contract.svx) grilling consumes it.
 
 Resolved when the asset exists and this step's Result section links it with a three-sentence gist.
+
+## Result (2026-07-24)
+
+Research is captured in [Annotation Anchoring for Mutable Brain Pages](./annotation-anchoring-research.svx). The receipt should combine a commit-pinned source path with W3C-shaped quote and position selectors over a versioned normalized rendered-text projection. Re-anchoring should verify the original commit, map the span through a text diff, then use exact quote and context matching; ambiguous or missing targets remain visible as unanchored feedback instead of silently moving.

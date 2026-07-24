@@ -1,0 +1,116 @@
+---
+title: "Annotation Anchoring for Mutable Brain Pages"
+type: "asset"
+parent: "./research-annotation-anchoring.svx"
+created_at: "2026-07-24"
+privacy: "private"
+---
+
+# Annotation Anchoring for Mutable Brain Pages
+
+The Brain has two useful facts that general web annotation systems do not. Each review can name the exact Git commit that produced the page, and the owning `.svx` file remains available in that repository. The anchor should use both facts without pretending that rendered prose is stable enough for line numbers.
+
+## What the W3C model contributes
+
+The [W3C Web Annotation Data Model](https://www.w3.org/TR/annotation-model/) separates the source resource from the selector that identifies a segment inside it. It allows several selectors to describe the same segment so a client can try more than one recovery method.
+
+Two selector types matter here:
+
+- `TextQuoteSelector` stores the selected `exact` text plus optional `prefix` and `suffix` context. The specification requires normalized text.
+- `TextPositionSelector` stores half-open `start` and `end` character offsets in the same normalized text stream. The specification calls this selector brittle when the resource changes.
+
+The model also supports [`refinedBy`](https://www.w3.org/TR/selectors-states/#refinement-of-selection): a broad selector can first identify a container, then a second selector identifies text inside it. A heading or stable block key refined by a quote would narrow duplicate matches, but a full JSON-LD `SpecificResource` graph would add ceremony without helping this private `.svx` receipt path.
+
+Borrow the selector semantics and names. Do not copy the JSON-LD envelope, remote selector identities, XPath selectors, or the full State model. The Git commit already supplies the immutable state that a W3C `TimeState` or HTTP state would otherwise approximate.
+
+## What Hypothesis proves
+
+Hypothesis built its [fuzzy anchoring](https://web.hypothes.is/blog/fuzzy-anchoring/) around redundant evidence. Its historical implementation stored a DOM range, normalized text positions, and a quote with surrounding context. It then tried progressively weaker strategies: restore the range and verify the quote, restore the position and verify the quote, match with prefix and suffix near the expected location, then use quote-only fuzzy matching.
+
+That ordering is the important part. Position is fast but weak. Quote is the identity check. Prefix, suffix, and expected position disambiguate repeated prose. Hypothesis described 32 characters of context on each side in the [W3C annotation workshop report](https://www.w3.org/2014/04/annotation/report.html#robust).
+
+Hypothesis also treats a failed match as data, not deletion. Its current help calls these [unanchored annotations](https://web.hypothes.is/help/what-are-unanchored-annotations/): the annotation remains visible in a separate category, and the original anchor text remains on its card with a strikethrough. This is the right failure posture for receipts. A low-confidence match must not silently move feedback onto the wrong sentence.
+
+The Brain can improve on the general web case. Before fuzzy search, it can load the pinned commit, reconstruct the original normalized text, and map the original range through a diff to the current normalized text. That gives re-anchoring a trusted old document instead of only a stale position and quote.
+
+## What plannotator contributes
+
+Plannotator is useful prior art for the return path, not a durable anchor implementation.
+
+At commit [`99d11dca`](https://github.com/backnotprop/plannotator/tree/99d11dca0441022b8d6b65e29d08b587bba5920f), plan annotations carry `blockId`, `startOffset`, `endOffset`, `originalText`, optional DOM-relative start/end metadata, and the feedback text ([annotation types](https://github.com/backnotprop/plannotator/blob/99d11dca0441022b8d6b65e29d08b587bba5920f/packages/ui/types.ts#L29-L84)). Its exported agent payload is readable Markdown: numbered feedback entries include the quoted original text, feedback, and a source line label when one can be resolved ([exporter](https://github.com/backnotprop/plannotator/blob/99d11dca0441022b8d6b65e29d08b587bba5920f/packages/ui/utils/parser.ts#L775-L872)). The CLI can also return a compact decision envelope such as `{"decision":"annotated","feedback":"..."}` or a blocking hook result ([decision output](https://github.com/backnotprop/plannotator/blob/99d11dca0441022b8d6b65e29d08b587bba5920f/apps/hook/server/index.ts#L214-L241)).
+
+Its editor bridge uses an even simpler payload: `filePath`, `selectedText`, one-based `lineStart` and `lineEnd`, optional `comment`, and `createdAt` ([server model](https://github.com/backnotprop/plannotator/blob/99d11dca0441022b8d6b65e29d08b587bba5920f/apps/pi-extension/server/annotations.ts#L10-L55)). That shape is good enough for immediate agent feedback, but not for a receipt expected to survive edits.
+
+Plannotator's own source shows the limit. After an edited document, it finds the first parsed block whose content includes `originalText`; if none exists, it clears `blockId`, and the export omits the line label ([re-anchoring path](https://github.com/backnotprop/plannotator/blob/99d11dca0441022b8d6b65e29d08b587bba5920f/packages/editor/App.tsx#L1563-L1590)). This preserves feedback and avoids a known-wrong line, which is good. It does not disambiguate duplicate quotes, record an immutable source revision, or expose a durable orphan state.
+
+Borrow its readable feedback handoff and explicit decision result. Do not borrow line numbers or DOM-relative block metadata as the receipt's primary anchor.
+
+## Why PR line comments rot
+
+GitHub pull request comments bind to a diff, not to prose identity. The [review comment API](https://docs.github.com/en/rest/pulls/comments#create-a-review-comment-for-a-pull-request) requires a commit SHA, path, line, and side; it warns that a later commit can make the comment outdated. Responses retain both current and original line and commit fields, which preserves history but does not make the comment portable to arbitrary later text.
+
+That model works because a review discusses a bounded diff. A Brain receipt has a longer life and the current page is not a diff view. Adding or deleting prose above a selection shifts line and character positions even when the selected sentence is unchanged. MDSvX frontmatter, imports, component invocations, and rendered component output also break any assumption that a source line equals a visible line.
+
+Commit pinning is still essential: it makes the original target reproducible. But line numbers should be diagnostic hints only. Quote plus context should identify the prose, with position and Git diff mapping used to find it efficiently.
+
+## Recommended receipt anchor
+
+The receipt should pin the annotation to a versioned **normalized rendered-text projection** of the page at review time. It should also retain the owning source path and Git commit so the exact original can always be reconstructed.
+
+```yaml
+target:
+  page: "[[brain-review-surface-brief]]"
+  source_path: ".brain/projects/brain-review-surface/brain-review-surface-brief.svx"
+  commit: "<full git sha>"
+  projection:
+    kind: "rendered-text"
+    version: 1
+    sha256: "<hash of normalized page text>"
+  selector:
+    quote:
+      exact: "the selected visible text"
+      prefix: "up to 32 normalized characters before "
+      suffix: " up to 32 normalized characters after"
+    position:
+      start: 412
+      end: 437
+    container:
+      heading: "Finish line"
+      ordinal: 1
+```
+
+The `.svx` receipt body must also contain a normal relative link to the target page. That link, not a hidden opaque identifier, gives the graph projection a durable edge and backlink. The YAML wikilink is a machine hint; the prose link is the graph contract until the projection explicitly supports frontmatter edges.
+
+`projection.version` defines normalization. Version 1 should use the visible article text after MDSvX rendering, exclude navigation and annotation UI, preserve logical reading order, normalize Unicode and whitespace deterministically, and count Unicode code points with a half-open range. Browser capture and server verification must use the same implementation. Reject submission if `normalized.slice(start, end) !== exact`; never accept selectors that disagreed at capture time.
+
+`container` is optional supporting evidence. Use a rendered heading key and occurrence ordinal when available. Do not make generated DOM paths or source line numbers authoritative. Components can render text with no direct source span, while source lines can contain syntax that never appears on the page.
+
+### Re-anchoring after the note changes
+
+Resolve against the current checkout with this ordered cascade:
+
+1. Load the pinned commit and verify the stored projection hash, position, and exact quote. A failed verification marks the receipt invalid, not orphaned.
+2. If the current projection hash matches, use the stored position.
+3. Diff the old and current normalized projections. Map the old range through unchanged regions, then verify the exact quote and context.
+4. Search for an exact quote. Accept one unique match. For duplicates, rank by matching prefix/suffix, container, and distance from the diff-mapped position.
+5. Try normalized or fuzzy quote matching only when one candidate clears a conservative threshold and beats the next candidate by a clear margin. Store the resolver method and confidence as derived build data, not as a rewrite of the original receipt.
+6. If no candidate is both strong and unique, mark it unanchored. Never choose the first duplicate and never let a low-confidence result create an inline highlight.
+
+The first shipped resolver does not need fuzzy edit-distance matching to be useful. Commit verification, projection diff mapping, exact quote, and context cover the common cases with less risk. Add fuzzy matching only after fixtures measure false attachment, because a visible orphan is safer than feedback on the wrong sentence.
+
+### Orphan rendering
+
+An unanchored annotation gets no inline marker on the current prose. It remains visible in an **Unanchored feedback** section on the page with:
+
+- the feedback text and author surface;
+- the original exact quote, visibly struck through or labeled “No longer found”;
+- the target page and pinned commit;
+- the last resolver result, such as “quote deleted” or “three ambiguous matches”;
+- an “Open reviewed revision” link that renders the pinned commit;
+- a later manual reattach action, if the write path adds one.
+
+The receipt stays a graph node and remains backlinked to the page. Agents can still act from the feedback plus the original commit snapshot. Orphan status changes presentation, not provenance or existence.
+
+## Decision
+
+Use a compact W3C-shaped pair of quote and position selectors over a versioned rendered-text projection. Pin the source file and full commit, include a normal Brain link for the graph, and use Git diff mapping before exact/context search. Preserve ambiguous or missing targets as visible unanchored receipts; do not silently guess.

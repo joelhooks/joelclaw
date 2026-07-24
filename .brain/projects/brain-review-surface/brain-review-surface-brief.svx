@@ -42,6 +42,8 @@ The Brain wiki gains a write path: rendered pages become review surfaces whose a
 
 <!-- one line per closed step: gist + link -->
 
+- [Research How Annotation Systems Anchor Spans to Mutable Documents](./research-annotation-anchoring.svx) — Pin quote and position selectors to the reviewed commit's rendered-text projection, re-anchor through diff plus context, and preserve uncertain matches as visible unanchored receipts.
+
 ## Latent
 
 - Team: shared-repo brain roots give team read almost structurally; identity, per-root visibility, and per-author receipts force reopening the privacy boundaries ticket — deliberately, by a new fact.
