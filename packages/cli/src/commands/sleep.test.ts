@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { __wakeTestUtils } from "./sleep";
 
-const { makeScheduleEntry, parseScheduleDuration, resolveScheduleAt } = __wakeTestUtils;
+const { assertChainSuccessor, makeScheduleEntry, parseScheduleDuration, resolveScheduleAt } = __wakeTestUtils;
 
 describe("joelclaw wake scheduling", () => {
   test("parses compound in durations", () => {
@@ -38,5 +38,31 @@ describe("joelclaw wake scheduling", () => {
       briefPath: "/tmp/x.svx",
       prompt: "extra context",
     });
+  });
+
+  test("campaign-pulse successor assertion requires exactly one matching future schedule", () => {
+    const nowMs = Date.parse("2026-07-21T18:00:00.000Z");
+    const expectedAt = "2026-07-21T19:00:00.000Z";
+    const briefPath = "/repo/.brain/projects/campaign-pulse/asset-hourly-pulse-runbook.svx";
+    const matching = {
+      version: 1 as const,
+      scheduleId: "pulse-next",
+      verb: "spawn" as const,
+      at: expectedAt,
+      briefPath,
+      requestedBy: "test",
+      createdAt: "2026-07-21T17:59:00.000Z",
+    };
+
+    expect(assertChainSuccessor({ chain: "campaign-pulse", briefPath, expectedAt, schedules: [matching], nowMs })).toEqual({
+      chain: "campaign-pulse",
+      scheduleId: "pulse-next",
+      fireTime: expectedAt,
+      verified: true,
+      matchingCount: 1,
+    });
+    expect(assertChainSuccessor({ chain: "campaign-pulse", briefPath, expectedAt, schedules: [], nowMs })).toMatchObject({ verified: false, matchingCount: 0 });
+    expect(assertChainSuccessor({ chain: "campaign-pulse", briefPath, expectedAt, schedules: [matching, { ...matching, scheduleId: "pulse-duplicate" }], nowMs })).toMatchObject({ verified: false, matchingCount: 2 });
+    expect(assertChainSuccessor({ chain: "campaign-pulse", briefPath, expectedAt, schedules: [{ ...matching, at: "2026-07-21T17:00:00.000Z" }], nowMs })).toMatchObject({ verified: false, matchingCount: 0 });
   });
 });

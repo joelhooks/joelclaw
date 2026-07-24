@@ -8,8 +8,10 @@
  * orphaned entries. It deliberately does NOT re-send `pane/schedule.requested`
  * — the main function's idempotency key would swallow it inside the
  * idempotency period, and outside it a duplicate sleeping run would be
- * created. The observer dispatcher dedupes executions by scheduleId, so a
- * re-emit for a schedule that actually delivered is a safe no-op downstream.
+ * created. The observer dispatcher owns terminal acknowledgement and removes
+ * the registry entry only after success or retry exhaustion. Until then each
+ * sweep re-emits the due signal, and dispatcher scheduleId state prevents
+ * duplicate pane launches.
  */
 
 import {
@@ -96,10 +98,8 @@ export const paneScheduleReconcile = inngest.createFunction(
     const overdue = overdueRaw.map((candidate) => validatePaneSchedule(candidate));
 
     for (const entry of overdue) {
-      // Emit first; delete only after the emit step resolved. pushGatewayEvent
-      // resolves only after the Redis lpush+publish to the gateway queue
-      // succeed, and step memoization guarantees a retry of the delete step
-      // never re-runs the emit step.
+      // Re-emit while the dispatcher-owned acknowledgement is absent. The
+      // dispatcher removes the pending row after success or retry exhaustion.
       await step.run(`re-emit-due-${entry.scheduleId}`, async () => {
         const firedAt = new Date();
         await pushGatewayEvent({
@@ -128,10 +128,6 @@ export const paneScheduleReconcile = inngest.createFunction(
         return firedAt.toISOString();
       });
 
-      await step.run(`remove-recovered-${entry.scheduleId}`, async () => {
-        await getRedisClient().hdel(PANE_SCHEDULE_REGISTRY_KEY, entry.scheduleId);
-        return { scheduleId: entry.scheduleId, removed: true };
-      });
     }
 
     return {

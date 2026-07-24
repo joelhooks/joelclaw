@@ -108,12 +108,11 @@ export const paneSchedule = inngest.createFunction(
       return firedAt.toISOString();
     });
 
-    await step.run("remove-pending-schedule", async () => {
-      await getRedisClient().hdel(PANE_SCHEDULE_REGISTRY_KEY, entry.scheduleId);
-    });
-
+    // The dispatcher owns terminal acknowledgement. Keep the registry entry
+    // until pane creation succeeds or its three-attempt latch exhausts. The
+    // reconciler re-emits this due signal while the entry remains pending.
     return {
-      status: "due-signal-emitted",
+      status: "due-signal-emitted-awaiting-dispatcher-ack",
       scheduleId: entry.scheduleId,
       firedAt,
       late: isPaneScheduleLate(entry.at, Date.parse(firedAt)),

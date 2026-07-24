@@ -71,3 +71,25 @@ test("malformed registry entries are partitioned out instead of failing the swee
 test("empty registry partitions to nothing", () => {
   expect(partitionPaneScheduleRegistry({})).toEqual({ valid: [], malformed: [] });
 });
+
+test("reconciler re-emits due work without deleting dispatcher-owned pending state", async () => {
+  const schedule = JSON.parse(entryAt("2026-07-20T11:00:00.000Z", "853efe38-4893-41a3-a078-b22766bdc52f"));
+  const stepIds: string[] = [];
+  const step = {
+    run: async (id: string, operation: () => unknown) => {
+      stepIds.push(id);
+      if (id === "read-pending-registry") return { scanned: 1, valid: [schedule], quarantined: [] };
+      if (id === "select-overdue") return operation();
+      if (id.startsWith("re-emit-due-")) return "2026-07-20T12:00:00.000Z";
+      throw new Error(`unexpected step: ${id}`);
+    },
+  };
+  const result = await (paneScheduleReconcile as unknown as { fn: (input: unknown) => Promise<unknown> }).fn({ step });
+
+  expect(stepIds).toEqual([
+    "read-pending-registry",
+    "select-overdue",
+    "re-emit-due-853efe38-4893-41a3-a078-b22766bdc52f",
+  ]);
+  expect(result).toMatchObject({ recovered: ["853efe38-4893-41a3-a078-b22766bdc52f"] });
+});

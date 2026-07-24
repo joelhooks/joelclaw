@@ -8,6 +8,7 @@ import {
   validatePaneSchedule,
 } from "@joelclaw/system-bus/src/lib/pane-schedule.ts"
 import { Console, Effect } from "effect"
+import { executeCapabilityCommand } from "../capabilities/runtime"
 import { Inngest } from "../inngest"
 import { respond, respondError } from "../response"
 
@@ -195,6 +196,9 @@ const scheduleTarget = Options.text("target").pipe(Options.optional, Options.wit
 const scheduleBrief = Options.text("brief").pipe(Options.optional, Options.withDescription("Task brief path for spawn"))
 const scheduleLoop = Options.text("loop").pipe(Options.optional, Options.withDescription("Loop id for revive"))
 const schedulePrompt = Options.text("prompt").pipe(Options.optional, Options.withDescription("Optional extra context"))
+const successorChain = Options.text("chain").pipe(Options.withDescription("Stable self-scheduling chain name"))
+const successorBrief = Options.text("brief").pipe(Options.withDescription("Exact successor spawn brief path"))
+const successorAt = Options.text("at").pipe(Options.withDescription("Expected successor fire time"))
 const scheduleFormat = Options.choice("format", ["json", "text"] as const).pipe(
   Options.withDefault("json"),
   Options.withDescription("Output format"),
@@ -251,6 +255,37 @@ function makeScheduleEntry(input: {
     requestedBy: requestedBy(),
     createdAt: new Date(nowMs).toISOString(),
   })
+}
+
+export type ChainSuccessorAssertion = {
+  chain: string
+  scheduleId: string | null
+  fireTime: string
+  verified: boolean
+  matchingCount: number
+}
+
+export function assertChainSuccessor(input: {
+  chain: string
+  briefPath: string
+  expectedAt: string
+  schedules: readonly PaneScheduleEntry[]
+  nowMs?: number
+}): ChainSuccessorAssertion {
+  const nowMs = input.nowMs ?? Date.now()
+  const matching = input.schedules.filter((entry) =>
+    entry.verb === "spawn"
+    && entry.briefPath === input.briefPath
+    && entry.at === input.expectedAt
+    && Date.parse(entry.at) > nowMs
+  )
+  return {
+    chain: input.chain,
+    scheduleId: matching.length === 1 ? matching[0]!.scheduleId : null,
+    fireTime: input.expectedAt,
+    verified: matching.length === 1,
+    matchingCount: matching.length,
+  }
 }
 
 function renderScheduleResult(format: "json" | "text", command: string, entry: PaneScheduleEntry, response: unknown): string {
@@ -319,6 +354,52 @@ const wakeListCmd = Command.make("list", { format: scheduleFormat }, ({ format }
   ]))
 })).pipe(Command.withDescription("List pending pane schedules"))
 
+const wakeAssertSuccessorCmd = Command.make("assert-successor", {
+  chain: successorChain,
+  brief: successorBrief,
+  at: successorAt,
+  format: scheduleFormat,
+}, ({ chain, brief, at, format }) => Effect.gen(function* () {
+  let expectedAt: string
+  try {
+    expectedAt = new Date(at).toISOString()
+  } catch {
+    yield* Console.log(respondError("wake assert-successor", `Invalid successor fire time: ${at}`, "INVALID_SCHEDULE", "Use an ISO-8601 date-time or another unambiguous future date."))
+    return
+  }
+  const redis = yield* makeRedis()
+  const raw = yield* Effect.tryPromise({ try: () => redis.hgetall(PANE_SCHEDULE_REGISTRY_KEY), catch: (error) => new Error(String(error)) })
+  yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
+  const schedules = Object.values(raw).flatMap((value) => {
+    try { return [validatePaneSchedule(JSON.parse(value))] } catch { return [] }
+  })
+  const assertion = assertChainSuccessor({ chain, briefPath: brief, expectedAt, schedules })
+  let alert: unknown = null
+  if (!assertion.verified) {
+    alert = yield* executeCapabilityCommand({
+      capability: "notify",
+      subcommand: "send",
+      args: {
+        message: `Chain successor assertion failed for ${chain}: expected exactly one future spawn at ${expectedAt}, found ${assertion.matchingCount}.`,
+        priority: "urgent",
+        kind: "alert",
+        source: "wake-successor-assertion",
+        context: { chain, briefPath: brief, expectedAt, matchingCount: assertion.matchingCount },
+      },
+    }).pipe(Effect.either)
+  }
+  if (format === "text") {
+    yield* Console.log(`${assertion.scheduleId ?? "none"}\t${assertion.fireTime}\tverified:${assertion.verified}`)
+    return
+  }
+  yield* Console.log(respond("wake assert-successor", { assertion, alert }, assertion.verified ? [
+    { command: "wake list", description: "List pending pane schedules" },
+  ] : [
+    { command: "wake list", description: "Inspect missing or duplicate successors" },
+    { command: "wake cancel <schedule-id>", description: "Cancel a duplicate successor" },
+  ], assertion.verified))
+})).pipe(Command.withDescription("Assert exactly one future successor and alert on failure"))
+
 const wakeCancelCmd = Command.make("cancel", {
   scheduleId: Args.text({ name: "schedule-id" }),
   format: scheduleFormat,
@@ -355,7 +436,7 @@ export const wakeCmd = Command.make("wake", {}, () =>
   })
 ).pipe(
   Command.withDescription("Wake the system now or schedule a pane action"),
-  Command.withSubcommands([scheduleCommand("at"), scheduleCommand("in"), wakeListCmd, wakeCancelCmd]),
+  Command.withSubcommands([scheduleCommand("at"), scheduleCommand("in"), wakeListCmd, wakeAssertSuccessorCmd, wakeCancelCmd]),
 )
 
-export const __wakeTestUtils = { parseScheduleDuration, resolveScheduleAt, makeScheduleEntry }
+export const __wakeTestUtils = { assertChainSuccessor, parseScheduleDuration, resolveScheduleAt, makeScheduleEntry }

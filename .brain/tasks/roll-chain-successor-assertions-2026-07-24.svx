@@ -1,0 +1,40 @@
+---
+title: "Chain successor assertions + dispatcher retry persistence"
+type: "task"
+date: "2026-07-24"
+privacy: "private"
+---
+
+# Chain successor assertions and dispatcher retry persistence
+
+Two failures, one theme: a self-scheduling chain died and nothing noticed for days. Both are earned by incidents this week — build both, they are adjacent.
+
+## Part 1 — chain successor assertions
+
+A self-scheduling run's last act is asserting its successor exists, recorded in its receipt. Today the arming is fire-and-forget inside a model-dependent run, so a session that dies before its final tool call silently ends the chain.
+
+Evidence:
+- 2026-07-21: the campaign-pulse spawned session died on a WebSocket error before its first tool call. No successor armed. Dark 3 days.
+- 2026-07-22: earlier pulse chain death, same silent shape.
+
+Build: after arming, the run re-reads `joelclaw wake list` and asserts exactly one future successor for its own chain, writing the assertion (scheduleId + fire time + verified:true/false) into the run receipt. A failed assertion raises a hard alert naming the chain. Consider whether arming can move outside the model-dependent path entirely — if so, say so in your result; that may supersede this step.
+
+## Part 2 — dispatcher retry persistence
+
+The observer dispatcher recorded "scheduled pane creation failed, attempt 1 of 3" and then the schedule disappeared — no retry ever ran. A 3-attempt latch that drops the schedule on attempt 1 is not a 3-attempt latch.
+
+Evidence: 2026-07-22, schedule `853efe38-4893-41a3-a078-b22766bdc52f` (daily-flow-agent). The daily learner audit went dark from 07-17 until manual revival 2026-07-24.
+
+Build: keep failed schedules registered until execution succeeds or all retries are exhausted; only then drop and alert. Repo: `~/Code/joelhooks/joelclaw-observer` (jj-colocated, local-only; promote via `bin/promote-release.sh` — do NOT promote, steering owns that). The dispatcher lives in `.pi/extensions/dispatcher/`. Prove it with a failed-pane drill in `test/observer.test.ts`: a schedule whose pane creation fails twice then succeeds must execute, and one that fails all three must alert exactly once.
+
+## Done condition
+
+Both parts have tests that fail before the change and pass after. State plainly which incident each test reproduces.
+
+## Constraints
+
+- Do NOT commit, do NOT promote a release. Steering reviews and commits.
+- Never print secrets or `.env` contents.
+- No sudo, no LaunchDaemon changes, no live schedule cancellation.
+- If a command is BLOCKED by dcg, stop and report it.
+- Print a DONE summary when finished.
