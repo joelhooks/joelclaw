@@ -1,0 +1,34 @@
+---
+title: "Fix three system-bus crons failing with missing env ID"
+type: "task"
+date: "2026-07-24"
+privacy: "private"
+---
+
+# Fix the missing-env-ID cron failures (2026-07-24)
+
+## Situation
+
+Three system-bus functions fail cron scheduling on flagg's self-hosted Inngest (v1.27.0, port 8288). Facts verified by the steering session at 2026-07-24T15:25Z from `/Users/Shared/joelclaw/logs/inngest/launchd.err.log`:
+
+- `system-bus-host-docs-backlog-driver` (id `f1455a8e-90c8-5273-bdf9-80fb2cb47e17`, cron `*/4 * * * *`, fnVersion 35): a stuck queue item with scheduleTime `2026-07-23T15:00:00Z` retries forever with `err: "missing env ID"`.
+- `system-bus-host-system/content-sync` (id `f36937bd-ac7e-5acf-ac41-363dcde5e784`): stuck items at 2026-07-23T15:00Z, 19:00Z, 23:00Z.
+- `system-bus-host-docs-ingest-janitor` (id `56a06f24-4380-5cb3-b3f6-4406c7f99b18`): failing **current** ticks too (e.g. scheduleTime 2026-07-24T15:18:00Z), so live cron scheduling is broken for it, not just a stale item.
+- ~55,762 matching error lines since 07-21; each carries a base64 goroutine dump — this is why the err log regrew to 438MB in 3 days.
+- Inngest has been up since Jul 20 13:08 local — **no restart on 07-23**, so this is NOT the known bounce-minting mode. Suspect a bad function re-registration around 2026-07-23 08:00 local (15:00Z) that produced fnVersion 35 without an env ID.
+
+## Task
+
+1. **Diagnose.** In `~/Code/joelhooks/joelclaw`, find what happened around 2026-07-23 08:00 local: `git log` in packages/system-bus, worker restarts (launchd logs for the system-bus worker on port 3111), any deploy/registration activity. Confirm whether the current registration in Inngest carries env IDs (functions table / GQL at `http://127.0.0.1:8288/v0/gql`).
+2. **Re-register.** Issue the registration PUT: `curl -X PUT http://127.0.0.1:3111/api/inngest`. Verify the response, then watch the err log to confirm `docs-ingest-janitor`'s next `*/4`-adjacent tick schedules WITHOUT the missing-env-ID error. "Verify runs, not registration": confirm at least one of the three functions produces a real run after the fix.
+3. **Stuck items.** For the 07-23 items that keep retrying: use the pinned purge tool `scripts/inngest-v127-purge.ts` (DequeueByJobID Lua — NEVER raw HDEL). Run the **dry-run only**, write the manifest, and hand the manifest path plus the exact `--apply` command back in your summary. Do NOT run `--apply` yourself.
+4. **Watchdog lookup.** `/Users/Shared/joelclaw/logs/session-index-health.err.log` repeats `Could not find service "com.joelclaw.central.inngest" in domain for system` — the recovery path in `infra/central/native/session-index-health.sh` cannot see the daemon (it runs unprivileged; `launchctl print system/...` needs root). Patch the script so the inngest-restart path works from its actual runtime context (check how the LaunchDaemon runs it — as root or as joelclaw), update `infra/central/native/test-session-index-health.sh`, run the test. Do NOT reinstall the LaunchDaemon — hand the installer command back in your summary (it needs sudo from Joel).
+5. **Report.** DONE summary: root cause of the 07-23 registration, PUT result + post-fix run evidence, purge manifest path + apply command, watchdog patch summary + test result + installer command. Do not truncate the 438MB log — steering handles that.
+
+## Constraints
+
+- Do NOT commit. Steering reviews and commits.
+- Never print secrets, tokens, or the contents of inngest.env / any `.env` file.
+- If a command is BLOCKED by dcg, stop and report it; do not work around it.
+- No `--apply` purges, no sudo, no LaunchDaemon reinstalls.
+- Print a DONE summary when finished.

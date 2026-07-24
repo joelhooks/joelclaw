@@ -191,6 +191,8 @@ recover() {
     return 1
   fi
 
+  # This probe is a root LaunchDaemon. Both managed services are LaunchDaemons
+  # in the system domain, even though the worker itself runs as user joel.
   # Restart only the failing target. worker_unavailable and index_lag_exceeded
   # implicate the host worker, never the event server; unscoped recovery killed
   # healthy Inngest 54 times after the 2026-07-19 reboot.
@@ -215,12 +217,7 @@ recover() {
   fi
   if [ "${restart_worker}" -eq 1 ]; then
     log "recovering host worker (reason=${reason})"
-    uid="$(id -u joel 2>/dev/null || true)"
-    if [ -n "${uid}" ]; then
-      launchctl kickstart -k "gui/${uid}/com.joel.system-bus-worker" 2>/dev/null || worker_rc=$?
-    else
-      worker_rc=1
-    fi
+    launchctl kickstart -k system/com.joel.system-bus-worker || worker_rc=$?
   fi
   if [ "${inngest_rc}" -ne 0 ] || [ "${worker_rc}" -ne 0 ]; then
     log "recovery attempt incomplete inngest=${inngest_rc} worker=${worker_rc} (cooldown stamped, retry after ${RECOVERY_COOLDOWN_SECONDS}s)"

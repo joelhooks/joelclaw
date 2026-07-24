@@ -2,6 +2,15 @@
 set -eu
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+HEALTH_PLIST="${SCRIPT_DIR}/com.joelclaw.central.session-index-health.plist"
+WORKER_PLIST="${SCRIPT_DIR}/../../launchd/com.joel.system-bus-worker.plist"
+
+# The health probe has no UserName, so launchd runs it as root in the system
+# domain. The worker is also a system LaunchDaemon; UserName only changes the
+# worker process owner, not its launchctl domain.
+! grep -q '<key>UserName</key>' "${HEALTH_PLIST}"
+grep -q '<string>com.joel.system-bus-worker</string>' "${WORKER_PLIST}"
+
 TEST_ROOT="$(mktemp -d /tmp/session-index-health-test.XXXXXX)"
 export TEST_ROOT
 mkdir -p "${TEST_ROOT}/bin" "${TEST_ROOT}/runs/joel/2026-07" "${TEST_ROOT}/state"
@@ -51,8 +60,9 @@ run_probe
 [ "$(cat "${TEST_ROOT}/state/consecutive-failures")" = "3" ]
 [ -s "${TEST_ROOT}/state/last-recovery-epoch" ]
 [ "$(wc -l <"${TEST_ROOT}/launchctl.log" | tr -d ' ')" = "1" ]
-grep -q 'gui/.*com.joel.system-bus-worker' "${TEST_ROOT}/launchctl.log"
+grep -q '^kickstart -k system/com.joel.system-bus-worker$' "${TEST_ROOT}/launchctl.log"
 ! grep -q 'system/com.joelclaw.central.inngest' "${TEST_ROOT}/launchctl.log"
+! grep -q 'gui/' "${TEST_ROOT}/launchctl.log"
 
 run_probe
 [ "$(wc -l <"${TEST_ROOT}/launchctl.log" | tr -d ' ')" = "1" ]
@@ -63,6 +73,7 @@ printf '%s\n' '0' >"${TEST_ROOT}/fail-recovery"
 run_probe
 [ "$(cat "${TEST_ROOT}/state/consecutive-failures")" = "0" ]
 [ "$(wc -l <"${TEST_ROOT}/launchctl.log" | tr -d ' ')" = "2" ]
+[ "$(tail -n 1 "${TEST_ROOT}/launchctl.log")" = "kickstart -k system/com.joel.system-bus-worker" ]
 
 run_probe
 [ "$(wc -l <"${TEST_ROOT}/launchctl.log" | tr -d ' ')" = "2" ]
@@ -91,4 +102,4 @@ run_probe
 [ "$(tail -n 1 "${TEST_ROOT}/launchctl.log")" = "kickstart -k system/com.joelclaw.central.inngest" ]
 printf '%s\n' '0' >"${TEST_ROOT}/fail-inngest"
 
-printf 'PASS session-index-health scoped recovery, stamped cooldown, retry, and OTEL delivery (%s)\n' "${TEST_ROOT}"
+printf 'PASS session-index-health system-domain recovery, scoped cooldown, retry, and OTEL delivery (%s)\n' "${TEST_ROOT}"
