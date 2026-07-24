@@ -1,0 +1,27 @@
+---
+title: "Prototype the Page Annotation UI"
+type: "step"
+kind: "prototype"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./brain-review-surface-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Prototype the Page Annotation UI
+
+## Step
+
+The earliest touchable artifact: annotation on one real rendered Brain page. Select text, write a comment, submit — the prototype writes a real receipt file locally (no gateway, no commit plumbing, throwaway endpoint is fine). Run via the `prototype` skill.
+
+Constraints from the brief's Notes:
+
+- **Phone-first**: Joel reviews it on his phone over the tailnet; if selection and typing are clumsy there, the prototype has done its job by failing loudly.
+- One real page from a registered root, rendered by the live renderer — not a mock document.
+- The receipt it writes should be a plausible draft of the contract (page, commit, span, text), so the prototype feeds the receipt-contract grilling a concrete strawman rather than waiting on it.
+
+Deliberately not blocked on the write-path or receipt-contract grillings — a reaction to a touchable thing is input to those decisions, not downstream of them.
+
+Resolved when Joel has annotated a real page from his phone and his reactions (UX, selection model, what felt missing) are recorded here for the write-path and receipt-contract grillings to consume.

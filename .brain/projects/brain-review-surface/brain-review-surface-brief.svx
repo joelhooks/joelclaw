@@ -1,0 +1,56 @@
+---
+title: "Chart the Brain Review Surface"
+type: "brief"
+status: "active"
+created_at: "2026-07-24"
+privacy: "private"
+---
+
+# Chart the Brain Review Surface
+
+## Finish line
+
+The Brain wiki gains a write path: rendered pages become review surfaces whose annotations return to agents as structured input. Accepted by Joel 2026-07-24; testable as written:
+
+1. Any rendered page at brain.joelclaw.com accepts inline annotations from any tailnet device, phone included.
+2. Submitting writes a `.svx` receipt committed to the annotated note's owning repo, carrying page, commit-at-review-time, author surface, and spans; the next graph rebuild shows it as a node backlinked to the page.
+3. The gateway correlates the annotation on a flowId and delivers it to the owning session or loop; a joelclaw agent acts on it with no explanation needed.
+4. One real HITL step in an active brief blocks, notifies Joel with its page URL, and closes through this loop end to end.
+5. Maintenance: HITL steps use the loop by default once live, so daily use is the regression test; a brainbench/wikibench leg asserts the receipt round-trip stays healthy, so breakage is loud, not discovered mid-review.
+
+## Vocabulary
+
+- **annotation** — inline feedback on a rendered Brain page, anchored to text spans, pinned to the commit the page rendered at review time.
+- **receipt** — the committed `.svx` record of an annotation; a graph node with provenance, backlinked to the annotated page.
+- **write path** — the chain from browser submit to committed receipt (the wiki is a static build today; this is the live part this effort adds).
+- **return path** — gateway delivery of an annotation to the owning session or loop, correlated on a flowId.
+- **interception** — a blocked `interaction: HITL` step that notifies with its page URL and closes through the annotation loop.
+- **stopgap** — the clipboard feedback-boxes loop on the bugle map; ships as-is, retired by the receipt path at parity.
+
+## Notes
+
+- **Domain**: extends the live Brain page renderer (brain.joelclaw.com/&lt;root&gt;/&lt;slug&gt;, provenance per page) with annotation write-back. Adjacent maps, do not duplicate: [Chart the joelclaw Brain Graph](../brain-graph/brain-graph-brief.svx) owns the graph projection and renderer; [joelclaw Bugle redesign](../bugle-redesign/bugle-redesign-brief.svx) owns the toolbar and the feedback-boxes stopgap; privacy is owned by [Define Privacy, Access, and Publication Boundaries](../personal-wiki/define-privacy-access-publication-boundaries.svx) — any team reopen goes through it, never re-decided here.
+- **Single-operator scope** (Joel, 2026-07-24): team is out of this finish line; it stays latent and charters as its own effort once this loop is touchable.
+- **Interception is in the finish line** (Joel, 2026-07-24): without a blocking case the loop has no forcing function.
+- **Feedback boxes ship as the stopgap** (Joel, 2026-07-24, "let it ship"): the bugle ticket stays claimed and ships clipboard-only; this map retires it at parity, same pattern as the static-page stopgap.
+- **Plannotator is prior art only** (Joel, 2026-07-24): cited for its ideas (annotation returning to agents, decision-time interception); no dependency, no install anywhere in the fleet.
+- **Phone-first UX** (Joel, 2026-07-24): if annotation is not comfortable on the phone over the tailnet, condition 1 fails — the point is reviewing where flagg's terminal isn't.
+- **Inherited fixed direction**: SvelteKit + MDSvX, Effect v4, tailnet-only stands, receipts are `.svx` by Brain law; build work lands in `joelhooks/joelclaw-wiki`; this brief lives here for adjacency with its siblings.
+- **Skills every session should consult**: `/skill:grill-master`, `/skill:brain-first-workflow`, `/skill:effect`, `/skill:tailnet-topology`, `/skill:messaging` (gateway contract), `/skill:joel-writing-style` when available.
+
+## Decision ledger
+
+<!-- one line per closed step: gist + link -->
+
+## Latent
+
+- Team: shared-repo brain roots give team read almost structurally; identity, per-root visibility, and per-author receipts force reopening the privacy boundaries ticket — deliberately, by a new fact.
+- Annotations as an observational-memory input stream: receipts are the highest-signal observations the write-loop map could distill.
+- Toolbar integration: an annotate mode beside secureMode in the JoelClaw toolbar (bugle map's build-joelclaw-toolbar).
+- Annotating editions (the immutable layer) versus Brain pages (mutable, commit-pinned) — the anchor model may differ.
+
+## Out of scope
+
+- Installing plannotator anywhere in the fleet — prior art only (Notes).
+- Team auth, tiers, and identity — past this finish line; returns as a fresh effort through the privacy ticket.
+- Replacing the feedback-boxes stopgap before the receipt path reaches parity — it ships on the bugle map untouched.

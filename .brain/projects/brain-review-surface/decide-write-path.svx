@@ -1,0 +1,24 @@
+---
+title: "Decide the Write Path"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./brain-review-surface-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Decide the Write Path
+
+## Step
+
+The wiki today is a static `build/` served by a LaunchAgent behind the daily sidecar. Annotations need a live endpoint on flagg. Decide the chain from browser submit to committed receipt:
+
+- **Endpoint shape**: SvelteKit server routes (converting the wiki from static build to a running app), a separate small API service beside the static build, or an Inngest function fronted by an existing surface. Weigh against the 6am rebuild pipeline and the sidecar/Caddy topology.
+- **Commit identity**: who commits receipts — a ShitRat-style bot actor, or direct commits with the surface recorded in frontmatter. Receipts land in the annotated note's owning repo, which may not be joelclaw-wiki.
+- **Multi-repo writes**: the endpoint must commit into any registered brain root's repo on flagg's checkouts. Locking/conflict posture with concurrent agent sessions in those repos.
+- **Failure modes**: submit succeeds but commit fails; repo checkout dirty or diverged; receipt written but push fails. What the annotator sees in each case — silent loss is the one forbidden outcome.
+
+Resolved when the endpoint shape, commit identity, and failure posture are decided and recorded here, sized so build steps can be chartered without further architecture decisions.

@@ -1,0 +1,26 @@
+---
+title: "Decide the Receipt Contract"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./brain-review-surface-brief.svx"
+blockers: ["./research-annotation-anchoring.svx"]
+created_at: "2026-07-24"
+---
+
+# Decide the Receipt Contract
+
+## Step
+
+Define the `.svx` receipt: the committed record of an annotation and the graph node it becomes.
+
+- **Location**: `.brain/reviews/` in the annotated note's root, a sidecar convention next to the note, or receipt sections appended to the note itself. Weigh graph legibility (backlinks, orphan rate — the bench already measures it) and repo noise.
+- **Frontmatter shape**: annotated page (root/slug), commit-at-review-time, author surface (device/session), spans, verdict/kind, flowId once the return path exists.
+- **Anchor model**: adopt from the anchoring research asset — what a span pins to, re-anchoring behavior after the note changes, what an orphaned annotation renders as.
+- **Wikilink behavior**: receipts backlink the annotated page under the decided namespace policy (`[[root/slug]]` cross-root syntax); confirm the projection picks them up without schema changes, or name the schema change.
+
+Consumes: [Research How Annotation Systems Anchor Spans to Mutable Documents](./research-annotation-anchoring.svx).
+
+Resolved when a receipt could be hand-written today and both the renderer and the graph projection would know exactly what to do with it.

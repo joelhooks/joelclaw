@@ -1,0 +1,28 @@
+---
+title: "Research How Annotation Systems Anchor Spans to Mutable Documents"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: "pi anchor-research (flagg, herdr pane w2M:p2, 2026-07-24)"
+parent: "./brain-review-surface-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Research How Annotation Systems Anchor Spans to Mutable Documents
+
+## Step
+
+Brain pages render current checkout state; an annotation pins the commit it was made against. When the note changes, the span the annotation anchored to may move, mutate, or vanish. How do existing annotation systems solve this, and what should the receipt contract borrow?
+
+Survey at minimum:
+
+- **W3C Web Annotation Data Model** — selector types (TextQuoteSelector, TextPositionSelector, refinement chains), and what of it is worth adopting versus overkill for `.svx` receipts.
+- **Hypothesis** — their fuzzy anchoring approach (quote + position + context, re-anchoring on document change, orphaned annotations), which is the most battle-tested mutable-document implementation.
+- **plannotator** (github.com/backnotprop/plannotator) — how it models annotations on plans and diffs, what its structured feedback payload looks like when returned to the agent; prior art only, no dependency.
+- **Git-native angles** — line-anchored review comments (GitHub PR model) and why they rot; whether commit-pinning plus quote-based re-anchoring beats line numbers for prose.
+
+Deliverable: an asset file `annotation-anchoring-research.svx` in this directory (`type: "asset"`, `parent:` this step) summarizing each model, with a concrete recommendation for the receipt anchor shape: what a span pins to, how re-anchoring works after the note changes, and what an orphaned annotation renders as. The [Decide the Receipt Contract](./decide-receipt-contract.svx) grilling consumes it.
+
+Resolved when the asset exists and this step's Result section links it with a three-sentence gist.

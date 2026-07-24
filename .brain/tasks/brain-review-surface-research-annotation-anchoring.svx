@@ -1,0 +1,25 @@
+---
+title: "Task: Research Annotation Anchoring for the Brain Review Surface"
+type: "task"
+parent: "../projects/brain-review-surface/research-annotation-anchoring.svx"
+created_at: "2026-07-24"
+privacy: "private"
+---
+
+# Task: Research Annotation Anchoring
+
+You are a research worker on the effort [Chart the Brain Review Surface](../projects/brain-review-surface/brain-review-surface-brief.svx). Read the brief first (index only), then your step file: [Research How Annotation Systems Anchor Spans to Mutable Documents](../projects/brain-review-surface/research-annotation-anchoring.svx). The step file states the full scope; this task file states your deliverables as file edits.
+
+## Deliverables (all file edits, all `.svx`)
+
+1. **Asset**: `.brain/projects/brain-review-surface/annotation-anchoring-research.svx` with frontmatter `type: "asset"`, `parent: "./research-annotation-anchoring.svx"`, `title`, `created_at: "2026-07-24"`, `privacy: "private"`. Content per the step file: W3C Web Annotation selector model, Hypothesis fuzzy anchoring (quote + position + context, re-anchoring, orphans), plannotator's annotation and feedback payload model (read its source on GitHub — prior art only), git/PR line-comment rot, and a concrete recommendation for the receipt anchor shape: what a span pins to, how re-anchoring works after the note changes, what an orphaned annotation renders as.
+2. **Step result**: append a `## Result (2026-07-24)` section to the step file linking the asset with a three-sentence gist; flip its frontmatter `status` to `"closed"` and add `closed_at: "2026-07-24"`.
+3. **Ledger line**: add one line to the brief's `## Decision ledger`: step title linked, plus a one-line gist.
+
+## Constraints
+
+- Ground claims in sources you actually fetched; link them. No fabricated citations.
+- The recommendation must be judged against this system's reality: pages render current checkout state, receipts pin a commit, prose is MDSvX, the graph projection reads wikilinks.
+- Keep the asset readable — prose first, tables only for enumerable comparisons.
+
+Work autonomously. Do not commit. Print a DONE summary when finished.

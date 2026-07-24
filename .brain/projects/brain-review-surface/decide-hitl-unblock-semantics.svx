@@ -1,0 +1,26 @@
+---
+title: "Decide HITL Unblock Semantics"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./brain-review-surface-brief.svx"
+blockers: ["./decide-gateway-correlation.svx"]
+created_at: "2026-07-24"
+---
+
+# Decide HITL Unblock Semantics
+
+## Step
+
+Interception: a blocked `interaction: HITL` step notifies Joel with its rendered page URL and closes through the annotation loop (finish-line condition 4). Decide the mechanics against grill-master's conventions:
+
+- **Offer**: what a blocked HITL step emits — a `notify send` carrying the brain.joelclaw.com URL of the step page, presumably at claim time or on a schedule via `joelclaw wake`. Who emits it: the claiming session, the scan, or an Inngest watcher.
+- **Close authority**: the receipt never flips step status itself — the claiming session consumes the annotation, acts, and closes the step (keeps grill-master's claim discipline intact). Confirm or refute this posture.
+- **Waiting shape**: what the claiming session does while blocked on Joel — hold the pane, schedule a wake, or release the claim with a resume marker. Prefer an explicit state sketch over boolean soup if modes multiply.
+- **Timeout/decay**: annotation never arrives — how the offer resurfaces without nagging, and how it interacts with the 24h stale-claim rule.
+
+Consumes: [Decide Gateway Correlation and Delivery](./decide-gateway-correlation.svx).
+
+Resolved when one real HITL step in any active brief could run the loop tomorrow with no improvisation, and the convention is written down where grill-master sessions will find it.

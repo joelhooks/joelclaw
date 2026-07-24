@@ -1,0 +1,24 @@
+---
+title: "Decide Gateway Correlation and Delivery"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./brain-review-surface-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Decide Gateway Correlation and Delivery
+
+## Step
+
+The return path: an annotation must reach the agent that owns the annotated work, through the comms gateway, with no new transport (single-daemon rule stands; consult `/skill:messaging`).
+
+- **Ownership resolution**: how an annotation finds its consumer — the step file's `assignee` claim, a loopId, the session change-ledger, or an explicit owner declared when a page is offered for review. What happens when the owning session is gone (claims go stale at 24h).
+- **flowId semantics**: does the review offer originate as a `notify send` whose flowId the annotation answers (fits the existing reply/reaction/button correlation), or do unsolicited annotations mint a flow. Recommend the former as the primary shape.
+- **Delivery contract**: what the consuming agent receives — the receipt itself, a pointer to it, or a compiled prompt (the stopgap's `{kind, answers, editorNote}` payload is prior art from the feedback-boxes ticket).
+- **Undeliverable annotations**: receipt committed but no live consumer — the receipt is durable either way; decide whether delivery retries, queues for the next claiming session, or just surfaces in the step file.
+
+Resolved when annotation-to-agent delivery is specified precisely enough that [Decide HITL Unblock Semantics](./decide-hitl-unblock-semantics.svx) can build on it.
