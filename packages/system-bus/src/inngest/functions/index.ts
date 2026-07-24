@@ -66,6 +66,11 @@ export {
   frontMessageReceived,
   frontMessageSent,
 } from "./front-notify";
+export {
+  functionRegistrationAndRunHealth,
+  runFunctionHealthCheck,
+  runProductionFunctionHealthCheck,
+} from "./function-health";
 export { gatewayBehaviorDailyReview } from "./gateway-behavior-review";
 export {
   githubPackagePublished,

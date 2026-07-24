@@ -3,8 +3,8 @@ title: "Assert Function Registration and Recent Runs"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+assignee: "reboot-cron-check"
 parent: "./reboot-hardening-brief.svx"
 blockers: []
 created_at: "2026-07-21"
@@ -15,3 +15,18 @@ created_at: "2026-07-21"
 ## Step
 
 The reconciler dead-bound on deploy because the worker's self-registration PUT fired into a down Inngest and was silently lost (2026-07-20; recovered by manual `PUT /api/inngest`). "Verify runs, not registration" is memory doctrine — mechanize it: a startup-and-hourly check in the system-bus worker that (1) every function exported by `serve.ts` exists in Inngest's functions table, re-issuing the registration PUT with retry/backoff if not, and (2) every cron-triggered function has a run newer than 2× its cadence, raising a hard alert (with the incident-latch semantics, not per-pass spam) naming the dead function. Fold into or alongside the post-reboot smoke check ([step](./wire-post-reboot-smoke-check.svx)) — one owner for both is fine. Resolved when killing a registration (test env) produces automatic re-registration, and a paused cron function produces one latched alert.
+
+## Result
+
+Closed 2026-07-24 by `reboot-cron-check`.
+
+- Added `check/function-registration-and-runs` to the host worker with an hourly cron and a manual event trigger.
+- Added a direct startup assertion in `serve.ts`, so the worker can repair registration even when the health function itself is absent.
+- The assertion compares the role-derived function manifest with Inngest's app function table. Missing functions cause a bounded registration PUT retry with exponential backoff and a readback after each attempt.
+- Cron health uses each function's actual cron expression, including offsets, timezones, irregular schedules, and multiple cron triggers. It queries the last `COMPLETED` run and alerts after two maximum observed cadence gaps.
+- Dead-cron alerts reuse the shared incident latch through `sendHardAlert` and `resolveHardAlert`. The alert names the function, slug, cron, and last successful run.
+- Fixture tests prove missing registration repair, failed-PUT retry/backoff, one alert plus repeat suppression for a paused cron, recovery resolution, startup grace, and cadence parsing.
+- Read-only live API validation found 176 expected host functions, 175 registered functions, and the new health function as the only expected pre-deploy absence. A `17 * * * *` function resolved to a 60-minute cadence and returned its actual latest completed run.
+- Checks: 15 focused tests passed; Biome passed; `serve.ts` bundled successfully. The repo-wide TypeScript check still has unrelated pre-existing failures in `critical-search.ts`, `critical-db-maintenance.test.ts`, `critical-db-freshness.ts`, and `run-capture.keying-verification.test.ts`. Brain validation reached 461 pages, then failed on seven pre-existing `.brain/tasks/*.md` files that violate the `.svx` rule.
+
+[Wire the Post-Reboot Smoke Check](./wire-post-reboot-smoke-check.svx) remains open. It requires launchd wiring and dispatcher/wake-registry assertions, while this task explicitly prohibited LaunchDaemon changes.

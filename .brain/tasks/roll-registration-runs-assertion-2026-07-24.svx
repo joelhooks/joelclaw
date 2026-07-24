@@ -1,0 +1,42 @@
+---
+title: "Assert function registration and recent runs (reboot-hardening step)"
+type: "task"
+date: "2026-07-24"
+privacy: "private"
+---
+
+# Assert function registration and recent runs
+
+## Your step
+
+Work the chartered step **Assert Function Registration and Recent Runs**: `.brain/projects/reboot-hardening/assert-function-registration-and-runs.svx`. Read the brief `.brain/projects/reboot-hardening/reboot-hardening-brief.svx` first. Claim the step (`assignee` = your callsign, status `in_progress`) before any work.
+
+The step also names **Wire Post-Reboot Smoke Check** (`./wire-post-reboot-smoke-check.svx`) as foldable into one owner. Read it; if one implementation cleanly covers both, do both and close both. Say which you did.
+
+## What to build
+
+A startup-and-hourly check in the system-bus worker that:
+
+1. Every function exported by `serve.ts` exists in Inngest's functions table; if not, re-issue the registration PUT with retry/backoff.
+2. Every cron-triggered function has a run newer than 2× its cadence; otherwise raise a hard alert **with incident-latch semantics** (key, quiet window, attempt cap, final notice — not per-pass spam) naming the dead function.
+
+## Field lessons — fold these in
+
+- **"Verify runs, not registration" is the whole point.** Today (2026-07-24) `curl -X PUT /api/inngest` returned `{"message":"Successfully registered","modified":false}` while three crons were completely dead. Registration success proves nothing. Assert on runs.
+- **`modified:true` is normal after a deploy** (manifest drift), so it is not by itself evidence of a dead binding either. Only run recency is evidence.
+- **Cron offsets are not always :00.** ai-hero's confirmation reconciler is `17 * * * *`. Compute "2× cadence" from the actual cron expression, never from an assumed top-of-hour.
+- **Today's outage was upstream, not registration**: Inngest v1.27.0's Postgres adapter dropped `Function.EnvID`, so the cron health check minted zero-EnvID queue items that could never run (fixed by upgrading to v1.28.0). A dead-cron alert must therefore name the function and its last successful run — enough for a human to tell "not registered" from "registered but unrunnable" without archaeology.
+- An incident-latch library may already exist from the Typesense-recovery work in `packages/system-bus/src/inngest/functions/typesense-recovery-alerts.ts` (stable alert IDs, attempt caps, resolve-on-recovery). **Reuse it — do not write a second one.** If it is not general enough, extend it in place.
+
+## Done condition (from the step)
+
+Killing a registration (test env) produces automatic re-registration, and a paused cron function produces exactly one latched alert. Tests prove both. Then write the Result section in the step file, set status `closed`, and add one Decision-ledger line to the brief.
+
+## Constraints
+
+- Do NOT commit. Steering reviews and commits.
+- Never print secrets, tokens, or `.env` / `inngest.env` contents.
+- No sudo, no service restarts, no LaunchDaemon changes, no purges.
+- Do not re-register or restart the live Inngest as a "test" — use a test env/fixture.
+- If a command is BLOCKED by dcg, stop and report it.
+- Print a DONE summary when finished.

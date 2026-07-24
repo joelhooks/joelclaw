@@ -20,10 +20,15 @@ import { createHash } from "node:crypto";
 const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
 const GQL = `${INNGEST_URL}/v0/gql`;
 
-type WorkerRole = "host" | "cluster";
-type TriggerSpec = { type: string; value: string; condition?: string };
-type FunctionSpec = { id: string; slug: string; name: string; triggers: TriggerSpec[] };
-type AppSpec = { name: string; functions: FunctionSpec[] };
+export type WorkerRole = "host" | "cluster";
+export type TriggerSpec = { type: string; value: string; condition?: string };
+export type RegisteredFunctionSpec = {
+  id: string;
+  slug: string;
+  name: string;
+  triggers: TriggerSpec[];
+};
+type AppSpec = { name: string; functions: RegisteredFunctionSpec[] };
 type DriftResult = {
   ok: boolean;
   checked: number;
@@ -41,11 +46,12 @@ type DriftEntry = {
   expected: string[];
   registered: string[];
 };
-type AuditConfig = {
+export type TriggerAuditConfig = {
   appId: string;
   workerRole: WorkerRole;
   baseUrl: URL;
 };
+export type ExpectedFunctionSpec = { name: string; triggers: string[] };
 type InngestFunctionConfig = {
   id: string;
   name: string;
@@ -89,7 +95,7 @@ function parseWorkerRole(value: string | undefined): WorkerRole {
   return normalized === "cluster" ? "cluster" : "host";
 }
 
-function getConfig(): AuditConfig {
+export function getTriggerAuditConfig(): TriggerAuditConfig {
   const workerRole = parseWorkerRole(process.env.WORKER_ROLE);
   const explicitAppId = process.env.INNGEST_APP_ID?.trim();
   const appId = explicitAppId && explicitAppId.length > 0
@@ -140,11 +146,13 @@ async function getApps(appId: string): Promise<AppSpec[]> {
 }
 
 /** Get registered functions for this worker app from Inngest server via GraphQL */
-async function getRegistered(appId: string): Promise<Map<string, FunctionSpec>> {
+export async function getRegisteredFunctions(
+  appId: string,
+): Promise<Map<string, RegisteredFunctionSpec>> {
   const apps = await getApps(appId);
   const app = apps.find((candidate) => candidate.name === appId);
 
-  const map = new Map<string, FunctionSpec>();
+  const map = new Map<string, RegisteredFunctionSpec>();
   for (const fn of app?.functions ?? []) {
     map.set(fn.slug, fn);
   }
@@ -168,10 +176,12 @@ async function getRoleFunctionDefinitions(workerRole: WorkerRole): Promise<unkno
 }
 
 /** Get expected functions from worker code for the current worker role */
-async function getExpected(config: AuditConfig): Promise<Map<string, { name: string; triggers: string[] }>> {
+export async function getExpectedFunctions(
+  config: TriggerAuditConfig,
+): Promise<Map<string, ExpectedFunctionSpec>> {
   const roleFunctions = await getRoleFunctionDefinitions(config.workerRole);
 
-  const map = new Map<string, { name: string; triggers: string[] }>();
+  const map = new Map<string, ExpectedFunctionSpec>();
   for (const fn of roleFunctions) {
     if (!isConfigurableInngestFunction(fn)) continue;
 
@@ -187,8 +197,9 @@ async function getExpected(config: AuditConfig): Promise<Map<string, { name: str
           triggers: (c.triggers ?? []).map(normalizeCodeTrigger).sort(),
         });
       }
-    } catch {
-      // skip functions that can't generate config
+    } catch (error) {
+      const id = (fn as { opts?: { id?: string } }).opts?.id ?? "unknown";
+      throw new Error(`Failed to generate Inngest config for ${id}`, { cause: error });
     }
   }
   return map;
@@ -212,9 +223,9 @@ function hashDriftState(drifted: DriftEntry[], missing: string[], extra: string[
 
 /** Compare registered vs expected triggers. Returns drift report. */
 export async function auditTriggers(): Promise<DriftResult> {
-  const config = getConfig();
-  const registered = await getRegistered(config.appId);
-  const expected = await getExpected(config);
+  const config = getTriggerAuditConfig();
+  const registered = await getRegisteredFunctions(config.appId);
+  const expected = await getExpectedFunctions(config);
 
   const drifted: DriftEntry[] = [];
   const missing: string[] = [];

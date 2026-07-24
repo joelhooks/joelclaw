@@ -67,6 +67,7 @@ import {
   frontMessageReceived,
   frontMessageSent,
 } from "./front-notify";
+import { functionRegistrationAndRunHealth } from "./function-health";
 import { gatewayBehaviorDailyReview } from "./gateway-behavior-review";
 import { gatewayHandleMessage } from "./gateway-handle-message";
 import { gatewaySendMessage } from "./gateway-send-message";
@@ -265,6 +266,7 @@ export const hostFunctionDefinitions = [
   taskTriage,
   checkSessions,
   checkTriggers,
+  functionRegistrationAndRunHealth,
   checkSystemHealth,
   checkSystemHealthSignalsSchedule,
   networkStatusUpdate,
