@@ -34,6 +34,8 @@ A plain copy-then-truncate script also has a race: bytes written after the copy 
 4. Send `SIGCONT`.
 5. Reduce each point-in-time clone to its newest 64 MiB after the writer resumes.
 
+Each service group also has a transaction manifest and phase file. A retry can distinguish a stale pre-truncate snapshot from an interrupted post-truncate finalization. It reclaims only a snapshot whose manifest proves truncation never started. An interruption during truncation remains a hard stop for operator review.
+
 The process is not restarted. Cold log pages do not need to be read while the writer is stopped because APFS `clonefile(2)` copies file metadata and shares data blocks. If `cp -c` falls back to a byte copy on another filesystem, the pause guard aborts before truncation.
 
 ## Pause budget and lease margin
@@ -67,7 +69,9 @@ The retained ceiling is:
 - 512 MiB for `typesense.log`
 - 1.5 GiB total, plus growth during one 60-second check interval
 
-A full copy-on-write snapshot exists briefly while its retained tail is finalized after resume. It shares APFS data blocks rather than duplicating the source bytes. A failed finalization leaves the named snapshot and an error receipt for operator recovery instead of deleting evidence.
+A full copy-on-write snapshot exists briefly while its retained tail is finalized after resume. It shares APFS data blocks rather than duplicating the source bytes. `tail -c` seeks to the retained end of a regular file; it does not scan the discarded prefix. A read-only measurement against the 3.5 GB pending snapshot retained 64 MiB in 1.43 seconds.
+
+A failed pre-truncate run is resumable. The next run verifies the recorded live inode and minimum size, reclaims the stale clone through the script's own state directory, and retries. A failed post-truncate finalization resumes from the pending snapshot. Ambiguous `truncating` state fails closed for operator review.
 
 At the measured Inngest rate of about 187 MiB per day, this keeps about 2.4 days in the noisy stderr stream. A burst larger than 64 MiB keeps only its newest 64 MiB. That is deliberate retention, not an in-flight write loss.
 
@@ -106,6 +110,7 @@ The drill starts a disposable writer, forces size rotation, and proves:
 - archive count stays within the configured limit;
 - a full 64 MiB retained path stays below the 500 ms pause budget;
 - an impossible pause budget fails closed without truncating the live inode;
+- a stale pre-truncate snapshot is safely reclaimed and retried;
 - an internal failure returns non-zero instead of producing a false PASS.
 
 The drill leaves its fixture under the supplied scratchpad. It does not touch `/Users/Shared/joelclaw/logs/`.
@@ -119,13 +124,14 @@ cd /Users/joel/Code/joelhooks/joelclaw
 sudo infra/central/native/install-log-rotation.sh --acknowledge-first-rotation
 ```
 
-The LaunchDaemon runs as `joelclaw:staff`. Routine rotation needs no sudo. Errors go to the bounded macOS unified log under tag `com.joelclaw.central.log-rotation`; the daemon does not create another unbounded launchd log.
+The LaunchDaemon runs as `joelclaw:staff`. Routine rotation needs no sudo. Launchd writes stdout and stderr under `/Users/Shared/joelclaw/logs/log-rotation/`. The script compacts each file in place to its newest 1 MiB before each run and reopens its descriptors after compaction. Errors also go to the macOS unified log under tag `com.joelclaw.central.log-rotation`.
 
 ## Post-install drill
 
 ```bash
 sudo launchctl print system/com.joelclaw.central.log-rotation | grep -E 'state =|runs =|last exit code'
 log show --last 10m --predicate 'senderImagePath ENDSWITH "/logger" AND eventMessage CONTAINS "log-rotation"'
+tail -n 50 /Users/Shared/joelclaw/logs/log-rotation/stderr.log
 stat -f 'inode=%i bytes=%z %N' \
   /Users/Shared/joelclaw/logs/inngest/launchd.err.log \
   /Users/Shared/joelclaw/logs/inngest/launchd.out.log \

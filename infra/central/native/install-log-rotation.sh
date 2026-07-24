@@ -32,6 +32,7 @@ id joelclaw >/dev/null 2>&1
 test -x /usr/bin/perl
 install -d -o root -g staff -m 0755 /Users/Shared/joelclaw/bin
 install -d -o joelclaw -g staff -m 0750 /Users/Shared/joelclaw/state/log-rotation
+install -d -o joelclaw -g staff -m 0750 /Users/Shared/joelclaw/logs/log-rotation
 install -o root -g wheel -m 0755 "${SCRIPT_DIR}/rotate-service-logs.sh" "${TARGET_SCRIPT}"
 install -o root -g wheel -m 0644 "${SCRIPT_DIR}/${LABEL}.plist" "${TARGET_PLIST}"
 plutil -lint "${TARGET_PLIST}"

@@ -2,8 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-SCRATCH_BASE="/private/tmp/claude-501/-Users-joel-Code-badass-courses-aihero-support/bf664c3d-2216-439d-9431-c0ba7693142e/scratchpad"
-TEST_ROOT="$(mktemp -d "${SCRATCH_BASE}/log-rotation-test.XXXXXX")"
+SCRATCH_BASE="${TMPDIR:-/private/tmp}"
+TEST_ROOT="$(mktemp -d "${SCRATCH_BASE%/}/log-rotation-test.XXXXXX")"
+export CENTRAL_ROOT="${TEST_ROOT}/central"
 STATE_DIR="${TEST_ROOT}/state"
 LOG_FILE="${TEST_ROOT}/fixture.log"
 WRITER="${TEST_ROOT}/writer.sh"
@@ -174,6 +175,42 @@ grep -q 'budget.*exceeded\|outside pause budget' "${guard_failure}"
 kill -TERM "${guard_writer_pid}"
 wait "${guard_writer_pid}" 2>/dev/null || true
 
+# Reproduce the installed stall: a pre-truncate snapshot and legacy manifest
+# must be reclaimed by the script, then rotation must complete on the retry.
+RECOVERY_ROOT="${TEST_ROOT}/recovery"
+RECOVERY_STATE="${RECOVERY_ROOT}/state"
+RECOVERY_LOG="${RECOVERY_ROOT}/fixture.log"
+mkdir -p "${RECOVERY_STATE}"
+printf '%0131072d\n' 1 >"${RECOVERY_LOG}"
+"${WRITER}" "${RECOVERY_LOG}" &
+recovery_writer_pid=$!
+ACTIVE_PIDS="${ACTIVE_PIDS} ${recovery_writer_pid}"
+recovery_pattern="^/bin/sh ${WRITER} ${RECOVERY_LOG}$"
+recovery_inode="$(stat -f %i "${RECOVERY_LOG}")"
+recovery_size="$(stat -f %z "${RECOVERY_LOG}")"
+cp -c "${RECOVERY_LOG}" "${RECOVERY_LOG}.snapshot.pending"
+printf 'fixture|%s|%s|%s|%s\n' \
+  "${RECOVERY_LOG}" "${RECOVERY_LOG}.snapshot.pending" "${recovery_inode}" "${recovery_size}" \
+  >"${RECOVERY_STATE}/fixture-manifest"
+LOG_ROTATION_TEST_MODE=1 \
+LOG_ROTATION_TEST_PROCESS_PATTERN="${recovery_pattern}" \
+LOG_ROTATION_TEST_LOG="${RECOVERY_LOG}" \
+LOG_ROTATION_SERVICE_USER="$(id -un)" \
+LOG_ROTATION_STATE_DIR="${RECOVERY_STATE}" \
+LOG_ROTATION_MAX_BYTES=65536 \
+LOG_ROTATION_MAX_ARCHIVES=7 \
+LOG_ROTATION_MAX_AGE_SECONDS=86400 \
+  sh "${SCRIPT_DIR}/rotate-service-logs.sh" 2>"${RECOVERY_ROOT}/rotation.stderr"
+kill -0 "${recovery_writer_pid}"
+[ -f "${RECOVERY_LOG}.0" ]
+[ ! -e "${RECOVERY_LOG}.snapshot.pending" ]
+[ ! -s "${RECOVERY_STATE}/fixture-manifest" ]
+[ ! -s "${RECOVERY_STATE}/fixture-phase" ]
+[ ! -s "${RECOVERY_STATE}/fixture-fixture.log.reclaimed" ]
+grep -q 'reclaimed stale pre-truncate snapshot' "${RECOVERY_ROOT}/rotation.stderr"
+kill -TERM "${recovery_writer_pid}"
+wait "${recovery_writer_pid}" 2>/dev/null || true
+
 # A missing writer must fail the rotator. This guards against shell constructs
 # that accidentally swallow an internal error and return a false PASS.
 printf '%s\n' 1 >"${state_epoch}"
@@ -192,6 +229,39 @@ if LOG_ROTATION_TEST_MODE=1 \
 fi
 grep -q 'expected one .* writer.* found 0' "${expected_failure}"
 
-printf 'PASS log rotation preserved inode, process, sequence, age trigger, retention, pause budget, and failure propagation\n'
+# The daemon's own launchd logs are visible and bounded without inode replacement.
+OWN_ROOT="${TEST_ROOT}/own-log"
+OWN_STATE="${OWN_ROOT}/state"
+OWN_FIXTURE="${OWN_ROOT}/fixture.log"
+mkdir -p "${OWN_STATE}" "${OWN_ROOT}/logs/log-rotation"
+dd if=/dev/zero of="${OWN_ROOT}/logs/log-rotation/stdout.log" bs=4096 count=1 2>/dev/null
+dd if=/dev/zero of="${OWN_ROOT}/logs/log-rotation/stderr.log" bs=4096 count=1 2>/dev/null
+stdout_inode="$(stat -f %i "${OWN_ROOT}/logs/log-rotation/stdout.log")"
+stderr_inode="$(stat -f %i "${OWN_ROOT}/logs/log-rotation/stderr.log")"
+printf '%02048d\n' 1 >"${OWN_FIXTURE}"
+"${WRITER}" "${OWN_FIXTURE}" &
+own_writer_pid=$!
+ACTIVE_PIDS="${ACTIVE_PIDS} ${own_writer_pid}"
+own_pattern="^/bin/sh ${WRITER} ${OWN_FIXTURE}$"
+CENTRAL_ROOT="${OWN_ROOT}" \
+LOG_ROTATION_TEST_MODE=1 \
+LOG_ROTATION_TEST_PROCESS_PATTERN="${own_pattern}" \
+LOG_ROTATION_TEST_LOG="${OWN_FIXTURE}" \
+LOG_ROTATION_SERVICE_USER="$(id -un)" \
+LOG_ROTATION_STATE_DIR="${OWN_STATE}" \
+LOG_ROTATION_MAX_BYTES=1024 \
+LOG_ROTATION_MAX_ARCHIVES=7 \
+LOG_ROTATION_MAX_AGE_SECONDS=86400 \
+LOG_ROTATION_OWN_LOG_MAX_BYTES=1024 \
+  sh "${SCRIPT_DIR}/rotate-service-logs.sh"
+kill -0 "${own_writer_pid}"
+[ "$(stat -f %i "${OWN_ROOT}/logs/log-rotation/stdout.log")" = "${stdout_inode}" ]
+[ "$(stat -f %i "${OWN_ROOT}/logs/log-rotation/stderr.log")" = "${stderr_inode}" ]
+[ "$(stat -f %z "${OWN_ROOT}/logs/log-rotation/stdout.log")" -le 1024 ]
+[ "$(stat -f %z "${OWN_ROOT}/logs/log-rotation/stderr.log")" -le 1280 ]
+kill -TERM "${own_writer_pid}"
+wait "${own_writer_pid}" 2>/dev/null || true
+
+printf 'PASS log rotation preserved inode, process, sequence, age trigger, retention, pause budget, stale-snapshot recovery, own-log bounds, and failure propagation\n'
 printf 'scratch=%s pid=%s inode=%s archive_max=%s live_min=%s archives=%s full_copy_bytes=67108864 pause_ms=%s budget_ms=500\n' \
   "${TEST_ROOT}" "${writer_pid}" "${inode_after}" "${archive_max}" "${live_min}" "${archive_count}" "${full_pause_ms}"

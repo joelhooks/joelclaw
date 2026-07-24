@@ -1,0 +1,49 @@
+---
+title: "Fix the installed log rotation daemon: it stalls and never rotates"
+type: "task"
+date: "2026-07-24"
+privacy: "private"
+---
+
+# Fix the log-rotation stall
+
+You built and I committed `infra/central/native/rotate-service-logs.sh` (commit 79c8c247). Joel installed it at 2026-07-24T19:15Z. **It does not rotate.** It fails safe — the live inode is never truncated, so nothing is lost — but it is not doing its job.
+
+## Observed state (measured by steering)
+
+Every 60s the daemon runs. Across three consecutive cycles:
+
+```
+t1 live=3499485877 pending=3499472855 archives=0
+t2 live=3499494950 pending=3499472855 archives=0
+t3 live=3499500008 pending=3499472855 archives=0
+```
+
+- Live log keeps growing. Pending snapshot is frozen at a fixed size. **No archive was ever produced.**
+- Leftover files: `launchd.err.log.snapshot.pending` (3.5GB APFS clone, shares blocks) and `launchd.out.log.snapshot.pending` (64790 bytes).
+- State dir `/Users/Shared/joelclaw/state/log-rotation/` contains `inngest-manifest` = `inngest|/Users/Shared/joelclaw/logs/inngest/launchd.err.log|/Users/Shared/joelclaw/logs/inngest/launchd.err.log.snapshot.pending|12163691|3499472855` and `last-pause.latest` (root-only, I could not read it).
+
+## Key measurement that rules out your prime suspect
+
+**The clone is not slow.** I timed `cp -c` on the live 3.5GB file: **18ms**. APFS clonefile is O(1)-ish. So the 500ms pause budget is NOT what is failing. Look elsewhere.
+
+## Hypotheses to test (in order)
+
+1. **A stale `.snapshot.pending` from a failed first run blocks every subsequent run.** If the code refuses to proceed when a pending snapshot already exists, the very first failure wedges it permanently. That matches the frozen pending size exactly. If so: make the run resumable or safely reclaim a stale pending snapshot (verify it is genuinely stale before touching it).
+2. **The post-pause reduction stage is the real cost.** Reducing a 3.5GB clone to its newest 64MiB reads 3.5GB. That runs outside the pause, but if it exceeds the 60s StartInterval, runs may overlap and fight over the lock, never finishing. Consider tailing bounded bytes directly rather than reducing a full clone.
+3. **Lock contention / lock left held.** `LOCK_DIR` may survive a failed run and block all successors.
+4. **The writer-detection guard fails on the live process** (`expected one joelclaw writer matching ...`). Verify it matches the real Inngest process, which your offline fixture would not have exercised.
+
+## Second defect: the daemon is invisible
+
+The plist sets `StandardOutPath` and `StandardErrorPath` to `/dev/null`, so every failure message you carefully wrote goes nowhere. I could not retrieve a single failure reason. Fix this: give the daemon a real log path under `/Users/Shared/joelclaw/logs/log-rotation/`, and make sure the rotator's own log cannot grow unbounded either. **This is the whole lesson of today — a loop whose failures are invisible is not a loop.**
+
+## Constraints
+
+- Do NOT commit. Steering reviews and commits.
+- No sudo. Do not install, bootout, or reinstall the LaunchDaemon — hand back the exact command.
+- Do NOT truncate, delete, or move the live logs. You may inspect them read-only.
+- The `.snapshot.pending` files are the daemon's own artifacts; you may design safe reclamation, but do not hand-delete them outside the script's own logic.
+- Prove the fix offline first, then state exactly what Joel must run and what he should see within two minutes of the fix being live.
+- dcg blocks commands containing the word that starts "reboot" even inside paths, and blocks `rm -rf` / that single-file removal utility by name. Use paths and mechanisms that avoid those traps.
+- Print a DONE summary when finished.

@@ -8,6 +8,7 @@ MAX_BYTES="${LOG_ROTATION_MAX_BYTES:-67108864}"
 MAX_ARCHIVES="${LOG_ROTATION_MAX_ARCHIVES:-7}"
 MAX_AGE_SECONDS="${LOG_ROTATION_MAX_AGE_SECONDS:-86400}"
 MAX_PAUSE_MS="${LOG_ROTATION_MAX_PAUSE_MS:-500}"
+OWN_LOG_MAX_BYTES="${LOG_ROTATION_OWN_LOG_MAX_BYTES:-1048576}"
 LOCK_DIR="${STATE_DIR}/lock"
 LOGGER_TAG="com.joelclaw.central.log-rotation"
 STOPPED_PID=""
@@ -59,9 +60,9 @@ release_lock() {
 
 trap release_lock EXIT HUP INT TERM
 
-case "${MAX_BYTES}:${MAX_ARCHIVES}:${MAX_AGE_SECONDS}:${MAX_PAUSE_MS}" in
-  *[!0-9:]*|0:*|*:0:*|*:*:0:*|*:*:*:0)
-    fail "rotation limits and pause budget must be positive integers"
+case "${MAX_BYTES}:${MAX_ARCHIVES}:${MAX_AGE_SECONDS}:${MAX_PAUSE_MS}:${OWN_LOG_MAX_BYTES}" in
+  *[!0-9:]*|0:*|*:0:*|*:*:0:*|*:*:*:0|*:*:*:*:0)
+    fail "rotation limits, pause budget, and own-log limit must be positive integers"
     exit 2
     ;;
 esac
@@ -182,23 +183,71 @@ snapshot_path_for() {
   printf '%s.snapshot.pending\n' "$1"
 }
 
-prepare_snapshot() {
+write_phase() {
+  phase_file="$1"
+  phase="$2"
+  phase_tmp="$(mktemp "${STATE_DIR}/phase.XXXXXX")"
+  printf '%s\n' "${phase}" >"${phase_tmp}"
+  mv "${phase_tmp}" "${phase_file}"
+}
+
+clear_transaction() {
+  manifest_file="$1"
+  phase_file="$2"
+  : >"${manifest_file}"
+  : >"${phase_file}"
+}
+
+reclaim_snapshot() {
   service_name="$1"
   log_file="$2"
-  manifest_file="$3"
-  original_inode="$(stat -f %i "${log_file}")"
-  original_size="$(stat -f %z "${log_file}")"
-  snapshot_file="$(snapshot_path_for "${log_file}")"
-  if [ -e "${snapshot_file}" ]; then
-    fail "pending snapshot requires operator review before retry: ${snapshot_file}"
+  snapshot_file="$3"
+  state_key="$(state_key_for "${service_name}" "${log_file}")"
+  reclaimed_file="${STATE_DIR}/${state_key}.reclaimed"
+  : >"${reclaimed_file}"
+  mv "${snapshot_file}" "${reclaimed_file}"
+  : >"${reclaimed_file}"
+  log_notice "reclaimed stale pre-truncate snapshot ${snapshot_file}"
+  printf 'reclaimed stale pre-truncate snapshot %s\n' "${snapshot_file}" >&2
+}
+
+reclaim_pretruncate_transaction() {
+  manifest_file="$1"
+  shift
+
+  manifest_entries=0
+  while IFS='|' read -r manifest_service manifest_log manifest_snapshot manifest_inode manifest_size; do
+    [ -n "${manifest_log}" ] || continue
+    manifest_entries=$((manifest_entries + 1))
+    current_inode="$(stat -f %i "${manifest_log}")"
+    current_size="$(stat -f %z "${manifest_log}")"
+    if [ "${current_inode}" != "${manifest_inode}" ] || [ "${current_size}" -lt "${manifest_size}" ]; then
+      fail "cannot reclaim interrupted snapshot transaction; live file may have been truncated: ${manifest_log}"
+      return 1
+    fi
+  done <"${manifest_file}"
+  if [ "${manifest_entries}" -eq 0 ]; then
+    fail "pending snapshot has no recovery manifest"
     return 1
   fi
+
+  # Truncation is group-atomic and starts only after every clone succeeds.
+  # A proven pre-truncate manifest therefore makes every group snapshot stale.
+  for log_file in "$@"; do
+    snapshot_file="$(snapshot_path_for "${log_file}")"
+    if [ -e "${snapshot_file}" ]; then
+      reclaim_snapshot "${service_name}" "${log_file}" "${snapshot_file}"
+    fi
+  done
+}
+
+prepare_snapshot() {
+  log_file="$1"
+  snapshot_file="$2"
 
   # APFS clonefile makes a point-in-time copy without reading the full file.
   # The writer stays stopped until every due file is cloned and truncated.
   clone_with_pause_budget "${log_file}" "${snapshot_file}"
-  printf '%s|%s|%s|%s|%s\n' \
-    "${service_name}" "${log_file}" "${snapshot_file}" "${original_inode}" "${original_size}" >>"${manifest_file}"
 }
 
 truncate_live_files() {
@@ -212,6 +261,34 @@ truncate_live_files() {
       return 1
     fi
   done <"${manifest_file}"
+}
+
+compact_own_log() {
+  own_log="$1"
+  [ -f "${own_log}" ] || return 0
+  own_size="$(stat -f %z "${own_log}")"
+  [ "${own_size}" -gt "${OWN_LOG_MAX_BYTES}" ] || return 0
+
+  own_tmp="${STATE_DIR}/$(printf '%s' "${own_log##*/}" | tr -c 'A-Za-z0-9._-' '_').retained"
+  tail -c "${OWN_LOG_MAX_BYTES}" "${own_log}" >"${own_tmp}"
+  cat "${own_tmp}" >"${own_log}"
+  : >"${own_tmp}"
+}
+
+compact_daemon_logs() {
+  stdout_log="${CENTRAL_ROOT}/logs/log-rotation/stdout.log"
+  stderr_log="${CENTRAL_ROOT}/logs/log-rotation/stderr.log"
+  compact_own_log "${stdout_log}"
+  compact_own_log "${stderr_log}"
+
+  # launchd opens these descriptors before the script starts. Reopen them after
+  # in-place compaction so a retained old offset cannot create a sparse hole.
+  if [ -f "${stdout_log}" ]; then
+    exec 1>>"${stdout_log}"
+  fi
+  if [ -f "${stderr_log}" ]; then
+    exec 2>>"${stderr_log}"
+  fi
 }
 
 finalize_snapshot() {
@@ -238,10 +315,66 @@ finalize_snapshot() {
   ROTATED_SUMMARY="${ROTATED_SUMMARY}${log_file}|${original_size}|${original_inode}\n"
 }
 
+recover_interrupted_group() {
+  service_name="$1"
+  manifest_file="$2"
+  phase_file="$3"
+  shift 3
+
+  phase=""
+  if [ -s "${phase_file}" ]; then
+    IFS= read -r phase <"${phase_file}" || phase=""
+  fi
+
+  has_pending=0
+  for log_file in "$@"; do
+    [ -e "$(snapshot_path_for "${log_file}")" ] && has_pending=1
+  done
+  [ -s "${manifest_file}" ] || {
+    if [ "${has_pending}" -eq 1 ]; then
+      fail "pending snapshot has no recovery manifest for ${service_name}"
+      return 1
+    fi
+    return 0
+  }
+
+  case "${phase}" in
+    ''|preparing)
+      reclaim_pretruncate_transaction "${manifest_file}" "$@"
+      clear_transaction "${manifest_file}" "${phase_file}"
+      ;;
+    truncating)
+      fail "interrupted ${service_name} transaction stopped during truncation; operator review required"
+      return 1
+      ;;
+    truncated|finalizing)
+      write_phase "${phase_file}" finalizing
+      while IFS='|' read -r manifest_service manifest_log manifest_snapshot manifest_inode manifest_size; do
+        [ -n "${manifest_log}" ] || continue
+        if [ -e "${manifest_snapshot}" ]; then
+          finalize_snapshot "${manifest_service}" "${manifest_log}" "${manifest_snapshot}" "${manifest_inode}" "${manifest_size}"
+        elif [ ! -e "${manifest_log}.0" ]; then
+          fail "interrupted finalization lost both snapshot and archive for ${manifest_log}"
+          return 1
+        fi
+      done <"${manifest_file}"
+      clear_transaction "${manifest_file}" "${phase_file}"
+      ;;
+    *)
+      fail "unknown ${service_name} recovery phase: ${phase}"
+      return 1
+      ;;
+  esac
+}
+
 rotate_group() {
   service_name="$1"
   process_pattern="$2"
   shift 2
+
+  manifest_file="${STATE_DIR}/${service_name}-manifest"
+  phase_file="${STATE_DIR}/${service_name}-phase"
+  recover_interrupted_group "${service_name}" "${manifest_file}" "${phase_file}" "$@" || return 1
 
   any_due=0
   for log_file in "$@"; do
@@ -251,34 +384,35 @@ rotate_group() {
   done
   [ "${any_due}" -eq 1 ] || return 0
 
+  writer_pid="$(find_writer_pid "${process_pattern}")" || return 1
+  : >"${manifest_file}"
   for log_file in "$@"; do
     if rotation_due "${service_name}" "${log_file}"; then
       snapshot_file="$(snapshot_path_for "${log_file}")"
-      if [ -e "${snapshot_file}" ]; then
-        fail "pending snapshot requires operator review before retry: ${snapshot_file}"
-        return 1
-      fi
+      original_inode="$(stat -f %i "${log_file}")"
+      original_size="$(stat -f %z "${log_file}")"
+      printf '%s|%s|%s|%s|%s\n' \
+        "${service_name}" "${log_file}" "${snapshot_file}" "${original_inode}" "${original_size}" >>"${manifest_file}"
     fi
   done
-
-  writer_pid="$(find_writer_pid "${process_pattern}")" || return 1
-  manifest_file="${STATE_DIR}/${service_name}-manifest"
-  : >"${manifest_file}"
+  write_phase "${phase_file}" preparing
   stop_writer "${writer_pid}" "${service_name}" || return 1
 
-  for log_file in "$@"; do
-    if rotation_due "${service_name}" "${log_file}"; then
-      prepare_snapshot "${service_name}" "${log_file}" "${manifest_file}"
-    fi
-  done
+  while IFS='|' read -r manifest_service manifest_log manifest_snapshot manifest_inode manifest_size; do
+    [ -n "${manifest_log}" ] || continue
+    prepare_snapshot "${manifest_log}" "${manifest_snapshot}"
+  done <"${manifest_file}"
+  write_phase "${phase_file}" truncating
   truncate_live_files "${manifest_file}"
+  write_phase "${phase_file}" truncated
   resume_writer
 
+  write_phase "${phase_file}" finalizing
   while IFS='|' read -r manifest_service manifest_log manifest_snapshot manifest_inode manifest_size; do
     [ -n "${manifest_log}" ] || continue
     finalize_snapshot "${manifest_service}" "${manifest_log}" "${manifest_snapshot}" "${manifest_inode}" "${manifest_size}"
   done <"${manifest_file}"
-  : >"${manifest_file}"
+  clear_transaction "${manifest_file}" "${phase_file}"
 
   printf '%b' "${ROTATED_SUMMARY}" | while IFS='|' read -r rotated_file rotated_size rotated_inode; do
     [ -n "${rotated_file}" ] || continue
@@ -312,4 +446,5 @@ run_rotation() {
     "${CENTRAL_ROOT}/logs/typesense/typesense.log"
 }
 
+compact_daemon_logs
 run_rotation

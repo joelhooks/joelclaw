@@ -22,6 +22,8 @@
     <string>67108864</string>
     <key>LOG_ROTATION_MAX_PAUSE_MS</key>
     <string>500</string>
+    <key>LOG_ROTATION_OWN_LOG_MAX_BYTES</key>
+    <string>1048576</string>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
@@ -36,8 +38,8 @@
   <key>GroupName</key>
   <string>staff</string>
   <key>StandardOutPath</key>
-  <string>/dev/null</string>
+  <string>/Users/Shared/joelclaw/logs/log-rotation/stdout.log</string>
   <key>StandardErrorPath</key>
-  <string>/dev/null</string>
+  <string>/Users/Shared/joelclaw/logs/log-rotation/stderr.log</string>
 </dict>
 </plist>
