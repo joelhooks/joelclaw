@@ -1,0 +1,29 @@
+---
+title: "Task: Prototype the Page Annotation UI"
+type: "task"
+parent: "../projects/brain-review-surface/prototype-page-annotation-ui.svx"
+created_at: "2026-07-24"
+privacy: "private"
+---
+
+# Task: Prototype the Page Annotation UI
+
+You are a build worker on [Chart the Brain Review Surface](../projects/brain-review-surface/brain-review-surface-brief.svx) (read the brief index first). Your step: [Prototype the Page Annotation UI](../projects/brain-review-surface/prototype-page-annotation-ui.svx). This is a **throwaway prototype** — optimize for touchable-today, not for keeps.
+
+## Build
+
+Work in `~/Code/joelhooks/joelclaw-wiki` (SvelteKit; Brain pages render at `src/routes/[root]/[slug]`). Deliver a dev-server instance where ONE real Brain page — use `joelclaw/brain-review-surface-brief` (this effort's own brief, already registered) — gets an annotation overlay:
+
+1. **Select text → annotate**: selecting prose pops a small "Annotate" affordance; tapping it opens a comment box; submit POSTs to a throwaway endpoint.
+2. **Endpoint writes a receipt draft**: a `.svx` file per annotation into `~/Code/joelhooks/joelclaw-wiki/.prototype-receipts/` (gitignore this dir locally). Receipt shape follows the recommendation in [Annotation Anchoring for Mutable Brain Pages](../projects/brain-review-surface/annotation-anchoring-research.svx): quote (exact + ~32-char prefix/suffix), position offsets over normalized visible text, source path, current commit sha of the joelclaw checkout, author surface string, timestamp, feedback text. Capture-time invariant: reject if `normalized.slice(start,end) !== exact`.
+3. **Existing annotations render**: on page load, receipts for this page show as highlights (exact-quote match is fine for the prototype; no re-anchoring cascade).
+4. **Phone-first**: this gets reviewed on an iPhone over the tailnet. Selection, the affordance, and the comment box must work with touch on mobile Safari — big targets, no hover dependence. Bind the dev server to `0.0.0.0` and report the port.
+
+## Constraints
+
+- **Partition**: the repo has other sessions' in-flight changes in `static/` and `.brain/tasks/` — do not touch, revert, or commit them. Your changes live in new files plus the minimal edit to the page route (or a dedicated `/annotate/[root]/[slug]` route if that's less invasive — your call, say which).
+- Throwaway means: no Effect ceremony, no tests, no toolbar integration. But the receipt files themselves should be honest `.svx` with frontmatter — they're the strawman the receipt-contract grilling reviews.
+- Do not commit anything. Leave the working tree additive.
+- When the server runs, verify yourself with curl that the page renders and a POST writes a receipt, then print a DONE summary: port, route, files you added/edited, receipt dir, anything that felt wrong.
+
+Work autonomously. Do not commit. Print a DONE summary when finished.
