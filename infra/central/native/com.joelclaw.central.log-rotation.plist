@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.joelclaw.central.log-rotation</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/Shared/joelclaw/bin/rotate-service-logs</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CENTRAL_ROOT</key>
+    <string>/Users/Shared/joelclaw</string>
+    <key>HOME</key>
+    <string>/Users/joelclaw</string>
+    <key>LOG_ROTATION_MAX_AGE_SECONDS</key>
+    <string>86400</string>
+    <key>LOG_ROTATION_MAX_ARCHIVES</key>
+    <string>7</string>
+    <key>LOG_ROTATION_MAX_BYTES</key>
+    <string>67108864</string>
+    <key>LOG_ROTATION_MAX_PAUSE_MS</key>
+    <string>500</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>UserName</key>
+  <string>joelclaw</string>
+  <key>GroupName</key>
+  <string>staff</string>
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>/dev/null</string>
+</dict>
+</plist>

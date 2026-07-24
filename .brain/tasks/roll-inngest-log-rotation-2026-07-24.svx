@@ -1,0 +1,42 @@
+---
+title: "Bound Inngest log growth — the rotation half"
+type: "task"
+date: "2026-07-24"
+privacy: "private"
+---
+
+# Bound Inngest log growth (rotation)
+
+## Your step
+
+Work the open half of **Bound Inngest Log Growth**: `.brain/projects/reboot-hardening/bound-inngest-log-growth.svx`. Read it and the brief `.brain/projects/reboot-hardening/reboot-hardening-brief.svx` first. Claim the step before any work. The truncation half is done; **rotation is what remains.**
+
+## Evidence
+
+`/Users/Shared/joelclaw/logs/inngest/launchd.err.log` reached **35.3GB** (2026-07-20, truncated by hand), then regrew to **438MB in three days** because each zero-EnvID cron error carried a base64 goroutine dump. Hand-truncation is not a control.
+
+The underlying error storm is fixed (Inngest v1.28.0, 2026-07-24) — but the next noisy failure mode will do the same thing. Rotation must hold regardless of what is logging.
+
+## What to build
+
+Size-and-age-bounded rotation for the Inngest logs (`launchd.err.log`, `launchd.out.log`) that survives reboot and runs unattended under launchd, owned by the `joelclaw` service account. macOS-native options in preference order — evaluate and pick one, stating why:
+
+1. `newsyslog` (`/etc/newsyslog.d/*.conf`) — the platform-standard path.
+2. A `com.joelclaw.central.*` LaunchDaemon running a rotation script, matching the existing infra conventions in `infra/central/native/`.
+
+Requirements: bounded total footprint (state the ceiling you chose and why), rotation must not require restarting Inngest, must not lose in-flight writes, and must be verifiable — a test or a documented drill that forces rotation and proves the service kept logging afterward.
+
+Check whether the other services under `/Users/Shared/joelclaw/logs/` have the same unbounded problem (`agent-mail.stdout.log` was 7.7MB and growing, `critical-search-*.out.log` similar). If one mechanism covers them all, say so and scope it; do not silently expand beyond Inngest without recording the decision.
+
+## Deliverable
+
+The config/script plus install instructions. **Do not install it** — it needs sudo. Hand steering the exact install command for Joel.
+
+## Constraints
+
+- Do NOT commit. Steering reviews and commits.
+- No sudo. Do not install, bootstrap, or modify any LaunchDaemon.
+- Do NOT truncate or delete the current 438MB log — steering/Joel own that.
+- Never print secrets or `.env` contents. Log samples in your summary must be short and free of credentials.
+- If a command is BLOCKED by dcg, stop and report it.
+- Print a DONE summary when finished.
