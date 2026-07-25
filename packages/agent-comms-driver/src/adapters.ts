@@ -6,7 +6,7 @@ import {
 } from "@joelclaw/message-event-log";
 import Redis from "ioredis";
 
-import type { AggregateDeadline, DriverPorts, DriverReceipt } from "./driver";
+import type { AggregateDeadline, DriverPorts, DriverReceipt, SessionHandoffInput } from "./driver";
 
 const PANE_SCHEDULE_REGISTRY_KEY = "pane:schedules:pending";
 
@@ -26,20 +26,38 @@ export type LiveAdapterOptions = {
 export const DEFAULT_SUCCESSOR_COMMAND =
   "cd /Users/joel/Code/joelhooks/joelclaw && claude --model sonnet --effort medium --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway";
 
+export type SpawnGatewaySuccessorResult = {
+  spawned: boolean;
+  paneId: string;
+  /** True when an existing labeled pane had no live agent and was relaunched in place. */
+  relaunched?: boolean;
+};
+
 /**
- * herdr-native successor spawn shared by the driver and the kill drill: if a
- * pane already carries the target label it IS the pending successor;
- * otherwise open a pane, label it, and boot the gateway command in it.
+ * herdr-native successor spawn shared by the driver and the kill drill.
+ *
+ * - No labeled pane → create one, label it, boot the gateway command.
+ * - Labeled pane with a live agent session → treat as pending successor (no-op).
+ * - Labeled pane with NO live agent (post-retire empty shell) → relaunch in place.
+ *   Never open a second pane for the same target label.
  */
 export async function spawnGatewaySuccessorPane(
   runCommand: (argv: string[]) => Promise<{ stdout: string; stderr: string }>,
   opts: { target: string; herdrWorkspace?: string; successorCommand?: string },
-): Promise<{ spawned: boolean; paneId: string }> {
+): Promise<SpawnGatewaySuccessorResult> {
+  const command = opts.successorCommand ?? DEFAULT_SUCCESSOR_COMMAND;
   const paneResult = await runCommand(["herdr", "pane", "list"]);
   const panes = resultList(paneResult.stdout, "panes");
   const existing = panes.find((entry) => matchesTarget(entry, opts.target));
   if (existing && typeof existing.pane_id === "string") {
-    return { spawned: false, paneId: existing.pane_id };
+    const agentResult = await runCommand(["herdr", "agent", "list"]);
+    const agents = resultList(agentResult.stdout, "agents");
+    const live = agents.some((entry) => entry.pane_id === existing.pane_id);
+    if (live) {
+      return { spawned: false, paneId: existing.pane_id };
+    }
+    await runCommand(["herdr", "pane", "run", existing.pane_id, command]);
+    return { spawned: true, paneId: existing.pane_id, relaunched: true };
   }
   const workspace = opts.herdrWorkspace?.trim();
   const createArgs = workspace
@@ -56,9 +74,56 @@ export async function spawnGatewaySuccessorPane(
     "pane",
     "run",
     paneId,
-    opts.successorCommand ?? DEFAULT_SUCCESSOR_COMMAND,
+    command,
   ]);
   return { spawned: true, paneId };
+}
+
+/**
+ * Stop the foreground agent process inside a pane without closing the pane.
+ * Used for clean/degeneration retire so spawn can relaunch in place.
+ */
+export async function stopAgentInPane(
+  runCommand: (argv: string[]) => Promise<{ stdout: string; stderr: string }>,
+  paneId: string,
+  killProcess: (pid: number, signal?: NodeJS.Signals) => void = (pid, signal) => {
+    globalThis.process.kill(pid, signal ?? "SIGTERM");
+  },
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  opts: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<{ stopped: boolean; pids: number[] }> {
+  const timeoutMs = opts.timeoutMs ?? 10_000;
+  const pollMs = opts.pollMs ?? 200;
+  const infoRaw = await runCommand(["herdr", "pane", "process-info", "--pane", paneId]);
+  const infoEnvelope = object(JSON.parse(infoRaw.stdout));
+  const infoResult = object(infoEnvelope?.result);
+  const processInfo = object(infoResult?.process_info);
+  const shellPid = typeof processInfo?.shell_pid === "number" ? processInfo.shell_pid : undefined;
+  const foreground = Array.isArray(processInfo?.foreground_processes)
+    ? processInfo.foreground_processes
+    : [];
+  const pids: number[] = [];
+  for (const entry of foreground) {
+    const record = object(entry);
+    const pid = typeof record?.pid === "number" ? record.pid : undefined;
+    if (pid === undefined || pid === shellPid) continue;
+    try {
+      killProcess(pid, "SIGTERM");
+      pids.push(pid);
+    } catch {
+      // Already gone is fine.
+    }
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const agentResult = await runCommand(["herdr", "agent", "list"]);
+    const agents = resultList(agentResult.stdout, "agents");
+    const live = agents.some((entry) => entry.pane_id === paneId);
+    if (!live) return { stopped: true, pids };
+    await wait(pollMs);
+  }
+  return { stopped: false, pids };
 }
 
 type CommandResult = { stdout: string; stderr: string };
@@ -265,10 +330,6 @@ export function makeLiveDriverPorts(
     options.redisUrl ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379",
     { lazyConnect: true, maxRetriesPerRequest: 1 },
   );
-  const successorIdentity = options.successorIdentity ?? `agent-comms-driver:${options.target}`;
-  const successorMarker = `[driver-spawn:${successorIdentity}]`;
-  const successorPrompt = `${successorMarker} Gateway session missing or retired. Start its successor from authoritative stream replay.`;
-
   const recordReceipt = async (receipt: DriverReceipt) => {
     const line = `${JSON.stringify(receipt)}\n`;
     process.stdout.write(line);
@@ -277,12 +338,15 @@ export function makeLiveDriverPorts(
 
   // The target may be a stable pane label that outlives respawns; herdr's
   // prompt command wants a pane id or agent name, so resolve per call.
-  const resolveCliTarget = async (): Promise<string> => {
+  const resolvePaneId = async (): Promise<string | undefined> => {
     const paneResult = await runCommand(["herdr", "pane", "list"]);
     const panes = resultList(paneResult.stdout, "panes");
     const pane = panes.find((entry) => matchesTarget(entry, options.target));
-    return typeof pane?.pane_id === "string" ? pane.pane_id : options.target;
+    return typeof pane?.pane_id === "string" ? pane.pane_id : undefined;
   };
+
+  const resolveCliTarget = async (): Promise<string> =>
+    (await resolvePaneId()) ?? options.target;
 
   return {
     now: Date.now,
@@ -313,6 +377,28 @@ export function makeLiveDriverPorts(
     },
     countUnhandled: async () =>
       (await stream.pendingForConsumer(GATEWAY_MESSAGE_EVENT_CONSUMER, 1)).length,
+    readRecentOutput: async () => {
+      try {
+        const target = await resolveCliTarget();
+        const result = await runCommand([
+          "herdr",
+          "agent",
+          "read",
+          target,
+          "--source",
+          "recent-unwrapped",
+          "--lines",
+          "80",
+          "--format",
+          "text",
+        ]);
+        // herdr wraps text; prefer raw stdout and let the detector scan it.
+        return result.stdout;
+      } catch {
+        // No agent / read failure is not degeneration evidence.
+        return "";
+      }
+    },
     promptAgent: async (text, timeoutMs) => {
       await runCommand([
         "herdr",
@@ -343,10 +429,33 @@ export function makeLiveDriverPorts(
       if (redis.status === "wait") await redis.connect();
       await redis.set(key, value, "PX", ttlMs);
     },
+    writeHandoff: async (input: SessionHandoffInput) => {
+      // Advisory only — SessionStart prefers stream replay over this note.
+      await stream.append({
+        semanticKey: `gateway-handoff:driver-retire:${input.reason}:${Date.now()}`,
+        kind: "gateway.handoff",
+        source: "agent-comms-driver",
+        payload: {
+          sessionId: `driver-retire:${options.target}`,
+          promptRevision: `driver-retire/${input.reason}`,
+          note: input.note.slice(0, 2000),
+          lastSequence: 0,
+        },
+      });
+    },
+    stopSession: async () => {
+      const paneId = await resolvePaneId();
+      if (!paneId) return;
+      const result = await stopAgentInPane(runCommand, paneId);
+      if (!result.stopped && result.pids.length > 0) {
+        throw new Error(`gateway session on ${paneId} still live after SIGTERM (pids ${result.pids.join(",")})`);
+      }
+    },
     requestSuccessor: async () => {
       // herdr-native spawn (Joel, cutover sitting 2026-07-21): the driver opens
       // the successor pane directly instead of routing through the wake
-      // registry — one hop, observable, no pipeline dependency.
+      // registry — one hop, observable, no pipeline dependency. Post-retire
+      // empty labeled panes relaunch in place (see spawnGatewaySuccessorPane).
       await spawnGatewaySuccessorPane(runCommand, {
         target: options.target,
         ...(options.herdrWorkspace ? { herdrWorkspace: options.herdrWorkspace } : {}),

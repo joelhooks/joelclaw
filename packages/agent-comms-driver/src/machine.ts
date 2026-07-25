@@ -5,20 +5,26 @@ export type AgentObservation = {
   sessionExists: boolean;
   idle: boolean;
   hasUnhandledWork: boolean;
+  degenerated: boolean;
+  sessionAgeMs: number;
   observedAt: number;
 };
+
+export type RetireReason = "age" | "degeneration";
 
 export type DriverContext = {
   pokeStartedAt?: number;
   lastPokeAnsweredAt?: number;
   spawnRequestedAt?: number;
   lastFailure?: string;
+  retireReason?: RetireReason;
 };
 
 export type DriverEvent =
   | ({ type: "OBSERVED" } & AgentObservation & {
       pokeDeadlineMs: number;
       successorDeadlineMs: number;
+      maxSessionAgeMs: number;
     })
   | { type: "POKE_ANSWERED"; answeredAt: number }
   | { type: "POKE_FAILED"; reason: string }
@@ -40,7 +46,26 @@ const shouldPoke = ({ event }: { event: DriverEvent }): boolean =>
   && event.paneExists
   && event.sessionExists
   && event.idle
-  && event.hasUnhandledWork;
+  && event.hasUnhandledWork
+  && !event.degenerated;
+
+/** Clean age retire: healthy, idle, no outstanding work, past wall-clock limit. */
+const shouldRetire = ({ event }: { event: DriverEvent }): boolean =>
+  event.type === "OBSERVED"
+  && event.paneExists
+  && event.sessionExists
+  && event.idle
+  && !event.hasUnhandledWork
+  && !event.degenerated
+  && event.sessionAgeMs >= event.maxSessionAgeMs
+  && event.maxSessionAgeMs > 0;
+
+/** Degeneration is poison — force successor even with queue/work outstanding. */
+const shouldForceRetire = ({ event }: { event: DriverEvent }): boolean =>
+  event.type === "OBSERVED"
+  && event.paneExists
+  && event.sessionExists
+  && event.degenerated;
 
 const pokePastDeadline = ({ context, event }: { context: DriverContext; event: DriverEvent }): boolean =>
   event.type === "OBSERVED"
@@ -69,6 +94,8 @@ export const driverMachine = setup({
     paneOrSessionMissing,
     sessionNotSettled,
     shouldPoke,
+    shouldRetire,
+    shouldForceRetire,
     pokePastDeadline,
     successorPastDeadline,
   },
@@ -76,6 +103,7 @@ export const driverMachine = setup({
     beginPoke: assign({
       pokeStartedAt: ({ event }) => event.type === "OBSERVED" ? event.observedAt : undefined,
       lastFailure: undefined,
+      retireReason: undefined,
     }),
     finishPoke: assign({
       pokeStartedAt: undefined,
@@ -93,10 +121,22 @@ export const driverMachine = setup({
       pokeStartedAt: undefined,
       spawnRequestedAt: undefined,
       lastFailure: undefined,
+      retireReason: undefined,
     }),
     recordSpawnRequest: assign({
       spawnRequestedAt: ({ event }) =>
         event.type === "SPAWN_ACCEPTED" ? event.requestedAt : undefined,
+      pokeStartedAt: undefined,
+    }),
+    markAgeRetire: assign({
+      retireReason: "age" as const,
+      pokeStartedAt: undefined,
+      lastFailure: undefined,
+    }),
+    markDegenerationRetire: assign({
+      retireReason: "degeneration" as const,
+      pokeStartedAt: undefined,
+      lastFailure: "session output degenerated",
     }),
   },
 }).createMachine({
@@ -110,8 +150,10 @@ export const driverMachine = setup({
     booting: {
       on: {
         OBSERVED: [
+          { target: "spawning", guard: "shouldForceRetire", actions: "markDegenerationRetire" },
           { target: "spawning", guard: "paneOrSessionMissing" },
           { target: "poking", guard: "shouldPoke", actions: "beginPoke" },
+          { target: "spawning", guard: "shouldRetire", actions: "markAgeRetire" },
           { target: "ready", guard: "healthyIdleSession" },
         ],
       },
@@ -119,8 +161,10 @@ export const driverMachine = setup({
     ready: {
       on: {
         OBSERVED: [
+          { target: "spawning", guard: "shouldForceRetire", actions: "markDegenerationRetire" },
           { target: "spawning", guard: "paneOrSessionMissing" },
           { target: "poking", guard: "shouldPoke", actions: "beginPoke" },
+          { target: "spawning", guard: "shouldRetire", actions: "markAgeRetire" },
           { target: "booting", guard: "sessionNotSettled" },
         ],
       },
@@ -130,6 +174,7 @@ export const driverMachine = setup({
         POKE_ANSWERED: { target: "ready", actions: "finishPoke" },
         POKE_FAILED: { target: "unhealthy", actions: "recordFailure" },
         OBSERVED: [
+          { target: "spawning", guard: "shouldForceRetire", actions: "markDegenerationRetire" },
           { target: "spawning", guard: "paneOrSessionMissing" },
           { target: "unhealthy", guard: "pokePastDeadline", actions: "recordFailure" },
         ],
@@ -138,6 +183,7 @@ export const driverMachine = setup({
     unhealthy: {
       on: {
         OBSERVED: [
+          { target: "spawning", guard: "shouldForceRetire", actions: "markDegenerationRetire" },
           { target: "spawning", guard: "paneOrSessionMissing" },
           { target: "poking", guard: "shouldPoke", actions: "beginPoke" },
           // A healthy idle session has no poke outstanding — that is recovery
@@ -145,6 +191,8 @@ export const driverMachine = setup({
           // when the queue is empty (absorbing-state bug, caught by the live
           // kill drill 2026-07-21). A truly wedged session fails its next
           // real poke and re-enters unhealthy with fresh evidence.
+          // Age retire is also allowed from recovered unhealthy when idle/empty.
+          { target: "spawning", guard: "shouldRetire", actions: "markAgeRetire" },
           { target: "ready", guard: "healthyIdleSession" },
         ],
       },
@@ -159,6 +207,7 @@ export const driverMachine = setup({
       on: {
         OBSERVED: [
           { target: "spawning", guard: "successorPastDeadline" },
+          { target: "spawning", guard: "shouldForceRetire", actions: "markDegenerationRetire" },
           { target: "poking", guard: "shouldPoke", actions: "beginPoke" },
           { target: "ready", guard: "healthyIdleSession", actions: "clearFailure" },
         ],

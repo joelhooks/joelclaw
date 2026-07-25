@@ -8,16 +8,20 @@ import {
   type DriverPorts,
   type DriverReceipt,
   driverMachine,
+  type SessionHandoffInput,
 } from "../src";
 
 type Fake = {
   now: number;
   agent: { paneExists: boolean; sessionExists: boolean; idle: boolean };
   unhandled: number;
+  recentOutput: string;
   due: AggregateDeadline[];
   prompts: string[];
   deadlines: AggregateDeadline[];
   receipts: DriverReceipt[];
+  handoffs: SessionHandoffInput[];
+  stops: number;
   spawns: number;
   heartbeat?: { key: string; expiresAt: number; value: string };
   promptError?: Error;
@@ -28,10 +32,13 @@ function harness(): { fake: Fake; ports: DriverPorts } {
     now: 1_000,
     agent: { paneExists: true, sessionExists: true, idle: true },
     unhandled: 0,
+    recentOutput: "",
     due: [],
     prompts: [],
     deadlines: [],
     receipts: [],
+    handoffs: [],
+    stops: 0,
     spawns: 0,
   };
   return {
@@ -40,6 +47,7 @@ function harness(): { fake: Fake; ports: DriverPorts } {
       now: () => fake.now,
       inspectAgent: async () => fake.agent,
       countUnhandled: async () => fake.unhandled,
+      readRecentOutput: async () => fake.recentOutput,
       promptAgent: async (text) => {
         fake.prompts.push(text);
         if (fake.promptError) throw fake.promptError;
@@ -51,6 +59,14 @@ function harness(): { fake: Fake; ports: DriverPorts } {
       },
       refreshHeartbeat: async (key, ttlMs, value) => {
         fake.heartbeat = { key, value, expiresAt: fake.now + ttlMs };
+      },
+      writeHandoff: async (input) => {
+        fake.handoffs.push(input);
+      },
+      stopSession: async () => {
+        fake.stops += 1;
+        fake.agent = { paneExists: true, sessionExists: false, idle: false };
+        fake.recentOutput = "";
       },
       requestSuccessor: async () => {
         fake.spawns += 1;
@@ -65,6 +81,32 @@ function harness(): { fake: Fake; ports: DriverPorts } {
 const run = (driver: AgentCommsDriver) => Effect.runPromise(driver.runPass());
 const heartbeatExists = (fake: Fake) =>
   fake.heartbeat !== undefined && fake.heartbeat.expiresAt > fake.now;
+
+const observed = (overrides: Partial<{
+  paneExists: boolean;
+  sessionExists: boolean;
+  idle: boolean;
+  hasUnhandledWork: boolean;
+  degenerated: boolean;
+  sessionAgeMs: number;
+  observedAt: number;
+  pokeDeadlineMs: number;
+  successorDeadlineMs: number;
+  maxSessionAgeMs: number;
+}> = {}) => ({
+  type: "OBSERVED" as const,
+  paneExists: true,
+  sessionExists: true,
+  idle: true,
+  hasUnhandledWork: false,
+  degenerated: false,
+  sessionAgeMs: 0,
+  observedAt: 1_000,
+  pokeDeadlineMs: 5_000,
+  successorDeadlineMs: 120_000,
+  maxSessionAgeMs: 4 * 60 * 60 * 1000,
+  ...overrides,
+});
 
 describe("AgentCommsDriver", () => {
   test("pokes once for unhandled work and refreshes the test heartbeat only after the answer", async () => {
@@ -173,6 +215,8 @@ describe("AgentCommsDriver", () => {
     expect(await run(driver)).toBe("awaitingSuccessor");
     expect(await run(driver)).toBe("awaitingSuccessor");
     expect(fake.spawns).toBe(1);
+    expect(fake.stops).toBe(0);
+    expect(fake.handoffs).toHaveLength(0);
     expect(fake.heartbeat).toBeUndefined();
 
     fake.now += 120_000;
@@ -183,33 +227,178 @@ describe("AgentCommsDriver", () => {
     expect(await run(driver)).toBe("ready");
     expect(fake.heartbeat?.key).toBe("test:gateway:heartbeat");
   });
+
+  test("retires a healthy idle empty session past the age limit and boots a successor", async () => {
+    const { fake, ports } = harness();
+    const maxSessionAgeMs = 4 * 60 * 60 * 1000;
+    const driver = new AgentCommsDriver(ports, {
+      heartbeatKey: "test:gateway:heartbeat",
+      maxSessionAgeMs,
+    });
+
+    expect(await run(driver)).toBe("ready");
+    expect(fake.spawns).toBe(0);
+
+    fake.now += maxSessionAgeMs;
+    expect(await run(driver)).toBe("awaitingSuccessor");
+    expect(fake.stops).toBe(1);
+    expect(fake.spawns).toBe(1);
+    expect(fake.handoffs).toEqual([
+      expect.objectContaining({
+        reason: "age",
+        sessionAgeMs: maxSessionAgeMs,
+      }),
+    ]);
+    expect(fake.receipts.map((receipt) => receipt.action)).toEqual(expect.arrayContaining([
+      "session.retire.requested",
+      "session.retire.stopped",
+      "successor.spawn.requested",
+    ]));
+    expect(fake.receipts.at(-1)).toMatchObject({
+      action: "heartbeat.withheld",
+      detail: { reason: "awaitingSuccessor" },
+    });
+
+    fake.agent = { paneExists: true, sessionExists: true, idle: true };
+    fake.now += 1_000;
+    expect(await run(driver)).toBe("ready");
+    expect(fake.heartbeat?.key).toBe("test:gateway:heartbeat");
+  });
+
+  test("does not age-retire while unhandled work remains", async () => {
+    const { fake, ports } = harness();
+    const maxSessionAgeMs = 60_000;
+    const driver = new AgentCommsDriver(ports, {
+      heartbeatKey: "test:gateway:heartbeat",
+      maxSessionAgeMs,
+    });
+
+    expect(await run(driver)).toBe("ready");
+    fake.now += maxSessionAgeMs;
+    fake.unhandled = 2;
+    expect(await run(driver)).toBe("ready");
+    expect(fake.prompts).toHaveLength(1);
+    expect(fake.stops).toBe(0);
+    expect(fake.spawns).toBe(0);
+  });
+
+  test("does not age-retire mid-poke", async () => {
+    const { fake, ports } = harness();
+    const maxSessionAgeMs = 60_000;
+    let resolvePrompt: (() => void) | undefined;
+    const portsBlocking: DriverPorts = {
+      ...ports,
+      promptAgent: async (text) => {
+        fake.prompts.push(text);
+        await new Promise<void>((resolve) => {
+          resolvePrompt = resolve;
+        });
+      },
+    };
+    // Age retire is gated on idle empty ready — while poking, only OBSERVED
+    // can force-spawn for missing pane or degeneration. Simulate via machine.
+    const actor = createActor(driverMachine).start();
+    actor.send(observed({
+      hasUnhandledWork: true,
+      observedAt: 1_000,
+      maxSessionAgeMs,
+    }));
+    expect(actor.getSnapshot().value).toBe("poking");
+    actor.send(observed({
+      idle: false,
+      hasUnhandledWork: true,
+      sessionAgeMs: maxSessionAgeMs + 1,
+      observedAt: 1_500,
+      maxSessionAgeMs,
+    }));
+    expect(actor.getSnapshot().value).toBe("poking");
+    expect(actor.getSnapshot().context.retireReason).toBeUndefined();
+    void portsBlocking;
+    void resolvePrompt;
+  });
+
+  test("force-retires on repeated-token collapse and recovers via successor", async () => {
+    const { fake, ports } = harness();
+    const driver = new AgentCommsDriver(ports, {
+      heartbeatKey: "test:gateway:heartbeat",
+      maxSessionAgeMs: 4 * 60 * 60 * 1000,
+    });
+
+    expect(await run(driver)).toBe("ready");
+    fake.recentOutput = "court court court court court court court";
+    fake.unhandled = 3;
+    expect(await run(driver)).toBe("awaitingSuccessor");
+    expect(fake.stops).toBe(1);
+    expect(fake.spawns).toBe(1);
+    expect(fake.handoffs[0]?.reason).toBe("degeneration");
+    expect(fake.prompts).toHaveLength(0);
+
+    fake.agent = { paneExists: true, sessionExists: true, idle: true };
+    fake.recentOutput = "normal gateway prose about aggregates";
+    fake.unhandled = 0;
+    fake.now += 1_000;
+    expect(await run(driver)).toBe("ready");
+    expect(fake.heartbeat?.key).toBe("test:gateway:heartbeat");
+  });
 });
 
 describe("driver lifecycle machine", () => {
   test("an outstanding poke past deadline becomes unhealthy", () => {
     const actor = createActor(driverMachine).start();
-    actor.send({
-      type: "OBSERVED",
-      paneExists: true,
-      sessionExists: true,
-      idle: true,
+    actor.send(observed({
       hasUnhandledWork: true,
       observedAt: 1_000,
       pokeDeadlineMs: 5_000,
-      successorDeadlineMs: 120_000,
-    });
+    }));
     expect(actor.getSnapshot().value).toBe("poking");
 
-    actor.send({
-      type: "OBSERVED",
-      paneExists: true,
-      sessionExists: true,
+    actor.send(observed({
       idle: false,
       hasUnhandledWork: true,
       observedAt: 6_000,
       pokeDeadlineMs: 5_000,
-      successorDeadlineMs: 120_000,
-    });
+    }));
     expect(actor.getSnapshot().value).toBe("unhealthy");
+  });
+
+  test("age retire requires idle empty session past the limit", () => {
+    const maxSessionAgeMs = 60_000;
+    const actor = createActor(driverMachine).start();
+    actor.send(observed({ sessionAgeMs: 0, observedAt: 1_000, maxSessionAgeMs }));
+    expect(actor.getSnapshot().value).toBe("ready");
+
+    actor.send(observed({
+      hasUnhandledWork: true,
+      sessionAgeMs: maxSessionAgeMs + 1,
+      observedAt: 2_000,
+      maxSessionAgeMs,
+    }));
+    expect(actor.getSnapshot().value).toBe("poking");
+
+    actor.send({ type: "POKE_ANSWERED", answeredAt: 2_100 });
+    expect(actor.getSnapshot().value).toBe("ready");
+
+    actor.send(observed({
+      sessionAgeMs: maxSessionAgeMs + 1,
+      observedAt: 3_000,
+      maxSessionAgeMs,
+    }));
+    expect(actor.getSnapshot().value).toBe("spawning");
+    expect(actor.getSnapshot().context.retireReason).toBe("age");
+  });
+
+  test("degeneration force-retires even mid-poke", () => {
+    const actor = createActor(driverMachine).start();
+    actor.send(observed({ hasUnhandledWork: true, observedAt: 1_000 }));
+    expect(actor.getSnapshot().value).toBe("poking");
+
+    actor.send(observed({
+      idle: false,
+      hasUnhandledWork: true,
+      degenerated: true,
+      observedAt: 1_500,
+    }));
+    expect(actor.getSnapshot().value).toBe("spawning");
+    expect(actor.getSnapshot().context.retireReason).toBe("degeneration");
   });
 });

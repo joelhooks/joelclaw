@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { MessageEventDocument } from "@joelclaw/message-event-log";
 
-import { makeDeadlineIndex, makeLiveDriverPorts } from "../src";
+import { makeDeadlineIndex, makeLiveDriverPorts, spawnGatewaySuccessorPane, stopAgentInPane } from "../src";
 
 function event(
   id: string,
@@ -177,15 +177,19 @@ describe("live adapters", () => {
     await ports.close();
   });
 
-  test("spawns the successor pane via herdr and treats a labeled pane as pending", async () => {
+  test("spawns the successor pane via herdr and treats a labeled live pane as pending", async () => {
     const stream = streamFake();
     const redis = redisFake();
     const calls: string[][] = [];
     let paneListPayload = '{"result":{"panes":[]}}';
+    let agentListPayload = '{"result":{"agents":[]}}';
     const runCommand = async (argv: string[]) => {
       calls.push(argv);
       if (argv[0] === "herdr" && argv[1] === "pane" && argv[2] === "list") {
         return { stdout: paneListPayload, stderr: "" };
+      }
+      if (argv[0] === "herdr" && argv[1] === "agent" && argv[2] === "list") {
+        return { stdout: agentListPayload, stderr: "" };
       }
       if (argv[0] === "herdr" && argv[1] === "tab" && argv[2] === "create") {
         return { stdout: '{"result":{"tab":"wT:t2","root_pane":{"pane_id":"wT:p9"}}}', stderr: "" };
@@ -208,11 +212,120 @@ describe("live adapters", () => {
     expect(rename).toEqual(["herdr", "pane", "rename", "wT:p9", "📨 gateway loop"]);
     expect(run).toEqual(["herdr", "pane", "run", "wT:p9", "echo boot"]);
 
-    // A pane already carrying the target label is the pending successor.
+    // A labeled pane with a live agent is the pending successor — do not relaunch.
     paneListPayload = '{"result":{"panes":[{"pane_id":"wT:p9","label":"📨 gateway loop"}]}}';
+    agentListPayload = '{"result":{"agents":[{"pane_id":"wT:p9","name":"gateway","agent_status":"idle"}]}}';
     const before = calls.length;
     await ports.requestSuccessor();
     expect(calls.slice(before).filter((argv) => argv[2] === "create")).toHaveLength(0);
+    expect(calls.slice(before).filter((argv) => argv[2] === "run")).toHaveLength(0);
+    await ports.close();
+  });
+
+  test("relaunches in place when the labeled pane has no live agent session", async () => {
+    const calls: string[][] = [];
+    const runCommand = async (argv: string[]) => {
+      calls.push(argv);
+      if (argv[0] === "herdr" && argv[1] === "pane" && argv[2] === "list") {
+        return {
+          stdout: JSON.stringify({
+            result: { panes: [{ pane_id: "wT:p9", label: "📨 gateway loop" }] },
+          }),
+          stderr: "",
+        };
+      }
+      if (argv[0] === "herdr" && argv[1] === "agent" && argv[2] === "list") {
+        return { stdout: '{"result":{"agents":[]}}', stderr: "" };
+      }
+      return { stdout: '{"result":{}}', stderr: "" };
+    };
+
+    const result = await spawnGatewaySuccessorPane(runCommand, {
+      target: "📨 gateway loop",
+      successorCommand: "echo relaunch",
+    });
+
+    expect(result).toEqual({ spawned: true, paneId: "wT:p9", relaunched: true });
+    expect(calls.filter((argv) => argv[1] === "tab" || argv[1] === "workspace")).toHaveLength(0);
+    expect(calls).toContainEqual(["herdr", "pane", "run", "wT:p9", "echo relaunch"]);
+  });
+
+  test("stopAgentInPane kills foreground pids and waits until the agent is gone", async () => {
+    const killed: Array<{ pid: number; signal?: NodeJS.Signals }> = [];
+    let agentPresent = true;
+    const runCommand = async (argv: string[]) => {
+      if (argv[0] === "herdr" && argv[1] === "pane" && argv[2] === "process-info") {
+        return {
+          stdout: JSON.stringify({
+            result: {
+              process_info: {
+                pane_id: "wT:p9",
+                shell_pid: 100,
+                foreground_processes: [{ pid: 200, name: "claude", argv0: "claude" }],
+              },
+            },
+          }),
+          stderr: "",
+        };
+      }
+      if (argv[0] === "herdr" && argv[1] === "agent" && argv[2] === "list") {
+        return {
+          stdout: JSON.stringify({
+            result: {
+              agents: agentPresent
+                ? [{ pane_id: "wT:p9", name: "gateway", agent_status: "idle" }]
+                : [],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      return { stdout: "{}", stderr: "" };
+    };
+
+    const result = await stopAgentInPane(
+      runCommand,
+      "wT:p9",
+      (pid, signal) => {
+        killed.push({ pid, signal });
+        agentPresent = false;
+      },
+      async () => {},
+      { timeoutMs: 1_000, pollMs: 1 },
+    );
+
+    expect(killed).toEqual([{ pid: 200, signal: "SIGTERM" }]);
+    expect(result).toEqual({ stopped: true, pids: [200] });
+  });
+
+  test("writeHandoff appends an advisory gateway.handoff note", async () => {
+    const stream = streamFake();
+    const redis = redisFake();
+    const ports = makeLiveDriverPorts(
+      { target: "📨 gateway loop", successorBriefPath: "/tmp/scratch.svx" },
+      {
+        stream: stream.client,
+        redis: redis.client,
+        runCommand: async () => ({ stdout: '{"result":{"agents":[],"panes":[]}}', stderr: "" }),
+      },
+    );
+
+    await ports.writeHandoff({
+      reason: "age",
+      sessionAgeMs: 14_400_000,
+      note: "Driver clean retire after 4h wall-clock session age.",
+    });
+
+    expect(stream.appended).toEqual([
+      expect.objectContaining({
+        kind: "gateway.handoff",
+        source: "agent-comms-driver",
+        payload: expect.objectContaining({
+          promptRevision: "driver-retire/age",
+          note: "Driver clean retire after 4h wall-clock session age.",
+        }),
+      }),
+    ]);
     await ports.close();
   });
 

@@ -2,14 +2,15 @@
 
 Zero-policy host driver for the Agent Comms Gateway.
 
-It does four mechanical jobs:
+It does five mechanical jobs:
 
 - Pokes one settled Herdr session when `gateway/agent` has pending stream events.
 - Appends due `aggregate.deadline.reached` events from agent-authored `holdUntil` values.
 - Refreshes a Redis heartbeat only after Herdr proves the pane and session exist and the latest poke settled before its deadline.
-- Requests a wake-registry `SPAWN` when the session disappears. It retries if no successor appears within the configured deadline.
+- Retires a healthy idle session past wall-clock age (default 4h) or on repeated-token collapse, writes an advisory `gateway.handoff`, stops the agent in-place, and relaunches the successor in the same pane.
+- Requests a successor spawn when the session disappears. Empty labeled panes relaunch in place; it retries if no successor appears within the configured deadline.
 
-It never reads message text and never chooses delivery, routing, grouping, suppression, or escalation.
+It never chooses delivery, routing, grouping, suppression, or escalation. Recent terminal text is scanned only for degeneration detection.
 
 ## Run
 
@@ -24,8 +25,9 @@ Optional settings:
 - `GATEWAY_HEARTBEAT_KEY` defaults to `gateway:agent:heartbeat`.
 - `GATEWAY_HEARTBEAT_REFRESH_MS` defaults to `15000`.
 - `GATEWAY_HEARTBEAT_TTL_MS` defaults to `60000`.
-- `GATEWAY_POKE_DEADLINE_MS` defaults to `120000`.
+- `GATEWAY_POKE_DEADLINE_MS` defaults to `300000`.
 - `GATEWAY_SUCCESSOR_DEADLINE_MS` defaults to `120000`.
+- `GATEWAY_MAX_SESSION_AGE_MS` defaults to `14400000` (4h). Set `0` to disable age retire.
 - `GATEWAY_DRIVER_RECEIPT_PATH` defaults to `/tmp/joelclaw/agent-comms-driver.jsonl`.
 
 Tests and scratch proofs must set a `test:*` heartbeat key. Never run a proof against the production gateway target.

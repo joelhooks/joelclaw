@@ -5,6 +5,7 @@ import {
   AgentCommsDriver,
   DEFAULT_HEARTBEAT_REFRESH_MS,
   DEFAULT_HEARTBEAT_TTL_MS,
+  DEFAULT_MAX_SESSION_AGE_MS,
   DEFAULT_POKE_DEADLINE_MS,
   DEFAULT_SUCCESSOR_DEADLINE_MS,
 } from "./driver";
@@ -37,6 +38,9 @@ const main = Effect.gen(function* () {
   const successorDeadlineMs = yield* Config.integer("GATEWAY_SUCCESSOR_DEADLINE_MS").pipe(
     Config.withDefault(DEFAULT_SUCCESSOR_DEADLINE_MS),
   );
+  const maxSessionAgeMs = yield* Config.integer("GATEWAY_MAX_SESSION_AGE_MS").pipe(
+    Config.withDefault(DEFAULT_MAX_SESSION_AGE_MS),
+  );
   const receiptPath = yield* Config.string("GATEWAY_DRIVER_RECEIPT_PATH").pipe(
     Config.withDefault("/tmp/joelclaw/agent-comms-driver.jsonl"),
   );
@@ -60,6 +64,7 @@ const main = Effect.gen(function* () {
     heartbeatTtlMs,
     pokeDeadlineMs,
     successorDeadlineMs,
+    maxSessionAgeMs,
   });
 
   yield* driver.runPass().pipe(

@@ -1,7 +1,13 @@
 import { Data, Effect } from "effect";
 import { type ActorRefFrom, createActor } from "xstate";
 
-import { type AgentObservation, type DriverState, driverMachine } from "./machine";
+import { detectRepeatedTokenCollapse } from "./degeneration";
+import {
+  type AgentObservation,
+  type DriverState,
+  driverMachine,
+  type RetireReason,
+} from "./machine";
 
 export const DEFAULT_HEARTBEAT_KEY = "gateway:agent:heartbeat";
 export const DEFAULT_HEARTBEAT_REFRESH_MS = 15_000;
@@ -10,6 +16,8 @@ export const DEFAULT_HEARTBEAT_TTL_MS = 60_000;
 // deadline scored healthy turns as failures and flapped the heartbeat.
 export const DEFAULT_POKE_DEADLINE_MS = 300_000;
 export const DEFAULT_SUCCESSOR_DEADLINE_MS = 120_000;
+/** Wall-clock session age before a clean idle retire. Prefer honest age over fragile token parsing. */
+export const DEFAULT_MAX_SESSION_AGE_MS = 4 * 60 * 60 * 1000;
 export const DRIVER_POKE_TEXT = "Unhandled gateway stream work exists. Read the authoritative stream and decide it.";
 
 export type AggregateDeadline = {
@@ -17,6 +25,12 @@ export type AggregateDeadline = {
   memberEventIds: string[];
   holdUntil: number;
   follows?: string;
+};
+
+export type SessionHandoffInput = {
+  reason: RetireReason;
+  sessionAgeMs: number;
+  note: string;
 };
 
 export type DriverReceipt = {
@@ -29,6 +43,8 @@ export type DriverReceipt = {
     | "heartbeat.refreshed"
     | "heartbeat.withheld"
     | "aggregate.deadline.fired"
+    | "session.retire.requested"
+    | "session.retire.stopped"
     | "successor.spawn.requested"
     | "successor.spawn.failed";
   state: DriverState;
@@ -36,12 +52,18 @@ export type DriverReceipt = {
 };
 
 export type DriverPorts = {
-  inspectAgent: () => Promise<Omit<AgentObservation, "hasUnhandledWork" | "observedAt">>;
+  inspectAgent: () => Promise<Omit<AgentObservation, "hasUnhandledWork" | "degenerated" | "sessionAgeMs" | "observedAt">>;
   countUnhandled: () => Promise<number>;
+  /** Recent terminal/assistant text used only for degeneration detection. */
+  readRecentOutput: () => Promise<string>;
   promptAgent: (text: string, timeoutMs: number) => Promise<void>;
   listDueDeadlines: (now: number) => Promise<AggregateDeadline[]>;
   appendDeadline: (deadline: AggregateDeadline) => Promise<void>;
   refreshHeartbeat: (key: string, ttlMs: number, value: string) => Promise<void>;
+  /** Append advisory gateway.handoff before a planned retire. */
+  writeHandoff: (input: SessionHandoffInput) => Promise<void>;
+  /** Stop the live agent process in-place; keep the pane for relaunch. */
+  stopSession: () => Promise<void>;
   requestSuccessor: () => Promise<void>;
   recordReceipt: (receipt: DriverReceipt) => Promise<void>;
   now: () => number;
@@ -52,6 +74,8 @@ export type DriverOptions = {
   heartbeatTtlMs?: number;
   pokeDeadlineMs?: number;
   successorDeadlineMs?: number;
+  /** Wall-clock age limit. Default 4h. Set 0 to disable age retire. */
+  maxSessionAgeMs?: number;
   pokeText?: string;
 };
 
@@ -69,14 +93,25 @@ const attempt = <A>(operation: string, run: () => Promise<A>) =>
 const stateOf = (actor: ActorRefFrom<typeof driverMachine>): DriverState =>
   actor.getSnapshot().value as DriverState;
 
+const handoffNote = (reason: RetireReason, sessionAgeMs: number): string => {
+  if (reason === "degeneration") {
+    return "Driver forced retire: repeated-token collapse detected in recent session output. Replay is authoritative.";
+  }
+  const hours = Math.round((sessionAgeMs / 3_600_000) * 10) / 10;
+  return `Driver clean retire after ${hours}h wall-clock session age. Replay is authoritative.`;
+};
+
 export class AgentCommsDriver {
   readonly #actor = createActor(driverMachine);
   readonly #heartbeatKey: string;
   readonly #heartbeatTtlMs: number;
   readonly #pokeDeadlineMs: number;
   readonly #successorDeadlineMs: number;
+  readonly #maxSessionAgeMs: number;
   readonly #pokeText: string;
   #started = false;
+  /** Wall-clock start of the currently observed live session. */
+  #sessionStartedAt?: number;
 
   constructor(
     readonly ports: DriverPorts,
@@ -86,11 +121,16 @@ export class AgentCommsDriver {
     this.#heartbeatTtlMs = options.heartbeatTtlMs ?? DEFAULT_HEARTBEAT_TTL_MS;
     this.#pokeDeadlineMs = options.pokeDeadlineMs ?? DEFAULT_POKE_DEADLINE_MS;
     this.#successorDeadlineMs = options.successorDeadlineMs ?? DEFAULT_SUCCESSOR_DEADLINE_MS;
+    this.#maxSessionAgeMs = options.maxSessionAgeMs ?? DEFAULT_MAX_SESSION_AGE_MS;
     this.#pokeText = options.pokeText ?? DRIVER_POKE_TEXT;
   }
 
   get state(): DriverState {
     return stateOf(this.#actor);
+  }
+
+  get retireReason(): RetireReason | undefined {
+    return this.#actor.getSnapshot().context.retireReason;
   }
 
   start(): void {
@@ -110,11 +150,12 @@ export class AgentCommsDriver {
     return Effect.gen(this, function* () {
       this.start();
       const now = this.ports.now();
-      const [agent, unhandled, deadlines] = yield* Effect.all(
+      const [agent, unhandled, deadlines, recentOutput] = yield* Effect.all(
         [
           attempt("inspectAgent", this.ports.inspectAgent),
           attempt("countUnhandled", this.ports.countUnhandled),
           attempt("listDueDeadlines", () => this.ports.listDueDeadlines(now)),
+          attempt("readRecentOutput", this.ports.readRecentOutput),
         ],
         { concurrency: "unbounded" },
       );
@@ -127,26 +168,60 @@ export class AgentCommsDriver {
         });
       }
 
+      if (agent.sessionExists) {
+        this.#sessionStartedAt ??= now;
+      } else {
+        this.#sessionStartedAt = undefined;
+      }
+      const sessionAgeMs = this.#sessionStartedAt === undefined
+        ? 0
+        : Math.max(0, now - this.#sessionStartedAt);
+
+      const collapse = detectRepeatedTokenCollapse(recentOutput);
+      const degenerated = collapse.degenerated;
+
       this.#actor.send({
         type: "OBSERVED",
         ...agent,
         hasUnhandledWork: unhandled > 0,
+        degenerated,
+        sessionAgeMs,
         observedAt: now,
         pokeDeadlineMs: this.#pokeDeadlineMs,
         successorDeadlineMs: this.#successorDeadlineMs,
+        maxSessionAgeMs: this.#maxSessionAgeMs,
       });
       yield* this.#receipt("observed", {
         paneExists: agent.paneExists,
         sessionExists: agent.sessionExists,
         idle: agent.idle,
         unhandled,
+        sessionAgeMs,
+        degenerated,
+        ...(collapse.reason ? { degenerationReason: collapse.reason } : {}),
+        ...(collapse.token ? { degenerationToken: collapse.token } : {}),
       });
 
       if (this.state === "spawning") {
+        const reason = this.retireReason;
+        if (reason) {
+          const note = handoffNote(reason, sessionAgeMs);
+          yield* this.#receipt("session.retire.requested", {
+            reason,
+            sessionAgeMs,
+          });
+          yield* attempt("writeHandoff", () =>
+            this.ports.writeHandoff({ reason, sessionAgeMs, note }),
+          );
+          yield* attempt("stopSession", this.ports.stopSession);
+          this.#sessionStartedAt = undefined;
+          yield* this.#receipt("session.retire.stopped", { reason });
+        }
+
         const spawned = yield* Effect.either(attempt("requestSuccessor", this.ports.requestSuccessor));
         if (spawned._tag === "Right") {
           this.#actor.send({ type: "SPAWN_ACCEPTED", requestedAt: this.ports.now() });
-          yield* this.#receipt("successor.spawn.requested");
+          yield* this.#receipt("successor.spawn.requested", reason ? { reason } : undefined);
         } else {
           this.#actor.send({ type: "SPAWN_FAILED", reason: String(spawned.left.cause) });
           yield* this.#receipt("successor.spawn.failed", { error: String(spawned.left.cause) });
