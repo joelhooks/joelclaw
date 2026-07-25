@@ -80,6 +80,7 @@ import { manifestArchive } from "./manifest-archive";
 import { mediaProcess } from "./media-process";
 import { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
 import { meetingAnalyze } from "./meeting-analyze";
+import { megaJourneyWatch } from "./mega-journey-watch";
 import { meetingTranscriptIndex } from "./meeting-transcript-index";
 import { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 import { memoryEmbed } from "./memory/embed";
@@ -238,6 +239,7 @@ export const hostFunctionDefinitions = [
   vercelDeployError,
   vercelDeployCreated,
   vercelDeployCanceled,
+  megaJourneyWatch,
   meetingAnalyze,
   meetingTranscriptIndex,
   messageEventConsumer,

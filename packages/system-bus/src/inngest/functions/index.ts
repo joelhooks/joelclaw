@@ -88,6 +88,7 @@ export {
 export { manifestArchive } from "./manifest-archive";
 export { mediaProcess } from "./media-process";
 export { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
+export { megaJourneyWatch } from "./mega-journey-watch";
 export { meetingAnalyze } from "./meeting-analyze";
 export { meetingTranscriptIndex } from "./meeting-transcript-index";
 export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
