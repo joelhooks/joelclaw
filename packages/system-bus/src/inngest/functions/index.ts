@@ -66,6 +66,7 @@ export {
   frontMessageReceived,
   frontMessageSent,
 } from "./front-notify";
+export { frontMessageReader } from "./front-reader";
 export {
   functionRegistrationAndRunHealth,
   runFunctionHealthCheck,

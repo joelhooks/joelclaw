@@ -72,7 +72,25 @@ export const frontMessageReceived = inngest.createFunction(
       messageId,
       isInbound,
       attachmentCount,
+      createdAt,
     } = event.data;
+
+    const messageTimestamp = (() => {
+      const raw = createdAt ?? (event.data as { created_at?: unknown }).created_at;
+      if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+        return raw > 1_000_000_000_000 ? Math.trunc(raw) : Math.trunc(raw * 1000);
+      }
+      if (typeof raw === "string" && raw.trim().length > 0) {
+        const numeric = Number(raw);
+        if (Number.isFinite(numeric) && numeric > 0) {
+          return numeric > 1_000_000_000_000 ? Math.trunc(numeric) : Math.trunc(numeric * 1000);
+        }
+        const parsed = Date.parse(raw);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+      }
+      // Last resort only — unstable across retries; reader + provider should pass createdAt.
+      return Date.now();
+    })();
 
     // Enrich: fetch conversation context (tags, assignee, status, thread depth)
     const context = await step.run("enrich-context", async () => {
@@ -107,7 +125,8 @@ export const frontMessageReceived = inngest.createFunction(
       ].join("\n");
     });
 
-    // ADR-0236: Index to Typesense for gateway context gathering
+    // ADR-0236: Index to Typesense for gateway context gathering.
+    // timestamp MUST be Front message created_at so poll-reader overlap is idempotent.
     await step.run("index-channel-message", async () => {
       await inngest.send({
         name: "channel/message.received",
@@ -119,7 +138,8 @@ export const frontMessageReceived = inngest.createFunction(
           userId: from || "unknown",
           userName: context.sender || from || "unknown",
           text: (bodyPlain || preview || "").slice(0, 2000),
-          timestamp: Date.now(),
+          timestamp: messageTimestamp,
+          ...(messageId ? { frontMessageId: messageId } : {}),
         },
       });
     });

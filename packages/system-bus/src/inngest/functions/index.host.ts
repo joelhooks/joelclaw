@@ -67,6 +67,7 @@ import {
   frontMessageReceived,
   frontMessageSent,
 } from "./front-notify";
+import { frontMessageReader } from "./front-reader";
 import { functionRegistrationAndRunHealth } from "./function-health";
 import { gatewayBehaviorDailyReview } from "./gateway-behavior-review";
 import { gatewayHandleMessage } from "./gateway-handle-message";
@@ -253,6 +254,7 @@ export const hostFunctionDefinitions = [
   frontMessageReceived,
   frontMessageSent,
   frontAssigneeChanged,
+  frontMessageReader,
   telnyxNotify,
   nightlyMaintenance,
   weeklyMaintenanceSummary,

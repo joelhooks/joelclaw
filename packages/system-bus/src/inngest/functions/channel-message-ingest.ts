@@ -92,7 +92,15 @@ function normalizeIncomingMessage(raw: Record<string, unknown>): IncomingMessage
   };
 }
 
-function buildMessageId(message: IncomingMessage): string {
+/**
+ * Stable Typesense document id for a channel message.
+ * Timestamp must be the source message time (not receipt/ingest time) so
+ * webhook + poller overlap upsert the same document.
+ */
+export function buildMessageId(message: Pick<
+  IncomingMessage,
+  "channelType" | "channelId" | "threadId" | "userId" | "timestamp" | "text"
+>): string {
   const digest = createHash("sha1")
     .update(
       [

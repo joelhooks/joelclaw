@@ -209,6 +209,24 @@ export const frontProvider: WebhookProvider = {
         }];
       }
 
+      const createdAtRaw = messageData.created_at ?? messageData.createdAt ?? messageData.received_at;
+      let createdAt: number | undefined;
+      if (typeof createdAtRaw === "number" && Number.isFinite(createdAtRaw) && createdAtRaw > 0) {
+        createdAt = createdAtRaw > 1_000_000_000_000
+          ? Math.trunc(createdAtRaw)
+          : Math.trunc(createdAtRaw * 1000);
+      } else if (typeof createdAtRaw === "string" && createdAtRaw.trim().length > 0) {
+        const numeric = Number(createdAtRaw);
+        if (Number.isFinite(numeric) && numeric > 0) {
+          createdAt = numeric > 1_000_000_000_000
+            ? Math.trunc(numeric)
+            : Math.trunc(numeric * 1000);
+        } else {
+          const parsed = Date.parse(createdAtRaw);
+          if (Number.isFinite(parsed) && parsed > 0) createdAt = parsed;
+        }
+      }
+
       return [{
         name: mappedName,
         data: {
@@ -223,6 +241,7 @@ export const frontProvider: WebhookProvider = {
           preview: normalizeWhitespace(String(messageData.blurb ?? "")) || normalizedText,
           isInbound: type === "inbound" || type === "inbound_received",
           attachmentCount,
+          ...(createdAt != null ? { createdAt } : {}),
         },
         idempotencyKey,
       }];

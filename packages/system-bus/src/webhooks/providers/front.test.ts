@@ -48,6 +48,7 @@ describe("Front webhook normalization", () => {
         target: {
           data: {
             id: "msg_app_123",
+            created_at: 1_783_970_700,
             recipients: [
               { role: "from", handle: "sender@example.com", name: "Sender" },
               { role: "to", handle: "support@example.com" },
@@ -71,6 +72,7 @@ describe("Front webhook normalization", () => {
         subject: "Application webhook",
         bodyPlain: "hello from application webhook",
         isInbound: true,
+        createdAt: 1_783_970_700_000,
       },
     });
     expect(event?.idempotencyKey).toBe("front-inbound_received-evt_app_123-1783970793");

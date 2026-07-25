@@ -1,0 +1,117 @@
+---
+title: Poll Front with our own keys instead of trusting their webhooks
+type: task
+status: open
+created: 2026-07-25
+---
+
+# Front ingestion must not depend on Front's webhook delivery
+
+Repo: `/Users/joel/Code/joelhooks/joelclaw`
+**You own `packages/system-bus/src/` only.** Do not edit the gateway, the driver,
+or the plugin.
+
+## The problem, in Joel's words
+
+> front is stale because our webhooks are unstable and shit the bed so they can
+> eat it, we likely need a reader not a webhook that uses my private front keys
+> in secrets
+
+Front's inbound email projection has been dead since **2026-07-21T18:44Z** —
+about 98 hours as of this brief. Nothing is broken on our side downstream; the
+webhooks simply stopped arriving. Health has been reporting `Front Projection`
+stale every 15 minutes since.
+
+A webhook is a delivery promise made by someone else. A reader is ours. Joel
+wants the reader to be the reliable path.
+
+## The seam, already built — do not redesign it
+
+Trace it yourself first, then use it:
+
+1. `packages/system-bus/src/webhooks/providers/front.ts` — receives the webhook,
+   emits `front/message.received` / `front/message.sent`
+2. `packages/system-bus/src/inngest/functions/front-notify.ts:112` — sends
+   `channel/message.received` with `channelType: "email"`
+3. `packages/system-bus/src/inngest/functions/channel-message-ingest.ts` —
+   `channelMessageIngest` writes the doc into Typesense `channel_messages`
+4. `check-system-health.ts` measures freshness as the newest email doc in that
+   collection — so a working reader turns the health check green on its own
+
+**Your reader emits the same `channel/message.received` event.** Everything
+downstream — classification, thread aggregation, gateway context, health — then
+works unchanged. Do not invent a parallel write path into Typesense.
+
+## Credentials
+
+`FRONT_API_TOKEN` is already present in the running worker env (confirmed, 196
+chars) and the base URL pattern is `https://api2.frontapp.com`, used today by
+`vip-email-received.ts` and `vip-email-backfill.ts`. Reuse that pattern.
+
+Related secrets exist (`front::joel::private`, `front_api_token`,
+`shitrat_front_private`). **Never lease, echo, log, or print a token value.**
+Read it from env the way the existing functions do. If the env var is missing,
+fail loudly with a clear message — do not silently no-op.
+
+## Build this
+
+1. **A scheduled reader.** An Inngest function on a cron (start around every 5
+   minutes; justify what you pick) that pulls conversations/messages updated
+   since a watermark and emits `channel/message.received` for each.
+
+2. **A durable watermark**, in Redis alongside the other health keys. Poll with
+   deliberate overlap — re-reading a little is free, missing a message is not.
+   On first run, backfill the outage window, but **bound it** so one run cannot
+   pull the entire Front history; report what it skipped rather than truncating
+   silently.
+
+3. **Fix the idempotency bug this exposes.** `channel-message-ingest.ts`'s
+   `buildMessageId` hashes `message.timestamp`, and `front-notify.ts` passes
+   `Date.now()` — the receipt time, not the message time. So the same Front
+   message ingested twice produces two different Typesense documents. With a
+   polling reader and deliberate overlap, that would duplicate constantly.
+   Pass Front's real message `created_at` from both the reader and
+   `front-notify`, so the id is stable for a given message. Check what this does
+   to existing documents and say so in your report.
+
+4. **Respect the API.** Front rate-limits. `vip-email-backfill.ts` already has
+   `RETRYABLE_FRONT_STATUSES` — reuse that approach, back off on 429, and never
+   hammer in a tight loop.
+
+5. **Keep the webhook.** It stays as the fast path when it works; the reader is
+   the backstop that makes staleness impossible. Do not delete the provider.
+   Two sources feeding one idempotent seam is the point of fixing item 3.
+
+6. **Emit telemetry** on every run: how many conversations scanned, messages
+   emitted, the watermark before and after, and any API failure. A reader that
+   silently stops is the bug we are already living through — make its silence
+   visible.
+
+## Constraints
+
+- **Do NOT commit. Do NOT push.** Steering reviews and commits.
+- Do NOT restart the system-bus worker; steering does that.
+- Do NOT print secret values anywhere, including debug output and telemetry.
+- Follow the repo's existing seam style: injectable dependencies, typed errors,
+  tests against the seam rather than the network.
+
+## Validation
+
+`bunx tsc --noEmit` and `bun test packages/system-bus` must pass. Add tests for:
+watermark advance, overlap producing no duplicate document ids once the
+timestamp fix lands, bounded first-run backfill, 429 backoff, and a missing
+token failing loudly.
+
+Do not call the live Front API from tests.
+
+## Deliverable
+
+Report the traced path, what you built, the cron interval and overlap you chose
+and why, what the timestamp fix does to existing docs, files touched, and test
+results. Then:
+
+```bash
+joelclaw notify send "worker front-reader done: <one-paragraph result>" --data '{"taskId":"front-reader"}'
+```
+
+Print DONE and stop.

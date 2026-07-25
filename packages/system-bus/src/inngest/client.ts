@@ -1820,6 +1820,13 @@ export type Events = {
       preview: string;
       isInbound: boolean;
       attachmentCount: number;
+      /** Front message created_at in unix ms — required for stable channel ids. */
+      createdAt?: number;
+    };
+  };
+  "front/reader.poll": {
+    data: {
+      reason?: string;
     };
   };
   "front/message.sent": {
