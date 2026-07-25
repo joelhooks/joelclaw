@@ -60,6 +60,51 @@ function subcommandNames() {
 }
 
 describe("messages CLI", () => {
+  test("falls back to the canonical Convex stream when the legacy journal is unconfigured", async () => {
+    // flagg has no ClickHouse listening and no MESSAGE_JOURNAL_READER creds, so
+    // audit failed outright while the events it wanted sat in Convex all along.
+    const configError = { _tag: "MessageJournalConfigError", role: "reader", missing: ["MESSAGE_JOURNAL_READER_USER"] };
+    const convexEvent = {
+      _id: "mx7abc",
+      kind: "inbound.received",
+      source: "gateway.telegram.chat-sdk.message",
+      flowId: "flow-1",
+      payload: { content: { text: "bing bong" } },
+      recordedAt: 1_784_700_000_000,
+      sequence: 42,
+      schemaVersion: 1,
+    };
+    const envelope = await Effect.runPromise(
+      executeMessagesAudit(
+        { since: "24h" },
+        {
+          auditMessages: () => Effect.fail(configError),
+          auditCanonicalEvents: () => Effect.succeed([convexEvent as never]),
+          traceMessage: unusedTrace,
+        },
+      ),
+    );
+
+    expect(envelope.ok).toBe(true);
+    expect((envelope.result as { source: string }).source).toBe("convex");
+    expect((envelope.result as { count: number }).count).toBe(1);
+  });
+
+  test("still reports a journal failure that is not a missing-credential problem", async () => {
+    const envelope = await Effect.runPromise(
+      executeMessagesAudit(
+        { since: "24h" },
+        {
+          auditMessages: () => Effect.fail({ _tag: "MessageJournalQueryError", operation: "audit", code: "BOOM" }),
+          auditCanonicalEvents: () => Effect.succeed([]),
+          traceMessage: unusedTrace,
+        },
+      ),
+    );
+
+    expect(envelope.ok).toBe(false);
+  });
+
   test("registers audit and trace subcommands", () => {
     expect(subcommandNames()).toEqual(["audit", "trace"]);
   });
@@ -147,6 +192,7 @@ describe("messages CLI", () => {
 
     expect(envelope.ok).toBe(true);
     expect(envelope.result).toEqual({
+      source: "legacy-clickhouse",
       filters: {
         since: "24h",
         channel: "telegram",

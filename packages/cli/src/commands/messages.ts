@@ -29,10 +29,25 @@ type MessagesDependencies = {
   readonly auditMessages: (
     input: AuditMessagesInput,
   ) => Effect.Effect<ReadonlyArray<JournalEvent>, unknown>;
+  /**
+   * Audit against the canonical Convex stream. The legacy ClickHouse journal
+   * predates the message event stream and is not deployed everywhere — on
+   * flagg it has no reader credentials and no ClickHouse listening at all, so
+   * `messages audit` failed outright while the events it wanted were sitting
+   * in Convex the whole time. Falling back keeps the command answerable.
+   */
+  readonly auditCanonicalEvents?: (
+    input: AuditMessagesInput,
+  ) => Effect.Effect<ReadonlyArray<MessageEventDocument>, unknown>;
   readonly traceMessage: (
     lookup: string,
   ) => Effect.Effect<TraceResult, unknown>;
 };
+
+function isJournalConfigError(error: unknown): boolean {
+  const record = asRecord(error);
+  return record._tag === "MessageJournalConfigError";
+}
 
 type JournalMetadata = Record<string, unknown>;
 
@@ -288,6 +303,25 @@ const defaultDependencies: MessagesDependencies = {
     Effect.flatMap(resolveMessageJournalConnection("reader"), (connection) =>
       auditMessages(input).pipe(Effect.provide(queryLayer(connection))),
     ),
+  auditCanonicalEvents: (input) =>
+    Effect.tryPromise({
+      try: async () => {
+        const since = Date.now() - parseDuration(input.since);
+        const limit = normalizeMessagesLimit(input.limit);
+        const client = getMessageEventLogClient();
+        const collected: MessageEventDocument[] = [];
+        let cursor: string | null = null;
+        do {
+          const page = await client.readSince(since, limit, cursor);
+          collected.push(...page.events);
+          cursor = page.nextCursor;
+        } while (cursor !== null && collected.length < limit);
+        return collected.slice(-limit);
+      },
+      catch: (error) => error instanceof MessageEventLogError
+        ? error
+        : new MessageEventLogError("readSince", "MESSAGE_EVENT_AUDIT_FAILED", error),
+    }),
   traceMessage: (lookup) =>
     Effect.tryPromise({
       try: () => getMessageEventLogClient().trace(lookup),
@@ -325,7 +359,18 @@ export function executeMessagesAudit(
     limit: normalizeMessagesLimit(input.limit),
   };
 
-  return dependencies.auditMessages(normalizedInput).pipe(
+  const audited = dependencies.auditMessages(normalizedInput).pipe(
+    Effect.map((events) => ({ source: "legacy-clickhouse" as const, events })),
+    Effect.catchAll((error) =>
+      isJournalConfigError(error) && dependencies.auditCanonicalEvents
+        ? dependencies
+            .auditCanonicalEvents(normalizedInput)
+            .pipe(Effect.map((events) => ({ source: "convex" as const, events })))
+        : Effect.fail(error),
+    ),
+  );
+
+  return audited.pipe(
     Effect.match({
       onFailure: (error) => {
         const details = errorDetails(error);
@@ -342,10 +387,11 @@ export function executeMessagesAudit(
           ],
         );
       },
-      onSuccess: (events) =>
+      onSuccess: (audit) =>
         buildSuccessEnvelope(
           "messages audit",
           {
+            source: audit.source,
             filters: {
               since: input.since,
               channel: input.channel ?? null,
@@ -353,8 +399,10 @@ export function executeMessagesAudit(
               direction: input.direction ?? null,
               limit: normalizedInput.limit,
             },
-            count: events.length,
-            events: events.map(formatJournalEvent),
+            count: audit.events.length,
+            events: audit.source === "convex"
+              ? audit.events.map(formatMessageEvent)
+              : audit.events.map(formatJournalEvent),
           },
           auditNextActions(),
         ),
