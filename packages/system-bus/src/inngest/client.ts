@@ -2010,6 +2010,9 @@ export type Events = {
   "triggers/audit.requested": {
     data: Record<string, never>;
   };
+  "inngest/function-health.requested": {
+    data: Record<string, never>;
+  };
   "system/health.requested": {
     data: {
       component?: string;

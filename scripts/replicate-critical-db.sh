@@ -10,8 +10,18 @@ fi
 SOURCE_DB="${CRITICAL_DB_SOURCE:-$HOME/.joelclaw/search/critical.db}"
 [ -f "$SOURCE_DB" ] || { echo "critical.db source missing: $SOURCE_DB" >&2; exit 1; }
 
-SOURCE_SHA="$(shasum -a 256 "$SOURCE_DB" | awk '{print $1}')"
-SOURCE_VERSION="$(CRITICAL_DB_SOURCE="$SOURCE_DB" bun -e '
+# Freeze one source generation before reading its checksum and metadata. The
+# builder atomically renames critical.db, so reading the live path twice can
+# otherwise combine the old file's checksum with the new file's built_at.
+SOURCE_SNAPSHOT="$(mktemp -t critical-search-source.XXXXXX)"
+cleanup() {
+  rm -f "$SOURCE_SNAPSHOT"
+}
+trap cleanup EXIT HUP INT TERM
+cp -c -p "$SOURCE_DB" "$SOURCE_SNAPSHOT" 2>/dev/null || cp -p "$SOURCE_DB" "$SOURCE_SNAPSHOT"
+
+SOURCE_SHA="$(shasum -a 256 "$SOURCE_SNAPSHOT" | awk '{print $1}')"
+SOURCE_VERSION="$(CRITICAL_DB_SOURCE="$SOURCE_SNAPSHOT" bun -e '
   import { Database } from "bun:sqlite";
   const db = new Database(process.env.CRITICAL_DB_SOURCE, { readonly: true });
   const row = db.query("SELECT value FROM metadata WHERE key = ?").get("built_at");
@@ -19,7 +29,7 @@ SOURCE_VERSION="$(CRITICAL_DB_SOURCE="$SOURCE_DB" bun -e '
   if (!row?.value) process.exit(1);
   console.log(row.value);
 ')"
-SOURCE_MTIME_EPOCH="$(stat -f '%m' "$SOURCE_DB")"
+SOURCE_MTIME_EPOCH="$(stat -f '%m' "$SOURCE_SNAPSHOT")"
 SOURCE_MTIME="$(date -u -r "$SOURCE_MTIME_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 CHECKED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
@@ -43,7 +53,7 @@ replicate_one() {
   if [ "$previous_sha" != "$SOURCE_SHA" ]; then
     remote_db="$root/data/critical.db.incoming.$suffix"
     ssh -o BatchMode=yes -o ConnectTimeout=12 "$host" \
-      "cat > '$remote_db'" < "$SOURCE_DB"
+      "cat > '$remote_db'" < "$SOURCE_SNAPSHOT"
     previous_copied_at="$CHECKED_AT"
     copied=true
   fi

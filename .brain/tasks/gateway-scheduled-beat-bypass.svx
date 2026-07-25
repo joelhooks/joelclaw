@@ -1,0 +1,93 @@
+---
+title: Scheduled beats bypass the gateway
+type: task
+status: open
+created: 2026-07-25
+---
+
+# Scheduled beats must stop round-tripping through the gateway
+
+Repo: `/Users/joel/Code/joelhooks/joelclaw`
+
+## The defect
+
+The agent comms gateway is an always-on Claude session whose ONLY job is deciding
+what Joel hears and when. It is not a scheduler and not a task runner.
+
+But recurring scheduled work is currently reaching it as evidence and being
+re-executed by it. A `pane.schedule.due` event fires from the wake registry, the
+gateway reads it as "work needing a worker," and calls `herdr_dispatch_worker`,
+which creates a brand new herdr tab. Every hour, forever.
+
+Receipts: `/tmp/joelclaw/gateway-tasks/` holds ~14 `campaign-pulse-*.md` task
+files written by the gateway at hourly cadence on 2026-07-24 and 2026-07-25, plus
+`neat-memory-beat-*`, `daily-flow-agent-*`. Each one produced a herdr tab that was
+never closed. Workspace `[jc] gateway agent` (`w2C`) reached 28 panes / 26 tabs.
+
+Read one of those task files. Note that the gateway added NO judgment — it copied
+the brief path and the prompt from the schedule into a worker brief. That is a
+mechanical spawn wearing an LLM costume.
+
+## The fix
+
+A wake schedule with `verb: spawn` already names its own `briefPath`, its own
+`prompt`, and implies its own pane. It needs no routing decision. It should be
+executed mechanically by the pane-schedule path, never handed to the gateway's
+judgment loop.
+
+The gateway should still hear the **result** — the beat reports back with
+`joelclaw notify send`, which is the correct evidence flow, and the gateway
+decides whether Joel needs to know. That part already works and must keep working.
+
+## What to do
+
+1. **Trace the current path end to end and write it down before changing anything.**
+   Start here:
+   - `packages/system-bus/src/inngest/functions/pane-schedule.ts`
+   - `packages/system-bus/src/inngest/functions/pane-schedule-reconcile.ts`
+   - `packages/system-bus/src/lib/pane-schedule.ts`
+   - `packages/cli/src/commands/` — the `wake` command family
+   - `packages/agent-comms-driver/src/adapters.ts` — note
+     `PANE_SCHEDULE_REGISTRY_KEY` and the herdr-native
+     `spawnGatewaySuccessorPane` helper, which is the working reference for
+     spawning a pane from a schedule.
+   Answer precisely: who emits `pane.schedule.due`, who consumes it today, and by
+   what route does it end up in the gateway's queue?
+
+2. **Implement the bypass.** A due schedule with `verb: spawn` gets spawned
+   mechanically into its own herdr pane — reusing the existing herdr-native spawn
+   approach rather than inventing a second one — and does NOT enter the gateway's
+   decision queue as work. `verb: wake` and `verb: revive` keep their current
+   behavior; do not touch them.
+
+3. **Pane hygiene is part of this.** The spawned beat pane must be reused or
+   closed. Prefer: one stable pane per recurring beat lane, identified by a stable
+   label (e.g. `⏰ campaign pulse`), reused on every firing when its agent is
+   `idle` or `done`; only create a pane when no such pane exists. Never one tab
+   per firing.
+
+4. **Tests.** This repo tests seams with injectable dependencies — follow the
+   existing style in `packages/system-bus/src/inngest/functions/*.test.ts`. Cover:
+   a spawn schedule bypasses the gateway queue; a wake schedule still reaches it;
+   a second firing reuses the existing pane instead of creating one; the beat's
+   `notify send` result still lands as gateway evidence.
+
+## Constraints
+
+- Do NOT commit. Do NOT push. The steering session reviews and commits.
+- Do NOT start `daemon.ts`. The slim `transport-daemon.ts` is the only poller —
+  starting the legacy daemon causes double delivery.
+- Do NOT create panes in workspace `w2C` while testing; it was just cleaned up.
+- Validate with `bunx tsc --noEmit` and the package's test command before you
+  report.
+
+## Deliverable
+
+Report: the traced path (before), the change (after), files touched, test results,
+and anything you found that you did NOT fix. Then:
+
+```bash
+joelclaw notify send "worker gateway-beat-bypass done: <one-paragraph result>" --data '{"taskId":"gateway-beat-bypass"}'
+```
+
+Print DONE and stop.

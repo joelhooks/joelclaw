@@ -1,0 +1,86 @@
+---
+title: Gateway message flow forensics
+type: task
+status: open
+created: 2026-07-25
+---
+
+# Gateway message flow forensics
+
+You are auditing the **agent comms gateway**'s real message traffic since cutover
+(2026-07-21 onward). Read-only investigation. Produce numbers, not vibes.
+
+Repo: `/Users/joel/Code/joelhooks/joelclaw`
+
+## Background you need
+
+The gateway is an always-on Claude session that decides what Joel hears. Its
+memory is an event-sourced stream in Convex (`joelclaw-api/convex/messageEvents*`,
+client package `packages/message-event-log`). Every external input event MUST
+appear in exactly one decision receipt before its cursor advances.
+
+Key event kinds:
+- `inbound.received` — a message from Joel or a producer
+- `message.requested` — a `joelclaw notify send` from any agent
+- `gateway.decision.recorded` — the gateway's receipt. `payload.decision.verb` is
+  one of `deliver | aggregate | escalate | fanout | route | drop`.
+  `payload.rewrite` is the exact text Joel receives. `semanticKey` is
+  `gateway:<inputEventId>:<decisionSeq>`.
+- `fallback.delivered` — the dumb path fired because the agent loop was down
+- `aggregate.deadline.reached`, `gateway.handoff`
+
+Consumer cursors: `gateway/agent`, `gateway-transport-executor`.
+
+## What to answer, with counts and timestamps
+
+1. **Volume**: total events by kind, by day. How many inbound events came from
+   Joel vs. from machine producers?
+2. **Silence audit**: how many external input events reached a terminal state
+   with ZERO decision receipt? Silence is illegal by design — find violations.
+   List the offending event ids and what they were.
+3. **Ack latency**: for Joel's own messages, time from `inbound.received` to the
+   FIRST `deliver` decision (the ack). Give p50/p90/max, and list the worst 5.
+4. **End-to-end latency**: inbound → the decision carrying `advanceAfter: true`.
+   Same stats.
+5. **Rewrite discipline**: how many `deliver`/`close-deliver` decisions were
+   recorded WITHOUT a usable `rewrite` (rejected or skipped by the executor)?
+   Grep the transport logs too.
+6. **Fallback**: every `fallback.delivered` — when, what text, and what the agent
+   was doing at that moment. Was the loop actually down, or did it just fail to
+   heartbeat?
+7. **Fanout accounting**: every `fanout` receipt vs. every worker result that
+   came back (`data.taskId`). Which dispatched workers NEVER returned a result?
+   Which results arrived with no matching fanout receipt?
+8. **Cursor health**: current position of both consumer cursors vs. stream head.
+   Any lag or wedge?
+
+## How to read the stream
+
+`joelclaw messages trace` is currently BROKEN on this machine —
+`MESSAGE_JOURNAL_READER_USER/PASSWORD` were never provisioned. Do not burn time
+on it; note it and move on.
+
+Read Convex directly. Look at `packages/message-event-log/src/` for the client and
+its `readSince(recordedAt, limit, cursor)` API, and at the plugin's own reader in
+`prototypes/agent-comms-gateway/claude-plugin/server/stream-tools.mjs`. Write a
+small throwaway script under `/tmp/` that pages the whole stream and aggregates.
+Use the same env/credentials the plugin uses.
+
+Also read the transport logs for executor behavior:
+`/tmp/joelclaw/*.log`, and whatever `~/.joelclaw/scripts/gateway-start.sh` writes.
+
+## Privacy
+
+The stream contains Joel's private message traffic. Keep any dump you write under
+`/tmp/` with mode 0600. Do NOT write message bodies into the repo, do not commit
+anything, do not publish anywhere. Quote at most short fragments in your findings
+when a specific message is the evidence.
+
+## Deliverable
+
+Write your findings to `/tmp/gateway-forensics-findings.md` (mode 0600) with the
+numbers above plus a ranked list of **defects you can prove from the data**. Rank
+by how much they hurt Joel's experience. For each: the evidence, the likely
+cause, and the smallest fix.
+
+Do not commit anything. Do not edit files in the repo. Print DONE when finished.

@@ -373,12 +373,15 @@ describe("check/system-health summary classification", () => {
     });
 
     expect(result.degradedCount).toBe(4);
-    expect(result.criticalDegradedCount).toBe(3);
-    expect(result.nonCriticalDegradedCount).toBe(1);
+    expect(result.criticalDegradedCount).toBe(2);
+    expect(result.nonCriticalDegradedCount).toBe(2);
     expect(result.criticalDegradedServices).toEqual([
       "Worker",
-      "Front Projection",
       "Agent Dispatch Canary",
+    ]);
+    expect(result.nonCriticalDegradedServices).toEqual([
+      "Front Projection",
+      "NFS Mounts",
     ]);
     expect(result.hasCriticalDegradation).toBe(true);
   });

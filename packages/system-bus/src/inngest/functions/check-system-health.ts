@@ -88,7 +88,8 @@ const CRITICAL_COMPONENTS = new Set([
   "typesense",
   "kubernetes",
   "agent secrets",
-  "front projection",
+  // Front Projection stays in core checks as informational only.
+  // Stale inbox projection must not page or force overall health critical.
 ]);
 const AGENT_DISPATCH_CANARY_COMPONENT = "Agent Dispatch Canary";
 const HEALTH_LAST_CHECK_KEY = "health:last_check";

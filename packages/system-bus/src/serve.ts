@@ -57,7 +57,10 @@ if (SHOULD_LEASE_WEBHOOK_SECRETS) {
   console.log("[secrets] skipping local webhook secret leasing in cluster worker role");
 }
 
-import { emitInngestRegistryLoaded } from "./inngest/functions";
+import {
+  emitInngestRegistryLoaded,
+  runProductionFunctionHealthCheck,
+} from "./inngest/functions";
 import {
   clusterFunctionDefinitions,
   clusterFunctionIds,
@@ -810,6 +813,23 @@ if (duplicateFunctionIds.length > 0) {
 setTimeout(() => {
   void fetch("http://127.0.0.1:3111/api/inngest", { method: "PUT" }).catch(() => {});
 }, 5_000);
+// Run the same registration and cron-recency assertion used by the hourly
+// durable function. This direct startup path still runs when that function's
+// own registration was lost while Inngest was unavailable.
+setTimeout(() => {
+  void runProductionFunctionHealthCheck().catch((error) => {
+    console.error("[inngest:function-health] startup check failed", error);
+    void emitOtelEvent({
+      level: "fatal",
+      source: "worker",
+      component: "inngest-function-health",
+      action: "inngest.function_health.startup_failed",
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      metadata: { workerRole: WORKER_ROLE, startedAt: WORKER_STARTED_AT },
+    }).catch(() => {});
+  });
+}, 15_000);
 // Startup sweep of the pane-schedule pending registry: a reboot terminally
 // fails in-flight pane/schedule runs, so ask the reconciler to recover any
 // orphaned entries as soon as the worker is back. Fire-and-forget; the */5

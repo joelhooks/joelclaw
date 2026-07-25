@@ -1,0 +1,72 @@
+---
+title: Gateway transcript review
+type: task
+status: open
+created: 2026-07-25
+---
+
+# Gateway transcript review
+
+You are reviewing the **agent comms gateway** agent's own session transcripts to
+find why it feels slow, procedural, and unconversational to Joel. Read-only.
+
+Repo: `/Users/joel/Code/joelhooks/joelclaw`
+
+## What the gateway is
+
+An always-on Claude Code session running the `joelclaw-gateway` agent from the
+plugin at `prototypes/agent-comms-gateway/claude-plugin/`. Read these first so
+you know what it was TOLD to do:
+
+- `agents/joelclaw-gateway.md` (frontmatter: model, tool whitelist)
+- `prompts/identity.md`, `prompts/vocabulary.md`, `prompts/judgment.md`
+- `hooks/session-start.mjs` (what gets injected at boot — this is expensive)
+- `server/index.mjs` (the MCP tool surface it can call)
+
+It cycles: a driver kills and respawns the session, and a SessionStart hook
+replays the stream plus the last 24h of conversation.
+
+## Find the transcripts
+
+Claude Code session transcripts live under `~/.claude/projects/<slugified-cwd>/*.jsonl`.
+The gateway runs with cwd `/Users/joel/Code/joelhooks/joelclaw`, so look in
+`~/.claude/projects/-Users-joel-Code-joelhooks-joelclaw/`. Gateway sessions are
+identifiable by the `joelclaw-gateway` agent and by `stream_record_decision` /
+`herdr_dispatch_worker` tool calls. There may be many; sample the most recent
+10–15 gateway sessions across 2026-07-21 → 2026-07-25.
+
+## What to measure and report
+
+1. **Turn anatomy**: for a typical Joel message, how many tool calls before the
+   ack deliver lands? The prompt says the FIRST tool call must be the ack. How
+   often is that actually true? List violations.
+2. **Wasted work**: repeated `herdr_snapshot`, re-reading the same files,
+   re-deriving facts already in context, redundant `stream_read` calls. Quantify.
+3. **Boot cost**: how many tokens does SessionStart inject? What fraction of the
+   context is boot vs. actual conversation? Is any of it never referenced?
+4. **Degeneration**: there was an incident where the agent repeatedly printed
+   "court". Find it in the transcripts. What preceded it? Model/effort at the
+   time? Was it a context or a sampling problem?
+5. **Conversational continuity**: does the agent reference prior exchanges, or
+   does it restate/re-introduce? Find concrete examples of it treating a
+   follow-up as a cold start.
+6. **Fanout behavior**: how often did it dispatch a worker vs. do the work inline
+   in its own turn? Joel's complaint was "ZERO herdr orchestration". Find where
+   it should have dispatched and didn't, and where it dispatched something
+   trivial it should have just answered.
+7. **Tone defects**: any place it moralized, remarked on Joel's typos, refused a
+   task for a bad reason ("I don't have a weather tool"), or otherwise behaved
+   like a form instead of a right hand.
+
+## Deliverable
+
+Write findings to `/tmp/gateway-transcript-findings.md` (mode 0600). For each
+defect: transcript evidence (session id + short quote), the specific prompt/tool/
+config line responsible, and the concrete change you'd make. Rank by impact on
+Joel's felt experience.
+
+The transcripts contain Joel's private messages. Keep the file under `/tmp/`,
+quote only short fragments, do not write message bodies into the repo, do not
+commit, do not publish.
+
+Do not edit repo files. Print DONE when finished.
