@@ -12,12 +12,16 @@ import { routeNotifySendToSlimTransport } from "./chat-sdk/notify-stream";
 import { normalizeSdkInboundEvent } from "./chat-sdk-inbound/normalize";
 import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
 import {
+  createHeartbeatGateState,
+  DEFAULT_HEARTBEAT_BLIP_GRACE_MS,
   FALLBACK_PREFIX,
+  formatFallbackText,
   type MessageEventAppender,
   makeExplicitTransportSender,
   makeRawTelegramFallbackSender,
   makeSlimNotifyIngress,
   type ProducerFacts,
+  parseHeartbeatPayload,
 } from "./transport-slim";
 
 const origin: MessageEventOrigin = {
@@ -39,6 +43,23 @@ const facts: ProducerFacts = {
     data: { privateDiagnostic: "stream-only" },
   },
 };
+
+
+function frozenClock(start = Date.parse("2026-07-21T18:12:00.000Z")) {
+  let current = start;
+  const waits: number[] = [];
+  return {
+    now: () => current,
+    wait: async (ms: number) => {
+      waits.push(ms);
+      current += ms;
+    },
+    waits,
+    get current() {
+      return current;
+    },
+  };
+}
 
 function eventLogHarness(calls: string[] = []) {
   const events: AppendMessageEventInput[] = [];
@@ -177,10 +198,11 @@ describe("gateway transport slim-down seams", () => {
     })(facts);
 
     expect(calls).toEqual(["append:message.requested", "heartbeat:exists"]);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       disposition: "agent",
       sourceEventId: "stream:1",
       flowId: facts.flowId,
+      heartbeatGateReason: "present",
     });
     expect(events[0]).toMatchObject({
       flowId: facts.flowId,
@@ -310,6 +332,7 @@ describe("gateway transport slim-down seams", () => {
     const calls: string[] = [];
     const { events, eventLog } = eventLogHarness(calls);
     const posts: unknown[] = [];
+    const clock = frozenClock();
     const fallback = makeRawTelegramFallbackSender({
       adapter: {
         openDM: async () => "telegram:7718912466",
@@ -333,8 +356,11 @@ describe("gateway transport slim-down seams", () => {
       heartbeatExists: async () => false,
       fallbackChannel: "telegram",
       sendRawTelegramFallback: fallback,
-      now: () => Date.parse("2026-07-21T18:12:00.000Z"),
+      now: clock.now,
+      wait: clock.wait,
       heartbeatTtlMs: 60_000,
+      blipGraceMs: DEFAULT_HEARTBEAT_BLIP_GRACE_MS,
+      gateState: createHeartbeatGateState(),
     })(facts);
 
     expect(result.disposition).toBe("fallback");
@@ -346,6 +372,8 @@ describe("gateway transport slim-down seams", () => {
       "journal:confirmed",
       "append:fallback.delivered",
     ]);
+    expect(clock.waits).toEqual([DEFAULT_HEARTBEAT_BLIP_GRACE_MS]);
+    // Measured staleness = recheck gap floored by TTL when never seen present.
     expect(events.at(-1)).toMatchObject({
       kind: "fallback.delivered",
       flowId: facts.flowId,
@@ -353,7 +381,12 @@ describe("gateway transport slim-down seams", () => {
         fallback: true,
         outcome: "confirmed",
         heartbeatStaleForMs: 60_000,
+        heartbeatGateReason: "stale",
       },
+    });
+    expect(result).toMatchObject({
+      disposition: "fallback",
+      heartbeatStaleForMs: 60_000,
     });
   });
 
@@ -374,6 +407,9 @@ describe("gateway transport slim-down seams", () => {
       }, {
         eventLog,
         heartbeatExists: async () => false,
+        wait: async () => {},
+        blipGraceMs: 0,
+        now: () => Date.parse("2026-07-21T18:12:00.000Z"),
       });
       throw new Error("expected pre-send failure");
     } catch (error) {
@@ -437,4 +473,205 @@ describe("gateway transport slim-down seams", () => {
     })).rejects.toThrow("automatic retry forbidden");
     expect(sends).toBe(1);
   });
+
+  test("records measured heartbeat age from driver checkedAt on the agent path", async () => {
+    const { eventLog } = eventLogHarness();
+    const checkedAt = Date.parse("2026-07-21T18:11:50.000Z");
+    const now = Date.parse("2026-07-21T18:12:00.000Z");
+    const result = await makeSlimNotifyIngress({
+      eventLog,
+      probeHeartbeat: async () => ({ present: true, checkedAt }),
+      fallbackChannel: "telegram",
+      sendRawTelegramFallback: async () => {
+        throw new Error("fresh heartbeat must not fallback");
+      },
+      now: () => now,
+    })(facts);
+
+    expect(result).toMatchObject({
+      disposition: "agent",
+      heartbeatStaleForMs: 10_000,
+      heartbeatGateReason: "present",
+    });
+    expect(parseHeartbeatPayload(JSON.stringify({ checkedAt, state: "ready" }))).toEqual({
+      present: true,
+      checkedAt,
+    });
+  });
+
+  test("a one-poll heartbeat blip does not fall back after recheck recovers", async () => {
+    const calls: string[] = [];
+    const { eventLog } = eventLogHarness(calls);
+    const clock = frozenClock();
+    let probes = 0;
+    const result = await makeSlimNotifyIngress({
+      eventLog,
+      probeHeartbeat: async () => {
+        probes += 1;
+        calls.push(`probe:${probes}`);
+        return probes === 1
+          ? { present: false }
+          : { present: true, checkedAt: clock.current - 1_000 };
+      },
+      fallbackChannel: "telegram",
+      sendRawTelegramFallback: async () => {
+        throw new Error("blip must not fallback");
+      },
+      now: clock.now,
+      wait: clock.wait,
+      blipGraceMs: DEFAULT_HEARTBEAT_BLIP_GRACE_MS,
+      gateState: createHeartbeatGateState(),
+    })(facts);
+
+    expect(probes).toBe(2);
+    expect(clock.waits).toEqual([DEFAULT_HEARTBEAT_BLIP_GRACE_MS]);
+    expect(result).toMatchObject({
+      disposition: "agent",
+      heartbeatGateReason: "blip-recovered",
+      heartbeatStaleForMs: 1_000,
+    });
+    expect(calls.filter((call) => call.startsWith("append:"))).toEqual([
+      "append:message.requested",
+    ]);
+  });
+
+  test("a real outage still falls back after the blip grace recheck", async () => {
+    const posts: unknown[] = [];
+    const { events, eventLog } = eventLogHarness();
+    const clock = frozenClock();
+    const gateState = createHeartbeatGateState();
+    // Seed a recent present observation so measured staleness is wall-clock, not TTL floor.
+    gateState.lastPresentAt = clock.current - 5_000;
+
+    const result = await makeSlimNotifyIngress({
+      eventLog,
+      probeHeartbeat: async () => ({ present: false }),
+      fallbackChannel: "telegram",
+      sendRawTelegramFallback: async (input) => {
+        posts.push(input);
+        return {
+          flowId: input.flowId,
+          platform: "telegram",
+          platformMessageId: "telegram:7718912466:15099",
+          threadId: "telegram:7718912466",
+        };
+      },
+      now: clock.now,
+      wait: clock.wait,
+      blipGraceMs: DEFAULT_HEARTBEAT_BLIP_GRACE_MS,
+      heartbeatTtlMs: 60_000,
+      gateState,
+    })(facts);
+
+    expect(result.disposition).toBe("fallback");
+    expect(clock.waits).toEqual([DEFAULT_HEARTBEAT_BLIP_GRACE_MS]);
+    const sent = posts[0] as { heartbeatStaleForMs: number; heartbeatGateReason: string };
+    // firstAt + grace - lastPresentAt = 5s + 20s = 25s
+    expect(sent.heartbeatStaleForMs).toBe(25_000);
+    expect(sent.heartbeatGateReason).toBe("stale");
+    expect(events.map((event) => event.kind)).toEqual(["message.requested"]);
+    expect(result).toMatchObject({
+      heartbeatStaleForMs: 25_000,
+      heartbeatGateReason: "stale",
+    });
+  });
+
+  test("summarizes routine machine noise instead of dumping full health markdown", async () => {
+    const posts: unknown[] = [];
+    const { eventLog } = eventLogHarness();
+    const clock = frozenClock();
+    const healthFacts: ProducerFacts = {
+      ...facts,
+      eventId: "health:1",
+      source: "inngest/check-system-health",
+      flowId: "health:1",
+      origin: { ...origin, producer: "inngest/check-system-health" },
+      text: [
+        "## System Health",
+        "",
+        "NAS: ok",
+        "Redis: ok",
+        "Inngest: ok",
+        "a".repeat(400),
+      ].join("\n"),
+      evidence: { sourceFunction: "system/check-system-health" },
+    };
+
+    expect(formatFallbackText(healthFacts)).toBe(
+      `System Health [flow ${healthFacts.flowId}]`,
+    );
+
+    const result = await makeSlimNotifyIngress({
+      eventLog,
+      heartbeatExists: async () => false,
+      fallbackChannel: "telegram",
+      sendRawTelegramFallback: async (input) => {
+        posts.push(input.text);
+        return {
+          flowId: input.flowId,
+          platform: "telegram",
+          platformMessageId: "telegram:7718912466:15100",
+          threadId: "telegram:7718912466",
+        };
+      },
+      now: clock.now,
+      wait: clock.wait,
+      blipGraceMs: 0,
+      gateState: createHeartbeatGateState(),
+    })(healthFacts);
+
+    expect(result.disposition).toBe("fallback");
+    expect(posts).toEqual([`System Health [flow ${healthFacts.flowId}]`]);
+    expect(JSON.stringify(posts)).not.toContain("NAS: ok");
+  });
+
+  test("coalesces repeated identical machine fallbacks inside the window", async () => {
+    const posts: string[] = [];
+    const { events, eventLog } = eventLogHarness();
+    const clock = frozenClock();
+    const gateState = createHeartbeatGateState();
+    // Confirmed absent so the second call skips another blip sleep.
+    gateState.confirmedAbsentSince = clock.current - 30_000;
+
+    const healthFacts: ProducerFacts = {
+      ...facts,
+      source: "inngest/check-system-health",
+      origin: { ...origin, producer: "inngest/check-system-health" },
+      text: "## System Health\n\nall green",
+      evidence: {},
+    };
+
+    const ingest = makeSlimNotifyIngress({
+      eventLog,
+      heartbeatExists: async () => false,
+      fallbackChannel: "telegram",
+      sendRawTelegramFallback: async (input) => {
+        posts.push(input.text);
+        return {
+          flowId: input.flowId,
+          platform: "telegram",
+          platformMessageId: `telegram:msg:${posts.length}`,
+          threadId: "telegram:7718912466",
+        };
+      },
+      now: clock.now,
+      wait: clock.wait,
+      blipGraceMs: 0,
+      coalesceWindowMs: 60_000,
+      gateState,
+    });
+
+    const first = await ingest({ ...healthFacts, eventId: "health:a", flowId: "health:a" });
+    const second = await ingest({ ...healthFacts, eventId: "health:b", flowId: "health:b" });
+
+    expect(first.disposition).toBe("fallback");
+    expect(second.disposition).toBe("coalesced");
+    expect(posts).toHaveLength(1);
+    expect(second).toMatchObject({ coalesceCount: 2 });
+    expect(events.some((event) => {
+      const payload = event.payload as Record<string, unknown>;
+      return event.kind === "fallback.delivered" && payload.coalesced === true;
+    })).toBe(true);
+  });
+
 });

@@ -26,6 +26,10 @@ import {
 } from "../operator-relay";
 import type { OutboundEnvelope } from "../outbound/envelope";
 import { type InlineButton, send as sendTelegram } from "../telegram-runtime";
+import {
+  createHeartbeatGateState,
+  makeRedisHeartbeatProbe,
+} from "../transport-slim";
 import { describeError, ErrorEmissionBudget, type ErrorSummary } from "./error-emission-budget";
 
 export type EnqueueFn = (
@@ -59,6 +63,7 @@ const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
   ? parseInt(process.env.TELEGRAM_USER_ID, 10)
   : undefined;
 const SLIM_TRANSPORT_ENABLED = process.env.GATEWAY_TRANSPORT_SLIM_DOWN === "1";
+const slimHeartbeatGateState = createHeartbeatGateState();
 
 const redisOpts = {
   host: process.env.REDIS_HOST ?? "localhost",
@@ -799,7 +804,8 @@ async function drainEvents(): Promise<void> {
       try {
         if (SLIM_TRANSPORT_ENABLED) {
           const result = await routeNotifySendToSlimTransport(event, {
-            heartbeatExists: async () => (await cmd!.exists("gateway:agent:heartbeat")) === 1,
+            probeHeartbeat: makeRedisHeartbeatProbe(async (key) => cmd!.get(key)),
+            gateState: slimHeartbeatGateState,
           });
           if (!result.handled) continue;
           compatHandledIds.add(event.id);
@@ -815,6 +821,15 @@ async function drainEvents(): Promise<void> {
               disposition: result.disposition,
               ...(result.disposition === "fallback"
                 ? { platformMessageId: result.platformMessageId }
+                : {}),
+              ...(result.disposition === "coalesced"
+                ? { coalesceCount: result.coalesceCount }
+                : {}),
+              ...(result.heartbeatStaleForMs !== undefined
+                ? { heartbeatStaleForMs: result.heartbeatStaleForMs }
+                : {}),
+              ...(result.heartbeatGateReason
+                ? { heartbeatGateReason: result.heartbeatGateReason }
                 : {}),
             },
           });

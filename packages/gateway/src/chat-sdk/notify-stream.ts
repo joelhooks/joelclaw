@@ -5,6 +5,8 @@ import {
 import { journalMessage } from "../message-journal";
 import {
   type FallbackChannel,
+  type HeartbeatGateState,
+  type HeartbeatProbeSample,
   type MessageEventAppender,
   makeRawTelegramFallbackSender,
   makeSlimNotifyIngress,
@@ -24,11 +26,18 @@ export interface SlimNotifyGatewayEvent {
 }
 
 export interface SlimNotifyRouteDependencies {
-  readonly heartbeatExists: () => Promise<boolean>;
+  readonly probeHeartbeat?: () => Promise<HeartbeatProbeSample>;
+  /** @deprecated Prefer probeHeartbeat. */
+  readonly heartbeatExists?: () => Promise<boolean>;
   readonly eventLog?: MessageEventAppender;
   readonly fallbackChannel?: FallbackChannel;
   readonly machineId?: string;
   readonly now?: () => number;
+  readonly wait?: (ms: number) => Promise<void>;
+  readonly blipGraceMs?: number;
+  readonly coalesceWindowMs?: number;
+  readonly heartbeatTtlMs?: number;
+  readonly gateState?: HeartbeatGateState;
 }
 
 export type SlimNotifyRouteResult =
@@ -149,7 +158,12 @@ export async function routeNotifySendToSlimTransport(
     };
     const result = await makeSlimNotifyIngress({
       eventLog,
-      heartbeatExists: dependencies.heartbeatExists,
+      ...(dependencies.probeHeartbeat
+        ? { probeHeartbeat: dependencies.probeHeartbeat }
+        : {}),
+      ...(dependencies.heartbeatExists
+        ? { heartbeatExists: dependencies.heartbeatExists }
+        : {}),
       fallbackChannel: dependencies.fallbackChannel ?? fallbackChannelFromEnvironment(),
       sendRawTelegramFallback: async (input) => {
         const recipientId = process.env.TELEGRAM_USER_ID?.trim();
@@ -173,6 +187,11 @@ export async function routeNotifySendToSlimTransport(
         })(input);
       },
       now: dependencies.now,
+      wait: dependencies.wait,
+      blipGraceMs: dependencies.blipGraceMs,
+      coalesceWindowMs: dependencies.coalesceWindowMs,
+      heartbeatTtlMs: dependencies.heartbeatTtlMs,
+      gateState: dependencies.gateState,
     })(facts);
     return { handled: true, ...result };
   } catch (error) {

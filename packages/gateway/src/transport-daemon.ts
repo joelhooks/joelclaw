@@ -18,6 +18,10 @@ import {
 import { registerChatSdkActingInbound } from "./chat-sdk-inbound/acting";
 import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
 import { drainDeliverDecisions } from "./gateway-decision-executor";
+import {
+  createHeartbeatGateState,
+  makeRedisHeartbeatProbe,
+} from "./transport-slim";
 
 const SESSION_ID = "gateway";
 const SESSIONS_SET = "joelclaw:gateway:sessions";
@@ -150,6 +154,12 @@ export async function startSlimTransportDaemon(): Promise<void> {
   }, HEARTBEAT_INTERVAL_MS);
   heartbeatTimer.unref?.();
 
+  // Process-local gate memory: blip rechecks + fallback coalesce.
+  // Do NOT treat HEARTBEAT_FILE / PID_FILE as agent liveness — those are this
+  // transport process, and trusting them would silence fallback during a dead loop.
+  const heartbeatGateState = createHeartbeatGateState();
+  const probeHeartbeat = makeRedisHeartbeatProbe(async (key) => command.get(key));
+
   let draining = false;
   let drainPending = false;
   const drain = async (): Promise<void> => {
@@ -173,8 +183,8 @@ export async function startSlimTransportDaemon(): Promise<void> {
             try {
               const result = await routeNotifySendToSlimTransport(event, {
                 eventLog,
-                heartbeatExists: async () =>
-                  (await command.exists("gateway:agent:heartbeat")) === 1,
+                probeHeartbeat,
+                gateState: heartbeatGateState,
               });
               if (!result.handled) {
                 console.log("[gateway:transport] removing non-message queue row", {
