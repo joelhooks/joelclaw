@@ -402,3 +402,30 @@ describe("driver lifecycle machine", () => {
     expect(actor.getSnapshot().context.retireReason).toBe("degeneration");
   });
 });
+
+test("real session start beats first sighting so a driver restart cannot reset the clock", async () => {
+  // A days-old session must retire on the next pass after a driver restart,
+  // not get a fresh 4h lease.
+  const startedAt = 1_000_000;
+  const now = startedAt + 5 * 60 * 60 * 1000;
+  const { fake, ports } = harness();
+  fake.now = now;
+  fake.unhandled = 0;
+  const driver = new AgentCommsDriver(
+    {
+      ...ports,
+      inspectAgent: async () => ({
+        paneExists: true,
+        sessionExists: true,
+        idle: true,
+        sessionStartedAt: startedAt,
+      }),
+    },
+    { maxSessionAgeMs: 4 * 60 * 60 * 1000 },
+  );
+
+  await Effect.runPromise(driver.runPass());
+  const observed = fake.receipts.find((receipt) => receipt.action === "observed");
+  expect(observed?.detail?.sessionAgeMs).toBe(5 * 60 * 60 * 1000);
+  expect(fake.receipts.some((receipt) => receipt.action === "session.retire.requested")).toBe(true);
+});

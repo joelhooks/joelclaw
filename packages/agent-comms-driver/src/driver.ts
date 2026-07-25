@@ -52,7 +52,10 @@ export type DriverReceipt = {
 };
 
 export type DriverPorts = {
-  inspectAgent: () => Promise<Omit<AgentObservation, "hasUnhandledWork" | "degenerated" | "sessionAgeMs" | "observedAt">>;
+  inspectAgent: () => Promise<
+    Omit<AgentObservation, "hasUnhandledWork" | "degenerated" | "sessionAgeMs" | "observedAt">
+    & { sessionStartedAt?: number }
+  >;
   countUnhandled: () => Promise<number>;
   /** Recent terminal/assistant text used only for degeneration detection. */
   readRecentOutput: () => Promise<string>;
@@ -169,7 +172,10 @@ export class AgentCommsDriver {
       }
 
       if (agent.sessionExists) {
-        this.#sessionStartedAt ??= now;
+        // Prefer the session's real start when the adapter can see it; first
+        // sighting is only a fallback. Otherwise a driver restart hands a
+        // days-old session a fresh lease — exactly when it most needs retiring.
+        this.#sessionStartedAt = agent.sessionStartedAt ?? this.#sessionStartedAt ?? now;
       } else {
         this.#sessionStartedAt = undefined;
       }

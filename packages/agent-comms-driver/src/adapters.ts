@@ -1,4 +1,6 @@
+import { statSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import {
   createMessageEventLogClient,
   GATEWAY_MESSAGE_EVENT_CONSUMER,
@@ -348,6 +350,30 @@ export function makeLiveDriverPorts(
   const resolveCliTarget = async (): Promise<string> =>
     (await resolvePaneId()) ?? options.target;
 
+  /**
+   * True session start, from the Claude transcript the herdr agent session id
+   * names. Tracking first-sighting in driver memory instead would hand a
+   * days-old session a fresh lease every time the driver restarts — which is
+   * exactly when a rotting session most needs retiring.
+   */
+  const sessionStartedAtFrom = (agent: Record<string, unknown> | undefined): number | undefined => {
+    const session = agent?.agent_session;
+    const sessionId = typeof session === "object" && session !== null
+      ? (session as Record<string, unknown>).value
+      : undefined;
+    if (typeof sessionId !== "string" || sessionId.trim() === "") return undefined;
+    const cwd = typeof agent?.cwd === "string" ? agent.cwd : process.cwd();
+    const slug = cwd.replace(/\//gu, "-");
+    const transcript = `${homedir()}/.claude/projects/${slug}/${sessionId}.jsonl`;
+    try {
+      const stats = statSync(transcript);
+      const birth = stats.birthtimeMs || stats.mtimeMs;
+      return Number.isFinite(birth) && birth > 0 ? birth : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   return {
     now: Date.now,
     inspectAgent: async () => {
@@ -373,6 +399,7 @@ export function makeLiveDriverPorts(
         paneExists: pane !== undefined,
         sessionExists: agent !== undefined,
         idle: status === "idle" || status === "done",
+        sessionStartedAt: sessionStartedAtFrom(agent),
       };
     },
     countUnhandled: async () =>
