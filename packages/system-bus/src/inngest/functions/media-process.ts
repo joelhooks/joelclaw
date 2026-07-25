@@ -13,7 +13,7 @@ import { getRedisPort } from "../../lib/redis";
 
 import { execSync } from "node:child_process";
 import { mkdir, readFile, stat } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { $ } from "bun";
 import Redis from "ioredis";
 import { infer } from "../../lib/inference";
@@ -303,8 +303,13 @@ async function transcribeAudio(audioPath: string): Promise<string> {
   }
 
   try {
+    // mlx_whisper always writes a transcript file next to its working directory.
+    // Without --output-dir that is the worker's cwd, which drops the contents of
+    // Joel's voice messages into the repo working tree as <uuid>.txt. Keep the
+    // side-effect file beside the audio it came from; stdout is what we return.
+    const outputDir = dirname(processPath);
     const result = execSync(
-      `mlx_whisper --model mlx-community/whisper-large-v3-turbo "${processPath}" --output-format txt`,
+      `mlx_whisper --model mlx-community/whisper-large-v3-turbo "${processPath}" --output-format txt --output-dir "${outputDir}"`,
       {
         encoding: "utf-8",
         timeout: 300_000, // 5 min for long audio
