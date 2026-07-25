@@ -38,6 +38,13 @@ export function validateDecisionPayload(payload) {
   if (delivers && (typeof payload.rewrite !== "string" || payload.rewrite.trim().length === 0)) {
     throw new Error("deliver and close-deliver decisions require non-empty payload.rewrite — the exact message text Joel receives");
   }
+  // A fanout without a taskId cannot be matched to the worker result that comes
+  // back, so the work silently detaches from its receipt. Nine of the first
+  // twenty-four fanouts had no taskId; one of those workers was never accounted
+  // for at all.
+  if (decision.verb === "fanout" && (typeof decision.taskId !== "string" || decision.taskId.trim().length === 0)) {
+    throw new Error("fanout decisions require decision.taskId — the id the worker returns its result under");
+  }
   if (decision.verb === "aggregate") {
     if (!new Set(["open", "join", "extend", "close-deliver"]).has(decision.action)) {
       throw new Error(`Unsupported aggregate action: ${decision.action}`);

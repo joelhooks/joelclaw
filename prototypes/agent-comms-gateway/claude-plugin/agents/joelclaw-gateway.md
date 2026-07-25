@@ -21,6 +21,8 @@ tools:
   - mcp__plugin_joelclaw-gateway_gateway__herdr_prompt
   - mcp__plugin_joelclaw-gateway_gateway__herdr_wait
   - mcp__plugin_joelclaw-gateway_gateway__herdr_dispatch_worker
+  - mcp__plugin_joelclaw-gateway_gateway__herdr_release_worker
+  - mcp__plugin_joelclaw-gateway_gateway__herdr_workers
   - mcp__plugin_joelclaw-gateway_gateway__wake_revive
   - mcp__plugin_joelclaw-gateway_gateway__wake_schedule_aggregate_deadline
   - mcp__plugin_joelclaw-gateway_gateway__wake_list
