@@ -1,0 +1,93 @@
+---
+title: Driver session recycle and degeneration watchdog
+type: task
+status: open
+created: 2026-07-25
+---
+
+# The gateway session rots until it emits garbage
+
+Repo: `/Users/joel/Code/joelhooks/joelclaw`
+**You own `packages/agent-comms-driver/` only.** Do not edit other packages.
+
+## The defect, with evidence
+
+The gateway is an always-on Claude Code session in a herdr pane. A driver
+process supervises it: observes, pokes, and spawns a successor when the session
+dies. The driver has **no notion of session age or size**, so the session runs
+until it degenerates.
+
+Read `/tmp/gateway-transcript-findings.md` section 4 ("court" degeneration).
+Measured from real transcripts:
+
+- session `45666099`: collapse onset at ~394k context, 27 bursts
+- session `2871fe18`: collapse onset at ~886k context, 142 bursts; one assistant
+  reply emitted the token "court" **32,000 times** (64k output tokens)
+- both were `--model opus --effort low` on multi-day sessions
+- preceding content was normal prose, then sudden `court court court…`
+- once it appears, later turns re-sample it — the transcript is poisoned
+
+Right now (verify yourself with `ps aux | grep joelclaw-gateway`) the live
+session has been running since Wednesday on `--model opus --effort low`.
+
+## What to build
+
+1. **Age/size-based retire.** Read `src/machine.ts` (XState v5) and `src/driver.ts`.
+   The machine has `booting | ready | poking | unhealthy | spawning |
+   awaitingSuccessor | stopped`. Add a retire path: when the session is healthy,
+   idle, and has **no unhandled work**, and it is past its limit, retire it and
+   boot a successor. Retiring a session with queued work or an outstanding poke
+   is a bug — the whole point is a clean handoff.
+
+   Limit on **wall-clock age** at minimum (default 4 hours, configurable). If you
+   can read a cheap, reliable context/token signal for the running session, gate
+   on that too — but do not invent a fragile parser. Prefer honest age over a
+   guessed token count, and say in your report which you implemented.
+
+2. **Fix the successor spawn gap this exposes.** Read
+   `spawnGatewaySuccessorPane` in `src/adapters.ts`. Today, if a pane already
+   carries the target label it returns `{spawned:false}` and **never launches the
+   command** — it assumes the pane already holds a live successor. After a
+   retire, the pane exists with no session, so nothing would relaunch. Make the
+   spawn relaunch in place when the pane has no live agent session. Reuse the
+   pane; never create a second one.
+
+3. **Degeneration watchdog.** If the session's recent output is a repeated-token
+   collapse (e.g. matches `/^(court\s*){5,}/i`, or a very high repeated-token
+   ratio), treat it as unhealthy evidence and force a retire + successor. Never
+   let that text be treated as operator-facing output. Keep the detector simple
+   and test it directly.
+
+4. **Handoff must survive.** The successor boots from stream replay plus a
+   `gateway.handoff` note. Do not lose that path. If a retire should write a
+   handoff note first, wire it through the existing ports rather than inventing
+   a new side channel.
+
+## Constraints
+
+- **Do NOT commit. Do NOT push.** Steering reviews and commits.
+- Do NOT restart the live driver or kill the live gateway session. Build and
+  test only — steering performs the live bounce.
+- Do NOT write the real `gateway:agent:heartbeat` Redis key in tests.
+- Keep the existing kill-drill green: `src/kill-test.ts`, `src/kill-test-live.ts`.
+  The live drill needs `--confirm-live-gateway-kill`; do not run it.
+- Follow the package's existing seam style: injectable ports, XState guards,
+  Effect for typed errors. Match the surrounding code.
+
+## Validation
+
+`bunx tsc --noEmit` and `bun test packages/agent-comms-driver` must pass. Add
+tests for: retire fires past the limit when idle and empty; retire does NOT fire
+with unhandled work; retire does NOT fire mid-poke; a retired pane is relaunched
+in place rather than duplicated; the degeneration detector trips and recovers.
+
+## Deliverable
+
+Report what you changed, which limit signal you implemented and why, files
+touched, and test results. Then:
+
+```bash
+joelclaw notify send "worker gateway-driver-recycle done: <one-paragraph result>" --data '{"taskId":"gateway-driver-recycle"}'
+```
+
+Print DONE and stop.

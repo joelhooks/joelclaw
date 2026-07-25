@@ -1,0 +1,107 @@
+---
+title: "Harden the gateway against its first week of real traffic"
+type: "step"
+kind: "task"
+status: "open"
+assignee: "steering session (charter pane w28:p1)"
+created_at: "2026-07-25"
+privacy: "private"
+---
+
+# Harden the gateway against its first week of real traffic
+
+The gateway ran live from 2026-07-21 to 2026-07-25 and produced 3027 stream
+events. That traffic is the first real evidence about the design, and it found
+defects no amount of grilling would have. This step records them and what was
+done.
+
+Resolved when: every proved defect below is fixed or explicitly deferred with a
+reason, the fixes are committed and live, and the loop is running on a model and
+session policy that does not rot.
+
+## How the evidence was gathered
+
+Three read-only investigations, each a herdr pi worker:
+
+- **message flow forensics** — paged the whole Convex stream, aggregated by kind,
+  source, verb, latency, and cursor state
+- **transcript review** — parsed the gateway's own Claude Code session JSONL for
+  turn anatomy, tool counts, boot payload size, and degeneration
+- **scheduled beat trace** — followed `pane.schedule.due` from the wake registry
+  into the gateway's dispatch path
+
+Findings live outside the repo because they quote Joel's private traffic:
+`/tmp/gateway-forensics-findings.md` and `/tmp/gateway-transcript-findings.md`,
+both mode 0600. Do not commit them.
+
+## What the traffic proved
+
+**Pane sprawl was the visible symptom.** `herdr_dispatch_worker` opened a new
+herdr tab on every call and the plugin had no close path at all. Workspace
+`[jc] gateway agent` reached 28 panes / 26 tabs. Most were not Joel's work: a
+`verb:spawn` schedule already names its own brief and cadence, and the gateway
+was re-executing it as a worker dispatch every hour, forever. The comms agent
+was being used as a scheduler.
+
+**Silence is illegal and happened 67 times.** 67 external inputs advanced with
+zero decision receipts, cursors at head, pending 0 — including 8 of Joel's own
+Slack messages. The invariant lived only in the plugin, so any other path past
+the cursor skipped it silently.
+
+**Five of Joel's messages were recorded and never sent.** Four close-delivers
+put their text on `decision.rewrite` while the executor read only
+`payload.rewrite`. The executor had no test file at all.
+
+**The loop answers slowly and acts like a clerk.** `stream_pending` was the first
+tool call on 463 of 483 wake turns despite an ack-first rule in prose. Joel's
+Telegram ack p50 was 58s, p90 17 minutes; "bing bong" took 11 minutes and its
+first decision was a `drop`, later corrected to `deliver`.
+
+**The session rots.** Two long sessions degenerated into repeated "court" tokens
+— one reply emitted it 32,000 times — at ~394k and ~886k context, on
+`--model opus --effort low`, running for days. The brief's own Vocabulary says a
+cycle should "retire at ~150k tokens or a quiet moment." That was never built:
+the driver had no age or size signal at all.
+
+**Incidents never close.** 13 aggregates were opened and never closed; one
+absorbed 518 joins. 607 health messages sit as join-only forever — a receipt
+exists, but nothing terminal ever ends the incident.
+
+**Fallback fires while the agent is alive.** 185 fallbacks, 77 on 2026-07-25
+alone, while the Claude process was up since Wednesday. The gate is a Redis key
+existence check, not liveness, and 161 of 185 sources later got a real decision
+anyway — so Joel got the raw dump first for nothing.
+
+**Voice notes leaked into the repo.** `mlx_whisper` runs without `--output-dir`,
+so every Telegram voice note wrote its transcript into `packages/system-bus` as
+a UUID-named `.txt`.
+
+**`messages audit` was misdiagnosed.** It failed fleet-wide with
+`MESSAGE_JOURNAL_CONFIG_MISSING`, recorded as "provision the reader
+credentials." Wrong: flagg has no ClickHouse listening at all, and the events
+were in Convex the whole time — the same stream `messages trace` reads fine.
+
+## Decisions
+
+- **A lane, not a pane, is a worker's identity.** The lane is the taskId with
+  trailing digit groups stripped, so recurring work reuses one warm pane that
+  still remembers the last run. Dispatch refuses past four open lanes rather
+  than sprawling; `herdr_release_worker` records a truthful outcome and frees
+  the lane. The gateway owns a worker's whole life, not just its birth.
+- **Mechanical work leaves the judgment loop.** `verb:spawn` executes into a
+  stable beat lane and never enters the gateway queue. The beat still reports
+  its result through notify, so the gateway keeps deciding whether Joel hears
+  about it — it just stops being what runs it. `wake` and `revive` are unchanged.
+- **Prose rules that matter get teeth.** Ack-first, aggregate deadlines, join
+  caps, fanout taskIds, and rewrite shape are enforced by the tools, because
+  four days of evidence showed prose alone did not hold.
+- **Beat lanes are kept out of the gateway's workspace by resolving it from the
+  pane hosting the loop**, never a hardcoded herdr id — ids are per-session and
+  a hardcoded one silently stops protecting anything after a restart.
+
+## Deliberately not done
+
+- The 67 silent inputs are **not** backfilled with synthetic receipts. That
+  would fabricate decisions nobody made. They are triaged and listed instead.
+- The live gateway was not bounced mid-investigation, and no production redeploy
+  was fired, while unreviewed worker changes were in flight.

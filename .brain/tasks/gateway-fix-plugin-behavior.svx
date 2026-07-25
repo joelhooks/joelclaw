@@ -1,0 +1,101 @@
+---
+title: Gateway plugin — ack enforcement, boot diet, aggregate discipline, rewrite lints
+type: task
+status: open
+created: 2026-07-25
+---
+
+# The gateway behaves like a clerk, boots fat, and never closes incidents
+
+Repo: `/Users/joel/Code/joelhooks/joelclaw`
+**You own `prototypes/agent-comms-gateway/claude-plugin/` only.** Do not edit
+other packages. Another worker owns the driver; another owns the transport.
+
+Read both findings files first — they are the evidence for everything below:
+`/tmp/gateway-transcript-findings.md` and `/tmp/gateway-forensics-findings.md`.
+
+## Fix 1 — Ack latency (highest felt impact)
+
+`prompts/judgment.md` says the FIRST tool call on a workful Joel message must be
+a `deliver` ack. Transcripts show `stream_pending` was the first tool call on
+**463 of 483** wake turns. Joel's Telegram ack p50 is 58s, p90 is 17 minutes;
+"bing bong" took **11 minutes** and its first decision was a `drop` later
+corrected to `deliver`.
+
+The rule is prose-only with nothing enforcing it. Make it mechanical. Options
+worth weighing (pick and justify): a tool-level guard that rejects or warns when
+a workful Joel input gets a non-ack first decision; making the ack cheap enough
+that it always wins; surfacing the pending Joel input at the very top of the
+turn. Do not add artificial latency anywhere.
+
+Also: **default `advanceAfter` to true** for single-input terminal decisions.
+Transcripts show the agent usually records a decision and then makes a separate
+advance call, doubling round-trips for no benefit.
+
+## Fix 2 — Boot diet
+
+`hooks/session-start.mjs` injects the prompts, recent conversation, pending
+replay, and a herdr snapshot. Measured:
+
+- full boot 21–45k chars, worst **67.5k**
+- herdr snapshot alone is **28–33k chars** — and runtime `herdr_snapshot` was
+  called **8 times total** across every session reviewed. Nearly dead weight.
+- pending replay JSON dumps up to **49k** raw
+- **10 of 25 boots had an empty conversation section**, and those boots
+  correlate with cold "I'm the gateway loop" behavior
+
+Shrink the snapshot to what is actually used (or drop it and let the agent call
+`herdr_snapshot` when it needs it). Summarize pending replay to ids + kind +
+one-line text instead of raw JSON. Most important: **guarantee the conversation
+section is populated** — if the 24h window is empty, widen it until you have
+real exchanges. That section is what makes the agent feel continuous.
+
+## Fix 3 — Aggregate discipline
+
+From forensics: **13 aggregates were opened and never closed.** One
+(`health-degradation-2026-07-22T2015`) absorbed **518 joins**. 607 health
+messages sit as join-only forever — a receipt exists, but nothing terminal ever
+closes the incident. No `extend` action was ever used.
+
+Enforce in `server/stream-tools.mjs` and teach in `prompts/judgment.md`:
+- opening an aggregate requires a deadline (`wake_schedule_aggregate_deadline`
+  already exists — see `server/wake-tools.mjs`)
+- refuse to join past a sane cap without closing; a 518-join aggregate is a bug,
+  not a busy day
+- joining an identical repeated tick after the incident is known should drop,
+  not join forever
+
+## Fix 4 — Rewrite lints
+
+Real delivered rewrites from transcripts that violate `prompts/identity.md`:
+- tool refusal: *"I'm the comms gateway loop and I have no live weather feed
+  here, so I can't give you real Vancouver WA conditions…"* — identity.md says
+  "You never respond that you lack a tool."
+- self-introduction: *"I'm the gateway loop (`w2C:pH`); stream is clear."*
+
+Reject these shapes in the rewrite validator with an error that tells the agent
+what to do instead. Joel has `Bash`, `WebFetch`, and `WebSearch` in the tool
+whitelist — a weather question is one command. The typo-charity rule is working;
+leave it alone.
+
+## Constraints
+
+- **Do NOT commit. Do NOT push.**
+- Do NOT restart the live gateway session.
+- Keep `bun test` green in the plugin dir (currently 15 pass). Add tests for
+  every new validator rule and for the boot builder's conversation guarantee.
+- `hooks/session-start.mjs` is exercised by `hooks/hooks.test.mjs` — keep it
+  passing and extend it.
+- Prompts are plain ELI5 in Joel's voice. Match the existing register: direct,
+  concrete, no corporate sludge. Say why a rule exists, not just the rule.
+
+## Deliverable
+
+Report each fix, the approach you chose for ack enforcement and why, before/after
+boot size in chars, files touched, and test results. Then:
+
+```bash
+joelclaw notify send "worker gateway-plugin-behavior done: <one-paragraph result>" --data '{"taskId":"gateway-plugin-behavior"}'
+```
+
+Print DONE and stop.

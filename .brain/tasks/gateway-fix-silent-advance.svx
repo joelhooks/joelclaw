@@ -1,0 +1,102 @@
+---
+title: Silence is illegal, but 67 inputs were advanced anyway
+type: task
+status: open
+created: 2026-07-25
+---
+
+# The stream lets the gateway skip an input without a decision
+
+Repos: `/Users/joel/Code/joelhooks/joelclaw` and the Convex API repo that backs
+the message event log (find it — the client lives in
+`packages/message-event-log/`; the functions live in a sibling `joelclaw-api`
+checkout under `convex/messageEvents*`).
+
+**You own the Convex message-event-log functions and
+`packages/message-event-log/`.** Do not edit `packages/gateway/`,
+`packages/agent-comms-driver/`, or the plugin — other workers own those.
+
+Read `/tmp/gateway-forensics-findings.md` section 2 for the evidence.
+
+## The contract
+
+ADR-0249: every external input event must appear in **exactly one** decision
+receipt before the gateway's cursor advances past it. Silence toward Joel is
+illegal by design. The plugin has `stream_advance_after_decision`, which checks
+this — and `stream_advance_own_output`, which mechanically skips events the
+gateway itself authored.
+
+## The defect
+
+**67 external inputs were advanced with zero decision receipts.** Cursors are at
+head with pending 0, so these were not merely still queued — they were passed
+over. Among them:
+
+- 8 of Joel's own Slack messages
+- 35 `inngest/check-system-health`
+- `cli/notify`, Front events, `wake-successor-assertion`, `observer-dispatcher`
+
+Also found, same area:
+
+- **15 inputs carry more than one decision receipt.** Patterns include
+  `drop` then `deliver` on Joel's "bing bong" (the first decision was simply
+  wrong), duplicate `deliver`/`deliver`, and `deliver` then `fanout`. The
+  doctrine is exactly one terminal decision per input.
+- **1 malformed receipt** (`mx78cvx7s6xm7gwqz542ahp1gd8az8ce`) has `verb` at the
+  payload root instead of under `payload.decision` — an early probe that bypassed
+  the plugin validator and the append accepted it.
+
+## What to fix
+
+1. **Make the invariant server-side.** The guarantee currently lives in the
+   plugin, so anything that advances the cursor by another path — a probe, a
+   restart, a replay — can skip an input silently. Advancing the `gateway/agent`
+   consumer past an external event must be rejected unless exactly one covering
+   decision exists. Gateway-authored output keeps its mechanical skip; that path
+   is legitimate and must stay fast.
+
+2. **Reject a second terminal decision** on an input that already has one. Allow
+   the legitimate non-terminal chain (aggregate open/join/extend) plus exactly
+   one closer.
+
+3. **Schema-validate the decision envelope on append** so a receipt without a
+   well-formed `payload.decision.verb` cannot land at all.
+
+4. **Triage the 67.** Do not silently backfill receipts to make a number go
+   green — that would fabricate decisions that were never made. Produce a list
+   (ids, kinds, sources, timestamps, one-line text) and say plainly which ones
+   represent messages Joel should have received and never did. Write it to
+   `/tmp/gateway-silent-inputs.md` mode 0600. Recommend, don't execute.
+
+## Constraints
+
+- **Do NOT commit. Do NOT push.**
+- This backs live comms. A deploy that rejects writes the real writers depend on
+  will take Joel's messaging down — the cutover already hit exactly this when a
+  `semanticKey` validator required a prefix every real writer violated. Check
+  every existing writer against your new rules **before** proposing a deploy, and
+  report what you checked.
+- **Do not deploy Convex yourself.** Steering deploys after review.
+- The stream holds Joel's private traffic. Keep any dump in `/tmp` mode 0600,
+  quote only short fragments, never write message bodies into a repo.
+
+## Validation
+
+Tests for: advancing past an external input with no covering decision is
+rejected; with exactly one it succeeds; gateway-authored output still skips
+mechanically; a second terminal decision is rejected while an aggregate chain is
+allowed; a malformed envelope is rejected on append. Run whatever test command
+those repos use and report results.
+
+## Deliverable
+
+Report the invariant you implemented, every existing writer you checked against
+it, the triage list location, files touched, and test results. Say explicitly
+whether a Convex deploy is required and what would break if it were rolled back.
+Then:
+
+```bash
+joelclaw notify send "worker gateway-silent-advance done: <one-paragraph result>" --data '{"taskId":"gateway-silent-advance"}'
+```
+
+Print DONE and stop.

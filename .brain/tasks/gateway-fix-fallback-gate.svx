@@ -1,0 +1,91 @@
+---
+title: Fallback fires while the gateway is alive
+type: task
+status: open
+created: 2026-07-25
+---
+
+# The dumb fallback dumps raw text at Joel while the agent is running fine
+
+Repo: `/Users/joel/Code/joelhooks/joelclaw`
+**You own `packages/gateway/src/` only.** Do not edit other packages. Another
+worker owns the driver; another owns the plugin; another owns the Convex stream.
+
+Read `/tmp/gateway-forensics-findings.md` section 6 for the evidence.
+
+## The defect
+
+The slim transport is deliberately dumb: before routing a producer message it
+checks whether the gateway agent is alive, and if not it sends the raw text to
+Telegram prefixed `⚠️ fallback:` and appends a `fallback.delivered` event. That
+safety net is correct and must keep working — it is the reason Joel never goes
+deaf. The kill drill proves it and must stay green.
+
+What is broken is the **gate**:
+
+- **185 fallbacks** since cutover, **77 on 2026-07-25 alone**
+- the Claude gateway process was alive the whole time (pid up since Wednesday)
+- **161 of 185** fallback sources later received a real gateway decision anyway —
+  so Joel got a raw dump first, then the considered message
+- the gate is `EXISTS gateway:agent:heartbeat` in Redis, which is a **key
+  presence check, not liveness**
+- every receipt records `heartbeatStaleForMs` as the configured TTL constant
+  (60000), not measured staleness — so the stream cannot distinguish "key
+  missing for 1 second" from "key missing for an hour"
+- top fallback source is `inngest/check-system-health` (102 of 185): routine
+  health noise, dumped raw, at full length
+
+## What to fix
+
+1. **Record real staleness.** Make `fallback.delivered` carry the measured age of
+   the heartbeat evidence instead of echoing the TTL constant. Without this
+   nobody can tell a blip from an outage after the fact.
+
+2. **Tolerate a blip.** A momentarily missing key during a normal session cycle
+   is not an outage. Require the evidence to be actually stale — not merely
+   absent for one poll — before declaring the loop down. Do not weaken the real
+   outage path: a genuinely dead loop must still fall back promptly. State the
+   threshold you chose and why.
+
+3. **Do not dump machine noise at full length.** When fallback does fire for a
+   routine machine producer, Joel needs one line and a pointer, not a wall of
+   health markdown. Joel's own messages and genuine failures keep their full
+   text. Coalesce repeated identical fallbacks rather than sending each one.
+
+4. Check whether the transport can cheaply corroborate liveness beyond the Redis
+   key (the driver writes `/tmp/joelclaw/last-heartbeat.ts`; the pid file is
+   `/tmp/joelclaw/gateway.pid`). If a second signal makes the gate honest, use
+   it — but the fallback must never depend on the agent being healthy enough to
+   report its own health. That circularity is the bug the kill drill exists to
+   catch.
+
+## Constraints
+
+- **Do NOT commit. Do NOT push.**
+- **Do NOT start `daemon.ts`.** The slim `transport-daemon.ts` is the only
+  poller; starting the legacy daemon causes double delivery.
+- Do NOT restart the live transport or gateway.
+- Never write the real `gateway:agent:heartbeat` key in a test.
+- The kill drill (`packages/agent-comms-driver/src/kill-test.ts`) asserts
+  fallback behavior end to end. Read it, keep its assertions true, and do not
+  edit that package — if your change would break a drill assertion, say so in
+  your report instead of changing the drill.
+
+## Validation
+
+`bunx tsc --noEmit` and `bun test packages/gateway` must pass (currently 202).
+Add tests for: measured staleness lands on the receipt; a one-poll blip does not
+fall back; a real outage still does; routine machine noise is summarized;
+repeated identical fallbacks coalesce.
+
+## Deliverable
+
+Report the gate before and after, the threshold you chose and why, whether you
+added a second liveness signal, files touched, and test results. Call out
+explicitly whether any kill-drill assertion is affected. Then:
+
+```bash
+joelclaw notify send "worker gateway-fallback-gate done: <one-paragraph result>" --data '{"taskId":"gateway-fallback-gate"}'
+```
+
+Print DONE and stop.
