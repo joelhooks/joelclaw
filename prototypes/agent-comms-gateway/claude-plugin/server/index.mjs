@@ -17,8 +17,8 @@ const arrayOfStrings = { type: "array", items: string, minItems: 1 };
 export const toolDefinitions = [
   { name: "stream_bootstrap", description: "Load the advisory handoff and authoritative pending replay for the gateway cursor.", inputSchema: objectSchema({ limit: integer }) },
   { name: "stream_read_since", description: "Read an independent canonical stream page without moving a consumer cursor.", inputSchema: objectSchema({ recordedAt: integer, limit: integer, cursor: { anyOf: [{ type: "string" }, { type: "null" }] } }, ["recordedAt"]) },
-  { name: "stream_pending", description: "Read pending events from the gateway's named durable cursor.", inputSchema: objectSchema({ limit: integer }) },
-  { name: "stream_record_decision", description: "Validate and append one ADR-0249 decision receipt, then read it back. Pass advanceAfter: true on single-input decisions to advance the cursor in the same call — the conversational fast path: one call replies to Joel.", inputSchema: objectSchema({ payload: { type: "object" }, flowId: string, origin: { type: "object" }, advanceAfter: { type: "boolean" } }, ["payload"]) },
+  { name: "stream_pending", description: "Read compact pending events from the gateway cursor. Joel inbounds needing ack are listed first under ackRequiredJoel — if that list is non-empty, your next tool call must be stream_record_decision ack, not another pending read.", inputSchema: objectSchema({ limit: integer }) },
+  { name: "stream_record_decision", description: "Validate and append one ADR-0249 decision receipt, then read it back. advanceAfter defaults to true for single-input terminal decisions (deliver/drop/escalate/route/fanout/close-deliver) so you do not need a second advance call. Joel ack is decisionSeq:1 deliver with advanceAfter:false so work can continue on the same input. Unacked Joel inbound blocks machine decisions and herdr work until you deliver.", inputSchema: objectSchema({ payload: { type: "object" }, flowId: string, origin: { type: "object" }, advanceAfter: { type: "boolean" } }, ["payload"]) },
   { name: "stream_append_gateway_event", description: "Append and read back a typed handoff, aggregate deadline, or inbound interpretation event.", inputSchema: objectSchema({ semanticKey: string, kind: { enum: ["gateway.handoff", "aggregate.deadline.reached", "inbound.interpreted"] }, payload: { type: "object" }, flowId: string, origin: { type: "object" } }, ["semanticKey", "kind", "payload"]) },
   { name: "stream_advance_after_decision", description: "Advance the gateway cursor only after exactly one read-back decision covers the input.", inputSchema: objectSchema({ eventId: string, decisionEventId: string }, ["eventId", "decisionEventId"]) },
   { name: "stream_advance_own_output", description: "Mechanically advance past a gateway-authored stream output without treating it as new evidence.", inputSchema: objectSchema({ eventId: string }, ["eventId"]) },
@@ -35,6 +35,15 @@ export const toolDefinitions = [
   { name: "wake_cancel", description: "Cancel one durable wake-registry schedule.", inputSchema: objectSchema({ scheduleId: string }, ["scheduleId"]) },
 ];
 
+function withJoelAckGate(stream, toolName, fn) {
+  return async (args) => {
+    if (typeof stream.assertJoelAckPriority === "function") {
+      await stream.assertJoelAckPriority({ toolName });
+    }
+    return fn(args);
+  };
+}
+
 export function createToolHandlers({ stream = createStreamTools(), herdr = createHerdrTools(), wake = createWakeTools() } = {}) {
   return {
     stream_bootstrap: (args) => stream.bootstrap(args),
@@ -44,14 +53,15 @@ export function createToolHandlers({ stream = createStreamTools(), herdr = creat
     stream_append_gateway_event: (args) => stream.appendGatewayEvent(args),
     stream_advance_after_decision: (args) => stream.advanceAfterDecision(args),
     stream_advance_own_output: (args) => stream.advanceOwnOutput(args),
-    herdr_snapshot: (args) => herdr.snapshot(args),
-    herdr_read: (args) => herdr.read(args),
-    herdr_prompt: (args) => herdr.prompt(args),
-    herdr_wait: (args) => herdr.wait(args),
-    herdr_dispatch_worker: (args) => herdr.dispatchWorker(args),
+    // Herdr work is real work. If Joel is waiting on an ack, refuse and force the deliver first.
+    herdr_snapshot: withJoelAckGate(stream, "herdr_snapshot", (args) => herdr.snapshot(args)),
+    herdr_read: withJoelAckGate(stream, "herdr_read", (args) => herdr.read(args)),
+    herdr_prompt: withJoelAckGate(stream, "herdr_prompt", (args) => herdr.prompt(args)),
+    herdr_wait: withJoelAckGate(stream, "herdr_wait", (args) => herdr.wait(args)),
+    herdr_dispatch_worker: withJoelAckGate(stream, "herdr_dispatch_worker", (args) => herdr.dispatchWorker(args)),
     herdr_release_worker: (args) => herdr.releaseWorker(args),
     herdr_workers: (args) => herdr.workers(args),
-    wake_revive: (args) => wake.revive(args),
+    wake_revive: withJoelAckGate(stream, "wake_revive", (args) => wake.revive(args)),
     wake_schedule_aggregate_deadline: (args) => wake.scheduleAggregateDeadline(args),
     wake_list: (args) => wake.list(args),
     wake_cancel: (args) => wake.cancel(args),

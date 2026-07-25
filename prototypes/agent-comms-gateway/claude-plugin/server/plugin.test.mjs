@@ -4,10 +4,24 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { createHerdrTools, laneFromTaskId, laneLabel, MAX_WORKER_LANES } from "./herdr-tools.mjs";
 import { createToolHandlers, handleMcpMessage, toolDefinitions } from "./index.mjs";
-import { createStreamTools, validateDecisionPayload } from "./stream-tools.mjs";
+import {
+  createStreamTools,
+  lintRewrite,
+  MAX_AGGREGATE_JOINS,
+  resolveAdvanceAfter,
+  validateDecisionPayload,
+} from "./stream-tools.mjs";
 import { createWakeTools } from "./wake-tools.mjs";
 
 const inputEvent = { _id: "input-1", kind: "message.requested", source: "producer", recordedAt: 10, sequence: 1 };
+const joelInbound = {
+  _id: "joel-1",
+  kind: "inbound.received",
+  source: "gateway.telegram.chat-sdk.message",
+  recordedAt: 11,
+  sequence: 2,
+  payload: { actorId: "7718912466", content: { text: "bing bong" } },
+};
 const decisionPayload = {
   inputEventIds: ["input-1"],
   reason: "Joel asked for the result.",
@@ -17,8 +31,8 @@ const decisionPayload = {
   rewrite: "Done.",
 };
 
-function fakeClient() {
-  const events = [inputEvent];
+function fakeClient(seed = [inputEvent]) {
+  const events = [...seed];
   return {
     events,
     readSince: async (recordedAt, limit, cursor) => {
@@ -27,7 +41,7 @@ function fakeClient() {
       const page = eligible.slice(offset, offset + limit);
       return { events: page, nextCursor: offset + page.length < eligible.length ? String(offset + page.length) : null, source: "message-event-log" };
     },
-    pendingForConsumer: async () => events,
+    pendingForConsumer: async () => events.filter((event) => event.kind !== "gateway.decision.recorded" && event.kind !== "gateway.handoff"),
     append: async (input) => {
       const event = { ...input, _id: `event-${events.length + 1}`, recordedAt: 20 + events.length, sequence: events.length + 1 };
       events.push(event);
@@ -41,18 +55,48 @@ describe("stream receipts", () => {
   test("validates one complete decision and reads it back", async () => {
     const client = fakeClient();
     const stream = createStreamTools({ client, now: () => 20 });
-    const appended = await stream.recordDecision({ payload: decisionPayload });
+    const appended = await stream.recordDecision({ payload: decisionPayload, advanceAfter: false });
     expect(appended.receipt.semanticKey).toBe("gateway:input-1:1");
     expect(appended.event.kind).toBe("gateway.decision.recorded");
     const cursor = await stream.advanceAfterDecision({ eventId: "input-1", decisionEventId: appended.receipt.eventId });
     expect(cursor.lastEventId).toBe("input-1");
   });
 
+  test("defaults advanceAfter true on single-input terminal decisions", async () => {
+    const client = fakeClient();
+    const stream = createStreamTools({ client, now: () => 20 });
+    const appended = await stream.recordDecision({ payload: decisionPayload });
+    expect(appended.advanceAfter).toBe(true);
+    expect(appended.cursor.lastEventId).toBe("input-1");
+  });
+
+  test("advanceAfter defaults true; acks pass false explicitly", () => {
+    expect(resolveAdvanceAfter({
+      ...decisionPayload,
+      decisionSeq: 1,
+      decision: { verb: "deliver" },
+    }, undefined)).toBe(true);
+    expect(resolveAdvanceAfter({
+      ...decisionPayload,
+      decisionSeq: 1,
+      decision: { verb: "deliver" },
+    }, false)).toBe(false);
+    expect(resolveAdvanceAfter({
+      ...decisionPayload,
+      decision: { verb: "drop" },
+    }, undefined)).toBe(true);
+    expect(resolveAdvanceAfter({
+      ...decisionPayload,
+      inputEventIds: ["a", "b"],
+      decision: { verb: "deliver" },
+    }, undefined)).toBe(false);
+  });
+
   test("refuses duplicate decisions before cursor advance", async () => {
     const client = fakeClient();
     const stream = createStreamTools({ client, now: () => 20 });
-    const first = await stream.recordDecision({ payload: decisionPayload });
-    await stream.recordDecision({ payload: { ...decisionPayload, decisionSeq: 2 } });
+    const first = await stream.recordDecision({ payload: decisionPayload, advanceAfter: false });
+    await stream.recordDecision({ payload: { ...decisionPayload, decisionSeq: 2 }, advanceAfter: false });
     await expect(stream.advanceAfterDecision({ eventId: "input-1", decisionEventId: first.receipt.eventId })).rejects.toThrow("found 2");
   });
 
@@ -74,6 +118,103 @@ describe("stream receipts", () => {
       ...decisionPayload,
       decision: { verb: "aggregate", action: "open", aggregateId: "a1", memberEventIds: ["input-1", "input-1"] },
     })).toThrow("must not contain duplicates");
+  });
+
+  test("aggregate open requires a future holdUntil", () => {
+    expect(() => validateDecisionPayload({
+      ...decisionPayload,
+      rewrite: undefined,
+      decision: { verb: "aggregate", action: "open", aggregateId: "a1", memberEventIds: ["input-1"] },
+    })).toThrow("holdUntil");
+    expect(validateDecisionPayload({
+      ...decisionPayload,
+      rewrite: undefined,
+      decision: {
+        verb: "aggregate",
+        action: "open",
+        aggregateId: "a1",
+        memberEventIds: ["input-1"],
+        holdUntil: Date.now() + 60_000,
+      },
+    }).decision.aggregateId).toBe("a1");
+  });
+
+  test("rejects join past the sane aggregate cap", () => {
+    expect(() => validateDecisionPayload({
+      ...decisionPayload,
+      rewrite: undefined,
+      decision: { verb: "aggregate", action: "join", aggregateId: "a1", memberEventIds: ["input-1"] },
+    }, { aggregateStats: { decisionCount: MAX_AGGREGATE_JOINS, duplicateTick: false } })).toThrow(`cap ${MAX_AGGREGATE_JOINS}`);
+  });
+
+  test("rejects identical repeated ticks on a known aggregate", () => {
+    expect(() => validateDecisionPayload({
+      ...decisionPayload,
+      rewrite: undefined,
+      decision: { verb: "aggregate", action: "join", aggregateId: "a1", memberEventIds: ["input-1"] },
+    }, { aggregateStats: { decisionCount: 3, duplicateTick: true } })).toThrow("identical repeated tick");
+  });
+
+  test("rewrite lints catch tool refusal and self-intro", () => {
+    expect(lintRewrite("I'm the comms gateway loop and I have no live weather feed here, so I can't give you real Vancouver WA conditions.")).toContain("tool-refusal");
+    expect(lintRewrite("I'm the gateway loop (`w2C:pH`); stream is clear.")).toContain("self-intro");
+    expect(lintRewrite("on it — checking Typesense now.")).toBeNull();
+    expect(() => validateDecisionPayload({
+      ...decisionPayload,
+      rewrite: "I'm the gateway loop; stream is clear.",
+    })).toThrow("self-intro");
+  });
+
+  test("forces Joel deliver before machine decisions and herdr work", async () => {
+    const client = fakeClient([inputEvent, joelInbound]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    await expect(stream.recordDecision({
+      payload: { ...decisionPayload, reason: "machine noise" },
+    })).rejects.toThrow("Ack Joel first");
+
+    await expect(stream.recordDecision({
+      payload: {
+        inputEventIds: ["joel-1"],
+        reason: "drop without hearing Joel",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "drop" },
+      },
+    })).rejects.toThrow("must be deliver");
+
+    const ack = await stream.recordDecision({
+      payload: {
+        inputEventIds: ["joel-1"],
+        reason: "Joel ping — ack first",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "deliver", target: { kind: "platform", platform: "telegram" } },
+        rewrite: "on it — right here.",
+      },
+      advanceAfter: false,
+    });
+    expect(ack.advanceAfter).toBe(false);
+
+    const handlers = createToolHandlers({
+      stream,
+      herdr: { snapshot: async () => ({ ok: true }), dispatchWorker: async () => ({ ok: true }) },
+      wake: {},
+    });
+    // After ack, machine decision is allowed.
+    const machine = await stream.recordDecision({ payload: { ...decisionPayload, decisionSeq: 1 } });
+    expect(machine.advanceAfter).toBe(true);
+    await expect(handlers.herdr_snapshot({})).resolves.toEqual({ ok: true });
+  });
+
+  test("herdr tools refuse while Joel is unacked", async () => {
+    const client = fakeClient([joelInbound]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    const handlers = createToolHandlers({
+      stream,
+      herdr: { snapshot: async () => ({ ok: true }), dispatchWorker: async () => ({ ok: true }) },
+      wake: {},
+    });
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" })).rejects.toThrow("Ack Joel first");
   });
 });
 
