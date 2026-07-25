@@ -14,9 +14,10 @@ import { inngest } from "../client";
 
 export const FRONT_API = "https://api2.frontapp.com";
 export const FRONT_READER_WATERMARK_KEY = "health:front-reader:watermark_emitted_at_ms";
-export const FRONT_READER_CRON = "*/5 * * * *";
+/** Hourly backstop; webhooks remain the fast path. */
+export const FRONT_READER_CRON = "0 * * * *";
 
-/** Re-read a little so clock skew / late index cannot drop a message. */
+/** Re-read a little so clock skew / late index cannot drop a message. Independent of cron cadence. */
 export const FRONT_READER_OVERLAP_MS = 5 * 60 * 1000;
 
 /**
