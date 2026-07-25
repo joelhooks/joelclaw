@@ -39,14 +39,22 @@ interface DeliverDecisionPayload {
     readonly verb?: string;
     readonly action?: string;
     readonly platform?: string;
+    readonly rewrite?: string;
   };
   readonly rewrite?: string;
   readonly reason?: string;
 }
 
+// The plugin validator requires the rewrite at the top level, but four real
+// close-delivers on cutover day carried their text on `decision.rewrite` only
+// and were never sent. Read either place: a message Joel should have received
+// is worth more than schema purity about where the agent put it.
 const asDeliverText = (payload: DeliverDecisionPayload): string | null => {
-  const text = typeof payload.rewrite === "string" ? payload.rewrite.trim() : "";
-  return text.length > 0 ? text : null;
+  for (const candidate of [payload.rewrite, payload.decision?.rewrite]) {
+    const text = typeof candidate === "string" ? candidate.trim() : "";
+    if (text.length > 0) return text;
+  }
+  return null;
 };
 
 export async function drainDeliverDecisions(
