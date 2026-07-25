@@ -1,0 +1,107 @@
+---
+title: Front reader must read conversations, not the events feed
+type: task
+status: open
+created: 2026-07-25
+---
+
+# The reader is built on an endpoint our token cannot read
+
+Repo: `/Users/joel/Code/joelhooks/joelclaw`
+**You own `packages/system-bus/src/inngest/functions/front-reader.ts` and its
+test.** Do not edit other files unless a change there is unavoidable — say so in
+your report if it is.
+
+## Background
+
+Front's webhooks died on 2026-07-21 and stayed dead ~98h, so we built a reader
+that polls Front with our own key and emits `channel/message.received` — the
+same event the webhook path emits, so everything downstream is unchanged. That
+design is correct and already committed. Read `front-reader.ts` before changing
+anything.
+
+## The defect
+
+The reader polls `GET /events`. Our token cannot read it. Live proof from the
+running worker log:
+
+```
+error: front events 403: {"_error":{"status":403,"title":"Forbidden",
+  "message":"Missing required scopes: [events:*:read]"}}
+  at fetchFrontEventsPage (front-reader.ts:415)
+  fnId: "system-bus-host-front/message-reader"
+```
+
+So the function runs on schedule, fails every time, and never advances its
+watermark. Front stays stale.
+
+I probed the live token directly (status codes only, no token printed):
+
+| endpoint | result |
+|---|---|
+| `/events?limit=1` | **403 Missing required scopes: [events:*:read]** |
+| `/conversations?limit=1` | 200 OK |
+| `/inboxes?limit=1` | 200 OK |
+| `/me` | 200 OK |
+
+## What to do
+
+**Rebuild the fetch layer on `/conversations`, not `/events`.** That endpoint
+works with the token we have today, needs nothing from Joel, and is already used
+successfully elsewhere in this repo — read
+`packages/system-bus/src/inngest/functions/vip-email-backfill.ts` and
+`vip-email-received.ts` for the working pattern, including how they fetch
+`/conversations/{id}/messages` and normalize a message.
+
+Requirements:
+
+1. **Poll conversations by recency**, page through them, and stop once you pass
+   the watermark minus overlap. Do not walk the whole inbox every hour.
+2. **Fetch messages for conversations that changed** and emit one
+   `channel/message.received` per message, in the exact shape the reader emits
+   today. Do not change the event contract or the downstream seam.
+3. **Keep `timestamp` as Front's real message `created_at`.** This is load
+   bearing: `channel-message-ingest` hashes the timestamp into the document id,
+   so a wall-clock value would duplicate a message on every overlapping poll.
+4. **Keep the existing safety rails**: durable Redis watermark, 5-minute
+   overlap, bounded lookback, bounded pages per run, backoff on retryable
+   statuses, and telemetry per run (scanned / emitted / watermark before+after /
+   failures). Do not regress any of them.
+5. **Fail loudly and specifically.** If Front returns 403, the message must name
+   the endpoint and the missing scope — this exact failure was invisible for an
+   hour because nothing surfaced it. A 403 must not look like "no new messages."
+6. Keep the hourly cron (`0 * * * *`) — that is Joel's explicit call, made on
+   Telegram 2026-07-25T21:31Z: "we don't need 5min email crons, every hour or
+   two is more than enough."
+
+Delete the `/events` code path rather than leaving it dead beside the new one.
+
+## Constraints
+
+- **Do NOT commit. Do NOT push.** Steering reviews and commits.
+- Do NOT restart the system-bus worker; steering does that.
+- **Never print, log, or echo a token value**, including in telemetry and error
+  messages. Report scopes and status codes, never credentials.
+- Do not call the live Front API from tests.
+
+## Validation
+
+`bunx tsc --noEmit` and `bun test packages/system-bus/src/inngest/functions/front-reader.test.ts`
+must pass. Cover: watermark advance, overlap producing stable document ids,
+bounded pagination, 429 backoff, a 403 surfacing as a named scope error, and a
+missing token failing loudly.
+
+Note: the full `packages/system-bus` suite has **4 pre-existing failures on
+main** (one duplicate worker-role function id, three git-diff tests). Those are
+not yours — do not chase them, and do not let them hide a real regression.
+
+## Deliverable
+
+Report the endpoints you used, how you page and bound the scan, what the
+watermark now tracks, files touched, and test results. Then:
+
+```bash
+joelclaw notify send "worker front-reader-conversations done: <one-paragraph result>" --data '{"taskId":"front-reader-conversations"}'
+```
+
+Print DONE and stop.

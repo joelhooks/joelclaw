@@ -6,17 +6,22 @@ import {
   advanceWatermark,
   buildChannelMessageData,
   createFrontReaderFunction,
-  fetchFrontEventsPage,
   FRONT_READER_MAX_LOOKBACK_MS,
   FRONT_READER_OVERLAP_MS,
+  type FrontEventRecord,
+  type FrontReaderDependencies,
+  fetchFrontConversationMessagesPage,
+  fetchFrontConversationsPage,
+  fetchFrontMessagesSince,
+  formatFrontHttpError,
+  normalizeFrontConversation,
   normalizeFrontEvent,
+  normalizeFrontMessage,
   requireFrontApiToken,
   resolvePollWindow,
   runFrontReader,
   stableChannelMessageIdentity,
   toTimestampMs,
-  type FrontEventRecord,
-  type FrontReaderDependencies,
 } from "./front-reader";
 
 function shaId(message: {
@@ -45,9 +50,9 @@ function shaId(message: {
 
 function fixtureEvent(overrides: Partial<FrontEventRecord> = {}): FrontEventRecord {
   return {
-    id: "evt_1",
+    id: "msg:msg_1",
     type: "inbound",
-    emittedAtMs: 1_700_000_100_000,
+    emittedAtMs: 1_700_000_000_000,
     conversationId: "cnv_1",
     subject: "Hello",
     messageId: "msg_1",
@@ -112,7 +117,42 @@ describe("front reader pure seam", () => {
     expect(requireFrontApiToken("tok_abc")).toBe("tok_abc");
   });
 
-  test("normalizeFrontEvent uses message created_at not emitted_at for channel timestamp", () => {
+  test("normalizeFrontMessage uses message created_at for channel timestamp", () => {
+    const normalized = normalizeFrontMessage(
+      {
+        id: "msg_9",
+        created_at: 1_700_000_000,
+        text: "body",
+        is_inbound: true,
+        recipients: [{ role: "from", handle: "a@b.com", name: "A" }],
+      },
+      { id: "cnv_9", subject: "Sub" },
+    );
+
+    expect(normalized).toMatchObject({
+      messageId: "msg_9",
+      createdAtMs: 1_700_000_000_000,
+      emittedAtMs: 1_700_000_000_000,
+      conversationId: "cnv_9",
+    });
+    expect(buildChannelMessageData(normalized!).timestamp).toBe(1_700_000_000_000);
+  });
+
+  test("normalizeFrontConversation reads last_message_at", () => {
+    expect(
+      normalizeFrontConversation({
+        id: "cnv_1",
+        subject: "Hi",
+        last_message_at: 1_700_000_500,
+      }),
+    ).toEqual({
+      id: "cnv_1",
+      subject: "Hi",
+      lastMessageAtMs: 1_700_000_500_000,
+    });
+  });
+
+  test("legacy normalizeFrontEvent still maps created_at for fixtures", () => {
     const normalized = normalizeFrontEvent({
       id: "evt_9",
       type: "inbound",
@@ -133,19 +173,18 @@ describe("front reader pure seam", () => {
       createdAtMs: 1_700_000_000_000,
       emittedAtMs: 1_700_000_500_000,
     });
-    expect(buildChannelMessageData(normalized!).timestamp).toBe(1_700_000_000_000);
   });
 
   test("overlap polls produce identical document ids once timestamp is source-stable", () => {
     const event = fixtureEvent({
       createdAtMs: 1_700_000_000_000,
-      emittedAtMs: 1_700_000_100_000,
+      emittedAtMs: 1_700_000_000_000,
       text: "same body",
     });
     const again = fixtureEvent({
-      id: "evt_2",
+      id: "msg:msg_1_again",
       createdAtMs: 1_700_000_000_000,
-      emittedAtMs: 1_700_000_200_000,
+      emittedAtMs: 1_700_000_000_000,
       text: "same body",
     });
 
@@ -159,6 +198,17 @@ describe("front reader pure seam", () => {
       timestamp: Date.now(),
     };
     expect(buildMessageId(receiptTimeIdentity)).not.toBe(buildMessageId(first));
+  });
+
+  test("formatFrontHttpError names endpoint and missing scope on 403", () => {
+    const error = formatFrontHttpError({
+      endpoint: "conversations",
+      status: 403,
+      detail: '{"_error":{"status":403,"title":"Forbidden","message":"Missing required scopes: [events:*:read]"}}',
+    });
+    expect(error.message).toMatch(/front conversations 403/);
+    expect(error.message).toMatch(/Missing required scopes: \[events:\*:read\]/);
+    expect(error.message).not.toMatch(/token|Bearer|secret/i);
   });
 });
 
@@ -177,27 +227,17 @@ describe("front reader 429 backoff", () => {
       return Response.json({
         _results: [
           {
-            id: "evt_ok",
-            type: "inbound",
-            emitted_at: 1_700_000_100,
-            conversation: { id: "cnv_ok", subject: "Ok" },
-            target: {
-              data: {
-                id: "msg_ok",
-                created_at: 1_700_000_000,
-                text: "hello",
-                recipients: [{ role: "from", handle: "a@b.com", name: "A" }],
-              },
-            },
+            id: "cnv_ok",
+            subject: "Ok",
+            last_message_at: 1_700_000_100,
           },
         ],
         _pagination: {},
       });
     }) as unknown as typeof fetch;
 
-    const page = await fetchFrontEventsPage({
+    const page = await fetchFrontConversationsPage({
       token: "test-token",
-      afterMs: 1_700_000_000_000,
       fetchImpl,
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -206,8 +246,8 @@ describe("front reader 429 backoff", () => {
 
     expect(attempts).toBe(3);
     expect(sleeps.length).toBe(2);
-    expect(page.events).toHaveLength(1);
-    expect(page.events[0]?.messageId).toBe("msg_ok");
+    expect(page.conversations).toHaveLength(1);
+    expect(page.conversations[0]?.id).toBe("cnv_ok");
   });
 
   test("gives up after max retries on persistent 429", async () => {
@@ -218,13 +258,173 @@ describe("front reader 429 backoff", () => {
       })) as unknown as typeof fetch;
 
     await expect(
-      fetchFrontEventsPage({
+      fetchFrontConversationsPage({
         token: "test-token",
-        afterMs: 1,
         fetchImpl,
         sleep: async () => {},
       }),
-    ).rejects.toThrow(/front events 429/);
+    ).rejects.toThrow(/front conversations 429/);
+  });
+
+  test("403 surfaces endpoint and missing scope, not empty success", async () => {
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({
+          _error: {
+            status: 403,
+            title: "Forbidden",
+            message: "Missing required scopes: [conversations:read]",
+          },
+        }),
+        { status: 403 },
+      )) as unknown as typeof fetch;
+
+    await expect(
+      fetchFrontConversationsPage({
+        token: "test-token",
+        fetchImpl,
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow(/front conversations 403.*Missing required scopes: \[conversations:read\]/);
+  });
+
+  test("message page 403 names the messages endpoint", async () => {
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({
+          _error: {
+            status: 403,
+            title: "Forbidden",
+            message: "Missing required scopes: [messages:read]",
+          },
+        }),
+        { status: 403 },
+      )) as unknown as typeof fetch;
+
+    await expect(
+      fetchFrontConversationMessagesPage({
+        token: "test-token",
+        conversationId: "cnv_x",
+        fetchImpl,
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow(/front conversations\/cnv_x\/messages 403.*\[messages:read\]/);
+  });
+});
+
+describe("fetchFrontMessagesSince bounds", () => {
+  test("pages conversations newest-first and stops after watermark window", async () => {
+    const afterMs = 1_700_000_000_000;
+    let conversationCalls = 0;
+    let messageCalls = 0;
+
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/messages")) {
+        messageCalls += 1;
+        const conversationId = url.match(/conversations\/([^/?]+)/)?.[1] ?? "cnv_x";
+        return Response.json({
+          _results: [
+            {
+              id: `${conversationId}_msg`,
+              created_at: afterMs / 1000 + 10,
+              text: "fresh",
+              is_inbound: true,
+              recipients: [{ role: "from", handle: "a@b.com", name: "A" }],
+            },
+            {
+              id: `${conversationId}_old`,
+              created_at: afterMs / 1000 - 100,
+              text: "old",
+              is_inbound: true,
+              recipients: [{ role: "from", handle: "a@b.com", name: "A" }],
+            },
+          ],
+          _pagination: {},
+        });
+      }
+
+      if (url.includes("/conversations")) {
+        conversationCalls += 1;
+        if (conversationCalls === 1) {
+          return Response.json({
+            _results: [
+              {
+                id: "cnv_new",
+                subject: "New",
+                last_message_at: afterMs / 1000 + 20,
+              },
+              {
+                id: "cnv_old",
+                subject: "Old",
+                last_message_at: afterMs / 1000 - 50,
+              },
+            ],
+            _pagination: {
+              next: "https://api2.frontapp.com/conversations?limit=100&page_token=page2",
+            },
+          });
+        }
+
+        throw new Error("must not request page 2 after passing watermark floor");
+      }
+
+      throw new Error(`unexpected url ${url}`);
+    }) as unknown as typeof fetch;
+
+    const result = await fetchFrontMessagesSince({
+      token: "test-token",
+      afterMs,
+      fetchImpl,
+      sleep: async () => {},
+    });
+
+    expect(conversationCalls).toBe(1);
+    expect(messageCalls).toBe(1);
+    expect(result.conversationsScanned).toBe(1);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.messageId).toBe("cnv_new_msg");
+    expect(result.events[0]?.createdAtMs).toBe(afterMs + 10_000);
+    expect(result.truncated).toBe(false);
+    expect(result.pagesFetched).toBe(1);
+  });
+
+  test("marks truncated when conversation page budget is exhausted", async () => {
+    const afterMs = 1_700_000_000_000;
+    let conversationCalls = 0;
+
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/messages")) {
+        return Response.json({ _results: [], _pagination: {} });
+      }
+
+      conversationCalls += 1;
+      return Response.json({
+        _results: [
+          {
+            id: `cnv_${conversationCalls}`,
+            subject: "Still new",
+            last_message_at: afterMs / 1000 + conversationCalls,
+          },
+        ],
+        _pagination: {
+          next: `https://api2.frontapp.com/conversations?limit=100&page_token=p${conversationCalls}`,
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchFrontMessagesSince({
+      token: "test-token",
+      afterMs,
+      maxPages: 2,
+      fetchImpl,
+      sleep: async () => {},
+    });
+
+    expect(result.pagesFetched).toBe(2);
+    expect(result.truncated).toBe(true);
+    expect(result.conversationsScanned).toBe(2);
   });
 });
 
@@ -236,17 +436,17 @@ describe("runFrontReader", () => {
     const nowMs = 1_800_000_000_000;
 
     const eventA = fixtureEvent({
-      id: "evt_a",
+      id: "msg:msg_a",
       messageId: "msg_a",
       conversationId: "cnv_a",
-      emittedAtMs: nowMs - 1_000,
+      emittedAtMs: nowMs - 3_000,
       createdAtMs: nowMs - 3_000,
     });
     const eventB = fixtureEvent({
-      id: "evt_b",
+      id: "msg:msg_b",
       messageId: "msg_b",
       conversationId: "cnv_b",
-      emittedAtMs: nowMs - 500,
+      emittedAtMs: nowMs - 2_000,
       createdAtMs: nowMs - 2_000,
       from: "grace@example.com",
       fromName: "Grace",
@@ -257,10 +457,11 @@ describe("runFrontReader", () => {
       now: () => nowMs,
       getToken: () => "test-token",
       watermark,
-      fetchEvents: async () => ({
+      fetchMessages: async () => ({
         events: [eventA, eventB],
         truncated: false,
         pagesFetched: 1,
+        conversationsScanned: 2,
       }),
       send: async (events) => {
         sent.push(...events);
@@ -279,8 +480,8 @@ describe("runFrontReader", () => {
     expect(result.messagesEmitted).toBe(2);
     expect(result.conversationsScanned).toBe(2);
     expect(result.watermarkBeforeMs).toBeNull();
-    expect(result.watermarkAfterMs).toBe(nowMs - 500);
-    expect(watermark.peek()).toBe(nowMs - 500);
+    expect(result.watermarkAfterMs).toBe(nowMs - 2_000);
+    expect(watermark.peek()).toBe(nowMs - 2_000);
 
     expect(sent).toHaveLength(2);
     expect(sent[0]).toMatchObject({
@@ -301,10 +502,11 @@ describe("runFrontReader", () => {
 
     const overlapAgain = await runFrontReader({
       ...deps,
-      fetchEvents: async () => ({
+      fetchMessages: async () => ({
         events: [eventA, eventB],
         truncated: false,
         pagesFetched: 1,
+        conversationsScanned: 2,
       }),
     });
     expect(overlapAgain.messagesEmitted).toBe(2);
@@ -320,11 +522,12 @@ describe("runFrontReader", () => {
   test("dedupes the same Front message id inside one poll", async () => {
     const watermark = memoryWatermark(1_700_000_000_000);
     const sent: Array<Record<string, unknown>> = [];
-    const base = fixtureEvent({ messageId: "msg_dup", emittedAtMs: 1_700_000_100_000 });
+    const base = fixtureEvent({ messageId: "msg_dup", emittedAtMs: 1_700_000_100_000, createdAtMs: 1_700_000_100_000 });
     const dup = fixtureEvent({
-      id: "evt_dup_2",
+      id: "msg:msg_dup_2",
       messageId: "msg_dup",
       emittedAtMs: 1_700_000_200_000,
+      createdAtMs: 1_700_000_200_000,
       text: "ping",
     });
 
@@ -332,7 +535,12 @@ describe("runFrontReader", () => {
       now: () => 1_800_000_000_000,
       getToken: () => "test-token",
       watermark,
-      fetchEvents: async () => ({ events: [base, dup], truncated: false, pagesFetched: 1 }),
+      fetchMessages: async () => ({
+        events: [base, dup],
+        truncated: false,
+        pagesFetched: 1,
+        conversationsScanned: 1,
+      }),
       send: async (events) => {
         sent.push(...events);
       },
@@ -351,11 +559,11 @@ describe("runFrontReader", () => {
       now: () => nowMs,
       getToken: () => "test-token",
       watermark,
-      fetchEvents: async () => ({
+      fetchMessages: async () => ({
         events: [
           fixtureEvent({ emittedAtMs: nowMs - 1_000, createdAtMs: nowMs - 2_000 }),
           fixtureEvent({
-            id: "evt_older",
+            id: "msg:msg_older",
             messageId: "msg_older",
             emittedAtMs: nowMs - 5_000,
             createdAtMs: nowMs - 6_000,
@@ -363,6 +571,7 @@ describe("runFrontReader", () => {
         ],
         truncated: true,
         pagesFetched: 15,
+        conversationsScanned: 2,
       }),
       send: async () => ({}),
       emit: async () => ({}),
@@ -375,13 +584,45 @@ describe("runFrontReader", () => {
     expect(result.watermarkAfterMs).toBe(nowMs - 1_000);
   });
 
+  test("propagates named 403 from fetch layer with telemetry", async () => {
+    const emissions: Array<Record<string, unknown>> = [];
+    await expect(
+      runFrontReader({
+        now: () => 1_800_000_000_000,
+        getToken: () => "test-token",
+        watermark: memoryWatermark(null),
+        fetchMessages: async () => {
+          throw formatFrontHttpError({
+            endpoint: "conversations",
+            status: 403,
+            detail: 'Missing required scopes: [events:*:read]',
+          });
+        },
+        send: async () => {
+          throw new Error("must not send");
+        },
+        emit: async (input) => {
+          emissions.push(input as Record<string, unknown>);
+        },
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow(/front conversations 403.*Missing required scopes/);
+
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]).toMatchObject({
+      success: false,
+      action: "front.reader.poll",
+    });
+    expect(String(emissions[0]?.error)).toMatch(/front conversations 403/);
+  });
+
   test("createFrontReaderFunction refuses to start without a token", async () => {
     const { InngestTestEngine } = await import("@inngest/test");
     const fn = createFrontReaderFunction({
       now: () => Date.now(),
       getToken: () => undefined,
       watermark: memoryWatermark(null),
-      fetchEvents: async () => {
+      fetchMessages: async () => {
         throw new Error("must not fetch");
       },
       send: async () => {

@@ -1,10 +1,14 @@
 /**
  * Front poll reader — reliable backstop for channel email projection.
  *
- * Webhooks stay as the fast path. This cron pulls Front events with the private
- * API token and emits the same `channel/message.received` seam so ingest,
- * classification, thread aggregation, and Front Projection health stay green
- * even when Front stops delivering webhooks.
+ * Webhooks stay as the fast path. This cron lists recent Front conversations
+ * with the private API token, loads their messages, and emits the same
+ * `channel/message.received` seam so ingest, classification, thread
+ * aggregation, and Front Projection health stay green even when Front stops
+ * delivering webhooks.
+ *
+ * Uses GET /conversations + GET /conversations/{id}/messages because our token
+ * cannot read GET /events (missing events:*:read).
  */
 
 import { NonRetriableError } from "inngest";
@@ -28,11 +32,11 @@ export const FRONT_READER_MAX_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const FRONT_READER_PAGE_SIZE = 100;
 export const FRONT_READER_MAX_PAGES = 15;
+/** Cap message pages per conversation so one noisy thread cannot burn the whole poll. */
+export const FRONT_READER_MAX_MESSAGE_PAGES = 5;
 export const FRONT_READER_TIMEOUT_MS = Number(process.env.JOELCLAW_FRONT_READER_TIMEOUT_MS ?? "8000");
 export const FRONT_READER_MAX_RETRIES = 4;
 export const RETRYABLE_FRONT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
-
-const MESSAGE_EVENT_TYPES = ["inbound", "outbound"] as const;
 
 export type FrontReaderWatermarkStore = {
   get: () => Promise<number | null>;
@@ -43,13 +47,14 @@ export type FrontReaderFetchResult = {
   events: FrontEventRecord[];
   truncated: boolean;
   pagesFetched: number;
+  conversationsScanned: number;
 };
 
 export type FrontReaderDependencies = {
   now: () => number;
   getToken: () => string | undefined;
   watermark: FrontReaderWatermarkStore;
-  fetchEvents: (input: {
+  fetchMessages: (input: {
     token: string;
     afterMs: number;
     maxPages: number;
@@ -59,9 +64,11 @@ export type FrontReaderDependencies = {
   sleep: (ms: number) => Promise<void>;
 };
 
+/** Normalized Front message ready for the channel/message.received seam. */
 export type FrontEventRecord = {
   id: string;
   type: string;
+  /** Activity timestamp used for watermark advance (message created_at). */
   emittedAtMs: number;
   conversationId: string;
   subject: string;
@@ -71,6 +78,12 @@ export type FrontEventRecord = {
   text: string;
   isInbound: boolean;
   createdAtMs: number;
+};
+
+export type FrontConversationRecord = {
+  id: string;
+  subject: string;
+  lastMessageAtMs: number;
 };
 
 export type ChannelMessageReceivedData = {
@@ -241,6 +254,57 @@ function normalizeFrontSender(messageData: Record<string, unknown>): { from: str
   };
 }
 
+export function normalizeFrontConversation(raw: Record<string, unknown>): FrontConversationRecord | null {
+  const id = String(raw.id ?? "").trim();
+  if (!id) return null;
+
+  const lastMessageAtMs = toTimestampMs(raw.last_message_at ?? raw.lastMessageAt ?? raw.created_at ?? raw.createdAt);
+  if (lastMessageAtMs == null) return null;
+
+  return {
+    id,
+    subject: String(raw.subject ?? "").trim() || "email",
+    lastMessageAtMs,
+  };
+}
+
+/**
+ * Normalize a Front message resource into the channel seam record.
+ * `timestamp` for channel/message.received MUST stay message created_at.
+ */
+export function normalizeFrontMessage(
+  raw: Record<string, unknown>,
+  conversation: Pick<FrontConversationRecord, "id" | "subject">,
+): FrontEventRecord | null {
+  const messageId = String(raw.id ?? "").trim();
+  if (!messageId) return null;
+
+  const createdAtMs = toTimestampMs(raw.created_at ?? raw.createdAt ?? raw.received_at);
+  if (createdAtMs == null) return null;
+
+  const text = deriveMessageText(raw);
+  if (!text) return null;
+
+  const isInbound = Boolean(raw.is_inbound ?? raw.isInbound);
+  const type = isInbound ? "inbound" : "outbound";
+  const sender = normalizeFrontSender(raw);
+
+  return {
+    id: `msg:${messageId}`,
+    type,
+    emittedAtMs: createdAtMs,
+    conversationId: conversation.id,
+    subject: String(raw.subject ?? conversation.subject ?? "").trim() || "email",
+    messageId,
+    from: sender.from,
+    fromName: sender.fromName,
+    text,
+    isInbound,
+    createdAtMs,
+  };
+}
+
+/** @deprecated events endpoint removed; kept only for older callers/tests that still pass event-shaped fixtures. */
 export function normalizeFrontEvent(raw: Record<string, unknown>): FrontEventRecord | null {
   const type = String(raw.type ?? "").trim();
   if (type !== "inbound" && type !== "outbound") return null;
@@ -342,6 +406,37 @@ function retryDelayMs(attempt: number, retryAfterHeader: string | null): number 
   return Math.min(30_000, 500 * 2 ** Math.max(0, attempt - 1));
 }
 
+function extractMissingScopes(detail: string): string | null {
+  const match = detail.match(/Missing required scopes:\s*(\[[^\]]*\])/iu);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Build a loud, specific Front HTTP error. 403 must name endpoint + missing scope.
+ * Never include credentials.
+ */
+export function formatFrontHttpError(input: {
+  endpoint: string;
+  status: number;
+  detail?: string;
+}): Error {
+  const detail = (input.detail ?? "").trim();
+  const scopes = extractMissingScopes(detail);
+
+  if (input.status === 403) {
+    const scopePart = scopes
+      ? ` Missing required scopes: ${scopes}`
+      : detail
+        ? ` ${detail}`
+        : " Missing required scopes (see Front API token permissions)";
+    return new Error(
+      `front ${input.endpoint} 403 Forbidden.${scopePart}`.replace(/\s+/gu, " ").trim(),
+    );
+  }
+
+  return new Error(`front ${input.endpoint} ${input.status}${detail ? `: ${detail}` : ""}`);
+}
+
 async function fetchJsonWithTimeout(
   url: string,
   init: RequestInit,
@@ -357,31 +452,14 @@ async function fetchJsonWithTimeout(
   }
 }
 
-export async function fetchFrontEventsPage(input: {
+async function frontGetJson(input: {
+  endpoint: string;
+  url: URL;
   token: string;
-  afterMs: number;
-  pageToken?: string | null;
-  limit?: number;
-  timeoutMs?: number;
-  sleep?: (ms: number) => Promise<void>;
-  fetchImpl?: typeof fetch;
-}): Promise<{ events: FrontEventRecord[]; nextPageToken: string | null }> {
-  const sleep = input.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const fetchImpl = input.fetchImpl ?? fetch;
-  const limit = input.limit ?? FRONT_READER_PAGE_SIZE;
-  const timeoutMs = input.timeoutMs ?? FRONT_READER_TIMEOUT_MS;
-
-  const url = new URL(`${FRONT_API}/events`);
-  url.searchParams.set("limit", String(limit));
-  // Front q[after] is unix seconds (fractional ok).
-  url.searchParams.set("q[after]", (input.afterMs / 1000).toFixed(3));
-  for (const type of MESSAGE_EVENT_TYPES) {
-    url.searchParams.append("q[types]", type);
-  }
-  if (input.pageToken) {
-    url.searchParams.set("page_token", input.pageToken);
-  }
-
+  timeoutMs: number;
+  sleep: (ms: number) => Promise<void>;
+  fetchImpl: typeof fetch;
+}): Promise<Record<string, unknown>> {
   const headers = {
     Authorization: `Bearer ${input.token}`,
     Accept: "application/json",
@@ -391,36 +469,172 @@ export async function fetchFrontEventsPage(input: {
   while (true) {
     attempt += 1;
     const response = await fetchJsonWithTimeout(
-      url.toString(),
+      input.url.toString(),
       { headers, method: "GET" },
-      timeoutMs,
-      fetchImpl,
+      input.timeoutMs,
+      input.fetchImpl,
     );
 
     if (response.ok) {
-      const body = (await response.json()) as Record<string, unknown>;
-      const results = Array.isArray(body._results) ? body._results : [];
-      const events: FrontEventRecord[] = [];
-      for (const item of results) {
-        if (!item || typeof item !== "object") continue;
-        const normalized = normalizeFrontEvent(item as Record<string, unknown>);
-        if (normalized) events.push(normalized);
-      }
-      const nextPageToken = extractPageToken((body._pagination as Record<string, unknown> | undefined)?.next);
-      return { events, nextPageToken };
+      return (await response.json()) as Record<string, unknown>;
     }
 
     const status = response.status;
-    const detail = (await response.text().catch(() => "")).slice(0, 200);
+    const detail = (await response.text().catch(() => "")).slice(0, 300);
     if (!RETRYABLE_FRONT_STATUSES.has(status) || attempt > FRONT_READER_MAX_RETRIES) {
-      throw new Error(`front events ${status}${detail ? `: ${detail}` : ""}`);
+      throw formatFrontHttpError({ endpoint: input.endpoint, status, detail });
     }
 
-    await sleep(retryDelayMs(attempt, response.headers.get("retry-after")));
+    await input.sleep(retryDelayMs(attempt, response.headers.get("retry-after")));
   }
 }
 
-export async function fetchFrontEventsSince(input: {
+export async function fetchFrontConversationsPage(input: {
+  token: string;
+  pageToken?: string | null;
+  limit?: number;
+  timeoutMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  fetchImpl?: typeof fetch;
+}): Promise<{ conversations: FrontConversationRecord[]; nextPageToken: string | null }> {
+  const sleep = input.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const limit = input.limit ?? FRONT_READER_PAGE_SIZE;
+  const timeoutMs = input.timeoutMs ?? FRONT_READER_TIMEOUT_MS;
+
+  const url = new URL(`${FRONT_API}/conversations`);
+  url.searchParams.set("limit", String(limit));
+  // Front returns conversations newest-updated first (company bump order).
+  if (input.pageToken) {
+    url.searchParams.set("page_token", input.pageToken);
+  }
+
+  const body = await frontGetJson({
+    endpoint: "conversations",
+    url,
+    token: input.token,
+    timeoutMs,
+    sleep,
+    fetchImpl,
+  });
+
+  const results = Array.isArray(body._results) ? body._results : [];
+  const conversations: FrontConversationRecord[] = [];
+  for (const item of results) {
+    if (!item || typeof item !== "object") continue;
+    const normalized = normalizeFrontConversation(item as Record<string, unknown>);
+    if (normalized) conversations.push(normalized);
+  }
+
+  const nextPageToken = extractPageToken((body._pagination as Record<string, unknown> | undefined)?.next);
+  return { conversations, nextPageToken };
+}
+
+export async function fetchFrontConversationMessagesPage(input: {
+  token: string;
+  conversationId: string;
+  pageToken?: string | null;
+  limit?: number;
+  timeoutMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  fetchImpl?: typeof fetch;
+}): Promise<{ messages: Record<string, unknown>[]; nextPageToken: string | null }> {
+  const sleep = input.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const limit = input.limit ?? FRONT_READER_PAGE_SIZE;
+  const timeoutMs = input.timeoutMs ?? FRONT_READER_TIMEOUT_MS;
+
+  const url = new URL(`${FRONT_API}/conversations/${encodeURIComponent(input.conversationId)}/messages`);
+  url.searchParams.set("limit", String(limit));
+  if (input.pageToken) {
+    url.searchParams.set("page_token", input.pageToken);
+  }
+
+  const body = await frontGetJson({
+    endpoint: `conversations/${input.conversationId}/messages`,
+    url,
+    token: input.token,
+    timeoutMs,
+    sleep,
+    fetchImpl,
+  });
+
+  const results = Array.isArray(body._results)
+    ? body._results.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    : [];
+  const nextPageToken = extractPageToken((body._pagination as Record<string, unknown> | undefined)?.next);
+  return { messages: results, nextPageToken };
+}
+
+/**
+ * Load messages for one conversation created at/after afterMs.
+ * Assumes Front returns messages newest-first and stops once older than the window.
+ */
+export async function fetchMessagesForConversation(input: {
+  token: string;
+  conversation: FrontConversationRecord;
+  afterMs: number;
+  maxMessagePages?: number;
+  sleep?: (ms: number) => Promise<void>;
+  fetchImpl?: typeof fetch;
+}): Promise<{ messages: FrontEventRecord[]; truncated: boolean; pagesFetched: number }> {
+  const maxMessagePages = input.maxMessagePages ?? FRONT_READER_MAX_MESSAGE_PAGES;
+  const messages: FrontEventRecord[] = [];
+  let pageToken: string | null = null;
+  let pagesFetched = 0;
+  let truncated = false;
+  let sawOlderThanWindow = false;
+
+  while (pagesFetched < maxMessagePages) {
+    const page = await fetchFrontConversationMessagesPage({
+      token: input.token,
+      conversationId: input.conversation.id,
+      pageToken,
+      sleep: input.sleep,
+      fetchImpl: input.fetchImpl,
+    });
+    pagesFetched += 1;
+
+    if (page.messages.length === 0) {
+      break;
+    }
+
+    for (const raw of page.messages) {
+      const normalized = normalizeFrontMessage(raw, input.conversation);
+      if (!normalized) continue;
+      if (normalized.createdAtMs < input.afterMs) {
+        sawOlderThanWindow = true;
+        continue;
+      }
+      messages.push(normalized);
+    }
+
+    // Newest-first: once a page includes older-than-window messages, further pages are older.
+    if (sawOlderThanWindow) {
+      truncated = false;
+      break;
+    }
+
+    if (!page.nextPageToken) {
+      truncated = false;
+      break;
+    }
+
+    pageToken = page.nextPageToken;
+    if (pagesFetched >= maxMessagePages) {
+      truncated = true;
+      break;
+    }
+  }
+
+  return { messages, truncated, pagesFetched };
+}
+
+/**
+ * Page recent conversations and load messages inside the poll window.
+ * Stops once conversation last_message_at falls below afterMs.
+ */
+export async function fetchFrontMessagesSince(input: {
   token: string;
   afterMs: number;
   maxPages?: number;
@@ -432,20 +646,48 @@ export async function fetchFrontEventsSince(input: {
   let pageToken: string | null = null;
   let pagesFetched = 0;
   let truncated = false;
+  let conversationsScanned = 0;
+  let reachedWindowFloor = false;
 
   while (pagesFetched < maxPages) {
-    const page = await fetchFrontEventsPage({
+    const page = await fetchFrontConversationsPage({
       token: input.token,
-      afterMs: input.afterMs,
       pageToken,
       sleep: input.sleep,
       fetchImpl: input.fetchImpl,
     });
     pagesFetched += 1;
-    events.push(...page.events);
+
+    if (page.conversations.length === 0) {
+      break;
+    }
+
+    for (const conversation of page.conversations) {
+      // Conversations are newest-first; once past the window we can stop the scan.
+      if (conversation.lastMessageAtMs < input.afterMs) {
+        reachedWindowFloor = true;
+        continue;
+      }
+
+      conversationsScanned += 1;
+      const loaded = await fetchMessagesForConversation({
+        token: input.token,
+        conversation,
+        afterMs: input.afterMs,
+        sleep: input.sleep,
+        fetchImpl: input.fetchImpl,
+      });
+      events.push(...loaded.messages);
+      if (loaded.truncated) {
+        truncated = true;
+      }
+    }
+
+    if (reachedWindowFloor) {
+      break;
+    }
 
     if (!page.nextPageToken) {
-      truncated = false;
       break;
     }
 
@@ -456,7 +698,7 @@ export async function fetchFrontEventsSince(input: {
     }
   }
 
-  return { events, truncated, pagesFetched };
+  return { events, truncated, pagesFetched, conversationsScanned };
 }
 
 function defaultWatermarkStore(): FrontReaderWatermarkStore {
@@ -477,8 +719,8 @@ const defaultDependencies: FrontReaderDependencies = {
   now: () => Date.now(),
   getToken: () => process.env.FRONT_API_TOKEN,
   watermark: defaultWatermarkStore(),
-  fetchEvents: ({ token, afterMs, maxPages }) =>
-    fetchFrontEventsSince({ token, afterMs, maxPages }),
+  fetchMessages: ({ token, afterMs, maxPages }) =>
+    fetchFrontMessagesSince({ token, afterMs, maxPages }),
   send: (events) => inngest.send(events as Parameters<typeof inngest.send>[0]),
   emit: emitOtelEvent,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -492,7 +734,7 @@ export async function runFrontReader(deps: FrontReaderDependencies): Promise<Fro
 
   let fetchResult: FrontReaderFetchResult;
   try {
-    fetchResult = await deps.fetchEvents({
+    fetchResult = await deps.fetchMessages({
       token,
       afterMs: window.afterMs,
       maxPages: FRONT_READER_MAX_PAGES,
@@ -514,7 +756,7 @@ export async function runFrontReader(deps: FrontReaderDependencies): Promise<Fro
     throw error;
   }
 
-  // Dedupe by Front message id within the poll (overlap + multi-event).
+  // Dedupe by Front message id within the poll (overlap + multi-page).
   const byMessageId = new Map<string, FrontEventRecord>();
   for (const event of fetchResult.events) {
     const prior = byMessageId.get(event.messageId);
@@ -570,7 +812,7 @@ export async function runFrontReader(deps: FrontReaderDependencies): Promise<Fro
     afterMs: window.afterMs,
     lookbackBounded: window.lookbackBounded,
     skippedBeforeMs,
-    conversationsScanned: conversationIds.size,
+    conversationsScanned: Math.max(conversationIds.size, fetchResult.conversationsScanned ?? 0),
     eventsScanned: fetchResult.events.length,
     messagesEmitted: channelEvents.length,
     truncated: fetchResult.truncated,
