@@ -1032,19 +1032,25 @@ export async function gitCommit(
 }
 
 export async function getStoryDiff(project: string): Promise<string> {
+  // Diff against main to capture both test and implementation commits
+  // (TDD flow: test-writer commits tests, then implement commits code).
   try {
-    // Diff against main to capture both test and implementation commits
-    // (TDD flow: test-writer commits tests, then implement commits code)
     const result = await $`git -C ${project} diff main...HEAD`.quiet();
+    const diff = result.text();
+    // An empty result here is not proof of "no changes": when the project is
+    // ON main, `main...HEAD` compares a branch to itself and exits 0 with no
+    // output. Returning that would hand the reviewer and judge an empty diff
+    // that looks identical to a story that changed nothing.
+    if (diff.trim().length > 0) return diff;
+  } catch {
+    // No main ref (or not a repo) — fall through to the single-commit diff.
+  }
+
+  try {
+    const result = await $`git -C ${project} diff HEAD~1 HEAD`.quiet();
     return result.text();
   } catch {
-    try {
-      // Fallback: single commit diff
-      const result = await $`git -C ${project} diff HEAD~1 HEAD`.quiet();
-      return result.text();
-    } catch {
-      return "";
-    }
+    return "";
   }
 }
 
