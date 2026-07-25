@@ -5,7 +5,13 @@ import {
   PANE_SCHEDULE_REGISTRY_KEY,
   PaneScheduleValidationError,
   validatePaneSchedule,
+  type PaneScheduleEntry,
 } from "../../lib/pane-schedule";
+import {
+  executeSpawnBeat,
+  type SpawnBeatPorts,
+  type SpawnBeatResult,
+} from "../../lib/pane-schedule-spawn";
 import { getRedisClient } from "../../lib/redis";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
@@ -37,6 +43,95 @@ function extractFailedScheduleId(data: unknown): string | undefined {
     return extractFailedScheduleId((nested as Record<string, unknown>).data);
   }
   return undefined;
+}
+
+export type PaneScheduleDeps = {
+  pushGatewayEvent?: typeof pushGatewayEvent;
+  executeSpawnBeat?: (entry: PaneScheduleEntry, ports?: SpawnBeatPorts) => Promise<SpawnBeatResult>;
+  spawnPorts?: SpawnBeatPorts;
+  hdelPending?: (scheduleId: string) => Promise<number>;
+  hsetPending?: (scheduleId: string, raw: string) => Promise<unknown>;
+  emitOtelEvent?: typeof emitOtelEvent;
+};
+
+/**
+ * verb:spawn is mechanical herdr work. It must never enter the gateway
+ * judgment queue as "work needing a worker." wake/revive keep the due-signal
+ * path so existing consumers still see them.
+ */
+export async function dispatchDuePaneSchedule(
+  entry: PaneScheduleEntry,
+  firedAt: Date,
+  deps: PaneScheduleDeps = {},
+): Promise<{
+  route: "mechanical-spawn" | "gateway-due-signal";
+  late: boolean;
+  firedAt: string;
+  spawn?: SpawnBeatResult;
+  gatewayPushed: boolean;
+  acked: boolean;
+}> {
+  const late = isPaneScheduleLate(entry.at, firedAt.getTime());
+  const firedAtIso = firedAt.toISOString();
+  const push = deps.pushGatewayEvent ?? pushGatewayEvent;
+  const spawn = deps.executeSpawnBeat ?? executeSpawnBeat;
+  const emit = deps.emitOtelEvent ?? emitOtelEvent;
+  const hdel =
+    deps.hdelPending ??
+    (async (scheduleId: string) => getRedisClient().hdel(PANE_SCHEDULE_REGISTRY_KEY, scheduleId));
+
+  if (entry.verb === "spawn") {
+    const spawnResult = await spawn(entry, deps.spawnPorts);
+    let acked = false;
+    if (spawnResult.ack) {
+      await hdel(entry.scheduleId);
+      acked = true;
+    }
+    await emit({
+      level: spawnResult.ack ? "info" : "warn",
+      source: "inngest/pane-schedule",
+      component: "system-bus",
+      action: "pane.schedule.spawn-dispatched",
+      success: spawnResult.ack,
+      error: spawnResult.ack ? undefined : ("reason" in spawnResult ? spawnResult.reason : spawnResult.status),
+      metadata: {
+        scheduleId: entry.scheduleId,
+        verb: entry.verb,
+        late,
+        firedAt: firedAtIso,
+        status: spawnResult.status,
+        acked,
+        ...(spawnResult.status === "spawned" || spawnResult.status === "reused" || spawnResult.status === "busy"
+          ? { paneId: spawnResult.paneId, label: spawnResult.label }
+          : {}),
+      },
+    });
+    return {
+      route: "mechanical-spawn",
+      late,
+      firedAt: firedAtIso,
+      spawn: spawnResult,
+      gatewayPushed: false,
+      acked,
+    };
+  }
+
+  await push({
+    type: "pane.schedule.due",
+    source: "inngest/pane-schedule",
+    payload: {
+      ...entry,
+      firedAt: firedAtIso,
+      late,
+    },
+  });
+  return {
+    route: "gateway-due-signal",
+    late,
+    firedAt: firedAtIso,
+    gatewayPushed: true,
+    acked: false,
+  };
 }
 
 export const paneSchedule = inngest.createFunction(
@@ -93,29 +188,34 @@ export const paneSchedule = inngest.createFunction(
 
     await step.sleepUntil("sleep-until-due", new Date(entry.at));
 
-    const firedAt = await step.run("emit-due-signal", async () => {
-      const firedAt = new Date();
-      const late = isPaneScheduleLate(entry.at, firedAt.getTime());
-      await pushGatewayEvent({
-        type: "pane.schedule.due",
-        source: "inngest/pane-schedule",
-        payload: {
-          ...entry,
-          firedAt: firedAt.toISOString(),
-          late,
-        },
-      });
-      return firedAt.toISOString();
+    const dispatch = await step.run("dispatch-due-schedule", async () => {
+      return dispatchDuePaneSchedule(entry, new Date());
     });
 
-    // The dispatcher owns terminal acknowledgement. Keep the registry entry
-    // until pane creation succeeds or its three-attempt latch exhausts. The
-    // reconciler re-emits this due signal while the entry remains pending.
+    if (dispatch.route === "mechanical-spawn") {
+      return {
+        status: dispatch.acked
+          ? "spawn-dispatched"
+          : dispatch.spawn?.status === "busy"
+            ? "spawn-busy-awaiting-retry"
+            : "spawn-failed-awaiting-retry",
+        scheduleId: entry.scheduleId,
+        firedAt: dispatch.firedAt,
+        late: dispatch.late,
+        spawn: dispatch.spawn,
+        gatewayPushed: false,
+      };
+    }
+
+    // wake/revive: dispatcher (or gateway path) owns terminal acknowledgement.
+    // Keep the registry entry until success or retry exhaustion. The reconciler
+    // re-emits this due signal while the entry remains pending.
     return {
       status: "due-signal-emitted-awaiting-dispatcher-ack",
       scheduleId: entry.scheduleId,
-      firedAt,
-      late: isPaneScheduleLate(entry.at, Date.parse(firedAt)),
+      firedAt: dispatch.firedAt,
+      late: dispatch.late,
+      gatewayPushed: true,
     };
   },
 );
