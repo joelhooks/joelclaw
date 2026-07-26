@@ -36,7 +36,12 @@ export { checkTriggers } from "./check-triggers";
 export { checkVaultSync } from "./check-vault-sync";
 export { contactEnrich } from "./contact-enrich";
 export { contentReviewApply } from "./content-review";
-export { contentPrune, contentSync, contentVerify } from "./content-sync";
+export {
+  contentPrune,
+  contentSync,
+  contentSyncSchedule,
+  contentVerify,
+} from "./content-sync";
 export { conversationAnnotate } from "./conversation-annotate";
 export { conversationThreadAggregate } from "./conversation-thread-aggregate";
 export { conversationThreadEnrich } from "./conversation-thread-enrich";
@@ -89,9 +94,9 @@ export {
 export { manifestArchive } from "./manifest-archive";
 export { mediaProcess } from "./media-process";
 export { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
-export { megaJourneyWatch } from "./mega-journey-watch";
 export { meetingAnalyze } from "./meeting-analyze";
 export { meetingTranscriptIndex } from "./meeting-transcript-index";
+export { megaJourneyWatch } from "./mega-journey-watch";
 export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 export { memoryEmbed } from "./memory/embed";
 export { nightlyMaintenance } from "./memory/nightly-maintenance";

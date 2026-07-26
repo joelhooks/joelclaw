@@ -36,7 +36,12 @@ import { checkTriggers } from "./check-triggers";
 import { checkVaultSync } from "./check-vault-sync";
 import { contactEnrich } from "./contact-enrich";
 import { contentReviewApply } from "./content-review";
-import { contentPrune, contentSync, contentVerify } from "./content-sync";
+import {
+  contentPrune,
+  contentSync,
+  contentSyncSchedule,
+  contentVerify,
+} from "./content-sync";
 import { conversationAnnotate } from "./conversation-annotate";
 import { conversationThreadAggregate } from "./conversation-thread-aggregate";
 import { conversationThreadEnrich } from "./conversation-thread-enrich";
@@ -81,8 +86,8 @@ import { manifestArchive } from "./manifest-archive";
 import { mediaProcess } from "./media-process";
 import { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
 import { meetingAnalyze } from "./meeting-analyze";
-import { megaJourneyWatch } from "./mega-journey-watch";
 import { meetingTranscriptIndex } from "./meeting-transcript-index";
+import { megaJourneyWatch } from "./mega-journey-watch";
 import { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 import { memoryEmbed } from "./memory/embed";
 import { nightlyMaintenance } from "./memory/nightly-maintenance";
@@ -192,6 +197,7 @@ export const hostFunctionDefinitions = [
   summarize,
   summarizeLegacyAlias,
   contentSync,
+  contentSyncSchedule,
   contentVerify,
   contentPrune,
   contentReviewApply,

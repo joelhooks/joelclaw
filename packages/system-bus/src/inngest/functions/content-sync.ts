@@ -231,12 +231,27 @@ async function collectContentGaps(): Promise<ContentGapResult[]> {
  * parses frontmatter, upserts to Convex. Production web reads Convex exclusively.
  *
  * Triggers:
- * - Hourly cron (safety net)
  * - content/updated (after edits)
  * - content/seed.requested (full reseed from CLI)
  * - discovery/captured (after discovery-capture writes a vault note)
  * - system/adr.sync.requested (after ADR edits)
  */
+// Keep cron scheduling outside the debounced function. Inngest v1.28.0
+// retries a cron item when Schedule reports an accepted debounce, and its
+// hourly health sync then creates another cron chain for the same function.
+export const contentSyncSchedule = inngest.createFunction(
+  {
+    id: "system/content-sync-schedule",
+    retries: 1,
+  },
+  { cron: "0 * * * *" },
+  async ({ step }) =>
+    step.sendEvent("request-content-sync", {
+      name: "content/seed.requested",
+      data: { source: "cron" },
+    }),
+);
+
 export const contentSync = inngest.createFunction(
   {
     id: "system/content-sync",
@@ -245,7 +260,6 @@ export const contentSync = inngest.createFunction(
     debounce: { period: "45s", timeout: "3m", key: '"vault-sync"' },
   },
   [
-    { cron: "0 * * * *" },
     { event: "content/updated" },
     { event: "content/seed.requested" },
     { event: "discovery/captured" },

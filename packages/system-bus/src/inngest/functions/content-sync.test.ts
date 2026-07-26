@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   adrExtraResourceIdsFromGaps,
   type ContentGapResult,
+  contentSync,
+  contentSyncSchedule,
   isCanonicalAdrFilename,
   isContentVerifyHealthy,
 } from "./content-sync";
@@ -16,6 +18,32 @@ function gap(overrides: Partial<ContentGapResult>): ContentGapResult {
     ...overrides,
   };
 }
+
+describe("content sync scheduling", () => {
+  const config = (fn: unknown) => (fn as {
+    getConfig: (input: { baseUrl: URL; appPrefix: string }) => Array<{
+      triggers?: Array<{ cron?: string; event?: string }>;
+      debounce?: { period: string; timeout?: string; key?: string };
+    }>;
+  }).getConfig({
+    baseUrl: new URL("http://localhost:3111/api/inngest"),
+    appPrefix: "system-bus-host",
+  })[0];
+
+  test("keeps cron scheduling outside the debounced function", () => {
+    const schedule = config(contentSyncSchedule);
+    const sync = config(contentSync);
+
+    expect(schedule?.triggers).toEqual([{ cron: "0 * * * *" }]);
+    expect(schedule?.debounce).toBeUndefined();
+    expect(sync?.triggers).not.toContainEqual({ cron: "0 * * * *" });
+    expect(sync?.debounce).toEqual({
+      period: "45s",
+      timeout: "3m",
+      key: '"vault-sync"',
+    });
+  });
+});
 
 describe("ADR filename guard", () => {
   test("allows canonical ADR filenames", () => {

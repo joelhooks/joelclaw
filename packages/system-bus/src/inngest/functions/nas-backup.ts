@@ -2,12 +2,14 @@ import { execSync } from "node:child_process";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
+import { DEFAULT_SERVICE_PLACEMENT } from "@joelclaw/endpoint-resolver";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
 import { buildAgentSessionBackupCommand } from "../../lib/agent-session-backup-command";
 import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
 import { infer } from "../../lib/inference";
 import { assertAllowedModel } from "../../lib/models";
+import { resolveHardAlert, sendHardAlert, stableAlertId } from "../../lib/search-maintenance";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
@@ -39,6 +41,15 @@ const TYPESENSE_BACKUP_REMOTE_ROOT = "/volume1/joelclaw/backups/typesense";
 
 const REDIS_POD = "redis-0";
 const REDIS_NAMESPACE = "joelclaw";
+const CONFIGURED_K8S_HOST = DEFAULT_SERVICE_PLACEMENT.hosts.find((host) =>
+  host.services.includes("k8s")
+)?.hostname;
+const K8S_OPERATOR_HOST = process.env.K8S_OPERATOR_HOST?.trim() || CONFIGURED_K8S_HOST || "panda";
+const K8S_KUBECTL_PATH = process.env.K8S_KUBECTL_PATH?.trim() || "/opt/homebrew/bin/kubectl";
+const K8S_OPERATOR_SSH_FLAGS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8"];
+const REDIS_BACKUP_ALERT_LATCH_KEY = "backup:redis";
+const REDIS_BACKUP_ALERT_QUIET_MS = 6 * 60 * 60 * 1000;
+const REDIS_BACKUP_ALERT_ATTEMPT_CAP = 3;
 const REDIS_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/redis`;
 const REDIS_BACKUP_REMOTE_ROOT = "/volume1/joelclaw/backups/redis";
 const REDIS_BACKUP_STAGING_ROOT = `${TYPESENSE_STAGE_ROOT}/redis`;
@@ -515,6 +526,7 @@ type BackupFailureOnFailureContext = {
     data?: Record<string, unknown>;
   };
   step: {
+    run: <T>(id: string, callback: () => Promise<T>) => Promise<T>;
     sendEvent: (
       id: string,
       payload:
@@ -723,6 +735,24 @@ function createBackupOnFailureHandler(
           target,
           selfHealingContext: selfHealingPayload.context,
         },
+      });
+    }
+
+    if (target === "redis") {
+      await step.run("alert-redis-backup-failure", async () => {
+        await sendHardAlert({
+          eventId: stableAlertId(`redis-backup-failure:${event.id ?? payload.backupFailureDetectedAt}`),
+          source: "redis-backup",
+          latchKey: REDIS_BACKUP_ALERT_LATCH_KEY,
+          quietWindowMs: REDIS_BACKUP_ALERT_QUIET_MS,
+          attemptCap: REDIS_BACKUP_ALERT_ATTEMPT_CAP,
+          message: [
+            "🚨 Redis backup failed",
+            `Target: ${K8S_OPERATOR_HOST} Kubernetes pod ${REDIS_NAMESPACE}/${REDIS_POD}`,
+            `Error: ${payload.error.slice(0, 500)}`,
+            "The backup run failed. No new RDB backup was confirmed.",
+          ].join("\n"),
+        });
       });
     }
   };
@@ -1013,6 +1043,119 @@ async function runShell(command: string, run: Promise<ShellResult>): Promise<She
   const result = await run;
   if (result.exitCode !== 0) throw commandError(command, result);
   return result;
+}
+
+type RedisSourceCommandRunner = (
+  command: string[],
+  options?: { stdoutPath?: string },
+) => Promise<ShellResult>;
+
+async function defaultRedisSourceCommandRunner(
+  command: string[],
+  options: { stdoutPath?: string } = {},
+): Promise<ShellResult> {
+  const process = Bun.spawn(command, {
+    stdout: options.stdoutPath ? Bun.file(options.stdoutPath) : "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    process.exited,
+    options.stdoutPath
+      ? Promise.resolve("")
+      : new Response(process.stdout as ReadableStream<Uint8Array>).text(),
+    new Response(process.stderr as ReadableStream<Uint8Array>).text(),
+  ]);
+  return { exitCode, stdout, stderr };
+}
+
+function redisOperatorCommand(remoteCommand: string[]): string[] {
+  return ["ssh", ...K8S_OPERATOR_SSH_FLAGS, K8S_OPERATOR_HOST, ...remoteCommand];
+}
+
+async function runRedisOperatorCommand(
+  label: string,
+  remoteCommand: string[],
+  runner: RedisSourceCommandRunner,
+  options?: { stdoutPath?: string },
+): Promise<ShellResult> {
+  return runShell(label, runner(redisOperatorCommand(remoteCommand), options));
+}
+
+export async function stageRedisBackupFromCluster(
+  stagingPath: string,
+  dependencies: {
+    runCommand?: RedisSourceCommandRunner;
+    sleep?: (milliseconds: number) => Promise<void>;
+    maxPolls?: number;
+  } = {},
+): Promise<{ lastSaveEpoch: number }> {
+  const runCommand = dependencies.runCommand ?? defaultRedisSourceCommandRunner;
+  const sleep = dependencies.sleep ?? Bun.sleep;
+  const maxPolls = dependencies.maxPolls ?? 120;
+
+  await runRedisOperatorCommand(
+    `remote kubectl preflight on ${K8S_OPERATOR_HOST}`,
+    ["test", "-x", K8S_KUBECTL_PATH],
+    runCommand,
+  );
+
+  const beforeResult = await runRedisOperatorCommand(
+    `read Redis LASTSAVE via ${K8S_OPERATOR_HOST}`,
+    [K8S_KUBECTL_PATH, "exec", "-n", REDIS_NAMESPACE, REDIS_POD, "--", "redis-cli", "LASTSAVE"],
+    runCommand,
+  );
+  const beforeLastSaveEpoch = Number.parseInt(toText(beforeResult.stdout), 10);
+  if (!Number.isFinite(beforeLastSaveEpoch) || beforeLastSaveEpoch <= 0) {
+    throw new Error(`Redis LASTSAVE returned invalid output on ${K8S_OPERATOR_HOST}`);
+  }
+
+  const triggerResult = await runRedisOperatorCommand(
+    `kubectl exec -n ${REDIS_NAMESPACE} ${REDIS_POD} -- redis-cli BGSAVE via ${K8S_OPERATOR_HOST}`,
+    [K8S_KUBECTL_PATH, "exec", "-n", REDIS_NAMESPACE, REDIS_POD, "--", "redis-cli", "BGSAVE"],
+    runCommand,
+  );
+  if (!/background saving (?:started|scheduled)/iu.test(toText(triggerResult.stdout))) {
+    throw new Error(`Redis BGSAVE was not accepted on ${K8S_OPERATOR_HOST}: ${toText(triggerResult.stdout)}`);
+  }
+
+  let lastSaveEpoch = 0;
+  let completed = false;
+  for (let poll = 0; poll < maxPolls; poll += 1) {
+    const result = await runRedisOperatorCommand(
+      `read Redis persistence status via ${K8S_OPERATOR_HOST}`,
+      [K8S_KUBECTL_PATH, "exec", "-n", REDIS_NAMESPACE, REDIS_POD, "--", "redis-cli", "INFO", "persistence"],
+      runCommand,
+    );
+    const persistence = toText(result.stdout);
+    const inProgress = /(?:^|\n)rdb_bgsave_in_progress:1\r?(?:\n|$)/u.test(persistence);
+    const succeeded = /(?:^|\n)rdb_last_bgsave_status:ok\r?(?:\n|$)/u.test(persistence);
+    const lastSaveMatch = persistence.match(/(?:^|\n)rdb_last_save_time:(\d+)\r?(?:\n|$)/u);
+    lastSaveEpoch = Number.parseInt(lastSaveMatch?.[1] ?? "0", 10);
+    if (!inProgress) {
+      if (!succeeded || lastSaveEpoch < beforeLastSaveEpoch) {
+        throw new Error(`Redis BGSAVE finished without a successful persistence status on ${K8S_OPERATOR_HOST}`);
+      }
+      completed = true;
+      break;
+    }
+    await sleep(1_000);
+  }
+  if (!completed) {
+    throw new Error(`Redis BGSAVE did not finish after ${maxPolls} persistence checks on ${K8S_OPERATOR_HOST}`);
+  }
+
+  await runRedisOperatorCommand(
+    `stream Redis RDB from ${K8S_OPERATOR_HOST}`,
+    [K8S_KUBECTL_PATH, "exec", "-n", REDIS_NAMESPACE, REDIS_POD, "--", "cat", "/data/dump.rdb"],
+    runCommand,
+    { stdoutPath: stagingPath },
+  );
+  const stagedFile = Bun.file(stagingPath);
+  if (!(await stagedFile.exists()) || stagedFile.size <= 0) {
+    throw new Error(`Redis RDB stream produced an empty staging file at ${stagingPath}`);
+  }
+
+  return { lastSaveEpoch };
 }
 
 function formatLosAngelesParts(now = new Date()): { year: string; month: string; day: string } {
@@ -1561,6 +1704,9 @@ export const backupRedis = inngest.createFunction(
     const metadata: Record<string, unknown> = {
       schedule: "daily_330am_pt",
       mount: NAS_HDD_ROOT,
+      sourceHost: K8S_OPERATOR_HOST,
+      sourceNamespace: REDIS_NAMESPACE,
+      sourcePod: REDIS_POD,
     };
 
     const eventData = event.data as Record<string, unknown> | undefined;
@@ -1598,23 +1744,9 @@ export const backupRedis = inngest.createFunction(
           await runShell(`rm -f ${stagingPath}`, $`rm -f ${stagingPath}`.quiet().nothrow());
         });
 
-        await step.run("trigger-redis-bgsave", async () => {
-          await runShell(
-            `kubectl exec -n ${REDIS_NAMESPACE} ${REDIS_POD} -- redis-cli BGSAVE`,
-            $`kubectl exec -n ${REDIS_NAMESPACE} ${REDIS_POD} -- redis-cli BGSAVE`.quiet().nothrow()
-          );
-        });
-
-        await step.run("wait-for-bgsave", async () => {
-          await Bun.sleep(10_000);
-        });
-
-        await step.run("copy-redis-rdb", async () => {
-          await runShell(
-            `kubectl cp -n ${REDIS_NAMESPACE} ${REDIS_POD}:/data/dump.rdb ${stagingPath}`,
-            $`kubectl cp -n ${REDIS_NAMESPACE} ${REDIS_POD}:/data/dump.rdb ${stagingPath}`.quiet().nothrow()
-          );
-        });
+        const source = await step.run("stage-redis-backup-from-cluster", async () =>
+          stageRedisBackupFromCluster(stagingPath)
+        );
 
         await step.run("copy-redis-rdb-to-nas", async () => {
           const result = await copyFileWithFallback(stagingPath, destinationPath, remoteDestinationPath);
@@ -1628,7 +1760,12 @@ export const backupRedis = inngest.createFunction(
           await runShell(`rm -f ${stagingPath}`, $`rm -f ${stagingPath}`.quiet().nothrow());
         });
 
+        await step.run("resolve-redis-backup-alert", async () => {
+          await resolveHardAlert({ latchKey: REDIS_BACKUP_ALERT_LATCH_KEY, allClear: true });
+        });
+
         metadata.date = dateStamp;
+        metadata.sourceLastSaveEpoch = source.lastSaveEpoch;
         metadata.destinationPath = destinationPath;
         metadata.remoteDestinationPath = remoteDestinationPath;
         metadata.retryAttempt = attempt;
@@ -1639,6 +1776,8 @@ export const backupRedis = inngest.createFunction(
 
         return {
           date: dateStamp,
+          sourceHost: K8S_OPERATOR_HOST,
+          sourceLastSaveEpoch: source.lastSaveEpoch,
           transportMode,
           transportAttempts,
           transportQueuedPath,

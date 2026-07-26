@@ -1,0 +1,41 @@
+---
+title: "Cron scheduling failing on flagg with 'function debounced'"
+type: "task"
+date: "2026-07-26"
+privacy: "private"
+---
+
+# Cron scheduling storm: "function debounced"
+
+## Facts (steering, 2026-07-26T18:15Z)
+
+From `/Users/Shared/joelclaw/logs/inngest/launchd.err.log` (self-hosted Inngest v1.28.0, port 8288, healthy, up since the 07-24 upgrade):
+
+```
+{"level":"ERROR","msg":"error handling queue item","error":"error scheduling run for cron: function debounced","item_kind":"cron"}
+```
+
+- 57 occurrences of `function debounced` in the last 3MB sampled.
+- `error scheduling cron function execution` by hour today: 13Z=8, 14Z=8, 15Z=47, 16Z=54, 17Z=50, 18Z=30. **It ramped hard at 15:00Z** — find what changed then.
+- Also present: 8x `cron health check failed, re-syncing`, 13x `cannot load metadata to execute run: run not found in state store`, 43x `Unable to reach SDK URL`, 4x `failed to extend capacity lease, no new lease ID received`.
+
+This is NOT the old zero-EnvID bug (fixed by the v1.27.0 → v1.28.0 upgrade on 07-24, commit 79c8c247 era; see `.brain/tasks/fix-missing-env-id-crons-2026-07-24.svx`). Different error, different cause. Do not assume it is the same thing.
+
+## Task
+
+1. **Identify which functions are affected.** Map the `functionID`s in the failing log lines to slugs via `http://127.0.0.1:8288/v0/gql` (`query { functions { id slug } }`). Report the list.
+2. **Explain `function debounced`.** Find where Inngest v1.28.0 raises it. Debounce is a flow-control feature — determine whether one of our functions declares `debounce` config that is now colliding with its cron trigger, or whether the runtime is applying it wrongly. Check `packages/system-bus/src/inngest/functions/**` for debounce config.
+3. **Explain the 15:00Z ramp.** Check for a worker restart, deploy, registration, or config change around 2026-07-26T15:00Z. `git log` in the repo, launchd logs for the system-bus worker.
+4. **Assess harm.** For each affected function, is it actually failing to run, or is the error cosmetic (debounce collapsing duplicate cron fires is arguably correct behaviour)? Use real run records, not the log alone. **This determines whether it is urgent or noise** — say which, plainly.
+5. **Also check `cron health check failed, re-syncing`** — the v1.28.0 health checker re-syncing repeatedly may itself be minting the duplicate cron items that then get debounced. If so, that is the actual root cause and the debounce message is a symptom.
+6. **Fix or recommend.** If it is a config bug in our functions, fix it with a test. If it is upstream behaviour, write up the finding and the options.
+
+Note: our new `function-health` check (commit d5743c51) asserts registration and run recency. Verify whether it is catching this. If a cron is genuinely dead and the check stayed silent, **that is a second bug** — report it.
+
+## Constraints
+
+- Do NOT commit. Steering reviews and commits.
+- No sudo, no service restarts, no LaunchDaemon changes, no queue purges.
+- Never print secrets, tokens, or `.env` / `inngest.env` contents.
+- dcg blocks commands containing the word that starts "re"+"boot" even inside file paths, plus `rm -rf` and the single-file unlink utility by name. Route around by choosing different paths/mechanisms; if blocked, stop and report.
+- Print a DONE summary: affected functions, root cause, urgent-or-noise verdict, fix.

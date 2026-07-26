@@ -1,0 +1,41 @@
+---
+title: "Redis backup has failed 174 times: kubectl not on PATH"
+type: "task"
+date: "2026-07-26"
+privacy: "private"
+---
+
+# The Redis backup is not backing anything up
+
+## Facts (steering, 2026-07-26T18:15Z)
+
+Most common error in the Inngest log, 174 occurrences in the last 3MB:
+
+```
+"error":"kubectl exec -n joelclaw redis-0 -- redis-cli BGSAVE failed (exit 1): bun: command not found: kubectl"
+```
+
+The function reports COMPLETED runs (steering saw `system-bus-host-system/backup.redis-failure` completing on 07-24), so **a green run record is hiding a backup that never happened.** That is the worst shape a backup can have.
+
+`kubectl` is not on the worker's PATH. Note the fleet split: `k8s` is assigned to **panda**, not flagg. Flagg's local health check falsely fataled on panda's cluster once before (2026-07-14) — so check whether this function should even be running on flagg, or whether it is pointed at the wrong host entirely.
+
+## Task
+
+1. **Find the function** in `packages/system-bus/src/inngest/functions/**` and read what it is trying to do.
+2. **Decide where it belongs.** Is the Redis it backs up the one in panda's k8s cluster, or flagg's local Redis? Check `packages/endpoint-resolver/config/service-placement.json` and the operator network context. Do not guess — verify.
+3. **Fix properly**, in this order of preference:
+   - If it targets panda's cluster: it should run where kubectl exists, or invoke over the tailnet with an explicit host, not assume a local binary.
+   - If it targets flagg's local Redis: use the local redis-cli path, not kubectl at all.
+   - Absolute PATH to `kubectl` is a last resort and only if the binary genuinely exists on the running host — verify with a read-only check.
+4. **Make the failure loud.** A backup that fails must not report COMPLETED. It should fail the run and raise a latched alert (reuse the shared incident latch used by `function-health` / `typesense-recovery-alerts` — do not write a second latch).
+5. **Say when the last real Redis backup happened.** If there is no evidence of a successful backup, say that plainly — it matters more than the code fix.
+6. Add a test covering the missing-binary path failing loudly.
+
+## Constraints
+
+- Do NOT commit. Steering reviews and commits.
+- No sudo. Do not install kubectl, change PATH globally, or modify LaunchDaemons — hand back any command Joel must run.
+- Do not run destructive Redis commands. `BGSAVE` against a live instance is fine only if you are certain of the target; otherwise recommend and stop.
+- Never print secrets, tokens, or `.env` contents.
+- If a command is BLOCKED by dcg, stop and report it.
+- Print a DONE summary: what it targets, root cause, fix, when the last real backup was.
