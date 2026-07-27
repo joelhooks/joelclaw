@@ -17,6 +17,7 @@ type Fake = {
   unhandled: number;
   recentOutput: string;
   due: AggregateDeadline[];
+  openAggregates: number;
   prompts: string[];
   deadlines: AggregateDeadline[];
   receipts: DriverReceipt[];
@@ -34,6 +35,7 @@ function harness(): { fake: Fake; ports: DriverPorts } {
     unhandled: 0,
     recentOutput: "",
     due: [],
+    openAggregates: 0,
     prompts: [],
     deadlines: [],
     receipts: [],
@@ -53,6 +55,7 @@ function harness(): { fake: Fake; ports: DriverPorts } {
         if (fake.promptError) throw fake.promptError;
       },
       listDueDeadlines: async () => fake.due,
+      countOpenAggregates: async () => fake.openAggregates,
       appendDeadline: async (deadline) => {
         fake.deadlines.push(deadline);
         fake.due = [];
@@ -89,10 +92,12 @@ const observed = (overrides: Partial<{
   hasUnhandledWork: boolean;
   degenerated: boolean;
   sessionAgeMs: number;
+  openAggregates: number;
   observedAt: number;
   pokeDeadlineMs: number;
   successorDeadlineMs: number;
   maxSessionAgeMs: number;
+  aggregateGraceMs: number;
 }> = {}) => ({
   type: "OBSERVED" as const,
   paneExists: true,
@@ -101,10 +106,12 @@ const observed = (overrides: Partial<{
   hasUnhandledWork: false,
   degenerated: false,
   sessionAgeMs: 0,
+  openAggregates: 0,
   observedAt: 1_000,
   pokeDeadlineMs: 5_000,
   successorDeadlineMs: 120_000,
   maxSessionAgeMs: 4 * 60 * 60 * 1000,
+  aggregateGraceMs: 60 * 60 * 1000,
   ...overrides,
 });
 
@@ -385,6 +392,65 @@ describe("driver lifecycle machine", () => {
     }));
     expect(actor.getSnapshot().value).toBe("spawning");
     expect(actor.getSnapshot().context.retireReason).toBe("age");
+  });
+
+  test("an open aggregate defers the age retire", () => {
+    // Shipped 2026-07-25: a fixed 4h retire stranded every open batch, and
+    // aggregation stopped for 43 hours across 11 retires. Deliveries to Joel
+    // went 15/day to 76/day because nothing folded the health-check noise.
+    const maxSessionAgeMs = 60_000;
+    const actor = createActor(driverMachine).start();
+
+    actor.send(observed({
+      sessionAgeMs: maxSessionAgeMs + 1,
+      openAggregates: 1,
+      observedAt: 2_000,
+      maxSessionAgeMs,
+    }));
+    expect(actor.getSnapshot().value).toBe("ready");
+
+    // Closing the batch releases the retire on the very next pass.
+    actor.send(observed({
+      sessionAgeMs: maxSessionAgeMs + 2,
+      openAggregates: 0,
+      observedAt: 3_000,
+      maxSessionAgeMs,
+    }));
+    expect(actor.getSnapshot().value).toBe("spawning");
+    expect(actor.getSnapshot().context.retireReason).toBe("age");
+  });
+
+  test("a wedged aggregate loses once the grace window closes", () => {
+    // Deferring forever would trade one bug for a session that never rotates.
+    const maxSessionAgeMs = 60_000;
+    const aggregateGraceMs = 30_000;
+    const actor = createActor(driverMachine).start();
+
+    actor.send(observed({
+      sessionAgeMs: maxSessionAgeMs + aggregateGraceMs - 1,
+      openAggregates: 2,
+      observedAt: 2_000,
+      maxSessionAgeMs,
+      aggregateGraceMs,
+    }));
+    expect(actor.getSnapshot().value).toBe("ready");
+
+    actor.send(observed({
+      sessionAgeMs: maxSessionAgeMs + aggregateGraceMs,
+      openAggregates: 2,
+      observedAt: 3_000,
+      maxSessionAgeMs,
+      aggregateGraceMs,
+    }));
+    expect(actor.getSnapshot().value).toBe("spawning");
+    expect(actor.getSnapshot().context.retireReason).toBe("age");
+  });
+
+  test("degeneration still force-retires on top of an open aggregate", () => {
+    const actor = createActor(driverMachine).start();
+    actor.send(observed({ degenerated: true, openAggregates: 3, observedAt: 1_000 }));
+    expect(actor.getSnapshot().value).toBe("spawning");
+    expect(actor.getSnapshot().context.retireReason).toBe("degeneration");
   });
 
   test("degeneration force-retires even mid-poke", () => {

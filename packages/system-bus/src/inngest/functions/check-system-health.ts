@@ -94,6 +94,75 @@ const CRITICAL_COMPONENTS = new Set([
 const AGENT_DISPATCH_CANARY_COMPONENT = "Agent Dispatch Canary";
 const HEALTH_LAST_CHECK_KEY = "health:last_check";
 const HEALTH_LAST_RESULT_KEY = "health:last_result";
+
+/**
+ * Transition latch for gateway notification.
+ *
+ * This check was the loudest speaker in the whole system: 844 of 1321 gateway
+ * inputs in the week of 2026-07-21, ~190/day, because the only suppressor was
+ * "does a task already exist for this service". A flapping Front Projection
+ * announced itself on every run — Joel was told about it 46 times in 40 hours.
+ * State, not ticks: notify when the degraded set CHANGES, plus a slow reminder
+ * so a genuine multi-hour outage does not go quiet forever.
+ */
+export const HEALTH_NOTIFY_STATE_KEY = "health:system-health:last_notified";
+export const HEALTH_RENOTIFY_AFTER_MS = 6 * 60 * 60 * 1000;
+
+export type HealthNotifyState = {
+  /** Sorted, normalized degraded service names. Empty string means all healthy. */
+  signature: string;
+  notifiedAtMs: number;
+};
+
+export type HealthNotifyKind = "degradation" | "recovery" | "reminder" | "none";
+
+/** Order- and case-independent identity for a degraded set. */
+export function healthSignature(degradedNames: readonly string[]): string {
+  const normalized = degradedNames
+    .map((name) => name.trim().toLowerCase())
+    .filter((name) => name.length > 0);
+  return [...new Set(normalized)].sort().join("|");
+}
+
+export function decideHealthNotification(input: {
+  signature: string;
+  previous: HealthNotifyState | null;
+  nowMs: number;
+  renotifyAfterMs?: number;
+}): { notify: boolean; kind: HealthNotifyKind } {
+  const renotifyAfterMs = input.renotifyAfterMs ?? HEALTH_RENOTIFY_AFTER_MS;
+  const previousSignature = input.previous?.signature ?? "";
+
+  if (input.signature === "") {
+    // Recovery is worth exactly one message, and only if we ever complained.
+    return previousSignature === ""
+      ? { notify: false, kind: "none" }
+      : { notify: true, kind: "recovery" };
+  }
+
+  if (input.signature !== previousSignature) return { notify: true, kind: "degradation" };
+
+  const elapsed = input.nowMs - (input.previous?.notifiedAtMs ?? 0);
+  if (elapsed >= renotifyAfterMs) return { notify: true, kind: "reminder" };
+
+  return { notify: false, kind: "none" };
+}
+
+export async function readHealthNotifyState(): Promise<HealthNotifyState | null> {
+  const raw = await getRedisClient().get(HEALTH_NOTIFY_STATE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<HealthNotifyState>;
+    if (typeof parsed.signature !== "string" || typeof parsed.notifiedAtMs !== "number") return null;
+    return { signature: parsed.signature, notifiedAtMs: parsed.notifiedAtMs };
+  } catch {
+    return null;
+  }
+}
+
+export async function writeHealthNotifyState(state: HealthNotifyState): Promise<void> {
+  await getRedisClient().set(HEALTH_NOTIFY_STATE_KEY, JSON.stringify(state));
+}
 const HEALTH_CHECK_GATE_INTERVAL_MS = 45 * 60 * 1000;
 const WRITE_GATE_DRIFT_LAST_NOTIFIED_KEY = "memory:health:write_gate_drift:last_notified";
 const WRITE_GATE_DRIFT_NOTIFY_COOLDOWN_SECONDS = 6 * 60 * 60;
@@ -1371,6 +1440,18 @@ export const checkSystemHealth = inngest.createFunction(
         : []),
     ];
 
+    const healthSignatureNow = healthSignature(degraded.map((service) => service.name));
+    const previousNotifyState = await withTiming(
+      stepDurationsMs,
+      "core.read-health-notify-state",
+      async () => step.run("read-health-notify-state", async () => await readHealthNotifyState()),
+    );
+    const notifyDecision = decideHealthNotification({
+      signature: healthSignatureNow,
+      previous: previousNotifyState,
+      nowMs: Date.now(),
+    });
+
     const gatewayCriticalDegrade = degraded.filter((service) =>
       service.name === "Gateway" || service.name === "Redis"
     );
@@ -1721,8 +1802,29 @@ export const checkSystemHealth = inngest.createFunction(
       );
     }
 
-    // NOOP: all healthy → no notification
+    // All healthy. Silent unless we are closing a complaint we already made.
     if (degraded.length === 0) {
+      if (notifyDecision.kind === "recovery") {
+        await withTiming(stepDurationsMs, "core.notify-recovery", async () =>
+          step.run("notify-recovery", async () => {
+            const recovered = (previousNotifyState?.signature ?? "").split("|").filter(Boolean);
+            await pushGatewayEvent({
+              type: "system.health.recovered",
+              source: "inngest/check-system-health",
+              payload: {
+                prompt: [
+                  "## ✅ System Health Recovered",
+                  "",
+                  `Back to green: ${recovered.join(", ")}`,
+                ].join("\n"),
+                recovered,
+              },
+            });
+            await writeHealthNotifyState({ signature: "", notifiedAtMs: Date.now() });
+          })
+        );
+      }
+
       // ADR-0085: trigger live network status collection after health checks.
       await withTiming(stepDurationsMs, "core.emit-network-update", async () =>
         step.sendEvent("emit-network-update", {
@@ -1773,6 +1875,26 @@ export const checkSystemHealth = inngest.createFunction(
       };
     }
 
+    // Same failure set as last time we spoke, and the reminder window has not
+    // elapsed. Repeating it is how a real alert becomes background hum.
+    if (!notifyDecision.notify) {
+      await withTiming(stepDurationsMs, "core.record-health-check-result-unchanged", async () =>
+        step.run("record-health-check-result-unchanged", async () =>
+          recordHealthCheckResult("degraded", Date.now())
+        )
+      );
+      return {
+        status: "noop",
+        mode,
+        slicePolicy,
+        reason: "degraded set unchanged since last notification",
+        signature: healthSignatureNow,
+        services,
+        agentDispatchCanary,
+        stepDurationsMs,
+      };
+    }
+
     // Something's down and NOT already tracked → alert gateway
     const typedDegraded = newDegraded as unknown as ServiceStatus[];
     const degradedNames = typedDegraded.map((s) => s.name);
@@ -1799,7 +1921,12 @@ export const checkSystemHealth = inngest.createFunction(
           payload: {
             prompt: lines.join("\n"),
             degraded: degraded.map((s) => s.name),
+            transition: notifyDecision.kind,
           },
+        });
+        await writeHealthNotifyState({
+          signature: healthSignatureNow,
+          notifiedAtMs: Date.now(),
         });
       })
     );

@@ -18,6 +18,8 @@ export const DEFAULT_POKE_DEADLINE_MS = 300_000;
 export const DEFAULT_SUCCESSOR_DEADLINE_MS = 120_000;
 /** Wall-clock session age before a clean idle retire. Prefer honest age over fragile token parsing. */
 export const DEFAULT_MAX_SESSION_AGE_MS = 4 * 60 * 60 * 1000;
+/** A wedged aggregate defers retire this long, then loses. */
+export const DEFAULT_AGGREGATE_GRACE_MS = 60 * 60 * 1000;
 export const DRIVER_POKE_TEXT = "Unhandled gateway stream work exists. Read the authoritative stream and decide it.";
 
 export type AggregateDeadline = {
@@ -53,7 +55,10 @@ export type DriverReceipt = {
 
 export type DriverPorts = {
   inspectAgent: () => Promise<
-    Omit<AgentObservation, "hasUnhandledWork" | "degenerated" | "sessionAgeMs" | "observedAt">
+    Omit<
+      AgentObservation,
+      "hasUnhandledWork" | "degenerated" | "sessionAgeMs" | "openAggregates" | "observedAt"
+    >
     & { sessionStartedAt?: number }
   >;
   countUnhandled: () => Promise<number>;
@@ -61,6 +66,8 @@ export type DriverPorts = {
   readRecentOutput: () => Promise<string>;
   promptAgent: (text: string, timeoutMs: number) => Promise<void>;
   listDueDeadlines: (now: number) => Promise<AggregateDeadline[]>;
+  /** Open (opened, not yet close-delivered) aggregates. Read after listDueDeadlines. */
+  countOpenAggregates: () => Promise<number>;
   appendDeadline: (deadline: AggregateDeadline) => Promise<void>;
   refreshHeartbeat: (key: string, ttlMs: number, value: string) => Promise<void>;
   /** Append advisory gateway.handoff before a planned retire. */
@@ -79,6 +86,8 @@ export type DriverOptions = {
   successorDeadlineMs?: number;
   /** Wall-clock age limit. Default 4h. Set 0 to disable age retire. */
   maxSessionAgeMs?: number;
+  /** Extra time an open aggregate may hold off an age retire. Default 1h. */
+  aggregateGraceMs?: number;
   pokeText?: string;
 };
 
@@ -111,6 +120,7 @@ export class AgentCommsDriver {
   readonly #pokeDeadlineMs: number;
   readonly #successorDeadlineMs: number;
   readonly #maxSessionAgeMs: number;
+  readonly #aggregateGraceMs: number;
   readonly #pokeText: string;
   #started = false;
   /** Wall-clock start of the currently observed live session. */
@@ -125,6 +135,7 @@ export class AgentCommsDriver {
     this.#pokeDeadlineMs = options.pokeDeadlineMs ?? DEFAULT_POKE_DEADLINE_MS;
     this.#successorDeadlineMs = options.successorDeadlineMs ?? DEFAULT_SUCCESSOR_DEADLINE_MS;
     this.#maxSessionAgeMs = options.maxSessionAgeMs ?? DEFAULT_MAX_SESSION_AGE_MS;
+    this.#aggregateGraceMs = options.aggregateGraceMs ?? DEFAULT_AGGREGATE_GRACE_MS;
     this.#pokeText = options.pokeText ?? DRIVER_POKE_TEXT;
   }
 
@@ -186,16 +197,21 @@ export class AgentCommsDriver {
       const collapse = detectRepeatedTokenCollapse(recentOutput);
       const degenerated = collapse.degenerated;
 
+      // Read after the deadline pass so the index reflects this pass's stream.
+      const openAggregates = yield* attempt("countOpenAggregates", this.ports.countOpenAggregates);
+
       this.#actor.send({
         type: "OBSERVED",
         ...agent,
         hasUnhandledWork: unhandled > 0,
         degenerated,
         sessionAgeMs,
+        openAggregates,
         observedAt: now,
         pokeDeadlineMs: this.#pokeDeadlineMs,
         successorDeadlineMs: this.#successorDeadlineMs,
         maxSessionAgeMs: this.#maxSessionAgeMs,
+        aggregateGraceMs: this.#aggregateGraceMs,
       });
       yield* this.#receipt("observed", {
         paneExists: agent.paneExists,
@@ -203,6 +219,7 @@ export class AgentCommsDriver {
         idle: agent.idle,
         unhandled,
         sessionAgeMs,
+        openAggregates,
         degenerated,
         ...(collapse.reason ? { degenerationReason: collapse.reason } : {}),
         ...(collapse.token ? { degenerationToken: collapse.token } : {}),

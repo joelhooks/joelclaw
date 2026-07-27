@@ -7,6 +7,12 @@ export type AgentObservation = {
   hasUnhandledWork: boolean;
   degenerated: boolean;
   sessionAgeMs: number;
+  /**
+   * Aggregates the agent has opened and not yet closed. An open batch lives in
+   * the session's head, so retiring on top of one strands it forever: the
+   * successor cannot close-deliver a batch it never opened.
+   */
+  openAggregates: number;
   observedAt: number;
 };
 
@@ -25,6 +31,7 @@ export type DriverEvent =
       pokeDeadlineMs: number;
       successorDeadlineMs: number;
       maxSessionAgeMs: number;
+      aggregateGraceMs: number;
     })
   | { type: "POKE_ANSWERED"; answeredAt: number }
   | { type: "POKE_FAILED"; reason: string }
@@ -49,7 +56,18 @@ const shouldPoke = ({ event }: { event: DriverEvent }): boolean =>
   && event.hasUnhandledWork
   && !event.degenerated;
 
-/** Clean age retire: healthy, idle, no outstanding work, past wall-clock limit. */
+/**
+ * Clean age retire: healthy, idle, no outstanding work, past wall-clock limit,
+ * and holding no open aggregate.
+ *
+ * The aggregate condition is not politeness. A fixed 4h retire shipped on
+ * 2026-07-25 and aggregation stopped dead at 21:00 that day — 43 hours and 11
+ * retires later it had never resumed, because every successor inherited a
+ * batch it could not close. Deliveries to Joel went 15/day to 76/day.
+ *
+ * An open aggregate defers the retire only up to `aggregateGraceMs`; past that
+ * a wedged batch would keep a rotting session alive forever, which is worse.
+ */
 const shouldRetire = ({ event }: { event: DriverEvent }): boolean =>
   event.type === "OBSERVED"
   && event.paneExists
@@ -57,8 +75,10 @@ const shouldRetire = ({ event }: { event: DriverEvent }): boolean =>
   && event.idle
   && !event.hasUnhandledWork
   && !event.degenerated
+  && event.maxSessionAgeMs > 0
   && event.sessionAgeMs >= event.maxSessionAgeMs
-  && event.maxSessionAgeMs > 0;
+  && (event.openAggregates === 0
+    || event.sessionAgeMs >= event.maxSessionAgeMs + event.aggregateGraceMs);
 
 /** Degeneration is poison — force successor even with queue/work outstanding. */
 const shouldForceRetire = ({ event }: { event: DriverEvent }): boolean =>

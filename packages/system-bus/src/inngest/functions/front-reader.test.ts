@@ -59,9 +59,23 @@ function fixtureEvent(overrides: Partial<FrontEventRecord> = {}): FrontEventReco
     from: "ada@example.com",
     fromName: "Ada",
     text: "ping",
+    to: ["joel@example.com"],
+    attachmentCount: 0,
     isInbound: true,
     createdAtMs: 1_700_000_000_000,
     ...overrides,
+  };
+}
+
+function memoryNotifyDedupe() {
+  const claimed = new Set<string>();
+  return {
+    claim: async (messageIds: string[]) => {
+      const won = messageIds.filter((id) => !claimed.has(id));
+      for (const id of won) claimed.add(id);
+      return won;
+    },
+    peek: () => [...claimed],
   };
 }
 
@@ -262,6 +276,7 @@ describe("front reader 429 backoff", () => {
         token: "test-token",
         fetchImpl,
         sleep: async () => {},
+        notifyDedupe: memoryNotifyDedupe(),
       }),
     ).rejects.toThrow(/front conversations 429/);
   });
@@ -284,6 +299,7 @@ describe("front reader 429 backoff", () => {
         token: "test-token",
         fetchImpl,
         sleep: async () => {},
+        notifyDedupe: memoryNotifyDedupe(),
       }),
     ).rejects.toThrow(/front conversations 403.*Missing required scopes: \[conversations:read\]/);
   });
@@ -307,6 +323,7 @@ describe("front reader 429 backoff", () => {
         conversationId: "cnv_x",
         fetchImpl,
         sleep: async () => {},
+        notifyDedupe: memoryNotifyDedupe(),
       }),
     ).rejects.toThrow(/front conversations\/cnv_x\/messages 403.*\[messages:read\]/);
   });
@@ -377,6 +394,7 @@ describe("fetchFrontMessagesSince bounds", () => {
       afterMs,
       fetchImpl,
       sleep: async () => {},
+      notifyDedupe: memoryNotifyDedupe(),
     });
 
     expect(conversationCalls).toBe(1);
@@ -420,6 +438,7 @@ describe("fetchFrontMessagesSince bounds", () => {
       maxPages: 2,
       fetchImpl,
       sleep: async () => {},
+      notifyDedupe: memoryNotifyDedupe(),
     });
 
     expect(result.pagesFetched).toBe(2);
@@ -470,6 +489,7 @@ describe("runFrontReader", () => {
         emissions.push(input as Record<string, unknown>);
       },
       sleep: async () => {},
+      notifyDedupe: memoryNotifyDedupe(),
     };
 
     const result = await runFrontReader(deps);
@@ -483,8 +503,11 @@ describe("runFrontReader", () => {
     expect(result.watermarkAfterMs).toBe(nowMs - 2_000);
     expect(watermark.peek()).toBe(nowMs - 2_000);
 
-    expect(sent).toHaveLength(2);
-    expect(sent[0]).toMatchObject({
+    const channelSent = sent.filter((item) => item.name === "channel/message.received");
+    const notifySent = sent.filter((item) => item.name === "front/message.received");
+
+    expect(channelSent).toHaveLength(2);
+    expect(channelSent[0]).toMatchObject({
       name: "channel/message.received",
       data: {
         channelType: "email",
@@ -493,8 +516,22 @@ describe("runFrontReader", () => {
       },
     });
 
+    // Ingest is not notification. Front mail was indexed but never announced
+    // from 2026-07-23 to 2026-07-27 because only the channel seam was emitted.
+    expect(result.messagesNotified).toBe(2);
+    expect(notifySent).toHaveLength(2);
+    expect(notifySent[0]).toMatchObject({
+      name: "front/message.received",
+      data: {
+        conversationId: "cnv_a",
+        messageId: "msg_a",
+        isInbound: true,
+        createdAt: eventA.createdAtMs,
+      },
+    });
+
     // Overlap re-read of the same Front messages must collapse to one id each.
-    const ids = sent.map((item) => {
+    const ids = channelSent.map((item) => {
       const data = (item as { data: Parameters<typeof buildMessageId>[0] }).data;
       return buildMessageId(data);
     });
@@ -510,10 +547,16 @@ describe("runFrontReader", () => {
       }),
     });
     expect(overlapAgain.messagesEmitted).toBe(2);
-    const overlapIds = sent.slice(2).map((item) => {
-      const data = (item as { data: Parameters<typeof buildMessageId>[0] }).data;
-      return buildMessageId(data);
-    });
+    // Re-indexing is fine; re-announcing is not. The second poll re-emits both
+    // channel messages under identical ids and notifies nobody.
+    expect(overlapAgain.messagesNotified).toBe(0);
+    const overlapIds = sent
+      .filter((item) => item.name === "channel/message.received")
+      .slice(2)
+      .map((item) => {
+        const data = (item as { data: Parameters<typeof buildMessageId>[0] }).data;
+        return buildMessageId(data);
+      });
     expect(overlapIds).toEqual(ids);
 
     expect(emissions.some((item) => item.action === "front.reader.poll" && item.success === true)).toBe(true);
@@ -546,10 +589,85 @@ describe("runFrontReader", () => {
       },
       emit: async () => ({}),
       sleep: async () => {},
+      notifyDedupe: memoryNotifyDedupe(),
     });
 
-    expect(sent).toHaveLength(1);
+    expect(sent.filter((item) => item.name === "channel/message.received")).toHaveLength(1);
+    expect(sent.filter((item) => item.name === "front/message.received")).toHaveLength(1);
     expect(watermark.peek()).toBe(1_700_000_200_000);
+  });
+
+  test("notifies each inbound message once across overlapping polls", async () => {
+    // The reader re-reads a 5-minute overlap every poll. Without a cross-poll
+    // claim, a message near the boundary pings Joel twice.
+    const nowMs = 1_800_000_000_000;
+    const notifyDedupe = memoryNotifyDedupe();
+    const sent: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const event = fixtureEvent({
+      messageId: "msg_overlap",
+      emittedAtMs: nowMs - 1_000,
+      createdAtMs: nowMs - 1_000,
+    });
+    const deps: FrontReaderDependencies = {
+      now: () => nowMs,
+      getToken: () => "test-token",
+      watermark: memoryWatermark(nowMs - 60_000),
+      fetchMessages: async () => ({
+        events: [event],
+        truncated: false,
+        pagesFetched: 1,
+        conversationsScanned: 1,
+      }),
+      send: async (events) => {
+        sent.push(...(events as Array<{ name: string; data: Record<string, unknown> }>));
+      },
+      emit: async () => ({}),
+      sleep: async () => {},
+      notifyDedupe,
+    };
+
+    const first = await runFrontReader(deps);
+    const second = await runFrontReader(deps);
+
+    expect(first.messagesNotified).toBe(1);
+    expect(second.messagesNotified).toBe(0);
+    expect(sent.filter((item) => item.name === "front/message.received")).toHaveLength(1);
+    // Indexing stays idempotent-by-id, so it is free to re-emit.
+    expect(sent.filter((item) => item.name === "channel/message.received")).toHaveLength(2);
+  });
+
+  test("does not announce our own outbound mail", async () => {
+    const nowMs = 1_800_000_000_000;
+    const sent: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const result = await runFrontReader({
+      now: () => nowMs,
+      getToken: () => "test-token",
+      watermark: memoryWatermark(nowMs - 60_000),
+      fetchMessages: async () => ({
+        events: [
+          fixtureEvent({
+            messageId: "msg_out",
+            type: "outbound",
+            isInbound: false,
+            emittedAtMs: nowMs - 1_000,
+            createdAtMs: nowMs - 1_000,
+          }),
+        ],
+        truncated: false,
+        pagesFetched: 1,
+        conversationsScanned: 1,
+      }),
+      send: async (events) => {
+        sent.push(...(events as Array<{ name: string; data: Record<string, unknown> }>));
+      },
+      emit: async () => ({}),
+      sleep: async () => {},
+      notifyDedupe: memoryNotifyDedupe(),
+    });
+
+    expect(result.messagesNotified).toBe(0);
+    expect(sent.filter((item) => item.name === "front/message.received")).toHaveLength(0);
+    expect(sent.filter((item) => item.name === "channel/message.received")).toHaveLength(1);
   });
 
   test("reports truncation skip bound without silent drop", async () => {
@@ -576,6 +694,7 @@ describe("runFrontReader", () => {
       send: async () => ({}),
       emit: async () => ({}),
       sleep: async () => {},
+      notifyDedupe: memoryNotifyDedupe(),
     });
 
     expect(result.truncated).toBe(true);
@@ -605,6 +724,7 @@ describe("runFrontReader", () => {
           emissions.push(input as Record<string, unknown>);
         },
         sleep: async () => {},
+        notifyDedupe: memoryNotifyDedupe(),
       }),
     ).rejects.toThrow(/front conversations 403.*Missing required scopes/);
 
@@ -630,6 +750,7 @@ describe("runFrontReader", () => {
       },
       emit: async () => ({}),
       sleep: async () => {},
+      notifyDedupe: memoryNotifyDedupe(),
     });
 
     const execution = await new InngestTestEngine({

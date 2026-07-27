@@ -43,6 +43,23 @@ export type FrontReaderWatermarkStore = {
   set: (watermarkMs: number) => Promise<void>;
 };
 
+/** Notify dedupe key prefix — one key per Front message id we have announced. */
+export const FRONT_READER_NOTIFIED_PREFIX = "joelclaw:front-reader:notified";
+/**
+ * Outlives the overlap window by a wide margin so a stalled worker that catches
+ * up hours late still cannot re-announce mail Joel already read.
+ */
+export const FRONT_READER_NOTIFIED_TTL_SECONDS = 3 * 24 * 60 * 60;
+
+/**
+ * Claims the right to announce each message id exactly once.
+ * Returns only the ids this call won, in the order given. The reader re-reads a
+ * 5-minute overlap every poll, so without this a boundary message pings twice.
+ */
+export type FrontReaderNotifyDedupe = {
+  claim: (messageIds: string[]) => Promise<string[]>;
+};
+
 export type FrontReaderFetchResult = {
   events: FrontEventRecord[];
   truncated: boolean;
@@ -54,6 +71,7 @@ export type FrontReaderDependencies = {
   now: () => number;
   getToken: () => string | undefined;
   watermark: FrontReaderWatermarkStore;
+  notifyDedupe: FrontReaderNotifyDedupe;
   fetchMessages: (input: {
     token: string;
     afterMs: number;
@@ -75,6 +93,9 @@ export type FrontEventRecord = {
   messageId: string;
   from: string;
   fromName: string;
+  /** Recipient handles with role "to" — carried for the gateway notify seam. */
+  to: string[];
+  attachmentCount: number;
   text: string;
   isInbound: boolean;
   createdAtMs: number;
@@ -110,6 +131,8 @@ export type FrontReaderRunResult = {
   conversationsScanned: number;
   eventsScanned: number;
   messagesEmitted: number;
+  /** Inbound messages announced to the gateway this poll (after dedupe claim). */
+  messagesNotified: number;
   truncated: boolean;
   pagesFetched: number;
 };
@@ -254,6 +277,21 @@ function normalizeFrontSender(messageData: Record<string, unknown>): { from: str
   };
 }
 
+function normalizeFrontRecipientsTo(messageData: Record<string, unknown>): string[] {
+  const recipients = Array.isArray(messageData.recipients)
+    ? messageData.recipients.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    : [];
+  const handles = recipients
+    .filter((recipient) => String(recipient.role ?? "") === "to")
+    .map((recipient) => String(recipient.handle ?? "").trim())
+    .filter((handle) => handle.length > 0);
+  return [...new Set(handles)];
+}
+
+function normalizeFrontAttachmentCount(messageData: Record<string, unknown>): number {
+  return Array.isArray(messageData.attachments) ? messageData.attachments.length : 0;
+}
+
 export function normalizeFrontConversation(raw: Record<string, unknown>): FrontConversationRecord | null {
   const id = String(raw.id ?? "").trim();
   if (!id) return null;
@@ -298,6 +336,8 @@ export function normalizeFrontMessage(
     messageId,
     from: sender.from,
     fromName: sender.fromName,
+    to: normalizeFrontRecipientsTo(raw),
+    attachmentCount: normalizeFrontAttachmentCount(raw),
     text,
     isInbound,
     createdAtMs,
@@ -336,6 +376,8 @@ export function normalizeFrontEvent(raw: Record<string, unknown>): FrontEventRec
     messageId,
     from: sender.from,
     fromName: sender.fromName,
+    to: normalizeFrontRecipientsTo(messageData),
+    attachmentCount: normalizeFrontAttachmentCount(messageData),
     text,
     isInbound: type === "inbound" || Boolean(messageData.is_inbound ?? messageData.isInbound),
     createdAtMs,
@@ -360,6 +402,45 @@ export function buildChannelMessageData(event: FrontEventRecord): ChannelMessage
     sourceUrl: `https://app.frontapp.com/open/${event.conversationId}`,
     frontMessageId: event.messageId,
     frontEventId: event.id,
+  };
+}
+
+/**
+ * Build the `front/message.received` payload — the seam that actually reaches Joel.
+ *
+ * The reader used to emit only `channel/message.received`, which feeds indexing.
+ * `front-message-received-notify` listens for `front/message.received`, so from
+ * 2026-07-23 (webhooks died) to 2026-07-27 every inbound email was indexed and
+ * none was announced. Ingest and notify are two seams; the reader owes both.
+ */
+export function buildFrontMessageReceivedData(event: FrontEventRecord): {
+  conversationId: string;
+  messageId: string;
+  from: string;
+  fromName: string;
+  to: string[];
+  subject: string;
+  body: string;
+  bodyPlain: string;
+  preview: string;
+  isInbound: boolean;
+  attachmentCount: number;
+  createdAt: number;
+} {
+  return {
+    conversationId: event.conversationId,
+    messageId: event.messageId,
+    from: event.from,
+    fromName: event.fromName,
+    to: event.to,
+    subject: event.subject,
+    body: event.text,
+    bodyPlain: event.text,
+    preview: event.text.slice(0, 500),
+    isInbound: event.isInbound,
+    attachmentCount: event.attachmentCount,
+    // Explicit created_at keeps channel ids stable when notify re-indexes.
+    createdAt: event.createdAtMs,
   };
 }
 
@@ -476,7 +557,25 @@ async function frontGetJson(input: {
     );
 
     if (response.ok) {
-      return (await response.json()) as Record<string, unknown>;
+      // Front occasionally closes a 200 with a truncated or empty body. Bare
+      // .json() turns that into "Unexpected end of JSON input" and burns an
+      // Inngest attempt; it is a transport hiccup, so retry it like a 503.
+      const body = await response.text().catch(() => "");
+      try {
+        return JSON.parse(body) as Record<string, unknown>;
+      } catch (error) {
+        if (attempt > FRONT_READER_MAX_RETRIES) {
+          throw formatFrontHttpError({
+            endpoint: input.endpoint,
+            status: response.status,
+            detail: `unparseable body after ${attempt} attempts: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+        }
+        await input.sleep(retryDelayMs(attempt, response.headers.get("retry-after")));
+        continue;
+      }
     }
 
     const status = response.status;
@@ -715,10 +814,34 @@ function defaultWatermarkStore(): FrontReaderWatermarkStore {
   };
 }
 
+function defaultNotifyDedupe(): FrontReaderNotifyDedupe {
+  return {
+    async claim(messageIds: string[]) {
+      if (messageIds.length === 0) return [];
+      const redis = getRedisClient();
+      const won: string[] = [];
+      for (const messageId of messageIds) {
+        // SET NX is the claim; a crash after this loses at most one notification,
+        // which beats the alternative of announcing the same email twice.
+        const result = await redis.set(
+          `${FRONT_READER_NOTIFIED_PREFIX}:${messageId}`,
+          "1",
+          "EX",
+          FRONT_READER_NOTIFIED_TTL_SECONDS,
+          "NX",
+        );
+        if (result) won.push(messageId);
+      }
+      return won;
+    },
+  };
+}
+
 const defaultDependencies: FrontReaderDependencies = {
   now: () => Date.now(),
   getToken: () => process.env.FRONT_API_TOKEN,
   watermark: defaultWatermarkStore(),
+  notifyDedupe: defaultNotifyDedupe(),
   fetchMessages: ({ token, afterMs, maxPages }) =>
     fetchFrontMessagesSince({ token, afterMs, maxPages }),
   send: (events) => inngest.send(events as Parameters<typeof inngest.send>[0]),
@@ -779,6 +902,24 @@ export async function runFrontReader(deps: FrontReaderDependencies): Promise<Fro
     }
   }
 
+  // Inbound only. The old webhook also announced our own sent mail; that is
+  // noise Joel does not need, and this gateway already talks too much.
+  const inbound = uniqueEvents.filter((event) => event.isInbound);
+  const claimedIds = new Set(await deps.notifyDedupe.claim(inbound.map((event) => event.messageId)));
+  const notifyEvents = inbound
+    .filter((event) => claimedIds.has(event.messageId))
+    .map((event) => ({
+      name: "front/message.received",
+      data: buildFrontMessageReceivedData(event) as Record<string, unknown>,
+    }));
+
+  if (notifyEvents.length > 0) {
+    const chunkSize = 50;
+    for (let index = 0; index < notifyEvents.length; index += chunkSize) {
+      await deps.send(notifyEvents.slice(index, index + chunkSize));
+    }
+  }
+
   const maxEmittedAtMs = fetchResult.events.reduce<number | null>((max, event) => {
     if (max == null || event.emittedAtMs > max) return event.emittedAtMs;
     return max;
@@ -815,6 +956,7 @@ export async function runFrontReader(deps: FrontReaderDependencies): Promise<Fro
     conversationsScanned: Math.max(conversationIds.size, fetchResult.conversationsScanned ?? 0),
     eventsScanned: fetchResult.events.length,
     messagesEmitted: channelEvents.length,
+    messagesNotified: notifyEvents.length,
     truncated: fetchResult.truncated,
     pagesFetched: fetchResult.pagesFetched,
   };

@@ -270,6 +270,8 @@ export function makeDeadlineIndex() {
       return watermark;
     },
     ingest,
+    /** Aggregates opened and not yet closed, regardless of deadline. */
+    open: (): AggregateDeadline[] => [...active.values()],
     due: (now: number): AggregateDeadline[] =>
       [...active.values()].filter(
         (deadline) =>
@@ -295,6 +297,11 @@ function makeDeadlineReader(client: StreamClient) {
       } while (cursor !== null);
       return index.due(now);
     },
+    /**
+     * Reads the index as of the last listDue pass. The driver calls listDue
+     * first every pass, so this is current without a second stream read.
+     */
+    countOpen: (): number => index.open().length,
     markFired: index.markFired,
   };
 }
@@ -443,6 +450,7 @@ export function makeLiveDriverPorts(
       ]);
     },
     listDueDeadlines: deadlines.listDue,
+    countOpenAggregates: async () => deadlines.countOpen(),
     appendDeadline: async (deadline) => {
       await stream.append({
         semanticKey: `aggregate-deadline:${deadline.aggregateId}:${deadline.holdUntil}`,
