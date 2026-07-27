@@ -150,7 +150,7 @@ describe("AgentCommsDriver", () => {
     expect(await run(driver)).toBe("unhealthy");
     expect(fake.receipts.at(-1)).toMatchObject({
       action: "heartbeat.withheld",
-      detail: { reason: "unhealthy" },
+      detail: { reason: "driver-unhealthy" },
     });
 
     fake.now += 15_000;
@@ -162,7 +162,9 @@ describe("AgentCommsDriver", () => {
     expect(heartbeatExists(fake)).toBe(false);
   });
 
-  test("stops refreshing when a ready session becomes working", async () => {
+  // A working session is the normal case, not an outage. Withholding here is
+  // what made the transport deliver raw text mid-turn (fixed 2026-07-27).
+  test("keeps refreshing when a ready session becomes working", async () => {
     const { fake, ports } = harness();
     const driver = new AgentCommsDriver(ports, { heartbeatKey: "test:gateway:heartbeat" });
 
@@ -172,24 +174,85 @@ describe("AgentCommsDriver", () => {
     fake.agent.idle = false;
 
     expect(await run(driver)).toBe("booting");
-    expect(fake.heartbeat?.expiresAt).toBe(firstExpiry);
-    expect(fake.receipts.at(-1)).toMatchObject({
-      action: "heartbeat.withheld",
-      detail: { reason: "booting" },
-    });
+    expect(fake.heartbeat?.expiresAt).toBeGreaterThan(firstExpiry ?? 0);
+    expect(heartbeatExists(fake)).toBe(true);
+    expect(fake.receipts.at(-1)).toMatchObject({ action: "heartbeat.refreshed" });
   });
 
-  test("withholds heartbeat while the session is not settled", async () => {
+  test("vouches for a session already mid-turn at first sighting", async () => {
     const { fake, ports } = harness();
     fake.agent.idle = false;
     const driver = new AgentCommsDriver(ports, { heartbeatKey: "test:gateway:heartbeat" });
 
+    // A driver restart lands here. Scoring it unresponsive on sight is what made
+    // every restart guarantee a raw-delivery window.
     expect(await run(driver)).toBe("booting");
-    expect(fake.heartbeat).toBeUndefined();
+    expect(heartbeatExists(fake)).toBe(true);
+  });
+
+  test("drops the heartbeat once a session stays mid-turn past the grace", async () => {
+    const { fake, ports } = harness();
+    const driver = new AgentCommsDriver(ports, {
+      heartbeatKey: "test:gateway:heartbeat",
+      unresponsiveGraceMs: 300_000,
+    });
+
+    expect(await run(driver)).toBe("ready");
+    fake.agent.idle = false;
+
+    fake.now += 299_000;
+    expect(await run(driver)).toBe("booting");
+    expect(heartbeatExists(fake)).toBe(true);
+
+    fake.now += 2_000;
+    expect(await run(driver)).toBe("booting");
     expect(fake.receipts.at(-1)).toMatchObject({
       action: "heartbeat.withheld",
-      detail: { reason: "booting" },
+      detail: { reason: "unresponsive" },
     });
+    fake.now += 60_001;
+    expect(heartbeatExists(fake)).toBe(false);
+  });
+
+  // The whole point of the separate pass: a poke blocks runPass for up to the
+  // poke deadline, which is five times the heartbeat TTL.
+  test("heartbeatPass keeps the key alive while a poke blocks the work pass", async () => {
+    const { fake, ports } = harness();
+    const driver = new AgentCommsDriver(ports, {
+      heartbeatKey: "test:gateway:heartbeat",
+      heartbeatTtlMs: 60_000,
+      pokeDeadlineMs: 300_000,
+    });
+
+    expect(await run(driver)).toBe("ready");
+    fake.unhandled = 1;
+
+    // Work pass is now notionally blocked inside promptAgent; only the
+    // heartbeat fiber runs. Step past the TTL entirely.
+    fake.agent.idle = false;
+    for (let elapsed = 0; elapsed < 240_000; elapsed += 15_000) {
+      fake.now += 15_000;
+      const verdict = await Effect.runPromise(driver.heartbeatPass());
+      expect(verdict.alive).toBe(true);
+      expect(heartbeatExists(fake)).toBe(true);
+    }
+  });
+
+  test("heartbeatPass withholds the moment the session disappears", async () => {
+    const { fake, ports } = harness();
+    const driver = new AgentCommsDriver(ports, { heartbeatKey: "test:gateway:heartbeat" });
+
+    expect(await run(driver)).toBe("ready");
+    expect(heartbeatExists(fake)).toBe(true);
+
+    // The kill drill: session gone, key must not be renewed on stale evidence.
+    fake.agent = { paneExists: true, sessionExists: false, idle: false };
+    fake.now += 15_000;
+    const verdict = await Effect.runPromise(driver.heartbeatPass());
+    expect(verdict).toEqual({ alive: false, reason: "no-session" });
+
+    fake.now += 60_001;
+    expect(heartbeatExists(fake)).toBe(false);
   });
 
   test("fires every due aggregate deadline without deciding its meaning", async () => {
@@ -263,7 +326,7 @@ describe("AgentCommsDriver", () => {
     ]));
     expect(fake.receipts.at(-1)).toMatchObject({
       action: "heartbeat.withheld",
-      detail: { reason: "awaitingSuccessor" },
+      detail: { reason: "no-session" },
     });
 
     fake.agent = { paneExists: true, sessionExists: true, idle: true };

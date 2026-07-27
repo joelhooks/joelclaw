@@ -32,6 +32,10 @@ const main = Effect.gen(function* () {
   const refreshMs = yield* Config.integer("GATEWAY_HEARTBEAT_REFRESH_MS").pipe(
     Config.withDefault(DEFAULT_HEARTBEAT_REFRESH_MS),
   );
+  // Work passes keep the cadence the heartbeat used to share, unless configured.
+  const passIntervalMs = yield* Config.integer("GATEWAY_PASS_INTERVAL_MS").pipe(
+    Config.withDefault(refreshMs),
+  );
   const pokeDeadlineMs = yield* Config.integer("GATEWAY_POKE_DEADLINE_MS").pipe(
     Config.withDefault(DEFAULT_POKE_DEADLINE_MS),
   );
@@ -67,10 +71,22 @@ const main = Effect.gen(function* () {
     maxSessionAgeMs,
   });
 
-  yield* driver.runPass().pipe(
+  const workLoop = driver.runPass().pipe(
     Effect.tapError((error) => Effect.logError("AgentCommsDriver.pass_failed", error)),
     Effect.ignore,
+    Effect.repeat(Schedule.spaced(passIntervalMs)),
+  );
+
+  // Separate fiber on purpose: the work pass blocks on a poke for up to the
+  // poke deadline, which is far longer than the heartbeat TTL. Sharing one loop
+  // meant a busy gateway stopped signalling life exactly when it was working.
+  const heartbeatLoop = driver.heartbeatPass().pipe(
+    Effect.tapError((error) => Effect.logError("AgentCommsDriver.heartbeat_failed", error)),
+    Effect.ignore,
     Effect.repeat(Schedule.spaced(refreshMs)),
+  );
+
+  yield* Effect.all([workLoop, heartbeatLoop], { concurrency: "unbounded" }).pipe(
     Effect.ensuring(
       Effect.promise(async () => {
         driver.stop();

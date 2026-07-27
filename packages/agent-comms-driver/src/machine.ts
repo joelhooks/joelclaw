@@ -245,3 +245,51 @@ export type DriverState =
   | "spawning"
   | "awaitingSuccessor"
   | "stopped";
+
+export type HeartbeatDenial =
+  | "no-session"
+  | "degenerated"
+  | "driver-unhealthy"
+  | "retiring"
+  | "unresponsive";
+
+export type HeartbeatVerdict =
+  | { readonly alive: true; readonly reason: "session-live" }
+  | { readonly alive: false; readonly reason: HeartbeatDenial };
+
+/**
+ * Does the heartbeat key belong up right now?
+ *
+ * The key answers exactly one question for the transport: will a live agent
+ * session pick this message up? It is NOT "is the session idle this instant".
+ *
+ * Those two were conflated until 2026-07-27: the driver wrote the key only in
+ * `ready`, so every ordinary busy turn read as an outage and the transport
+ * dumped raw text at Joel. Measured on the live receipt log that morning, 51 of
+ * 200 pokes outlived the 60s TTL and the gateway was invisible 12.6% of the day.
+ *
+ * `unresponsiveForMs` is what keeps this honest. A session that stops answering
+ * altogether must still lose the key or the kill drill has nothing to catch, so
+ * the driver only vouches for a mid-turn session for a bounded window.
+ */
+export function heartbeatVerdict(input: {
+  readonly state: DriverState;
+  readonly paneExists: boolean;
+  readonly sessionExists: boolean;
+  readonly degenerated: boolean;
+  readonly unresponsiveForMs: number;
+  readonly unresponsiveGraceMs: number;
+}): HeartbeatVerdict {
+  if (!(input.paneExists && input.sessionExists)) return { alive: false, reason: "no-session" };
+  if (input.degenerated) return { alive: false, reason: "degenerated" };
+  // The session is being stopped or replaced — there is a real gap here.
+  if (input.state === "spawning" || input.state === "stopped") {
+    return { alive: false, reason: "retiring" };
+  }
+  // A failed or timed-out poke is evidence against the session, not for it.
+  if (input.state === "unhealthy") return { alive: false, reason: "driver-unhealthy" };
+  if (input.unresponsiveForMs > input.unresponsiveGraceMs) {
+    return { alive: false, reason: "unresponsive" };
+  }
+  return { alive: true, reason: "session-live" };
+}

@@ -6,6 +6,8 @@ import {
   type AgentObservation,
   type DriverState,
   driverMachine,
+  type HeartbeatVerdict,
+  heartbeatVerdict,
   type RetireReason,
 } from "./machine";
 
@@ -20,6 +22,12 @@ export const DEFAULT_SUCCESSOR_DEADLINE_MS = 120_000;
 export const DEFAULT_MAX_SESSION_AGE_MS = 4 * 60 * 60 * 1000;
 /** A wedged aggregate defers retire this long, then loses. */
 export const DEFAULT_AGGREGATE_GRACE_MS = 60 * 60 * 1000;
+/**
+ * How long a session may stay mid-turn while the driver still vouches for it.
+ * Matches the poke deadline: past it the session has failed to answer anything,
+ * and the transport deserves to know.
+ */
+export const DEFAULT_UNRESPONSIVE_GRACE_MS = DEFAULT_POKE_DEADLINE_MS;
 export const DRIVER_POKE_TEXT = "Unhandled gateway stream work exists. Read the authoritative stream and decide it.";
 
 export type AggregateDeadline = {
@@ -88,6 +96,8 @@ export type DriverOptions = {
   maxSessionAgeMs?: number;
   /** Extra time an open aggregate may hold off an age retire. Default 1h. */
   aggregateGraceMs?: number;
+  /** How long a mid-turn session keeps the heartbeat. Default = poke deadline. */
+  unresponsiveGraceMs?: number;
   pokeText?: string;
 };
 
@@ -121,10 +131,20 @@ export class AgentCommsDriver {
   readonly #successorDeadlineMs: number;
   readonly #maxSessionAgeMs: number;
   readonly #aggregateGraceMs: number;
+  readonly #unresponsiveGraceMs: number;
   readonly #pokeText: string;
   #started = false;
   /** Wall-clock start of the currently observed live session. */
   #sessionStartedAt?: number;
+  /**
+   * Last moment the session proved it still answers: observed settled, or a
+   * poke came back. Undefined until the first live sighting.
+   */
+  #lastResponsiveAt?: number;
+  /** Latest degeneration read, so the heartbeat pass need not re-scan output. */
+  #degenerated = false;
+  /** Last verdict reason recorded, so the heartbeat loop logs changes only. */
+  #lastHeartbeatReason?: string;
 
   constructor(
     readonly ports: DriverPorts,
@@ -136,6 +156,7 @@ export class AgentCommsDriver {
     this.#successorDeadlineMs = options.successorDeadlineMs ?? DEFAULT_SUCCESSOR_DEADLINE_MS;
     this.#maxSessionAgeMs = options.maxSessionAgeMs ?? DEFAULT_MAX_SESSION_AGE_MS;
     this.#aggregateGraceMs = options.aggregateGraceMs ?? DEFAULT_AGGREGATE_GRACE_MS;
+    this.#unresponsiveGraceMs = options.unresponsiveGraceMs ?? this.#pokeDeadlineMs;
     this.#pokeText = options.pokeText ?? DRIVER_POKE_TEXT;
   }
 
@@ -196,6 +217,10 @@ export class AgentCommsDriver {
 
       const collapse = detectRepeatedTokenCollapse(recentOutput);
       const degenerated = collapse.degenerated;
+      this.#degenerated = degenerated;
+      this.#markResponsiveness(agent, now);
+      // Tracks whether the session this pass observed is still the live one.
+      let sessionLive = agent.sessionExists;
 
       // Read after the deadline pass so the index reflects this pass's stream.
       const openAggregates = yield* attempt("countOpenAggregates", this.ports.countOpenAggregates);
@@ -238,6 +263,10 @@ export class AgentCommsDriver {
           );
           yield* attempt("stopSession", this.ports.stopSession);
           this.#sessionStartedAt = undefined;
+          // The observation at the top of this pass is now stale: that session
+          // is gone. Never heartbeat on evidence collected before the kill.
+          this.#lastResponsiveAt = undefined;
+          sessionLive = false;
           yield* this.#receipt("session.retire.stopped", { reason });
         }
 
@@ -258,6 +287,8 @@ export class AgentCommsDriver {
         );
         if (prompted._tag === "Right") {
           const answeredAt = this.ports.now();
+          // An answered poke is the strongest responsiveness evidence there is.
+          this.#lastResponsiveAt = answeredAt;
           this.#actor.send({ type: "POKE_ANSWERED", answeredAt });
           yield* this.#receipt("poke.answered", { answeredAt });
         } else {
@@ -266,20 +297,92 @@ export class AgentCommsDriver {
         }
       }
 
-      if (this.state === "ready") {
-        const value = JSON.stringify({ checkedAt: this.ports.now(), state: this.state });
+      yield* this.#applyHeartbeat(
+        { paneExists: agent.paneExists, sessionExists: sessionLive },
+        this.ports.now(),
+        true,
+      );
+
+      return this.state;
+    });
+  }
+
+  /**
+   * Heartbeat on its own cadence, independent of the work pass.
+   *
+   * This exists because `runPass` blocks on `promptAgent` for up to the poke
+   * deadline (300s) while the key lives 60s. The pass that owned the key could
+   * not refresh it precisely when the session was busiest, so a healthy gateway
+   * went dark mid-turn and the transport delivered raw. Measured 2026-07-27:
+   * 12.6% of the day blind.
+   *
+   * It takes a fresh observation rather than reusing the pass's — stale evidence
+   * is what the kill drill exists to catch — but never sends machine events, so
+   * it cannot race the work pass for the state machine.
+   */
+  heartbeatPass(): Effect.Effect<HeartbeatVerdict, DriverPassError> {
+    return Effect.gen(this, function* () {
+      this.start();
+      const agent = yield* attempt("inspectAgent", this.ports.inspectAgent);
+      const now = this.ports.now();
+      this.#markResponsiveness(agent, now);
+      return yield* this.#applyHeartbeat(agent, now, false);
+    });
+  }
+
+  /** Fold one observation into the responsiveness clock. */
+  #markResponsiveness(
+    agent: { paneExists: boolean; sessionExists: boolean; idle: boolean },
+    now: number,
+  ): void {
+    if (!agent.sessionExists) {
+      this.#lastResponsiveAt = undefined;
+      return;
+    }
+    // First sighting of a busy session starts its clock now rather than
+    // scoring it unresponsive — otherwise a driver restart mid-turn withholds
+    // instantly, which is the raw-delivery window restarts used to guarantee.
+    if (agent.idle) this.#lastResponsiveAt = now;
+    else this.#lastResponsiveAt ??= now;
+  }
+
+  #applyHeartbeat(
+    agent: { paneExists: boolean; sessionExists: boolean },
+    now: number,
+    alwaysRecord: boolean,
+  ): Effect.Effect<HeartbeatVerdict, DriverPassError> {
+    return Effect.gen(this, function* () {
+      const verdict = heartbeatVerdict({
+        state: this.state,
+        paneExists: agent.paneExists,
+        sessionExists: agent.sessionExists,
+        degenerated: this.#degenerated,
+        unresponsiveForMs: this.#lastResponsiveAt === undefined
+          ? Number.POSITIVE_INFINITY
+          : Math.max(0, now - this.#lastResponsiveAt),
+        unresponsiveGraceMs: this.#unresponsiveGraceMs,
+      });
+      const changed = this.#lastHeartbeatReason !== verdict.reason;
+      this.#lastHeartbeatReason = verdict.reason;
+
+      if (verdict.alive) {
+        const value = JSON.stringify({ checkedAt: now, state: this.state });
         yield* attempt("refreshHeartbeat", () =>
           this.ports.refreshHeartbeat(this.#heartbeatKey, this.#heartbeatTtlMs, value),
         );
-        yield* this.#receipt("heartbeat.refreshed", {
-          key: this.#heartbeatKey,
-          ttlMs: this.#heartbeatTtlMs,
+        if (alwaysRecord || changed) {
+          yield* this.#receipt("heartbeat.refreshed", {
+            key: this.#heartbeatKey,
+            ttlMs: this.#heartbeatTtlMs,
+          });
+        }
+      } else if (alwaysRecord || changed) {
+        yield* this.#receipt("heartbeat.withheld", {
+          reason: verdict.reason,
+          state: this.state,
         });
-      } else {
-        yield* this.#receipt("heartbeat.withheld", { reason: this.state });
       }
-
-      return this.state;
+      return verdict;
     });
   }
 
