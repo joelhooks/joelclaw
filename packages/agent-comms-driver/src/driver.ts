@@ -145,6 +145,8 @@ export class AgentCommsDriver {
   #degenerated = false;
   /** Last verdict reason recorded, so the heartbeat loop logs changes only. */
   #lastHeartbeatReason?: string;
+  /** When the work pass last completed, used to spot a pass blocked in a poke. */
+  #lastWorkPassAt?: number;
 
   constructor(
     readonly ports: DriverPorts,
@@ -297,9 +299,11 @@ export class AgentCommsDriver {
         }
       }
 
+      const finishedAt = this.ports.now();
+      this.#lastWorkPassAt = finishedAt;
       yield* this.#applyHeartbeat(
         { paneExists: agent.paneExists, sessionExists: sessionLive },
-        this.ports.now(),
+        finishedAt,
         true,
       );
 
@@ -326,7 +330,11 @@ export class AgentCommsDriver {
       const agent = yield* attempt("inspectAgent", this.ports.inspectAgent);
       const now = this.ports.now();
       this.#markResponsiveness(agent, now);
-      return yield* this.#applyHeartbeat(agent, now, false);
+      // A work pass older than the TTL means it is blocked in a poke and the key
+      // would already be gone. Record those: they are this fiber earning its keep.
+      const covering = this.#lastWorkPassAt !== undefined
+        && now - this.#lastWorkPassAt > this.#heartbeatTtlMs;
+      return yield* this.#applyHeartbeat(agent, now, covering, covering);
     });
   }
 
@@ -350,6 +358,7 @@ export class AgentCommsDriver {
     agent: { paneExists: boolean; sessionExists: boolean },
     now: number,
     alwaysRecord: boolean,
+    coveringBlockedPass = false,
   ): Effect.Effect<HeartbeatVerdict, DriverPassError> {
     return Effect.gen(this, function* () {
       const verdict = heartbeatVerdict({
@@ -374,6 +383,9 @@ export class AgentCommsDriver {
           yield* this.#receipt("heartbeat.refreshed", {
             key: this.#heartbeatKey,
             ttlMs: this.#heartbeatTtlMs,
+            ...(coveringBlockedPass
+              ? { coveringBlockedPass: true, workPassStaleForMs: now - (this.#lastWorkPassAt ?? now) }
+              : {}),
           });
         }
       } else if (alwaysRecord || changed) {

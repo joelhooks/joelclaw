@@ -236,6 +236,14 @@ describe("AgentCommsDriver", () => {
       expect(verdict.alive).toBe(true);
       expect(heartbeatExists(fake)).toBe(true);
     }
+
+    // Silent while the work pass is fresh, but it must leave a receipt for the
+    // refreshes that only happened because the work pass was stuck.
+    const covering = fake.receipts.filter(
+      (receipt) => receipt.detail?.coveringBlockedPass === true,
+    );
+    expect(covering.length).toBeGreaterThan(0);
+    expect(covering.at(-1)).toMatchObject({ action: "heartbeat.refreshed" });
   });
 
   test("heartbeatPass withholds the moment the session disappears", async () => {
