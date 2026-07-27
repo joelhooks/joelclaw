@@ -56,8 +56,8 @@ function fixtureEvent(overrides: Partial<FrontEventRecord> = {}): FrontEventReco
     conversationId: "cnv_1",
     subject: "Hello",
     messageId: "msg_1",
-    from: "ada@example.com",
-    fromName: "Ada",
+    from: "alex@indyhall.org",
+    fromName: "Alex Hillman",
     text: "ping",
     to: ["joel@example.com"],
     attachmentCount: 0,
@@ -467,8 +467,8 @@ describe("runFrontReader", () => {
       conversationId: "cnv_b",
       emittedAtMs: nowMs - 2_000,
       createdAtMs: nowMs - 2_000,
-      from: "grace@example.com",
-      fromName: "Grace",
+      from: "alex@indyhall.org",
+      fromName: "Alex Hillman",
       text: "second",
     });
 
@@ -634,6 +634,43 @@ describe("runFrontReader", () => {
     expect(sent.filter((item) => item.name === "front/message.received")).toHaveLength(1);
     // Indexing stays idempotent-by-id, so it is free to re-emit.
     expect(sent.filter((item) => item.name === "channel/message.received")).toHaveLength(2);
+  });
+
+  test("bulk mail is indexed but never announced", async () => {
+    // Restoring the old webhook's announce-everything behavior put seven
+    // messages, ads included, on Joel's phone inside a minute. Non-VIP mail
+    // reaches him through the check/email-triage digest instead.
+    const nowMs = 1_800_000_000_000;
+    const sent: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const result = await runFrontReader({
+      now: () => nowMs,
+      getToken: () => "test-token",
+      watermark: memoryWatermark(nowMs - 60_000),
+      fetchMessages: async () => ({
+        events: [
+          fixtureEvent({
+            messageId: "msg_ad",
+            from: "deals@marketing.example.com",
+            fromName: "Big Sale",
+            emittedAtMs: nowMs - 1_000,
+            createdAtMs: nowMs - 1_000,
+          }),
+        ],
+        truncated: false,
+        pagesFetched: 1,
+        conversationsScanned: 1,
+      }),
+      send: async (events) => {
+        sent.push(...(events as Array<{ name: string; data: Record<string, unknown> }>));
+      },
+      emit: async () => ({}),
+      sleep: async () => {},
+      notifyDedupe: memoryNotifyDedupe(),
+    });
+
+    expect(result.messagesNotified).toBe(0);
+    expect(sent.filter((item) => item.name === "front/message.received")).toHaveLength(0);
+    expect(sent.filter((item) => item.name === "channel/message.received")).toHaveLength(1);
   });
 
   test("does not announce our own outbound mail", async () => {

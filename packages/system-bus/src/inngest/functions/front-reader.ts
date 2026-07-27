@@ -15,6 +15,7 @@ import { NonRetriableError } from "inngest";
 import { getRedisClient } from "../../lib/redis";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
+import { isVipSender } from "./vip-utils";
 
 export const FRONT_API = "https://api2.frontapp.com";
 export const FRONT_READER_WATERMARK_KEY = "health:front-reader:watermark_emitted_at_ms";
@@ -902,9 +903,16 @@ export async function runFrontReader(deps: FrontReaderDependencies): Promise<Fro
     }
   }
 
-  // Inbound only. The old webhook also announced our own sent mail; that is
-  // noise Joel does not need, and this gateway already talks too much.
-  const inbound = uniqueEvents.filter((event) => event.isInbound);
+  // Inbound, and only from someone worth interrupting for.
+  //
+  // The old webhook announced every inbound email individually. Restoring that
+  // verbatim on 2026-07-27 put seven messages — ads included — on Joel's phone
+  // inside a minute. Bulk mail is still indexed and still reaches him through
+  // the `check/email-triage` digest ("N emails need you"); it does not get to
+  // ring the phone. Outbound is never announced at all.
+  const inbound = uniqueEvents.filter(
+    (event) => event.isInbound && isVipSender(event.from, event.fromName),
+  );
   const claimedIds = new Set(await deps.notifyDedupe.claim(inbound.map((event) => event.messageId)));
   const notifyEvents = inbound
     .filter((event) => claimedIds.has(event.messageId))
