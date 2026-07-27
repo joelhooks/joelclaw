@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PaneScheduleEntry } from "./pane-schedule";
 import {
+  beatLaneKey,
   beatLaneLabel,
   buildSpawnLaunchCommand,
   executeSpawnBeat,
@@ -291,5 +292,39 @@ describe("executeSpawnBeat", () => {
       label,
       ack: false,
     });
+  });
+});
+
+describe("beat lane survives a pane rename", () => {
+  test("reuses the registered pane even after herdr-name-sync rewrote its label", () => {
+    // The pi name-sync extension renames a worker pane to the pi session name
+    // on every turn, so "⏰ Campaign Pulse" becomes "📈 Campaign Pulse". Label
+    // matching alone spawned a fresh pane every hour — ten panes in ten tabs.
+    const plan = planSpawnBeat({
+      entry: spawnEntry,
+      briefExists: true,
+      label: "⏰ Campaign Pulse",
+      knownPaneId: "wB:p1",
+      panes: [{ pane_id: "wB:p1", label: "📈 Campaign Pulse", agent_status: "done", workspace_id: "wB" }],
+      agents: [{ pane_id: "wB:p1", agent_status: "done" }],
+      workspaces: [{ workspace_id: "wB", label: SCHEDULED_BEATS_WORKSPACE_LABEL }],
+    });
+    expect(plan).toMatchObject({ action: "reuse", paneId: "wB:p1", mode: "prompt" });
+  });
+
+  test("creates a lane when the registered pane is gone", () => {
+    const plan = planSpawnBeat({
+      entry: spawnEntry,
+      briefExists: true,
+      label: "⏰ Campaign Pulse",
+      knownPaneId: "wB:pGONE",
+      panes: [],
+      workspaces: [{ workspace_id: "wB", label: SCHEDULED_BEATS_WORKSPACE_LABEL }],
+    });
+    expect(plan).toMatchObject({ action: "create", workspaceId: "wB" });
+  });
+
+  test("the lane key is the brief path, not the mutable label", () => {
+    expect(beatLaneKey(spawnEntry)).toBe(spawnEntry.briefPath);
   });
 });

@@ -200,6 +200,14 @@ export function planSpawnBeat(input: {
   workspaces?: readonly HerdrWorkspaceRecord[];
   briefExists: boolean;
   label?: string;
+  /**
+   * The pane this lane used last time, from the durable registry. This is the
+   * primary match — a label cannot be, because the `herdr-name-sync` pi
+   * extension rewrites a worker's pane label to the pi session name on every
+   * turn. Matching on label alone meant every firing failed to find its own
+   * lane and opened a new pane: ten Campaign Pulse panes in ten tabs.
+   */
+  knownPaneId?: string;
 }): SpawnBeatPlan {
   if (input.entry.verb !== "spawn") {
     return { action: "refuse", reason: `planSpawnBeat only handles verb spawn, got ${input.entry.verb}` };
@@ -214,12 +222,22 @@ export function planSpawnBeat(input: {
   const label = input.label ?? beatLaneLabel(input.entry);
   const launch = buildSpawnLaunchCommand(input.entry);
   const forbidden = forbiddenWorkspaceIds(input.panes);
-  const existing = input.panes.find((pane) => {
-    const paneLabel = stringField(pane.label) ?? stringField(pane.name) ?? stringField(pane.agent_name);
+  const usable = (pane: HerdrPaneRecord | undefined): boolean => {
+    if (!pane || typeof pane.pane_id !== "string") return false;
     const workspaceId = stringField(pane.workspace_id);
-    if (workspaceId && forbidden.has(workspaceId)) return false;
-    return paneLabel === label && typeof pane.pane_id === "string";
-  });
+    return !(workspaceId && forbidden.has(workspaceId));
+  };
+  const registered = input.knownPaneId
+    ? input.panes.find((pane) => stringField(pane.pane_id) === input.knownPaneId)
+    : undefined;
+  // Registry first, label only as a fallback for lanes predating the registry.
+  const existing = usable(registered)
+    ? registered
+    : input.panes.find((pane) => {
+        const paneLabel =
+          stringField(pane.label) ?? stringField(pane.name) ?? stringField(pane.agent_name);
+        return paneLabel === label && usable(pane);
+      });
 
   if (existing && typeof existing.pane_id === "string") {
     const status = agentStatusForPane(existing.pane_id, existing, input.agents ?? []);
@@ -264,10 +282,23 @@ export function planSpawnBeat(input: {
 }
 
 export type SpawnBeatPorts = {
-  runCommand: CommandRunner;
+  /** Defaults to a real herdr subprocess runner when omitted. */
+  runCommand?: CommandRunner;
   briefExists?: (path: string) => boolean;
   readBriefTitle?: (path: string) => string;
+  /** Durable lane registry: brief path -> pane id. Survives label rewrites. */
+  readLanePane?: (laneKey: string) => Promise<string | undefined>;
+  writeLanePane?: (laneKey: string, paneId: string) => Promise<void>;
 };
+
+/**
+ * A lane is identified by its brief path, not its label. The schedule names the
+ * brief and never changes it; labels are cosmetic and get rewritten underneath
+ * us by the pi name-sync extension.
+ */
+export function beatLaneKey(entry: Pick<PaneScheduleEntry, "briefPath">): string {
+  return entry.briefPath ?? "";
+}
 
 async function defaultCommand(argv: string[]): Promise<CommandResult> {
   const process = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
@@ -289,9 +320,9 @@ async function defaultCommand(argv: string[]): Promise<CommandResult> {
  */
 export async function executeSpawnBeat(
   entry: PaneScheduleEntry,
-  ports: SpawnBeatPorts = { runCommand: defaultCommand },
+  ports: SpawnBeatPorts = {},
 ): Promise<SpawnBeatResult> {
-  const runCommand = ports.runCommand;
+  const runCommand = ports.runCommand ?? defaultCommand;
   const briefExists = ports.briefExists ?? ((path: string) => existsSync(path));
   const label =
     entry.briefPath && ports.readBriefTitle
@@ -323,6 +354,8 @@ export async function executeSpawnBeat(
     ]);
     const panes = resultList(paneResult.stdout, "panes");
     const forbidden = forbiddenWorkspaceIds(panes);
+    const laneKey = beatLaneKey(entry);
+    const knownPaneId = ports.readLanePane ? await ports.readLanePane(laneKey) : undefined;
     const plan = planSpawnBeat({
       entry,
       panes,
@@ -330,6 +363,7 @@ export async function executeSpawnBeat(
       workspaces: resultList(workspaceResult.stdout, "workspaces"),
       briefExists: briefExists(entry.briefPath),
       label,
+      ...(knownPaneId ? { knownPaneId } : {}),
     });
 
     if (plan.action === "refuse") {
@@ -364,6 +398,7 @@ export async function executeSpawnBeat(
       } else {
         await runCommand(["herdr", "pane", "run", plan.paneId, plan.launch]);
       }
+      if (ports.writeLanePane) await ports.writeLanePane(laneKey, plan.paneId);
       return {
         status: "reused",
         scheduleId: entry.scheduleId,
@@ -411,6 +446,7 @@ export async function executeSpawnBeat(
       if (rootPaneId) {
         await runCommand(["herdr", "pane", "rename", rootPaneId, plan.label]);
         await runCommand(["herdr", "pane", "run", rootPaneId, plan.launch]);
+        if (ports.writeLanePane) await ports.writeLanePane(laneKey, rootPaneId);
         return {
           status: "spawned",
           scheduleId: entry.scheduleId,
@@ -450,6 +486,7 @@ export async function executeSpawnBeat(
     }
     await runCommand(["herdr", "pane", "rename", paneId, plan.label]);
     await runCommand(["herdr", "pane", "run", paneId, plan.launch]);
+    if (ports.writeLanePane) await ports.writeLanePane(laneKey, paneId);
     return {
       status: "spawned",
       scheduleId: entry.scheduleId,

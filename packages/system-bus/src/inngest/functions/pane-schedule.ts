@@ -3,9 +3,9 @@ import {
   isPaneScheduleLate,
   PANE_SCHEDULE_FAILURES_KEY,
   PANE_SCHEDULE_REGISTRY_KEY,
+  type PaneScheduleEntry,
   PaneScheduleValidationError,
   validatePaneSchedule,
-  type PaneScheduleEntry,
 } from "../../lib/pane-schedule";
 import {
   executeSpawnBeat,
@@ -45,6 +45,20 @@ function extractFailedScheduleId(data: unknown): string | undefined {
   return undefined;
 }
 
+/** Durable beat-lane registry: brief path -> pane id, so a lane survives the
+ * pi name-sync extension rewriting its pane label out from under us. */
+export const BEAT_LANE_REGISTRY_KEY = "pane:beats:lanes";
+
+function defaultSpawnPorts(): SpawnBeatPorts {
+  return {
+    readLanePane: async (laneKey) =>
+      (await getRedisClient().hget(BEAT_LANE_REGISTRY_KEY, laneKey)) ?? undefined,
+    writeLanePane: async (laneKey, paneId) => {
+      await getRedisClient().hset(BEAT_LANE_REGISTRY_KEY, laneKey, paneId);
+    },
+  };
+}
+
 export type PaneScheduleDeps = {
   pushGatewayEvent?: typeof pushGatewayEvent;
   executeSpawnBeat?: (entry: PaneScheduleEntry, ports?: SpawnBeatPorts) => Promise<SpawnBeatResult>;
@@ -81,7 +95,7 @@ export async function dispatchDuePaneSchedule(
     (async (scheduleId: string) => getRedisClient().hdel(PANE_SCHEDULE_REGISTRY_KEY, scheduleId));
 
   if (entry.verb === "spawn") {
-    const spawnResult = await spawn(entry, deps.spawnPorts);
+    const spawnResult = await spawn(entry, deps.spawnPorts ?? defaultSpawnPorts());
     let acked = false;
     if (spawnResult.ack) {
       await hdel(entry.scheduleId);
