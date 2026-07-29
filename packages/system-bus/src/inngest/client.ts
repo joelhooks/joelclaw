@@ -1204,6 +1204,12 @@ export type Events = {
       cancelledAt: string;
     };
   };
+  "gateway/external-canary.requested": {
+    data: {
+      liveApproved?: boolean;
+      reason?: string;
+    };
+  };
   "pane/schedule.reconcile.requested": {
     data: {
       reason?: string;

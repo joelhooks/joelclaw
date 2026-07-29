@@ -89,6 +89,10 @@ export {
 } from "./function-health";
 export { gatewayBehaviorDailyReview } from "./gateway-behavior-review";
 export {
+  createGatewayExternalDeliveryCanary,
+  gatewayExternalDeliveryCanary,
+} from "./gateway-external-delivery-canary";
+export {
   githubPackagePublished,
   githubWorkflowRunCompleted,
 } from "./github-notify";

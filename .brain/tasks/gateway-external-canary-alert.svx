@@ -1,0 +1,23 @@
+---
+title: "Gateway external canary needs operator action"
+type: "task"
+status: "operational"
+privacy: "private"
+---
+
+# Gateway external canary needs operator action
+
+This scheduled beat is the independent alarm for the Telegram external delivery
+canary. The gateway does not dispatch it.
+
+Read the run named in the prompt from
+`~/.joelclaw/receipts/gateway-external-delivery-canary.jsonl`. Confirm the same
+run in OTEL with component `gateway-external-canary` and action
+`gateway.external_canary.failed`.
+
+Report the failed path, terminal evidence, oldest unhandled external input age,
+and overdue aggregate deadlines. Ask Joel for operator action. Do not send a
+live canary. Do not start a poller or listener. Do not start, restart,
+reconfigure, or repair the gateway or transport.
+
+This lane is a receipt reader. It has no repair authority.

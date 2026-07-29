@@ -77,6 +77,7 @@ import {
 import { frontMessageReader } from "./front-reader";
 import { functionRegistrationAndRunHealth } from "./function-health";
 import { gatewayBehaviorDailyReview } from "./gateway-behavior-review";
+import { gatewayExternalDeliveryCanary } from "./gateway-external-delivery-canary";
 import { gatewayHandleMessage } from "./gateway-handle-message";
 import { gatewaySendMessage } from "./gateway-send-message";
 import { granolaBackfill } from "./granola-backfill";
@@ -189,6 +190,7 @@ export const hostFunctionDefinitions = [
   gatewaySendMessage,
   gatewayHandleMessage,
   gatewayBehaviorDailyReview,
+  gatewayExternalDeliveryCanary,
   videoDownload,
   videoDownloadLegacyAlias,
   ...videoFunctionDefinitions,
