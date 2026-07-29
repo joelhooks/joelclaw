@@ -32,6 +32,18 @@ Optional settings:
 
 Tests and scratch proofs must set a `test:*` heartbeat key. Never run a proof against the production gateway target.
 
+## Morning digest beat
+
+The daily digest beat is ready but unarmed. Steering arms it with:
+
+```bash
+pnpm --filter @joelclaw/agent-comms-driver arm-morning-digest
+```
+
+The command schedules one `WAKE` for the next 07:30 in `America/Los_Angeles`. `joelclaw wake` emits `pane/schedule.requested`. The `pane/schedule` function sends `pane.schedule.due` through `pushGatewayEvent` to `joelclaw:events:gateway`. Its source is `inngest/pane-schedule`, and it never starts a beat lane. The arm path returns an existing future `[gateway-morning-digest]` schedule instead of adding a duplicate, and verifies a new `scheduleId` by registry readback.
+
+After a digest due signal succeeds, the gateway runs the same arm command to prove the next beat exists. It then cancels the current due schedule so the reconciler cannot fire it again.
+
 ## Kill drill
 
 The live drill is destructive. It closes the configured gateway pane and sends a real Telegram DM. Run it only during the supervised cutover sitting:

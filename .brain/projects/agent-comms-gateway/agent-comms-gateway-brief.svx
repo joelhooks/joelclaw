@@ -97,6 +97,7 @@ _(charter settlements live in Finish line, Vocabulary, and Notes)_
 - [Decide the Telegram delivery bar](./decide-telegram-delivery-bar.svx) — Telegram is a dropped-ball detector ("shit i'm slippin on"), not a severity-filtered alert feed: morning digest only, one incident one thread, worker receipts never ping, runbook cadence demoted to evidence, addressed/ambient inbound ladder with a mechanical tooth (amends "no mechanical fast path"), digest awareness stays judgment not spec. (2026-07-29)
 - [Build the delivery-volume meter](./build-delivery-volume-meter.svx) — daily 08:00 cron counts 24h deliveries+fallbacks off the stream, pages once with top sources at 24/day via a Redis NX latch that resets only after a full day at or under the 12/day target. (2026-07-29)
 - [Build the inbound ladder tooth](./build-inbound-ladder-tooth.svx) — transport stamps addressed/ambient at ingress; the plugin refuses outbound on ambient without a prior escalate receipt, first ambient decision must be observe/escalate, ack-first scoped to addressed; `observe` verb added end to end (joelclaw-api Convex deploy pending). (2026-07-29)
+- [Build the delivery-bar steering prose and morning digest](./build-delivery-bar-prose-and-digest.svx) — roles/gateway.md rewritten around the bar (ack addressed only, observe ambient, Telegram Bar + Morning Digest sections, runbook cadence demoted); idempotent 07:30 digest wake with registry readback in the driver package. (2026-07-29)
 
 ## Latent
 

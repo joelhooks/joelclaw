@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "arm-morning-digest": "bun run scripts/arm-morning-digest.ts",
     "arm-weekly-drill": "bun run scripts/arm-weekly-kill-drill.ts",
     "check-types": "tsc --noEmit",
     "kill-drill": "bun run scripts/kill-test.ts --confirm-live-gateway-kill",

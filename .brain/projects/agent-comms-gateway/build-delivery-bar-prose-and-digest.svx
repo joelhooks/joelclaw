@@ -3,7 +3,8 @@ title: "Build the delivery-bar steering prose and morning digest"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-29"
 assignee: "pi worker (flagg, herdr pane w28:pZ, 2026-07-29)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: []
@@ -34,6 +35,21 @@ Resolved when:
   pane-schedule/wake path; the digest is judgment, so it lands in the gateway
   queue, not a beat lane.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-29)
 
-_(open)_
+Delivered by pi worker (pane w28:pZ), reviewed and committed by steering.
+`roles/gateway.md` (+62/−25): ack-first scoped to addressed inbound; ambient
+gets `observe` and zero outbound; new "The Telegram Bar" section carries the
+dropped-ball bar verbatim with one-incident-one-thread, one-ping-per-crossing,
+worker-receipts-never-ping, and runbook-cadence-is-evidence; "Morning Digest"
+section keeps composition as judgment (live-state re-check, waiting-on-you
+first, handled-quietly below the fold) with mechanical successor-arm steps.
+Digest beat: `morning-digest-schedule.ts` in the driver package — idempotent
+07:30 America/Los_Angeles wake via the registry with readback verification and
+cancel-on-unverifiable; armed by `pnpm --filter @joelclaw/agent-comms-driver
+arm-morning-digest`. 52 driver tests pass.
+
+Noted cut: the old "Steering Cadence" section (check-ins every 60–120s, the
+frenzied-behavior stop rule) was removed wholesale — the cadence mandate was
+itself chatter under the bar, but the frenzied-behavior stop was collateral;
+restore it separately if missed.
