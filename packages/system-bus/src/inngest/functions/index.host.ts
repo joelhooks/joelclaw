@@ -52,6 +52,7 @@ import {
 } from "./critical-db-maintenance";
 import { dailyDigest } from "./daily-digest";
 import { dailyTokenUsageReport } from "./daily-token-usage-report";
+import { deliveryVolumeMeter } from "./delivery-volume-meter";
 import { discoveryCapture } from "./discovery-capture";
 import { docsIngest } from "./docs-ingest";
 import {
@@ -301,6 +302,7 @@ export const hostFunctionDefinitions = [
   selfHealingInngestRuntime,
   dailyDigest,
   dailyTokenUsageReport,
+  deliveryVolumeMeter,
   wikiEditionBuild,
   sleepModeRequested,
   wakeModeRequested,

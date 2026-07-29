@@ -95,6 +95,7 @@ _(charter settlements live in Finish line, Vocabulary, and Notes)_
 - [Build the kill-test script and weekly drill](./build-kill-test.svx) — delivered the guarded eight-assertion XState kill drill, stream + journal receipt proof, emergency restart, and idempotent wake-registry weekly arm path; 24 tests pass. Live execution and schedule arming remain reserved for the supervised cutover sitting. (2026-07-21)
 - [Build the joelclaw-gateway plugin](./build-gateway-plugin.svx) — hardened the approved seed against the real stream: 15 stream/Herdr/wake MCP tools, exact receipt-before-cursor enforcement, ordered SessionStart replay, and a live-read-back PostCompact OTEL receipt; deleted the replay-only adapter and renderer. (2026-07-21)
 - [Decide the Telegram delivery bar](./decide-telegram-delivery-bar.svx) — Telegram is a dropped-ball detector ("shit i'm slippin on"), not a severity-filtered alert feed: morning digest only, one incident one thread, worker receipts never ping, runbook cadence demoted to evidence, addressed/ambient inbound ladder with a mechanical tooth (amends "no mechanical fast path"), digest awareness stays judgment not spec. (2026-07-29)
+- [Build the delivery-volume meter](./build-delivery-volume-meter.svx) — daily 08:00 cron counts 24h deliveries+fallbacks off the stream, pages once with top sources at 24/day via a Redis NX latch that resets only after a full day at or under the 12/day target. (2026-07-29)
 
 ## Latent
 

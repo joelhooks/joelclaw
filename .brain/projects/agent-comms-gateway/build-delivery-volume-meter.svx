@@ -3,7 +3,8 @@ title: "Build the delivery-volume meter"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-29"
 assignee: "pi worker (flagg, herdr pane w28:p0, 2026-07-29)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: []
@@ -28,6 +29,16 @@ Resolved when:
   and reasoning next to them.
 - Tests cover the count, the single-fire latch, and the quiet path.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-29)
 
-_(open)_
+Delivered by pi worker (pane w28:p0), reviewed and committed by steering.
+`packages/system-bus/src/inngest/functions/delivery-volume-meter.ts` + test:
+daily 08:00 America/Los_Angeles cron pages the count of `delivery.requested` +
+`fallback.delivered` over the last 24h with the top three producers when it
+reaches `PAGE_THRESHOLD = 24`; a Redis NX latch
+(`joelclaw:delivery-volume-meter:paged`) guarantees single-fire, released only
+after a full window at or under `TARGET_DELIVERIES_PER_DAY = 12` (and released
+immediately if the page itself fails to send). Notify uses a stable
+content-hashed eventId so Inngest retries cannot double-page. Host-registered
+only (needs local Convex + `joelclaw` CLI); 5 tests pass. Deploy = restart the
+host worker so Inngest re-registers the function.

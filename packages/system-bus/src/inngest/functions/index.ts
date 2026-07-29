@@ -51,6 +51,15 @@ export {
   criticalDbStalenessCheck,
 } from "./critical-db-maintenance";
 export { dailyDigest } from "./daily-digest";
+export {
+  clearDeliveryVolumeLatch,
+  countDeliveryVolume,
+  createDeliveryVolumeMeterFunction,
+  deliveryVolumeMeter,
+  measureDeliveryVolume,
+  PAGE_THRESHOLD,
+  TARGET_DELIVERIES_PER_DAY,
+} from "./delivery-volume-meter";
 export { discoveryCapture } from "./discovery-capture";
 export { docsIngest } from "./docs-ingest";
 export {
