@@ -31,6 +31,7 @@ export { checkSessions } from "./check-sessions";
 export {
   checkSystemHealth,
   checkSystemHealthSignalsSchedule,
+  systemHealthDailyDigest,
 } from "./check-system-health";
 export { checkTriggers } from "./check-triggers";
 export { checkVaultSync } from "./check-vault-sync";

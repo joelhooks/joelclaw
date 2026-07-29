@@ -22,9 +22,18 @@ import Redis from "ioredis";
 import { pushNotification, pushSystemStatus } from "../../lib/convex";
 import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
-import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import {
+  addHealthObservationToDailyAggregate,
+  formatHealthTransitionMessage,
+  formatSystemHealthDailyDigest,
+  parseDailyAggregate,
+  parseHealthLatchState,
+  previousPtDate,
+  reconcileSystemHealth,
+  type SystemHealthReconciliation,
+} from "./system-health-latch";
 
 type ServiceStatus = {
   name: string;
@@ -94,74 +103,46 @@ const CRITICAL_COMPONENTS = new Set([
 const AGENT_DISPATCH_CANARY_COMPONENT = "Agent Dispatch Canary";
 const HEALTH_LAST_CHECK_KEY = "health:last_check";
 const HEALTH_LAST_RESULT_KEY = "health:last_result";
+export const SYSTEM_HEALTH_LATCH_KEY = "health:system-health:transition-latch:v1";
+const SYSTEM_HEALTH_DAILY_KEY_PREFIX = "health:system-health:daily:v1";
+const SYSTEM_HEALTH_DAILY_CLOSED_KEY_PREFIX = "health:system-health:daily-closed:v1";
+const SYSTEM_HEALTH_DAILY_TTL_SECONDS = 45 * 24 * 60 * 60;
 
-/**
- * Transition latch for gateway notification.
- *
- * This check was the loudest speaker in the whole system: 844 of 1321 gateway
- * inputs in the week of 2026-07-21, ~190/day, because the only suppressor was
- * "does a task already exist for this service". A flapping Front Projection
- * announced itself on every run — Joel was told about it 46 times in 40 hours.
- * State, not ticks: notify when the degraded set CHANGES, plus a slow reminder
- * so a genuine multi-hour outage does not go quiet forever.
- */
-export const HEALTH_NOTIFY_STATE_KEY = "health:system-health:last_notified";
-export const HEALTH_RENOTIFY_AFTER_MS = 6 * 60 * 60 * 1000;
-
-export type HealthNotifyState = {
-  /** Sorted, normalized degraded service names. Empty string means all healthy. */
-  signature: string;
-  notifiedAtMs: number;
-};
-
-export type HealthNotifyKind = "degradation" | "recovery" | "reminder" | "none";
-
-/** Order- and case-independent identity for a degraded set. */
-export function healthSignature(degradedNames: readonly string[]): string {
-  const normalized = degradedNames
-    .map((name) => name.trim().toLowerCase())
-    .filter((name) => name.length > 0);
-  return [...new Set(normalized)].sort().join("|");
+function systemHealthDailyKey(date: string): string {
+  return `${SYSTEM_HEALTH_DAILY_KEY_PREFIX}:${date}`;
 }
 
-export function decideHealthNotification(input: {
-  signature: string;
-  previous: HealthNotifyState | null;
-  nowMs: number;
-  renotifyAfterMs?: number;
-}): { notify: boolean; kind: HealthNotifyKind } {
-  const renotifyAfterMs = input.renotifyAfterMs ?? HEALTH_RENOTIFY_AFTER_MS;
-  const previousSignature = input.previous?.signature ?? "";
-
-  if (input.signature === "") {
-    // Recovery is worth exactly one message, and only if we ever complained.
-    return previousSignature === ""
-      ? { notify: false, kind: "none" }
-      : { notify: true, kind: "recovery" };
-  }
-
-  if (input.signature !== previousSignature) return { notify: true, kind: "degradation" };
-
-  const elapsed = input.nowMs - (input.previous?.notifiedAtMs ?? 0);
-  if (elapsed >= renotifyAfterMs) return { notify: true, kind: "reminder" };
-
-  return { notify: false, kind: "none" };
+function systemHealthDailyClosedKey(date: string): string {
+  return `${SYSTEM_HEALTH_DAILY_CLOSED_KEY_PREFIX}:${date}`;
 }
 
-export async function readHealthNotifyState(): Promise<HealthNotifyState | null> {
-  const raw = await getRedisClient().get(HEALTH_NOTIFY_STATE_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<HealthNotifyState>;
-    if (typeof parsed.signature !== "string" || typeof parsed.notifiedAtMs !== "number") return null;
-    return { signature: parsed.signature, notifiedAtMs: parsed.notifiedAtMs };
-  } catch {
-    return null;
-  }
+async function readSystemHealthReconciliation(input: {
+  services: readonly ServiceStatus[];
+  observedAt: string;
+}): Promise<SystemHealthReconciliation> {
+  const raw = await getRedisClient().get(SYSTEM_HEALTH_LATCH_KEY);
+  return reconcileSystemHealth({
+    previous: parseHealthLatchState(raw, input.observedAt),
+    services: input.services,
+    observedAt: input.observedAt,
+  });
 }
 
-export async function writeHealthNotifyState(state: HealthNotifyState): Promise<void> {
-  await getRedisClient().set(HEALTH_NOTIFY_STATE_KEY, JSON.stringify(state));
+async function commitSystemHealthReconciliation(
+  reconciliation: SystemHealthReconciliation,
+): Promise<void> {
+  const redis = getRedisClient();
+  const dailyKey = systemHealthDailyKey(reconciliation.ptDate);
+  const dailyRaw = await redis.get(dailyKey);
+  const daily = addHealthObservationToDailyAggregate(
+    parseDailyAggregate(dailyRaw, reconciliation.ptDate),
+    reconciliation,
+  );
+  await redis
+    .multi()
+    .set(SYSTEM_HEALTH_LATCH_KEY, JSON.stringify(reconciliation.nextState))
+    .set(dailyKey, JSON.stringify(daily), "EX", SYSTEM_HEALTH_DAILY_TTL_SECONDS)
+    .exec();
 }
 const HEALTH_CHECK_GATE_INTERVAL_MS = 45 * 60 * 1000;
 const WRITE_GATE_DRIFT_LAST_NOTIFIED_KEY = "memory:health:write_gate_drift:last_notified";
@@ -1440,17 +1421,50 @@ export const checkSystemHealth = inngest.createFunction(
         : []),
     ];
 
-    const healthSignatureNow = healthSignature(degraded.map((service) => service.name));
-    const previousNotifyState = await withTiming(
+    const healthReconciliation = await withTiming(
       stepDurationsMs,
-      "core.read-health-notify-state",
-      async () => step.run("read-health-notify-state", async () => await readHealthNotifyState()),
+      "core.reconcile-health-transition-latch",
+      async () =>
+        step.run("reconcile-health-transition-latch", async () => {
+          const observedAt = new Date().toISOString();
+          return readSystemHealthReconciliation({ services, observedAt });
+        }),
     );
-    const notifyDecision = decideHealthNotification({
-      signature: healthSignatureNow,
-      previous: previousNotifyState,
-      nowMs: Date.now(),
-    });
+
+    await withTiming(stepDurationsMs, "core.record-health-transition-receipt", async () =>
+      step.run("record-health-transition-receipt", async () =>
+        emitOtelEvent({
+          level: degraded.length === 0 ? "info" : "warn",
+          source: "worker",
+          component: "check-system-health",
+          action: "system.health.observation.recorded",
+          success: true,
+          metadata: {
+            sourceEventId: event.id,
+            sourceEventName: eventName,
+            observedAt: healthReconciliation.observedAt,
+            ptDate: healthReconciliation.ptDate,
+            active: healthReconciliation.active.map((item) => ({
+              anomalyId: item.anomalyId,
+              component: item.component,
+              evidenceShape: item.evidenceShape,
+              severity: item.severity,
+            })),
+            decisions: healthReconciliation.decisions.map((item) => ({
+              anomalyId: item.anomalyId,
+              component: item.component,
+              deliver: item.deliver,
+              deliveryReason: item.deliveryReason,
+              evidenceShape: item.evidenceShape,
+              previousAnomalyId: item.previousAnomalyId ?? null,
+              repeatCount: item.repeatCount,
+              severity: item.severity,
+              transition: item.transition,
+            })),
+          },
+        })
+      )
+    );
 
     const gatewayCriticalDegrade = degraded.filter((service) =>
       service.name === "Gateway" || service.name === "Redis"
@@ -1802,193 +1816,68 @@ export const checkSystemHealth = inngest.createFunction(
       );
     }
 
-    // All healthy. Silent unless we are closing a complaint we already made.
-    if (degraded.length === 0) {
-      if (notifyDecision.kind === "recovery") {
-        await withTiming(stepDurationsMs, "core.notify-recovery", async () =>
-          step.run("notify-recovery", async () => {
-            const recovered = (previousNotifyState?.signature ?? "").split("|").filter(Boolean);
-            await pushGatewayEvent({
-              type: "system.health.recovered",
-              source: "inngest/check-system-health",
-              payload: {
-                prompt: [
-                  "## ✅ System Health Recovered",
-                  "",
-                  `Back to green: ${recovered.join(", ")}`,
-                ].join("\n"),
-                recovered,
-              },
-            });
-            await writeHealthNotifyState({ signature: "", notifiedAtMs: Date.now() });
+    const immediateTransitions = healthReconciliation.decisions.filter(
+      (item) => item.deliver,
+    );
+    if (immediateTransitions.length > 0) {
+      await withTiming(stepDurationsMs, "core.notify-health-transitions", async () =>
+        step.run("notify-health-transitions", async () => {
+          const message = formatHealthTransitionMessage(immediateTransitions);
+          const allResolved = immediateTransitions.every(
+            (item) => item.transition === "resolved",
+          );
+          await pushGatewayEvent({
+            type: allResolved
+              ? "system.health.recovered"
+              : "system.health.transition",
+            source: "inngest/check-system-health",
+            payload: {
+              prompt: message,
+              telegramMessage: message,
+              telegramFormat: "markdown",
+              immediateTelegram: true,
+              level: immediateTransitions.some(
+                (item) =>
+                  item.severity === "critical"
+                  && item.transition !== "resolved",
+              )
+                ? "fatal"
+                : allResolved
+                  ? "info"
+                  : "warn",
+              transitions: immediateTransitions.map((item) => ({
+                anomalyId: item.anomalyId,
+                component: item.component,
+                severity: item.severity,
+                transition: item.transition,
+              })),
+            },
+          });
+        })
+      );
+
+      const activeTransitions = immediateTransitions.filter(
+        (item) => item.transition !== "resolved",
+      );
+      if (activeTransitions.length > 0) {
+        await withTiming(stepDurationsMs, "core.notify-convex-health-transitions", async () =>
+          step.run("notify-convex-health-transitions", async () => {
+            await pushNotification(
+              "error",
+              `Health transition: ${activeTransitions.map((item) => item.component).join(", ")}`,
+              activeTransitions
+                .map((item) => `${item.anomalyId}: ${item.transition}`)
+                .join("\n"),
+            );
           })
         );
       }
-
-      // ADR-0085: trigger live network status collection after health checks.
-      await withTiming(stepDurationsMs, "core.emit-network-update", async () =>
-        step.sendEvent("emit-network-update", {
-          name: "system/network.update",
-          data: { source: "check-system-health", checkedAt: Date.now() },
-        })
-      );
-      await withTiming(stepDurationsMs, "core.record-health-check-result-healthy", async () =>
-        step.run("record-health-check-result-healthy", async () =>
-          recordHealthCheckResult("healthy", Date.now())
-        )
-      );
-      return { status: "noop", mode, slicePolicy, services, agentDispatchCanary, stepDurationsMs };
     }
 
-    // Filter: don't re-alert about things that already have tasks
-    const newDegraded = await withTiming(stepDurationsMs, "core.filter-against-tasks", async () =>
-      step.run("filter-against-tasks", async () => {
-        const tasks = await getCurrentTasks();
-        return degraded.filter((s) => !hasTaskMatching(tasks, s.name));
-      })
-    );
-
-    if (newDegraded.length === 0) {
-      // ADR-0085: trigger live network status collection after health checks.
-      await withTiming(stepDurationsMs, "core.emit-network-update", async () =>
-        step.sendEvent("emit-network-update", {
-          name: "system/network.update",
-          data: { source: "check-system-health", checkedAt: Date.now() },
-        })
-      );
-      await withTiming(
-        stepDurationsMs,
-        "core.record-health-check-result-tracked-degraded",
-        async () =>
-          step.run("record-health-check-result-tracked-degraded", async () =>
-            recordHealthCheckResult("degraded", Date.now())
-          ),
-      );
-      return {
-        status: "noop",
-        mode,
-        slicePolicy,
-        reason: "degraded but already tracked in tasks",
-        services,
-        agentDispatchCanary,
-        stepDurationsMs,
-      };
-    }
-
-    // Same failure set as last time we spoke, and the reminder window has not
-    // elapsed. Repeating it is how a real alert becomes background hum.
-    if (!notifyDecision.notify) {
-      await withTiming(stepDurationsMs, "core.record-health-check-result-unchanged", async () =>
-        step.run("record-health-check-result-unchanged", async () =>
-          recordHealthCheckResult("degraded", Date.now())
-        )
-      );
-      return {
-        status: "noop",
-        mode,
-        slicePolicy,
-        reason: "degraded set unchanged since last notification",
-        signature: healthSignatureNow,
-        services,
-        agentDispatchCanary,
-        stepDurationsMs,
-      };
-    }
-
-    // Something's down and NOT already tracked → alert gateway
-    const typedDegraded = newDegraded as unknown as ServiceStatus[];
-    const degradedNames = typedDegraded.map((s) => s.name);
-    const degradedDetails = typedDegraded.map((s) => `${s.name}: ${s.detail ?? "down"}`);
-    const criticalDown = typedDegraded.filter((service) =>
-      CRITICAL_COMPONENTS.has(service.name.toLowerCase())
-    );
-
-    await withTiming(stepDurationsMs, "core.notify-degradation", async () =>
-      step.run("notify-degradation", async () => {
-        const lines = [
-          "## 🚨 System Health Degradation",
-          "",
-          ...services.map((s) => {
-            const icon = s.ok ? "✅" : "❌";
-            const detail = s.detail ? ` — ${s.detail.slice(0, 100)}` : "";
-            return `- ${icon} **${s.name}**${detail}`;
-          }),
-        ];
-
-        await pushGatewayEvent({
-          type: "system.health.degraded",
-          source: "inngest/check-system-health",
-          payload: {
-            prompt: lines.join("\n"),
-            degraded: degraded.map((s) => s.name),
-            transition: notifyDecision.kind,
-          },
-        });
-        await writeHealthNotifyState({
-          signature: healthSignatureNow,
-          notifiedAtMs: Date.now(),
-        });
-      })
-    );
-
-    if (criticalDown.length > 0) {
-      await withTiming(stepDurationsMs, "core.notify-fatal-immediate", async () =>
-        step.run("notify-fatal-immediate", async () => {
-          const prompt = [
-            "## ☠️ Critical Service Failure",
-            "",
-            ...criticalDown.map((service) => `- ${service.name}: ${service.detail ?? "down"}`),
-            "",
-            "Immediate attention required. This alert bypassed normal digest batching.",
-          ].join("\n");
-
-          await pushGatewayEvent({
-            type: "system.fatal",
-            source: "inngest/check-system-health",
-            payload: {
-              prompt,
-              level: "fatal",
-              immediateTelegram: true,
-              critical: criticalDown.map((service) => service.name),
-            },
-          });
-        })
-      );
-
-      await withTiming(stepDurationsMs, "core.emit-fatal-service-alert", async () =>
-        step.run("emit-fatal-service-alert", async () => {
-          await emitOtelEvent({
-            level: "fatal",
-            source: "worker",
-            component: "check-system-health",
-            action: "system.health.critical_failure",
-            success: false,
-            error: criticalDown.map((service) => service.name).join(", "),
-            metadata: {
-              runContext: {
-                runContextKey: flowContext.runContextKey,
-                flowTrace: flowContext.flowTrace,
-                sourceEventName: flowContext.sourceEventName,
-                sourceEventId: flowContext.sourceEventId,
-                attempt: flowContext.attempt,
-              },
-              mode,
-              criticalDown,
-            },
-          });
-        })
-      );
-    }
-
-    // Push degradation notification to Convex dashboard — ADR-0075
-    await withTiming(stepDurationsMs, "core.notify-convex-degradation", async () =>
-      step.run("notify-convex-degradation", async () => {
-        await pushNotification(
-          "error",
-          `Health degradation: ${degradedNames.join(", ")}`,
-          degradedDetails.join("\n")
-        );
-      })
+    await withTiming(stepDurationsMs, "core.commit-health-transition-latch", async () =>
+      step.run("commit-health-transition-latch", async () =>
+        commitSystemHealthReconciliation(healthReconciliation)
+      )
     );
 
     // ADR-0085: trigger live network status collection after health checks.
@@ -1998,17 +1887,21 @@ export const checkSystemHealth = inngest.createFunction(
         data: { source: "check-system-health", checkedAt: Date.now() },
       })
     );
-    await withTiming(stepDurationsMs, "core.record-health-check-result-degraded", async () =>
-      step.run("record-health-check-result-degraded", async () =>
-        recordHealthCheckResult("degraded", Date.now())
+    await withTiming(stepDurationsMs, "core.record-health-check-result", async () =>
+      step.run("record-health-check-result", async () =>
+        recordHealthCheckResult(
+          degraded.length === 0 ? "healthy" : "degraded",
+          Date.now(),
+        )
       )
     );
 
     return {
-      status: "degraded",
+      status: degraded.length === 0 ? "noop" : "degraded",
       mode,
       slicePolicy,
       degraded: degraded.map((s) => s.name),
+      healthTransitions: healthReconciliation.decisions,
       services,
       otelErrorRate,
       agentDispatchCanary,
@@ -2032,6 +1925,99 @@ export const __checkSystemHealthTestUtils = {
   classifyHealthSummary,
   isCriticalHealthComponent,
 };
+
+export const systemHealthDailyDigest = inngest.createFunction(
+  {
+    id: "check/system-health-daily-digest",
+    concurrency: { limit: 1 },
+    retries: 1,
+  },
+  { cron: "TZ=America/Los_Angeles 5 0 * * *" },
+  async ({ step, event }) => {
+    const digestTimestamp = await step.run(
+      "resolve-system-health-digest-time",
+      () => event.ts ?? Date.now(),
+    );
+    const date = previousPtDate(digestTimestamp);
+    const prepared = await step.run("prepare-system-health-daily-digest", async () => {
+      const redis = getRedisClient();
+      const closedKey = systemHealthDailyClosedKey(date);
+      if (await redis.get(closedKey)) {
+        return {
+          status: "noop" as const,
+          reason: "digest already closed" as const,
+          date,
+        };
+      }
+
+      const [dailyRaw, latchRaw] = await redis.mget(
+        systemHealthDailyKey(date),
+        SYSTEM_HEALTH_LATCH_KEY,
+      );
+      const observedAt = new Date(digestTimestamp).toISOString();
+      const aggregate = parseDailyAggregate(dailyRaw ?? null, date);
+      const latchState = parseHealthLatchState(latchRaw ?? null, observedAt);
+      return {
+        status: "ready" as const,
+        date,
+        aggregate,
+        latchState,
+        message: formatSystemHealthDailyDigest({ aggregate, latchState }),
+      };
+    });
+
+    if (prepared.status === "noop") return prepared;
+
+    await step.run("deliver-system-health-daily-digest", async () => {
+      await pushGatewayEvent({
+        type: "system.health.daily-digest",
+        source: "inngest/check-system-health",
+        payload: {
+          prompt: prepared.message,
+          telegramMessage: prepared.message,
+          telegramFormat: "markdown",
+          immediateTelegram: true,
+          level: "info",
+          date: prepared.date,
+          observationCount: prepared.aggregate.observationCount,
+          immediateDmCount: prepared.aggregate.immediateDmCount,
+        },
+      });
+      await getRedisClient().set(
+        systemHealthDailyClosedKey(prepared.date),
+        new Date(digestTimestamp).toISOString(),
+        "EX",
+        SYSTEM_HEALTH_DAILY_TTL_SECONDS,
+      );
+    });
+
+    await step.run("record-system-health-daily-digest", async () =>
+      emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "check-system-health",
+        action: "system.health.daily_digest.closed",
+        success: true,
+        metadata: {
+          date: prepared.date,
+          observationCount: prepared.aggregate.observationCount,
+          allGreenCount: prepared.aggregate.allGreenCount,
+          degradedCount: prepared.aggregate.degradedCount,
+          immediateDmCount: prepared.aggregate.immediateDmCount,
+          transitions: prepared.aggregate.transitions,
+          repeatsByAnomaly: prepared.aggregate.repeatsByAnomaly,
+        },
+      })
+    );
+
+    return {
+      status: "delivered",
+      date: prepared.date,
+      observationCount: prepared.aggregate.observationCount,
+      immediateDmCount: prepared.aggregate.immediateDmCount,
+    };
+  },
+);
 
 export const checkSystemHealthSignalsSchedule = inngest.createFunction(
   { id: "check/system-health-signals-schedule" },

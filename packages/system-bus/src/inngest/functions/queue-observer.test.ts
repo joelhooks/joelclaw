@@ -180,6 +180,12 @@ describe("queue observer config and control adapter", () => {
     })) as typeof testUtils.deps.getQueueStats;
     testUtils.deps.listMessages = (async () => []) as typeof testUtils.deps.listMessages;
     testUtils.deps.listActiveQueueFamilyPauses = (async () => []) as typeof testUtils.deps.listActiveQueueFamilyPauses;
+    testUtils.deps.search = (async () => ({
+      found: 0,
+      hits: [],
+      page: 1,
+      search_time_ms: 0,
+    })) as typeof testUtils.deps.search;
     testUtils.deps.pauseQueueFamily = (async () => {
       pauseCalls += 1;
       throw new Error("manual probe must not mutate queue control state");

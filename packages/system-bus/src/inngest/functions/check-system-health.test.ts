@@ -5,9 +5,6 @@ import {
 } from "@joelclaw/endpoint-resolver";
 import {
   __checkSystemHealthTestUtils,
-  decideHealthNotification,
-  HEALTH_RENOTIFY_AFTER_MS,
-  healthSignature,
   resolveHealthCheckMode,
   shouldSkipHealthCheckSchedule,
 } from "./check-system-health";
@@ -411,77 +408,5 @@ describe("check/system-health agent secrets parsing", () => {
 
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("failed to get health report");
-  });
-});
-
-describe("check/system-health notification transitions", () => {
-  const nowMs = 1_800_000_000_000;
-
-  test("signature ignores order and case", () => {
-    expect(healthSignature(["Front Projection", "Redis"]))
-      .toBe(healthSignature(["redis", "front projection"]));
-  });
-
-  test("signature of an all-healthy run is empty", () => {
-    expect(healthSignature([])).toBe("");
-  });
-
-  test("first degradation notifies", () => {
-    expect(decideHealthNotification({ signature: "redis", previous: null, nowMs }))
-      .toEqual({ notify: true, kind: "degradation" });
-  });
-
-  test("the same degraded set stays quiet", () => {
-    // The whole point: Front Projection flapped stale for days and announced
-    // itself on every run, 46 times in 40 hours.
-    expect(decideHealthNotification({
-      signature: "front projection",
-      previous: { signature: "front projection", notifiedAtMs: nowMs - 60_000 },
-      nowMs,
-    })).toEqual({ notify: false, kind: "none" });
-  });
-
-  test("a new service joining the failure set notifies", () => {
-    expect(decideHealthNotification({
-      signature: "front projection|worker",
-      previous: { signature: "front projection", notifiedAtMs: nowMs - 60_000 },
-      nowMs,
-    })).toEqual({ notify: true, kind: "degradation" });
-  });
-
-  test("partial recovery is a change worth reporting", () => {
-    expect(decideHealthNotification({
-      signature: "worker",
-      previous: { signature: "front projection|worker", notifiedAtMs: nowMs - 60_000 },
-      nowMs,
-    })).toEqual({ notify: true, kind: "degradation" });
-  });
-
-  test("a long outage still reminds once the window elapses", () => {
-    expect(decideHealthNotification({
-      signature: "worker",
-      previous: { signature: "worker", notifiedAtMs: nowMs - HEALTH_RENOTIFY_AFTER_MS },
-      nowMs,
-    })).toEqual({ notify: true, kind: "reminder" });
-  });
-
-  test("full recovery notifies exactly once", () => {
-    const recovery = decideHealthNotification({
-      signature: "",
-      previous: { signature: "worker", notifiedAtMs: nowMs - 60_000 },
-      nowMs,
-    });
-    expect(recovery).toEqual({ notify: true, kind: "recovery" });
-
-    expect(decideHealthNotification({
-      signature: "",
-      previous: { signature: "", notifiedAtMs: nowMs },
-      nowMs,
-    })).toEqual({ notify: false, kind: "none" });
-  });
-
-  test("a healthy system with no history says nothing", () => {
-    expect(decideHealthNotification({ signature: "", previous: null, nowMs }))
-      .toEqual({ notify: false, kind: "none" });
   });
 });

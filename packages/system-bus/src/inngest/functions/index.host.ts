@@ -31,6 +31,7 @@ import { checkSessions } from "./check-sessions";
 import {
   checkSystemHealth,
   checkSystemHealthSignalsSchedule,
+  systemHealthDailyDigest,
 } from "./check-system-health";
 import { checkTriggers } from "./check-triggers";
 import { checkVaultSync } from "./check-vault-sync";
@@ -280,6 +281,7 @@ export const hostFunctionDefinitions = [
   functionRegistrationAndRunHealth,
   checkSystemHealth,
   checkSystemHealthSignalsSchedule,
+  systemHealthDailyDigest,
   networkStatusUpdate,
   noiseRateGuard,
   checkVaultSync,
