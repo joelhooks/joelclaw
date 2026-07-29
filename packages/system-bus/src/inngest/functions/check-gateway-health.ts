@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { mkdir, rename, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import Redis from "ioredis";
 
 /**
@@ -17,19 +19,23 @@ const GATEWAY_MONITOR_EVENT = "gateway/health.check.requested";
 
 const GENERAL_STREAK_KEY = "gateway:health:monitor:general-streak";
 const GENERAL_ALERT_COOLDOWN_KEY = "gateway:health:monitor:general-alert-cooldown";
-const GENERAL_RESTART_COOLDOWN_KEY = "gateway:health:monitor:restart-cooldown";
 const CHANNEL_STREAK_KEY_PREFIX = "gateway:health:monitor:channel-streak:";
 const CHANNEL_ALERT_COOLDOWN_KEY = "gateway:health:monitor:channel-alert-cooldown";
 const MUTED_CHANNELS_KEY = "gateway:health:muted-channels";
+const GATEWAY_OPERATOR_ACTION_RECEIPT_DIR = process.env.GATEWAY_HEALTH_RECEIPT_DIR
+  ?? join(
+    process.env.HOME || "/Users/joel",
+    ".joelclaw",
+    "receipts",
+    "gateway-health-operator-actions",
+  );
 
 const STREAK_TTL_SECONDS = 6 * 60 * 60;
 const GENERAL_ALERT_COOLDOWN_SECONDS = 20 * 60;
 const CHANNEL_ALERT_COOLDOWN_SECONDS = 30 * 60;
-const RESTART_COOLDOWN_SECONDS = 15 * 60;
 
 const TYPESENSE_QUERY_BY = "action,component,source,error,metadata_json,search_text";
 const CRITICAL_GENERAL_LAYERS = new Set(["process", "cli-status", "redis-state"]);
-const AUTO_RESTART_GENERAL_LAYERS = new Set(["process", "cli-status", "redis-state"]);
 
 function asPositiveInt(raw: string | undefined, fallback: number, min = 1): number {
   if (!raw) return fallback;
@@ -52,7 +58,6 @@ const CHANNEL_WINDOW_MINUTES = asPositiveInt(process.env.GATEWAY_CHANNEL_HEALTH_
 const CHANNEL_DEGRADED_ERROR_THRESHOLD = asPositiveInt(process.env.GATEWAY_CHANNEL_DEGRADED_THRESHOLD, 3, 1);
 const CHANNEL_FAILED_ERROR_THRESHOLD = asPositiveInt(process.env.GATEWAY_CHANNEL_FAILED_THRESHOLD, 6, 2);
 const GENERAL_ALERT_STREAK_THRESHOLD = asPositiveInt(process.env.GATEWAY_GENERAL_ALERT_STREAK_THRESHOLD, 2, 1);
-const GENERAL_RESTART_STREAK_THRESHOLD = asPositiveInt(process.env.GATEWAY_GENERAL_RESTART_STREAK_THRESHOLD, 2, 1);
 const CHANNEL_ALERT_STREAK_THRESHOLD = asPositiveInt(process.env.GATEWAY_CHANNEL_ALERT_STREAK_THRESHOLD, 2, 1);
 
 let redisClient: Redis | null = null;
@@ -119,13 +124,22 @@ type ChannelHealthSummary = {
   streak: number;
 };
 
-type RestartAttemptSummary = {
-  attempted: boolean;
-  cooldownBlocked?: boolean;
-  restartError?: string;
-  postHealthy?: boolean;
-  postSummary?: string;
-  postCriticalFailures?: string[];
+type GatewayOperatorActionReceipt = {
+  version: 1;
+  action: "gateway.health.operator_action.requested";
+  source: "inngest/check-gateway-health";
+  sourceEventId: string;
+  observedAt: string;
+  generalStreak: number;
+  diagnoseSummary?: string;
+  diagnoseError?: string;
+  criticalFailures: Array<{
+    layer: string;
+    status: GatewayLayerStatus;
+    detail: string;
+  }>;
+  automaticRestart: false;
+  requestedAction: string;
 };
 
 const CHANNEL_PROBES: ChannelProbeConfig[] = [
@@ -194,10 +208,6 @@ const CHANNEL_PROBES: ChannelProbeConfig[] = [
 
 const CHANNEL_IDS = new Set<ChannelProbeConfig["id"]>(CHANNEL_PROBES.map((probe) => probe.id));
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function toSafeText(value: unknown, fallback = ""): string {
   if (typeof value !== "string") return fallback;
   const trimmed = value.trim();
@@ -222,6 +232,66 @@ function parseCriticalFailures(result: GatewayDiagnoseResult | undefined): Gatew
   return result.layers.filter(
     (layer) => CRITICAL_GENERAL_LAYERS.has(layer.layer) && layer.status === "failed",
   );
+}
+
+function buildOperatorActionReceipt(args: {
+  sourceEventId: string;
+  observedAt: string;
+  generalStreak: number;
+  diagnoseSummary?: string;
+  diagnoseError?: string;
+  criticalFailures: GatewayDiagnoseLayer[];
+}): GatewayOperatorActionReceipt {
+  return {
+    version: 1,
+    action: "gateway.health.operator_action.requested",
+    source: "inngest/check-gateway-health",
+    sourceEventId: args.sourceEventId,
+    observedAt: args.observedAt,
+    generalStreak: args.generalStreak,
+    diagnoseSummary: args.diagnoseSummary,
+    diagnoseError: args.diagnoseError,
+    criticalFailures: args.criticalFailures.map((layer) => ({
+      layer: layer.layer,
+      status: layer.status,
+      detail: layer.detail,
+    })),
+    automaticRestart: false,
+    requestedAction: "Inspect the gateway diagnosis and choose the recovery action.",
+  };
+}
+
+function shouldRequestOperatorAction(args: {
+  generalFailure: boolean;
+  generalStreak: number;
+  alertSuppressed: boolean;
+  threshold?: number;
+}): boolean {
+  const threshold = args.threshold ?? GENERAL_ALERT_STREAK_THRESHOLD;
+  return !args.alertSuppressed && args.generalFailure && args.generalStreak >= threshold;
+}
+
+function operatorActionReceiptPath(
+  sourceEventId: string,
+  receiptDir = GATEWAY_OPERATOR_ACTION_RECEIPT_DIR,
+): string {
+  const safeEventId = sourceEventId.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return join(receiptDir, `${safeEventId}.json`);
+}
+
+async function writeOperatorActionReceipt(
+  receipt: GatewayOperatorActionReceipt,
+  receiptDir = GATEWAY_OPERATOR_ACTION_RECEIPT_DIR,
+): Promise<string> {
+  await mkdir(receiptDir, { recursive: true, mode: 0o700 });
+  const receiptPath = operatorActionReceiptPath(receipt.sourceEventId, receiptDir);
+  const temporaryPath = `${receiptPath}.${process.pid}.tmp`;
+  await writeFile(temporaryPath, `${JSON.stringify(receipt, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await rename(temporaryPath, receiptPath);
+  return receiptPath;
 }
 
 function runJoelclawEnvelope<T>(args: string[], timeoutMs: number): CliResult<T> {
@@ -440,7 +510,6 @@ function buildGeneralAlertPrompt(args: {
   streak: number;
   summary?: string;
   criticalFailures: GatewayDiagnoseLayer[];
-  restartAttempt?: RestartAttemptSummary;
   diagnoseError?: string;
 }): string {
   const lines = [
@@ -464,37 +533,11 @@ function buildGeneralAlertPrompt(args: {
     }
   }
 
-  if (args.restartAttempt?.attempted) {
-    if (args.restartAttempt.restartError) {
-      lines.push("", `Auto-restart attempted: failed (${truncate(args.restartAttempt.restartError, 160)})`);
-    } else {
-      const post = args.restartAttempt.postHealthy === true ? "healthy" : "still degraded";
-      lines.push("", `Auto-restart attempted: ${post}`);
-    }
-  }
-
-  lines.push("", "Run `joelclaw gateway diagnose --hours 1 --lines 200` for deeper trace.");
-  return lines.join("\n");
-}
-
-function buildSelfHealedPrompt(args: {
-  summary?: string;
-  restartAttempt: RestartAttemptSummary;
-}): string {
-  const lines = [
-    "## ✅ Gateway Self-Healed",
+  lines.push(
     "",
-    `Auto-restart succeeded. Post-check status: ${args.restartAttempt.postHealthy ? "healthy" : "unknown"}`,
-  ];
-
-  if (args.summary) {
-    lines.push(`Summary: ${args.summary}`);
-  }
-
-  if (args.restartAttempt.postCriticalFailures && args.restartAttempt.postCriticalFailures.length > 0) {
-    lines.push("", `Residual critical findings: ${args.restartAttempt.postCriticalFailures.join(", ")}`);
-  }
-
+    "Operator action required. This checker will not restart the gateway.",
+    "Run `joelclaw gateway diagnose --hours 1 --lines 200` for the deeper trace.",
+  );
   return lines.join("\n");
 }
 
@@ -521,8 +564,13 @@ function buildChannelAlertPrompt(channels: ChannelHealthSummary[]): string {
 }
 
 export const __checkGatewayHealthTestUtils = {
+  buildGeneralAlertPrompt,
+  buildOperatorActionReceipt,
+  operatorActionReceiptPath,
   parseMutedChannels,
   partitionAlertableChannels,
+  shouldRequestOperatorAction,
+  writeOperatorActionReceipt,
 };
 
 export const checkGatewayHealth = inngest.createFunction(
@@ -532,7 +580,7 @@ export const checkGatewayHealth = inngest.createFunction(
     retries: 1,
   },
   { event: GATEWAY_MONITOR_EVENT },
-  async ({ step }) => {
+  async ({ event, step }) => {
     const mutedChannels = await step.run("load-muted-channels", async () =>
       loadMutedChannelsFromRedis()
     );
@@ -547,108 +595,23 @@ export const checkGatewayHealth = inngest.createFunction(
     let diagnoseError: string | undefined;
     let diagnoseSummary: string | undefined;
     let criticalFailures: GatewayDiagnoseLayer[] = [];
-    let restartEligibleFailures: GatewayDiagnoseLayer[] = [];
-    let generalFailure = false;
 
     if (diagnose.ok) {
       diagnoseSummary = diagnose.result.summary;
       criticalFailures = parseCriticalFailures(diagnose.result);
-      restartEligibleFailures = criticalFailures.filter((layer) =>
-        AUTO_RESTART_GENERAL_LAYERS.has(layer.layer)
-      );
-      generalFailure = criticalFailures.length > 0;
     } else {
       diagnoseError = diagnose.error;
 
       if (diagnose.result) {
         diagnoseSummary = diagnose.result.summary;
         criticalFailures = parseCriticalFailures(diagnose.result);
-        restartEligibleFailures = criticalFailures.filter((layer) =>
-          AUTO_RESTART_GENERAL_LAYERS.has(layer.layer)
-        );
       }
-
-      // Treat diagnose command failure as degraded, but only auto-restart
-      // when failures include restart-eligible layers (process/cli/redis)
-      // or when layer details are unavailable.
-      generalFailure = true;
     }
+    const generalFailure = !diagnose.ok || criticalFailures.length > 0;
 
-    let generalStreak = await step.run("update-general-streak", async () =>
+    const generalStreak = await step.run("update-general-streak", async () =>
       setFailureStreak(GENERAL_STREAK_KEY, generalFailure)
     );
-
-    const shouldAutoRestart = generalFailure
-      && generalStreak >= GENERAL_RESTART_STREAK_THRESHOLD
-      && (restartEligibleFailures.length > 0 || criticalFailures.length === 0);
-
-    let restartAttempt: RestartAttemptSummary | undefined;
-
-    if (shouldAutoRestart) {
-      restartAttempt = await step.run("maybe-auto-restart-gateway", async () => {
-        const cooldownClaimed = await claimCooldown(GENERAL_RESTART_COOLDOWN_KEY, RESTART_COOLDOWN_SECONDS);
-        if (!cooldownClaimed) {
-          return {
-            attempted: false,
-            cooldownBlocked: true,
-          } satisfies RestartAttemptSummary;
-        }
-
-        const restartResult = runJoelclawEnvelope<Record<string, unknown>>(
-          ["gateway", "restart"],
-          90_000,
-        );
-
-        if (!restartResult.ok) {
-          return {
-            attempted: true,
-            restartError: restartResult.error,
-          } satisfies RestartAttemptSummary;
-        }
-
-        await sleep(6_000);
-
-        const postDiagnose = runJoelclawEnvelope<GatewayDiagnoseResult>(
-          ["gateway", "diagnose", "--hours", "1", "--lines", "120"],
-          60_000,
-        );
-
-        if (!postDiagnose.ok) {
-          return {
-            attempted: true,
-            restartError: `post-check failed: ${postDiagnose.error}`,
-          } satisfies RestartAttemptSummary;
-        }
-
-        if (!postDiagnose.result) {
-          return {
-            attempted: true,
-            restartError: "post-check returned no result",
-          } satisfies RestartAttemptSummary;
-        }
-
-        const postCritical = parseCriticalFailures(postDiagnose.result).map((layer) =>
-          `${layer.layer}:${truncate(layer.detail, 80)}`
-        );
-
-        return {
-          attempted: true,
-          postHealthy: postCritical.length === 0,
-          postSummary: postDiagnose.result.summary,
-          postCriticalFailures: postCritical,
-        } satisfies RestartAttemptSummary;
-      });
-
-      if (restartAttempt.postHealthy) {
-        generalFailure = false;
-        diagnoseError = undefined;
-        criticalFailures = [];
-        restartEligibleFailures = [];
-        generalStreak = await step.run("clear-general-streak-after-recovery", async () =>
-          setFailureStreak(GENERAL_STREAK_KEY, false)
-        );
-      }
-    }
 
     const channelHealth = await step.run("probe-channel-health", async () => {
       if (!CHANNEL_OTEL_PROBES_ENABLED) {
@@ -691,6 +654,56 @@ export const checkGatewayHealth = inngest.createFunction(
       isAlertSuppressed("check-gateway-health")
     );
 
+    const operatorActionCooldownClaimed = await step.run(
+      "claim-general-operator-action-cooldown",
+      async () => {
+        if (!shouldRequestOperatorAction({
+          generalFailure,
+          generalStreak,
+          alertSuppressed,
+        })) return false;
+        return claimCooldown(GENERAL_ALERT_COOLDOWN_KEY, GENERAL_ALERT_COOLDOWN_SECONDS);
+      },
+    );
+
+    const operatorActionReceipt = operatorActionCooldownClaimed
+      ? await step.run("write-general-operator-action-receipt", async () => {
+          const observedAt = new Date().toISOString();
+          const receipt = buildOperatorActionReceipt({
+            sourceEventId: event.id ?? `${GATEWAY_MONITOR_EVENT}-${observedAt}`,
+            observedAt,
+            generalStreak,
+            diagnoseSummary,
+            diagnoseError,
+            criticalFailures,
+          });
+          const receiptPath = await writeOperatorActionReceipt(receipt);
+          return { ...receipt, receiptPath };
+        })
+      : undefined;
+
+    if (operatorActionReceipt) {
+      await step.run("emit-general-operator-action-otel", async () => {
+        await emitOtelEvent({
+          level: "error",
+          source: "worker",
+          component: "check-gateway-health",
+          action: "gateway.health.operator_action.requested",
+          success: true,
+          metadata: {
+            sourceEventId: operatorActionReceipt.sourceEventId,
+            observedAt: operatorActionReceipt.observedAt,
+            generalStreak,
+            diagnoseSummary,
+            diagnoseError,
+            automaticRestart: false,
+            receiptPath: operatorActionReceipt.receiptPath,
+            criticalFailures: operatorActionReceipt.criticalFailures,
+          },
+        });
+      });
+    }
+
     const channelAlertSent = await step.run("maybe-alert-channel-degradation", async () => {
       if (alertSuppressed) return false;
       if (alertableChannels.length === 0) return false;
@@ -716,11 +729,7 @@ export const checkGatewayHealth = inngest.createFunction(
     });
 
     const generalAlertSent = await step.run("maybe-alert-general-degradation", async () => {
-      if (alertSuppressed) return false;
-      if (!generalFailure || generalStreak < GENERAL_ALERT_STREAK_THRESHOLD) return false;
-
-      const shouldAlert = await claimCooldown(GENERAL_ALERT_COOLDOWN_KEY, GENERAL_ALERT_COOLDOWN_SECONDS);
-      if (!shouldAlert) return false;
+      if (!operatorActionReceipt) return false;
 
       await pushGatewayEvent({
         type: "gateway.health.degraded",
@@ -730,7 +739,6 @@ export const checkGatewayHealth = inngest.createFunction(
             streak: generalStreak,
             summary: diagnoseSummary,
             criticalFailures,
-            restartAttempt,
             diagnoseError,
           }),
           level: "error",
@@ -738,28 +746,8 @@ export const checkGatewayHealth = inngest.createFunction(
           generalStreak,
           criticalFailures,
           diagnoseError,
-          restartAttempt,
-        },
-      });
-
-      return true;
-    });
-
-    const selfHealedSent = await step.run("maybe-notify-self-healed", async () => {
-      if (alertSuppressed) return false;
-      if (!restartAttempt?.attempted || restartAttempt.postHealthy !== true) return false;
-
-      await pushGatewayEvent({
-        type: "gateway.health.self-healed",
-        source: "inngest/check-gateway-health",
-        payload: {
-          prompt: buildSelfHealedPrompt({
-            summary: restartAttempt.postSummary ?? diagnoseSummary,
-            restartAttempt,
-          }),
-          level: "info",
-          immediateTelegram: false,
-          restartAttempt,
+          automaticRestart: false,
+          operatorActionReceiptPath: operatorActionReceipt.receiptPath,
         },
       });
 
@@ -789,7 +777,9 @@ export const checkGatewayHealth = inngest.createFunction(
           generalStreak,
           generalAlertSent,
           channelAlertSent,
-          selfHealedSent,
+          operatorActionRequested: operatorActionReceipt != null,
+          operatorActionReceiptPath: operatorActionReceipt?.receiptPath,
+          automaticRestart: false,
           mutedChannels,
           alertableChannels: alertableChannels.map((channel) => ({
             channel: channel.channel,
@@ -805,13 +795,7 @@ export const checkGatewayHealth = inngest.createFunction(
             successCount: channel.successCount,
             streak: channel.streak,
           })),
-          restartAttempt,
           criticalFailures: criticalFailures.map((layer) => ({
-            layer: layer.layer,
-            status: layer.status,
-            detail: layer.detail,
-          })),
-          restartEligibleFailures: restartEligibleFailures.map((layer) => ({
             layer: layer.layer,
             status: layer.status,
             detail: layer.detail,
@@ -842,15 +826,12 @@ export const checkGatewayHealth = inngest.createFunction(
           layer: layer.layer,
           detail: layer.detail,
         })),
-        restartEligibleFailures: restartEligibleFailures.map((layer) => ({
-          layer: layer.layer,
-          detail: layer.detail,
-        })),
         diagnoseError,
         diagnoseSummary,
-        restartAttempt,
+        automaticRestart: false,
+        operatorActionRequested: operatorActionReceipt != null,
+        operatorActionReceiptPath: operatorActionReceipt?.receiptPath,
         alertSent: generalAlertSent,
-        selfHealedSent,
       },
       channels: {
         alertSent: channelAlertSent,
