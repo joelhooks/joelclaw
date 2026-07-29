@@ -53,3 +53,11 @@ Noted cut: the old "Steering Cadence" section (check-ins every 60–120s, the
 frenzied-behavior stop rule) was removed wholesale — the cadence mandate was
 itself chatter under the bar, but the frenzied-behavior stop was collateral;
 restore it separately if missed.
+
+**Deploy correction (steering, same day):** the live loop never reads
+`roles/gateway.md` — its steering prose is the plugin agent body plus
+`prompts/identity.md` / `vocabulary.md` / `judgment.md`, loaded from disk by
+the SessionStart hook each cycle. The task file pointed the worker at the
+wrong surface (steering's recon error, not the worker's). Steering ported the
+settlement into those four plugin files; `roles/gateway.md` keeps the rewrite
+as the long-form reference it always was.
