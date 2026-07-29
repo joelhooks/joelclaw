@@ -13,6 +13,7 @@ import { normalizeSdkInboundEvent } from "./chat-sdk-inbound/normalize";
 import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
 import {
   createHeartbeatGateState,
+  DEFAULT_FALLBACK_COALESCE_MS,
   DEFAULT_HEARTBEAT_BLIP_GRACE_MS,
   FALLBACK_PREFIX,
   formatFallbackText,
@@ -58,6 +59,32 @@ function frozenClock(start = Date.parse("2026-07-21T18:12:00.000Z")) {
     get current() {
       return current;
     },
+  };
+}
+
+function fallbackScheduleHarness() {
+  const scheduled: Array<{
+    cancelled: boolean;
+    readonly delayMs: number;
+    readonly task: () => Promise<void>;
+  }> = [];
+  return {
+    schedule: (task: () => Promise<void>, delayMs: number) => {
+      const entry = { cancelled: false, delayMs, task };
+      scheduled.push(entry);
+      return {
+        cancel: () => {
+          entry.cancelled = true;
+        },
+      };
+    },
+    async flushLatest() {
+      const entry = scheduled.findLast((candidate) => !candidate.cancelled);
+      if (!entry) throw new Error("no scheduled fallback batch");
+      entry.cancelled = true;
+      await entry.task();
+    },
+    scheduled,
   };
 }
 
@@ -411,7 +438,7 @@ describe("gateway transport slim-down seams", () => {
     });
   });
 
-  test("uses verbatim stale-heartbeat fallback, then journals and marks it once", async () => {
+  test("sends the first stale-heartbeat fallback summary immediately, then marks it once", async () => {
     const calls: string[] = [];
     const { events, eventLog } = eventLogHarness(calls);
     const posts: unknown[] = [];
@@ -447,7 +474,14 @@ describe("gateway transport slim-down seams", () => {
     })(facts);
 
     expect(result.disposition).toBe("fallback");
-    expect(posts).toEqual([{ raw: `${FALLBACK_PREFIX} ${facts.text}` }]);
+    expect(posts).toEqual([{
+      raw: [
+        `${FALLBACK_PREFIX} gateway unreachable — 1 message held`,
+        "Sources: deploy-worker × 1",
+        "Urgent/critical subjects:",
+        "- deploy-worker: deploy failed",
+      ].join("\n"),
+    }]);
     expect(JSON.stringify(posts)).not.toContain("privateDiagnostic");
     expect(calls).toEqual([
       "append:message.requested",
@@ -462,6 +496,8 @@ describe("gateway transport slim-down seams", () => {
       flowId: facts.flowId,
       payload: {
         fallback: true,
+        heldCount: 1,
+        sourceCounts: { "deploy-worker": 1 },
         outcome: "confirmed",
         heartbeatStaleForMs: 60_000,
         heartbeatGateReason: "stale",
@@ -659,7 +695,7 @@ describe("gateway transport slim-down seams", () => {
     });
   });
 
-  test("summarizes routine machine noise instead of dumping full health markdown", async () => {
+  test("summarizes fallback facts instead of dumping health markdown", async () => {
     const posts: unknown[] = [];
     const { eventLog } = eventLogHarness();
     const clock = frozenClock();
@@ -681,7 +717,10 @@ describe("gateway transport slim-down seams", () => {
     };
 
     expect(formatFallbackText(healthFacts)).toBe(
-      `System Health [flow ${healthFacts.flowId}]`,
+      [
+        "gateway unreachable — 1 message held",
+        "Sources: inngest/check-system-health × 1",
+      ].join("\n"),
     );
 
     const result = await makeSlimNotifyIngress({
@@ -704,57 +743,273 @@ describe("gateway transport slim-down seams", () => {
     })(healthFacts);
 
     expect(result.disposition).toBe("fallback");
-    expect(posts).toEqual([`System Health [flow ${healthFacts.flowId}]`]);
+    expect(posts).toEqual([[
+      "gateway unreachable — 1 message held",
+      "Sources: inngest/check-system-health × 1",
+    ].join("\n")]);
     expect(JSON.stringify(posts)).not.toContain("NAS: ok");
   });
 
-  test("coalesces repeated identical machine fallbacks inside the window", async () => {
-    const posts: string[] = [];
+  test("uses a rolling ten-minute window and writes receipts only after the summary sends", async () => {
+    const posts: unknown[] = [];
     const { events, eventLog } = eventLogHarness();
     const clock = frozenClock();
+    const scheduler = fallbackScheduleHarness();
     const gateState = createHeartbeatGateState();
-    // Confirmed absent so the second call skips another blip sleep.
     gateState.confirmedAbsentSince = clock.current - 30_000;
-
-    const healthFacts: ProducerFacts = {
-      ...facts,
-      source: "inngest/check-system-health",
-      origin: { ...origin, producer: "inngest/check-system-health" },
-      text: "## System Health\n\nall green",
-      evidence: {},
-    };
+    const fallback = makeRawTelegramFallbackSender({
+      adapter: {
+        openDM: async () => "telegram:test",
+        postMessage: async (_threadId, content) => {
+          posts.push(content);
+          return { id: `telegram:msg:${posts.length}`, threadId: "telegram:test" };
+        },
+      },
+      recipientId: "test",
+      journal: { record: async () => ({ persisted: true }) },
+      eventLog,
+    });
 
     const ingest = makeSlimNotifyIngress({
       eventLog,
       heartbeatExists: async () => false,
       fallbackChannel: "telegram",
-      sendRawTelegramFallback: async (input) => {
-        posts.push(input.text);
-        return {
-          flowId: input.flowId,
-          platform: "telegram",
-          platformMessageId: `telegram:msg:${posts.length}`,
-          threadId: "telegram:7718912466",
-        };
-      },
+      sendRawTelegramFallback: fallback,
       now: clock.now,
       wait: clock.wait,
       blipGraceMs: 0,
-      coalesceWindowMs: 60_000,
+      coalesceWindowMs: DEFAULT_FALLBACK_COALESCE_MS,
+      scheduleFallbackBatch: scheduler.schedule,
       gateState,
     });
 
-    const first = await ingest({ ...healthFacts, eventId: "health:a", flowId: "health:a" });
-    const second = await ingest({ ...healthFacts, eventId: "health:b", flowId: "health:b" });
+    const first = await ingest({ ...facts, eventId: "fallback:a", flowId: "fallback:a" });
+    const second = await ingest({ ...facts, eventId: "fallback:b", flowId: "fallback:b" });
+    const third = await ingest({ ...facts, eventId: "fallback:c", flowId: "fallback:c" });
 
     expect(first.disposition).toBe("fallback");
-    expect(second.disposition).toBe("coalesced");
+    expect(second).toMatchObject({ disposition: "held", heldCount: 1 });
+    expect(third).toMatchObject({ disposition: "held", heldCount: 2 });
     expect(posts).toHaveLength(1);
-    expect(second).toMatchObject({ coalesceCount: 2 });
-    expect(events.some((event) => {
-      const payload = event.payload as Record<string, unknown>;
-      return event.kind === "fallback.delivered" && payload.coalesced === true;
-    })).toBe(true);
+    expect(scheduler.scheduled).toHaveLength(2);
+    expect(scheduler.scheduled[0]).toMatchObject({
+      cancelled: true,
+      delayMs: DEFAULT_FALLBACK_COALESCE_MS,
+    });
+    expect(events.filter((event) => event.kind === "fallback.delivered")).toHaveLength(1);
+
+    await scheduler.flushLatest();
+
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).toEqual({
+      raw: [
+        `${FALLBACK_PREFIX} gateway unreachable — 2 messages held`,
+        "Sources: deploy-worker × 2",
+        "Urgent/critical subjects:",
+        "- deploy-worker: deploy failed",
+      ].join("\n"),
+    });
+    expect(events.filter((event) => event.kind === "fallback.delivered")).toHaveLength(3);
+    expect(events.filter((event) => event.kind === "fallback.delivered").slice(1))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          flowId: "fallback:b",
+          payload: expect.objectContaining({ outcome: "batch-confirmed", heldCount: 2 }),
+        }),
+        expect.objectContaining({
+          flowId: "fallback:c",
+          payload: expect.objectContaining({ outcome: "batch-confirmed", heldCount: 2 }),
+        }),
+      ]));
+  });
+
+  test("cancels a held batch on heartbeat recovery and leaves its input for the agent", async () => {
+    const posts: unknown[] = [];
+    const { events, eventLog } = eventLogHarness();
+    const clock = frozenClock();
+    const scheduler = fallbackScheduleHarness();
+    const gateState = createHeartbeatGateState();
+    gateState.confirmedAbsentSince = clock.current - 30_000;
+    let heartbeatPresent = false;
+    const fallback = makeRawTelegramFallbackSender({
+      adapter: {
+        openDM: async () => "telegram:test",
+        postMessage: async (_threadId, content) => {
+          posts.push(content);
+          return { id: `telegram:recovery:${posts.length}`, threadId: "telegram:test" };
+        },
+      },
+      recipientId: "test",
+      journal: { record: async () => ({ persisted: true }) },
+      eventLog,
+    });
+    const ingest = makeSlimNotifyIngress({
+      eventLog,
+      heartbeatExists: async () => heartbeatPresent,
+      fallbackChannel: "telegram",
+      sendRawTelegramFallback: fallback,
+      now: clock.now,
+      wait: clock.wait,
+      blipGraceMs: 0,
+      scheduleFallbackBatch: scheduler.schedule,
+      gateState,
+    });
+
+    await ingest({ ...facts, eventId: "recovery:first", flowId: "recovery:first" });
+    const held = await ingest({
+      ...facts,
+      eventId: "recovery:held",
+      flowId: "recovery:held",
+    });
+    heartbeatPresent = true;
+    await scheduler.flushLatest();
+
+    expect(held.disposition).toBe("held");
+    expect(posts).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "message.requested")).toHaveLength(2);
+    expect(events.filter((event) => event.kind === "fallback.delivered")).toHaveLength(1);
+    expect(gateState.fallbackOutageActive).toBe(false);
+  });
+
+  test("redacts Front, email, and Slack bodies by source even when marked critical", async () => {
+    const posts: unknown[] = [];
+    const { events, eventLog } = eventLogHarness();
+    const clock = frozenClock();
+    const scheduler = fallbackScheduleHarness();
+    const gateState = createHeartbeatGateState();
+    gateState.confirmedAbsentSince = clock.current - 30_000;
+    const fallback = makeRawTelegramFallbackSender({
+      adapter: {
+        openDM: async () => "telegram:test",
+        postMessage: async (_threadId, content) => {
+          posts.push(content);
+          return { id: `telegram:redacted:${posts.length}`, threadId: "telegram:test" };
+        },
+      },
+      recipientId: "test",
+      journal: { record: async () => ({ persisted: true }) },
+      eventLog,
+    });
+    const ingest = makeSlimNotifyIngress({
+      eventLog,
+      heartbeatExists: async () => false,
+      fallbackChannel: "telegram",
+      sendRawTelegramFallback: fallback,
+      now: clock.now,
+      wait: clock.wait,
+      blipGraceMs: 0,
+      scheduleFallbackBatch: scheduler.schedule,
+      gateState,
+    });
+    const privateFacts = [
+      {
+        source: "inngest/front/message.received",
+        text: "FRONT_PRIVATE_BODY",
+      },
+      {
+        source: "inngest/check-email",
+        text: "EMAIL_PRIVATE_BODY",
+      },
+      {
+        source: "gateway.slack.chat-sdk.message",
+        text: "SLACK_PRIVATE_BODY",
+      },
+    ] as const;
+
+    for (const [index, item] of privateFacts.entries()) {
+      await ingest({
+        ...facts,
+        eventId: `private:${index}`,
+        flowId: `private:${index}`,
+        source: item.source,
+        origin: { ...origin, producer: item.source },
+        text: item.text,
+        evidence: { kind: "inbound-reply", priority: "critical" },
+      });
+    }
+    await scheduler.flushLatest();
+
+    const rendered = JSON.stringify(posts);
+    expect(rendered).not.toContain("FRONT_PRIVATE_BODY");
+    expect(rendered).not.toContain("EMAIL_PRIVATE_BODY");
+    expect(rendered).not.toContain("SLACK_PRIVATE_BODY");
+    expect(rendered).not.toContain("Urgent/critical subjects");
+    expect(rendered).toContain("inngest/front/message.received");
+    expect(rendered).toContain("inngest/check-email");
+    expect(rendered).toContain("gateway.slack.chat-sdk.message");
+    expect(events.filter((event) => event.kind === "fallback.delivered")).toHaveLength(3);
+  });
+
+  test("replays the 07-27 source mix as six summaries with zero private bodies", async () => {
+    const posts: unknown[] = [];
+    const { events, eventLog } = eventLogHarness();
+    const clock = frozenClock();
+    const scheduler = fallbackScheduleHarness();
+    const gateState = createHeartbeatGateState();
+    gateState.confirmedAbsentSince = clock.current - 30_000;
+    const fallback = makeRawTelegramFallbackSender({
+      adapter: {
+        openDM: async () => "telegram:test",
+        postMessage: async (_threadId, content) => {
+          posts.push(content);
+          return { id: `telegram:replay:${posts.length}`, threadId: "telegram:test" };
+        },
+      },
+      recipientId: "test",
+      journal: { record: async () => ({ persisted: true }) },
+      eventLog,
+    });
+    const ingest = makeSlimNotifyIngress({
+      eventLog,
+      heartbeatExists: async () => false,
+      fallbackChannel: "telegram",
+      sendRawTelegramFallback: fallback,
+      now: clock.now,
+      wait: clock.wait,
+      blipGraceMs: 0,
+      scheduleFallbackBatch: scheduler.schedule,
+      gateState,
+    });
+    const sourceMix = [
+      ...Array.from({ length: 10 }, () => "inngest/check-system-health"),
+      ...Array.from({ length: 7 }, () => "inngest/front/message.received"),
+      ...Array.from({ length: 4 }, () => "campaign-pulse"),
+      ...Array.from({ length: 4 }, () => "cli/notify"),
+      ...Array.from({ length: 3 }, () => "inngest-function-health"),
+      ...Array.from({ length: 2 }, () => "inngest/check-email"),
+      "inngest/inngest/scheduled.timer",
+      "typesense-recovery-startup-budget",
+      "work-state-pass",
+    ];
+    expect(sourceMix).toHaveLength(33);
+
+    for (const [index, source] of sourceMix.entries()) {
+      const isPrivate = /front|email|slack/i.test(source);
+      await ingest({
+        ...facts,
+        eventId: `replay:${index}`,
+        flowId: `replay:${index}`,
+        source,
+        origin: { ...origin, producer: source },
+        text: isPrivate ? `PRIVATE_BODY_${index}` : `subject ${index}`,
+        evidence: {
+          kind: isPrivate ? "inbound-reply" : "alert",
+          priority: index % 5 === 0 ? "urgent" : "high",
+        },
+      });
+      // Five rolling batches after the immediate outage notice.
+      if ([6, 12, 18, 25, 32].includes(index)) await scheduler.flushLatest();
+    }
+
+    expect(posts).toHaveLength(6);
+    expect(posts.every((post) =>
+      JSON.stringify(post).includes("gateway unreachable —")
+    )).toBe(true);
+    const rendered = JSON.stringify(posts);
+    expect(rendered).not.toContain("PRIVATE_BODY_");
+    expect(rendered).toContain("subject 5");
+    expect(rendered).not.toContain("subject 1");
+    expect(events.filter((event) => event.kind === "fallback.delivered")).toHaveLength(33);
   });
 
 });

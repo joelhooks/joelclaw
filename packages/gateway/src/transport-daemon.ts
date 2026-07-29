@@ -154,7 +154,7 @@ export async function startSlimTransportDaemon(): Promise<void> {
   }, HEARTBEAT_INTERVAL_MS);
   heartbeatTimer.unref?.();
 
-  // Process-local gate memory: blip rechecks + fallback coalesce.
+  // Process-local gate memory: blip rechecks + fallback outage batches.
   // Do NOT treat HEARTBEAT_FILE / PID_FILE as agent liveness — those are this
   // transport process, and trusting them would silence fallback during a dead loop.
   const heartbeatGateState = createHeartbeatGateState();

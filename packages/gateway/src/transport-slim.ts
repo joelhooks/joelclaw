@@ -33,9 +33,9 @@ export const DEFAULT_HEARTBEAT_TTL_MS = 60_000;
  * kill drill green (it already waits a full TTL before probing).
  */
 export const DEFAULT_HEARTBEAT_BLIP_GRACE_MS = 20_000;
-/** Collapse identical machine fallbacks inside this window instead of spamming Telegram. */
-export const DEFAULT_FALLBACK_COALESCE_MS = 5 * 60_000;
-export const ROUTINE_MACHINE_FALLBACK_TEXT_MAX = 140;
+/** Rolling outage batch window. The first fallback still sends immediately. */
+export const DEFAULT_FALLBACK_COALESCE_MS = 10 * 60_000;
+export const FALLBACK_SUBJECT_MAX = 140;
 
 export interface MessageEventAppender {
   readonly append: (
@@ -86,6 +86,19 @@ export interface RawFallbackRequest {
   /** Measured age of heartbeat evidence at decision time — not the TTL constant. */
   readonly heartbeatStaleForMs: number;
   readonly heartbeatGateReason?: string;
+  /** Every producer input represented by this physical Telegram send. */
+  readonly receipts?: readonly RawFallbackReceipt[];
+  readonly sourceCounts?: Readonly<Record<string, number>>;
+}
+
+export interface RawFallbackReceipt {
+  readonly sourceEventId: string;
+  readonly flowId: string;
+  readonly source: string;
+  readonly origin: MessageEventOrigin;
+  readonly heartbeatObservedAt: number;
+  readonly heartbeatStaleForMs: number;
+  readonly heartbeatGateReason?: string;
 }
 
 /** One observation of agent-liveness evidence. Prefer GET+checkedAt over bare EXISTS. */
@@ -115,13 +128,30 @@ export interface HeartbeatGateState {
   lastPresentAt?: number;
   lastCheckedAt?: number;
   confirmedAbsentSince?: number;
-  lastCoalesceKey?: string;
-  lastCoalesceAt?: number;
-  coalesceCount: number;
+  fallbackOutageActive: boolean;
+  fallbackBatch?: PendingFallbackBatch;
 }
 
 export function createHeartbeatGateState(): HeartbeatGateState {
-  return { coalesceCount: 0 };
+  return { fallbackOutageActive: false };
+}
+
+export interface FallbackBatchScheduleHandle {
+  readonly cancel: () => void;
+}
+
+export type ScheduleFallbackBatch = (
+  task: () => Promise<void>,
+  delayMs: number,
+) => FallbackBatchScheduleHandle;
+
+interface PendingFallbackMember extends RawFallbackReceipt {
+  readonly urgentSubject?: string;
+}
+
+interface PendingFallbackBatch {
+  readonly members: PendingFallbackMember[];
+  schedule?: FallbackBatchScheduleHandle;
 }
 
 export interface SlimNotifyIngressDependencies {
@@ -142,6 +172,8 @@ export interface SlimNotifyIngressDependencies {
   readonly heartbeatTtlMs?: number;
   readonly blipGraceMs?: number;
   readonly coalesceWindowMs?: number;
+  readonly scheduleFallbackBatch?: ScheduleFallbackBatch;
+  readonly onFallbackBatchError?: (error: unknown) => void;
   /** Process-local gate memory. Create once per transport process. */
   readonly gateState?: HeartbeatGateState;
 }
@@ -186,16 +218,93 @@ export type SlimNotifyIngressResult =
       readonly heartbeatGateReason: HeartbeatGateReason;
     }
   | {
-      readonly disposition: "coalesced";
+      readonly disposition: "held";
       readonly sourceEventId: string;
       readonly flowId: string;
       readonly heartbeatStaleForMs: number;
       readonly heartbeatGateReason: HeartbeatGateReason;
-      readonly coalesceCount: number;
+      readonly heldCount: number;
     };
 
-const ROUTINE_MACHINE_SOURCE_PATTERN =
-  /check-system-health|system-health|system\.health|cron\.heartbeat|health\.probe|gateway-health/i;
+const PRIVATE_FALLBACK_SOURCE_PATTERN =
+  /(?:^|[./:_-])(front|email|slack)(?:$|[./:_-])/i;
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function fallbackEvidenceRecords(facts: ProducerFacts): readonly Record<string, unknown>[] {
+  return [
+    facts.evidence,
+    recordValue(facts.evidence.evidence),
+    recordValue(facts.evidence.context),
+    recordValue(facts.evidence.data),
+  ].filter((value): value is Record<string, unknown> => value !== undefined);
+}
+
+function fallbackSourceCandidates(facts: ProducerFacts): readonly string[] {
+  const records = fallbackEvidenceRecords(facts);
+  return [
+    facts.source,
+    facts.origin.producer,
+    ...records.flatMap((record) => [
+      typeof record.source === "string" ? record.source : "",
+      typeof record.sourceFunction === "string" ? record.sourceFunction : "",
+      typeof record.kind === "string" ? record.kind : "",
+      typeof record.type === "string" ? record.type : "",
+    ]),
+  ];
+}
+
+/** Front, email, and Slack producer paths can carry private human bodies. */
+export function isPrivateFallbackProducer(facts: ProducerFacts): boolean {
+  return fallbackSourceCandidates(facts)
+    .some((value) => PRIVATE_FALLBACK_SOURCE_PATTERN.test(value));
+}
+
+function fallbackPriority(facts: ProducerFacts): string | undefined {
+  for (const record of fallbackEvidenceRecords(facts)) {
+    for (const field of ["priority", "severity", "urgency"] as const) {
+      const value = record[field];
+      if (typeof value === "string" && value.trim()) return value.trim().toLowerCase();
+    }
+  }
+  return undefined;
+}
+
+function cleanFallbackSubject(value: string): string | undefined {
+  const firstLine = value
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (!firstLine) return undefined;
+  const stripped = firstLine
+    .replace(/^#+\s*/u, "")
+    .replace(/^[-*]\s+/u, "")
+    .trim();
+  if (!stripped) return undefined;
+  return stripped.length > FALLBACK_SUBJECT_MAX
+    ? `${stripped.slice(0, FALLBACK_SUBJECT_MAX - 1)}…`
+    : stripped;
+}
+
+function urgentFallbackSubject(facts: ProducerFacts): string | undefined {
+  if (isPrivateFallbackProducer(facts)) return undefined;
+  const priority = fallbackPriority(facts);
+  if (priority !== "urgent" && priority !== "critical") return undefined;
+  for (const record of fallbackEvidenceRecords(facts)) {
+    for (const field of ["subject", "title"] as const) {
+      const value = record[field];
+      if (typeof value === "string") {
+        const subject = cleanFallbackSubject(value);
+        if (subject) return subject;
+      }
+    }
+  }
+  return cleanFallbackSubject(facts.text);
+}
 
 export function parseHeartbeatPayload(raw: string | null | undefined): HeartbeatProbeSample {
   if (raw == null || raw === "") return { present: false };
@@ -217,38 +326,41 @@ export function makeRedisHeartbeatProbe(
   return async () => parseHeartbeatPayload(await get(GATEWAY_AGENT_HEARTBEAT_KEY));
 }
 
-export function isRoutineMachineProducer(facts: ProducerFacts): boolean {
-  const candidates = [
-    facts.source,
-    facts.origin.producer,
-    typeof facts.evidence.sourceFunction === "string" ? facts.evidence.sourceFunction : "",
-    typeof facts.evidence.source === "string" ? facts.evidence.source : "",
-  ];
-  return candidates.some((value) => ROUTINE_MACHINE_SOURCE_PATTERN.test(value));
+function renderFallbackSummary(members: readonly PendingFallbackMember[]): string {
+  const counts = new Map<string, number>();
+  for (const member of members) {
+    counts.set(member.source, (counts.get(member.source) ?? 0) + 1);
+  }
+  const sources = [...counts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([source, count]) => `${source} × ${count}`)
+    .join(", ");
+  const subjects = [...new Set(
+    members.flatMap((member) =>
+      member.urgentSubject ? [`${member.source}: ${member.urgentSubject}`] : []
+    ),
+  )];
+  const count = members.length;
+  return [
+    `gateway unreachable — ${count} ${count === 1 ? "message" : "messages"} held`,
+    `Sources: ${sources}`,
+    ...(subjects.length > 0
+      ? ["Urgent/critical subjects:", ...subjects.map((subject) => `- ${subject}`)]
+      : []),
+  ].join("\n");
 }
 
-/**
- * Fallback body for Telegram. Routine machine producers get one line + flow pointer.
- * Joel/human traffic and non-routine failures keep full text.
- */
+/** Privacy-safe fallback body. Raw producer text never crosses this boundary. */
 export function formatFallbackText(facts: ProducerFacts): string {
-  if (!isRoutineMachineProducer(facts)) return facts.text;
-  const firstLine = facts.text
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0)
-    ?? "machine alert";
-  const stripped = firstLine.replace(/^#+\s*/, "").trim() || "machine alert";
-  const clipped = stripped.length > ROUTINE_MACHINE_FALLBACK_TEXT_MAX
-    ? `${stripped.slice(0, ROUTINE_MACHINE_FALLBACK_TEXT_MAX - 1)}…`
-    : stripped;
-  return `${clipped} [flow ${facts.flowId}]`;
-}
-
-function coalesceKeyFor(facts: ProducerFacts, text: string): string {
-  // Flow ids are unique per notify; strip the pointer so identical machine noise collapses.
-  const normalized = text.replace(/\s*\[flow [^\]]+\]\s*$/u, "").trim();
-  return `${facts.source}\u0000${normalized}`;
+  return renderFallbackSummary([{
+    sourceEventId: facts.eventId,
+    flowId: facts.flowId,
+    source: facts.source,
+    origin: facts.origin,
+    heartbeatObservedAt: facts.occurredAt,
+    heartbeatStaleForMs: 0,
+    urgentSubject: urgentFallbackSubject(facts),
+  }]);
 }
 
 function resolveProbe(
@@ -542,30 +654,43 @@ export function makeRawTelegramFallbackSender(dependencies: {
         new Error("Fallback sent but its journal receipt was not persisted; automatic retry forbidden"),
       );
     }
-    await dependencies.eventLog.append({
-      semanticKey: `fallback-delivered:${input.sourceEventId}:${platformMessageId}`,
-      kind: "fallback.delivered",
-      source: "gateway-transport",
+    const receipts = input.receipts ?? [{
+      sourceEventId: input.sourceEventId,
       flowId: input.flowId,
+      source: input.origin.producer,
       origin: input.origin,
-      correlationId: input.sourceEventId,
-      platform: "telegram",
-      platformMessageId,
-      payload: {
-        sourceEventId: input.sourceEventId,
-        fallback: true,
-        heartbeatObservedAt: input.heartbeatObservedAt,
-        heartbeatStaleForMs: input.heartbeatStaleForMs,
-        ...(input.heartbeatGateReason
-          ? { heartbeatGateReason: input.heartbeatGateReason }
-          : {}),
-        target: dependencies.recipientId,
+      heartbeatObservedAt: input.heartbeatObservedAt,
+      heartbeatStaleForMs: input.heartbeatStaleForMs,
+      heartbeatGateReason: input.heartbeatGateReason,
+    }];
+    for (const receipt of receipts) {
+      await dependencies.eventLog.append({
+        semanticKey: `fallback-delivered:${receipt.sourceEventId}:${platformMessageId}`,
+        kind: "fallback.delivered",
+        source: "gateway-transport",
+        flowId: receipt.flowId,
+        origin: receipt.origin,
+        correlationId: receipt.sourceEventId,
+        platform: "telegram",
         platformMessageId,
-        outcome: "confirmed",
-      },
-    }).catch((error) => {
-      throw new RawFallbackDeliveryError(true, error);
-    });
+        payload: {
+          sourceEventId: receipt.sourceEventId,
+          producerSource: receipt.source,
+          fallback: true,
+          heldCount: receipts.length,
+          sourceCounts: input.sourceCounts,
+          heartbeatObservedAt: receipt.heartbeatObservedAt,
+          heartbeatStaleForMs: receipt.heartbeatStaleForMs,
+          ...(receipt.heartbeatGateReason
+            ? { heartbeatGateReason: receipt.heartbeatGateReason }
+            : {}),
+          platformMessageId,
+          outcome: receipts.length === 1 ? "confirmed" : "batch-confirmed",
+        },
+      }).catch((error) => {
+        throw new RawFallbackDeliveryError(true, error);
+      });
+    }
     return {
       flowId: input.flowId,
       platform: "telegram",
@@ -588,6 +713,74 @@ export function makeSlimNotifyIngress(
   const wait = dependencies.wait ?? ((ms: number) => new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   }));
+  const onFallbackBatchError = dependencies.onFallbackBatchError
+    ?? ((error: unknown) => console.error("[gateway:transport] fallback batch failed", {
+      error: String(error),
+    }));
+  const scheduleFallbackBatch = dependencies.scheduleFallbackBatch
+    ?? ((task: () => Promise<void>, delayMs: number): FallbackBatchScheduleHandle => {
+      const timer = setTimeout(() => {
+        void task().catch(onFallbackBatchError);
+      }, delayMs);
+      timer.unref?.();
+      return { cancel: () => clearTimeout(timer) };
+    });
+
+  const resetFallbackOutage = () => {
+    gateState.fallbackBatch?.schedule?.cancel();
+    gateState.fallbackBatch = undefined;
+    gateState.fallbackOutageActive = false;
+  };
+
+  const sourceCountsFor = (
+    members: readonly PendingFallbackMember[],
+  ): Readonly<Record<string, number>> => {
+    const counts: Record<string, number> = {};
+    for (const member of members) {
+      counts[member.source] = (counts[member.source] ?? 0) + 1;
+    }
+    return counts;
+  };
+
+  const sendFallbackMembers = async (
+    members: readonly PendingFallbackMember[],
+  ): Promise<ExplicitTransportSendReceipt> => {
+    const representative = members[0];
+    if (!representative) throw new Error("Cannot send an empty fallback batch");
+    return dependencies.sendRawTelegramFallback({
+      text: renderFallbackSummary(members),
+      flowId: representative.flowId,
+      sourceEventId: representative.sourceEventId,
+      origin: representative.origin,
+      heartbeatObservedAt: representative.heartbeatObservedAt,
+      heartbeatStaleForMs: representative.heartbeatStaleForMs,
+      heartbeatGateReason: representative.heartbeatGateReason,
+      receipts: members,
+      sourceCounts: sourceCountsFor(members),
+    });
+  };
+
+  const schedulePendingBatch = (batch: PendingFallbackBatch) => {
+    batch.schedule?.cancel();
+    batch.schedule = scheduleFallbackBatch(async () => {
+      if (gateState.fallbackBatch !== batch) return;
+
+      // A recovered gateway owns the canonical message.requested events. Do not
+      // claim fallback delivery or send a stale outage summary after recovery.
+      const heartbeat = await probe();
+      const observedAt = nowFn();
+      if (heartbeat.present) {
+        gateState.lastPresentAt = observedAt;
+        if (heartbeat.checkedAt !== undefined) gateState.lastCheckedAt = heartbeat.checkedAt;
+        gateState.confirmedAbsentSince = undefined;
+        resetFallbackOutage();
+        return;
+      }
+
+      gateState.fallbackBatch = undefined;
+      await sendFallbackMembers(batch.members);
+    }, coalesceWindowMs);
+  };
 
   return async function ingest(
     facts: ProducerFacts,
@@ -621,6 +814,7 @@ export function makeSlimNotifyIngress(
     });
 
     if (assessment.alive) {
+      resetFallbackOutage();
       return {
         disposition: "agent",
         sourceEventId: appended.eventId,
@@ -638,62 +832,39 @@ export function makeSlimNotifyIngress(
       );
     }
 
-    const fallbackBody = formatFallbackText(facts);
-    const coalesceKey = coalesceKeyFor(facts, fallbackBody);
     const observedAt = assessment.observedAt;
-    if (
-      gateState.lastCoalesceKey === coalesceKey
-      && gateState.lastCoalesceAt !== undefined
-      && observedAt - gateState.lastCoalesceAt < coalesceWindowMs
-    ) {
-      gateState.coalesceCount += 1;
-      await dependencies.eventLog.append({
-        semanticKey: `fallback-coalesced:${facts.eventId}:${gateState.coalesceCount}`,
-        kind: "fallback.delivered",
-        source: "gateway-transport",
-        flowId: facts.flowId,
-        origin: facts.origin,
-        correlationId: appended.eventId,
-        platform: "telegram",
-        payload: {
-          sourceEventId: appended.eventId,
-          fallback: true,
-          coalesced: true,
-          coalesceCount: gateState.coalesceCount,
-          heartbeatObservedAt: observedAt,
-          heartbeatStaleForMs: assessment.staleForMs,
-          heartbeatGateReason: assessment.reason,
-          outcome: "coalesced",
-          text: fallbackBody,
-        },
-      }).catch((error) => {
-        throw new SlimIngressStageError("fallback", error);
-      });
-      return {
-        disposition: "coalesced",
-        sourceEventId: appended.eventId,
-        flowId: facts.flowId,
-        heartbeatStaleForMs: assessment.staleForMs,
-        heartbeatGateReason: assessment.reason,
-        coalesceCount: gateState.coalesceCount,
-      };
-    }
-
-    const receipt = await dependencies.sendRawTelegramFallback({
-      text: fallbackBody,
-      flowId: facts.flowId,
+    const member: PendingFallbackMember = {
       sourceEventId: appended.eventId,
+      flowId: facts.flowId,
+      source: facts.source,
       origin: facts.origin,
       heartbeatObservedAt: observedAt,
       heartbeatStaleForMs: assessment.staleForMs,
       heartbeatGateReason: assessment.reason,
-    }).catch((error) => {
-      throw new SlimIngressStageError("fallback", error);
-    });
+      urgentSubject: urgentFallbackSubject(facts),
+    };
 
-    gateState.lastCoalesceKey = coalesceKey;
-    gateState.lastCoalesceAt = observedAt;
-    gateState.coalesceCount = 1;
+    if (gateState.fallbackOutageActive) {
+      const batch = gateState.fallbackBatch ?? { members: [] };
+      batch.members.push(member);
+      gateState.fallbackBatch = batch;
+      schedulePendingBatch(batch);
+      return {
+        disposition: "held",
+        sourceEventId: appended.eventId,
+        flowId: facts.flowId,
+        heartbeatStaleForMs: assessment.staleForMs,
+        heartbeatGateReason: assessment.reason,
+        heldCount: batch.members.length,
+      };
+    }
+
+    const receipt = await sendFallbackMembers([member])
+      .catch((error) => {
+        resetFallbackOutage();
+        throw new SlimIngressStageError("fallback", error);
+      });
+    gateState.fallbackOutageActive = true;
 
     return {
       disposition: "fallback",
