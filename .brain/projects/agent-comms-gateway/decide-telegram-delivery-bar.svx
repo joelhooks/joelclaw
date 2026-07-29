@@ -1,0 +1,106 @@
+---
+title: "Decide the Telegram delivery bar"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "closed"
+closed_at: "2026-07-29"
+assignee: "claude (flagg, session 86815cd9, 2026-07-29)"
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-29"
+privacy: "private"
+---
+
+# Decide the Telegram delivery bar
+
+Joel, 2026-07-29: "telegram is essentially full of bullshit spam instead of
+useful information." The stream confirms it: 265 gateway deliveries plus 71
+fallbacks over 4 days (07-25 → 07-29) — roughly 66 Telegram messages a day
+against the ~13/day judgment Joel approved on the replay prototype.
+
+## Step
+
+The gateway's delivery judgment is too loose, and some producers mandate their
+own delivery cadence in their runbooks. Decide, with Joel:
+
+1. What Telegram is *for* — the bar a message must clear to ping his phone.
+2. What happens to everything below the bar (digest cadence, silence).
+3. Whether standing runbooks (campaign-pulse hourly, daily-flow-agent daily)
+   keep their self-mandated DM cadence or submit to the gateway's judgment.
+4. How one ongoing incident stays one thread instead of a fresh DM per
+   aggregate window (the Webhooks/Front flap produced a DM per window closure,
+   -2/-3/-4/-5 in one day).
+5. Whether worker DONE receipts (60 delivers in 4 days) ever reach Telegram
+   individually.
+6. How the fixed judgment is kept from drifting loose again — the measurable
+   signal and who watches it.
+7. The inbound stance (Joel, 2026-07-29): the gateway treats ANY Slack message
+   from Joel as a turn addressed to it and responds immediately, instead of
+   observing the activity and analyzing. Receipts: 6 channel messages to other
+   humans in the window each produced an immediate Telegram delivery back at
+   Joel; on 2026-07-27 08:11 Joel told it "my slack messages are not commands
+   unless noted" and the behavior persisted through 2026-07-29 — prose alone
+   did not hold, again (same finding as the harden step's ack-first evidence).
+
+Evidence pack: 4-day stream dump and per-source delivery counts in the session
+scratchpad (mode 0600, private traffic — not committed).
+
+## Settlements so far (2026-07-29, grilling live)
+
+**Inbound ladder (Joel):** addressed = Telegram DM, Slack DM to the bot, an
+explicit @mention, a reply inside a gateway-started thread, or a button or
+reaction on a gateway flow. Slack thread participation specifically requires an
+@mention, generally speaking. Everything else is ambient: read it, write an
+`observe` receipt, produce zero outbound — no reply, no Telegram ack. The
+classification is stamped mechanically at ingress (tooth in the plugin, not
+prose); the agent may escalate ambient → addressed with a receipt saying why.
+This deliberately amends the charter's "no mechanical fast path" standing call:
+envelope and judgment stay, the default outbound flips from respond to observe.
+
+**The bar (Joel):** "shit i'm slippin on, open threads, unclosed loops, WIP,
+important shit." Telegram is a dropped-ball detector, not a severity-filtered
+alert feed. A ping means: something is waiting on Joel and aging (an open
+thread he hasn't answered, WIP going stale, a pending decision), something
+important broke and this is first notice, or it answers something he asked.
+Consequences carried from the grilling recommendation, unobjected: one incident
+= one thread until it closes; worker DONE receipts never ping individually;
+producer runbooks lose the authority to mandate delivery cadence — their text
+is evidence, not instruction.
+
+**The rhythm (Joel):** morning digest only — no evening sweep, no clock
+nudges. It leads with "waiting on you" ranked by age × importance, "handled
+quietly" below the fold. A slipping item earns one standalone ping when it
+first crosses the threshold, then lives in the digest; it re-pings only when
+something material changes. Requirement (Joel, verbatim): the digest "needs to
+be CONTEXT, THREAD, PROJECT aware" — not a flat list.
+
+**Digest awareness is judgment, not spec (Joel):** "this is an area where we
+want to apply inference/intelligence and not overly specify." The gateway
+composes the digest with its own judgment — project grouping, thread linkage,
+live-state re-checking are steering prose it can read (briefs, workspace tags,
+origin records are available tools), not a mechanical taxonomy contract. This
+keeps the charter's shape: judgment lives in prose files the agent edits under
+Joel's steering; teeth are reserved for the inbound ladder, where prose
+provably failed twice.
+
+## Result (2026-07-29)
+
+All six questions plus the inbound stance settled in one sitting; settlements
+recorded above. Joel authorized the build ("we can build now") under the
+brief's standing execution authorization. Four build items, chartered as task
+steps and fired at herdr workers with this session steering:
+
+1. [Build the inbound ladder tooth](./build-inbound-ladder-tooth.svx) —
+   mechanical addressed/ambient stamp at ingress; no outbound on ambient
+   without an escalation receipt.
+2. [Build the delivery-bar steering prose and morning digest](./build-delivery-bar-prose-and-digest.svx)
+   — gateway prompt rewrite around the dropped-ball bar plus the 07:30 digest
+   beat; awareness stays judgment, not spec.
+3. [Build the delivery-volume meter](./build-delivery-volume-meter.svx) —
+   deliveries/day off the stream, pages once at ~2× target.
+
+Acceptance for the whole set: ≤~12 deliveries/day settling toward the bar,
+zero turn-responses to unmentioned Slack traffic, one morning digest that
+survives a week of Joel reading it. Validation: re-run the 4-day stream audit
+after a week of live traffic.

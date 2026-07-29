@@ -1,0 +1,33 @@
+---
+title: "Build the delivery-volume meter"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane w28:p0, 2026-07-29)"
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-29"
+privacy: "private"
+---
+
+# Build the delivery-volume meter
+
+From [Decide the Telegram delivery bar](./decide-telegram-delivery-bar.svx):
+judgment drifts loose silently — the fix must police itself instead of rotting
+like the prose rules did.
+
+Resolved when:
+
+- A scheduled check (Inngest, `packages/system-bus`) counts the last 24h of
+  `delivery.requested` + `fallback.delivered` off the Convex stream.
+- Over ~24/day (2× the ~12 target) it sends exactly one notify with the count
+  and top sources — evidence, once, not a repeating alarm; a cap/latch keeps
+  it from becoming the next spam source.
+- The threshold and target live as named constants with the settlement's date
+  and reasoning next to them.
+- Tests cover the count, the single-fire latch, and the quiet path.
+
+## Result (YYYY-MM-DD)
+
+_(open)_

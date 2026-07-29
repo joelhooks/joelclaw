@@ -1,0 +1,49 @@
+---
+title: "Worker task: build the delivery-volume meter"
+type: "task"
+parent: "../projects/agent-comms-gateway/build-delivery-volume-meter.svx"
+created_at: "2026-07-29"
+privacy: "private"
+---
+
+# Worker task: build the delivery-volume meter
+
+Read first: the brief
+`.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` and your
+step `.brain/projects/agent-comms-gateway/build-delivery-volume-meter.svx`.
+
+## Why
+
+The gateway's delivery judgment drifted from ~13/day (approved) to ~66/day and
+nobody noticed until Joel called it spam. The fix must police itself.
+
+## The work
+
+1. An Inngest scheduled function in `packages/system-bus/src/inngest/functions/`
+   (daily; follow the existing check-* function patterns) that reads the
+   message event stream from Convex (see how the gateway reads it — reuse the
+   `@joelclaw/message-event-log` client, default `http://127.0.0.1:3210`) and
+   counts the last 24h of `delivery.requested` + `fallback.delivered`.
+2. Over the threshold (~24/day = 2× the ~12 target) it sends exactly ONE
+   `joelclaw notify send` with the count and the top 3 sources by volume. A
+   Redis latch (follow the incident-latch / health-latch pattern already in
+   the codebase) guarantees single-fire until the count drops back under
+   target for a full day.
+3. `TARGET_DELIVERIES_PER_DAY = 12` and `PAGE_THRESHOLD = 24` as named
+   constants with a comment: settled 2026-07-29, delivery-bar grilling,
+   `.brain/projects/agent-comms-gateway/decide-telegram-delivery-bar.svx`.
+4. Register the function in the serve list like its siblings.
+5. Tests: count logic, single-fire latch, quiet path under threshold. Follow
+   `check-system-health.test.ts` conventions.
+
+## Boundaries
+
+- You own new files in `packages/system-bus/` plus its serve registration.
+  Nothing else — no `roles/gateway.md`, no `packages/gateway/`, no plugin.
+- Do not deploy the worker (`k8s/publish-system-bus-worker.sh` is steering's
+  job). Do not commit.
+
+Validate: `bunx tsc --noEmit` and `bun test` for the files you add.
+
+Work autonomously. Do not commit. Print a DONE summary when finished: files,
+test results, and the exact deploy step steering must run.

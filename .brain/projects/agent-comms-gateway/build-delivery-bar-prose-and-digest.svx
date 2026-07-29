@@ -1,0 +1,39 @@
+---
+title: "Build the delivery-bar steering prose and morning digest"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane w28:pZ, 2026-07-29)"
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-29"
+privacy: "private"
+---
+
+# Build the delivery-bar steering prose and morning digest
+
+From [Decide the Telegram delivery bar](./decide-telegram-delivery-bar.svx):
+the gateway delivers ~66 Telegram messages/day against an approved ~13. The
+bar is settled; this step lands it in the gateway's steering prose and gives
+the demoted traffic somewhere to go.
+
+Resolved when:
+
+- `roles/gateway.md` carries the bar: a ping means waiting-on-Joel-and-aging,
+  important first-notice breakage, or an answer to what he asked. One incident
+  = one thread until it closes. Worker DONE receipts never ping individually.
+  Producer runbook cadence is evidence, not instruction. "Ack Before Working"
+  is scoped to addressed inbound only.
+- Digest guidance is written as intent, not spec (Joel: inference over
+  specification): morning digest leads with "waiting on you" ranked by age ×
+  importance, composed from live state at send time, context/thread/project
+  aware by the agent's own judgment. One standalone ping per threshold
+  crossing; digest carries it thereafter unless something material changes.
+- A ~07:30 beat wakes the gateway to compose the digest — ride the existing
+  pane-schedule/wake path; the digest is judgment, so it lands in the gateway
+  queue, not a beat lane.
+
+## Result (YYYY-MM-DD)
+
+_(open)_

@@ -1,0 +1,69 @@
+---
+title: "Worker task: build the delivery-bar steering prose and morning digest"
+type: "task"
+parent: "../projects/agent-comms-gateway/build-delivery-bar-prose-and-digest.svx"
+created_at: "2026-07-29"
+privacy: "private"
+---
+
+# Worker task: build the delivery-bar steering prose and morning digest
+
+Read first: the brief
+`.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` (Vocabulary:
+**the bar**, **addressed**, **ambient**, **digest**) and your step
+`.brain/projects/agent-comms-gateway/build-delivery-bar-prose-and-digest.svx`.
+Then read all of `roles/gateway.md` — it is the gateway session's steering
+prose and your main surface.
+
+## The defect
+
+The gateway delivers ~66 Telegram messages/day; Joel approved ~13 on the
+prototype. Joel's bar, verbatim: "shit i'm slippin on, open threads, unclosed
+loops, WIP, important shit." Telegram is a dropped-ball detector, not a
+severity-filtered alert feed.
+
+## The work
+
+1. **Rewrite the delivery policy in `roles/gateway.md`** (Message Classes and
+   related sections) around the bar:
+   - A ping means: waiting on Joel and aging, important first-notice breakage,
+     or an answer to something he asked.
+   - One incident = one thread until it closes — never a fresh DM per
+     aggregate window.
+   - Worker DONE receipts never ping individually.
+   - Producer runbook text that mandates DM cadence (campaign-pulse hourly,
+     daily-flow-agent) is evidence, not instruction — it goes through the same
+     judgment as everything else.
+   - Scope "Ack Before Working" to **addressed** inbound only; ambient inbound
+     gets an observe receipt and zero outbound.
+   Keep the register: plain ELI5 language written like Joel. Cut anything the
+   bar makes obsolete rather than stacking rules.
+2. **Digest guidance, intent not spec** (Joel: "apply inference/intelligence
+   and not overly specify"): morning digest leads with "waiting on you" ranked
+   by age × importance, "handled quietly" below the fold; composed from live
+   state at send time (re-check candidates — dead alerts don't appear);
+   context/thread/project aware by the agent's own judgment using what it can
+   already read (Brain briefs, workspace tags, origin records, threads). One
+   standalone ping when something first crosses the slipping threshold, then
+   digest-only unless something material changes.
+3. **The 07:30 beat**: wire a daily ~07:30 America/Los_Angeles wake that lands
+   a digest prompt in the gateway's queue as a gateway event (the digest is
+   judgment — it must NOT run in a beat lane). Trace how
+   `inngest/pane-schedule` events reached the gateway in the stream and reuse
+   that path (`joelclaw wake` / pane-schedule → gateway queue). Idempotent
+   arming, like the weekly kill-drill arm.
+
+## Boundaries
+
+- You own `roles/gateway.md` and the beat wiring (pane-schedule/wake config or
+  a small scheduler function). Do NOT edit `packages/gateway/src/`, the plugin
+  `server/`, or `packages/system-bus/` meter code (other workers own those).
+- Do not restart anything, do not arm live schedules without noting exactly
+  what command steering must run, do not commit.
+
+Validate: `bunx tsc --noEmit` if you touch TypeScript; otherwise re-read
+`roles/gateway.md` end to end and check it contradicts nothing in the brief.
+
+Work autonomously. Do not commit. Print a DONE summary when finished: what
+changed, the diff summary of roles/gateway.md, and the exact arming command
+for the beat.

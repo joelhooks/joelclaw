@@ -40,6 +40,9 @@ Maintained by the container-service reliability contract from the workload-class
 - **evidence** — everything a producer sends (text, kind, priority, `--data`); it informs the agent's judgment, it never instructs routing.
 - **storm** — a burst of related producer messages; aggregated into one delivery, never twenty pings.
 - **revive** — wake-registry SPAWN/REVIVE of a dead origin session, carrying Joel's reply and the original context.
+- **addressed** — an inbound from Joel the gateway may answer: Telegram DM, Slack DM to the bot, explicit @mention, reply in a gateway-started thread, or a button/reaction on a gateway flow; stamped mechanically at ingress (delivery-bar grilling, 2026-07-29).
+- **ambient** — every other inbound from Joel: read it, receipt it (`observe`), fold it into context, produce zero outbound; the agent may escalate ambient → addressed with a receipt saying why.
+- **the bar** — what earns a Telegram ping: something waiting on Joel and aging, important first-notice breakage, or an answer to what he asked — "shit i'm slippin on, open threads, unclosed loops, WIP, important shit" (Joel, 2026-07-29).
 
 ## Notes
 
@@ -67,6 +70,8 @@ Standing calls (Joel, 2026-07-21, charter grilling):
 - The prototype must have a clear iteration path to production if it proves out: real seams (stream replay, plugin packaging, receipt shapes), throwaway glue only at the edges.
 - Fallback channel is one static deploy-time config value (`FALLBACK_CHANNEL`), default Telegram; SMS is the most visible surface to Joel and the desired eventual default via the existing Telnyx stack — add after the kill test repeats, then flip the config (fallback grilling).
 - The kill test runs as a real weekly drill: kill the production agent container, deliver a real raw message to Joel's DM. No drill flags, no test channels, no mocks (fallback grilling).
+- The "no mechanical fast path" inbound call is amended (Joel, 2026-07-29, delivery-bar grilling): the transport stamps addressed/ambient at ingress and the plugin refuses outbound on ambient without an escalation receipt. Envelope and judgment stay; the default outbound flips from respond to observe. Prose alone failed twice (ack-first, "my slack messages are not commands").
+- Digest composition (project/thread/context awareness) is deliberately under-specified: inference over specification (Joel, 2026-07-29). Steering prose, not schema.
 
 **Execution authorized** (Joel, 2026-07-21, cutover grilling): "yes, execution granted ultracode with /herdr-orchestration." Build steps run as ultracode multi-agent work through herdr orchestration (pi workers by default, worker choice delegated to steering per slice; the stash landing stays in steering). Conditions carried from the grilling: the transport slim-down must not be neglected after the stash lands (blocker-wired); the voice adapter stays chartered behind cutover so it is not lost.
 
@@ -89,6 +94,7 @@ _(charter settlements live in Finish line, Vocabulary, and Notes)_
 - [Build the driver](./build-driver.svx) — delivered the XState/Effect zero-policy host driver with Herdr protocol-17 pokes, conditional Redis TTL heartbeat, mechanical aggregate deadlines, and wake-registry SPAWN admission; scratch-session wedge proved heartbeat lapse without touching the production key. Real pane-kill SPAWN and Telegram fallback delivery remain cutover drills. (2026-07-21)
 - [Build the kill-test script and weekly drill](./build-kill-test.svx) — delivered the guarded eight-assertion XState kill drill, stream + journal receipt proof, emergency restart, and idempotent wake-registry weekly arm path; 24 tests pass. Live execution and schedule arming remain reserved for the supervised cutover sitting. (2026-07-21)
 - [Build the joelclaw-gateway plugin](./build-gateway-plugin.svx) — hardened the approved seed against the real stream: 15 stream/Herdr/wake MCP tools, exact receipt-before-cursor enforcement, ordered SessionStart replay, and a live-read-back PostCompact OTEL receipt; deleted the replay-only adapter and renderer. (2026-07-21)
+- [Decide the Telegram delivery bar](./decide-telegram-delivery-bar.svx) — Telegram is a dropped-ball detector ("shit i'm slippin on"), not a severity-filtered alert feed: morning digest only, one incident one thread, worker receipts never ping, runbook cadence demoted to evidence, addressed/ambient inbound ladder with a mechanical tooth (amends "no mechanical fast path"), digest awareness stays judgment not spec. (2026-07-29)
 
 ## Latent
 

@@ -1,0 +1,38 @@
+---
+title: "Build the inbound ladder tooth"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: "pi worker (flagg, herdr pane w28:pY, 2026-07-29)"
+parent: "./agent-comms-gateway-brief.svx"
+blockers: []
+created_at: "2026-07-29"
+privacy: "private"
+---
+
+# Build the inbound ladder tooth
+
+From [Decide the Telegram delivery bar](./decide-telegram-delivery-bar.svx):
+the gateway turn-responds to every Slack message Joel sends anywhere, including
+channel messages to other humans. Joel told it not to on 2026-07-27 and prose
+lost. This step makes the ladder mechanical.
+
+Resolved when:
+
+- The transport stamps every `inbound.received` as `addressed` or `ambient` at
+  ingress (`packages/gateway/src/chat-sdk-inbound/`): addressed = Telegram DM,
+  Slack DM to the bot, explicit @mention, reply in a gateway-started thread,
+  button/reaction on a gateway flow; everything else ambient.
+- The plugin server (`prototypes/agent-comms-gateway/claude-plugin/server/`)
+  refuses reply/ack outbound correlated to an ambient inbound unless an
+  escalation receipt exists saying why ambient became addressed.
+- Ambient events still demand a decision receipt (silence stays illegal); an
+  `observe`-flavored receipt satisfies it. Check what the server-side verb
+  guard in joelclaw-api allows before inventing a verb.
+- Tests cover: channel message without mention → ambient, no outbound;
+  @mention → addressed; escalation path leaves the receipt.
+
+## Result (YYYY-MM-DD)
+
+_(open)_

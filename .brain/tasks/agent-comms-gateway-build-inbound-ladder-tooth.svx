@@ -1,0 +1,58 @@
+---
+title: "Worker task: build the inbound ladder tooth"
+type: "task"
+parent: "../projects/agent-comms-gateway/build-inbound-ladder-tooth.svx"
+created_at: "2026-07-29"
+privacy: "private"
+---
+
+# Worker task: build the inbound ladder tooth
+
+Read first: the brief
+`.brain/projects/agent-comms-gateway/agent-comms-gateway-brief.svx` (Vocabulary:
+**addressed**, **ambient**, **the bar**) and your step
+`.brain/projects/agent-comms-gateway/build-inbound-ladder-tooth.svx`.
+
+## The defect
+
+Every Slack message Joel sends — including channel messages to other humans —
+becomes `inbound.received`, and the gateway loop turn-responds with an ack to
+Telegram. Six times in the last 4 days Joel messaged a human and his phone
+buzzed. He instructed the gateway "my slack messages are not commands unless
+noted" on 2026-07-27; the behavior persisted. Prose failed; build the tooth.
+
+## The work
+
+1. **Transport stamp** (`packages/gateway/src/chat-sdk-inbound/` — normalize.ts
+   builds the envelope, publish.ts appends `inbound.received`): stamp each
+   inbound `addressed` or `ambient` in the payload at ingress.
+   - addressed: Telegram DM to the bot; Slack DM (conversation type im);
+     explicit @mention of the bot; a reply inside a thread the gateway itself
+     started (correlate via origin records/platformMessageId); button or
+     reaction on a gateway flow.
+   - ambient: everything else, notably Slack channel messages without a
+     mention.
+2. **Plugin tooth** (`prototypes/agent-comms-gateway/claude-plugin/server/`):
+   the send/reply tool refuses outbound correlated to an ambient inbound
+   unless an escalation receipt exists (a decision receipt saying why ambient
+   became addressed). The refusal message must tell the agent how to escalate.
+3. **Observe receipts**: ambient events still require a decision receipt
+   before the cursor advances. Check the server-side verb guard in
+   `~/Code/joelhooks/joelclaw-api` (convex/messageEvents) for the allowed verb
+   set. If `observe` needs a schema/guard change there, make the edit in that
+   repo's working tree and SAY SO in your DONE summary — do not deploy Convex.
+4. **Tests**: channel-no-mention → ambient + no outbound; @mention →
+   addressed; DM → addressed; escalation leaves the receipt and unlocks
+   outbound. Extend the existing test files next to the code you touch.
+
+## Boundaries
+
+- You own `packages/gateway/` and the plugin `server/` dir. Do NOT edit
+  `roles/gateway.md` (another worker owns it) or `packages/system-bus/`.
+- Do not restart the gateway loop, driver, or transport. Do not deploy.
+- Do not commit. Steering reviews, commits, deploys.
+
+Validate: `bunx tsc --noEmit` and the package test suites you touched.
+
+Work autonomously. Do not commit. Print a DONE summary when finished: what
+changed, file list, test results, and anything joelclaw-api needs.
