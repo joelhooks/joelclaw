@@ -16,7 +16,7 @@ export const JOEL_ACTOR_IDS = new Set(["7718912466", "U030BJ3CK"]);
  */
 export const MAX_AGGREGATE_JOINS = 25;
 
-const TERMINAL_VERBS = new Set(["deliver", "escalate", "fanout", "route", "drop"]);
+const TERMINAL_VERBS = new Set(["deliver", "observe", "fanout", "route", "drop"]);
 
 const REWRITE_LINTS = [
   {
@@ -61,6 +61,17 @@ export function isJoelInbound(event) {
   return typeof actorId === "string" && JOEL_ACTOR_IDS.has(actorId);
 }
 
+export function inboundAddressing(event) {
+  // Backlog rows from before the transport stamp stay addressed. Failing open
+  // here preserves replies; only an explicit ambient stamp suppresses output.
+  return event?.payload?.addressing === "ambient" ? "ambient" : "addressed";
+}
+
+function isOutboundDecision(decision) {
+  return decision?.verb === "deliver"
+    || (decision?.verb === "aggregate" && decision?.action === "close-deliver");
+}
+
 export function textFingerprint(text) {
   return String(text ?? "")
     .toLowerCase()
@@ -102,6 +113,7 @@ export function compactPendingEvent(event, { now = Date.now() } = {}) {
     ageSec,
     text,
     joel: isJoelInbound(event),
+    ...(isJoelInbound(event) ? { addressing: inboundAddressing(event) } : {}),
   };
 }
 
@@ -123,7 +135,7 @@ export function validateDecisionPayload(payload, { aggregateStats = null } = {})
   positiveInteger(payload.decisionSeq, "decisionSeq");
   const decision = payload.decision;
   if (!decision || typeof decision !== "object") throw new Error("decision must be an object");
-  const verbs = new Set(["deliver", "aggregate", "escalate", "fanout", "route", "drop"]);
+  const verbs = new Set(["deliver", "aggregate", "escalate", "observe", "fanout", "route", "drop"]);
   if (!verbs.has(decision.verb)) throw new Error(`Unsupported decision verb: ${decision.verb}`);
 
   // A decision that delivers must carry the full operator-facing message.
@@ -241,19 +253,23 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
   }
 
   function hasDeliverCovering(events, eventId) {
-    return decisionsCovering(events, eventId).some((event) => {
-      const decision = event.payload?.decision;
-      return decision?.verb === "deliver" || decision?.action === "close-deliver";
-    });
+    return decisionsCovering(events, eventId).some((event) =>
+      isOutboundDecision(event.payload?.decision));
+  }
+
+  function hasEscalationCovering(events, eventId) {
+    return decisionsCovering(events, eventId).some((event) =>
+      event.payload?.decision?.verb === "escalate");
   }
 
   /**
-   * Joel inbounds still pending with zero deliver receipt. These must be acked
-   * before machine bookkeeping or herdr work — that is the felt-latency fix.
+   * Addressed Joel inbounds still pending with zero deliver receipt. Ambient
+   * inbounds require observe or escalation, never an automatic ack.
    */
   async function unackedJoelInbound({ pending: pendingArg, events: eventsArg } = {}) {
     const pending = pendingArg ?? await loadPending(200);
-    const joelPending = pending.filter((event) => isJoelInbound(event));
+    const joelPending = pending.filter((event) =>
+      isJoelInbound(event) && inboundAddressing(event) === "addressed");
     if (joelPending.length === 0) return [];
     const events = eventsArg ?? await scanAll();
     return joelPending.filter((event) => !hasDeliverCovering(events, event._id));
@@ -355,16 +371,33 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         }
       }
 
-      // First receipt on a Joel inbound must be a deliver (ack or one-shot answer).
+      // Addressed inbounds keep the ack-first contract. Ambient inbounds flip
+      // the default to observe and require a separate escalation receipt before
+      // any deliver or close-deliver can reach transport.
       for (const eventId of inputEventIds) {
         const input = events.find((event) => event._id === eventId)
           ?? pending.find((event) => event._id === eventId);
         if (!input || !isJoelInbound(input)) continue;
+        const priorDecisions = decisionsCovering(events, eventId);
+        const decision = payload?.decision;
+        const verb = decision?.verb;
+        if (inboundAddressing(input) === "ambient") {
+          if (isOutboundDecision(decision) && !hasEscalationCovering(events, eventId)) {
+            throw new Error(
+              `Ambient inbound ${eventId} cannot produce outbound. First record an escalate decision for the same inputEventId with a reason explaining why it became addressed; then record the deliver decision. Otherwise record an observe decision.`,
+            );
+          }
+          if (priorDecisions.length === 0 && verb !== "observe" && verb !== "escalate") {
+            throw new Error(
+              `First decision on ambient inbound ${eventId} must be observe or escalate. Got verb=${verb}`,
+            );
+          }
+          continue;
+        }
         if (hasDeliverCovering(events, eventId)) continue;
-        const verb = payload?.decision?.verb;
         if (verb !== "deliver") {
           throw new Error(
-            `First decision on Joel inbound ${eventId} must be deliver (ack decisionSeq:1, or one-shot answer with advanceAfter). Got verb=${verb}`,
+            `First decision on addressed Joel inbound ${eventId} must be deliver (ack decisionSeq:1, or one-shot answer with advanceAfter). Got verb=${verb}`,
           );
         }
       }

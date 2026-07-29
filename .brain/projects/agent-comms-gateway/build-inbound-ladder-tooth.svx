@@ -3,7 +3,8 @@ title: "Build the inbound ladder tooth"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-29"
 assignee: "pi worker (flagg, herdr pane w28:pY, 2026-07-29)"
 parent: "./agent-comms-gateway-brief.svx"
 blockers: []
@@ -33,6 +34,19 @@ Resolved when:
 - Tests cover: channel message without mention → ambient, no outbound;
   @mention → addressed; escalation path leaves the receipt.
 
-## Result (YYYY-MM-DD)
+## Result (2026-07-29)
 
-_(open)_
+Delivered by pi worker (pane w28:pY), reviewed and committed by steering.
+Transport stamps `inbound.received.payload.addressing` at ingress
+(`inboundAddressing` in `chat-sdk-inbound/publish.ts`): reply to a gateway
+flow, @mention, Telegram DM, or Slack `im` conversation ⇒ addressed; Slack
+channel messages without a mention ⇒ ambient. The plugin server refuses
+`deliver`/`close-deliver` on an ambient inbound unless a prior `escalate`
+receipt covers the same input (error text teaches the escalation path); the
+first decision on ambient must be `observe` or `escalate`; the ack-first
+pusher (`unackedJoelInbound`) fires on addressed only. `observe` is a new
+terminal verb; `escalate` became non-terminal so a later deliver can follow.
+Pre-stamp backlog fails open to addressed so existing replies survive.
+joelclaw-api's server-side verb guard gained `observe` (Convex deploy required
+before production accepts observe receipts). Tests: gateway 14, plugin 22,
+joelclaw-api 13 — all pass under steering re-run.

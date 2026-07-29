@@ -1,7 +1,7 @@
+import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
 import { createHerdrTools, laneFromTaskId, laneLabel, MAX_WORKER_LANES } from "./herdr-tools.mjs";
 import { createToolHandlers, handleMcpMessage, toolDefinitions } from "./index.mjs";
 import {
@@ -20,7 +20,23 @@ const joelInbound = {
   source: "gateway.telegram.chat-sdk.message",
   recordedAt: 11,
   sequence: 2,
-  payload: { actorId: "7718912466", content: { text: "bing bong" } },
+  payload: {
+    addressing: "addressed",
+    actorId: "7718912466",
+    content: { text: "bing bong" },
+  },
+};
+const ambientJoelInbound = {
+  _id: "joel-ambient-1",
+  kind: "inbound.received",
+  source: "gateway.slack.chat-sdk.message",
+  recordedAt: 12,
+  sequence: 3,
+  payload: {
+    addressing: "ambient",
+    actorId: "U030BJ3CK",
+    content: { text: "message for a human" },
+  },
 };
 const decisionPayload = {
   inputEventIds: ["input-1"],
@@ -204,6 +220,65 @@ describe("stream receipts", () => {
     const machine = await stream.recordDecision({ payload: { ...decisionPayload, decisionSeq: 1 } });
     expect(machine.advanceAfter).toBe(true);
     await expect(handlers.herdr_snapshot({})).resolves.toEqual({ ok: true });
+  });
+
+  test("ambient inbound observes silently and escalation unlocks outbound", async () => {
+    const observeClient = fakeClient([ambientJoelInbound]);
+    const observeStream = createStreamTools({ client: observeClient, now: () => 20 });
+    const pending = await observeStream.pending();
+    expect(pending.ackRequiredJoel).toEqual([]);
+    expect(pending.pending[0]).toMatchObject({ addressing: "ambient" });
+
+    await expect(observeStream.recordDecision({
+      payload: {
+        inputEventIds: ["joel-ambient-1"],
+        reason: "No mention or direct conversation.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "deliver" },
+        rewrite: "on it",
+      },
+    })).rejects.toThrow("First record an escalate decision");
+
+    const observed = await observeStream.recordDecision({
+      payload: {
+        inputEventIds: ["joel-ambient-1"],
+        reason: "Channel message was not addressed to the gateway.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "observe" },
+      },
+    });
+    expect(observed.advanceAfter).toBe(true);
+    expect(observed.event.payload.decision.verb).toBe("observe");
+
+    const escalationClient = fakeClient([ambientJoelInbound]);
+    const escalationStream = createStreamTools({ client: escalationClient, now: () => 20 });
+    const escalation = await escalationStream.recordDecision({
+      payload: {
+        inputEventIds: ["joel-ambient-1"],
+        reason: "The ambient message reports first-notice production breakage.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "escalate" },
+      },
+    });
+    expect(escalation.advanceAfter).toBe(false);
+
+    const delivered = await escalationStream.recordDecision({
+      payload: {
+        inputEventIds: ["joel-ambient-1"],
+        reason: "Escalation receipt converted this input to addressed.",
+        promptRevision: "abc123",
+        decisionSeq: 2,
+        decision: { verb: "deliver" },
+        rewrite: "Production is down.",
+      },
+    });
+    expect(delivered.advanceAfter).toBe(true);
+    expect(escalationClient.events.filter((event) =>
+      event.kind === "gateway.decision.recorded").map((event) =>
+      event.payload.decision.verb)).toEqual(["escalate", "deliver"]);
   });
 
   test("herdr tools refuse while Joel is unacked", async () => {

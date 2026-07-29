@@ -115,6 +115,64 @@ function inboundReply(): InboundEvent {
   });
 }
 
+function slackMessage(
+  conversationId: string,
+  isMention: boolean,
+): InboundEvent {
+  return decodeInboundEvent({
+    contractVersion: 2,
+    eventId: `slack:message:${conversationId}:${isMention}`,
+    platform: "slack",
+    type: "message",
+    occurredAt: "2026-07-21T18:10:00.000Z",
+    observedAt: "2026-07-21T18:10:00.100Z",
+    shadow: true,
+    actor: {
+      platformUserId: "U030BJ3CK",
+      userName: "joel",
+      displayName: "Joel",
+      isBot: false,
+      isSelf: false,
+    },
+    platformIds: {
+      conversationId,
+      messageId: "171234.567",
+      threadId: null,
+      actorId: "U030BJ3CK",
+      workspaceId: "T123",
+    },
+    rawAnchors: {
+      transportEventId: "171234.568",
+      updateId: null,
+      callbackQueryId: null,
+      sourceMessageId: "171234.567",
+      sourceThreadId: null,
+    },
+    audit: {
+      source: "gateway.slack.message",
+      transport: "socket",
+      sdkName: "vercel/chat",
+      sdkVersion: "4.34.0",
+      normalizedAt: "2026-07-21T18:10:00.100Z",
+      rawEventType: "message",
+      rawEventId: "171234.568",
+      lineageId: `${conversationId}-${isMention}`,
+    },
+    authorization: {
+      verdict: "accepted",
+      reason: "authorized_joel",
+      policyAction: "invoke",
+      expectedActorId: "U030BJ3CK",
+      actualActorId: "U030BJ3CK",
+      canPublish: true,
+      canExecute: false,
+    },
+    text: isMention ? "<@UBOT> status" : "message for a human",
+    isMention,
+    attachmentCount: 0,
+  });
+}
+
 function inbound(type: "message" | "reaction"): InboundEvent {
   const common = {
     contractVersion: 2,
@@ -296,6 +354,27 @@ describe("gateway transport slim-down seams", () => {
     expect(calls).not.toContain("route:kind");
   });
 
+  test("stamps Slack channel messages ambient, mentions addressed, and DMs addressed", async () => {
+    const { events, eventLog } = eventLogHarness();
+    const publisher = createStreamInboundPublisher({
+      eventLog,
+      machineId: "flagg",
+      resolveFlowId: async () => undefined,
+    });
+
+    await publisher.publishEvent(slackMessage("C123", false));
+    await publisher.publishEvent(slackMessage("C123", true));
+    await publisher.publishEvent(slackMessage("D123", false));
+    await publisher.publishEvent(inbound("message"));
+
+    expect(events.map((event) => event.payload)).toEqual([
+      expect.objectContaining({ addressing: "ambient" }),
+      expect.objectContaining({ addressing: "addressed" }),
+      expect.objectContaining({ addressing: "addressed" }),
+      expect.objectContaining({ addressing: "addressed" }),
+    ]);
+  });
+
   test("appends inbound replies and reactions with outbound flow correlation", async () => {
     const { events, eventLog } = eventLogHarness();
     const resolutions: unknown[] = [];
@@ -320,7 +399,10 @@ describe("gateway transport slim-down seams", () => {
       expect(event).toMatchObject({
         kind: "inbound.received",
         flowId: "flow-agent-send-1",
-        payload: { replyFlowId: "flow-agent-send-1" },
+        payload: {
+          addressing: "addressed",
+          replyFlowId: "flow-agent-send-1",
+        },
       });
     }
     expect(events[1]?.payload).toMatchObject({

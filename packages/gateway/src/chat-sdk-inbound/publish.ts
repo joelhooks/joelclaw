@@ -96,6 +96,8 @@ export type ObserveOnlyInboundPublisher = ReturnType<
   typeof createObserveOnlyInboundPublisher
 >;
 
+export type InboundAddressing = "addressed" | "ambient";
+
 export interface StreamInboundPublisherOptions {
   readonly eventLog?: MessageEventAppender;
   readonly resolveFlowId: (
@@ -132,6 +134,28 @@ function inboundContent(event: InboundEvent): { text?: string; data: unknown } {
   }
 }
 
+function isDirectConversation(event: InboundEvent): boolean {
+  if (event.platform === "telegram") {
+    return event.platformIds.conversationId === event.actor.platformUserId;
+  }
+  if (event.platform === "slack") {
+    // Slack conversation IDs beginning with D are `im` conversations. Chat SDK
+    // keeps that platform-native ID in the normalized envelope.
+    return event.platformIds.conversationId.startsWith("D");
+  }
+  return false;
+}
+
+export function inboundAddressing(
+  event: InboundEvent,
+  replyFlowId?: string,
+): InboundAddressing {
+  if (replyFlowId) return "addressed";
+  if (event.type === "message" && event.isMention) return "addressed";
+  if (isDirectConversation(event)) return "addressed";
+  return "ambient";
+}
+
 /** Canonical inbound stream append. It publishes facts and executes no policy. */
 export function createStreamInboundPublisher(options: StreamInboundPublisherOptions) {
   const eventLog = options.eventLog ?? getMessageEventLogClient();
@@ -160,6 +184,16 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
             event.platformIds.conversationId,
           )
         : undefined;
+      const addressing = inboundAddressing(event, replyFlowId);
+      const payload = {
+        addressing,
+        platformEventId: event.eventId,
+        actorId: event.actor.platformUserId,
+        conversationId: event.platformIds.conversationId,
+        threadId: event.platformIds.threadId ?? undefined,
+        replyFlowId,
+        content: inboundContent(event),
+      };
       await eventLog.append({
         semanticKey: `inbound:${event.eventId}`,
         kind: "inbound.received",
@@ -170,14 +204,7 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
         platform: event.platform,
         platformMessageId: platformMessageId ?? undefined,
         occurredAt: Date.parse(event.occurredAt),
-        payload: {
-          platformEventId: event.eventId,
-          actorId: event.actor.platformUserId,
-          conversationId: event.platformIds.conversationId,
-          threadId: event.platformIds.threadId ?? undefined,
-          replyFlowId,
-          content: inboundContent(event),
-        },
+        payload,
       });
     },
   };
