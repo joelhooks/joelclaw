@@ -6,9 +6,12 @@ import { respond, respondError } from "../response"
 
 const NOTIFY_PRIORITIES = ["low", "normal", "high", "urgent", "critical"] as const
 const NOTIFY_KINDS = ["memory", "alert", "digest", "ask", "receipt"] as const
+export const NOTIFY_KIND_REQUIRED_REVIEW_DATE = "2026-08-12"
+export const MISSING_NOTIFY_KIND_WARNING =
+  `Missing --kind; using conservative default "receipt". Add an explicit kind before the ${NOTIFY_KIND_REQUIRED_REVIEW_DATE} required-kind review.`
 
 type NotifyPriority = (typeof NOTIFY_PRIORITIES)[number]
-type NotifyKind = (typeof NOTIFY_KINDS)[number]
+export type NotifyKind = (typeof NOTIFY_KINDS)[number]
 type OptionalText = { _tag: "Some"; value: string } | { _tag: "None" }
 
 function parseOptionalText(value: OptionalText): string | undefined {
@@ -36,6 +39,14 @@ function codeOrFallback(error: CapabilityError): string {
 
 function fixOrFallback(error: CapabilityError, fallback: string): string {
   return error.fix ?? fallback
+}
+
+export function resolveNotifyKind(kind: NotifyKind | undefined): {
+  kind: NotifyKind
+  warning?: string
+} {
+  if (kind) return { kind }
+  return { kind: "receipt", warning: MISSING_NOTIFY_KIND_WARNING }
 }
 
 export function parseNotifyWaitTimeoutSeconds(input: string): number | null {
@@ -75,7 +86,7 @@ const sourceOption = Options.text("source").pipe(
 
 const kindOption = Options.choice("kind", NOTIFY_KINDS).pipe(
   Options.withDescription(
-    "Contract-v2 semantic kind. The versioned routing table owns platform, delivery mode, and formatting."
+    "Contract-v2 semantic kind. Missing values warn and default to receipt until the required-kind review."
   ),
   Options.optional,
 )
@@ -146,6 +157,12 @@ const notifySend = Command.make(
       }
 
       const adapterOverride = parseOptionalText(adapter)
+      const resolvedKind = resolveNotifyKind(
+        kind._tag === "Some" ? (kind.value as NotifyKind) : undefined
+      )
+      if (resolvedKind.warning) {
+        yield* Console.warn(resolvedKind.warning)
+      }
       const result = yield* executeCapabilityCommand({
         capability: "notify",
         subcommand: "send",
@@ -158,7 +175,7 @@ const notifySend = Command.make(
           context: parsedContext,
           type: parseOptionalText(type),
           source: parseOptionalText(source),
-          kind: kind._tag === "Some" ? (kind.value as NotifyKind) : undefined,
+          kind: resolvedKind.kind,
           telegramOnly,
           eventId: parseOptionalText(eventId),
         },

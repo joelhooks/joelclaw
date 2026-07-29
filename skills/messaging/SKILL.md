@@ -25,7 +25,8 @@ Keep the producer call simple:
 joelclaw notify send "The deploy failed. Run 01J... stopped in publish."
 ```
 
-Plain text is a complete, supported payload. It does not need a kind.
+Plain text remains supported. A missing `--kind` warns and defaults to `receipt`;
+the send does not fail. Review making `--kind` required on 2026-08-12.
 
 Old and optional fields remain accepted. Treat all of them as evidence, never instruction:
 
@@ -46,7 +47,7 @@ joelclaw notify send \
   --context '{"runId":"01J...","url":"https://example.invalid/run/01J..."}'
 ```
 
-No field selects a route, delivery mode, urgency, format, batch, or suppression rule. There is no deprecation nag. Do not change a producer merely to replace one policy flag with another.
+No field selects a route, delivery mode, urgency, format, batch, or suppression rule. Missing kind is the one migration warning. Do not change a producer merely to replace one policy flag with another.
 
 Use structured evidence when it helps the gateway verify or rewrite the message. Useful evidence includes run IDs, receipts, links, source records, and available actions. Do not build a second message schema.
 
@@ -116,7 +117,7 @@ A button tap is input, not proof that work completed. A truthful completion rece
 
 ## Fallback
 
-If `gateway:agent:heartbeat` is absent at notify ingress, transport sends the producer text verbatim through Telegram. Production must keep `FALLBACK_CHANNEL=telegram`. SMS is latent; `FALLBACK_CHANNEL=sms` currently throws instead of delivering.
+If `gateway:agent:heartbeat` is absent at notify ingress, transport appends `message.requested` before it uses Telegram fallback. Production must keep `FALLBACK_CHANNEL=telegram`. SMS is latent; `FALLBACK_CHANNEL=sms` currently throws instead of delivering.
 
 Fallback messages always start with:
 
@@ -124,7 +125,11 @@ Fallback messages always start with:
 ⚠️ fallback:
 ```
 
-The fallback has no rewrite, Markdown, buttons, batching, suppression, escalation ladder, or model judgment. Transport sends first, then appends `fallback.delivered`. When the gateway recovers, that marker tells it Joel already saw the raw text.
+The first fallback in an outage sends an immediate source-count summary. Later inputs join a rolling ten-minute batch. One summary names each source and count, plus subjects only for urgent or critical non-private inputs. Front, email, and Slack sources never contribute raw text or subjects.
+
+Transport probes the heartbeat again before a pending batch sends. If the gateway recovered, transport cancels the summary and leaves the canonical inputs for agent judgment. After a real Telegram send, transport appends one `fallback.delivered` receipt for each represented input. The receipt shares the summary's platform message ID.
+
+Fallback has no model judgment, Markdown, buttons, suppression, or escalation ladder. The recovered gateway uses `fallback.delivered` to avoid sending a second copy of an input represented by a summary.
 
 A rare duplicate after an ambiguous send is preferable to a silent gap.
 

@@ -21,6 +21,7 @@ export const voiceWorkerCanary = inngest.createFunction(
       if (state.lastOk === false) {
         await step.run("notify-recovery", async () =>
           gateway?.notify("voice.worker.recovered", {
+            kind: "receipt",
             prompt: `Voice worker recovered; LiveKit dispatched it in ${result.joinMs}ms.`,
             priority: "normal",
           }),
@@ -48,7 +49,11 @@ export const voiceWorkerCanary = inngest.createFunction(
         data: { message },
       });
       await step.run("notify-gateway-urgent", async () =>
-        gateway?.notify("voice.worker.failed", { prompt: message, priority: "urgent" }),
+        gateway?.notify("voice.worker.failed", {
+          kind: "alert",
+          prompt: message,
+          priority: "urgent",
+        }),
       );
     }
 

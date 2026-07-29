@@ -1706,6 +1706,7 @@ export const checkSystemHealth = inngest.createFunction(
             type: "system.health.error-rate",
             source: "inngest/check-system-health",
             payload: {
+              kind: "alert",
               prompt,
               level: "error",
               immediateTelegram: true,
@@ -1746,6 +1747,7 @@ export const checkSystemHealth = inngest.createFunction(
             type: "system.health.memory-write-gate-drift",
             source: "inngest/check-system-health",
             payload: {
+              kind: "alert",
               prompt,
               level: "warn",
               immediateTelegram: true,
@@ -1832,6 +1834,7 @@ export const checkSystemHealth = inngest.createFunction(
               : "system.health.transition",
             source: "inngest/check-system-health",
             payload: {
+              kind: allResolved ? "receipt" : "alert",
               prompt: message,
               telegramMessage: message,
               telegramFormat: "markdown",
@@ -1973,6 +1976,7 @@ export const systemHealthDailyDigest = inngest.createFunction(
         type: "system.health.daily-digest",
         source: "inngest/check-system-health",
         payload: {
+          kind: "digest",
           prompt: prepared.message,
           telegramMessage: prepared.message,
           telegramFormat: "markdown",

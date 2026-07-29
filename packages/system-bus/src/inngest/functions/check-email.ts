@@ -351,6 +351,7 @@ export const checkEmail = inngest.createFunction(
         type: "email.needs.attention",
         source: "inngest/check-email",
         payload: {
+          kind: "ask",
           prompt: [
             `## 📧 ${filteredEscalations.length} Email${filteredEscalations.length > 1 ? "s" : ""} Need${filteredEscalations.length === 1 ? "s" : ""} You`,
             "",

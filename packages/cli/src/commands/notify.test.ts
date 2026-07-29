@@ -1,5 +1,23 @@
 import { describe, expect, test } from "bun:test"
-import { parseNotifyWaitTimeoutSeconds } from "./notify"
+import {
+  MISSING_NOTIFY_KIND_WARNING,
+  parseNotifyWaitTimeoutSeconds,
+  resolveNotifyKind,
+} from "./notify"
+
+describe("notify send kind", () => {
+  test("keeps an explicit kind without a warning", () => {
+    expect(resolveNotifyKind("alert")).toEqual({ kind: "alert" })
+  })
+
+  test("warns and defaults a missing kind to receipt", () => {
+    expect(resolveNotifyKind(undefined)).toEqual({
+      kind: "receipt",
+      warning: MISSING_NOTIFY_KIND_WARNING,
+    })
+    expect(MISSING_NOTIFY_KIND_WARNING).toContain("2026-08-12")
+  })
+})
 
 describe("notify wait timeout", () => {
   test("accepts the documented duration syntax", () => {

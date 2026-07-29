@@ -407,6 +407,7 @@ export const nasSoakReview = inngest.createFunction(
       ];
 
       await gateway.notify("nas.soak.review", {
+        kind: "digest",
         message: summary.join("\n"),
         gatePass: allGatesPass,
         code: compactCode,
