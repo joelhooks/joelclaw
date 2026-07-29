@@ -2,10 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { MessageEventDocument } from "@joelclaw/message-event-log";
 import { drainDeliverDecisions, EXECUTOR_CONSUMER } from "./gateway-decision-executor";
 
-function decisionEvent(
-  id: string,
-  payload: Record<string, unknown>,
-): MessageEventDocument {
+function decisionEvent(id: string, payload: Record<string, unknown>): MessageEventDocument {
   return {
     _id: id,
     kind: "gateway.decision.recorded",
@@ -44,9 +41,7 @@ function harness(events: MessageEventDocument[]) {
           sent.push(request.text);
           sentRequests.push({
             flowId: request.flowId,
-            ...(request.correlationId
-              ? { correlationId: request.correlationId }
-              : {}),
+            ...(request.correlationId ? { correlationId: request.correlationId } : {}),
           });
           return { platformMessageId: `sent-${sent.length}` };
         },
@@ -57,19 +52,21 @@ function harness(events: MessageEventDocument[]) {
 
 describe("deliver executor", () => {
   test("executes a deliver decision with top-level rewrite", async () => {
-    const event = decisionEvent(
-      "d1",
-      { decision: { verb: "deliver" }, rewrite: "Front is back up." },
-    );
+    const event = decisionEvent("d1", {
+      decision: { verb: "deliver" },
+      rewrite: "Front is back up.",
+    });
     event.flowId = "notify:11111111-1111-4111-8111-111111111111";
     event.correlationId = "daily-flow-agent:11111111-1111-4111-8111-111111111111";
     const harnessed = harness([event]);
     const result = await harnessed.run();
     expect(harnessed.sent).toEqual(["Front is back up."]);
-    expect(harnessed.sentRequests).toEqual([{
-      flowId: "notify:11111111-1111-4111-8111-111111111111",
-      correlationId: "daily-flow-agent:11111111-1111-4111-8111-111111111111",
-    }]);
+    expect(harnessed.sentRequests).toEqual([
+      {
+        flowId: "notify:11111111-1111-4111-8111-111111111111",
+        correlationId: "daily-flow-agent:11111111-1111-4111-8111-111111111111",
+      },
+    ]);
     expect(harnessed.advanced).toEqual(["d1"]);
     expect(result).toEqual({ executed: 1, skipped: 0 });
   });
@@ -79,11 +76,33 @@ describe("deliver executor", () => {
     // sent. Joel never saw those messages; the executor must read both places.
     const harnessed = harness([
       decisionEvent("d2", {
-        decision: { verb: "aggregate", action: "close-deliver", rewrite: "3 health alerts, all Front." },
+        decision: {
+          verb: "aggregate",
+          action: "close-deliver",
+          rewrite: "3 health alerts, all Front.",
+        },
       }),
     ]);
     const result = await harnessed.run();
     expect(harnessed.sent).toEqual(["3 health alerts, all Front."]);
+    expect(result).toEqual({ executed: 1, skipped: 0 });
+  });
+
+  test("delivers an incident aggregate open marked for immediate delivery", async () => {
+    const harnessed = harness([
+      decisionEvent("incident-open", {
+        decision: {
+          verb: "aggregate",
+          action: "open",
+          aggregateId: "incident:welcome-email-backlog:1",
+          anomalyId: "welcome-email-backlog",
+          delivery: "immediate",
+        },
+        rewrite: "Three welcome emails are stuck.",
+      }),
+    ]);
+    const result = await harnessed.run();
+    expect(harnessed.sent).toEqual(["Three welcome emails are stuck."]);
     expect(result).toEqual({ executed: 1, skipped: 0 });
   });
 

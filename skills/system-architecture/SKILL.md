@@ -331,18 +331,21 @@ Source files:
   - cluster uses `clusterFunctionDefinitions`
 
 ## Ground-truth counts
-- Host function set: **125**
-- Cluster function set: **18**
+- Measured from the imported definition arrays on 2026-07-29:
+  - Host function set: **163**
+  - Cluster function set: **14**
+- `gateway/external-delivery-canary` is host-only. It appends synthetic
+  `message.requested` events and watches the canonical event log. It does not run
+  in the gateway driver, transport daemon, or gateway session.
 - Cluster subset functions:
-  - `approvalRequest`, `approvalResolve`
-  - `todoistCommentAdded`, `todoistTaskCompleted`, `todoistTaskCreated`
-  - `frontMessageReceived`, `frontMessageSent`, `frontAssigneeChanged`
-  - `todoistMemoryReviewBridge`
-  - `githubWorkflowRunCompleted`, `githubPackagePublished`
-  - `webhookSubscriptionDispatchGithubWorkflowRunCompleted`
-  - `observeSessionFunction`, `checkMemoryReview`
-  - `queueObserver`, `queueObserverRequested`
-  - `swarmOrchestrator`, `swarmAgentExec`
+  - `agent/approval-request`, `agent/approval-resolve`
+  - `todoist-comment-notify`, `todoist-task-completed-notify`, `todoist-task-created-notify`
+  - `github-workflow-run-completed-notify`, `github-package-published-notify`
+  - `webhook-subscription-dispatch-generic`
+  - `webhook-subscription-dispatch-github-workflow-run-completed`
+  - `memory/observe-session`
+  - `queue/observer`, `queue/observer-requested`
+  - `swarm-orchestrator`, `swarm-agent-exec`
 
 ## App registration isolation
 From `inngest/client.ts`:

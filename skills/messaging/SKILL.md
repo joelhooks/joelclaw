@@ -72,6 +72,35 @@ joelclaw messages trace <flowId>
 
 Correlate replies, reactions, buttons, decisions, and platform receipts by `flowId`. Platform message IDs are lookup data, not the durable identity.
 
+## Recurring incident producer contract
+
+Recurring alarms use one stable incident envelope. The `message.requested` event
+supplies `source`. Its `payload.evidence` supplies:
+
+```text
+anomalyId
+state = open | changed | resolved
+severity
+observedAt
+evidence
+```
+
+`anomalyId` names the condition, never the run. Examples:
+`welcome-email-backlog`, `hourly-loop-stalled`, and
+`system-worker-unreachable`.
+
+The gateway reconstructs the latch from canonical
+`gateway.decision.recorded` receipts. Redis may cache that projection, but it
+is never the only copy. First notice opens and delivers. Identical repeats join
+the incident aggregate. One material `changed` transition can deliver. One
+`resolved` transition close-delivers. A resolved repeat records a drop. A
+reopen creates a successor with `follows`.
+
+Each `(source, anomalyId)` can spend three immediate Telegram slots per Pacific
+day: open, one material change, and resolution. A distinct critical anomaly
+has a distinct `anomalyId`, so it gets its own slots. Routine all-good evidence
+joins one dated digest aggregate.
+
 ## Inbound messages
 
 Every event from Joel uses one stream contract:

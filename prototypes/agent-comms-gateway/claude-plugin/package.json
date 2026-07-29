@@ -8,6 +8,7 @@
     "mcp:list": "bun scripts/list-tools.mjs"
   },
   "dependencies": {
+    "@joelclaw/gateway-incident-latch": "file:../../../packages/gateway-incident-latch",
     "@joelclaw/message-event-log": "file:../../../packages/message-event-log"
   }
 }

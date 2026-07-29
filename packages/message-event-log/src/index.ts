@@ -40,12 +40,73 @@ export type GatewayTargetIntent =
   | { kind: "revived-session"; sessionId: string }
   | { kind: "bus-consumer"; consumer: string; flowId: string };
 
+export type GatewayIncidentProducerState = "open" | "changed" | "resolved";
+
+export type GatewayIncidentObservation = {
+  source: string;
+  anomalyId: string;
+  state: GatewayIncidentProducerState;
+  severity: string;
+  observedAt: string;
+  evidence: unknown;
+};
+
+export type GatewayIncidentPlatformAnchor = {
+  platform: MessagePlatform;
+  platformMessageId: string;
+};
+
+export type GatewayIncidentTombstone = {
+  resolvedAt: string;
+  expiresAt: string;
+};
+
+export type GatewayIncidentState = {
+  source: string;
+  anomalyId: string;
+  state: GatewayIncidentProducerState;
+  severity: string;
+  firstObservedAt: string;
+  lastObservedAt: string;
+  lastDeliveredAt?: string;
+  lastEvidenceHash: string;
+  repeatCount: number;
+  aggregateId: string;
+  platformAnchor?: GatewayIncidentPlatformAnchor;
+  resolutionDeliveredAt?: string;
+  tombstone?: GatewayIncidentTombstone;
+  follows?: string;
+};
+
+export type GatewayIncidentTransition =
+  | "opened"
+  | "repeated"
+  | "changed"
+  | "resolved"
+  | "resolved-repeat"
+  | "reopened"
+  | "routine-all-good";
+
+export type GatewayIncidentDeliverySlot = "open" | "changed" | "resolved";
+
+export type GatewayIncidentDecisionReceipt = {
+  schema: "gateway-incident-latch.v1";
+  key: string;
+  observation: GatewayIncidentObservation;
+  transition: GatewayIncidentTransition;
+  delivery: "immediate" | "aggregate" | "daily-digest" | "recorded-drop";
+  after: GatewayIncidentState;
+  ptDate: string;
+};
+
 export type GatewayDecision =
   | { verb: "deliver"; target: GatewayTargetIntent; rewrite: string }
   | {
       verb: "aggregate";
       action: "open" | "join" | "extend" | "close-deliver";
       aggregateId: string;
+      anomalyId?: string;
+      delivery?: "immediate";
       memberEventIds: string[];
       holdUntil?: number;
       follows?: string;
@@ -55,7 +116,7 @@ export type GatewayDecision =
   | { verb: "escalate"; target: GatewayTargetIntent; rewrite: string }
   | { verb: "fanout"; taskId: string }
   | { verb: "route"; target: GatewayTargetIntent }
-  | { verb: "drop" };
+  | { verb: "drop"; anomalyId?: string };
 
 export type GatewayDecisionRecordedPayload = {
   inputEventIds: string[];
@@ -63,6 +124,7 @@ export type GatewayDecisionRecordedPayload = {
   promptRevision: string;
   decisionSeq: number;
   decision: GatewayDecision;
+  incident?: GatewayIncidentDecisionReceipt;
 };
 
 export type GatewayHandoffPayload = {
@@ -107,10 +169,7 @@ export type InboundInterpretedPayload = {
   inboundEventId: string;
   reason: string;
   promptRevision: string;
-  target: Extract<
-    GatewayTargetIntent,
-    { kind: "live-pane" | "revived-session" | "bus-consumer" }
-  >;
+  target: Extract<GatewayTargetIntent, { kind: "live-pane" | "revived-session" | "bus-consumer" }>;
 };
 
 export type MessageEventPayloadByKind = {
@@ -281,7 +340,8 @@ export const createMessageEventLogClient = (options: ClientOptions = {}) => {
   const appendRef = (anyApi as any).messageEvents.append as FunctionReference<"mutation">;
   const materializeRef = (anyApi as any).messageEvents.materialize as FunctionReference<"mutation">;
   const pendingRef = (anyApi as any).messageEvents.pendingForConsumer as FunctionReference<"query">;
-  const advanceCursorRef = (anyApi as any).messageEvents.advanceConsumerCursor as FunctionReference<"mutation">;
+  const advanceCursorRef = (anyApi as any).messageEvents
+    .advanceConsumerCursor as FunctionReference<"mutation">;
   const readSinceRef = (anyApi as any).messageEvents.readSince as FunctionReference<"query">;
   const traceRef = (anyApi as any).messageEvents.traceByFlow as FunctionReference<"query">;
 
@@ -322,7 +382,11 @@ export const createMessageEventLogClient = (options: ClientOptions = {}) => {
           eventId: requireNonEmpty(eventId, "eventId"),
         })) as MessageConsumerCursor;
       } catch (error) {
-        throw new MessageEventLogError("advanceCursor", "MESSAGE_EVENT_CURSOR_ADVANCE_FAILED", error);
+        throw new MessageEventLogError(
+          "advanceCursor",
+          "MESSAGE_EVENT_CURSOR_ADVANCE_FAILED",
+          error,
+        );
       }
     },
     readSince: async (

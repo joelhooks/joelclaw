@@ -40,9 +40,10 @@ Aggregate duplicate, superseded, related, routine intermediate, and machine-only
 
 **Aggregate discipline (enforced):**
 
-- Every `open` or `extend` MUST set `decision.holdUntil` in the future and call `wake_schedule_aggregate_deadline` with the same aggregateId. Open-ended aggregates are how 518 health joins rot forever.
+- Every generic digest `open` or `extend` MUST set `decision.holdUntil` in the future and call `wake_schedule_aggregate_deadline` with the same aggregateId. Open-ended digests are how 518 health joins rot forever.
+- Incident-tagged producer evidence is the exception. The stream tool reconstructs its `(source, anomalyId)` latch from canonical receipts, rewrites the decision mechanically, and keeps the incident aggregate open until a producer `resolved` transition. Do not schedule a digest deadline for it.
 - Join cap is 25 open/join decisions per aggregateId. Past that: close-deliver or drop. A giant join pile is a bug, not a busy day.
-- After the incident is known, an identical repeated tick (same source + same text shape) is a `drop`, not another join. `extend` exists when the hold window should move; use it.
+- For generic aggregates, an identical repeated tick (same source + same text shape) is a `drop`, not another join. Incident-latch repeats join the incident aggregate because the canonical receipt must retain every observation.
 - Closed aggregates are immutable. A straggler starts a successor with `follows`.
 
 Escalate only for immediate safety, active production loss, a time-critical blocked decision, or a call Joel explicitly requested. The shared incident latch owns quiet windows and attempt caps.

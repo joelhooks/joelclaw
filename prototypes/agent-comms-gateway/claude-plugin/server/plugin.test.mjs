@@ -13,7 +13,16 @@ import {
 } from "./stream-tools.mjs";
 import { createWakeTools } from "./wake-tools.mjs";
 
-const inputEvent = { _id: "input-1", kind: "message.requested", source: "producer", recordedAt: 10, sequence: 1 };
+const inputEvent = {
+  _id: "input-1",
+  kind: "message.requested",
+  source: "producer",
+  rawSourceId: "11111111-1111-4111-8111-111111111111",
+  flowId: "notify:11111111-1111-4111-8111-111111111111",
+  correlationId: "producer:11111111-1111-4111-8111-111111111111",
+  recordedAt: 10,
+  sequence: 1,
+};
 const joelInbound = {
   _id: "joel-1",
   kind: "inbound.received",
@@ -74,6 +83,10 @@ describe("stream receipts", () => {
     const appended = await stream.recordDecision({ payload: decisionPayload, advanceAfter: false });
     expect(appended.receipt.semanticKey).toBe("gateway:input-1:1");
     expect(appended.event.kind).toBe("gateway.decision.recorded");
+    expect(appended.event.flowId).toBe("notify:11111111-1111-4111-8111-111111111111");
+    expect(appended.event.correlationId).toBe(
+      "producer:11111111-1111-4111-8111-111111111111",
+    );
     const cursor = await stream.advanceAfterDecision({ eventId: "input-1", decisionEventId: appended.receipt.eventId });
     expect(cursor.lastEventId).toBe("input-1");
   });

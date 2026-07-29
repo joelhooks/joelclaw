@@ -35,6 +35,36 @@ The message stream is durable memory. `gateway.handoff` is advisory. Stream repl
 
 Every consumed external event must get exactly one `gateway.decision.recorded` receipt before the gateway cursor advances. Recorded `deliver` and `aggregate/close-deliver` decisions are executed mechanically by `packages/gateway/src/gateway-decision-executor.ts`.
 
+### Recurring incident contract
+
+Recurring alarm producers put stable incident facts in the canonical
+`message.requested` envelope:
+
+```text
+source                              # message.requested.source
+anomalyId                           # payload.evidence.anomalyId
+state = open | changed | resolved   # payload.evidence.state
+severity                            # payload.evidence.severity
+observedAt                          # payload.evidence.observedAt
+evidence                            # payload.evidence.evidence
+```
+
+Use a condition ID such as `welcome-email-backlog`. Never put a run ID in
+`anomalyId`. Producers report transitions. They do not choose delivery.
+
+`@joelclaw/gateway-incident-latch` folds canonical
+`gateway.decision.recorded` receipts into state keyed by `(source, anomalyId)`.
+The receipt keeps first and last observation times, evidence hash, repeat
+count, aggregate ID, delivery times, platform anchor, resolution tombstone,
+and `follows` for a reopened successor. Redis is optional cache only.
+
+The first occurrence delivers and opens an incident aggregate. Identical
+repeats join without another DM. One material `changed` transition and one
+`resolved` transition can deliver. Resolved repeats record a drop. Per anomaly,
+the immediate cap is three Telegram DMs per Pacific day: open, one change, and
+resolution. A distinct critical condition must use and name its distinct
+`anomalyId`. Routine all-good evidence joins one dated daily digest.
+
 The policy contract gives platform choice to the gateway agent. The current decision executor delivers only to Telegram. Another platform is not complete without its own transport receipt.
 
 ### Driver

@@ -1,4 +1,9 @@
 import {
+  parseGatewayIncidentObservation,
+  reconcileGatewayIncident,
+  reconstructGatewayIncidentStore,
+} from "@joelclaw/gateway-incident-latch";
+import {
   createMessageEventLogClient,
   GATEWAY_MESSAGE_EVENT_CONSUMER,
   gatewayDecisionSemanticKey,
@@ -141,9 +146,11 @@ export function validateDecisionPayload(payload, { aggregateStats = null } = {})
   // A decision that delivers must carry the full operator-facing message.
   // Five close-delivers shipped without text on cutover day and were never
   // sent — the executor cannot deliver what was never written.
-  const delivers = decision.verb === "deliver" || decision.action === "close-deliver";
+  const delivers = decision.verb === "deliver"
+    || decision.action === "close-deliver"
+    || decision.delivery === "immediate";
   if (delivers && (typeof payload.rewrite !== "string" || payload.rewrite.trim().length === 0)) {
-    throw new Error("deliver and close-deliver decisions require non-empty payload.rewrite — the exact message text Joel receives");
+    throw new Error("immediate and close-deliver decisions require non-empty payload.rewrite — the exact message text Joel receives");
   }
   if (delivers) {
     const lintError = lintRewrite(payload.rewrite);
@@ -174,7 +181,10 @@ export function validateDecisionPayload(payload, { aggregateStats = null } = {})
 
     // Open/extend without a deadline is how health incidents live forever.
     // wake_schedule_aggregate_deadline is the timer; holdUntil is the receipt.
-    if (decision.action === "open" || decision.action === "extend") {
+    if (
+      (decision.action === "open" || decision.action === "extend")
+      && payload.incident === undefined
+    ) {
       const holdUntilMs = Date.parse(String(decision.holdUntil ?? ""));
       const numericHold = typeof decision.holdUntil === "number" ? decision.holdUntil : holdUntilMs;
       if (!Number.isFinite(numericHold) || numericHold <= Date.now()) {
@@ -210,6 +220,7 @@ export function validateDecisionPayload(payload, { aggregateStats = null } = {})
 export function resolveAdvanceAfter(payload, advanceAfter) {
   if (typeof advanceAfter === "boolean") return advanceAfter;
   if (!payload || payload.inputEventIds?.length !== 1) return false;
+  if (payload.incident) return true;
   if (!isTerminalDecision(payload.decision)) return false;
   return true;
 }
@@ -402,18 +413,77 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         }
       }
 
-      const aggregateStats = payload?.decision
-        ? await aggregateJoinStats(payload.decision, inputEventIds)
+      const coveredInputs = inputEventIds
+        .map((eventId) => events.find((event) => event._id === eventId)
+          ?? pending.find((event) => event._id === eventId))
+        .filter(Boolean);
+      const incidentInputs = coveredInputs
+        .map((event) => ({
+          event,
+          observation: parseGatewayIncidentObservation(event),
+        }))
+        .filter((item) => item.observation !== null);
+      if (incidentInputs.length > 0 && coveredInputs.length !== 1) {
+        throw new Error(
+          "Incident-tagged producer inputs must be decided one at a time so each (source, anomalyId) transition gets one canonical receipt.",
+        );
+      }
+      let candidatePayload = payload;
+      if (incidentInputs.length === 1) {
+        const incident = reconcileGatewayIncident({
+          store: reconstructGatewayIncidentStore(events),
+          observation: incidentInputs[0].observation,
+          inputEventId: incidentInputs[0].event._id,
+        });
+        candidatePayload = {
+          ...payload,
+          reason: incident.reason,
+          decision: incident.decision,
+          incident: incident.receipt,
+        };
+      }
+
+      const aggregateStats = candidatePayload?.decision && !candidatePayload?.incident
+        ? await aggregateJoinStats(candidatePayload.decision, inputEventIds)
         : null;
-      const validated = validateDecisionPayload(payload, { aggregateStats });
+      const validated = validateDecisionPayload(candidatePayload, { aggregateStats });
       const resolvedAdvance = resolveAdvanceAfter(validated, advanceAfter);
+      const inheritedFlowIds = [...new Set(
+        coveredInputs
+          .map((event) => event.flowId)
+          .filter((value) => typeof value === "string" && value.trim().length > 0),
+      )];
+      const inheritedCorrelations = [...new Set(
+        coveredInputs
+          .map((event) => {
+            if (typeof event.correlationId === "string" && event.correlationId.trim().length > 0) {
+              return event.correlationId.trim();
+            }
+            if (
+              typeof event.source === "string"
+              && event.source.trim().length > 0
+              && typeof event.rawSourceId === "string"
+              && event.rawSourceId.trim().length > 0
+            ) {
+              return `${event.source.trim()}:${event.rawSourceId.trim()}`;
+            }
+            return undefined;
+          })
+          .filter(Boolean),
+      )];
+      const resolvedFlowId = flowId
+        ?? (inheritedFlowIds.length === 1 ? inheritedFlowIds[0] : undefined);
+      const resolvedCorrelationId = inheritedCorrelations.length === 1
+        ? inheritedCorrelations[0]
+        : undefined;
 
       const appended = await appendAndReadBack({
         semanticKey: gatewayDecisionSemanticKey(validated),
         kind: "gateway.decision.recorded",
         source: "joelclaw-gateway",
         payload: validated,
-        ...(flowId ? { flowId } : {}),
+        ...(resolvedFlowId ? { flowId: resolvedFlowId } : {}),
+        ...(resolvedCorrelationId ? { correlationId: resolvedCorrelationId } : {}),
         ...(origin ? { origin } : {}),
       });
 

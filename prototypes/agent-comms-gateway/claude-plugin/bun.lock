@@ -5,6 +5,7 @@
     "": {
       "name": "joelclaw-gateway-plugin",
       "dependencies": {
+        "@joelclaw/gateway-incident-latch": "file:../../../packages/gateway-incident-latch",
         "@joelclaw/message-event-log": "file:../../../packages/message-event-log",
       },
     },
@@ -62,6 +63,8 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.27.0", "", { "os": "win32", "cpu": "x64" }, "sha512-aIitBcjQeyOhMTImhLZmtxfdOcuNRpwlPNmlFKPcHQYPhEssw75Cl1TSXJXpMkzaua9FUetx/4OQKq7eJul5Cg=="],
 
+    "@joelclaw/gateway-incident-latch": ["@joelclaw/gateway-incident-latch@file:../../../packages/gateway-incident-latch", { "dependencies": { "@joelclaw/message-event-log": "file:../message-event-log" }, "devDependencies": { "@types/bun": "latest", "typescript": "5.9.2" } }],
+
     "@joelclaw/message-event-log": ["@joelclaw/message-event-log@file:../../../packages/message-event-log", { "dependencies": { "convex": "^1.32.0" }, "devDependencies": { "@types/bun": "latest", "typescript": "5.9.2" } }],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
@@ -81,5 +84,7 @@
     "undici-types": ["undici-types@8.3.0", "", {}, "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="],
 
     "ws": ["ws@8.21.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g=="],
+
+    "@joelclaw/gateway-incident-latch/@joelclaw/message-event-log": ["@joelclaw/message-event-log@file:../../../packages/message-event-log", {}],
   }
 }

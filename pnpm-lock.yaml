@@ -519,6 +519,19 @@ importers:
         specifier: 5.9.2
         version: 5.9.2
 
+  packages/gateway-incident-latch:
+    dependencies:
+      '@joelclaw/message-event-log':
+        specifier: file:../message-event-log
+        version: link:../message-event-log
+    devDependencies:
+      '@types/bun':
+        specifier: latest
+        version: 1.3.14
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
   packages/incident-latch:
     dependencies:
       effect:

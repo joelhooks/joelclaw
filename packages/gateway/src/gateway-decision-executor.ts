@@ -10,14 +10,8 @@ import type { MessageEventDocument } from "@joelclaw/message-event-log";
 export const EXECUTOR_CONSUMER = "gateway-transport-executor" as const;
 
 export interface DeliverExecutorEventLog {
-  readonly pendingForConsumer: (
-    consumer: string,
-    limit: number,
-  ) => Promise<MessageEventDocument[]>;
-  readonly advanceCursor: (
-    consumer: string,
-    eventId: string,
-  ) => Promise<unknown>;
+  readonly pendingForConsumer: (consumer: string, limit: number) => Promise<MessageEventDocument[]>;
+  readonly advanceCursor: (consumer: string, eventId: string) => Promise<unknown>;
 }
 
 export interface DeliverExecutorDependencies {
@@ -38,6 +32,7 @@ interface DeliverDecisionPayload {
   readonly decision?: {
     readonly verb?: string;
     readonly action?: string;
+    readonly delivery?: string;
     readonly platform?: string;
     readonly rewrite?: string;
   };
@@ -70,7 +65,8 @@ export async function drainDeliverDecisions(
     const isDeliver =
       event.kind === "gateway.decision.recorded" &&
       (decision?.verb === "deliver" ||
-        (decision?.verb === "aggregate" && decision?.action === "close-deliver"));
+        (decision?.verb === "aggregate" &&
+          (decision?.action === "close-deliver" || decision?.delivery === "immediate")));
     if (!isDeliver) {
       skipped += 1;
       await dependencies.eventLog.advanceCursor(EXECUTOR_CONSUMER, event._id);
@@ -96,7 +92,10 @@ export async function drainDeliverDecisions(
       content: { raw: text },
       text,
       flowId: event.flowId ?? `decision:${event._id}`,
-      origin: { machineId: event.origin?.machineId ?? "flagg", producer: "gateway-transport-executor" },
+      origin: {
+        machineId: event.origin?.machineId ?? "flagg",
+        producer: "gateway-transport-executor",
+      },
       ...(event.correlationId ? { correlationId: event.correlationId } : {}),
     });
     executed += 1;
