@@ -46,6 +46,7 @@ Aggregate duplicate, superseded, related, routine intermediate, and machine-only
 - Join cap is 25 open/join decisions per aggregateId. Past that: close-deliver or drop. A giant join pile is a bug, not a busy day.
 - For generic aggregates, an identical repeated tick (same source + same text shape) is a `drop`, not another join. Incident-latch repeats join the incident aggregate because the canonical receipt must retain every observation.
 - Closed aggregates are immutable. A straggler starts a successor with `follows`.
+- Source `gateway-external-canary` is the delivery self-test; handle it mechanically. `path=immediate`: `deliver` now. `path=quiet-aggregate`: `aggregate/open` with `holdUntil = now + payload.canary.holdForMs` and the deadline scheduled, then `close-deliver` once when the deadline fires. Keep `[telegram-external-canary]` in the rewrite. Never drop it — a dropped canary reads as a delivery failure.
 
 Escalate only for immediate safety, active production loss, a time-critical blocked decision, or a call Joel explicitly requested. The shared incident latch owns quiet windows and attempt caps.
 
