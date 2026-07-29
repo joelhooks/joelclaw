@@ -21,6 +21,8 @@ spec:
       containers:
         - name: inngest
           image: inngest/inngest
+          # Keep the cached image bootable when Panda loses registry egress.
+          imagePullPolicy: IfNotPresent
           args:
             - inngest
             - start

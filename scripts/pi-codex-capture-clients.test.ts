@@ -87,20 +87,25 @@ async function invokePiCapture(input: {
   centralUrl: string;
   sessionId: string;
   transcriptPath: string;
+  httpTimeoutMs?: number;
 }) {
   const moduleUrl = pathToFileURL(
     join(process.cwd(), "packages", "pi-extensions", "memory-capture", "index.ts"),
   ).href;
   const program = `
-    import memoryCapture from ${JSON.stringify(moduleUrl)};
+    import memoryCapture, { flushCaptureQueue } from ${JSON.stringify(moduleUrl)};
     const handlers = {};
     memoryCapture({ on(name, handler) { handlers[name] = handler; } });
-    await handlers.turn_end({}, {
+    const startedAt = performance.now();
+    handlers.turn_end({}, {
       sessionManager: {
         getSessionId: () => ${JSON.stringify(input.sessionId)},
         getSessionFile: () => ${JSON.stringify(input.transcriptPath)},
       },
     });
+    const hookDurationMs = performance.now() - startedAt;
+    await flushCaptureQueue();
+    console.log(JSON.stringify({ hookDurationMs, totalDurationMs: performance.now() - startedAt }));
   `;
   const child = Bun.spawn([process.execPath, "-e", program], {
     cwd: process.cwd(),
@@ -109,11 +114,18 @@ async function invokePiCapture(input: {
       HOME: input.root,
       JOELCLAW_AUTH_PATH: input.authPath,
       JOELCLAW_CENTRAL_URL: input.centralUrl,
+      ...(input.httpTimeoutMs
+        ? { JOELCLAW_CAPTURE_HTTP_TIMEOUT_MS: String(input.httpTimeoutMs) }
+        : {}),
     },
     stdout: "pipe",
     stderr: "pipe",
   });
   expect(await child.exited).toBe(0);
+  return JSON.parse(await new Response(child.stdout).text()) as {
+    hookDurationMs: number;
+    totalDurationMs: number;
+  };
 }
 
 async function invokeCodexCapture(input: {
@@ -153,6 +165,36 @@ const lines = [
 ];
 
 describe("capture client fixtures", () => {
+  test("Pi turn_end returns immediately when Central never responds", async () => {
+    const fixture = createFixture();
+    const transcriptPath = join(fixture.root, "pi-session.jsonl");
+    const requests: CaptureBody[] = [];
+    const central = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requests.push((await request.json()) as CaptureBody);
+        return new Promise<Response>(() => {});
+      },
+    });
+    try {
+      writeFileSync(transcriptPath, lines[0]);
+      const timing = await invokePiCapture({
+        ...fixture,
+        centralUrl: `http://127.0.0.1:${central.port}`,
+        sessionId: "pi-session",
+        transcriptPath,
+        httpTimeoutMs: 50,
+      });
+
+      expect(timing.hookDurationMs).toBeLessThan(25);
+      expect(timing.totalDurationMs).toBeLessThan(1_000);
+      expect(requests).toHaveLength(1);
+      expect(readdirSync(join(fixture.configDir, "outbox"))).toHaveLength(1);
+    } finally {
+      central.stop(true);
+    }
+  });
+
   test("Pi coalesces repeated failures under one byte-accurate pending Run", async () => {
     const fixture = createFixture();
     const transcriptPath = join(fixture.root, "pi-session.jsonl");
