@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@joelclaw/inference-router": "workspace:*",
+    "@joelclaw/message-event-log": "workspace:*",
     "@joelclaw/queue": "workspace:*",
     "@joelclaw/telemetry": "workspace:*",
     "effect": "^3.19.17",

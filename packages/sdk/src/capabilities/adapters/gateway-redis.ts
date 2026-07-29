@@ -1,3 +1,8 @@
+import {
+  getMessageEventLogClient,
+  type MessageEventDocument,
+  type MessageEventTraceResult,
+} from "@joelclaw/message-event-log"
 import { createChannelDeliveryAudit, emitGatewayOtel } from "@joelclaw/telemetry"
 import { Effect, ParseResult, Schema } from "effect"
 import { type CapabilityPort, capabilityError } from "../contract"
@@ -168,13 +173,64 @@ export function notifyTerminalFailureCode(
   return state === "failed" ? "NOTIFY_DELIVERY_FAILED" : "NOTIFY_DIGESTED"
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function isAggregateClosure(event: MessageEventDocument): boolean {
+  if (event.kind !== "gateway.decision.recorded") return false
+  const decision = asRecord(asRecord(event.payload)?.decision)
+  return decision?.verb === "aggregate" && decision.action === "close-deliver"
+}
+
+function canonicalTerminalReceipt(
+  trace: MessageEventTraceResult,
+  correlationId: string,
+): NotifyTerminalReceipt | null {
+  if (trace.kind !== "trace") return null
+  const terminal = [...trace.events].reverse().find((event) =>
+    event.kind === "delivery.confirmed"
+    || event.kind === "fallback.delivered"
+    || event.kind === "delivery.failed"
+    || isAggregateClosure(event)
+  )
+  if (!terminal) return null
+
+  const deliveryState =
+    terminal.kind === "delivery.failed"
+      ? "failed"
+      : isAggregateClosure(terminal)
+        ? "digested"
+        : "confirmed"
+  const confirmedAt =
+    deliveryState === "confirmed"
+      ? new Date(terminal.occurredAt).toISOString()
+      : null
+
+  return Schema.decodeUnknownSync(NotifyWaitResultSchema)({
+    flowId: trace.flowId,
+    correlationId,
+    platform:
+      terminal.platform
+      ?? (terminal.kind === "fallback.delivered" ? "telegram" : "gateway"),
+    platformMessageId: terminal.platformMessageId ?? null,
+    deliveryState,
+    declaredActions: [],
+    confirmedAt,
+  })
+}
+
 export async function waitForNotifyTerminalReceipt(
   input: {
+    readonly flowId: string
     readonly correlationId: string
     readonly timeoutMs: number
   },
   dependencies: {
     readonly get: (key: string) => Promise<string | null>
+    readonly trace: (flowId: string) => Promise<MessageEventTraceResult>
     readonly now?: () => number
     readonly sleep?: (milliseconds: number) => Promise<void>
     readonly pollIntervalMs?: number
@@ -186,11 +242,23 @@ export async function waitForNotifyTerminalReceipt(
   const deadline = now() + Math.max(0, input.timeoutMs)
   const key = `joelclaw:message-contract:correlation:${input.correlationId}`
   while (now() <= deadline) {
+    let traceError: unknown
+    try {
+      const canonical = canonicalTerminalReceipt(
+        await dependencies.trace(input.flowId),
+        input.correlationId,
+      )
+      if (canonical) return canonical
+    } catch (error) {
+      traceError = error
+    }
+
     const raw = await dependencies.get(key)
     if (raw) {
       const parsed = JSON.parse(raw)
       return Schema.decodeUnknownSync(NotifyWaitResultSchema)(parsed)
     }
+    if (traceError) throw traceError
     if (now() >= deadline) return null
     await sleep(dependencies.pollIntervalMs ?? 250)
   }
@@ -401,25 +469,26 @@ export const gatewayRedisNotifyAdapter: CapabilityPort<typeof commands> = {
               )
             )
           }
-          const redis = yield* Effect.tryPromise({
-            try: () => connectRedis(),
-            catch: (error) =>
-              capabilityError(
-                "NOTIFY_BACKEND_UNAVAILABLE",
-                `Redis connection failed: ${String(error)}`,
-                "Verify Redis is running (`joelclaw status`) and retry the same event ID."
-              ),
-          })
           const correlationId = `${source}:${eventId}`
+          const flowId = `notify:${eventId}`
+          const eventLog = getMessageEventLogClient()
           const receipt = yield* Effect.tryPromise({
             try: async () => {
+              const redis = await connectRedis().catch(() => undefined)
               try {
                 return await waitForNotifyTerminalReceipt(
-                  { correlationId, timeoutMs: timeoutSeconds * 1_000 },
-                  { get: (key) => redis.get(key) },
+                  {
+                    flowId,
+                    correlationId,
+                    timeoutMs: timeoutSeconds * 1_000,
+                  },
+                  {
+                    get: (key) => redis?.get(key) ?? Promise.resolve(null),
+                    trace: (resolvedFlowId) => eventLog.trace(resolvedFlowId),
+                  },
                 )
               } finally {
-                await redis.quit().catch(() => {})
+                await redis?.quit().catch(() => {})
               }
             },
             catch: (error) =>

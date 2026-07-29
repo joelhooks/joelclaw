@@ -264,6 +264,7 @@ describe("gateway transport slim-down seams", () => {
     });
     expect(events[0]).toMatchObject({
       flowId: facts.flowId,
+      correlationId: `${facts.source}:${facts.eventId}`,
       origin,
       payload: { text: facts.text, evidence: facts.evidence },
     });

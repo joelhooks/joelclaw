@@ -19,10 +19,15 @@ function decisionEvent(
 
 function harness(events: MessageEventDocument[]) {
   const sent: string[] = [];
+  const sentRequests: Array<{
+    flowId: string;
+    correlationId?: string;
+  }> = [];
   const advanced: string[] = [];
   const logged: string[] = [];
   return {
     sent,
+    sentRequests,
     advanced,
     logged,
     run: () =>
@@ -37,6 +42,12 @@ function harness(events: MessageEventDocument[]) {
         recipientId: "joel",
         send: async (request) => {
           sent.push(request.text);
+          sentRequests.push({
+            flowId: request.flowId,
+            ...(request.correlationId
+              ? { correlationId: request.correlationId }
+              : {}),
+          });
           return { platformMessageId: `sent-${sent.length}` };
         },
         log: (message) => logged.push(message),
@@ -46,11 +57,19 @@ function harness(events: MessageEventDocument[]) {
 
 describe("deliver executor", () => {
   test("executes a deliver decision with top-level rewrite", async () => {
-    const harnessed = harness([
-      decisionEvent("d1", { decision: { verb: "deliver" }, rewrite: "Front is back up." }),
-    ]);
+    const event = decisionEvent(
+      "d1",
+      { decision: { verb: "deliver" }, rewrite: "Front is back up." },
+    );
+    event.flowId = "notify:11111111-1111-4111-8111-111111111111";
+    event.correlationId = "daily-flow-agent:11111111-1111-4111-8111-111111111111";
+    const harnessed = harness([event]);
     const result = await harnessed.run();
     expect(harnessed.sent).toEqual(["Front is back up."]);
+    expect(harnessed.sentRequests).toEqual([{
+      flowId: "notify:11111111-1111-4111-8111-111111111111",
+      correlationId: "daily-flow-agent:11111111-1111-4111-8111-111111111111",
+    }]);
     expect(harnessed.advanced).toEqual(["d1"]);
     expect(result).toEqual({ executed: 1, skipped: 0 });
   });

@@ -598,6 +598,7 @@ export function makeSlimNotifyIngress(
       source: facts.source,
       flowId: facts.flowId,
       origin: facts.origin,
+      correlationId: `${facts.source}:${facts.eventId}`,
       rawSourceId: facts.eventId,
       occurredAt: facts.occurredAt,
       payload: {

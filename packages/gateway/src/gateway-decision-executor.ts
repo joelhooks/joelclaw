@@ -97,7 +97,7 @@ export async function drainDeliverDecisions(
       text,
       flowId: event.flowId ?? `decision:${event._id}`,
       origin: { machineId: event.origin?.machineId ?? "flagg", producer: "gateway-transport-executor" },
-      correlationId: event._id,
+      ...(event.correlationId ? { correlationId: event.correlationId } : {}),
     });
     executed += 1;
     log("[gateway:executor] executed deliver decision", {

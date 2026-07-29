@@ -178,6 +178,13 @@ export type ReadSinceResult = {
   source: "message-event-log";
 };
 
+export type MessageFlowTerminalState =
+  | "confirmed"
+  | "failed"
+  | "suppressed"
+  | "digested"
+  | "fallback";
+
 export type MessageFlowProjection = {
   flowId: string;
   eventCount: number;
@@ -185,7 +192,7 @@ export type MessageFlowProjection = {
   lastOccurredAt: number;
   latestEventId: string;
   latestKind: MessageEventKind;
-  terminalState?: "confirmed" | "failed" | "suppressed" | "digested";
+  terminalState?: MessageFlowTerminalState;
   updatedAt: number;
 };
 
