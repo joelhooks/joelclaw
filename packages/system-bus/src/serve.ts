@@ -1,5 +1,4 @@
 import { execSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -72,6 +71,7 @@ import {
 import { enqueueRegisteredQueueEvent } from "./lib/queue";
 import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
 import { type MemoryIdentity, registerRunCaptureRoute } from "./routes/run-capture";
+import { lookupCaptureIdentity } from "./routes/run-capture-auth";
 import { registerRunHealthRoute } from "./routes/run-health";
 
 const app = new Hono();
@@ -224,10 +224,6 @@ function isFreshRunningResult(
   return Date.now() - startedAtMs <= allowedAgeMs;
 }
 
-function sha256(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
-}
-
 async function lookupMemoryIdentity(token: string): Promise<MemoryIdentity | null> {
   if (token === "dev-joel-panda") {
     return {
@@ -240,32 +236,13 @@ async function lookupMemoryIdentity(token: string): Promise<MemoryIdentity | nul
   const typesenseKey = process.env.TYPESENSE_API_KEY;
   if (!typesenseKey) return null;
 
-  const hash = sha256(token);
-  const params = new URLSearchParams({
-    q: hash,
-    query_by: "app_password_sha256",
-    filter_by: `app_password_sha256:=\`${hash}\``,
-    per_page: "1",
+  return lookupCaptureIdentity({
+    token,
+    typesenseUrl: TYPESENSE_URL,
+    typesenseApiKey: typesenseKey,
+    machinesCollection: MACHINES_COLLECTION,
+    timeoutMs: Number(process.env.RUN_CAPTURE_AUTH_TIMEOUT_MS ?? 1_000),
   });
-  const res = await fetch(
-    `${TYPESENSE_URL}/collections/${MACHINES_COLLECTION}/documents/search?${params}`,
-    { headers: { "X-TYPESENSE-API-KEY": typesenseKey } },
-  );
-  if (!res.ok) return null;
-
-  const data = (await res.json()) as {
-    hits?: Array<{
-      document: {
-        id: string;
-        user_id: string;
-        did?: string;
-        revoked_at?: number;
-      };
-    }>;
-  };
-  const hit = data.hits?.[0]?.document;
-  if (!hit || hit.revoked_at) return null;
-  return { user_id: hit.user_id, machine_id: hit.id, did: hit.did ?? null };
 }
 
 async function authenticateRunCapture(c: any): Promise<MemoryIdentity | null> {
