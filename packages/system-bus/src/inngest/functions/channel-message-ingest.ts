@@ -15,6 +15,7 @@ type IncomingMessage = {
   userId: string;
   userName: string;
   text: string;
+  sourceTimestamp: number;
   timestamp: number;
   sourceUrl?: string;
 };
@@ -60,13 +61,17 @@ function optionalString(value: unknown): string | undefined {
 function requireTimestamp(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed)) {
-    throw new NonRetriableError("timestamp must be a finite unix-ms number");
+    throw new NonRetriableError("timestamp must be a finite Unix-seconds or Unix-ms number");
   }
   const normalized = Math.trunc(parsed);
   if (normalized <= 0) {
     throw new NonRetriableError("timestamp must be greater than 0");
   }
   return normalized;
+}
+
+export function normalizeChannelTimestamp(timestamp: number): number {
+  return timestamp < 100_000_000_000 ? timestamp * 1_000 : timestamp;
 }
 
 function requireChannelType(value: unknown): ChannelType {
@@ -79,6 +84,7 @@ function requireChannelType(value: unknown): ChannelType {
 
 function normalizeIncomingMessage(raw: Record<string, unknown>): IncomingMessage {
   const channelType = requireChannelType(raw.channelType);
+  const sourceTimestamp = requireTimestamp(raw.timestamp);
   return {
     channelType,
     channelId: requireString(raw.channelId, "channelId"),
@@ -87,7 +93,8 @@ function normalizeIncomingMessage(raw: Record<string, unknown>): IncomingMessage
     userId: requireString(raw.userId, "userId"),
     userName: requireString(raw.userName, "userName"),
     text: requireString(raw.text, "text"),
-    timestamp: requireTimestamp(raw.timestamp),
+    sourceTimestamp,
+    timestamp: normalizeChannelTimestamp(sourceTimestamp),
     sourceUrl: optionalString(raw.sourceUrl),
   };
 }
@@ -130,7 +137,7 @@ export const channelMessageIngest = inngest.createFunction(
     const incoming = normalizeIncomingMessage(event.data as Record<string, unknown>);
 
     const indexed = await step.run("index-to-typesense", async () => {
-      const messageId = buildMessageId(incoming);
+      const messageId = buildMessageId({ ...incoming, timestamp: incoming.sourceTimestamp });
       const document: ChannelMessageDocument = {
         id: messageId,
         channel_type: incoming.channelType,

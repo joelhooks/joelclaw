@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { NonRetriableError } from "inngest";
-import { buildMessageId } from "./channel-message-ingest";
+import { buildMessageId, normalizeChannelTimestamp } from "./channel-message-ingest";
 import {
   advanceWatermark,
   buildChannelMessageData,
@@ -212,6 +212,11 @@ describe("front reader pure seam", () => {
       timestamp: Date.now(),
     };
     expect(buildMessageId(receiptTimeIdentity)).not.toBe(buildMessageId(first));
+  });
+
+  test("normalizes Unix seconds without changing Unix milliseconds", () => {
+    expect(normalizeChannelTimestamp(1_774_713_412)).toBe(1_774_713_412_000);
+    expect(normalizeChannelTimestamp(1_776_652_261_181)).toBe(1_776_652_261_181);
   });
 
   test("formatFrontHttpError names endpoint and missing scope on 403", () => {

@@ -29,12 +29,90 @@ The verified export is at `~/.joelclaw/backups/typesense-retired/20260730T021238
 
 Typesense fell from 23 collections and 428,704 documents to 18 collections and 300,231 documents. Resident memory fell from 5.31 GiB before the cut to 1.34 GiB after deletion.
 
+## Book collection isolation
+
+The book move is complete.
+
+- `com.joelclaw.typesense-books` owns loopback ports 8110 and 8109.
+- The node contains exactly 662 `docs` and 241,939 `docs_chunks_v2`.
+- Flagg and Blaine reach port 8110 through a tailnet-only TCP forward.
+- docs-api reports both exact counts and routes through
+  `DOCS_TYPESENSE_URL=http://127.0.0.1:8110`.
+- The CLI splits unified search across the book and operational nodes. Flagg and
+  Blaine returned the same 9,014-match direct book canary and both returned
+  mixed book/operational unified results.
+- The system-bus worker restarted under its existing supervisor and
+  re-registered 163 functions with book writers routed to port 8110.
+- `docs` and `docs_chunks_v2` now return HTTP 404 on port 8108. They remain
+  present with exact counts on port 8110.
+
+The import exposed the actual Typesense failure. The book LaunchAgent inherited
+a 256-file descriptor limit. At 260 open files, Typesense logged `Too many open
+files`, lost its Raft leader, and returned no useful progress. The LaunchAgent
+now sets `NumberOfFiles` to 65,536. After one 5 minute 34 second replay, the
+resumable importer completed 1,301 batches with zero document errors.
+
+The rollback export is
+`~/.joelclaw/backups/typesense-books/20260730T053110Z`. The chunk JSONL contains
+241,939 documents, is 3,276,496,486 bytes, and has SHA-256
+`c00dd3fe67a067fa87a1475ab913376f19503f5664f85daca382cda6c3d8ccaf`.
+
 ## Still open
 
-- Move `docs_chunks_v2` into a dedicated book-search process. It still owns 241,939 documents and the long vector-index startup.
-- Repair or retire stale `vault_notes`, `conversation_threads`, `pi_mono_artifacts`, and `slack_messages`.
-- Remove `blog_posts`, `discoveries`, and `system_log` only after their remaining web/search callers move to canonical sources.
+- Repair or retire stale `vault_notes`, `conversation_threads`,
+  `pi_mono_artifacts`, and `slack_messages`.
+- Remove `blog_posts`, `discoveries`, and `system_log` only after their remaining
+  web/search callers move to canonical sources.
 - Inspect duplicate v2 book chunks. The first post-cut query returned the same citation twice from distinct hits.
+
+## Operational data verdict
+
+After the book move, the operational node holds 16 collections and 58,113
+documents. The collection list is no longer the main problem. Freshness and
+field quality are.
+
+Keep as live operational projections:
+
+- `machines_dev`: 4 Machine enrollment mirrors. Capture auth no longer depends
+  on it, but enrollment and registry sync still do.
+- `gateway_behavior_history`: 84 records, current through July 26.
+- `brain_graph_nodes`: 749 current graph nodes across the registered Brain
+  roots.
+- `system_knowledge`: 1,218 ADR, skill, insight, and turn-note records, current
+  through July 21.
+- `channel_messages`: 4,165 classified email, Slack, and Telegram messages,
+  current through July 30. The repair updated 573 Slack timestamps from seconds
+  to milliseconds without changing document IDs.
+- `observations`: 801 compact session observations. It remains useful to recall,
+  but it stops on July 20 and 34 legacy records have invalid 1970-era start
+  values.
+
+Keep as explicit bounded corpora, not pretend-live feeds:
+
+- `slack_messages`: 33,262 records covering April 2025 through April 29, 2026.
+- `pi_mono_artifacts`: 8,744 records covering the upstream repository through
+  March 7.
+- `vault_notes`: 4,308 records through April 16. Of these, 3,258 are old
+  `log-entry` records and only 745 carry the newer `source` field.
+- `blog_posts`, `discoveries`, `transcripts`, and `voice_transcripts`: 95 small
+  searchable archive records combined. Their time metadata is inconsistent,
+  but deleting them saves nothing material.
+- `email_threads`: 37 narrow VIP thread records. This is a purpose-built view,
+  not a general email index.
+
+Fix or retire:
+
+- `conversation_threads`: 2,159 derived threads. The repair normalized 73 Slack
+  thread timestamps, but 2,147 records remain marked stale and only 12 are
+  active.
+- `system_log`: 2,487 records ending March 17. The live web syslog reads Convex,
+  but generic search and old SDK adapters still query this frozen Typesense
+  copy. Move those readers, export it, then delete the collection.
+
+Replicas would not repair any of this. A Typesense replica duplicates the full
+dataset and failure mode. The separate book process isolates the 241,939-chunk
+library from capture and operational search, which is the boundary this system
+needed.
 
 ## Deployment gate repair
 
