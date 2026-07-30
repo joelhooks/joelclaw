@@ -1,0 +1,37 @@
+---
+title: "Retire Typesense Debris"
+type: "step"
+status: "closed"
+closed_at: "2026-07-29"
+parent: "./typesense-reboot-recovery-brief.svx"
+created_at: "2026-07-29"
+---
+
+# Retire Typesense Debris
+
+## Result
+
+Run capture and session health no longer read or write Typesense. `memory/run.captured` appends metadata, chunks, and FTS rows to `~/.joelclaw/search/sessions.db`. The Typesense startup monitor now checks the Typesense process independently from SQLite session freshness.
+
+Generic book search now resolves `docs_chunks` to `docs_chunks_v2`. Base document ingest no longer creates or writes the legacy `docs_chunks` collection. The v2 reindex function is the only chunk-index writer.
+
+Commit `60d53337` deployed to Flagg and Blaine. A live capture canary reached SQLite in one second while `runs_dev` stayed at 107,682 documents.
+
+## Deleted collections
+
+- `runs_dev`: 107,682 documents
+- `docs_chunks`: 17,101 documents
+- `run_chunks_spike`: 3,199 documents
+- `transcript_chunks_v1`: 60 documents
+- `otel_events`: 0 documents
+
+The verified export is at `~/.joelclaw/backups/typesense-retired/20260730T021238Z-first-cut`. Its manifest contains source counts and SHA-256 receipts. `runs_dev.full_text` was excluded because raw Run JSONL and `sessions.db` remain authoritative.
+
+Typesense fell from 23 collections and 428,704 documents to 18 collections and 300,231 documents. Resident memory fell from 5.31 GiB before the cut to 1.34 GiB after deletion.
+
+## Still open
+
+- Move `docs_chunks_v2` into a dedicated book-search process. It still owns 241,939 documents and the long vector-index startup.
+- Repair or retire stale `vault_notes`, `conversation_threads`, `pi_mono_artifacts`, and `slack_messages`.
+- Remove `blog_posts`, `discoveries`, and `system_log` only after their remaining web/search callers move to canonical sources.
+- Inspect duplicate v2 book chunks. The first post-cut query returned the same citation twice from distinct hits.

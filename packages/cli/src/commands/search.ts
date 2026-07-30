@@ -283,8 +283,8 @@ export const search = Command.make(
             description: "Re-run with hybrid semantic search",
           },
           {
-            command: `search "${query}" --collection otel_events`,
-            description: "Search observability events only",
+            command: `otel search "${query}"`,
+            description: "Search observability events in ClickHouse",
           },
           {
             command: `search "${query}" --collection vault_notes --facet type`,
