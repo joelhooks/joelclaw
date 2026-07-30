@@ -14,8 +14,8 @@ const freshSearch = {
     stale: false,
   },
   provenance: {
-    engine: "typesense" as const,
-    index: "runs_dev",
+    engine: "sqlite" as const,
+    index: "sessions.db",
     sourceOfTruth: "raw-run-jsonl" as const,
     runId: "run-1",
     sourceIdentity: "source-1",
@@ -90,7 +90,7 @@ describe("GET /api/runs/health", () => {
     expect(body).toMatchObject({ ok: false, recovery: { search: null } });
   });
 
-  test("reports an active collection outage unhealthy", async () => {
+  test("reports an active Typesense process outage unhealthy", async () => {
     const { response, body } = await health(async () => recovery(
       { ...freshSearch, ok: false },
       { unavailableSince: 1_000, alertedAt: null },

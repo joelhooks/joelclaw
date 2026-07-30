@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { getRedisClient } from "../../lib/redis";
 import {
   assessStartupBudget,
@@ -20,8 +22,8 @@ import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
 const CAPTURE_LEDGER_PREFIX = "search-maintenance:capture-ledger:";
-const STARTUP_BUDGET_STATE_KEY = "search-maintenance:startup-budget:typesense-runs-dev";
-const SEARCH_HEALTH_KEY = "search-maintenance:health:runs-dev";
+const STARTUP_BUDGET_STATE_KEY = "search-maintenance:startup-budget:typesense-process";
+const SEARCH_HEALTH_KEY = "search-maintenance:health:sessions-db";
 const CAPTURE_LEDGER_TTL_SECONDS = 90 * 24 * 60 * 60;
 const CAPTURE_INCIDENT_QUIET_MS = 24 * 60 * 60_000;
 const STARTUP_INCIDENT_QUIET_MS = 24 * 60 * 60_000;
@@ -30,6 +32,8 @@ const MAX_CAPTURE_SEGMENTS_PER_SOURCE = 2_048;
 const TYPESENSE_STARTUP_BUDGET_MS = parseStartupBudgetMs(
   process.env.TYPESENSE_STARTUP_BUDGET_MS,
 );
+const SESSION_INDEX_PATH =
+  process.env.SESSION_INDEX_PATH ?? join(homedir(), ".joelclaw", "search", "sessions.db");
 
 export interface SearchMaintenanceStateStore {
   get(key: string): Promise<string | null>;
@@ -134,33 +138,31 @@ export async function processStartupBudget(
   probe: { healthy: boolean; status: number | null; detail: string };
   assessment: StartupBudgetAssessment;
   projection: SearchProjectionHealth | null;
-  collectionHealthy: boolean;
+  targetHealthy: boolean;
   availabilityDetail: string;
 }> {
   const checkedAt = dependencies.now();
   const probe = await dependencies.probe();
   let projection: SearchProjectionHealth | null = null;
   let projectionError: string | null = null;
-  if (probe.healthy) {
-    try {
-      projection = await dependencies.readProjection();
-      await dependencies.store.set(SEARCH_HEALTH_KEY, JSON.stringify(projection));
-    } catch (error) {
-      projectionError = String(error).slice(0, 180);
-    }
+  try {
+    projection = await dependencies.readProjection();
+    await dependencies.store.set(SEARCH_HEALTH_KEY, JSON.stringify(projection));
+  } catch (error) {
+    projectionError = String(error).slice(0, 180);
   }
-  const collectionHealthy = probe.healthy && projectionError === null;
+  const targetHealthy = probe.healthy;
   const availabilityDetail = projectionError
-    ? `${probe.detail}; runs_dev query failed: ${projectionError}`
+    ? `${probe.detail}; sessions.db health failed independently: ${projectionError}`
     : probe.detail;
   const previous = parseJson<StartupBudgetState | null>(
     await dependencies.store.get(STARTUP_BUDGET_STATE_KEY),
     null,
   );
   const assessment = assessStartupBudget({
-    target: "typesense:runs_dev",
+    target: "typesense:process",
     engine: "typesense",
-    healthy: collectionHealthy,
+    healthy: targetHealthy,
     checkedAt,
     budgetMs: dependencies.budgetMs,
     previous,
@@ -180,7 +182,7 @@ export async function processStartupBudget(
     await dependencies.notify(assessment, availabilityDetail);
   }
 
-  return { probe, assessment, projection, collectionHealthy, availabilityDetail };
+  return { probe, assessment, projection, targetHealthy, availabilityDetail };
 }
 
 async function probeTypesenseHealth(): Promise<{
@@ -246,7 +248,7 @@ async function notifyStartupBudget(
     `Unavailable: ${Math.floor(assessment.unavailableForMs / 1000)}s`,
     `Budget: ${Math.floor(assessment.budgetMs / 1000)}s`,
     `Probe: ${detail}`,
-    "Raw Run JSONL remains the source of truth. Use the raw fallback while the index recovers.",
+    "Session search stays on SQLite. Other Typesense search collections remain unavailable until recovery.",
   ].join("\n");
   const receipt = await sendHardAlert({
     eventId,
@@ -343,11 +345,11 @@ export const typesenseStartupBudgetCheck = inngest.createFunction(
       processStartupBudget({
         store: stateStore(),
         probe: probeTypesenseHealth,
-        readProjection: () => readSearchProjectionHealth(typesense.typesenseRequest),
+        readProjection: async () => readSearchProjectionHealth(SESSION_INDEX_PATH),
         notify: notifyStartupBudget,
         resolve: async () => {
           await resolveHardAlert({
-            latchKey: "typesense-recovery:startup-budget:typesense:runs_dev",
+            latchKey: "typesense-recovery:startup-budget:typesense:process",
           });
         },
         now: Date.now,
@@ -356,11 +358,11 @@ export const typesenseStartupBudgetCheck = inngest.createFunction(
     );
     await step.run("emit-startup-budget-otel", () =>
       emitOtelEvent({
-        level: result.assessment.exceeded ? "fatal" : result.collectionHealthy ? "info" : "warn",
+        level: result.assessment.exceeded ? "fatal" : result.targetHealthy ? "info" : "warn",
         source: "system-bus",
         component: "typesense-recovery-alerts",
         action: "search.index.startup_budget.checked",
-        success: result.collectionHealthy,
+        success: result.targetHealthy,
         metadata: result,
       })
     );

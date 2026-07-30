@@ -14,9 +14,9 @@ grep -q '<string>com.joel.system-bus-worker</string>' "${WORKER_PLIST}"
 TEST_ROOT="$(mktemp -d /tmp/session-index-health-test.XXXXXX)"
 export TEST_ROOT
 mkdir -p "${TEST_ROOT}/bin" "${TEST_ROOT}/runs/joel/2026-07" "${TEST_ROOT}/state"
-printf '%s\n' 'TYPESENSE_API_KEY=test-only' >"${TEST_ROOT}/typesense.env"
 printf '%s\n' '{"started_at":2000000000000}' >"${TEST_ROOT}/runs/joel/2026-07/canary.metadata.json"
-printf '%s\n' '{"hits":[{"document":{"started_at":1000000000000}}]}' >"${TEST_ROOT}/indexed.json"
+printf '%s\n' '1000000000000' >"${TEST_ROOT}/indexed.txt"
+printf '%s\n' 'fixture' >"${TEST_ROOT}/sessions.db"
 printf '%s\n' '1' >"${TEST_ROOT}/fail-recovery"
 printf '%s\n' '0' >"${TEST_ROOT}/fail-otel"
 printf '%s\n' '0' >"${TEST_ROOT}/fail-inngest"
@@ -24,7 +24,6 @@ printf '%s\n' '0' >"${TEST_ROOT}/fail-inngest"
 cat >"${TEST_ROOT}/bin/curl" <<'MOCK'
 #!/bin/sh
 case "$*" in
-  *runs_dev/documents/search*) cat "${TEST_ROOT}/indexed.json" ;;
   *observability/emit*)
     printf '%s\n' otel >>"${TEST_ROOT}/otel-attempts.log"
     [ "$(cat "${TEST_ROOT}/fail-otel")" = "0" ]
@@ -33,18 +32,23 @@ case "$*" in
   *) exit 0 ;;
 esac
 MOCK
+cat >"${TEST_ROOT}/bin/sqlite3" <<'MOCK'
+#!/bin/sh
+cat "${TEST_ROOT}/indexed.txt"
+MOCK
 cat >"${TEST_ROOT}/bin/launchctl" <<'MOCK'
 #!/bin/sh
 printf '%s\n' "$*" >>"${TEST_ROOT}/launchctl.log"
 [ "$(cat "${TEST_ROOT}/fail-recovery")" = "0" ]
 MOCK
-chmod +x "${TEST_ROOT}/bin/curl" "${TEST_ROOT}/bin/launchctl"
+chmod +x "${TEST_ROOT}/bin/curl" "${TEST_ROOT}/bin/launchctl" "${TEST_ROOT}/bin/sqlite3"
 
 run_probe() {
   PATH="${TEST_ROOT}/bin:${PATH}" \
   STATE_DIR="${TEST_ROOT}/state" \
   RUNS_ROOT="${TEST_ROOT}/runs" \
-  TYPESENSE_ENV="${TEST_ROOT}/typesense.env" \
+  SESSION_INDEX_PATH="${TEST_ROOT}/sessions.db" \
+  SQLITE3_BIN="${TEST_ROOT}/bin/sqlite3" \
   MAX_INDEX_LAG_SECONDS=300 \
   RECOVER_AFTER_FAILURES=3 \
   RECOVERY_COOLDOWN_SECONDS=900 \
@@ -80,7 +84,7 @@ run_probe
 
 # A failed transition delivery stays pending. Once the worker accepts OTEL again,
 # the pending state is delivered before the current state is considered emitted.
-printf '%s\n' '{"hits":[{"document":{"started_at":2000000000000}}]}' >"${TEST_ROOT}/indexed.json"
+printf '%s\n' '2000000000000' >"${TEST_ROOT}/indexed.txt"
 printf '%s\n' '1' >"${TEST_ROOT}/fail-otel"
 run_probe
 [ -s "${TEST_ROOT}/state/pending-otel.json" ]

@@ -1,15 +1,12 @@
 /**
- * ADR-0243: memory/run.captured — chunk + embed + index a freshly-captured Run.
+ * ADR-0243: memory/run.captured — append a freshly-captured Run to sessions.db.
  *
  * Receives a Run that has already been persisted to NAS (authoritative storage,
- * Rule 10). This function is the derived-index path: chunks the jsonl,
- * requests embeddings at ingest-realtime priority (via the in-process queue
- * in @joelclaw/inference-router so queries are never starved), and writes
- * chunks + Run metadata to Typesense.
+ * Rule 10). This function maintains the local SQLite FTS projection. The
+ * retired Typesense runs_dev/run_chunks_dev projections must not be recreated.
  *
- * Concurrency: limit 4. Ollama itself serializes embed calls internally, so
- * the priority queue in the router keeps query latency bounded even when
- * multiple Runs are mid-ingest.
+ * Concurrency stays bounded at four writers. SQLite serializes the short
+ * append transactions and rejects overlapping source segments.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -28,67 +25,11 @@ import {
   detectFormat,
   extractTurns,
   parseJsonl,
-  RUNS_COLLECTION,
-  type Run,
-  runsSchema,
   SessionIndexConflictError,
 } from "@joelclaw/memory";
 import { NonRetriableError } from "inngest";
 import { emitOtelEvent } from "../../../observability/emit";
 import { inngest } from "../../client";
-
-const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
-const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY ?? "";
-
-async function typesenseRequest(
-  path: string,
-  init: RequestInit = {}
-): Promise<Response> {
-  return fetch(`${TYPESENSE_URL}${path}`, {
-    ...init,
-    headers: {
-      ...init.headers,
-      "X-TYPESENSE-API-KEY": TYPESENSE_API_KEY,
-      "Content-Type": "application/json",
-    },
-  });
-}
-
-async function ensureCollections(): Promise<void> {
-  // run_chunks_dev retired 2026-07-20 (Joel-approved cutover): full-transcript
-  // chunks live in sessions.db only. Never recreate the Typesense collection.
-  for (const [name, schema] of [
-    [RUNS_COLLECTION, runsSchema(RUNS_COLLECTION)],
-  ] as const) {
-    const existing = await typesenseRequest(`/collections/${name}`);
-    if (existing.status === 200) continue;
-    if (existing.status !== 404) {
-      const body = await existing.text();
-      throw new Error(`typesense status ${existing.status} for ${name}: ${body}`);
-    }
-    const res = await typesenseRequest("/collections", {
-      method: "POST",
-      body: JSON.stringify(schema),
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`create ${name} failed: ${res.status} ${body}`);
-    }
-  }
-}
-
-async function upsertRunDocument(run: Partial<Run> & { id: string }): Promise<void> {
-  const res = await typesenseRequest(
-    `/collections/${RUNS_COLLECTION}/documents?action=upsert`,
-    {
-      method: "POST",
-      body: JSON.stringify(run),
-    }
-  );
-  if (!res.ok) {
-    throw new Error(`run upsert failed: ${res.status} ${await res.text()}`);
-  }
-}
 
 function readCapture(jsonlPath: string) {
   const entries = parseJsonl(readFileSync(jsonlPath, "utf8"));
@@ -231,10 +172,6 @@ export const memoryRunCaptured = inngest.createFunction(
       });
     });
 
-    await step.run("ensure-collections", async () => {
-      await ensureCollections();
-    });
-
     const analysis = await step.run("chunk", async () => {
       const { candidates, turns } = readCapture(capturePath);
       return {
@@ -255,53 +192,7 @@ export const memoryRunCaptured = inngest.createFunction(
             return { run_id };
           });
 
-    const indexRun = () =>
-      step.run("index-run", async () => {
-        const { turns } = readCapture(capturePath);
-        const lastTurnStartedAt = turns[turns.length - 1]?.started_at ?? started_at;
-        const run: Partial<Run> & { id: string } = {
-          id: run_id,
-          user_id,
-          machine_id,
-          agent_runtime,
-          agent_version: "",
-          model: "",
-          parent_run_id: parent_run_id ?? null,
-          root_run_id: parent_run_id ?? null,
-          conversation_id: conversation_id ?? null,
-          tags: tags ?? [],
-          readable_by: [user_id],
-          intent: turns.find((turn) => turn.role === "user")?.text.slice(0, 500) ?? "",
-          started_at,
-          ended_at: lastTurnStartedAt,
-          duration_ms: lastTurnStartedAt - started_at,
-          turn_count: turns.length,
-          user_turn_count: turns.filter((turn) => turn.role === "user").length,
-          assistant_turn_count: turns.filter((turn) => turn.role === "assistant").length,
-          tool_turn_count: turns.filter((turn) => turn.role === "tool").length,
-          token_total: turns.reduce((total, turn) => total + turn.token_estimate, 0),
-          tool_call_count: turns.filter((turn) => turn.role === "tool").length,
-          files_touched: [],
-          skills_invoked: [],
-          entities_mentioned: [],
-          enriched_at: null,
-          enrichment_model: null,
-          status: "active",
-          full_text: turns.map((turn) => turn.text).join("\n"),
-          jsonl_path,
-          jsonl_bytes,
-          jsonl_sha256,
-          from_offset,
-          to_offset,
-          source_identity,
-        };
-
-        await upsertRunDocument(run);
-        return { run_id, turn_count: turns.length };
-      });
-
     if (analysis.candidate_count === 0) {
-      await indexRun();
       await step.run("emit-empty", async () => {
         const { format } = readCapture(capturePath);
         await emitOtelEvent({
@@ -325,11 +216,6 @@ export const memoryRunCaptured = inngest.createFunction(
         reason: "empty",
       };
     }
-
-    // run_chunks_dev retired 2026-07-20: sessions.db (appended above, before
-    // any Typesense work) is the only full-transcript chunk index. Typesense
-    // keeps Run metadata (runs_dev) for provenance and health only.
-    await indexRun();
 
     const duration_ms = performance.now() - t0;
 

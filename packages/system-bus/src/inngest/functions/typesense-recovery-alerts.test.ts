@@ -167,8 +167,8 @@ describe("Typesense startup budget monitor", () => {
       detail: "fixture",
       freshness: { observedAt: "2026-07-20T00:00:00.000Z", latestSourceAt: null, ageMs: null },
       provenance: {
-        engine: "typesense" as const,
-        index: "runs_dev",
+        engine: "sqlite" as const,
+        index: "sessions.db",
         sourceOfTruth: "raw-run-jsonl" as const,
         runId: "run-1",
         sourceIdentity: null,
@@ -204,7 +204,7 @@ describe("Typesense startup budget monitor", () => {
     expect(store.values.has(__typesenseRecoveryAlertTestUtils.SEARCH_HEALTH_KEY)).toBe(true);
   });
 
-  test("keeps the collection outage clock when process health is 200 but runs_dev is 503", async () => {
+  test("does not call a sessions.db failure a Typesense process outage", async () => {
     const stateKey = __typesenseRecoveryAlertTestUtils.STARTUP_BUDGET_STATE_KEY;
     const store = memoryStore({
       [stateKey]: JSON.stringify({ unavailableSince: 1_000, alertedAt: null }),
@@ -214,7 +214,7 @@ describe("Typesense startup budget monitor", () => {
       store,
       probe: async () => ({ healthy: true, status: 200, detail: "HTTP 200 ok" }),
       readProjection: async () => {
-        throw new Error("search projection query failed: 503 loading");
+        throw new Error("sessions.db is unreadable");
       },
       notify: async (assessment) => {
         alerts.push(assessment.target);
@@ -224,20 +224,17 @@ describe("Typesense startup budget monitor", () => {
     });
 
     expect(result).toMatchObject({
-      collectionHealthy: false,
-      availabilityDetail: expect.stringContaining("runs_dev query failed"),
+      targetHealthy: true,
+      availabilityDetail: expect.stringContaining("sessions.db health failed independently"),
     });
     expect(result.assessment).toMatchObject({
-      target: "typesense:runs_dev",
-      exceeded: true,
-      shouldAlert: true,
-      unavailableSince: 1_000,
+      target: "typesense:process",
+      exceeded: false,
+      shouldAlert: false,
+      unavailableSince: null,
     });
-    expect(alerts).toEqual(["typesense:runs_dev"]);
-    expect(JSON.parse(store.values.get(stateKey) ?? "{}")).toMatchObject({
-      unavailableSince: 1_000,
-      alertedAt: null,
-    });
+    expect(alerts).toEqual([]);
+    expect(store.values.has(stateKey)).toBe(false);
   });
 
   test("keeps startup alert pending when delivery fails, then retries", async () => {
@@ -282,8 +279,8 @@ describe("Typesense startup budget monitor", () => {
           ageMs: 5_000,
         },
         provenance: {
-          engine: "typesense",
-          index: "runs_dev",
+          engine: "sqlite",
+          index: "sessions.db",
           sourceOfTruth: "raw-run-jsonl",
           runId: "run-1",
           sourceIdentity: null,

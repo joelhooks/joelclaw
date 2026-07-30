@@ -3,14 +3,14 @@ set -eu
 
 CENTRAL_ROOT="${CENTRAL_ROOT:-/Users/Shared/joelclaw}"
 RUNS_ROOT="${RUNS_ROOT:-/Users/joel/.joelclaw/runs-dev}"
-TYPESENSE_URL="${TYPESENSE_URL:-http://127.0.0.1:8108}"
+SESSION_INDEX_PATH="${SESSION_INDEX_PATH:-/Users/joel/.joelclaw/search/sessions.db}"
+SQLITE3_BIN="${SQLITE3_BIN:-/usr/bin/sqlite3}"
 WORKER_URL="${WORKER_URL:-http://127.0.0.1:3111}"
 INNGEST_URL="${INNGEST_URL:-http://127.0.0.1:8288}"
 MAX_INDEX_LAG_SECONDS="${MAX_INDEX_LAG_SECONDS:-300}"
 RECOVER_AFTER_FAILURES="${RECOVER_AFTER_FAILURES:-3}"
 RECOVERY_COOLDOWN_SECONDS="${RECOVERY_COOLDOWN_SECONDS:-900}"
 STATE_DIR="${STATE_DIR:-${CENTRAL_ROOT}/state/session-index-health}"
-TYPESENSE_ENV="${TYPESENSE_ENV:-${CENTRAL_ROOT}/etc/typesense/typesense.env}"
 LOG_PREFIX="session-index-health"
 
 mkdir -p "${STATE_DIR}"
@@ -71,40 +71,17 @@ print(latest)
 PY
 }
 
-read_typesense_key() {
-  [ -r "${TYPESENSE_ENV}" ] || return 1
-  python3 - "${TYPESENSE_ENV}" <<'PY'
-import sys
-for line in open(sys.argv[1], encoding="utf-8"):
-    key, separator, value = line.partition("=")
-    if separator and key.strip() == "TYPESENSE_API_KEY":
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-            value = value[1:-1]
-        if value:
-            print(value)
-            raise SystemExit(0)
-raise SystemExit(1)
-PY
-}
-
 newest_indexed_epoch() {
-  TYPESENSE_API_KEY="$(read_typesense_key)" || return 1
-  response="$(curl --noproxy '*' --connect-timeout 2 --max-time 8 -fsS \
-    -H "X-TYPESENSE-API-KEY: ${TYPESENSE_API_KEY}" \
-    --get "${TYPESENSE_URL}/collections/runs_dev/documents/search" \
-    --data-urlencode 'q=*' \
-    --data-urlencode 'query_by=full_text' \
-    --data-urlencode 'sort_by=started_at:desc' \
-    --data-urlencode 'per_page=1')" || return 1
-  printf '%s' "${response}" | python3 -c '
-import json, sys
-body = json.load(sys.stdin)
-value = body.get("hits", [{}])[0].get("document", {}).get("started_at")
-if not isinstance(value, (int, float)):
-    raise SystemExit(1)
-print(int(value / 1000 if value > 10_000_000_000 else value))
-'
+  [ -r "${SESSION_INDEX_PATH}" ] || return 1
+  value="$("${SQLITE3_BIN}" -readonly "${SESSION_INDEX_PATH}" \
+    'SELECT MAX(started_at) FROM runs;' 2>/dev/null)" || return 1
+  case "${value}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  if [ "${value}" -gt 10000000000 ]; then
+    value=$((value / 1000))
+  fi
+  printf '%s\n' "${value}"
 }
 
 post_otel() {

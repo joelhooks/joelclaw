@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 /**
- * Backfill ADR-0243 Run blobs into the derived Typesense indexes.
+ * Emergency restore for the retired ADR-0243 Typesense Run projections.
  *
  * Source of truth is ~/.joelclaw/runs-dev/<user>/<yyyy-mm>/*.metadata.json +
- * *.jsonl. Typesense `runs_dev` / `run_chunks_dev` are rebuildable indexes.
- * Use this when memory/run.captured was accepted but the derived index wedged.
+ * *.jsonl. Live session search uses sessions.db. This script requires an
+ * explicit retired-projection flag so routine recovery cannot recreate the
+ * collections.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -39,6 +40,7 @@ interface Args {
   limit: number;
   dryRun: boolean;
   sleepMs: number;
+  allowRetiredProjection: boolean;
 }
 
 interface RunMetadata {
@@ -55,7 +57,7 @@ interface RunMetadata {
 }
 
 function usage(): never {
-  console.error(`Usage: TYPESENSE_API_KEY=... bun scripts/backfill-run-typesense.ts [options]\n\nOptions:\n  --user <id>           User partition (default: joel)\n  --month <yyyy-mm>     Run store month (default: current UTC month)\n  --since <iso|ms>      Include runs at/after this start time\n  --until <iso|ms>      Include runs before this start time (default: now)\n  --machine <id>        Filter machine_id\n  --runtime <runtime>   Filter agent_runtime\n  --limit <n>           Max missing runs to index; 0 = all (default: 100)\n  --sleep-ms <n>        Delay after each run to avoid starving live embeds (default: 100)\n  --dry-run             Print planned work only\n`);
+  console.error(`Usage: TYPESENSE_API_KEY=... bun scripts/backfill-run-typesense.ts --allow-retired-projection [options]\n\nDANGER: this recreates retired runs_dev/run_chunks_dev collections. Live search uses sessions.db.\n\nOptions:\n  --allow-retired-projection  Explicitly permit emergency projection restore\n  --user <id>           User partition (default: joel)\n  --month <yyyy-mm>     Run store month (default: current UTC month)\n  --since <iso|ms>      Include runs at/after this start time\n  --until <iso|ms>      Include runs before this start time (default: now)\n  --machine <id>        Filter machine_id\n  --runtime <runtime>   Filter agent_runtime\n  --limit <n>           Max missing runs to index; 0 = all (default: 100)\n  --sleep-ms <n>        Delay after each run to avoid starving live embeds (default: 100)\n  --dry-run             Print planned work only\n`);
   process.exit(2);
 }
 
@@ -81,6 +83,7 @@ function parseArgs(argv: string[]): Args {
     limit: 100,
     dryRun: false,
     sleepMs: 100,
+    allowRetiredProjection: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -95,6 +98,7 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--limit") args.limit = Number(next());
     else if (arg === "--sleep-ms") args.sleepMs = Number(next());
     else if (arg === "--dry-run") args.dryRun = true;
+    else if (arg === "--allow-retired-projection") args.allowRetiredProjection = true;
     else if (arg === "--help" || arg === "-h") usage();
     else usage();
   }
@@ -296,6 +300,11 @@ async function indexRun(entry: { metadata: RunMetadata; jsonlPath: string }): Pr
 
 async function main() {
   const args = parseArgs(Bun.argv.slice(2));
+  if (!args.allowRetiredProjection) {
+    throw new Error(
+      "runs_dev/run_chunks_dev are retired; use scripts/backfill-session-index.ts or pass --allow-retired-projection for an emergency restore",
+    );
+  }
   await ensureCollections();
   const existingIds = await loadExistingRunIds();
   const candidates = loadCandidates(args, existingIds);

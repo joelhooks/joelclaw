@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,7 +10,6 @@ import {
   makeIncidentLatch,
   makeRedisIncidentLatchStore,
 } from "@joelclaw/incident-latch";
-import { RUNS_COLLECTION } from "@joelclaw/memory";
 import { Effect } from "effect";
 import { emitOtelEvent } from "../observability/emit";
 import { getRedisClient } from "./redis";
@@ -80,8 +80,6 @@ type CommandResult = {
 
 type CommandRunner = (args: readonly string[]) => Promise<CommandResult>;
 
-type SearchRequest = (path: string) => Promise<Response>;
-
 function finiteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim().length > 0) {
@@ -93,18 +91,6 @@ function finiteNumber(value: unknown): number | null {
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function toSegment(document: Record<string, unknown>): CaptureSegment | null {
-  const runId = nonEmptyString(document.id);
-  const sourceIdentity = nonEmptyString(document.source_identity);
-  const fromOffset = finiteNumber(document.from_offset);
-  const toOffset = finiteNumber(document.to_offset);
-  const jsonlSha256 = nonEmptyString(document.jsonl_sha256);
-  if (!runId || !sourceIdentity || fromOffset === null || toOffset === null || !jsonlSha256) {
-    return null;
-  }
-  return { runId, sourceIdentity, fromOffset, toOffset, jsonlSha256 };
 }
 
 export function detectCaptureGrowth(
@@ -124,33 +110,6 @@ export function detectCaptureGrowth(
   return null;
 }
 
-export async function findCaptureGrowth(
-  request: SearchRequest,
-  current: CaptureSegment,
-): Promise<CaptureGrowthFinding | null> {
-  const params = new URLSearchParams({
-    q: "*",
-    query_by: "full_text",
-    filter_by: [
-      `source_identity:=\`${current.sourceIdentity}\``,
-      `id:!=\`${current.runId}\``,
-      `from_offset:<${current.toOffset}`,
-      `to_offset:>${current.fromOffset}`,
-    ].join(" && "),
-    include_fields: "id,source_identity,from_offset,to_offset,jsonl_sha256",
-    per_page: "10",
-  });
-  const response = await request(`/collections/${RUNS_COLLECTION}/documents/search?${params}`);
-  if (!response.ok) {
-    throw new Error(`capture growth query failed: ${response.status} ${await response.text()}`);
-  }
-  const payload = await response.json() as { hits?: Array<{ document?: Record<string, unknown> }> };
-  const candidates = (payload.hits ?? [])
-    .map((hit) => hit.document ? toSegment(hit.document) : null)
-    .filter((segment): segment is CaptureSegment => segment !== null);
-  return detectCaptureGrowth(current, candidates);
-}
-
 export function classifySearchProjection(
   document: Record<string, unknown> | null,
   observedAt: number,
@@ -158,7 +117,9 @@ export function classifySearchProjection(
   const latestSourceAt = document
     ? finiteNumber(document.ended_at) ?? finiteNumber(document.started_at)
     : null;
-  const runId = document ? nonEmptyString(document.id) : null;
+  const runId = document
+    ? nonEmptyString(document.run_id) ?? nonEmptyString(document.id)
+    : null;
   const sourceIdentity = document ? nonEmptyString(document.source_identity) : null;
   const fromOffset = document ? finiteNumber(document.from_offset) : null;
   const toOffset = document ? finiteNumber(document.to_offset) : null;
@@ -166,8 +127,8 @@ export function classifySearchProjection(
   const jsonlPath = document ? nonEmptyString(document.jsonl_path) : null;
   const ageMs = latestSourceAt === null ? null : Math.max(0, observedAt - latestSourceAt);
   const provenance: SearchProvenance = {
-    engine: "typesense",
-    index: RUNS_COLLECTION,
+    engine: "sqlite",
+    index: "sessions.db",
     sourceOfTruth: "raw-run-jsonl",
     runId,
     sourceIdentity,
@@ -186,29 +147,27 @@ export function classifySearchProjection(
     ok: hasProvenance,
     detail: hasProvenance
       ? `latest=${freshness.latestSourceAt}; ageMs=${ageMs}; source=raw-run-jsonl; run=${runId}`
-      : "runs_dev has no indexed Run with source provenance",
+      : "sessions.db has no indexed Run with source provenance",
     freshness,
     provenance,
   };
 }
 
-export async function readSearchProjectionHealth(
-  request: SearchRequest,
+export function readSearchProjectionHealth(
+  databasePath: string,
   observedAt = Date.now(),
-): Promise<SearchProjectionHealth> {
-  const params = new URLSearchParams({
-    q: "*",
-    query_by: "full_text",
-    sort_by: "ended_at:desc,started_at:desc",
-    include_fields: "id,started_at,ended_at,jsonl_path,jsonl_sha256,from_offset,to_offset,source_identity",
-    per_page: "1",
-  });
-  const response = await request(`/collections/${RUNS_COLLECTION}/documents/search?${params}`);
-  if (!response.ok) {
-    throw new Error(`search projection query failed: ${response.status} ${await response.text()}`);
+): SearchProjectionHealth {
+  const db = new Database(databasePath, { readonly: true, strict: true });
+  try {
+    const document = db.query(`SELECT run_id, started_at, ended_at, jsonl_path,
+      jsonl_sha256, from_offset, to_offset, source_identity
+      FROM runs ORDER BY ended_at DESC, started_at DESC LIMIT 1`).get() as
+      | Record<string, unknown>
+      | null;
+    return classifySearchProjection(document, observedAt);
+  } finally {
+    db.close(false);
   }
-  const payload = await response.json() as { hits?: Array<{ document?: Record<string, unknown> }> };
-  return classifySearchProjection(payload.hits?.[0]?.document ?? null, observedAt);
 }
 
 export function parseStartupBudgetMs(

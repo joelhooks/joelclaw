@@ -141,7 +141,7 @@ describe("search health projection", () => {
     const observedAt = Date.parse("2026-07-20T03:00:00.000Z");
     const endedAt = observedAt - 5_000;
     const result = classifySearchProjection({
-      id: "run-1",
+      run_id: "run-1",
       started_at: endedAt - 1_000,
       ended_at: endedAt,
       jsonl_path: "/fixtures/run-1.jsonl",
@@ -155,8 +155,8 @@ describe("search health projection", () => {
       ok: true,
       freshness: { ageMs: 5_000 },
       provenance: {
-        engine: "typesense",
-        index: "runs_dev",
+        engine: "sqlite",
+        index: "sessions.db",
         sourceOfTruth: "raw-run-jsonl",
         runId: "run-1",
         fromOffset: 10,

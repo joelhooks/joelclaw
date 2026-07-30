@@ -10,16 +10,16 @@ const {
 } = __searchTestUtils
 
 describe("search collection selection", () => {
-  test("supports otel_events as an explicit collection", () => {
-    const selected = resolveRequestedCollections("otel_events")
+  test("supports docs_chunks_v2 as an explicit collection", () => {
+    const selected = resolveRequestedCollections("docs_chunks_v2")
     expect(selected).toHaveLength(1)
-    expect(selected[0]?.name).toBe("otel_events")
+    expect(selected[0]?.name).toBe("docs_chunks_v2")
   })
 
   test("supports prefix selection for collection names", () => {
-    const selected = resolveRequestedCollections("otel")
+    const selected = resolveRequestedCollections("docs_chunks")
     expect(selected).toHaveLength(1)
-    expect(selected[0]?.name).toBe("otel_events")
+    expect(selected[0]?.name).toBe("docs_chunks_v2")
   })
 
   test("throws deterministic error for unsupported collection", () => {
@@ -35,16 +35,16 @@ describe("search collection selection", () => {
 })
 
 describe("search request building", () => {
-  test("semantic search is disabled for otel_events", () => {
-    const otelCollection = COLLECTIONS.find((collection) => collection.name === "otel_events")
-    expect(otelCollection).toBeDefined()
+  test("docs_chunks_v2 stays keyword-only without a configured query vector field", () => {
+    const docsCollection = COLLECTIONS.find((collection) => collection.name === "docs_chunks_v2")
+    expect(docsCollection).toBeDefined()
 
-    const request = buildSearchRequest(otelCollection!, "callback", {
+    const request = buildSearchRequest(docsCollection!, "callback", {
       perPage: 5,
       semantic: true,
     })
 
-    expect(request.query_by).toBe(otelCollection!.queryBy)
+    expect(request.query_by).toBe(docsCollection!.queryBy)
     expect(request.vector_query).toBeUndefined()
   })
 

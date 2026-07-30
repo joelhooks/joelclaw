@@ -66,18 +66,6 @@ const MANIFEST_LOOKUP_TIMEOUT_MS = Math.max(
 const DOCS_ALLOW_RULES_FALLBACK = /^(1|true|yes)$/i.test(
   process.env.JOELCLAW_DOCS_ALLOW_RULES_FALLBACK ?? ""
 );
-const MINI_LM_MODEL_CONFIG = {
-  model_name: "ts/all-MiniLM-L12-v2",
-  indexing_prefix: "",
-  query_prefix: "",
-};
-
-const NOMIC_EMBED_MODEL_CONFIG = {
-  model_name: "ts/nomic-embed-text-v1.5",
-  indexing_prefix: "",
-  query_prefix: "",
-};
-
 export type DocsFileType = "pdf" | "md" | "txt";
 type EvidenceTier = "section" | "snippet";
 type TaxonomyClassificationStrategy = "backfill" | "llm" | "rules";
@@ -1519,23 +1507,6 @@ export async function ensureDocsCollections(): Promise<void> {
     { name: "retrieval_text", type: "string" },
   ];
 
-  await typesense.ensureCollection(DOCS_CHUNKS_COLLECTION, {
-    name: DOCS_CHUNKS_COLLECTION,
-    fields: [
-      ...chunkFields,
-      {
-        name: "embedding",
-        type: "float[]",
-        embed: {
-          from: ["retrieval_text"],
-          model_config: MINI_LM_MODEL_CONFIG,
-        },
-      },
-      { name: "added_at", type: "int64" },
-    ],
-    default_sorting_field: "added_at",
-  });
-
   // ADR-0234: pre-computed embeddings via ollama (GPU-accelerated, ~150x faster than Typesense CPU)
   // No auto-embed — raw float[] vectors stored directly
   await typesense.ensureCollection(DOCS_CHUNKS_V2_COLLECTION, {
@@ -1714,10 +1685,8 @@ export const docsIngest = inngest.createFunction(
     });
 
     const chunkSummary = await step.run("chunk-and-index", async () => {
-      // ADR-0245 visibility: emit per-phase OTEL inside chunk-and-index so
-      // operators can tell which phase is slow instead of watching a silent
-      // 15–30 minute black hole. Phases: text-read, chunk, delete, upsert.
-      const chunkStart = Date.now();
+      // Keep the deployed step ID stable for Inngest memoization. This step now
+      // profiles base chunks only; docs/reindex-v2 owns durable chunk indexing.
       await emitOtelEvent({
         level: "info",
         source: "worker",
@@ -1732,17 +1701,6 @@ export const docsIngest = inngest.createFunction(
 
       const text = await readFile(extracted.textPath, "utf8");
       const chunking = chunkBookText(validated.docId, text);
-
-      const chunkRecords = buildChunkRecords({
-        docId: validated.docId,
-        title: validated.title,
-        chunking,
-        primaryConceptId: classification.primaryConceptId,
-        conceptIds: classification.conceptIds,
-        conceptSource: classification.conceptSource,
-        taxonomyVersion: classification.taxonomyVersion,
-        addedAt,
-      });
 
       await emitMeasuredOtelEvent(
         {
@@ -1766,78 +1724,19 @@ export const docsIngest = inngest.createFunction(
         level: "info",
         source: "worker",
         component: "docs-ingest",
-        action: "docs.chunks.delete.started",
-        success: true,
-        metadata: { docId: validated.docId },
-      });
-      const deleteStart = Date.now();
-      await deleteDocChunks(validated.docId);
-      await emitOtelEvent({
-        level: "info",
-        source: "worker",
-        component: "docs-ingest",
-        action: "docs.chunks.delete.completed",
+        action: "docs.chunks.v1.skipped",
         success: true,
         metadata: {
           docId: validated.docId,
-          elapsedMs: Date.now() - deleteStart,
+          reason: "docs_chunks retired; docs/reindex-v2 owns chunk indexing",
+          sectionCount: chunking.stats.section_chunks,
+          snippetCount: chunking.stats.snippet_chunks,
         },
       });
-
-      await emitOtelEvent({
-        level: "info",
-        source: "worker",
-        component: "docs-ingest",
-        action: "docs.chunks.upsert.started",
-        success: true,
-        metadata: {
-          docId: validated.docId,
-          chunkRecordCount: chunkRecords.length,
-          collection: DOCS_CHUNKS_COLLECTION,
-          elapsedSinceStepStartMs: Date.now() - chunkStart,
-        },
-      });
-      const upsertStart = Date.now();
-      const importResult = await typesense.bulkImport(
-        DOCS_CHUNKS_COLLECTION,
-        chunkRecords as unknown as Record<string, unknown>[],
-        "upsert"
-      );
-      await emitOtelEvent({
-        level: importResult.errors > 0 ? "warn" : "info",
-        source: "worker",
-        component: "docs-ingest",
-        action: "docs.chunks.upsert.completed",
-        success: importResult.errors === 0,
-        metadata: {
-          docId: validated.docId,
-          chunkRecordCount: chunkRecords.length,
-          indexed: importResult.success,
-          errors: importResult.errors,
-          elapsedMs: Date.now() - upsertStart,
-        },
-      });
-
-      await emitMeasuredOtelEvent(
-        {
-          level: importResult.errors > 0 ? "warn" : "info",
-          source: "worker",
-          component: "docs-ingest",
-          action: "docs.chunks.indexed",
-          metadata: {
-            docId: validated.docId,
-            indexed: importResult.success,
-            errors: importResult.errors,
-            sectionCount: chunking.stats.section_chunks,
-            snippetCount: chunking.stats.snippet_chunks,
-          },
-        },
-        async () => importResult
-      );
 
       return {
-        indexed: importResult.success,
-        errors: importResult.errors,
+        indexed: 0,
+        errors: 0,
         sectionCount: chunking.stats.section_chunks,
         snippetCount: chunking.stats.snippet_chunks,
       };
@@ -1859,7 +1758,7 @@ export const docsIngest = inngest.createFunction(
           snippetChunks: chunkSummary.snippetCount,
         },
       },
-      // ADR-0234: chain v1 completion to v2 artifact pipeline
+      // ADR-0234: chain base ingest to the only live chunk index
       // Every new PDF gets v2 artifacts (NAS-durable .md/.meta.json/.chunks.jsonl)
       // + nomic 768-dim embeddings in docs_chunks_v2
       {

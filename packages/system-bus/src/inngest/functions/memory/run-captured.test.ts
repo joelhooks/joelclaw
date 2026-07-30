@@ -5,19 +5,13 @@ import { mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InngestTestEngine } from "@inngest/test";
-import { runsSchema } from "@joelclaw/memory";
 import { memoryRunCaptured } from "./run-captured";
 
-const originalFetch = globalThis.fetch;
 const originalOtelEnabled = process.env.OTEL_EVENTS_ENABLED;
 const originalSessionIndexPath = process.env.SESSION_INDEX_PATH;
 
 let testDirectory = "";
 let sessionIndexPath = "";
-let upsertedRun: Record<string, unknown> | null = null;
-let requestedPaths: string[] = [];
-let runUpsertStatus = 200;
-let runUpsertBody = '{"id":"run-empty"}';
 const spooledPaths = new Set<string>();
 
 beforeEach(() => {
@@ -47,27 +41,10 @@ beforeEach(() => {
   `);
   db.close(false);
 
-  upsertedRun = null;
-  requestedPaths = [];
-  runUpsertStatus = 200;
-  runUpsertBody = '{"id":"run-empty"}';
   process.env.OTEL_EVENTS_ENABLED = "0";
-
-  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input);
-    requestedPaths.push(url);
-
-    if (url.includes("/runs_dev/documents?action=upsert")) {
-      upsertedRun = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return new Response(runUpsertBody, { status: runUpsertStatus });
-    }
-
-    return new Response("{}", { status: 200 });
-  }) as typeof fetch;
 });
 
 afterEach(() => {
-  globalThis.fetch = originalFetch;
   if (originalOtelEnabled === undefined) delete process.env.OTEL_EVENTS_ENABLED;
   else process.env.OTEL_EVENTS_ENABLED = originalOtelEnabled;
   if (originalSessionIndexPath === undefined) delete process.env.SESSION_INDEX_PATH;
@@ -160,7 +137,7 @@ function emptyRunData(): CaptureEventData {
 }
 
 describe("memory/run.captured", () => {
-  test("indexes the Run metadata row with zero turns and no chunks", async () => {
+  test("stores a zero-turn Run in sessions.db without a Typesense step", async () => {
     const { result, stepIds } = await executeRun(emptyRunData());
 
     expect(result).toEqual({
@@ -168,47 +145,24 @@ describe("memory/run.captured", () => {
       chunks_indexed: 0,
       reason: "empty",
     });
-    expect(stepIds).toContain("index-run");
-    expect(upsertedRun).toMatchObject({
-      id: "run-empty",
-      user_id: "joel",
-      machine_id: "flagg",
-      agent_runtime: "pi",
-      parent_run_id: "run-parent",
-      root_run_id: "run-parent",
-      conversation_id: "conversation-empty",
-      tags: ["capture-outbox"],
-      readable_by: ["joel"],
-      started_at: 1_721_238_660_000,
-      ended_at: 1_721_238_660_000,
-      duration_ms: 0,
-      turn_count: 0,
-      user_turn_count: 0,
-      assistant_turn_count: 0,
-      tool_turn_count: 0,
-      token_total: 0,
-      tool_call_count: 0,
-      status: "active",
-      full_text: "",
-      jsonl_path: "/captures/run-empty.jsonl",
-      jsonl_bytes: Buffer.byteLength('{"type":"session","version":3}\n'),
-      jsonl_sha256: createHash("sha256")
-        .update('{"type":"session","version":3}\n')
-        .digest("hex"),
-    });
+    expect(stepIds).not.toContain("ensure-collections");
+    expect(stepIds).not.toContain("index-run");
 
-    const requiredFields = runsSchema().fields
-      .filter((field) => !field.optional)
-      .map((field) => field.name);
-    for (const field of requiredFields) {
-      expect(upsertedRun).toHaveProperty(field);
-    }
-
-    expect(
-      requestedPaths.some((path) =>
-        path.includes("/run_chunks_dev/documents/import?action=upsert")
-      )
-    ).toBe(false);
+    const db = new Database(sessionIndexPath, { readonly: true, strict: true });
+    expect(db.query(`SELECT run_id, user_id, machine_id, agent_runtime, parent_run_id,
+      conversation_id, turn_count, chunk_count, tags_json FROM runs WHERE run_id = ?`)
+      .get("run-empty")).toEqual({
+        run_id: "run-empty",
+        user_id: "joel",
+        machine_id: "flagg",
+        agent_runtime: "pi",
+        parent_run_id: "run-parent",
+        conversation_id: "conversation-empty",
+        turn_count: 0,
+        chunk_count: 0,
+        tags_json: '["capture-outbox"]',
+      });
+    db.close(false);
   });
 
   test("is idempotent across Inngest event redelivery and step retry", async () => {
@@ -282,21 +236,15 @@ describe("memory/run.captured", () => {
     ).rejects.toThrow(`session index Run ${original.run_id} already exists`);
   });
 
-  test("survives a real Inngest step retry after the SQLite side effect committed", async () => {
+  test("survives a real Inngest replay after the SQLite side effect committed", async () => {
     const event = { name: "memory/run.captured" as const, data: emptyRunData() };
-    runUpsertStatus = 503;
-    runUpsertBody = '{"message":"retry me"}';
 
-    const failed = await new InngestTestEngine({
+    const first = await new InngestTestEngine({
       function: memoryRunCaptured,
       events: [event],
     }).execute();
-    expect(failed.error).toBeDefined();
-    expect(String((failed.error as { message?: string })?.message ?? failed.error)).toContain(
-      "run upsert failed: 503",
-    );
+    expect(first.result).toMatchObject({ run_id: "run-empty", chunks_indexed: 0 });
 
-    runUpsertStatus = 200;
     const replay = await new InngestTestEngine({
       function: memoryRunCaptured,
       events: [event],
@@ -336,15 +284,6 @@ describe("memory/run.captured", () => {
         jsonl_inline: changedJsonl,
       }),
     ).rejects.toThrow("already exists with different JSONL bytes");
-  });
-
-  test("fails the run when Typesense rejects the metadata document", async () => {
-    runUpsertStatus = 400;
-    runUpsertBody = '{"message":"Field turn_count must be an int32"}';
-
-    await expect(executeRun(emptyRunData())).rejects.toThrow(
-      "run upsert failed: 400"
-    );
   });
 
   test("keeps every durable step output small for a large inline capture", async () => {
@@ -396,10 +335,7 @@ describe("memory/run.captured", () => {
       candidate_count: 128,
     });
     expect(stepIds).not.toContain("index-chunks");
-    expect(stepOutputs.get("index-run")).toEqual({
-      run_id: "run-large-inline",
-      turn_count: 128,
-    });
+    expect(stepIds).not.toContain("index-run");
     expect(stepOutputs.get("cleanup-inline-jsonl")).toEqual({
       run_id: "run-large-inline",
     });
@@ -413,11 +349,6 @@ describe("memory/run.captured", () => {
       expect(serialized).not.toContain(marker);
     }
 
-    expect(upsertedRun).toMatchObject({
-      id: "run-large-inline",
-      turn_count: 128,
-    });
-    expect(String(upsertedRun?.full_text)).toContain(marker);
     expect(sentEvents).toEqual([
       {
         stepId: "emit-indexed",
