@@ -10,8 +10,8 @@ import { ConvexHttpClient } from "convex/browser";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { Suspense } from "react";
-import { api } from "joelclaw-api/convex/_generated/api";
 import { SITE_NAME } from "@/lib/constants";
+import { api } from "@/lib/convex-api";
 
 type NetworkNode = {
   publicName: string;

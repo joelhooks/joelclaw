@@ -1,11 +1,11 @@
 import { ConvexHttpClient } from "convex/browser";
 import { cacheLife, cacheTag } from "next/cache";
-import { api } from "joelclaw-api/convex/_generated/api";
 import {
   buildAdrRouteSlugs,
   resolveAdrSourceSlug,
   toAdrRouteSlug,
 } from "@/lib/adr-route";
+import { api } from "@/lib/convex-api";
 import {
   readConvexDeployKey,
   readConvexUrl,

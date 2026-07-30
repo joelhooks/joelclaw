@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { ConvexHttpClient } from "convex/browser";
 import matter from "gray-matter";
 import { cacheLife, cacheTag } from "next/cache";
-import { api } from "joelclaw-api/convex/_generated/api";
+import { api } from "@/lib/convex-api";
 import {
   readConvexDeployKey,
   readConvexUrl,

@@ -5,8 +5,8 @@ import { SearchBar } from "@repo/ui/search-bar";
 import { useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { api } from "joelclaw-api/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
+import { api } from "@/lib/convex-api";
 
 type Transcript = {
   id: string;

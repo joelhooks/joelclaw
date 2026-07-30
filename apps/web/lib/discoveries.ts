@@ -3,7 +3,7 @@ import fs from "fs";
 import matter from "gray-matter";
 import { cacheLife, cacheTag } from "next/cache";
 import path from "path";
-import { api } from "joelclaw-api/convex/_generated/api";
+import { api } from "@/lib/convex-api";
 import {
   readConvexDeployKey,
   readConvexUrl,

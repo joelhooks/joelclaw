@@ -35,3 +35,12 @@ Typesense fell from 23 collections and 428,704 documents to 18 collections and 3
 - Repair or retire stale `vault_notes`, `conversation_threads`, `pi_mono_artifacts`, and `slack_messages`.
 - Remove `blog_posts`, `discoveries`, and `system_log` only after their remaining web/search callers move to canonical sources.
 - Inspect duplicate v2 book chunks. The first post-cut query returned the same citation twice from distinct hits.
+
+## Deployment gate repair
+
+The first cleanup commit exposed two existing Vercel-only failures.
+
+- `apps/web` depended on `link:../../../joelclaw-api`, a sibling checkout that is absent in Vercel.
+- The legacy Vercel Run routes pulled `bun:sqlite` into Next.js through `@joelclaw/memory`.
+
+The web app now owns a checked public Convex contract in `apps/web/lib/convex-api.ts`. The Vercel Run ingest and search routes return `410`; Central system-bus owns Run ingest and SQLite owns search. The frozen lockfile install, web typecheck, and local production build pass.

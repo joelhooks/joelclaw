@@ -45,6 +45,8 @@ Runtime read policy:
 - `apps/web/lib/posts.ts` → Convex-first articles (`article:*`)
 - `apps/web/lib/adrs.ts` → Convex-first ADRs (`adr:*`)
 - `apps/web/lib/discoveries.ts` → Convex-first discoveries (`discovery:*`)
+- `apps/web/lib/convex-api.ts` → checked web-facing Convex function contract plus the runtime `anyApi` proxy
+- Never add a `link:` dependency on the sibling private `joelclaw-api` checkout. Vercel clones only this repository.
 - Optional local escape hatches (non-production only):
   - `JOELCLAW_ALLOW_FILESYSTEM_POSTS_FALLBACK=1` (articles)
   - `JOELCLAW_ALLOW_FILESYSTEM_CONTENT_FALLBACK=1` (ADRs/discoveries)
@@ -126,6 +128,7 @@ Use the canonical `joel-writing-style` skill for prose. Key traits: direct, firs
 | `lib/posts.ts` | Article loading from Convex (`article:*`) |
 | `lib/adrs.ts` | ADR loading from Convex (`adr:*`) |
 | `lib/discoveries.ts` | Discovery loading from Convex (`discovery:*`) |
+| `lib/convex-api.ts` | Deployable runtime proxy and typed public Convex contract |
 | `lib/constants.ts` | Site name, URL, tagline |
 | `lib/claw.ts` | SVG path for claw icon |
 

@@ -422,6 +422,7 @@ From index comments + function lists:
 6. `packages/system-bus/src/inngest/functions/memory/run-captured.ts` appends Run metadata, chunks, and FTS rows to SQLite `sessions.db` in one transaction.
 7. If POST fails from a Machine, the hook writes the POST body into `~/.joelclaw/outbox/`; the Machine does not become Central just because capture is temporarily offline.
 8. If raw blobs exist but SQLite is stale, recover Inngest/worker registration first, then backfill with `scripts/backfill-session-index.ts`. Do not replay thousands of `memory/run.captured` events casually.
+9. The public Vercel app is not a Run ingress or search surface. Its `POST /api/runs` and `POST /api/runs/search` routes return `410`. Machine hooks must use the Central system-bus endpoint, and operators must use `joelclaw sessions search`.
 
 ## Queue flow: `joelclaw queue emit` → Restate drainer → durable dispatch
 
