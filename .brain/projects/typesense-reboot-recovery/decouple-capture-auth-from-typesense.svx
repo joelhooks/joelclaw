@@ -2,7 +2,7 @@
 title: "Decouple Run capture auth from Typesense"
 type: "step"
 kind: "construction"
-status: "active"
+status: "closed"
 created_at: "2026-07-29"
 privacy: "private"
 parent: "./typesense-reboot-recovery-brief.svx"
@@ -42,7 +42,7 @@ This preserves every existing Flagg/Blaine token. Signed capture capability
 tokens remain a possible later replacement for the PDS App Password minting
 flow, but they are not required to remove Typesense from the request path.
 
-## Verification before deployment
+## Verification
 
 - Seven focused auth tests pass: persistence across reopen, zero-call offline
   lookup, bounded migration fallback, revocation, empty-sync preservation,
@@ -52,6 +52,16 @@ flow, but they are not required to remove Typesense from the request path.
 - The current Flagg token resolved after reopening the registry with a fetch
   implementation that always failed.
 - The SQLite file was `0600`.
+- Commit `b3149dc2` was pushed to `main` and fast-forwarded onto Blaine.
+- Flagg restarted only the system-bus worker. Health returned HTTP 200 and
+  reported `captureAuth.backend: "sqlite"`.
+- The worker synchronized four Machine identities at startup.
+- A Flagg capture canary returned HTTP 202 in 10.5 ms.
+- The production registry resolved Flagg's token in 0.2 ms while its injected
+  fetch implementation failed. It made zero remote calls.
+- A capture canary sent from Blaine returned HTTP 202 in 14.3 ms.
+- Blaine's live Pi extension symlink points at the patched non-blocking
+  `memory-capture` package.
 
 ## Non-goal
 
