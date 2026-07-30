@@ -6,6 +6,13 @@ export const CRITICAL_DB_REQUIRED_SOURCES = [
   "archive:memory_observations",
 ] as const;
 
+export const CRITICAL_DB_LIVE_SOURCES = [
+  "files:observations",
+  "files:brain",
+  "files:vault",
+  "files:knowledge",
+] as const;
+
 export const CRITICAL_DB_SOURCE_STALE_AFTER_MS = 7 * 24 * 60 * 60_000;
 
 export type CriticalDbRequiredSource = (typeof CRITICAL_DB_REQUIRED_SOURCES)[number];
@@ -54,7 +61,7 @@ export function evaluateCriticalDbFreshness<T extends CriticalDbSourceMetadata>(
   const required = CRITICAL_DB_REQUIRED_SOURCES.map((source) => sources[source]);
   const status = input.degradedOverride || required.some((source) => !source || source.status !== "ok")
     ? "degraded"
-    : required.some((source) => source.freshness === "stale")
+    : CRITICAL_DB_LIVE_SOURCES.some((source) => sources[source]?.freshness === "stale")
       ? "stale"
       : "ok";
   return { sources, status };

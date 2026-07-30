@@ -101,6 +101,7 @@ const receiptPath = resolve(arg("--receipt", "/tmp/capture-outbox-replay-receipt
 const checkpointPath = resolve(
   arg("--checkpoint", join(HOME, ".joelclaw", "capture-outbox-replay-checkpoint.jsonl"))!,
 );
+const authPath = resolve(arg("--auth-path", join(HOME, ".joelclaw", "auth.json"))!);
 const stopFile = resolve(arg("--stop-file", join(HOME, ".joelclaw", "capture-outbox.STOP"))!);
 const centralUrl = (
   arg("--central-url") ??
@@ -194,6 +195,8 @@ type IndexedRun = {
   source_identity: string | null;
   jsonl_path: string | null;
   jsonl_sha256: string | null;
+  from_offset: number | null;
+  to_offset: number | null;
 };
 
 let sessionsDb: Database | undefined;
@@ -213,7 +216,7 @@ function sessionIndex(): Database {
 function exactRun(runId: string): IndexedRun | undefined {
   const row = sessionIndex()
     .query<IndexedRun, [string]>(
-      "SELECT run_id, parent_run_id, source_identity, jsonl_path, jsonl_sha256 FROM runs WHERE run_id = ?",
+      "SELECT run_id, parent_run_id, source_identity, jsonl_path, jsonl_sha256, from_offset, to_offset FROM runs WHERE run_id = ?",
     )
     .get(runId);
   return row ?? undefined;
@@ -223,29 +226,100 @@ function capturedSiblings(body: CaptureBody): CapturedSibling[] {
   if (!body.conversation_id) return [];
   const rows = sessionIndex()
     .query<IndexedRun, [string, string]>(
-      "SELECT run_id, parent_run_id, source_identity, jsonl_path, jsonl_sha256 FROM runs WHERE agent_runtime = ? AND conversation_id = ?",
+      "SELECT run_id, parent_run_id, source_identity, jsonl_path, jsonl_sha256, from_offset, to_offset FROM runs WHERE agent_runtime = ? AND conversation_id = ?",
     )
     .all(body.agent_runtime, body.conversation_id);
-  const siblings: CapturedSibling[] = [];
-  for (const row of rows) {
-    if ((row.parent_run_id ?? undefined) !== (body.parent_run_id ?? undefined)) continue;
-    if (body.source_identity && row.source_identity !== body.source_identity) continue;
-    if (!row.jsonl_path) continue;
+  if (body.source_identity && body.from_offset !== undefined) {
+    const segments = rows
+      .filter(
+        (row) =>
+          row.source_identity === body.source_identity
+          && Number.isSafeInteger(row.from_offset)
+          && Number.isSafeInteger(row.to_offset)
+          && (row.to_offset as number) > (row.from_offset as number),
+      )
+      .sort(
+        (a, b) =>
+          (a.from_offset as number) - (b.from_offset as number)
+          || (b.to_offset as number) - (a.to_offset as number),
+      );
+    let nextOffset = body.from_offset;
+    let combined = "";
+    let lastRunId: string | undefined;
+    while (true) {
+      const segment = segments.find((row) => row.from_offset === nextOffset);
+      if (!segment?.jsonl_path || !segment.jsonl_sha256) break;
+      const jsonlPath = segment.jsonl_path.startsWith("/")
+        ? segment.jsonl_path
+        : join(runStorePath, segment.jsonl_path);
+      if (!existsSync(jsonlPath)) break;
+      const jsonl = readFileSync(jsonlPath, "utf8");
+      verifiedCapturedSibling(segment.run_id, jsonl, segment.jsonl_sha256);
+      combined += jsonl;
+      lastRunId = segment.run_id;
+      nextOffset = segment.to_offset as number;
+    }
+    if (lastRunId && combined.length > 0) {
+      return [{ runId: lastRunId, jsonl: combined, jsonlSha256: sha256(combined) }];
+    }
+  }
+  const readable = rows.flatMap((row) => {
+    if (body.source_identity && row.source_identity !== body.source_identity) return [];
+    if (!row.jsonl_path) return [];
     // sessions.db stores run-store-relative jsonl paths (same convention as
     // `joelclaw sessions`); absolute paths are legacy rows.
     const jsonlPath = row.jsonl_path.startsWith("/")
       ? row.jsonl_path
       : join(runStorePath, row.jsonl_path);
-    if (!existsSync(jsonlPath)) continue;
-    siblings.push(
-      verifiedCapturedSibling(
-        row.run_id,
-        readFileSync(jsonlPath, "utf8"),
-        row.jsonl_sha256 ?? undefined,
-      ),
-    );
-  }
-  return siblings;
+    if (!existsSync(jsonlPath)) return [];
+    return [
+      {
+        row,
+        sibling: verifiedCapturedSibling(
+          row.run_id,
+          readFileSync(jsonlPath, "utf8"),
+          row.jsonl_sha256 ?? undefined,
+        ),
+      },
+    ];
+  });
+
+  // Captures written before source cursors existed form a parent chain:
+  // the first indexed Run contains the prefix and each child contains the
+  // next suffix. Rebuild only chains whose bytes match the reviewed outbox
+  // body at every step.
+  const roots = readable.filter(
+    ({ row, sibling }) =>
+      (row.parent_run_id ?? undefined) === (body.parent_run_id ?? undefined)
+      && (body.jsonl.startsWith(sibling.jsonl) || sibling.jsonl.startsWith(body.jsonl)),
+  );
+  const reconstructed = roots.map(({ sibling: root }) => {
+    let combined = root.jsonl;
+    let lastRunId = root.runId;
+    while (body.jsonl.startsWith(combined)) {
+      const child = readable
+        .filter(
+          ({ row, sibling }) =>
+            row.parent_run_id === lastRunId
+            && sibling.jsonl.length > 0
+            && body.jsonl.startsWith(combined + sibling.jsonl),
+        )
+        .sort((a, b) => b.sibling.jsonl.length - a.sibling.jsonl.length)[0];
+      if (!child) break;
+      combined += child.sibling.jsonl;
+      lastRunId = child.sibling.runId;
+    }
+    return { runId: lastRunId, jsonl: combined, jsonlSha256: sha256(combined) };
+  });
+  const longest = reconstructed.sort((a, b) => b.jsonl.length - a.jsonl.length)[0];
+  if (longest) return [longest];
+
+  return readable
+    .filter(
+      ({ row }) =>
+        (row.parent_run_id ?? undefined) === (body.parent_run_id ?? undefined),
+    )
+    .map(({ sibling }) => sibling);
 }
 
 async function plan(): Promise<void> {
@@ -355,7 +429,6 @@ async function run(): Promise<void> {
   if (!execute) throw new Error("real replay requires --execute");
   if (maxFiles <= 0) throw new Error("real replay requires --max-files > 0");
   if (!existsSync(catalogPath)) throw new Error(`reviewed catalog not found: ${catalogPath}`);
-  const authPath = join(HOME, ".joelclaw", "auth.json");
   const token = (JSON.parse(readFileSync(authPath, "utf8")) as { token?: string }).token;
   if (!token) throw new Error("capture auth token missing");
   const artifact = JSON.parse(readFileSync(catalogPath, "utf8")) as PlanArtifact;
@@ -506,6 +579,39 @@ async function run(): Promise<void> {
       receipt.rows.push(row);
       receipt.failed += 1;
       break;
+    }
+    const responseBody = (await response.json().catch(() => null)) as {
+      status?: unknown;
+      run_id?: unknown;
+      to_offset?: unknown;
+      jsonl_sha256?: unknown;
+    } | null;
+    if (
+      responseBody?.status === "accepted_prefix"
+      && responseBody.run_id === targetRunId
+      && Number.isSafeInteger(responseBody.to_offset)
+      && typeof responseBody.jsonl_sha256 === "string"
+    ) {
+      const indexed = await waitForIndex(targetRunId, responseBody.jsonl_sha256);
+      if (indexed !== "indexed") {
+        throw new Error(
+          `accepted prefix ${targetRunId} did not index safely (${indexed}); stopping without resend`,
+        );
+      }
+      row = checkpoint({
+        key,
+        runId: targetRunId,
+        status: "covered",
+        sourceSha256: entry.bodySha256,
+        replaySha256: derivation.replaySha256,
+        httpStatus: response.status,
+        detail: `server retained an existing prefix through offset ${responseBody.to_offset}`,
+      });
+      latest.set(key, row);
+      receipt.rows.push(row);
+      receipt.covered += 1;
+      candidates.push(entry);
+      continue;
     }
     row = checkpoint({
       key,

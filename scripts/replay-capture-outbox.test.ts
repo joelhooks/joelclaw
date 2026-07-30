@@ -17,8 +17,10 @@ type SeedRun = {
   agentRuntime: string;
   conversationId: string;
   parentRunId?: string;
-  sourceIdentity: string;
+  sourceIdentity?: string;
   jsonl: string;
+  fromOffset?: number;
+  toOffset?: number;
 };
 
 function seedFixture(seeds: SeedRun[]): { home: string; outbox: string } {
@@ -34,9 +36,11 @@ function seedFixture(seeds: SeedRun[]): { home: string; outbox: string } {
       agent_runtime TEXT NOT NULL,
       conversation_id TEXT,
       parent_run_id TEXT,
-      source_identity TEXT NOT NULL,
+      source_identity TEXT,
       jsonl_path TEXT NOT NULL,
-      jsonl_sha256 TEXT NOT NULL
+      jsonl_sha256 TEXT NOT NULL,
+      from_offset INTEGER,
+      to_offset INTEGER
     )`,
   );
   const runStore = join(fixtureRoot, ".joelclaw", "runs-dev");
@@ -45,15 +49,17 @@ function seedFixture(seeds: SeedRun[]): { home: string; outbox: string } {
     // sessions.db stores run-store-relative jsonl paths.
     writeFileSync(join(runStore, `${seed.runId}.jsonl`), seed.jsonl);
     db.run(
-      "INSERT INTO runs (run_id, agent_runtime, conversation_id, parent_run_id, source_identity, jsonl_path, jsonl_sha256) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO runs (run_id, agent_runtime, conversation_id, parent_run_id, source_identity, jsonl_path, jsonl_sha256, from_offset, to_offset) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         seed.runId,
         seed.agentRuntime,
         seed.conversationId,
         seed.parentRunId ?? null,
-        seed.sourceIdentity,
+        seed.sourceIdentity ?? null,
         `${seed.runId}.jsonl`,
         sha256(seed.jsonl),
+        seed.fromOffset ?? null,
+        seed.toOffset ?? null,
       ],
     );
   }
@@ -73,6 +79,19 @@ function writeOutboxSource(outbox: string, runId: string, identity: string, json
       from_offset: 0,
       to_offset: Buffer.byteLength(jsonl),
       jsonl_sha256: sha256(jsonl),
+      jsonl,
+    }),
+  );
+}
+
+function writeLegacyOutboxSource(outbox: string, runId: string, jsonl: string): void {
+  writeFileSync(
+    join(outbox, `${runId}.json`),
+    JSON.stringify({
+      run_id: runId,
+      agent_runtime: "pi",
+      conversation_id: "conversation",
+      started_at: 1_700_000_000_000,
       jsonl,
     }),
   );
@@ -151,6 +170,71 @@ describe("canonical capture replay planner", () => {
       readOnly: true,
       representatives: 1,
       archiveStatus: { covered: 0, suffix: 0, full: 1 },
+    });
+  });
+
+  test("reconstructs contiguous source cursor segments across parent Runs", async () => {
+    const identity = captureSourceIdentity(["pi", "machine", "conversation", "/session.jsonl"]);
+    const prefix = "one\n";
+    const suffix = "two\n";
+    const prefixBytes = Buffer.byteLength(prefix);
+    const fullBytes = prefixBytes + Buffer.byteLength(suffix);
+    const { home, outbox } = seedFixture([
+      {
+        runId: "b".repeat(26),
+        agentRuntime: "pi",
+        conversationId: "conversation",
+        sourceIdentity: identity,
+        jsonl: prefix,
+        fromOffset: 0,
+        toOffset: prefixBytes,
+      },
+      {
+        runId: "c".repeat(26),
+        agentRuntime: "pi",
+        conversationId: "conversation",
+        parentRunId: "b".repeat(26),
+        sourceIdentity: identity,
+        jsonl: suffix,
+        fromOffset: prefixBytes,
+        toOffset: fullBytes,
+      },
+    ]);
+    writeOutboxSource(outbox, "a".repeat(26), identity, prefix + suffix);
+
+    expect(await planReceipt(home, outbox)).toMatchObject({
+      ok: true,
+      readOnly: true,
+      representatives: 1,
+      archiveStatus: { covered: 1, suffix: 0, full: 0 },
+    });
+  });
+
+  test("reconstructs legacy parent chains without source cursors", async () => {
+    const prefix = "one\n";
+    const suffix = "two\n";
+    const { home, outbox } = seedFixture([
+      {
+        runId: "b".repeat(26),
+        agentRuntime: "pi",
+        conversationId: "conversation",
+        jsonl: prefix,
+      },
+      {
+        runId: "c".repeat(26),
+        agentRuntime: "pi",
+        conversationId: "conversation",
+        parentRunId: "b".repeat(26),
+        jsonl: suffix,
+      },
+    ]);
+    writeLegacyOutboxSource(outbox, "a".repeat(26), prefix + suffix);
+
+    expect(await planReceipt(home, outbox)).toMatchObject({
+      ok: true,
+      readOnly: true,
+      representatives: 1,
+      archiveStatus: { covered: 1, suffix: 0, full: 0 },
     });
   });
 });

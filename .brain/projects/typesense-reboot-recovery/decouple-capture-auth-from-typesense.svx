@@ -70,3 +70,74 @@ Typesense 30.2 has no collection lazy-load mode. The remaining boot-time work is
 to retire dead derived collections or move archive-sized indexes to a separate
 non-critical process. Those collection drops require inventory and explicit
 review because they are destructive.
+
+## Pi extension follow-up
+
+The 2026-07-29 fleet audit found two independent `turn_end` blockers.
+
+- `memory-capture` used to return its network delivery promise to Pi. It now
+  schedules capture without blocking the lifecycle handler and bounds HTTP work.
+- Blaine's `pi-codex-computer-use` awaited an MCP notification with no timeout
+  after every connected turn. Its `turn_end` handler is now fire-and-forget,
+  connection timers are cleared, and shutdown is bounded to two seconds.
+
+The computer-use patch is commit `a66625f` in the local source checkout. The
+ShitRat GitHub App cannot access that repository, so the push is blocked. The
+patched files were copied to Blaine after the remote source hash matched the
+expected parent revision. Blaine passed the syntax check and two lifecycle
+tests.
+
+Blaine also loaded the retired `pi-rhizomatic` package. Its first-agent hook
+waited on two calls to a parked service. No Rhizomatic tool calls appeared in
+269 Pi sessions from the prior 45 days. The package was removed from Blaine's
+active Pi settings, while its source and a timestamped settings backup remain.
+Offline Pi startup on Blaine fell from 1.70 seconds to 0.99 seconds.
+
+The zoo is large but not uniformly dead. In the same 45-day Blaine sample,
+computer-use appeared 14 times, MCP 3 times, Bellwether's Herdr tools 2 times,
+subagents 260 times, Pi Notes 350 times, and browser/search tools 1,164 times.
+Keep those. The retired Rhizomatic package had evidence for removal; the others
+do not.
+
+## Memory backlog recovery
+
+The capture request path is healthy after the worker restart. A valid token
+reaches request validation without Typesense, and a real Blaine backlog blob
+returned HTTP 202. The local session index also passes `PRAGMA quick_check`;
+recent count and lookup queries complete in 10 ms.
+
+The old clients left a prefix-explosion backlog:
+
+- Flagg: 1,064 JSON blobs, 1.9 GiB; 978 are older than seven days.
+- Blaine: 1,165 JSON blobs, 16.8 GB; 1,162 are older than seven days.
+- The patched clients coalesce one pending body per source cursor, so this old
+  prefix explosion no longer repeats.
+
+Recovery is complete without blind resends.
+
+- The replay planner collapses exact and growing-prefix duplicates.
+- It verifies indexed bytes against `sessions.db` and the raw Run store.
+- It reconstructs both current source-cursor segments and legacy parent Run
+  chains.
+- Blaine collapsed to 26 representatives. All 26 are indexed.
+- Flagg collapsed to 153 representatives. The worker indexed 88 replay items,
+  including one deterministic child after a retained-prefix collision. All 153
+  are now indexed.
+- Flagg's 1,064 reviewed files moved to
+  `~/.joelclaw/outbox-quarantine/20260729T2355Z`.
+- Blaine's 1,165 reviewed files moved to
+  `~/.joelclaw/outbox-quarantine/20260729T2327Z`.
+- Both active outboxes are empty. The quarantine files still consume 1.9 GiB
+  and 16 GB respectively; they have not been deleted.
+
+Private frozen copies and SHA-bearing catalogs remain under
+`~/.joelclaw/backups/capture-outbox-{flagg,blaine}/`. The quarantine tool only
+moves a live file when its size and SHA match the reviewed catalog. Missing,
+new, or changed files stay in the active outbox.
+
+`joelclaw recall` is healthy and returned three SQLite FTS5 hits in 130 ms. Its
+health envelope incorrectly called the projection stale because the retired,
+intentionally frozen May 31 `memory_observations` archive was included in the
+live freshness gate. The code now requires that archive for availability and
+integrity, but only age-gates live Brain, observation, vault, and knowledge
+sources.
