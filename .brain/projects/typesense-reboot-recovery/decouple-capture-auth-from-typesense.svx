@@ -1,0 +1,62 @@
+---
+title: "Decouple Run capture auth from Typesense"
+type: "step"
+kind: "construction"
+status: "active"
+created_at: "2026-07-29"
+privacy: "private"
+parent: "./typesense-reboot-recovery-brief.svx"
+---
+
+# Decouple Run capture auth from Typesense
+
+## Failure
+
+Flagg Typesense needed 57 minutes to rebuild 24 collections on 2026-07-29.
+`machines_dev` contained only four Machine records and loaded within seconds, but
+Typesense returned HTTP 503 for every collection until the complete rebuild
+finished. Run capture authenticated each request through `machines_dev`, so an
+unrelated 241,939-document `docs_chunks_v2` rebuild made capture authentication
+unavailable.
+
+The Pi `memory-capture` extension now returns immediately and bounds its delivery
+worker, but Central must also keep its request path independent of a non-critical
+search projection.
+
+## Decision
+
+Central stores the current Machine token hashes and identities in
+`~/.joelclaw/capture-auth.db`, mode `0600`.
+
+- Known tokens resolve from local SQLite without a network call.
+- `machines_dev` remains the enrollment and migration mirror.
+- The worker refreshes the complete four-row registry every five minutes outside
+  the request path.
+- An unknown token gets one bounded Typesense lookup. A successful lookup is
+  persisted locally.
+- A failed, malformed, or empty sync keeps the last working registry.
+- Revocation and token rotation replace the local Machine row on the next
+  successful background sync.
+
+This preserves every existing Flagg/Blaine token. Signed capture capability
+tokens remain a possible later replacement for the PDS App Password minting
+flow, but they are not required to remove Typesense from the request path.
+
+## Verification before deployment
+
+- Seven focused auth tests pass: persistence across reopen, zero-call offline
+  lookup, bounded migration fallback, revocation, empty-sync preservation,
+  malformed records, and timeout behavior.
+- The broader Run route and health set passes: 19 tests total.
+- A live temporary registry synchronized all four `machines_dev` records.
+- The current Flagg token resolved after reopening the registry with a fetch
+  implementation that always failed.
+- The SQLite file was `0600`.
+
+## Non-goal
+
+This change does not make Typesense rebuild its in-memory indexes faster.
+Typesense 30.2 has no collection lazy-load mode. The remaining boot-time work is
+to retire dead derived collections or move archive-sized indexes to a separate
+non-critical process. Those collection drops require inventory and explicit
+review because they are destructive.

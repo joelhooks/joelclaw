@@ -465,10 +465,10 @@ Do **not** mutate `main.db` without a point-in-time backup.
 - trigger: `memory/run.captured`
 - derived indexes:
   - `runs_dev`
-  - `run_chunks_dev`
+  - SQLite `sessions.db` for full transcript search (`run_chunks_dev` retired 2026-07-20)
 - source of truth: `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/<run-id>.jsonl` plus `.metadata.json`
 - live ingest endpoint while Panda is Central: `POST https://panda.tail7af24.ts.net/api/runs`, served by the host system-bus worker on `localhost:3111` through Tailscale Funnel root proxy. This mirrors the web app ADR-0243 route because no durable `localhost:3000` Central web listener currently exists on Panda.
-- auth: satellite hooks send `Authorization: Bearer <~/.joelclaw/auth.json token>`; worker hashes the token and resolves identity from Typesense `machines_dev`.
+- auth: satellite hooks send `Authorization: Bearer <~/.joelclaw/auth.json token>`; the worker hashes the token and resolves identity from persistent local SQLite `~/.joelclaw/capture-auth.db`. A five-minute background sync mirrors the four Machine records from Typesense `machines_dev`; known-token requests do not call Typesense.
 - recovery rule: if raw run blobs exist but Typesense is stale, restart Inngest only after logging the restart, force worker registration with `PUT /api/inngest`, then backfill missing blobs with:
 
 ```bash
@@ -484,7 +484,7 @@ TYPESENSE_API_KEY=$(secrets lease typesense_api_key) \
 - validation gates:
   1. `joelclaw runs --count 5 --hours 1 --compact` returns quickly and shows recent `memory/run.captured` completions
   2. `runs_dev` latest `agent_runtime:=pi` doc advances past the stale timestamp
-  3. `run_chunks_dev` latest matching chunks exist for the same `run_id`
+  3. SQLite `sessions.db` contains the same `run_id` and its FTS chunks
   4. OTEL emission uses the canonical single-object `emitOtelEvent({ level, source, component, action, success, metadata })` contract; old two-argument calls are type failures and should not be reintroduced
 
 ### Knowledge turn-write contract (ADR-0202)

@@ -71,7 +71,7 @@ import {
 import { enqueueRegisteredQueueEvent } from "./lib/queue";
 import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
 import { type MemoryIdentity, registerRunCaptureRoute } from "./routes/run-capture";
-import { lookupCaptureIdentity } from "./routes/run-capture-auth";
+import { createCaptureIdentityResolver } from "./routes/run-capture-auth";
 import { registerRunHealthRoute } from "./routes/run-health";
 
 const app = new Hono();
@@ -85,6 +85,10 @@ const INTERNAL_AGENT_ACK_DIR = join(INTERNAL_AGENT_INBOX_DIR, "ack");
 const INTERNAL_AGENT_POLL_MS = 2_000;
 const INTERNAL_AGENT_MAX_TIMEOUT_MS = 60 * 60_000;
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
+const RUN_CAPTURE_AUTH_DATABASE =
+  process.env.RUN_CAPTURE_AUTH_DATABASE ??
+  join(process.env.HOME ?? "/Users/joel", ".joelclaw", "capture-auth.db");
+const RUN_CAPTURE_AUTH_SYNC_INTERVAL_MS = 5 * 60_000;
 type WorkerRole = "host" | "cluster";
 type FunctionDefinition = { opts?: { id?: string } };
 
@@ -224,6 +228,52 @@ function isFreshRunningResult(
   return Date.now() - startedAtMs <= allowedAgeMs;
 }
 
+const captureIdentityResolver = createCaptureIdentityResolver({
+  databasePath: RUN_CAPTURE_AUTH_DATABASE,
+  typesenseUrl: TYPESENSE_URL,
+  typesenseApiKey: process.env.TYPESENSE_API_KEY ?? "",
+  machinesCollection: MACHINES_COLLECTION,
+  timeoutMs: Number(process.env.RUN_CAPTURE_AUTH_TIMEOUT_MS ?? 1_000),
+});
+let captureAuthSyncInFlight: Promise<void> | null = null;
+let captureAuthLastCount: number | null = null;
+
+function synchronizeCaptureIdentityRegistry(): Promise<void> {
+  if (!process.env.TYPESENSE_API_KEY) {
+    if (captureIdentityResolver.count() === 0) {
+      console.warn(
+        "[capture-auth] local registry is empty and TYPESENSE_API_KEY is unavailable",
+      );
+    }
+    return Promise.resolve();
+  }
+  if (captureAuthSyncInFlight) return captureAuthSyncInFlight;
+  captureAuthSyncInFlight = captureIdentityResolver
+    .synchronize()
+    .then((count) => {
+      if (captureAuthLastCount !== count) {
+        console.log(`[capture-auth] synchronized ${count} Machine identities`);
+        captureAuthLastCount = count;
+      }
+    })
+    .catch((error) => {
+      console.warn(
+        `[capture-auth] background sync failed; keeping local registry: ${String(error)}`,
+      );
+    })
+    .finally(() => {
+      captureAuthSyncInFlight = null;
+    });
+  return captureAuthSyncInFlight;
+}
+
+void synchronizeCaptureIdentityRegistry();
+const captureAuthSyncTimer = setInterval(
+  () => void synchronizeCaptureIdentityRegistry(),
+  RUN_CAPTURE_AUTH_SYNC_INTERVAL_MS,
+);
+captureAuthSyncTimer.unref();
+
 async function lookupMemoryIdentity(token: string): Promise<MemoryIdentity | null> {
   if (token === "dev-joel-panda") {
     return {
@@ -232,17 +282,7 @@ async function lookupMemoryIdentity(token: string): Promise<MemoryIdentity | nul
       did: "did:plc:5w6ablyvahugobsj7n57yjmm",
     };
   }
-
-  const typesenseKey = process.env.TYPESENSE_API_KEY;
-  if (!typesenseKey) return null;
-
-  return lookupCaptureIdentity({
-    token,
-    typesenseUrl: TYPESENSE_URL,
-    typesenseApiKey: typesenseKey,
-    machinesCollection: MACHINES_COLLECTION,
-    timeoutMs: Number(process.env.RUN_CAPTURE_AUTH_TIMEOUT_MS ?? 1_000),
-  });
+  return captureIdentityResolver.lookup(token);
 }
 
 async function authenticateRunCapture(c: any): Promise<MemoryIdentity | null> {

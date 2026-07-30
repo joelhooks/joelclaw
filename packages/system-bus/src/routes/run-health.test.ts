@@ -26,18 +26,25 @@ const freshSearch = {
   },
 };
 
-function appWith(readRecovery: RunHealthDependencies["readRecovery"]): Hono {
+function appWith(
+  readRecovery: RunHealthDependencies["readRecovery"],
+  captureAuthConfigured = true,
+): Hono {
   const app = new Hono();
   registerRunHealthRoute(app, {
     readRecovery,
+    captureAuthConfigured: () => captureAuthConfigured,
     typesenseAuthConfigured: () => true,
     runStore: () => "/fixture/runs",
   });
   return app;
 }
 
-async function health(readRecovery: RunHealthDependencies["readRecovery"]) {
-  const response = await appWith(readRecovery).request("/api/runs/health");
+async function health(
+  readRecovery: RunHealthDependencies["readRecovery"],
+  captureAuthConfigured = true,
+) {
+  const response = await appWith(readRecovery, captureAuthConfigured).request("/api/runs/health");
   return { response, body: await response.json() as Record<string, unknown> };
 }
 
@@ -50,7 +57,11 @@ describe("GET /api/runs/health", () => {
   test("reports a fresh projection healthy", async () => {
     const { response, body } = await health(async () => recovery(freshSearch));
     expect(response.status).toBe(200);
-    expect(body).toMatchObject({ ok: true, recovery: { search: freshSearch } });
+    expect(body).toMatchObject({
+      ok: true,
+      captureAuth: { configured: true, backend: "sqlite" },
+      recovery: { search: freshSearch },
+    });
   });
 
   test("reports a stale projection unhealthy", async () => {
@@ -62,6 +73,15 @@ describe("GET /api/runs/health", () => {
     const { response, body } = await health(async () => recovery(stale));
     expect(response.status).toBe(503);
     expect(body).toMatchObject({ ok: false, recovery: { search: { freshness: { stale: true } } } });
+  });
+
+  test("reports missing capture authentication as unhealthy", async () => {
+    const { response, body } = await health(async () => recovery(freshSearch), false);
+    expect(response.status).toBe(503);
+    expect(body).toMatchObject({
+      ok: false,
+      captureAuth: { configured: false, backend: "unavailable" },
+    });
   });
 
   test("reports empty monitor state unhealthy", async () => {

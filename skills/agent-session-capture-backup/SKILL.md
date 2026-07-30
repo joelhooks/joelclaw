@@ -36,7 +36,7 @@ Current live capture endpoint, per 2026-07-09 repair receipt:
 - `http://joels-mac-studio.tail7af24.ts.net:3111/api/runs`
 - health: `http://joels-mac-studio.tail7af24.ts.net:3111/api/runs/health`
 
-Important drift note: older system-architecture docs say Panda is Central, but Panda's run-capture path currently fails during auth because its local Typesense `machines_dev` lookup resets connections. Flagg/Mac Studio is the working capture endpoint for Blaine right now.
+Important drift note: older system-architecture docs say Panda is Central. Flagg/Mac Studio is the working capture endpoint for Blaine. Capture authentication uses Flagg's persistent local `~/.joelclaw/capture-auth.db`; Typesense `machines_dev` is only its enrollment/migration mirror.
 
 ## Manual verification / repair
 

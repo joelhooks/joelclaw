@@ -8,7 +8,9 @@
  *      given name. Returns the plaintext App Password once.
  *   2. Compute sha256(appPassword) and upsert a row in Typesense
  *      `machines_dev` linking (did, handle, app_password_sha256,
- *      machine_id, user_id, machine_name).
+ *      machine_id, user_id, machine_name). Central mirrors this enrollment
+ *      record into its persistent local `~/.joelclaw/capture-auth.db`;
+ *      capture requests authenticate from SQLite and never await Typesense.
  *   3. Write/overwrite ~/.joelclaw/auth.json with the new token so
  *      future POST /api/runs calls use it.
  *   4. Back up the previous auth.json to ~/.joelclaw/auth.json.bak.

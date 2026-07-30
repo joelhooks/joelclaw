@@ -117,7 +117,7 @@ Current authority split (verified 2026-07-10):
 - **Flagg is authoritative for agent-mail and Run capture ingress.** The agent-mail daemon binds Flagg loopback; Blaine and Panda use SSH connector LaunchAgents so every `joelclaw mail` client reaches the same mailbox without exposing the service on the tailnet.
 - **Panda is migration debt plus Relay responsibilities.** Its independent agent-mail daemon and Talon are removed. A reboot-survivable SSH connector now binds Panda IPv4 loopback `127.0.0.1:3111` and forwards legacy `/api/runs` and `/webhooks` ingress to Flagg. The legacy system worker still owns the IPv6 listener until its system LaunchDaemon is booted out with sudo.
 - **Satellites stay thin**. They run Pi/Codex/Claude, local capture hooks, and connectors to Central. Do not install independent stateful Central services on a satellite without a specific reason.
-- **Typesense is derived for Runs**. NAS/local Run blobs are the source of truth; `runs_dev` and `run_chunks_dev` can be rebuilt.
+- **Typesense is derived for Runs**. NAS/local Run blobs are the source of truth; `runs_dev` can be rebuilt. Full transcript search lives in SQLite `sessions.db`; `run_chunks_dev` was retired on 2026-07-20.
 
 Cutover rule: avoid split-brain. Panda and Flagg must not both accept authoritative writes for the same Central service family. Gate 5 permits shadow smoke tests and migration rehearsal, but authority flips only inside an approved freeze/cutover window.
 
@@ -414,14 +414,12 @@ From index comments + function lists:
    - current live URL for satellites: `POST https://panda.tail7af24.ts.net/api/runs`
    - Panda serves this through the host system-bus worker on `localhost:3111`
    - auth: `Authorization: Bearer <~/.joelclaw/auth.json token>`
-3. `packages/system-bus/src/serve.ts` validates the bearer token by hashing it and resolving Machine identity from Typesense `machines_dev` (`MACHINES_COLLECTION`).
+3. `packages/system-bus/src/serve.ts` validates the bearer token against the persistent local SQLite registry `~/.joelclaw/capture-auth.db`. The worker refreshes this four-row registry from Typesense `machines_dev` in the background every five minutes. Known-token requests never wait for Typesense; an unknown token gets one bounded migration lookup.
 4. Worker writes the raw source of truth through `@joelclaw/memory#writeRunBlob`:
    - default dev store: `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/<run-id>.jsonl`
    - companion metadata includes `user_id`, `machine_id`, `agent_runtime`, parent/conversation IDs, tags, byte count, and SHA-256.
 5. Worker emits `memory/run.captured` to Inngest.
-6. `packages/system-bus/src/inngest/functions/memory/run-captured.ts` derives indexes:
-   - `runs_dev`
-   - `run_chunks_dev`
+6. `packages/system-bus/src/inngest/functions/memory/run-captured.ts` appends the transcript to SQLite `sessions.db`, then maintains the non-critical Typesense `runs_dev` projection.
 7. If POST fails from a Machine, the hook writes the POST body into `~/.joelclaw/outbox/`; the Machine does not become Central just because capture is temporarily offline.
 8. If raw blobs exist but Typesense is stale, recover by fixing Inngest/worker registration first, then backfill blobs with `scripts/backfill-run-typesense.ts`. Do not replay thousands of `memory/run.captured` events casually.
 
@@ -520,11 +518,11 @@ From index comments + function lists:
 ## Run blobs / memory capture
 
 - Current dev source of truth: `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/<run-id>.jsonl` plus `.metadata.json`.
-- Capture identity is resolved from `machines_dev` by bearer-token hash.
-- Derived Typesense collections:
-  - `runs_dev`
-  - `run_chunks_dev`
-  - `machines_dev`
+- Capture identity is resolved locally by bearer-token hash from `~/.joelclaw/capture-auth.db`.
+- `machines_dev` is the enrollment/migration mirror. A five-minute background sync propagates rotation and revocation without putting Typesense on the capture request path.
+- Derived indexes:
+  - SQLite `sessions.db` for full transcript search
+  - Typesense `runs_dev` for the non-critical Run projection
 - Failed Machine POSTs spool to `~/.joelclaw/outbox/`.
 - Future/target contract from `CONTEXT.md`: Run blobs live on NAS and Typesense remains rebuildable from those blobs.
 
@@ -541,8 +539,8 @@ From index comments + function lists:
 From observability code:
 - `otel_events` collection (canonical telemetry event store)
 - `observations` and `brain_graph_nodes` collections (disposable projections for Brain-backed recall; rebuildable from canonical Brain/observation sources)
-- `runs_dev` and `run_chunks_dev` for ADR-0243 captured Runs
-- `machines_dev` for Machine/App Password token-hash lookup
+- `runs_dev` for the non-critical ADR-0243 Run projection
+- `machines_dev` as the enrollment/migration mirror for the local capture-auth registry
 - docs-api also points at `http://typesense:8108` for docs search/index surfaces.
 
 ## Firecracker runtime storage
@@ -699,7 +697,7 @@ Primary command tree root: `packages/cli/src/cli.ts`.
 | `restate cron *` | Dkron REST API via direct `--base-url` or short-lived `kubectl port-forward` to `svc/dkron-svc` |
 | `otel *` | Typesense `otel_events` via capability adapter |
 | `recall *` | disposable Typesense `observations` + `brain_graph_nodes` projections; Brain `.svx` remains canonical |
-| `sessions *` | Central `run_chunks_dev` / raw Pi session JSONL via local/SSH bridge |
+| `sessions *` | Central SQLite `sessions.db` / raw Pi session JSONL fallback |
 | `satellite *` | thin-Machine local probes + optional Central gateway repair request over SSH |
 | `mail *` | Agent-mail MCP HTTP (`127.0.0.1:8765`) via CLI adapter wrappers |
 | `inngest *` | worker launchd + Talon + k8s + Typesense diagnostics |
@@ -734,7 +732,7 @@ Config source:
 ## Run/session search observability
 
 - `joelclaw sessions search` is an operator bridge, not a new source of truth.
-- Typesense path searches captured Run chunks (`run_chunks_dev`) when the derived index is current.
+- SQLite `sessions.db` searches captured Run chunks when the compacted index is current.
 - Raw fallback searches Pi session JSONL locally or over SSH when Typesense is stale or missing a collection.
 - `--extract` returns bounded task context with decisions, commands, files, receipts, verification, blockers, next actions, and transcript line pointers. Do not dump whole transcripts.
 - If raw blobs/session files are newer than Typesense, fix indexing or backfill from blobs; do not treat the missing search hit as proof the work never happened.
@@ -1102,7 +1100,7 @@ Update this skill **in the same change** whenever any of these change:
    - `docs/runbooks/satellite-rig-setup.md`
    - Flagg/Panda cutover status, Central host identity, or Relay Machine role changes
 10. Run capture / memory ingestion changes
-   - `/api/runs`, `memory/run.captured`, capture hook scripts, Machine auth, Run blob paths, `runs_dev`, `run_chunks_dev`, `machines_dev`
+   - `/api/runs`, `memory/run.captured`, capture hook scripts, Machine auth, Run blob paths, `capture-auth.db`, `sessions.db`, `runs_dev`, `machines_dev`
 11. Flagg Central scaffold changes
    - `infra/central/*`, Central LaunchDaemon templates, NAS proof scripts, shadow Compose services, reboot proof, Gate 5 status
 12. Rhizomatic / Chorus parked-state cleanup
