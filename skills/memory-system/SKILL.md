@@ -103,12 +103,14 @@ tick/dream/neat-memory should show status 0. The self-maintenance check
 (inside each tick) surfaces warnings in `/tmp/observer-tick.log`,
 including release-drift (dev HEAD ≠ release HEAD).
 
-**"Session capture / Typesense runs index is stale"** (ADR-0243): raw
-truth is `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/*.jsonl`; derived indexes
-are `runs_dev`/`run_chunks_dev` via `memory/run.captured`. Verify raw vs
-index timestamps separately; check Inngest queue health; backfill with
-`bun scripts/backfill-run-typesense.ts --since <iso> --limit 0 --sleep-ms 250`
-— never by flooding Inngest with replay events.
+**"Session capture / SQLite index is stale"** (ADR-0243): raw truth is
+`~/.joelclaw/runs-dev/<user>/<yyyy-mm>/*.jsonl`; the live FTS projection
+is `~/.joelclaw/search/sessions.db` via `memory/run.captured`. Verify raw
+and SQLite timestamps separately; check Inngest queue health; dry-run
+`bun scripts/backfill-session-index.ts`, then apply with
+`bun scripts/backfill-session-index.ts --apply`. Never flood Inngest with
+replay events. Typesense `runs_dev` and `run_chunks_dev` are retired and
+must not be recreated.
 
 ## Usage (getting things in and out)
 
