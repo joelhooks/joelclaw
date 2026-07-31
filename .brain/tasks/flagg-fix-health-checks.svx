@@ -1,0 +1,71 @@
+---
+title: "Flagg fix: make the lying health checks tell the truth"
+type: "task"
+interaction: "AFK"
+status: "closed"
+assignee: "pi worker (flagg, w28 right column, 2026-07-31)"
+created_at: "2026-07-31"
+privacy: "private"
+---
+
+# Flagg fix: make the lying health checks tell the truth
+
+Two health surfaces on flagg report wrong. The 2026-07-31 post-reboot sweep
+receipts are in `.brain/tasks/reboot-repair-sweep.svx`.
+
+## Part 1 — session-index-health false red
+
+`/Users/Shared/joelclaw/bin/session-index-health` (LaunchAgent
+`com.joelclaw.central.session-index-health`, last exit 1) queries the RETIRED
+Typesense collection `runs_dev` and reports `indexed=0` forever, while real
+session indexing runs on SQLite (`sessions.db` — find the live path via the
+session-index code in this repo; the `session-search` skill and
+`packages/`/`scripts/` mention it).
+
+Do: rewrite the script to check the live SQLite index (row count recency /
+freshest capture timestamp — pick a check that actually detects a stalled
+indexer, not just file existence). Keep the same exit-code contract the
+LaunchAgent expects. Kickstart the LaunchAgent and verify it exits 0 with a
+truthful report, and that it would exit non-zero if the index were stale
+(demonstrate by pointing it at a nonsense path in a one-off dry run, NOT by
+breaking the real index).
+
+## Part 2 — health.sh is an auto-recovery script posing as a reporter
+
+`infra/central/scripts/health.sh` writes state and can invoke recovery, and
+it still expects retired surfaces (Restate ports 8080/9070, MinIO :9000).
+
+Do: bring it up to date with what actually runs on flagg today (the sweep
+table in the receipts file is the ground truth list). Separate concerns:
+`health.sh` becomes read-only reporting; recovery actions stay in/move to
+`recover.sh` (read both first — preserve existing recovery logic, just stop
+health.sh from auto-invoking it silently; a `--repair` opt-in flag is an
+acceptable shape). Remove/inert the retired Restate and MinIO checks. Run the
+updated health.sh and include its output in your summary.
+
+## Rules
+
+- Repo edits yes, commits no — steering reviews and commits.
+- Do not restart healthy services. Do not touch panda.
+- No destructive commands; dcg BLOCKED = full stop, report.
+- DONE summary: what changed in each file, verification receipts.
+
+## Result (2026-07-31)
+
+Delivered by pi worker (w28:p15), reviewed and committed by steering.
+`session-index-health.sh`: retired Typesense `runs_dev` lookup replaced with
+the live SQLite index (`~/.joelclaw/search/sessions.db`, COUNT + MAX
+captured_at vs raw month-dir mtime; 82k-file scan cut to ~1s; exit contract
+kept). Test harness passes; live probe healthy (162,363 rows, lag 0s);
+missing-db probe correctly degrades rc=1. `health.sh`: now a read-only
+reporter with current flagg checks; auto-recovery machinery removed (the
+`com.joelclaw.central.health` job is not loaded on flagg, so the auto-heal
+path was dormant); explicit recovery stays in `recover.sh`, untouched.
+README updated.
+
+Deploy still needed (root-owned install, no passwordless sudo on flagg):
+
+    sudo install -o root -g wheel -m 0755 \
+      infra/central/native/session-index-health.sh \
+      /Users/Shared/joelclaw/bin/session-index-health
+    sudo launchctl kickstart system/com.joelclaw.central.session-index-health

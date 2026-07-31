@@ -46,41 +46,30 @@ http_ok() {
 
 newest_raw_epoch() {
   [ -d "${RUNS_ROOT}" ] || return 1
+  # Every capture creates a new Run metadata file. The containing month
+  # directory mtime therefore advances with the raw store, without opening
+  # tens of thousands of metadata files on every 60-second health pass.
   python3 - "${RUNS_ROOT}" <<'PY'
-import glob, json, os, re, sys
+import glob, os, re, sys
 root = sys.argv[1]
-month_dirs = [path for path in glob.glob(os.path.join(root, "*", "*")) if re.fullmatch(r"\d{4}-\d{2}", os.path.basename(path))]
+month_dirs = [
+    path
+    for path in glob.glob(os.path.join(root, "*", "*"))
+    if os.path.isdir(path) and re.fullmatch(r"\d{4}-\d{2}", os.path.basename(path))
+]
 if not month_dirs:
     raise SystemExit(1)
-latest_month = max(os.path.basename(path) for path in month_dirs)
-latest = 0
-for directory in month_dirs:
-    if os.path.basename(directory) != latest_month:
-        continue
-    for path in glob.glob(os.path.join(directory, "*.metadata.json")):
-        try:
-            with open(path, encoding="utf-8") as handle:
-                value = json.load(handle).get("started_at")
-            if isinstance(value, (int, float)):
-                latest = max(latest, int(value / 1000 if value > 10_000_000_000 else value))
-        except (OSError, ValueError):
-            continue
-if latest <= 0:
-    raise SystemExit(1)
-print(latest)
+print(int(max(os.stat(path).st_mtime for path in month_dirs)))
 PY
 }
 
-newest_indexed_epoch() {
+index_stats() {
   [ -r "${SESSION_INDEX_PATH}" ] || return 1
-  value="$("${SQLITE3_BIN}" -readonly "${SESSION_INDEX_PATH}" \
-    'SELECT MAX(started_at) FROM runs;' 2>/dev/null)" || return 1
+  value="$("${SQLITE3_BIN}" -readonly -separator '|' "${SESSION_INDEX_PATH}" \
+    'SELECT COUNT(*), COALESCE(MAX(captured_at), 0) FROM runs;' 2>/dev/null)" || return 1
   case "${value}" in
-    ''|*[!0-9]*) return 1 ;;
+    ''|*[!0-9|]*) return 1 ;;
   esac
-  if [ "${value}" -gt 10000000000 ]; then
-    value=$((value / 1000))
-  fi
   printf '%s\n' "${value}"
 }
 
@@ -140,17 +129,19 @@ write_receipt() {
   reason="$2"
   raw="$3"
   indexed="$4"
-  lag="$5"
-  failures="$6"
-  python3 - "${status}" "${reason}" "${raw}" "${indexed}" "${lag}" "${failures}" >"${RECEIPT_FILE}.tmp" <<'PY'
+  rows="$5"
+  lag="$6"
+  failures="$7"
+  python3 - "${status}" "${reason}" "${raw}" "${indexed}" "${rows}" "${lag}" "${failures}" >"${RECEIPT_FILE}.tmp" <<'PY'
 import datetime, json, sys
-status, reason, raw, indexed, lag, failures = sys.argv[1:]
+status, reason, raw, indexed, rows, lag, failures = sys.argv[1:]
 print(json.dumps({
   "checkedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
   "status": status,
   "reason": reason,
   "newestRawEpoch": int(raw),
   "newestIndexedEpoch": int(indexed),
+  "indexedRunCount": int(rows),
   "indexLagSeconds": int(lag),
   "consecutiveFailures": int(failures),
 }, indent=2))
@@ -210,9 +201,15 @@ esac
 
 now="$(date +%s)"
 raw="$(newest_raw_epoch 2>/dev/null || printf '0')"
-indexed="$(newest_indexed_epoch 2>/dev/null || printf '0')"
+stats="$(index_stats 2>/dev/null || printf '0|0')"
+rows="${stats%%|*}"
+indexed="${stats#*|}"
 raw="${raw:-0}"
+rows="${rows:-0}"
 indexed="${indexed:-0}"
+if [ "${indexed}" -gt 10000000000 ]; then
+  indexed=$((indexed / 1000))
+fi
 lag=0
 [ "${raw}" -le "${indexed}" ] || lag=$((raw - indexed))
 status="healthy"
@@ -230,7 +227,7 @@ elif ! http_ok "${WORKER_URL}/api/inngest"; then
 elif [ "${raw}" -eq 0 ]; then
   status="degraded"
   reason="raw_freshness_unknown"
-elif [ "${indexed}" -eq 0 ]; then
+elif [ "${rows}" -eq 0 ] || [ "${indexed}" -eq 0 ]; then
   status="degraded"
   reason="index_freshness_unknown"
 elif [ "${lag}" -gt "${MAX_INDEX_LAG_SECONDS}" ]; then
@@ -248,7 +245,7 @@ else
   write_number "${FAILURE_FILE}" 0
 fi
 
-write_receipt "${status}" "${reason}" "${raw}" "${indexed}" "${lag}" "${failures}"
+write_receipt "${status}" "${reason}" "${raw}" "${indexed}" "${rows}" "${lag}" "${failures}"
 emit_otel "${status}" "${reason}" "${lag}"
 
 if [ "${actionable}" -eq 1 ] && [ "${failures}" -ge "${RECOVER_AFTER_FAILURES}" ]; then
@@ -256,9 +253,9 @@ if [ "${actionable}" -eq 1 ] && [ "${failures}" -ge "${RECOVER_AFTER_FAILURES}" 
 fi
 
 if [ "${status}" = "healthy" ]; then
-  log "healthy raw=${raw} indexed=${indexed} lag=${lag}s"
+  log "healthy raw=${raw} indexed=${indexed} rows=${rows} lag=${lag}s"
   exit 0
 fi
 
-log "degraded reason=${reason} raw=${raw} indexed=${indexed} lag=${lag}s failures=${failures}"
+log "degraded reason=${reason} raw=${raw} indexed=${indexed} rows=${rows} lag=${lag}s failures=${failures}"
 exit 1

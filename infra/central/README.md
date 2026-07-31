@@ -251,7 +251,7 @@ sudo ./infra/central/scripts/recover.sh --all --passes 3
 
 It restarts the shadow Compose services as `joelclaw`, writes a timestamped receipt under `/Users/Shared/joelclaw/logs/central/`, and only exits 0 after consecutive green health passes.
 
-`health.sh` is also a tiny recovery state machine now: `healthy -> degraded -> recovering -> healthy|failed`. By default it runs bounded probes, tracks consecutive failures in `/Users/Shared/joelclaw/logs/central/health-consecutive-failures`, and invokes `recover.sh --all` after 3 degraded passes with a cooldown. Set `CENTRAL_AUTO_RECOVER=0` to make it check-only again.
+`health.sh` is a read-only reporter. It checks the native Flagg services, Run index freshness, local operator surfaces, and NAS mounts. It never writes recovery state or restarts a service. Use `recover.sh` explicitly for the old shadow Compose recovery path; it is not called by `health.sh`.
 
 After Gate 3 installs Colima/Docker and mirrors the repo into `/Users/Shared/joelclaw/src/joelclaw`, the service-user commands are:
 
@@ -276,7 +276,7 @@ The current native Central services use `infra/central/native/session-index-heal
 
 Its recovery machine is `healthy -> degraded -> recovering -> healthy|cooldown`. It:
 
-- compares the newest raw Run metadata `started_at` with the newest SQLite `sessions.db` Run;
+- compares the raw Run month-directory freshness with SQLite `MAX(captured_at)` and checks that the index has rows;
 - treats Inngest or worker HTTP failure and index lag over 300 seconds as actionable;
 - waits for three consecutive actionable failures;
 - restarts `com.joelclaw.central.inngest` and `com.joel.system-bus-worker` from a root LaunchDaemon;

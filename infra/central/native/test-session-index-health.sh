@@ -14,8 +14,12 @@ grep -q '<string>com.joel.system-bus-worker</string>' "${WORKER_PLIST}"
 TEST_ROOT="$(mktemp -d /tmp/session-index-health-test.XXXXXX)"
 export TEST_ROOT
 mkdir -p "${TEST_ROOT}/bin" "${TEST_ROOT}/runs/joel/2026-07" "${TEST_ROOT}/state"
-printf '%s\n' '{"started_at":2000000000000}' >"${TEST_ROOT}/runs/joel/2026-07/canary.metadata.json"
-printf '%s\n' '1000000000000' >"${TEST_ROOT}/indexed.txt"
+printf '%s\n' '{"captured_at":2000000000000}' >"${TEST_ROOT}/runs/joel/2026-07/canary.metadata.json"
+python3 - "${TEST_ROOT}/runs/joel/2026-07" <<'PY'
+import os, sys
+os.utime(sys.argv[1], (2_000_000_000, 2_000_000_000))
+PY
+printf '%s\n' '1|1000000000000' >"${TEST_ROOT}/indexed.txt"
 printf '%s\n' 'fixture' >"${TEST_ROOT}/sessions.db"
 printf '%s\n' '1' >"${TEST_ROOT}/fail-recovery"
 printf '%s\n' '0' >"${TEST_ROOT}/fail-otel"
@@ -84,7 +88,7 @@ run_probe
 
 # A failed transition delivery stays pending. Once the worker accepts OTEL again,
 # the pending state is delivered before the current state is considered emitted.
-printf '%s\n' '2000000000000' >"${TEST_ROOT}/indexed.txt"
+printf '%s\n' '1|2000000000000' >"${TEST_ROOT}/indexed.txt"
 printf '%s\n' '1' >"${TEST_ROOT}/fail-otel"
 run_probe
 [ -s "${TEST_ROOT}/state/pending-otel.json" ]
