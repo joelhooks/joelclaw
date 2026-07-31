@@ -1,0 +1,114 @@
+---
+title: "Flagg fix: supervise the gateway driver and Joel's colima under launchd"
+type: "task"
+interaction: "AFK"
+status: "closed"
+assignee: "pi worker (flagg, w28 right column, 2026-07-31)"
+created_at: "2026-07-31"
+closed_at: "2026-07-31"
+privacy: "private"
+---
+
+# Flagg fix: supervise the gateway driver and Joel's colima under launchd
+
+Two processes died in last night's reboot because nothing supervises them.
+Third time for the driver. Fix both for good.
+
+## Part 1 — agent-comms-driver LaunchAgent
+
+Current state: driver runs as a detached PID-1 orphan (runtime PID in
+`/tmp/joelclaw/agent-comms-driver.pid`, log
+`/tmp/joelclaw/agent-comms-driver-reboot-repair.log`), started this morning by
+a repair worker. Command: `pnpm --filter @joelclaw/agent-comms-driver start`
+from repo root. Read `packages/agent-comms-driver/src/main.ts` and the repair
+log header for the env it needs (it drives the herdr CLI, so it needs the
+herdr socket = gui domain, joel's user).
+
+Do:
+
+1. Write a wrapper script `infra/agent-comms-driver-daemon.sh` (pattern-match
+   the existing `infra/gateway-daemon.sh` / repo daemon scripts) and a plist
+   `infra/launchd/com.joelclaw.agent-comms-driver.plist` — gui LaunchAgent,
+   RunAtLoad + KeepAlive, logs under `/tmp/joelclaw/agent-comms-driver.log`.
+2. Install it: copy plist to `~/Library/LaunchAgents/`, then the swap —
+   IN THIS ORDER so there is never two drivers: kill the detached runtime
+   (and its launcher), confirm zero driver processes, then
+   `launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.joelclaw.agent-comms-driver.plist`.
+3. Verify: exactly one driver runtime; `redis-cli TTL gateway:agent:heartbeat`
+   positive and refreshing across 2+ minutes (values changing); kill the
+   driver process once and confirm launchd respawns it and heartbeat
+   recovers. The gateway claude session in pane `w2C:p1R` must survive or be
+   respawned by the driver — check `herdr agent list` after.
+
+## Part 2 — colima supervision for Joel's profile
+
+Current state: `com.joelclaw.colima` (loaded in joel's gui domain, PID ~364)
+runs but supervises the WRONG thing — the sweep found it points at the
+`/Users/joelclaw` service-account profile, and Joel's actual `~/.colima`
+default VM (8 CPU / 24 GiB / 100 GiB / grpc, docker runtime, Convex + wiki
+sidecar containers) did NOT start on boot. Repo has
+`infra/colima-start.sh` + `infra/launchd/com.joel.colima.plist` (uninstalled,
+and its hardcoded specs 4c/8g/60g/ssh differ from the live VM).
+
+Do:
+
+1. Read `com.joelclaw.colima`'s plist (find it via
+   `launchctl print gui/501/com.joelclaw.colima` or grep LaunchAgents/
+   LaunchDaemons) and `infra/colima-start.sh`. Understand what the loaded one
+   actually starts and why it didn't bring up Joel's VM.
+2. Decide with evidence: either fix the existing job or install a
+   corrected user LaunchAgent. The start command must be profile-faithful:
+   plain `colima start` (no CPU/mem/disk flags) so the saved
+   `~/.colima/default/colima.yaml` wins — never bake specs into the plist.
+   Two supervisors must not fight over one VM: if you install a new job,
+   neuter/replace the wrong one and say so.
+3. Docker containers with restart policies (convex, daily-sidecar) come back
+   with the VM — verify `docker ps` shows them after your change, and that
+   you have NOT restarted the currently-running VM (it is live and serving;
+   do not stop/restart colima to test — verify supervision wiring only).
+4. Update `infra/` repo copies (script/plist) to match what you installed.
+   Do not commit; steering reviews and commits.
+
+## Rules
+
+- Single-owner: never two drivers, never a second gateway session or
+  transport. Heartbeat gaps over ~60s during the swap are a failure — plan
+  the kill/bootstrap to be quick.
+- Do NOT stop or restart the running colima VM. Do NOT touch panda.
+- No destructive commands; dcg BLOCKED = full stop, report.
+- Do not commit. Print a DONE summary with receipts (commands + output).
+
+## Result (2026-07-31)
+
+Closed. Both Joel-owned runtimes now have launchd supervisors in the user
+`Background` domain. Flagg had no GUI login (`/dev/console` owner was `root`),
+so `gui/501` did not exist. The installed LaunchAgents set
+`LimitLoadToSessionType=Background` and were bootstrapped into `user/501` from
+a Background audit session. This preserves the requested user identity and
+works without a GUI login. Both labels have explicit enabled overrides in
+`user/501` for the next Background-domain bootstrap.
+
+The agent comms driver now runs through
+`com.joelclaw.agent-comms-driver`. The swap reached zero detached driver
+processes before bootstrap and took 4.3 seconds. One pnpm launcher and one Bun
+runtime remained. Five heartbeat samples across more than two minutes changed
+`checkedAt` while PTTL stayed positive. A deliberate SIGTERM of the Bun runtime
+made launchd increment `runs` from 1 to 2 and replace runtime PID 78421 with
+82026 in 4.6 seconds. Minimum observed PTTL was 51,113 ms. The heartbeat
+recovered to 59,450 ms. Gateway Claude session
+`ea16621f-7705-4803-96a8-69cbbad33bc7` in `w2C:p1R` survived unchanged.
+
+The loaded `system/com.joelclaw.colima` job was not a broken supervisor for
+Joel's VM. It correctly owns the separate `/Users/joelclaw` service-account
+profile as PID 364. It was left alone. The new `com.joel.colima` Background
+LaunchAgent supervises Joel's `/Users/joel/.colima/default` profile with a
+30-second health loop. Recovery uses plain `colima start`, so the saved YAML is
+authoritative. Live evidence corrected the brief: Joel's current saved and
+running profile is 4 CPU, 8 GiB, 60 GiB, and the SSH port forwarder, not
+8/24/100/grpc. The existing VM process IDs and Docker container set did not
+change during installation. `daily-sidecar-*` and all local Convex containers
+remained up; the Convex backend stayed healthy.
+
+Validation: 52 driver tests passed, package typecheck passed, both shell scripts
+passed `bash -n`, both plists passed `plutil -lint`, and `git diff --check`
+passed for the four repo assets. No commit was made.

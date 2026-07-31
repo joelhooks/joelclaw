@@ -3,25 +3,25 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.joel.colima</string>
+    <string>com.joelclaw.agent-comms-driver</string>
 
     <key>LimitLoadToSessionType</key>
     <string>Background</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/joel/Code/joelhooks/joelclaw/infra/colima-start.sh</string>
+        <string>/Users/joel/Code/joelhooks/joelclaw/infra/agent-comms-driver-daemon.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/joel</string>
+    <string>/Users/joel/Code/joelhooks/joelclaw</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
         <string>/Users/joel</string>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/Users/joel/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/joel/.local/bin:/Users/joel/.bun/bin:/Users/joel/.local/share/fnm/aliases/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
     <key>RunAtLoad</key>
@@ -37,9 +37,9 @@
     <string>Background</string>
 
     <key>StandardOutPath</key>
-    <string>/tmp/joelclaw/colima.log</string>
+    <string>/tmp/joelclaw/agent-comms-driver.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/tmp/joelclaw/colima.err</string>
+    <string>/tmp/joelclaw/agent-comms-driver.log</string>
 </dict>
 </plist>

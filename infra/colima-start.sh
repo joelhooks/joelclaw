@@ -1,55 +1,38 @@
 #!/bin/bash
 set -euo pipefail
 
-export PATH="/opt/homebrew/bin:/Users/joel/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+export HOME="/Users/joel"
+export PATH="/opt/homebrew/bin:/Users/joel/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-PROFILE="${COLIMA_PROFILE:-default}"
-CPU="${COLIMA_CPU:-8}"
-MEMORY="${COLIMA_MEMORY:-24}"
-DISK="${COLIMA_DISK:-100}"
-VM_TYPE="${COLIMA_VM_TYPE:-vz}"
-MOUNT_TYPE="${COLIMA_MOUNT_TYPE:-virtiofs}"
-PORT_FORWARDER="${COLIMA_PORT_FORWARDER:-grpc}"
+COLIMA_BIN="${COLIMA_BIN:-/opt/homebrew/bin/colima}"
+CHECK_INTERVAL_SECONDS="${COLIMA_CHECK_INTERVAL_SECONDS:-30}"
+PROFILE_CONFIG="$HOME/.colima/default/colima.yaml"
 
 log() {
-  printf '[colima-start] %s\n' "$*"
+  printf '[colima-supervisor] %s\n' "$*"
 }
 
-profile_running() {
-  local raw
-
-  raw="$(colima list --json 2>/dev/null || true)"
-  python3 - "$PROFILE" "$raw" <<'PY'
-import json
-import sys
-
-profile = sys.argv[1]
-raw = sys.argv[2].strip()
-if not raw:
-    sys.exit(1)
-try:
-    data = json.loads(raw)
-except Exception:
-    sys.exit(1)
-profiles = data if isinstance(data, list) else [data]
-for item in profiles:
-    if item.get("name") == profile and item.get("status") == "Running":
-        sys.exit(0)
-sys.exit(1)
-PY
+[ -x "$COLIMA_BIN" ] || {
+  log "colima is missing or not executable: $COLIMA_BIN"
+  exit 78
+}
+[ -f "$PROFILE_CONFIG" ] || {
+  log "saved default profile is missing: $PROFILE_CONFIG"
+  exit 78
 }
 
-if profile_running; then
-  log "profile ${PROFILE} already running"
-  exit 0
-fi
+log "supervising Joel's saved default profile"
+while true; do
+  if "$COLIMA_BIN" status --json >/dev/null 2>&1; then
+    sleep "$CHECK_INTERVAL_SECONDS"
+    continue
+  fi
 
-log "starting profile ${PROFILE} with ${CPU} CPU, ${MEMORY}GiB memory, ${DISK}GiB disk, ${PORT_FORWARDER} port forwarder"
-exec colima start \
-  --profile "$PROFILE" \
-  --vm-type "$VM_TYPE" \
-  --mount-type "$MOUNT_TYPE" \
-  --cpu "$CPU" \
-  --memory "$MEMORY" \
-  --disk "$DISK" \
-  --port-forwarder "$PORT_FORWARDER"
+  log "default profile is down; starting it from saved config"
+  if "$COLIMA_BIN" start; then
+    log "default profile started"
+  else
+    log "default profile start failed; retrying in ${CHECK_INTERVAL_SECONDS}s"
+  fi
+  sleep "$CHECK_INTERVAL_SECONDS"
+done
