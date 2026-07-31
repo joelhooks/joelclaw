@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.joelclaw.local-convex.lan-forwarder</string>
+
+  <key>UserName</key>
+  <string>joel</string>
+  <key>GroupName</key>
+  <string>staff</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/Shared/joelclaw/bin/local-convex-lan-forwarder.mjs</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/Shared/joelclaw</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/joel</string>
+    <key>LAN_BIND_IP</key>
+    <string>192.168.1.10</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/Shared/joelclaw/logs/convex/lan-forwarder.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/Shared/joelclaw/logs/convex/lan-forwarder.err.log</string>
+</dict>
+</plist>

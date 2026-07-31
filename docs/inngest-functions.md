@@ -513,19 +513,23 @@ Watchdog extension:
 - function: `system/backup.typesense`
 - file: `packages/system-bus/src/inngest/functions/nas-backup.ts`
 - snapshot creation supports primary→fallback root selection.
+- the source adapter supports native Flagg Typesense (`local`, default) and the retired pod path (`k8s`).
+- native snapshots stay on local scratch storage until the backup transport copies them to NAS.
 - backup transport now uses a three-tier write policy:
   1. local NAS mount (`/Volumes/three-body`)
   2. direct remote copy over SSH/SCP to NAS
   3. local deferred queue spool (when both NAS paths are unavailable)
 - after successful sync/defer:
-  - delete just-created snapshot dir in pod
-  - prune old snapshot dirs by retention count
+  - delete the just-created snapshot directory at its source
+  - prune old snapshot directories by retention count
 
 Environment variables:
 
-- `TYPESENSE_SNAPSHOT_ROOT` (default: `/data/snapshots`)
-- `TYPESENSE_SNAPSHOT_FALLBACK_ROOT` (default: `/data/snapshots`)
+- `TYPESENSE_SNAPSHOT_SOURCE` (`local` default; use `k8s` only when the Typesense API and snapshot files live in `typesense-0`)
+- `TYPESENSE_SNAPSHOT_ROOT` (default: `/tmp/typesense-native-snapshots` for `local`; `/data/snapshots` for `k8s`)
+- `TYPESENSE_SNAPSHOT_FALLBACK_ROOT` (defaults to the source-specific primary root)
 - `TYPESENSE_SNAPSHOT_RETENTION_COUNT` (default: `2`, min `1`)
+- `NAS_BACKUP_PREFER_REMOTE` (`1` bypasses the local NAS mount and starts with the SSH/SCP transport)
 - `NAS_BACKUP_QUEUE_ROOT` (default: `/tmp/joelclaw/nas-queue`)
 
 Kubernetes note:

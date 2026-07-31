@@ -213,9 +213,10 @@ http://100.99.76.47:6791
 Implementation:
 
 - Docker Compose keeps the Convex backend and dashboards bound to `127.0.0.1` only.
-- LAN exposure is a user launchd TCP forwarder:
-  - plist: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/local-convex/com.joelclaw.local-convex.lan-forwarder.plist`
-  - forwarder: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/local-convex/lan-forwarder.mjs`
+- LAN exposure is a system LaunchDaemon that runs the TCP forwarder as `joel` before GUI login:
+  - plist source: `infra/central/native/com.joelclaw.local-convex.lan-forwarder.plist.template`
+  - forwarder source: `infra/central/native/local-convex-lan-forwarder.mjs`
+  - installer: `infra/central/native/install-local-convex-lan-forwarder.sh`
   - binds `192.168.1.10:{3210,3211,6791}` and forwards to `127.0.0.1:{3210,3211,6791}`
 - Tailnet exposure is Tailscale Serve TCP forwarding:
   - `100.99.76.47:3210 -> 127.0.0.1:3210`
@@ -232,11 +233,12 @@ Known Docker Desktop gotcha:
 Manage LAN forwarder:
 
 ```sh
-cd /Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/local-convex
-./start-lan-forwarder.sh
-./stop-lan-forwarder.sh
-launchctl print gui/$(id -u)/com.joelclaw.local-convex.lan-forwarder
+cd /Users/joel/Code/joelhooks/joelclaw
+sudo ./infra/central/native/install-local-convex-lan-forwarder.sh
+sudo launchctl print system/com.joelclaw.local-convex.lan-forwarder
 ```
+
+The old GUI LaunchAgent under the protected `Documents/Codex` work directory did not start after a reboot without GUI login. Do not restore that shape.
 
 Manage tailnet forwards without disturbing unrelated Tailscale Serve config:
 

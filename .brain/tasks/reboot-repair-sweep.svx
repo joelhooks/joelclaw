@@ -63,3 +63,43 @@ session-index-health checks retired Typesense `runs_dev` (false red);
 reporter and expects absent Restate/MinIO ports; MTU drift (9000 set vs 8192
 contract); Typesense on-demand snapshot failed ~03:00 UTC; stale k8s
 assumptions in flagg jobs (no local kubectl/cluster).
+
+## Follow-up repair (2026-07-31)
+
+### Typesense backup
+
+- Cause: the backup still assumed a Kubernetes pod. The native destination
+  also used a path the `joelclaw` Typesense account could not traverse.
+  Remote fallback was broken because the configured SSH flags were passed as
+  one argument, and `scp` added a second incorrect `-o`.
+- Change: native-local snapshot mode now uses
+  `/tmp/typesense-native-snapshots`. Snapshot paths include the Inngest event
+  ID. The root grants inherited `staff` cleanup access. SSH/SCP receives a
+  real argument array. Remote transport can be preferred when the local NFS
+  mount is wedged. Durable step output now preserves the actual transport.
+- Proof: run `01KYWWMV1Y0KQBNGFE6JFE5Z03` completed. It reported
+  `transportMode: remote`, one attempt, source cleanup `ok: true`, and prune
+  `ok: true`. A LAN-side read returned 4,096 bytes from the NAS snapshot.
+- Residue: `/tmp/typesense-native-snapshots/20260731` is a 52 GB pre-ACL
+  snapshot owned by `joelclaw`. It was not deleted.
+
+### Convex LAN forwarder
+
+- Consumer evidence still requires LAN ports 3210, 3211, and 6791.
+- The recreated forwarder is live as a detached `node` process. LAN probes
+  returned HTTP 200, 404 from the real site upstream, and 200 respectively.
+- The repo now contains the forwarder, a system LaunchDaemon template, and a
+  root installer. `launchctl bootstrap user/501` failed with error 5 in this
+  headless session. The system daemon remains uninstalled because
+  non-interactive sudo is unavailable.
+
+### MTU and NAS
+
+- The proved Flagg ceiling is 8192. MTU 9000 has no end-to-end receipt.
+- Ethernet is active and configured at 8192. A do-not-fragment 8,164-byte
+  payload reached the NAS. An 8,972-byte payload failed as expected.
+- The tracked LaunchDaemon and installer use 8192. The installed root plist
+  still contains 9000 because non-interactive sudo is unavailable.
+- The successful Typesense copy and a 4,096-byte NAS read verify the LAN/NAS
+  path at MTU 8192. Direct reads through the existing macOS NFS mount remain
+  blocked or hung and need a privileged remount.

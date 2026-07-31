@@ -1,0 +1,102 @@
+---
+title: "Flagg fix: typesense snapshot failure, Convex LAN forwarder, MTU drift"
+type: "task"
+interaction: "AFK"
+status: "blocked"
+assignee: "pi worker (flagg, w28 right column, 2026-07-31)"
+created_at: "2026-07-31"
+privacy: "private"
+---
+
+# Flagg fix: typesense snapshot failure, Convex LAN forwarder, MTU drift
+
+Three small infra defects from the 2026-07-31 post-reboot sweep
+(`.brain/tasks/reboot-repair-sweep.svx` has the receipts).
+
+## Part 1 — Typesense on-demand snapshot failed
+
+Typesense (`com.joelclaw.central.typesense`, :8108) logged
+`On demand snapshot failed, error: copy failed` around 03:00 UTC. Find the
+snapshot job (launchd/cron/Inngest — grep the repo and
+`/Users/Shared/joelclaw`), find where it copies to, and diagnose the copy
+failure (likely: destination NAS volume unmounted during the reboot window,
+or a path/permission problem). Fix the root cause if mechanical (e.g. the job
+should check the mount before copying), then trigger one on-demand snapshot
+and verify it succeeds end to end.
+
+## Part 2 — Convex LAN forwarder absent
+
+`192.168.1.10:3210` (flagg LAN IP) refuses connections while localhost and
+tailnet :3210 work. Something used to forward/bind Convex on the LAN address
+— find what (grep `192.168.1.10` and `3210` across the repo, esp.
+`infra/central/`, `scripts/setup-satellite-rig.sh`, launchd plists, and the
+local-convex docs/skills). Determine whether it is still wanted: if a
+consumer exists (satellite rig, another machine on the LAN), restore the
+forwarder the way it was built; if it was deliberately retired, record that
+with the receipt that shows it and remove stale references. Verify with a
+real request from the LAN address after.
+
+## Part 3 — MTU drift
+
+`com.joel.mtu-jumbo` sets `en0` MTU 9000; the sweep says the NAS mount
+contract expects 8192. Find the contract (grep `8192`/`mtu` in the repo,
+`infra/central/scripts/install-nas-mounts.sh`, `mount-nas.sh`, ADRs in
+`~/Vault/docs/decisions/`, Brain notes). Decide from the documents which
+number is right — do NOT change the live interface MTU on a guess. If the
+receipts clearly say 8192, align the mtu-jumbo plist/script AND set the
+interface, then verify NAS mounts still respond (`ls /Volumes/badass-media`,
+read a file). If the receipts are ambiguous or say 9000 is fine, change
+nothing and report the evidence for steering to decide.
+
+## Rules
+
+- Repo edits yes, commits no — steering reviews and commits.
+- NAS data is untouchable — snapshot/copy targets only, never delete.
+- No destructive commands; dcg BLOCKED = full stop, report.
+- Do not touch panda. DONE summary per part: cause, change, verification.
+
+## Result (2026-07-31)
+
+### Part 1 — DONE
+
+- Cause: the backup still assumed Kubernetes. The first native snapshot path
+  was not traversable by the `joelclaw` Typesense account. The remote fallback
+  passed all SSH flags as one argument and gave `scp` a second incorrect
+  `-o`. Same-day retries also reused one snapshot path.
+- Change: added native-local snapshot mode, a traversable scratch root,
+  inherited `staff` cleanup access, event-unique snapshot paths, correct
+  SSH/SCP argument arrays, remote-first transport, and durable transport
+  result capture.
+- Verification: Inngest run `01KYWWMV1Y0KQBNGFE6JFE5Z03` completed with
+  `transportMode: remote`, one attempt, source cleanup `ok: true`, and prune
+  `ok: true`. A 4,096-byte read from the NAS copy succeeded.
+- Residue: a 52 GB pre-ACL snapshot remains at
+  `/tmp/typesense-native-snapshots/20260731`. It was not deleted.
+
+### Part 2 — LIVE, DURABILITY BLOCKED
+
+- Cause: the only LAN forwarder lived in a protected Codex work directory and
+  did not return after the reboot. Current satellite and local-Convex docs
+  still require the LAN endpoint.
+- Change: recreated the forwarder under `infra/central/native/` with a system
+  LaunchDaemon template and installer. A detached process now owns the three
+  LAN listeners.
+- Verification: LAN requests returned HTTP 200 on 3210, the real upstream 404
+  on 3211, and HTTP 200 on 6791.
+- Blocker: headless user-domain bootstrap returned launchd error 5.
+  Non-interactive sudo is unavailable, so the system LaunchDaemon is not yet
+  installed.
+
+### Part 3 — LIVE, REBOOT PERSISTENCE BLOCKED
+
+- Cause: receipts prove 8192 as Flagg's safe frame ceiling. Nothing proves
+  MTU 9000 end to end.
+- Change: active and configured Ethernet MTU is 8192. The tracked plist and
+  installer also use 8192.
+- Verification: a do-not-fragment 8,164-byte payload reached the NAS. An
+  8,972-byte payload failed. The successful Typesense copy and a 4,096-byte
+  NAS read verify the LAN/NAS path at MTU 8192.
+- Blocker: `/Library/LaunchDaemons/com.joel.mtu-jumbo.plist` still contains
+  9000 because non-interactive sudo is unavailable. The existing macOS NFS
+  mount also needs a privileged remount before a direct mounted-file read can
+  be trusted.

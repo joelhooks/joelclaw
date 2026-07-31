@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
+import { readdir, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { DEFAULT_SERVICE_PLACEMENT } from "@joelclaw/endpoint-resolver";
 import { $ } from "bun";
@@ -22,13 +23,19 @@ const NAS_HDD_ROOT = BACKUP_ROUTER_CONFIG.transport.nasHddRoot; // bulk archive 
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const TYPESENSE_POD = "typesense-0";
 const TYPESENSE_NAMESPACE = "joelclaw";
+const TYPESENSE_SNAPSHOT_SOURCE = parseTypesenseSnapshotSource(
+  process.env.TYPESENSE_SNAPSHOT_SOURCE
+);
+const TYPESENSE_DEFAULT_SNAPSHOT_ROOT = TYPESENSE_SNAPSHOT_SOURCE === "local"
+  ? "/tmp/typesense-native-snapshots"
+  : "/data/snapshots";
 const TYPESENSE_SNAPSHOT_ROOT = normalizeSnapshotRoot(
   process.env.TYPESENSE_SNAPSHOT_ROOT,
-  "/data/snapshots"
+  TYPESENSE_DEFAULT_SNAPSHOT_ROOT
 );
 const TYPESENSE_SNAPSHOT_FALLBACK_ROOT = normalizeSnapshotRoot(
   process.env.TYPESENSE_SNAPSHOT_FALLBACK_ROOT,
-  "/data/snapshots"
+  TYPESENSE_DEFAULT_SNAPSHOT_ROOT
 );
 const TYPESENSE_SNAPSHOT_RETENTION_COUNT = parsePositiveIntEnv(
   "TYPESENSE_SNAPSHOT_RETENTION_COUNT",
@@ -65,7 +72,8 @@ const BACKUP_ROUTER_SLEEP_MIN_MS = BACKUP_ROUTER_CONFIG.failureRouter.sleepMinMs
 const BACKUP_ROUTER_SLEEP_MAX_MS = BACKUP_ROUTER_CONFIG.failureRouter.sleepMaxMs;
 const BACKUP_ROUTER_SLEEP_STEP_MS = BACKUP_ROUTER_CONFIG.failureRouter.sleepStepMs;
 const NAS_SSH_HOST = BACKUP_ROUTER_CONFIG.transport.nasSshHost;
-const NAS_SSH_FLAGS = BACKUP_ROUTER_CONFIG.transport.nasSshFlags;
+const NAS_SSH_ARGS = BACKUP_ROUTER_CONFIG.transport.nasSshFlags.trim().split(/\s+/).filter(Boolean);
+const NAS_BACKUP_PREFER_REMOTE = process.env.NAS_BACKUP_PREFER_REMOTE === "1";
 const BACKUP_FAILURE_EVENT = "system/backup.failure.detected";
 const SELF_HEALING_REQUEST_EVENT = "system/self.healing.requested";
 const BACKUP_RETRY_REQUEST_EVENT = "system/backup.retry.requested";
@@ -89,6 +97,7 @@ const AGENT_SESSION_BACKUP_ROOT = `${NAS_HDD_ROOT}/sessions`;
 const AGENT_SESSION_CENTRAL_URL = process.env.JOELCLAW_SESSION_CAPTURE_URL?.trim() || "http://joels-mac-studio.tail7af24.ts.net:3111";
 
 type BackupTarget = "typesense" | "redis";
+export type TypesenseSnapshotSource = "local" | "k8s";
 type BackupFailureAction = "retry" | "pause" | "escalate";
 type BackupFunctionId = "system/backup.typesense" | "system/backup.redis";
 type BackupFailureDecision = {
@@ -197,6 +206,13 @@ function parsePositiveIntEnv(name: string, fallback: number, min = 1): number {
   const value = process.env[name];
   const parsed = parseAttempt(value, fallback);
   return Math.max(min, parsed || fallback);
+}
+
+export function parseTypesenseSnapshotSource(raw: string | undefined): TypesenseSnapshotSource {
+  const source = raw?.trim().toLowerCase();
+  if (!source) return "local";
+  if (source === "local" || source === "k8s") return source;
+  throw new Error(`Invalid TYPESENSE_SNAPSHOT_SOURCE: ${raw}`);
 }
 
 function normalizeSnapshotRoot(raw: string | undefined, fallback: string): string {
@@ -840,18 +856,18 @@ async function checkLocalBackupTarget(path: string): Promise<boolean> {
 }
 
 async function checkRemoteBackupTarget(path: string): Promise<boolean> {
-  const mkdirResult = await $`ssh ${NAS_SSH_FLAGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`.quiet().nothrow();
+  const mkdirResult = await $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`.quiet().nothrow();
   if (mkdirResult.exitCode !== 0) return false;
 
   const probe = `${path}/.joelclaw-backup-probe-${Date.now()}`;
-  const probeResult = await $`ssh ${NAS_SSH_FLAGS} ${NAS_SSH_HOST} "touch ${probe} && rm -f ${probe}"`.quiet().nothrow();
+  const probeResult = await $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "touch ${probe} && rm -f ${probe}"`.quiet().nothrow();
   return probeResult.exitCode === 0;
 }
 
 async function ensureRemoteDirectory(path: string): Promise<void> {
   await runShell(
     `mkdir -p ${path} via remote`,
-    $`ssh ${NAS_SSH_FLAGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`.quiet().nothrow()
+    $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`.quiet().nothrow()
   );
 }
 
@@ -871,7 +887,7 @@ async function runWithBackupTransport<T>(
   const start = Date.now();
   const timeoutMs = BACKUP_RECOVERY_WINDOW_HOURS * 60 * 60 * 1000;
   const deadline = start + timeoutMs;
-  let mode: BackupMode = "local";
+  let mode: BackupMode = NAS_BACKUP_PREFER_REMOTE ? "remote" : "local";
   let lastError: RetryError;
   let attempts = 0;
 
@@ -954,7 +970,7 @@ async function copyDirectoryWithFallback(
         await ensureRemoteDirectory(remoteDestination);
         await runShell(
           `scp -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`,
-          $`scp -o ${NAS_SSH_FLAGS} -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`.quiet().nothrow()
+          $`scp ${NAS_SSH_ARGS} -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`.quiet().nothrow()
         );
         return;
       }
@@ -1005,7 +1021,7 @@ async function copyFileWithFallback(
         await ensureRemoteDirectory(remoteDir);
         await runShell(
           `scp ${source} to remote backup`,
-          $`scp -o ${NAS_SSH_FLAGS} ${source} ${NAS_SSH_HOST}:${remoteDestination}`.quiet().nothrow()
+          $`scp ${NAS_SSH_ARGS} ${source} ${NAS_SSH_HOST}:${remoteDestination}`.quiet().nothrow()
         );
         return;
       }
@@ -1300,13 +1316,60 @@ function escapeSingleQuotesForSh(value: string): string {
   return value.replace(/'/g, "'\\''");
 }
 
-async function pathExistsInTypesensePod(path: string): Promise<boolean> {
+export function isLocalSnapshotPathWithinRoot(path: string, root: string, allowRoot = false): boolean {
+  const pathFromRoot = relative(root, path);
+  if (pathFromRoot.length === 0) return allowRoot;
+  return pathFromRoot !== ".." && !pathFromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`);
+}
+
+function assertLocalSnapshotPath(path: string, allowRoot = false): void {
+  const roots = [TYPESENSE_SNAPSHOT_ROOT, TYPESENSE_SNAPSHOT_FALLBACK_ROOT];
+  const insideConfiguredRoot = roots.some((root) => isLocalSnapshotPathWithinRoot(path, root, allowRoot));
+  if (!insideConfiguredRoot) {
+    throw new Error(`Refusing local Typesense snapshot path outside configured roots: ${path}`);
+  }
+}
+
+async function ensureLocalSnapshotRoot(root: string): Promise<void> {
+  await ensureDir(root);
+  await runShell(`chmod 0770 ${root}`, $`chmod 0770 ${root}`.quiet().nothrow());
+
+  if (process.platform === "darwin") {
+    const aclState = await $`ls -lde ${root}`.quiet().nothrow();
+    const aclText = toText(aclState.stdout);
+    const hasStaffInheritance = aclText.includes("group:staff allow")
+      && aclText.includes("delete_child")
+      && aclText.includes("file_inherit")
+      && aclText.includes("directory_inherit");
+    if (!hasStaffInheritance) {
+      await runShell(
+        `grant inherited staff cleanup access on ${root}`,
+        $`chmod +a "group:staff allow read,write,execute,delete,append,delete_child,file_inherit,directory_inherit" ${root}`.quiet().nothrow()
+      );
+    }
+  }
+}
+
+async function pathExistsAtTypesenseSource(path: string): Promise<boolean> {
+  if (TYPESENSE_SNAPSHOT_SOURCE === "local") {
+    assertLocalSnapshotPath(path, true);
+    return pathExists(path);
+  }
+
   const escapedPath = escapeSingleQuotesForSh(path);
   const result = await $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- sh -lc "test -d '${escapedPath}'"`.quiet().nothrow();
   return result.exitCode === 0;
 }
 
-async function listSnapshotDirsInTypesensePod(root: string): Promise<string[]> {
+async function listSnapshotDirsAtTypesenseSource(root: string): Promise<string[]> {
+  if (TYPESENSE_SNAPSHOT_SOURCE === "local") {
+    const entries = await readdir(root, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(root, entry.name))
+      .sort((a, b) => a.localeCompare(b));
+  }
+
   const escapedRoot = escapeSingleQuotesForSh(root);
   const result = await runShell(
     `list snapshot dirs under ${root} in ${TYPESENSE_POD}`,
@@ -1320,6 +1383,38 @@ async function listSnapshotDirsInTypesensePod(root: string): Promise<string[]> {
     .map((line) => line.trim())
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
+}
+
+export async function stageTypesenseSnapshotForBackup(
+  snapshotPath: string,
+  stagedSnapshotPath: string,
+  source: TypesenseSnapshotSource = TYPESENSE_SNAPSHOT_SOURCE,
+): Promise<{ path: string; staged: boolean }> {
+  if (source === "local") {
+    const snapshotContentProbe = await runShell(
+      `find ${snapshotPath} -mindepth 1 -print -quit`,
+      $`find ${snapshotPath} -mindepth 1 -print -quit`.quiet().nothrow()
+    );
+    if (!toText(snapshotContentProbe.stdout)) {
+      throw new Error(`No Typesense snapshot files found at ${snapshotPath}`);
+    }
+    return { path: snapshotPath, staged: false };
+  }
+
+  await ensureDir(stagedSnapshotPath);
+  await runShell(
+    `kubectl cp -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD}:${snapshotPath}/. ${stagedSnapshotPath}`,
+    $`kubectl cp -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD}:${snapshotPath}/. ${stagedSnapshotPath}`.quiet().nothrow()
+  );
+
+  const snapshotContentProbe = await runShell(
+    `find ${stagedSnapshotPath} -mindepth 1 -print -quit`,
+    $`find ${stagedSnapshotPath} -mindepth 1 -print -quit`.quiet().nothrow()
+  );
+  if (!toText(snapshotContentProbe.stdout)) {
+    throw new Error(`No Typesense snapshot files staged at ${stagedSnapshotPath}`);
+  }
+  return { path: stagedSnapshotPath, staged: true };
 }
 
 async function triggerTypesenseSnapshotWithFallback(dateStamp: string): Promise<TypesenseSnapshotSelection> {
@@ -1379,12 +1474,17 @@ async function triggerTypesenseSnapshotWithFallback(dateStamp: string): Promise<
   }
 }
 
-async function cleanupSnapshotInTypesensePod(snapshotPath: string): Promise<SnapshotCleanupOutcome> {
+async function cleanupSnapshotAtTypesenseSource(snapshotPath: string): Promise<SnapshotCleanupOutcome> {
   try {
-    await runShell(
-      `rm -rf ${snapshotPath} in ${TYPESENSE_POD}`,
-      $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- rm -rf ${snapshotPath}`.quiet().nothrow()
-    );
+    if (TYPESENSE_SNAPSHOT_SOURCE === "local") {
+      assertLocalSnapshotPath(snapshotPath);
+      await rm(snapshotPath, { recursive: true, force: true });
+    } else {
+      await runShell(
+        `rm -rf ${snapshotPath} in ${TYPESENSE_POD}`,
+        $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- rm -rf ${snapshotPath}`.quiet().nothrow()
+      );
+    }
     return {
       attempted: true,
       path: snapshotPath,
@@ -1400,12 +1500,12 @@ async function cleanupSnapshotInTypesensePod(snapshotPath: string): Promise<Snap
   }
 }
 
-async function pruneSnapshotRootInTypesensePod(
+async function pruneSnapshotRootAtTypesenseSource(
   root: string,
   retentionCount: number
 ): Promise<SnapshotPruneOutcome> {
   const safeRetention = Math.max(1, retentionCount);
-  const exists = await pathExistsInTypesensePod(root);
+  const exists = await pathExistsAtTypesenseSource(root);
   if (!exists) {
     return {
       root,
@@ -1418,13 +1518,23 @@ async function pruneSnapshotRootInTypesensePod(
     };
   }
 
-  const discoveredPaths = await listSnapshotDirsInTypesensePod(root);
-  const keepCount = Math.max(0, discoveredPaths.length - safeRetention);
-  const prunedPaths = discoveredPaths.slice(0, keepCount);
-  const keptPaths = discoveredPaths.slice(keepCount);
+  const discoveredPaths = await listSnapshotDirsAtTypesenseSource(root);
+  const pruneCount = Math.max(0, discoveredPaths.length - safeRetention);
+  const prunedPaths = discoveredPaths.slice(0, pruneCount);
+  const keptPaths = discoveredPaths.slice(pruneCount);
 
   const errors: string[] = [];
   for (const path of prunedPaths) {
+    if (TYPESENSE_SNAPSHOT_SOURCE === "local") {
+      try {
+        assertLocalSnapshotPath(path);
+        await rm(path, { recursive: true, force: true });
+      } catch (error) {
+        errors.push(`failed ${path}: ${stringifyFailureError(error)}`);
+      }
+      continue;
+    }
+
     const result = await $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- rm -rf ${path}`.quiet().nothrow();
     if (result.exitCode !== 0) {
       errors.push(`failed ${path}: ${toText(result.stderr) || toText(result.stdout) || `exit ${result.exitCode}`}`);
@@ -1551,6 +1661,7 @@ export const backupTypesense = inngest.createFunction(
     const metadata: Record<string, unknown> = {
       schedule: "daily_3am_pt",
       mount: NAS_HDD_ROOT,
+      snapshotSource: TYPESENSE_SNAPSHOT_SOURCE,
     };
 
     const eventData = event.data as Record<string, unknown> | undefined;
@@ -1559,7 +1670,7 @@ export const backupTypesense = inngest.createFunction(
     }
 
     const attempt = resolveEventAttempt(eventData);
-    let transportMode: BackupMode = "local";
+    let transportMode: BackupMode = NAS_BACKUP_PREFER_REMOTE ? "remote" : "local";
     let transportAttempts = 0;
     let transportQueuedPath: string | null = null;
     let transportQueuedReason: string | null = null;
@@ -1578,6 +1689,10 @@ export const backupTypesense = inngest.createFunction(
       },
       async () => {
         const dateStamp = await step.run("resolve-date-stamp", async () => getDateStamp());
+        const snapshotStamp = await step.run("resolve-snapshot-stamp", async () => {
+          const eventSuffix = String(event.id ?? crypto.randomUUID()).replace(/[^A-Za-z0-9_-]/g, "-");
+          return `${dateStamp}-${eventSuffix}`;
+        });
         const stagedSnapshotPath = `${TYPESENSE_STAGE_ROOT}/${dateStamp}`;
         const destinationPath = `${TYPESENSE_BACKUP_ROOT}/${dateStamp}`;
         const remoteDestinationPath = `${TYPESENSE_BACKUP_REMOTE_ROOT}/${dateStamp}`;
@@ -1588,61 +1703,52 @@ export const backupTypesense = inngest.createFunction(
             `rm -rf ${stagedSnapshotPath}`,
             $`rm -rf ${stagedSnapshotPath}`.quiet().nothrow()
           );
+          if (TYPESENSE_SNAPSHOT_SOURCE === "local") {
+            await ensureLocalSnapshotRoot(TYPESENSE_SNAPSHOT_ROOT);
+            await ensureLocalSnapshotRoot(TYPESENSE_SNAPSHOT_FALLBACK_ROOT);
+          }
         });
 
         const snapshotSelection = await step.run("trigger-snapshot-with-fallback", async () =>
-          triggerTypesenseSnapshotWithFallback(dateStamp)
+          triggerTypesenseSnapshotWithFallback(snapshotStamp)
         );
         const snapshotPath = snapshotSelection.snapshotPath;
         const snapshotRoot = snapshotSelection.snapshotRoot;
         const snapshotResult = snapshotSelection.snapshotResult;
 
-        await step.run("copy-snapshot-to-host", async () => {
-          // kubectl cp strips the source directory name when copying into an existing local dir.
-          // Copy snapshot contents into an explicit dated staging directory so rsync has a stable source path.
-          await ensureDir(stagedSnapshotPath);
-          await runShell(
-            `kubectl cp -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD}:${snapshotPath}/. ${stagedSnapshotPath}`,
-            $`kubectl cp -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD}:${snapshotPath}/. ${stagedSnapshotPath}`.quiet().nothrow()
-          );
+        const snapshotTransfer = await step.run("copy-snapshot-to-host", async () =>
+          stageTypesenseSnapshotForBackup(snapshotPath, stagedSnapshotPath)
+        );
 
-          const snapshotContentProbe = await runShell(
-            `find ${stagedSnapshotPath} -mindepth 1 -print -quit`,
-            $`find ${stagedSnapshotPath} -mindepth 1 -print -quit`.quiet().nothrow()
-          );
-          if (!toText(snapshotContentProbe.stdout)) {
-            throw new Error(`No Typesense snapshot files staged at ${stagedSnapshotPath}`);
-          }
-        });
-
-        await step.run("sync-snapshot-to-nas", async () => {
-          const result = await copyDirectoryWithFallback(
-            stagedSnapshotPath,
+        const transportResult = await step.run("sync-snapshot-to-nas", async () =>
+          copyDirectoryWithFallback(
+            snapshotTransfer.path,
             destinationPath,
             remoteDestinationPath
-          );
-          transportMode = result.mode;
-          transportAttempts = result.attempts;
-          transportQueuedPath = result.queuedPath ?? null;
-          transportQueuedReason = result.queuedReason ?? null;
-        });
+          )
+        );
+        transportMode = transportResult.mode;
+        transportAttempts = transportResult.attempts;
+        transportQueuedPath = transportResult.queuedPath ?? null;
+        transportQueuedReason = transportResult.queuedReason ?? null;
 
         await step.run("cleanup-stage", async () => {
+          if (!snapshotTransfer.staged) return;
           await runShell(
             `rm -rf ${stagedSnapshotPath}`,
             $`rm -rf ${stagedSnapshotPath}`.quiet().nothrow()
           );
         });
 
-        const snapshotCleanup = await step.run("cleanup-typesense-snapshot-in-pod", async () =>
-          cleanupSnapshotInTypesensePod(snapshotPath)
+        const snapshotCleanup = await step.run("cleanup-typesense-snapshot-at-source", async () =>
+          cleanupSnapshotAtTypesenseSource(snapshotPath)
         );
 
         const pruneRoots = [...new Set([TYPESENSE_SNAPSHOT_ROOT, TYPESENSE_SNAPSHOT_FALLBACK_ROOT])];
         const snapshotPrune = await step.run("prune-typesense-snapshot-roots", async () => {
           const outcomes: SnapshotPruneOutcome[] = [];
           for (const root of pruneRoots) {
-            const outcome = await pruneSnapshotRootInTypesensePod(
+            const outcome = await pruneSnapshotRootAtTypesenseSource(
               root,
               TYPESENSE_SNAPSHOT_RETENTION_COUNT
             );
@@ -1652,9 +1758,11 @@ export const backupTypesense = inngest.createFunction(
         });
 
         metadata.date = dateStamp;
+        metadata.snapshotSource = TYPESENSE_SNAPSHOT_SOURCE;
         metadata.snapshotRootPrimary = TYPESENSE_SNAPSHOT_ROOT;
         metadata.snapshotRootFallback = TYPESENSE_SNAPSHOT_FALLBACK_ROOT;
         metadata.snapshotRootEffective = snapshotRoot;
+        metadata.snapshotStamp = snapshotStamp;
         metadata.snapshotFallbackAttempted = snapshotSelection.fallbackAttempted;
         metadata.snapshotFallbackUsed = snapshotSelection.fallbackUsed;
         metadata.snapshotCreateAttempts = snapshotSelection.attempts;
