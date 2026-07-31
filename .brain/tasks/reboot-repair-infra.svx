@@ -1,0 +1,65 @@
+---
+title: "Post-reboot repair: revive colima, docker, Convex, k8s"
+type: "task"
+interaction: "AFK"
+status: "closed"
+assignee: "pi worker (flagg, w28 right column, 2026-07-31)"
+created_at: "2026-07-31"
+privacy: "private"
+---
+
+# Post-reboot repair: revive colima, docker, Convex, k8s
+
+flagg rebooted ~22:08 on 2026-07-30. You are on flagg. This is the critical
+path: everything docker-hosted is down.
+
+## Confirmed symptoms (steering, 06:11)
+
+- `colima status` → fatal "colima is not running", yet launchd shows
+  `com.joelclaw.colima` PID 364 exit 0. The launchd job likely ran and exited
+  without colima actually up.
+- `docker ps` → cannot connect to `~/.colima/default/docker.sock`.
+- Self-hosted Convex at `http://127.0.0.1:3210` → connection refused. This is
+  the gateway message-event stream; another worker is waiting on it.
+- k8s (Talos on Colima) presumed down with docker.
+
+## Levers (READ each script before running it)
+
+- `infra/colima-start.sh` and `infra/launchd/com.joel.colima.plist`
+- `infra/k8s-reboot-heal.sh` and `infra/launchd/com.joel.k8s-reboot-heal.plist`
+- `infra/central/scripts/start-colima.sh`, `health.sh`, `diagnose.sh`,
+  `recover.sh` (central stack tooling)
+- Prefer restarting via the existing launchd label
+  (`launchctl kickstart -k gui/501/<label>`) over ad-hoc `colima start`, so
+  supervision stays where it was. If the plist itself is the bug, say so.
+
+## Resolved when
+
+1. `colima status` reports running and `docker ps` works.
+2. Convex answers: `curl -sf http://127.0.0.1:3210/version` (or any 2xx/3xx).
+3. k8s: `kubectl get nodes` shows Ready — ONLY if the cluster lives on this
+   machine's colima. Fleet placement assigns `k8s` to panda; do NOT touch
+   panda, do not declare panda's cluster broken (2026-07-14 false-fatal
+   precedent). If flagg has no local cluster, record that and move on.
+4. The daily-sidecar / wiki tailnet containers are up again (`docker ps`
+   shows them; see `infra/daily-sidecar/` in joelclaw-wiki if needed).
+
+## Rules
+
+- No destructive commands. A dcg BLOCKED command is a full stop — report it.
+- Do not commit anything.
+- Do not delete or recreate VMs/volumes. If colima needs anything beyond a
+  start/restart, STOP and report instead of improvising.
+- Print a DONE summary: what was broken, what you ran, receipts (command +
+  output snippets), what remains broken.
+
+## Result (2026-07-31)
+
+Delivered by pi worker (w28:p11). Colima restarted, docker back, Convex
+backend healthy on :3210, daily-sidecar (wiki tailnet) containers up —
+verified live by steering. Flagg has no local k8s (profile kubernetes:false);
+panda untouched. Flagged: no user LaunchAgent supervises Joel's ~/.colima
+profile (`com.joelclaw.colima` supervises /Users/joelclaw), so colima will
+NOT survive the next power cycle; repo plist defaults differ from the live
+profile (4c/8g/60g/ssh vs 8c/24g/100g/grpc). Convex LAN forwarder
+(192.168.1.10:3210) absent; localhost + tailnet work.

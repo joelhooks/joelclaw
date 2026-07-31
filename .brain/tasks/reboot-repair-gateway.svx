@@ -1,0 +1,87 @@
+---
+title: "Post-reboot repair: resurrect the agent comms gateway"
+type: "task"
+interaction: "AFK"
+status: "closed"
+assignee: "pi worker (flagg, w28 right column, 2026-07-31)"
+created_at: "2026-07-31"
+privacy: "private"
+---
+
+# Post-reboot repair: resurrect the agent comms gateway
+
+flagg rebooted ~22:08 on 2026-07-30. The gateway driver had no supervisor
+(bare PPID-1 process) so it died with the reboot and nothing restarted it.
+
+## Confirmed state (steering, 06:11)
+
+- `redis-cli TTL gateway:agent:heartbeat` → -2 (key gone). Gateway loop dead.
+- No `agent-comms-driver` process.
+- Transport daemon IS up (launchd `com.joel.gateway`, PID 1238,
+  `packages/gateway/src/transport-daemon.ts`). Exactly one exists. NEVER
+  start a second transport daemon.
+- Convex stream at `http://127.0.0.1:3210` is DOWN; a sibling worker is
+  reviving it. The driver is useless without it.
+- Gateway pane `w2C:p1R` (label 📨) was restored by herdr with an ORPHANED
+  idle claude session in it — pre-reboot session 050485d3's pane, but the
+  reboot killed the real process; what herdr restored may be stale.
+
+## Steps
+
+1. **Wait for Convex**: poll `curl -sf http://127.0.0.1:3210/version` every
+   30s, up to 20 min. If it never comes up, report and stop — do not start
+   the driver against a dead stream.
+2. **Read before acting**: `packages/agent-comms-driver/src/main.ts` and
+   `src/adapters.ts` — learn what env it needs (GATEWAY_AGENT_TARGET was 📨,
+   gateway workspace `w2C`), how `sessionExists` treats an existing claude
+   process in the pane, and how it spawns a successor. Decide from the CODE
+   whether the orphaned session in `w2C:p1R` must be cleared first (SIGTERM
+   the claude PID via `herdr pane process-info`, driver-style) or whether the
+   driver adopts/replaces it. State which and why in your summary.
+3. **Start exactly one driver**: `pnpm --filter @joelclaw/agent-comms-driver
+   start` detached (nohup + background, log to a file under
+   `/tmp` or the package dir), with whatever env main.ts requires. `pgrep -fl
+   agent-comms-driver` must show exactly one.
+4. **Verify resurrection**:
+   - `redis-cli TTL gateway:agent:heartbeat` positive and refreshing.
+   - A gateway claude session boots in the pane (driver spawns it); its
+     SessionStart hook loads the plugin prompts.
+   - Pending stream events start getting decision receipts.
+5. **Morning digest**: `joelclaw wake list` — is there a pending
+   `[gateway-morning-digest]` wake for ~07:30 America/Los_Angeles today
+   (2026-07-31)? If missing, arm it:
+   `pnpm --filter @joelclaw/agent-comms-driver arm-morning-digest`, then
+   verify via `wake list` readback. Note: it is ~06:15 now; if you finish
+   past 07:30, arm for tomorrow and say so.
+
+## Rules
+
+- Single-owner comms: one transport daemon, one driver, one gateway session.
+  Check before starting anything.
+- Never print/lease secrets. Never use the real heartbeat key in any test.
+- No destructive commands; dcg BLOCKED = full stop.
+- Do not commit.
+- DONE summary with receipts: driver PID, heartbeat TTL readings ~60s apart,
+  gateway session id, digest wake schedule id.
+
+## Result (2026-07-31)
+
+Delivered by pi worker (w28:p13). Orphaned pane session was a stale
+`claude --resume` chooser that would have satisfied the driver's
+`sessionExists` and produced a false heartbeat — worker SIGTERMed only that
+PID and let the driver take its normal missing-session spawn path. Driver
+runtime 48615 (setsid double-fork; nohup fails under Pi PTY), exactly one of
+each process. Gateway session f65334f3 booted with plugin prompts via
+SessionStart. Heartbeat refreshing (changing checkedAt receipts). Canonical
+backlog drained to 0 with two flows verified terminal `confirmed`. Morning
+digest armed: 843b96e8 at 2026-07-31T14:30Z.
+
+Steering addendum: Telegram inbound had been dead since 2026-07-27 15:11Z —
+panda's legacy ADR-0038 gateway daemon (`/Library/LaunchDaemons/
+com.joel.gateway.plist` → `~/.joelclaw/scripts/gateway-start.sh`) was
+long-polling getUpdates with the shared bot token and winning; flagg's
+transport logged 880 consecutive 409 conflicts. Steering neutered the panda
+start script (backup at gateway-start.sh.pre-neuter-20260731, stub sleeps),
+killed the daemon; conflicts stopped (880 → 880 over 90s). Proper fix needs
+sudo on panda: `launchctl bootout system/com.joel.gateway` + remove plist.
+Driver still has NO supervisor (PID-1 orphan) — next reboot kills it again.

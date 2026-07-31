@@ -1,0 +1,65 @@
+---
+title: "Post-reboot repair: full service sweep on flagg"
+type: "task"
+interaction: "AFK"
+status: "closed"
+assignee: "pi worker (flagg, w28 right column, 2026-07-31)"
+created_at: "2026-07-31"
+privacy: "private"
+---
+
+# Post-reboot repair: full service sweep on flagg
+
+flagg rebooted ~22:08 on 2026-07-30. Verify every service actually works —
+launchd "running" is not proof (colima showed a PID while dead). A sibling
+worker owns colima/docker/Convex/k8s — check their status but do NOT restart
+those; note "sibling owns" in your table.
+
+## Sweep list (launchd label → verify with a real request)
+
+- `com.joelclaw.central.typesense` — query the health endpoint.
+- `com.joelclaw.central.postgres` — `pg_isready` or equivalent.
+- `com.joelclaw.central.redis` — `redis-cli ping`.
+- `com.joelclaw.central.executor` + `executor-dashboard` — ports 4788/4789.
+- `com.joelclaw.central.inngest` — `curl 127.0.0.1:8288/health` (was OK at
+  06:11; last exit status 1 — glance at logs for why).
+- `com.joel.system-bus-worker` — :3111 answered 200 at 06:11; confirm Inngest
+  registration (functions appear in Inngest, e.g. GQL or dashboard API).
+- `com.joel.gateway` (transport daemon, PID 1238) — process up, but its last
+  exit status was 1 and Convex was down; check its recent log for crash loops.
+  Do NOT restart it unless it is actually wedged — single transport daemon
+  rule. If Convex comes back and the transport still errors, report.
+- `com.joelclaw.wiki-serve` (:8790) + wiki-serve-check — local 200.
+- `https://brain.joelclaw.com` — will fail until the docker sidecar returns
+  (sibling owns); verify after, or note pending.
+- `com.joelclaw.agent-mail` — process/port check per its plist.
+- `com.joelclaw.central.session-index-health` — last exit 1; read its log.
+- `com.joelclaw.central.nas-mounts` / `mount-nas` — NAS volumes mounted?
+  (`/Volumes/badass-media` etc.)
+- `com.joel.mtu-jumbo` — ran? (one-shot; just note)
+- `com.joel.agent-secrets`, `com.joelclaw.central.ds4` — process up.
+- `infra/central/scripts/health.sh` exists — read it first; run it if it is a
+  read-only health reporter and fold its output in.
+
+## Rules
+
+- Fix = `launchctl kickstart -k gui/501/<label>` (or system domain if that is
+  where it lives) for a service that is genuinely dead/wedged. Nothing
+  fancier without reporting first.
+- Never restart a healthy service. Never touch panda or other machines.
+- No destructive commands; dcg BLOCKED = full stop, report it.
+- Do not commit.
+- DONE summary: a table `service → check ran → result → action taken`, then
+  a short list of anything needing operator judgment.
+
+## Result (2026-07-31)
+
+Delivered by pi worker (w28:p12). Every service verified with a real request;
+nothing needed a restart (full table in the worker DONE summary, key rows:
+typesense/postgres/redis/executor/inngest/system-bus (184 fns exposed, 238
+registered)/wiki/agent-mail/NAS mounts/ds4 all green). Needs judgment:
+session-index-health checks retired Typesense `runs_dev` (false red);
+`infra/central/scripts/health.sh` is an auto-recovery script posing as a
+reporter and expects absent Restate/MinIO ports; MTU drift (9000 set vs 8192
+contract); Typesense on-demand snapshot failed ~03:00 UTC; stale k8s
+assumptions in flagg jobs (no local kubectl/cluster).
