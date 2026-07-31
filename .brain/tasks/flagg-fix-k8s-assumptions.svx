@@ -1,0 +1,63 @@
+---
+title: "Flagg fix: purge stale k8s assumptions from flagg jobs"
+type: "task"
+interaction: "AFK"
+status: "closed"
+assignee: "pi worker (flagg, w28 right column, 2026-07-31)"
+created_at: "2026-07-31"
+privacy: "private"
+---
+
+# Flagg fix: purge stale k8s assumptions from flagg jobs
+
+The 2026-07-31 sweep found flagg jobs that still assume a local k8s cluster.
+Flagg has none: colima profile has `kubernetes: false`, no local `kubectl`,
+and fleet placement (`packages/endpoint-resolver/config/service-placement.json`)
+assigns k8s to panda.
+
+## Do
+
+1. Inventory the damage: which Inngest functions registered by the flagg
+   host worker (`com.joel.system-bus-worker`, :3111) shell out to `kubectl`
+   or assume a local cluster? Grep `packages/system-bus/src` for kubectl/k8s
+   usage; check recent Inngest run failures at `http://127.0.0.1:8288` for
+   k8s-shaped errors to confirm which actually fire and fail on flagg.
+2. For each, decide the right shape with the placement config as the source
+   of truth:
+   - Function belongs to panda's cluster → it should not run on the flagg
+     host worker: gate its registration (host vs k8s worker split already
+     exists — see `index.ts` vs `index.host.ts`) or make it target panda's
+     API server through the endpoint resolver if that is how siblings do it.
+   - Function is genuinely flagg-local → fix its assumption.
+   - Dead code for retired infra → flag it for removal, list it, don't
+     delete wholesale.
+3. Keep changes minimal and pattern-matched to how the codebase already
+   splits host/k8s registration. After edits:
+   `bunx tsc --noEmit` and `pnpm biome check packages/` must pass; run the
+   nearest tests for touched files.
+4. Do NOT restart the host worker — steering deploys after review.
+
+## Rules
+
+- Panda's cluster and its API server are out of scope — flagg-side code only.
+- Repo edits yes, commits no — steering reviews, commits, restarts.
+- No destructive commands; dcg BLOCKED = full stop, report.
+- DONE summary: function-by-function table (name → k8s dependency → what you
+  did → how verified), plus the flagged-for-removal list.
+
+## Result (2026-07-31)
+
+Delivered by pi worker (w28:p17), reviewed and committed by steering.
+`network/status-update`: placement-aware kubectl (local when host owns k8s,
+SSH to the placement host otherwise); retired typesense-portforward entry
+removed; confirmed old failure `01KYWQY4B41G5EPB6X51PR9PW6` (kubectl not
+found). `system/agent-dispatch`: k8s sandbox backend gated by service
+placement — flagg rejects non-retriably with `not-hosted-here (hosted on:
+panda)`. `tasks/triage` prompt and `skill-garden` stale-pattern corrected.
+`check/system-health` and `system/backup.redis` already placement-aware (the
+8 redis-backup failures are panda's dead k8s API — out of scope here).
+43 targeted tests pass, tsc clean, per-file biome clean (33 pre-existing
+import-order errors elsewhere untouched). Removal candidates flagged:
+`executeK8sSandboxAgent` (no eligible worker post-gate) and the
+`TYPESENSE_SNAPSHOT_SOURCE=k8s` rollback branch once panda Typesense retires.
+Host worker restart pending steering deploy.

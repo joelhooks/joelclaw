@@ -1,6 +1,35 @@
 import { describe, expect, test } from "bun:test";
+import type { ServicePlacementConfig } from "@joelclaw/endpoint-resolver";
 
 import { __testables } from "../agent-dispatch";
+
+describe("agent-dispatch k8s placement", () => {
+  const placement = {
+    version: 1,
+    hosts: [
+      { hostname: "flagg", services: ["joelclaw-headless-runtime"] },
+      { hostname: "panda", services: ["k8s"] },
+    ],
+  } satisfies ServicePlacementConfig;
+
+  test("rejects the k8s sandbox backend on flagg", () => {
+    expect(
+      __testables.resolveK8sSandboxPlacement({ hostname: "flagg", placement })
+    ).toEqual({
+      allowed: false,
+      detail: "not-hosted-here (hosted on: panda)",
+    });
+  });
+
+  test("allows the k8s sandbox backend only on the configured host", () => {
+    expect(
+      __testables.resolveK8sSandboxPlacement({ hostname: "panda", placement })
+    ).toEqual({
+      allowed: true,
+      detail: "hosted-here (panda)",
+    });
+  });
+});
 
 describe("agent-dispatch subprocess capture", () => {
   test("returns after parent exit even when a background child keeps stderr open", async () => {

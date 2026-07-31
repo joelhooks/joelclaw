@@ -33,11 +33,6 @@ const STALE_PATTERNS: Array<{ pattern: RegExp; label: string; note: string }> =
       note: "Removed from cluster — using Typesense vector search",
     },
     {
-      pattern: /launchctl.*system-bus/i,
-      label: "launchd worker",
-      note: "Worker runs in k8s now, not launchd",
-    },
-    {
       pattern: /~\/Code\/system-bus-worker/,
       label: "old worker path",
       note: "Worker source is in monorepo packages/system-bus/",

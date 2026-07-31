@@ -1,4 +1,9 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
+import { hostname as osHostname } from "node:os";
+import {
+  resolveServicePlacement,
+  type ServicePlacementConfig,
+} from "@joelclaw/endpoint-resolver";
 import { anyApi, type FunctionReference } from "convex/server";
 import { getConvexClient, pushContentResource, removeContentResources } from "../../lib/convex";
 import { inngest } from "../client";
@@ -30,8 +35,10 @@ const KNOWN_DAEMONS = [
   "colima",
   "vault-log-sync",
   "content-sync-watcher",
-  "typesense-portforward",
 ] as const;
+
+const K8S_OPERATOR_SSH_FLAGS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8"] as const;
+const K8S_KUBECTL_PATH = process.env.K8S_KUBECTL_PATH?.trim() || "/opt/homebrew/bin/kubectl";
 
 const DEFAULT_DAEMON_DESCRIPTIONS: Record<string, string> = {
   "agent-secrets": "Encrypted secrets daemon (leases API keys/tokens)",
@@ -39,13 +46,72 @@ const DEFAULT_DAEMON_DESCRIPTIONS: Record<string, string> = {
   gateway: "Pi agent gateway daemon + Telegram bridge",
   "gateway-tripwire": "Gateway watchdog (auto-restart on failure)",
   caddy: "HTTPS reverse proxy with Tailscale certs",
-  colima: "Container runtime (VZ framework → Talos k8s)",
+  colima: "Container runtime for Flagg-local services",
   "content-sync-watcher": "Vault content → web deploy trigger",
-  "typesense-portforward": "kubectl port-forward for Typesense :8108",
 };
 
 function runCommand(command: string): string {
   return execSync(command, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 10_000,
+  }).trim();
+}
+
+type PlacedKubectlCommand = {
+  command: "kubectl" | "ssh";
+  args: string[];
+  operatorHost: string;
+  hostedHere: boolean;
+};
+
+type PlacedKubectlOptions = {
+  hostname?: string;
+  placement?: ServicePlacementConfig;
+  kubectlPath?: string;
+};
+
+// This host-local function also reports fleet pods, so route only that probe to the k8s host.
+export function buildPlacedKubectlCommand(
+  kubectlArgs: readonly string[],
+  options: PlacedKubectlOptions = {}
+): PlacedKubectlCommand {
+  const placement = resolveServicePlacement(
+    "k8s",
+    options.hostname ?? osHostname(),
+    options.placement
+  );
+
+  if (placement.hostedHere) {
+    return {
+      command: "kubectl",
+      args: [...kubectlArgs],
+      operatorHost: placement.hostname,
+      hostedHere: true,
+    };
+  }
+
+  const operatorHost = placement.hostedOn[0];
+  if (!operatorHost) {
+    throw new Error("Kubernetes has no host in service-placement.json");
+  }
+
+  return {
+    command: "ssh",
+    args: [
+      ...K8S_OPERATOR_SSH_FLAGS,
+      operatorHost,
+      options.kubectlPath ?? K8S_KUBECTL_PATH,
+      ...kubectlArgs,
+    ],
+    operatorHost,
+    hostedHere: false,
+  };
+}
+
+function runPlacedKubectl(kubectlArgs: readonly string[]): string {
+  const target = buildPlacedKubectlCommand(kubectlArgs);
+  return execFileSync(target.command, target.args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 10_000,
@@ -150,9 +216,15 @@ export const networkStatusUpdate = inngest.createFunction(
   async ({ step }) => {
     // ADR-0085: collect-pod-status
     await step.run("collect-pod-status", async () => {
-      const podsOutput = runCommand(
-        "kubectl get pods -n joelclaw --no-headers -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp"
-      );
+      const podsOutput = runPlacedKubectl([
+        "get",
+        "pods",
+        "-n",
+        "joelclaw",
+        "--no-headers",
+        "-o",
+        "custom-columns=NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp",
+      ]);
       const rows = parsePods(podsOutput);
       const existing = await listByType("network_pod");
       const descriptionByName = new Map<string, string>();

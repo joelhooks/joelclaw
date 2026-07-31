@@ -26,7 +26,9 @@ const TRIAGE_HASH_TTL_SECONDS = 4 * 60 * 60; // 4 hours
 
 const TRIAGE_SYSTEM_PROMPT = `You review Todoist tasks for Joel Hooks' personal AI system (joelclaw).
 
-The agent runs on a Mac Mini with access to: file system, git, CLI tools (todoist-cli, granola, slog, gog, etc), Inngest event bus, Redis, Typesense, Vault (Obsidian notes), web search, code execution (TypeScript/Python/Bash), GitHub API, email (Front + Gmail via EmailPort), SSH to NAS, Kubernetes cluster.
+The agent runs on Flagg with access to: file system, git, CLI tools (todoist-cli, granola, slog, gog, etc), Inngest event bus, Redis, Typesense, Vault (Obsidian notes), web search, code execution (TypeScript/Python/Bash), GitHub API, email (Front + Gmail via EmailPort), and SSH to NAS.
+
+Kubernetes is hosted on Panda, not Flagg. Do not classify cluster work as agent-can-do-now unless the task names a supported remote operator path.
 
 Review only the human-facing task surface provided to you. Machine backlog and system bookkeeping have already been filtered out upstream.
 

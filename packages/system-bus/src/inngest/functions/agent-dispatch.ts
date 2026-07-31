@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname as osHostname, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import {
   cancelSandboxJob,
@@ -31,6 +31,11 @@ import {
   upsertLocalSandboxRegistryEntry,
   writeArtifactBundle,
 } from "@joelclaw/agent-execution";
+import {
+  formatNotHostedHere,
+  resolveServicePlacement,
+  type ServicePlacementConfig,
+} from "@joelclaw/endpoint-resolver";
 import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
 import { inngest } from "../client";
@@ -68,6 +73,27 @@ const SANDBOX_K8S_IMAGE_PULL_SECRET = process.env.SANDBOX_K8S_IMAGE_PULL_SECRET?
 const SANDBOX_K8S_SERVICE_ACCOUNT = process.env.SANDBOX_K8S_SERVICE_ACCOUNT?.trim() || "default";
 const SANDBOX_RESULT_CALLBACK_URL = process.env.SANDBOX_RESULT_CALLBACK_URL?.trim() || "http://host.docker.internal:3111/internal/agent-result";
 const INTERNAL_RESULT_TOKEN = process.env.OTEL_EMIT_TOKEN?.trim();
+
+type K8sSandboxPlacement = {
+  allowed: boolean;
+  detail: string;
+};
+
+// @joelclaw/agent-execution shells to local kubectl. Keep that path off hosts without k8s.
+function resolveK8sSandboxPlacement(options: {
+  hostname?: string;
+  placement?: ServicePlacementConfig;
+} = {}): K8sSandboxPlacement {
+  const placement = resolveServicePlacement(
+    "k8s",
+    options.hostname ?? osHostname(),
+    options.placement
+  );
+
+  return placement.hostedHere
+    ? { allowed: true, detail: `hosted-here (${placement.hostname})` }
+    : { allowed: false, detail: formatNotHostedHere(placement) };
+}
 
 type AgentDispatchTool = "codex" | "claude" | "pi" | "canary";
 
@@ -1374,6 +1400,15 @@ export const agentDispatch = inngest.createFunction(
       };
     }
 
+    if (executionMode === "sandbox" && sandboxBackend === "k8s") {
+      const placement = resolveK8sSandboxPlacement();
+      if (!placement.allowed) {
+        throw new NonRetriableError(
+          `sandbox k8s backend cannot run on this host: ${placement.detail}`
+        );
+      }
+    }
+
     const localSandboxContext =
       executionMode === "sandbox" && sandboxBackend === "local"
         ? await step.run("resolve-local-sandbox-context", async () => {
@@ -1629,6 +1664,7 @@ function buildCommand(
 
 export const __testables = {
   buildAgentDispatchCanaryCommand,
+  resolveK8sSandboxPlacement,
   runAgentCommand,
   runAgentDispatchCanary,
   runSandboxInfraCommand,
