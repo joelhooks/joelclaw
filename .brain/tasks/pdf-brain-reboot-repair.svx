@@ -54,8 +54,10 @@ failed on headless flagg (`gui/501` bootstrap, error 125/5).
   rollback of the k8s system-bus-worker.
 - The typesense-books migration WIP (CLI/search/typesense.ts changes,
   TYPESENSE_BOOKS.md, installer, restore tooling) remains uncommitted —
-  owned by its session. This repair committed only the two docs-api assets
-  and the two-line headless patch to the books installer.
+  owned by its session. My two-line headless patch to the untracked books
+  installer and plist template rides along in that WIP, uncommitted. This
+  repair committed only the two docs-api assets, the repo heal-plist patch,
+  and this note.
 - k8s `docs-api` deployment and `typesense` statefulset stay scaled to 0 by
   migration design; retire the manifests once the migration session closes
   out.
