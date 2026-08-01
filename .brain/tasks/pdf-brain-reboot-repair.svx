@@ -1,0 +1,61 @@
+---
+title: "pdf-brain down: books node and docs-api orphaned by the reboots"
+type: "task"
+interaction: "AFK"
+status: "closed"
+closed_at: "2026-08-01"
+assignee: "claude steering (flagg, w28:p1, 2026-08-01)"
+created_at: "2026-08-01"
+privacy: "private"
+---
+
+# pdf-brain down: books node and docs-api orphaned by the reboots
+
+Joel reported pdf-brain down via joelclaw CLI and API (2026-08-01).
+
+## Root cause
+
+The typesense-books migration (another session, WIP uncommitted as of this
+repair) had moved the docs corpus off panda k8s onto flagg-native services —
+books Typesense node on :8110, docs-api on flagg :3838 — and scaled the k8s
+`typesense` statefulset and `docs-api` deployment to 0. Both flagg-side
+replacements ran as unsupervised ad-hoc processes, and the 2026-07-30 reboot
+killed them. The migration's LaunchAgent installer existed but had silently
+failed on headless flagg (`gui/501` bootstrap, error 125/5).
+
+## Repair (all verified live)
+
+1. **Books node**: patched the WIP installer (`LimitLoadToSessionType=
+   Background` in the plist template, `user/501` domain) and ran it.
+   `com.joelclaw.typesense-books` supervised on :8110; both collections
+   loaded (662 docs + docs_chunks_v2); health `ok:true`.
+2. **CLI env**: `joelclaw docs` reads `DOCS_TYPESENSE_URL` from process env
+   only — added the export to `~/.zshenv` (daemons get it from
+   `system-bus.env`, which the installer writes). Fresh-shell search verified.
+3. **docs-api**: new `infra/central/native/docs-api-start.sh` +
+   `com.joelclaw.docs-api.plist.template`, installed as a supervised
+   Background LaunchAgent on flagg :3838. Sources `system-bus.env`, leases
+   `pdf_brain_api_token` from the secrets store at start (never logged).
+   Health verified locally and via
+   `joels-mac-studio.tail7af24.ts.net:3838` (the satellite URL).
+4. **Panda k8s** (the old API path, also dead since panda's reboot): colima
+   VM refused to start on a stale lima `in_use_by` disk marker after unclean
+   shutdown — cleared it (marker symlink only; 322 GB datadisk untouched).
+   Cluster healed: node Ready, redis/restate/inngest/dkron/bluesky pods
+   Running. Installed `com.joel.k8s-reboot-heal` LaunchAgent on panda
+   (Background session type — repo plist patched to match) so the heal loop
+   finally runs every 180s as designed.
+
+## Flagged, not fixed
+
+- Pod `system-bus-worker-77ff454797-44cjs` on panda: ErrImagePull /
+  CrashLoopBackOff for 9 days — a bad image tag from a stale deploy, predates
+  the reboots. The older ReplicaSet pod serves. Needs a proper redeploy or
+  rollback of the k8s system-bus-worker.
+- The typesense-books migration WIP (CLI/search/typesense.ts changes,
+  TYPESENSE_BOOKS.md, installer, restore tooling) remains uncommitted —
+  owned by its session. This repair committed only the two docs-api assets
+  and the two-line headless patch to the books installer.
+- k8s `docs-api` deployment and `typesense` statefulset stay scaled to 0 by
+  migration design; retire the manifests once the migration session closes
+  out.
