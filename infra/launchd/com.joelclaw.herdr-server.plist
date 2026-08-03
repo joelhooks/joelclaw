@@ -36,8 +36,11 @@
     <key>ThrottleInterval</key>
     <integer>10</integer>
 
+    <!-- Interactive, not Background: every herdr keystroke round-trips through
+         this server. Background clamps it to the E-cores' lowest band, where it
+         starves behind batch jobs and lags typing (flagg, 2026-08-03). -->
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>Interactive</string>
 
     <key>SoftResourceLimits</key>
     <dict>
