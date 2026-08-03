@@ -43,7 +43,9 @@ plist_running() {
 }
 
 gui_session() { launchctl print "gui/$(id -u)" >/dev/null; }
-secrets_healthy() { secrets health >/dev/null; }
+# `secrets health` performs slow checks that can outlive the CLI's 5s timeout and
+# block the daemon's following lease requests. Status is the fast liveness probe.
+secrets_healthy() { secrets status >/dev/null; }
 lease_named() { lease "$1" >/dev/null; }
 
 cleanup_room() {
@@ -165,9 +167,25 @@ probe 'Telnyx available credit at least $10' balance_check
 warn_probe 'Telnyx available credit at least $25' balance_warn
 probe 'voice config has allowed callers' config_has_callers
 
+# Transition latch: this script ticks every 30 minutes, so an unchanged failure
+# set must not re-alert (2026-08-02: a 13-day stuck recall check paged Joel every
+# tick). Alert only when the failure set changes or on recovery.
+STATE_FILE="/tmp/joelclaw/verify-voice.failures"
+mkdir -p /tmp/joelclaw
+last_failures=""
+[[ -f "$STATE_FILE" ]] && last_failures="$(cat "$STATE_FILE")"
+
 if [[ "$status" -ne 0 ]]; then
   joined="$(IFS=', '; echo "${failures[*]}")"
-  joelclaw send notification/call.requested "{\"message\":\"verify-voice FAILED on flagg: $joined\"}" || true
-  joelclaw notify send "verify-voice FAILED: $joined" --priority urgent || true
+  if [[ "$joined" != "$last_failures" ]]; then
+    printf '%s\n' "$joined" >| "$STATE_FILE"
+    joelclaw send notification/call.requested "{\"message\":\"verify-voice FAILED on flagg: $joined\"}" || true
+    joelclaw notify send "verify-voice FAILED: $joined" --priority urgent || true
+  else
+    printf 'suppressed repeat alert (unchanged failure set): %s\n' "$joined"
+  fi
+elif [[ -n "$last_failures" ]]; then
+  rm -f "$STATE_FILE"
+  joelclaw notify send "verify-voice recovered on flagg (was failing: $last_failures)" || true
 fi
 exit "$status"

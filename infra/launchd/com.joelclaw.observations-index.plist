@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.joelclaw.observations-index</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Background</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/joel/.bun/bin/joelclaw</string>
+    <string>observations</string>
+    <string>index</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/joel</string>
+    <key>PATH</key>
+    <string>/Users/joel/.local/bin:/Users/joel/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/tmp/joelclaw/observations-index.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/joelclaw/observations-index.err</string>
+</dict>
+</plist>

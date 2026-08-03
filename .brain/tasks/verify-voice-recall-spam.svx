@@ -1,0 +1,60 @@
+---
+title: "verify-voice recall spam: stale observation index and a latchless alerter"
+type: "task"
+interaction: "AFK"
+status: "closed"
+closed_at: "2026-08-02"
+assignee: "claude steering (flagg, w28:p1, 2026-08-02)"
+created_at: "2026-08-02"
+privacy: "private"
+---
+
+# verify-voice recall spam: stale observation index and a latchless alerter
+
+Joel was paged every 30 minutes with "verify-voice FAILED: voice recall tool
+registered with non-empty observation index" (2026-08-02, repeating for days).
+
+## Root causes (three stacked)
+
+1. **Stale observation index.** The recall tool wraps `joelclaw sessions
+   search`, which reads the Typesense `observations` projection. Fresh
+   observation pages existed in `dark-wizard/.brain/observations/` (72 files
+   in 3 days) but the projection's newest doc was 2026-07-20 — the Observer
+   loop stopped running its `joelclaw observations index` step ~07-21
+   (its own self-reflection reports dispatcher-dedupe/telemetry state stale
+   ~16,000+ minutes). Probe rightly returned NOTHING_DISTILLED for a 7-day
+   window.
+2. **Latchless alerter.** `verify-voice.sh` (launchd, every 30 min) fired
+   `joelclaw notify send --priority urgent` AND `notification/call.requested`
+   on EVERY failing tick — no state transition check.
+3. **Gateway re-delivered repeats.** Stream receipts: 19 identical
+   verify-voice failures in 24h → 15 delivery.requested. The one-incident-
+   one-thread bar did not hold for this producer. Evidence for the gateway
+   validation pass, not fixed here.
+
+## Repair (verified live)
+
+- Ran `joelclaw observations index`: 658 pages indexed; recall probe now
+  returns real content (Reflector 07-30) and the full verify-voice suite
+  passes 14/14.
+- Added a transition latch to `verify-voice.sh`: alerts only when the failure
+  set CHANGES; unchanged repeats are suppressed with a log line; recovery
+  sends one normal-priority all-clear. State in
+  `/tmp/joelclaw/verify-voice.failures` (reboot resets → one re-alert, fine).
+- Installed `com.joelclaw.observations-index` LaunchAgent (hourly
+  `joelclaw observations index`, RunAtLoad, Background/user-domain): recall
+  freshness no longer depends on Observer loop health. First run exit 0.
+- Reloaded the four observer LaunchAgents (tick/dream/herdr/neat-memory) —
+  they were not loaded post-reboot; error 5 turned out to be
+  "already bootstrapped" ambiguity, verified live in gui/501 afterward.
+
+## Flagged for the Observer charter (not fixed here)
+
+- Observer internals stale since ~07-21: dispatcher-dedupe, telemetry-state,
+  pending-state, capture-outbox aging; `observer-context`/`observer-dream`
+  logs missing; tick last exit code was 2 before this session. The loop
+  writes pages but is not healthy. Owned by the observer charter in
+  dark-wizard, needs its own session.
+- Also skipped during indexing: a handful of `slack-work-state-pass` pages
+  with invalid `sessionId` frontmatter — the producer writes pages the
+  indexer rejects; worth a schema fix in that Inngest function.
