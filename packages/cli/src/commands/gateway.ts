@@ -762,8 +762,8 @@ const GATEWAY_CHANNEL_CONFIGS: Record<GatewayChannelName, GatewayChannelConfig> 
       },
       {
         variable: "SLACK_USER_TOKEN",
-        enabled: 'SLACK_USER_TOKEN="$(lease_secret_or_empty slack_user_token)"',
-        disabled: 'SLACK_USER_TOKEN=""',
+        enabled: 'export SLACK_USER_TOKEN="$(lease_secret_or_empty slack_user_token)"',
+        disabled: 'export SLACK_USER_TOKEN=""',
       },
       {
         variable: "SLACK_ALLOWED_USER_ID",

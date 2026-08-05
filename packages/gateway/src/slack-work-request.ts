@@ -61,6 +61,17 @@ function slackThreadId(channelId: string, threadTs: string): string {
   return `slack:${channelId}:${threadTs}`;
 }
 
+function slackThreadTimestamp(
+  channelId: string,
+  sourceThreadId: string | null | undefined,
+): string | undefined {
+  if (!sourceThreadId) return undefined;
+  const prefix = `slack:${channelId}:`;
+  return sourceThreadId.startsWith(prefix)
+    ? sourceThreadId.slice(prefix.length)
+    : sourceThreadId;
+}
+
 export async function resolveSlackWorkRequest(input: {
   readonly event: InboundEvent;
   readonly resolveChannelName: (channelId: string) => Promise<string | undefined>;
@@ -81,7 +92,10 @@ export async function resolveSlackWorkRequest(input: {
     ?? event.rawAnchors.sourceMessageId
     ?? undefined;
   if (!messageTs) throw new Error("Slack :shitrat: request has no message timestamp");
-  const rawThreadTs = event.rawAnchors.sourceThreadId;
+  const rawThreadTs = slackThreadTimestamp(
+    channelId,
+    event.rawAnchors.sourceThreadId,
+  );
   const threadTs = rawThreadTs && rawThreadTs !== messageTs
     ? rawThreadTs
     : messageTs;

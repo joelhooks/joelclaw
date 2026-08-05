@@ -78,8 +78,8 @@ describe("Slack ShitRat work trigger", () => {
 
   test("accepts lc-* and cc-* channel names only", () => {
     expect(isShitRatWorkChannel("lc-example-project")).toBe(true);
-    expect(isShitRatWorkChannel("#cc-matt-p")).toBe(true);
-    expect(isShitRatWorkChannel("brain-joel")).toBe(false);
+    expect(isShitRatWorkChannel("#cc-example-creator")).toBe(true);
+    expect(isShitRatWorkChannel("brain-example")).toBe(false);
   });
 
   test("builds the root-thread launch context and loads the channel binding", async () => {
@@ -89,7 +89,7 @@ describe("Slack ShitRat work trigger", () => {
       loadBinding: async () => ({
         repo: "/tmp/example-project",
         cwd: "/tmp/example-project",
-        brainEntry: ".brain/projects/mega-assessment/mega-assessment-brief.svx",
+        brainEntry: ".brain/projects/example/example-brief.svx",
       }),
     });
 
@@ -104,7 +104,7 @@ describe("Slack ShitRat work trigger", () => {
       binding: {
         repo: "/tmp/example-project",
         cwd: "/tmp/example-project",
-        brainEntry: ".brain/projects/mega-assessment/mega-assessment-brief.svx",
+        brainEntry: ".brain/projects/example/example-brief.svx",
       },
     });
   });
@@ -114,9 +114,9 @@ describe("Slack ShitRat work trigger", () => {
       event: slackMessage({
         text: ":shitrat: check the follow-up",
         messageTs: "1785950001.200",
-        threadTs: "1785950000.100",
+        threadTs: "slack:CEXAMPLE:1785950000.100",
       }),
-      resolveChannelName: async () => "cc-matt-p",
+      resolveChannelName: async () => "cc-example-creator",
     });
 
     expect(request?.threadTs).toBe("1785950000.100");
@@ -151,7 +151,7 @@ describe("Slack ShitRat work trigger", () => {
   test("does not trigger outside lc/cc channels", async () => {
     const request = await resolveSlackWorkRequest({
       event: slackMessage({ text: ":shitrat: review this" }),
-      resolveChannelName: async () => "brain-joel",
+      resolveChannelName: async () => "brain-example",
     });
     expect(request).toBeUndefined();
   });
