@@ -14,11 +14,14 @@ function decisionEvent(id: string, payload: Record<string, unknown>): MessageEve
   } as unknown as MessageEventDocument;
 }
 
-function harness(events: MessageEventDocument[]) {
+function harness(events: MessageEventDocument[], recipientId = "joel") {
   const sent: string[] = [];
   const sentRequests: Array<{
     flowId: string;
     correlationId?: string;
+    platform: string;
+    recipientId: string;
+    replyThreadId?: string;
   }> = [];
   const advanced: string[] = [];
   const logged: string[] = [];
@@ -36,12 +39,15 @@ function harness(events: MessageEventDocument[]) {
             advanced.push(eventId);
           },
         },
-        recipientId: "joel",
+        recipientId,
         send: async (request) => {
           sent.push(request.text);
           sentRequests.push({
             flowId: request.flowId,
+            platform: request.target.platform,
+            recipientId: request.target.recipientId,
             ...(request.correlationId ? { correlationId: request.correlationId } : {}),
+            ...(request.replyThreadId ? { replyThreadId: request.replyThreadId } : {}),
           });
           return { platformMessageId: `sent-${sent.length}` };
         },
@@ -65,9 +71,39 @@ describe("deliver executor", () => {
       {
         flowId: "notify:11111111-1111-4111-8111-111111111111",
         correlationId: "daily-flow-agent:11111111-1111-4111-8111-111111111111",
+        platform: "telegram",
+        recipientId: "joel",
       },
     ]);
     expect(harnessed.advanced).toEqual(["d1"]);
+    expect(result).toEqual({ executed: 1, skipped: 0 });
+  });
+
+  test("delivers to the Slack thread named by the decision target", async () => {
+    const harnessed = harness([
+      decisionEvent("slack-result", {
+        decision: {
+          verb: "deliver",
+          target: {
+            kind: "platform",
+            platform: "slack",
+            conversationId: "CMEGA",
+            threadId: "slack:CMEGA:1785950000.100",
+          },
+        },
+        rewrite: "Review complete: nine defects found.",
+      }),
+    ], "");
+
+    const result = await harnessed.run();
+    expect(harnessed.sentRequests).toEqual([
+      {
+        flowId: "flow-slack-result",
+        platform: "slack",
+        recipientId: "CMEGA",
+        replyThreadId: "slack:CMEGA:1785950000.100",
+      },
+    ]);
     expect(result).toEqual({ executed: 1, skipped: 0 });
   });
 

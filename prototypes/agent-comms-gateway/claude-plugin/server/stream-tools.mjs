@@ -77,6 +77,23 @@ function isOutboundDecision(decision) {
     || (decision?.verb === "aggregate" && decision?.action === "close-deliver");
 }
 
+function slackWorkerReturnTarget(event) {
+  if (event?.kind !== "message.requested") return null;
+  const context = event?.payload?.evidence?.context;
+  if (
+    context?.platform !== "slack"
+    || typeof context.channelId !== "string"
+    || typeof context.replyThreadId !== "string"
+    || typeof context.taskId !== "string"
+  ) return null;
+  return {
+    kind: "platform",
+    platform: "slack",
+    conversationId: context.channelId,
+    threadId: context.replyThreadId,
+  };
+}
+
 export function textFingerprint(text) {
   return String(text ?? "")
     .toLowerCase()
@@ -111,6 +128,16 @@ export function compactPendingEvent(event, { now = Date.now() } = {}) {
   const recordedAt = typeof event?.recordedAt === "number" ? event.recordedAt : now;
   const ageSec = Math.max(0, Math.round((now - recordedAt) / 1000));
   const text = eventText(event).replace(/\s+/gu, " ").trim().slice(0, 80);
+  const workRequest = event?.payload?.workRequest;
+  const workerContext = event?.payload?.evidence?.context;
+  const workerResult = workerContext?.taskId
+    ? {
+        taskId: workerContext.taskId,
+        platform: workerContext.platform ?? null,
+        channelId: workerContext.channelId ?? null,
+        replyThreadId: workerContext.replyThreadId ?? null,
+      }
+    : null;
   return {
     id: event?._id ?? null,
     kind: event?.kind ?? "unknown",
@@ -119,6 +146,14 @@ export function compactPendingEvent(event, { now = Date.now() } = {}) {
     text,
     joel: isJoelInbound(event),
     ...(isJoelInbound(event) ? { addressing: inboundAddressing(event) } : {}),
+    ...(workRequest ? {
+      workRequest: {
+        channelName: workRequest.channelName,
+        replyThreadId: workRequest.replyThreadId,
+        binding: workRequest.binding ?? null,
+      },
+    } : {}),
+    ...(workerResult ? { workerResult } : {}),
   };
 }
 
@@ -429,6 +464,22 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         );
       }
       let candidatePayload = payload;
+      const slackReturnTargets = coveredInputs
+        .map(slackWorkerReturnTarget)
+        .filter(Boolean);
+      if (slackReturnTargets.length > 0 && isOutboundDecision(candidatePayload?.decision)) {
+        const uniqueTargets = new Set(slackReturnTargets.map((target) => JSON.stringify(target)));
+        if (uniqueTargets.size !== 1) {
+          throw new Error("One decision cannot deliver worker results to multiple Slack threads");
+        }
+        candidatePayload = {
+          ...candidatePayload,
+          decision: {
+            ...candidatePayload.decision,
+            target: slackReturnTargets[0],
+          },
+        };
+      }
       if (incidentInputs.length === 1) {
         const incident = reconcileGatewayIncident({
           store: reconstructGatewayIncidentStore(events),

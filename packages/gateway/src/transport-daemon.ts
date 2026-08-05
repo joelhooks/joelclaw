@@ -1,9 +1,10 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import type { FlowIdType } from "@joelclaw/message-contract";
+import type { FlowIdType, InboundEvent } from "@joelclaw/message-contract";
 import {
   getMessageEventLogClient,
   type MessagePlatform,
 } from "@joelclaw/message-event-log";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 import Redis from "ioredis";
 import { sendExplicitTransport } from "./chat-sdk/explicit-send";
 import {
@@ -18,6 +19,7 @@ import {
 import { registerChatSdkActingInbound } from "./chat-sdk-inbound/acting";
 import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
 import { drainDeliverDecisions } from "./gateway-decision-executor";
+import { resolveSlackWorkRequest } from "./slack-work-request";
 import {
   createHeartbeatGateState,
   makeRedisHeartbeatProbe,
@@ -107,6 +109,39 @@ export async function startSlimTransportDaemon(): Promise<void> {
     platformMessageId: string,
     conversationId?: string,
   ) => resolveFlowId(command, platform, platformMessageId, conversationId);
+  const slackChannelNames = new Map<string, string>();
+  const resolveSlackChannelName = async (channelId: string): Promise<string | undefined> => {
+    const cached = slackChannelNames.get(channelId);
+    if (cached) return cached;
+    const response = await runtime.adapters.slack?.webClient.conversations.info({
+      channel: channelId,
+    });
+    const name = response?.channel?.name?.trim();
+    if (name) slackChannelNames.set(channelId, name);
+    return name;
+  };
+  const resolveWorkRequest = async (event: InboundEvent) => {
+    const request = await resolveSlackWorkRequest({
+      event,
+      resolveChannelName: resolveSlackChannelName,
+    });
+    if (request) {
+      void emitGatewayOtel({
+        level: "info",
+        component: "slack-shitrat",
+        action: "slack.shitrat.work_requested",
+        success: true,
+        metadata: {
+          channelId: request.channelId,
+          channelName: request.channelName,
+          threadTs: request.threadTs,
+          actorId: event.actor.platformUserId,
+          bound: Boolean(request.binding?.cwd || request.binding?.repo),
+        },
+      });
+    }
+    return request;
+  };
 
   registerChatSdkActingInbound(runtime, {
     enqueue: async () => {
@@ -115,6 +150,38 @@ export async function startSlimTransportDaemon(): Promise<void> {
     publisher: createStreamInboundPublisher({
       eventLog,
       resolveFlowId: resolveInboundFlow,
+      resolveWorkRequest,
+      acknowledgeWorkRequest: async (request) => {
+        try {
+          await runtime.adapters.slack?.webClient.reactions.add({
+            channel: request.channelId,
+            name: process.env.SLACK_SHITRAT_REACTION?.trim() || "shitrat",
+            timestamp: request.messageTs,
+          });
+        } catch (error) {
+          if (String(error).includes("already_reacted")) return;
+          throw error;
+        }
+      },
+      onWorkRequestError: (error, phase, event) => {
+        console.error("[gateway:transport] Slack ShitRat work request failed", {
+          phase,
+          eventId: event.eventId,
+          error: String(error),
+        });
+        void emitGatewayOtel({
+          level: "error",
+          component: "slack-shitrat",
+          action: `slack.shitrat.${phase}_failed`,
+          success: false,
+          error: String(error),
+          metadata: {
+            eventId: event.eventId,
+            channelId: event.platformIds.conversationId,
+            actorId: event.actor.platformUserId,
+          },
+        });
+      },
     }),
     transportOnly: true,
     resolveFlowId: resolveInboundFlow,
@@ -220,10 +287,10 @@ export async function startSlimTransportDaemon(): Promise<void> {
   // Mechanical executor for recorded deliver decisions: the agent decides,
   // the transport executes the receipt. Decisions are appended by the MCP
   // plugin without a Redis notify, so this polls its own stream cursor.
-  const executorRecipient = process.env.TELEGRAM_USER_ID?.trim();
+  const executorRecipient = process.env.TELEGRAM_USER_ID?.trim() ?? "";
   let executorDraining = false;
   const drainExecutor = async (): Promise<void> => {
-    if (!executorRecipient || executorDraining) return;
+    if (executorDraining) return;
     executorDraining = true;
     try {
       await drainDeliverDecisions({

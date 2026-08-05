@@ -47,6 +47,25 @@ const ambientJoelInbound = {
     content: { text: "message for a human" },
   },
 };
+const shitratWorkerResult = {
+  _id: "worker-result-1",
+  kind: "message.requested",
+  source: "shitrat-worker",
+  flowId: "notify:worker-result-1",
+  recordedAt: 13,
+  sequence: 4,
+  payload: {
+    text: "Review complete.",
+    evidence: {
+      context: {
+        taskId: "mega-review",
+        platform: "slack",
+        channelId: "CMEGA",
+        replyThreadId: "slack:CMEGA:1785950000.100",
+      },
+    },
+  },
+};
 const decisionPayload = {
   inputEventIds: ["input-1"],
   reason: "Joel asked for the result.",
@@ -89,6 +108,35 @@ describe("stream receipts", () => {
     );
     const cursor = await stream.advanceAfterDecision({ eventId: "input-1", decisionEventId: appended.receipt.eventId });
     expect(cursor.lastEventId).toBe("input-1");
+  });
+
+  test("mechanically returns ShitRat worker results to their Slack thread", async () => {
+    const client = fakeClient([shitratWorkerResult]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    const pending = await stream.pending();
+    expect(pending.pending[0].workerResult).toEqual({
+      taskId: "mega-review",
+      platform: "slack",
+      channelId: "CMEGA",
+      replyThreadId: "slack:CMEGA:1785950000.100",
+    });
+    const appended = await stream.recordDecision({
+      payload: {
+        ...decisionPayload,
+        inputEventIds: ["worker-result-1"],
+        decision: {
+          verb: "deliver",
+          target: { kind: "platform", platform: "telegram" },
+        },
+        rewrite: "Review complete.",
+      },
+    });
+    expect(appended.event.payload.decision.target).toEqual({
+      kind: "platform",
+      platform: "slack",
+      conversationId: "CMEGA",
+      threadId: "slack:CMEGA:1785950000.100",
+    });
   });
 
   test("defaults advanceAfter true on single-input terminal decisions", async () => {
@@ -328,6 +376,16 @@ describe("worker lanes", () => {
       if (family === "pane" && verb === "list") return { result: { panes } };
       if (family === "pane" && verb === "split") return { result: { pane: { pane_id: "wZ:pNEW" } } };
       if (family === "tab" && verb === "create") return { result: { root_pane: { pane_id: "wZ:pNEW" } } };
+      if (family === "worktree" && verb === "create") {
+        return {
+          result: {
+            type: "worktree_created",
+            workspace: { workspace_id: "wSR" },
+            root_pane: { pane_id: "wSR:p1" },
+            worktree: { path: "/tmp/mega-shitrat-review", branch: "shitrat/mega-review" },
+          },
+        };
+      }
       return { result: { type: "ok" } };
     };
     return { calls, tools: createHerdrTools({ run, now: () => 1000, taskDir: `${dir}/tasks`, workerDir: `${dir}/workers` }) };
@@ -354,6 +412,85 @@ describe("worker lanes", () => {
     expect(again.paneId).toBe("wZ:pNEW");
     expect(again.mode).toBe("prompted");
     expect(second.calls.some(([family, verb]) => family === "tab" && verb === "create")).toBe(false);
+  });
+
+  test("Slack work launches a fresh Herdr worktree in the channel-bound repo", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
+    const { calls, tools } = fakeHerdr({ dir });
+    const result = await tools.dispatchWorker({
+      taskId: "mega-review",
+      lane: "mega-review",
+      label: "[mega] assessment review",
+      task: "Review the assessment logic.",
+      cwd: "/Users/joel/Code/mega-dot-dev/mega-dev",
+      freshWorkspace: true,
+      worktree: true,
+      resultContext: {
+        platform: "slack",
+        channelId: "CMEGA",
+        replyThreadId: "slack:CMEGA:1785950000.100",
+      },
+    });
+
+    expect(result).toMatchObject({
+      paneId: "wSR:p1",
+      workspaceId: "wSR",
+      cwd: "/tmp/mega-shitrat-review",
+      sourceCwd: "/Users/joel/Code/mega-dot-dev/mega-dev",
+      freshWorkspace: true,
+      worktree: true,
+    });
+    expect(calls).toContainEqual([
+      "worktree", "create",
+      "--cwd", "/Users/joel/Code/mega-dot-dev/mega-dev",
+      "--branch", "shitrat/mega-review",
+      "--label", "[mega] assessment review",
+      "--no-focus", "--json",
+    ]);
+    const task = await readFile(join(dir, "tasks", "mega-review.md"), "utf8");
+    expect(task).toContain("Launch contract cwd: `/tmp/mega-shitrat-review`");
+    expect(task).toContain('"replyThreadId":"slack:CMEGA:1785950000.100"');
+    expect(task).toContain("--context");
+    expect(task).not.toContain("--data");
+
+    const livePane = {
+      pane_id: "wSR:p1",
+      label: laneLabel("mega-review"),
+      workspace_id: "wSR",
+      agent_status: "working",
+    };
+    const retry = fakeHerdr({ panes: [gatewayLoop, livePane], dir });
+    const idempotent = await retry.tools.dispatchWorker({
+      taskId: "mega-review",
+      lane: "mega-review",
+      task: "Review the assessment logic.",
+      cwd: "/Users/joel/Code/mega-dot-dev/mega-dev",
+      freshWorkspace: true,
+      worktree: true,
+      resultContext: {
+        platform: "slack",
+        channelId: "CMEGA",
+        replyThreadId: "slack:CMEGA:1785950000.100",
+      },
+    });
+    expect(idempotent).toMatchObject({
+      reused: true,
+      mode: "idempotent-existing",
+      paneId: "wSR:p1",
+    });
+    expect(retry.calls.some(([family, verb]) => family === "worktree" && verb === "create")).toBe(false);
+  });
+
+  test("fresh Slack work refuses without a return thread", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
+    const { tools } = fakeHerdr({ dir });
+    await expect(tools.dispatchWorker({
+      taskId: "missing-return",
+      task: "Review it.",
+      cwd: "/Users/joel/Code/mega-dot-dev/mega-dev",
+      freshWorkspace: true,
+      worktree: true,
+    })).rejects.toThrow("fresh Slack work requires resultContext");
   });
 
   test("a busy lane refuses rather than opening a second pane", async () => {

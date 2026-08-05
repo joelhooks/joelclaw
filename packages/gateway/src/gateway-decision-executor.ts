@@ -1,4 +1,8 @@
-import type { MessageEventDocument } from "@joelclaw/message-event-log";
+import type {
+  GatewayTargetIntent,
+  MessageEventDocument,
+  MessagePlatform,
+} from "@joelclaw/message-event-log";
 
 /**
  * Mechanical executor for recorded gateway deliver decisions. The agent has
@@ -18,12 +22,13 @@ export interface DeliverExecutorDependencies {
   readonly eventLog: DeliverExecutorEventLog;
   readonly recipientId: string;
   readonly send: (request: {
-    target: { platform: "telegram"; recipientId: string };
+    target: { platform: MessagePlatform; recipientId: string };
     content: { raw: string };
     text: string;
     flowId: string;
     origin: { machineId: string; producer: string };
     correlationId?: string;
+    replyThreadId?: string;
   }) => Promise<{ platformMessageId: string }>;
   readonly log?: (message: string, detail?: Record<string, unknown>) => void;
 }
@@ -35,6 +40,7 @@ interface DeliverDecisionPayload {
     readonly delivery?: string;
     readonly platform?: string;
     readonly rewrite?: string;
+    readonly target?: GatewayTargetIntent;
   };
   readonly rewrite?: string;
   readonly reason?: string;
@@ -51,6 +57,40 @@ const asDeliverText = (payload: DeliverDecisionPayload): string | null => {
   }
   return null;
 };
+
+function deliveryTarget(
+  decision: DeliverDecisionPayload["decision"],
+  defaultRecipientId: string,
+): {
+  target: { platform: MessagePlatform; recipientId: string };
+  replyThreadId?: string;
+} {
+  const target = decision?.target;
+  if (target?.kind !== "platform") {
+    if (!defaultRecipientId) throw new Error("Telegram deliver target requires recipientId");
+    return {
+      target: { platform: "telegram", recipientId: defaultRecipientId },
+    };
+  }
+  const conversationId = target.conversationId?.trim();
+  if (target.platform === "telegram" && !conversationId) {
+    if (!defaultRecipientId) throw new Error("Telegram deliver target requires recipientId");
+    return {
+      target: { platform: "telegram", recipientId: defaultRecipientId },
+    };
+  }
+  if (!conversationId) {
+    throw new Error(`${target.platform} deliver target requires conversationId`);
+  }
+  const threadId = target.threadId?.trim();
+  if (target.platform !== "telegram" && !threadId) {
+    throw new Error(`${target.platform} deliver target requires threadId`);
+  }
+  return {
+    target: { platform: target.platform, recipientId: conversationId },
+    ...(threadId ? { replyThreadId: threadId } : {}),
+  };
+}
 
 export async function drainDeliverDecisions(
   dependencies: DeliverExecutorDependencies,
@@ -87,8 +127,9 @@ export async function drainDeliverDecisions(
     // Execute, then advance. A crash between the two re-executes on the next
     // drain; the explicit sender's flowId-keyed receipts make the duplicate
     // visible, and a rare duplicate beats a silent gap (fallback doctrine).
+    const resolvedTarget = deliveryTarget(decision, dependencies.recipientId);
     await dependencies.send({
-      target: { platform: "telegram", recipientId: dependencies.recipientId },
+      ...resolvedTarget,
       content: { raw: text },
       text,
       flowId: event.flowId ?? `decision:${event._id}`,

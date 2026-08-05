@@ -1,4 +1,5 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { runJson } from "./process.mjs";
 
 function target(value) {
@@ -78,9 +79,14 @@ function pruneRegistry(registry, byId) {
   return live;
 }
 
-function workerBrief({ taskId, task }) {
+function workerBrief({ taskId, task, cwd, resultContext = {} }) {
+  const resultData = JSON.stringify({ taskId, ...resultContext });
   return [
     `# Gateway worker task: ${taskId}`,
+    "",
+    `Launch contract cwd: \`${cwd}\``,
+    "",
+    "Before work, run `pwd` and `git rev-parse --show-toplevel` when this is a Git repo. Stop and report a launch-contract mismatch instead of searching other repositories.",
     "",
     task.trim(),
     "",
@@ -88,7 +94,7 @@ function workerBrief({ taskId, task }) {
     "When finished, send your result back through the gateway (this is the ONLY return path):",
     "",
     "```bash",
-    `joelclaw notify send "worker ${taskId} done: <one-paragraph result>" --data '{"taskId":"${taskId}"}'`,
+    `joelclaw notify send "worker ${taskId} done: <one-paragraph result>" --kind receipt --source shitrat-worker --context '${resultData}'`,
     "```",
     "",
     "Then print DONE and stop. Do not commit anything. Do not message Joel any other way.",
@@ -113,20 +119,23 @@ export function createHerdrTools({
     return panes?.result?.panes ?? [];
   };
 
-  /** Every worker pane lives in one tab, so dispatch never grows the tab bar. */
-  const openLanePane = async ({ panes, workspace }) => {
+  /** Every reusable worker pane lives in one tab, so recurring beats do not grow the tab bar. */
+  const openLanePane = async ({ panes, workspace, cwd }) => {
     const host = panes.find(
       (pane) => typeof pane.label === "string" && pane.label.startsWith("🛠️ ") && pane.workspace_id === workspace,
     );
     if (host?.pane_id) {
       const split = await run("herdr", [
         "pane", "split", host.pane_id, "--direction", "down", "--ratio", "0.5",
-        "--cwd", WORKER_CWD, "--no-focus",
+        "--cwd", cwd, "--no-focus",
       ]);
       const paneId = split?.result?.pane?.pane_id;
       if (paneId) return paneId;
     }
-    const created = await run("herdr", ["tab", "create", "--workspace", workspace, "--label", WORKER_TAB_LABEL]);
+    const created = await run("herdr", [
+      "tab", "create", "--workspace", workspace, "--label", WORKER_TAB_LABEL,
+      "--cwd", cwd, "--no-focus",
+    ]);
     const paneId = created?.result?.root_pane?.pane_id;
     if (!paneId) throw new Error(`tab create returned no pane: ${JSON.stringify(created)}`);
     return paneId;
@@ -175,10 +184,24 @@ export function createHerdrTools({
      * exists — warm session, no new tab. Only opens a pane when the lane has
      * none, and refuses past MAX_WORKER_LANES rather than sprawling.
      */
-    dispatchWorker: async ({ taskId, label, task, lane: rawLane }) => {
+    dispatchWorker: async ({
+      taskId,
+      label,
+      task,
+      lane: rawLane,
+      cwd: rawCwd,
+      freshWorkspace = false,
+      worktree = false,
+      resultContext = {},
+    }) => {
       assertSlug(taskId, "taskId");
       if (typeof task !== "string" || task.trim().length === 0) throw new Error("task must be non-empty");
       const lane = assertSlug(rawLane?.trim() || laneFromTaskId(taskId), "lane");
+      const cwd = rawCwd?.trim() || WORKER_CWD;
+      if (!isAbsolute(cwd)) throw new Error("cwd must be an absolute path");
+      if (!resultContext || typeof resultContext !== "object" || Array.isArray(resultContext)) {
+        throw new Error("resultContext must be an object");
+      }
 
       const panes = await paneList();
       const gatewayPane = panes.find((pane) => pane.label === GATEWAY_LOOP_LABEL);
@@ -190,8 +213,101 @@ export function createHerdrTools({
 
       await mkdir(TASK_DIR, { recursive: true });
       const taskFile = `${TASK_DIR}/${taskId}.md`;
-      await writeFile(taskFile, workerBrief({ taskId, task }), "utf8");
+      await writeFile(taskFile, workerBrief({ taskId, task, cwd, resultContext }), "utf8");
       const launch = `pi @${taskFile} "Execute the task in the attached brief. Work autonomously. Print DONE when finished."`;
+
+      if (freshWorkspace) {
+        if (
+          resultContext.platform !== "slack"
+          || typeof resultContext.channelId !== "string"
+          || typeof resultContext.replyThreadId !== "string"
+        ) {
+          throw new Error(
+            "fresh Slack work requires resultContext.platform=slack plus channelId and replyThreadId",
+          );
+        }
+        const registered = registry[lane];
+        const existingFresh = byLabel.get(laneLabel(lane))
+          ?? (registered?.paneId ? byId.get(registered.paneId) : undefined);
+        if (existingFresh?.pane_id) {
+          if (registered?.taskId === taskId) {
+            return {
+              taskId,
+              lane,
+              paneId: existingFresh.pane_id,
+              workspaceId: registered.workspaceId,
+              cwd: registered.cwd,
+              sourceCwd: registered.sourceCwd ?? cwd,
+              freshWorkspace: true,
+              worktree: Boolean(registered.worktree),
+              taskFile: registered.taskFile,
+              reused: true,
+              mode: "idempotent-existing",
+              resultReturnsVia: "stream message.requested with payload.evidence.context.taskId and Slack resultContext",
+            };
+          }
+          throw new Error(
+            `fresh lane ${lane} already owns pane ${existingFresh.pane_id} for ${registered?.taskId ?? "unknown work"}. `
+            + "Release it before dispatching another task.",
+          );
+        }
+        if (Object.keys(registry).length >= MAX_WORKER_LANES) {
+          const busy = Object.entries(registry)
+            .map(([name, entry]) => `${name}(${byId.get(entry.paneId)?.agent_status ?? "unknown"})`)
+            .join(", ");
+          throw new Error(
+            `worker ceiling reached: ${MAX_WORKER_LANES} lanes already open [${busy}]. `
+            + "Release a finished lane with herdr_release_worker before dispatching a new one.",
+          );
+        }
+        const workspaceLabel = label?.trim() || `[sr] ${lane}`;
+        const created = worktree
+          ? await run("herdr", [
+              "worktree", "create", "--cwd", cwd,
+              "--branch", `shitrat/${taskId}`,
+              "--label", workspaceLabel,
+              "--no-focus", "--json",
+            ])
+          : await run("herdr", [
+              "workspace", "create", "--cwd", cwd,
+              "--label", workspaceLabel,
+              "--no-focus",
+            ]);
+        const paneId = created?.result?.root_pane?.pane_id;
+        const workspaceId = created?.result?.workspace?.workspace_id;
+        const resolvedCwd = created?.result?.worktree?.path || cwd;
+        if (!paneId || !workspaceId) {
+          throw new Error(`fresh workspace returned no pane/workspace: ${JSON.stringify(created)}`);
+        }
+        await writeFile(taskFile, workerBrief({ taskId, task, cwd: resolvedCwd, resultContext }), "utf8");
+        await run("herdr", ["pane", "rename", paneId, laneLabel(lane)]);
+        await run("herdr", ["pane", "run", paneId, launch]);
+        registry[lane] = {
+          paneId,
+          workspaceId,
+          taskId,
+          taskFile,
+          cwd: resolvedCwd,
+          sourceCwd: cwd,
+          worktree: Boolean(worktree),
+          dispatchedAt: now(),
+          label: label ?? null,
+          resultContext,
+        };
+        await saveRegistry(registry);
+        return {
+          taskId,
+          lane,
+          paneId,
+          workspaceId,
+          cwd: resolvedCwd,
+          sourceCwd: cwd,
+          freshWorkspace: true,
+          worktree: Boolean(worktree),
+          taskFile,
+          resultReturnsVia: "stream message.requested with payload.evidence.context.taskId and Slack resultContext",
+        };
+      }
 
       const existing = byLabel.get(laneLabel(lane)) ?? byId.get(registry[lane]?.paneId);
       if (existing?.pane_id) {
@@ -208,11 +324,19 @@ export function createHerdrTools({
           ? ["agent", "prompt", existing.pane_id, `Next task: read ${taskFile} and execute it. Work autonomously. Print DONE when finished.`]
           : ["pane", "run", existing.pane_id, launch]);
         await run("herdr", ["pane", "rename", existing.pane_id, laneLabel(lane)]);
-        registry[lane] = { paneId: existing.pane_id, taskId, taskFile, dispatchedAt: now(), label: label ?? null };
+        registry[lane] = {
+          paneId: existing.pane_id,
+          taskId,
+          taskFile,
+          cwd,
+          dispatchedAt: now(),
+          label: label ?? null,
+          resultContext,
+        };
         await saveRegistry(registry);
         return {
           taskId, lane, paneId: existing.pane_id, reused: true, mode, taskFile,
-          resultReturnsVia: "stream message.requested with data.taskId",
+          resultReturnsVia: "stream message.requested with payload.evidence.context.taskId",
         };
       }
 
@@ -226,14 +350,22 @@ export function createHerdrTools({
         );
       }
 
-      const paneId = await openLanePane({ panes, workspace });
+      const paneId = await openLanePane({ panes, workspace, cwd });
       await run("herdr", ["pane", "rename", paneId, laneLabel(lane)]);
       await run("herdr", ["pane", "run", paneId, launch]);
-      registry[lane] = { paneId, taskId, taskFile, dispatchedAt: now(), label: label ?? null };
+      registry[lane] = {
+        paneId,
+        taskId,
+        taskFile,
+        cwd,
+        dispatchedAt: now(),
+        label: label ?? null,
+        resultContext,
+      };
       await saveRegistry(registry);
       return {
         taskId, lane, paneId, reused: false, mode: "opened", taskFile,
-        resultReturnsVia: "stream message.requested with data.taskId",
+        resultReturnsVia: "stream message.requested with payload.evidence.context.taskId",
       };
     },
 
@@ -262,10 +394,18 @@ export function createHerdrTools({
       let closed = false;
       if (close) {
         try {
-          await run("herdr", ["pane", "close", entry.paneId]);
+          if (entry.worktree && entry.workspaceId) {
+            // Never force a dirty checkout away. A refusal keeps the lane open
+            // so steering can inspect and harvest real worker changes.
+            await run("herdr", [
+              "worktree", "remove", "--workspace", entry.workspaceId, "--json",
+            ]);
+          } else {
+            await run("herdr", ["pane", "close", entry.paneId]);
+          }
           closed = true;
         } catch (error) {
-          // A pane that already vanished is the outcome we wanted.
+          // A pane/workspace that already vanished is the outcome we wanted.
           if (!String(error).includes("not found")) throw error;
           closed = true;
         }

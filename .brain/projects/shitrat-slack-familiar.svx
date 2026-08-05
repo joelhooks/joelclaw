@@ -135,9 +135,9 @@ Flue is not disqualified for being experimental. Joel explicitly likes experimen
 
 Implementation repo scaffolded at `/Users/joel/Code/joelhooks/shitrat-slack-agent` with Cloudflare Agents SDK, Wrangler, pi-notes Brain, Slack ingress, and a signed joelclaw executor bridge skeleton.
 
-## Recommended next move
+## Historical next move (2026-05)
 
-Design a Cloudflare-first ShitRat architecture and build the smallest vertical slice:
+The May proposal was a Cloudflare-first vertical slice:
 
 ```text
 Slack :rat: reaction
@@ -149,3 +149,115 @@ Slack :rat: reaction
   -> result returns to Cloudflare
   -> ShitRat posts a threaded reply
 ```
+
+## Current proposal: team-triggered Herdr work (2026-08-05)
+
+A real request exposed the smaller local path. A teammate posted `@Joel` plus `:shitrat:` and asked for a review of assessment logic and screens. The live Slack connection received the message, but the gateway treated it as passive channel intelligence. It was not an app mention, so `packages/gateway/src/slack-runtime.ts` did not invoke work.
+
+The work itself was completed manually as a canary. A fresh Pi worker ran in Herdr against the mapped MEGA repository, wrote a private Brain review report, passed 106 assessment tests plus the contamination and Brain checks, and found nine defects. No Slack reply was sent automatically. This proves the executor shape; the missing part is the trigger, lifecycle, and reply boundary.
+
+### Trigger grammar
+
+Use an exact, boring trigger. Do not classify ordinary channel chatter with a model.
+
+- Channel name starts with `lc-` or `cc-`; no per-channel or per-sender Task Grant gate.
+- Message contains the exact `:shitrat:` token or directly mentions the existing `@joelclaw` bot, repurposed as ShitRat.
+- The channel must have a durable context binding before launch. An unmapped channel receives a threaded binding-needed reply; the gateway never guesses a cwd.
+- Optional later trigger: an allowed teammate adds a `:shitrat:` reaction to a task root.
+- Dedupe key is Slack workspace + channel + root timestamp.
+
+### Channel dictates context
+
+The Slack channel is the primary context key for both the work and the response. The message is the request inside that context; it does not choose the project from scratch.
+
+Each allowed channel has one durable **Channel Context Binding**:
+
+- project and local repository root;
+- canonical Brain project/area notes and active brief;
+- channel purpose, vocabulary, people, and response audience;
+- required skills and default validation commands;
+- allowed task modes, write boundaries, and Reply Grant policy;
+- related channels or external systems that may supply context.
+
+For example, a request in the MEGA launch channel starts from the MEGA repository, its Brain, its current assessment brief, and that channel's recent thread history. It does not search every repo and guess what “assessment” means. The final Slack reply uses the same binding, so it reports in the channel's language and links the artifacts that channel cares about.
+
+Context precedence is deterministic:
+
+```text
+Channel Context Binding
+  -> root message + full thread
+  -> linked project Brain and live repo state
+  -> sender/participant context
+  -> bounded cross-channel or system recall only when the binding allows it
+```
+
+An unmapped channel does not run arbitrary local work. ShitRat asks Joel to bind it or records a private draft recommendation. Channel IDs and private topology stay in private config, not public repo files.
+
+The binding is also the **launch contract**, not prompt decoration. Before Pi starts, the dispatcher resolves and verifies:
+
+```ts
+{
+  repo: "/absolute/project/repo",
+  cwd: "/absolute/project/repo-or-worktree",
+  brainEntry: ".brain/projects/.../brief.svx",
+  skills: ["..."],
+  taskMode: "review" | "write" | "operate",
+  isolation: "read-only-main" | "worktree",
+  validation: ["exact project commands"]
+}
+```
+
+Herdr creates the workspace and Pi process with that `cwd`. The task brief includes the resolved binding and Slack permalink. Pi must verify `pwd`, repository identity, Brain entry, and source-control state before it claims the task. A mismatch fails closed; the agent does not `cd` around until something looks plausible.
+
+### Explicit trigger consent
+
+Joel authorized `:shitrat:` and direct `@joelclaw` mentions in any `lc-*` or `cc-*` channel as both work consent and one-thread reply consent. This narrow deterministic path does not use Task Grants or Reply Grants. Ordinary channel chatter stays ambient and ADR-0244 still governs every non-triggered public reply.
+
+The existing `@joelclaw` Slack bot is the ShitRat identity for the canary. Do not create a second Slack app or listener. The bot must be present in a channel for Socket Mode to receive its events; channel membership is transport reach, not a policy gate.
+
+### Runtime flow
+
+Keep the existing Socket Mode owner. Do not start another Slack listener.
+
+```text
+Slack message
+  -> Chat SDK / existing Slack runtime
+  -> pure Task Grant policy + exact trigger parser
+  -> durable slack.work.requested event
+  -> ShitRat bot adds :shitrat: acknowledgement on the thread root
+  -> live Agent Comms Gateway records a fanout decision + taskId
+  -> private Channel Context Binding loads repo, Brain, people, policy, and validation
+  -> fresh Herdr workspace starts a Pi orchestrator in an isolated worktree
+  -> orchestrator starts from that channel context and uses Herdr workers as needed
+  -> result.json + Brain/report artifacts
+  -> worker result returns with taskId + Slack reply context
+  -> gateway matches the fanout receipt
+  -> @joelclaw/ShitRat bot posts one threaded result automatically
+```
+
+Reuse the live Agent Comms Gateway fanout contract from ADR-0249. Do not build another orchestration service. Workers never post to Slack directly. They append a result receipt. The existing gateway remains the only outward comms owner.
+
+Automated acknowledgement must use the bot token so the reaction is visibly ShitRat's. The existing `jc-slack react` path uses Joel's user token and should remain the human-session work-tagging path. The Slack work-state board must recognize bot-owned `:shitrat:` as started before the canary relies on it.
+
+### Lifecycle sketch
+
+Use an XState v5 machine instead of loose Redis flags:
+
+```text
+observed
+  -> authorized
+  -> acknowledged
+  -> resolvingProject
+  -> provisioning
+  -> running
+  -> reviewing
+  -> posted
+
+any -> rejected | failed | cancelled
+```
+
+The machine must model dedupe, retries, Herdr crash recovery, cancellation, result harvest, and the public-post gate. Slack reactions remain the visible work-state projection: no tag = unclaimed, `:shitrat:` = started, `:white_check_mark:` = shipped.
+
+### Current recommendation
+
+Ship the deterministic trigger across every visible `lc-*` and `cc-*` channel. Bind `lc-mega-dev` first as the live canary. The transport adds a `:shitrat:` reaction, the gateway launches a fresh Herdr worktree in the resolved project cwd, and the existing bot posts the worker result to the originating thread without an approval gate.

@@ -364,15 +364,18 @@ describe("gateway transport slim-down seams", () => {
     });
 
     const receipt = await send({
-      target: { platform: "slack", recipientId: "UJOEL" },
+      target: { platform: "slack", recipientId: "CMEGA" },
       content: { markdown: "agent chose **this**" },
       text: "agent chose this",
       flowId: "flow-agent-send-1",
       origin,
       correlationId: "decision:event-1",
+      replyThreadId: "slack:CMEGA:1785950000.100",
     });
 
     expect(posted).toEqual([{ markdown: "agent chose **this**" }]);
+    expect(calls).toContain("post:slack:CMEGA:1785950000.100");
+    expect(calls.some((call) => call.startsWith("open:"))).toBe(false);
     expect(receipt).toMatchObject({ platform: "slack", platformMessageId: "171234.567" });
     expect(remembered).toEqual([receipt]);
     expect(events.map((event) => event.kind)).toEqual([

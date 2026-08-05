@@ -5,6 +5,7 @@ import type {
 } from "@joelclaw/message-contract";
 import {
   getMessageEventLogClient,
+  type InboundReceivedPayload,
   type MessageEventOrigin,
 } from "@joelclaw/message-event-log";
 import { loadGatewayInngestEventConfig } from "../lib/inngest-event";
@@ -105,6 +106,17 @@ export interface StreamInboundPublisherOptions {
     platformMessageId: string,
     conversationId?: string,
   ) => Promise<string | undefined>;
+  readonly resolveWorkRequest?: (
+    event: InboundEvent,
+  ) => Promise<InboundReceivedPayload["workRequest"] | undefined>;
+  readonly acknowledgeWorkRequest?: (
+    workRequest: NonNullable<InboundReceivedPayload["workRequest"]>,
+  ) => Promise<void>;
+  readonly onWorkRequestError?: (
+    error: unknown,
+    phase: "resolve" | "acknowledge",
+    event: InboundEvent,
+  ) => void;
   readonly machineId?: string;
 }
 
@@ -165,12 +177,16 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
     ?? "flagg";
   return {
     publishEvent: async (event: InboundEvent): Promise<void> => {
-      if (
-        event.authorization.verdict !== "accepted"
-        || event.authorization.reason !== "authorized_joel"
-      ) {
-        return;
+      let workRequest: InboundReceivedPayload["workRequest"];
+      try {
+        workRequest = await options.resolveWorkRequest?.(event);
+      } catch (error) {
+        options.onWorkRequestError?.(error, "resolve", event);
       }
+      const authorizedJoel = event.authorization.verdict === "accepted"
+        && event.authorization.reason === "authorized_joel";
+      if (!authorizedJoel && !workRequest) return;
+
       const platformMessageId = event.platformIds.messageId
         ?? event.rawAnchors.sourceMessageId
         ?? undefined;
@@ -184,14 +200,17 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
             event.platformIds.conversationId,
           )
         : undefined;
-      const addressing = inboundAddressing(event, replyFlowId);
-      const payload = {
+      const addressing = workRequest
+        ? "addressed"
+        : inboundAddressing(event, replyFlowId);
+      const payload: InboundReceivedPayload = {
         addressing,
         platformEventId: event.eventId,
         actorId: event.actor.platformUserId,
         conversationId: event.platformIds.conversationId,
         threadId: event.platformIds.threadId ?? undefined,
         replyFlowId,
+        ...(workRequest ? { workRequest } : {}),
         content: inboundContent(event),
       };
       await eventLog.append({
@@ -206,6 +225,13 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
         occurredAt: Date.parse(event.occurredAt),
         payload,
       });
+      if (workRequest && options.acknowledgeWorkRequest) {
+        try {
+          await options.acknowledgeWorkRequest(workRequest);
+        } catch (error) {
+          options.onWorkRequestError?.(error, "acknowledge", event);
+        }
+      }
     },
   };
 }

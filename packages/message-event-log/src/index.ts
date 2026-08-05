@@ -34,7 +34,12 @@ export type MessageEventOrigin = {
 };
 
 export type GatewayTargetIntent =
-  | { kind: "platform"; platform: MessagePlatform; conversationId?: string }
+  | {
+      kind: "platform";
+      platform: MessagePlatform;
+      conversationId?: string;
+      threadId?: string;
+    }
   | { kind: "phone" }
   | { kind: "live-pane"; paneId: string }
   | { kind: "revived-session"; sessionId: string }
@@ -162,6 +167,23 @@ export type InboundReceivedPayload = {
   conversationId: string;
   threadId?: string;
   replyFlowId?: string;
+  addressing?: "addressed" | "ambient";
+  workRequest?: {
+    trigger: "shitrat";
+    addressedBy: "emoji" | "mention";
+    channelId: string;
+    channelName: string;
+    messageTs: string;
+    threadTs: string;
+    replyThreadId: string;
+    binding?: {
+      repo?: string;
+      cwd?: string;
+      brainEntry?: string;
+      skills?: readonly string[];
+      validation?: readonly string[];
+    };
+  };
   content: InboundContentPacket;
 };
 
