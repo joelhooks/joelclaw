@@ -25,6 +25,7 @@ export type DriverContext = {
   lastFailure?: string;
   retireReason?: RetireReason;
   stalledEventId?: string;
+  stalledCount?: number;
 };
 
 export type DriverEvent =
@@ -93,7 +94,8 @@ const shouldRetireStalled = ({ context, event }: { context: DriverContext; event
   event.type === "OBSERVED"
   && event.paneExists
   && event.sessionExists
-  && context.stalledEventId !== undefined;
+  && context.stalledEventId !== undefined
+  && (context.stalledCount ?? 0) >= 2;
 
 const pokePastDeadline = ({ context, event }: { context: DriverContext; event: DriverEvent }): boolean =>
   event.type === "OBSERVED"
@@ -140,12 +142,19 @@ export const driverMachine = setup({
         event.type === "POKE_ANSWERED" ? event.answeredAt : undefined,
       lastFailure: undefined,
       stalledEventId: undefined,
+      stalledCount: undefined,
     }),
     recordStall: assign({
       pokeStartedAt: undefined,
       lastFailure: ({ event }) =>
         event.type === "POKE_STALLED" ? `stream cursor stalled at ${event.eventId}` : "stream cursor stalled",
       stalledEventId: ({ event }) => event.type === "POKE_STALLED" ? event.eventId : undefined,
+      stalledCount: ({ context, event }) => {
+        if (event.type !== "POKE_STALLED") return undefined;
+        return context.stalledEventId === event.eventId
+          ? (context.stalledCount ?? 0) + 1
+          : 1;
+      },
     }),
     recordFailure: assign({
       lastFailure: ({ event }) =>
@@ -159,6 +168,7 @@ export const driverMachine = setup({
       lastFailure: undefined,
       retireReason: undefined,
       stalledEventId: undefined,
+      stalledCount: undefined,
     }),
     recordSpawnRequest: assign({
       spawnRequestedAt: ({ event }) =>

@@ -144,7 +144,7 @@ describe("AgentCommsDriver", () => {
     );
   });
 
-  test("retires a settled session that did not move the stream cursor", async () => {
+  test("retires only after two settled turns fail to move the same stream head", async () => {
     const { fake, ports } = harness();
     fake.unhandled = 1;
     fake.firstUnhandledId = "stuck-event";
@@ -163,6 +163,12 @@ describe("AgentCommsDriver", () => {
       action: "heartbeat.withheld",
       detail: { reason: "driver-unhealthy" },
     });
+    expect(fake.stops).toBe(0);
+
+    fake.now += 15_000;
+    expect(await run(driver)).toBe("unhealthy");
+    expect(fake.prompts).toHaveLength(2);
+    expect(fake.stops).toBe(0);
 
     fake.now += 15_000;
     expect(await run(driver)).toBe("awaitingSuccessor");
@@ -172,6 +178,27 @@ describe("AgentCommsDriver", () => {
       reason: "stalled",
       note: expect.stringContaining("did not move the authoritative stream cursor"),
     });
+  });
+
+  test("allows one stationary turn for a two-stage acknowledgement", async () => {
+    const { fake, ports } = harness();
+    fake.unhandled = 1;
+    fake.firstUnhandledId = "addressed-joel-event";
+    fake.advanceOnPrompt = false;
+    const driver = new AgentCommsDriver(ports, {
+      heartbeatKey: "test:gateway:heartbeat",
+    });
+
+    expect(await run(driver)).toBe("unhealthy");
+    expect(fake.stops).toBe(0);
+
+    fake.now += 15_000;
+    fake.advanceOnPrompt = true;
+    expect(await run(driver)).toBe("ready");
+    expect(fake.prompts).toHaveLength(2);
+    expect(fake.stops).toBe(0);
+    expect(fake.spawns).toBe(0);
+    expect(heartbeatExists(fake)).toBe(true);
   });
 
   test("withholds heartbeat after a failed poke and lets its TTL trip fallback", async () => {
