@@ -11,7 +11,7 @@ function slackEvent(authorizedJoel: boolean): InboundEvent {
     occurredAt: "2026-08-05T16:00:00.000Z",
     actor: { platformUserId: authorizedJoel ? "UJOEL" : "UTEAM" },
     platformIds: {
-      conversationId: "CMEGA",
+      conversationId: "CEXAMPLE",
       messageId: "1785950000.100",
       threadId: null,
     },
@@ -56,12 +56,12 @@ function harness(input: {
       ? {
           trigger: "shitrat",
           addressedBy: "emoji",
-          channelId: "CMEGA",
-          channelName: "lc-mega-dev",
+          channelId: "CEXAMPLE",
+          channelName: "lc-example-project",
           messageTs: "1785950000.100",
           threadTs: "1785950000.100",
-          replyThreadId: "slack:CMEGA:1785950000.100",
-          binding: { cwd: "/Users/joel/Code/mega-dot-dev/mega-dev" },
+          replyThreadId: "slack:CEXAMPLE:1785950000.100",
+          binding: { cwd: "/tmp/example-project" },
         }
       : undefined,
     acknowledgeWorkRequest: async (request) => {
@@ -85,12 +85,12 @@ describe("stream inbound ShitRat work requests", () => {
       workRequest: {
         trigger: "shitrat",
         addressedBy: "emoji",
-        channelName: "lc-mega-dev",
-        replyThreadId: "slack:CMEGA:1785950000.100",
-        binding: { cwd: "/Users/joel/Code/mega-dot-dev/mega-dev" },
+        channelName: "lc-example-project",
+        replyThreadId: "slack:CEXAMPLE:1785950000.100",
+        binding: { cwd: "/tmp/example-project" },
       },
     });
-    expect(tested.acknowledged).toEqual(["slack:CMEGA:1785950000.100"]);
+    expect(tested.acknowledged).toEqual(["slack:CEXAMPLE:1785950000.100"]);
     expect(tested.errors).toEqual([]);
   });
 
@@ -126,11 +126,11 @@ describe("stream inbound ShitRat work requests", () => {
       resolveWorkRequest: async () => ({
         trigger: "shitrat",
         addressedBy: "emoji",
-        channelId: "CMEGA",
-        channelName: "lc-mega-dev",
+        channelId: "CEXAMPLE",
+        channelName: "lc-example-project",
         messageTs: "1785950000.100",
         threadTs: "1785950000.100",
-        replyThreadId: "slack:CMEGA:1785950000.100",
+        replyThreadId: "slack:CEXAMPLE:1785950000.100",
       }),
       acknowledgeWorkRequest: async () => {
         throw new Error("missing_scope");

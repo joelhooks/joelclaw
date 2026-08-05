@@ -260,4 +260,4 @@ The machine must model dedupe, retries, Herdr crash recovery, cancellation, resu
 
 ### Current recommendation
 
-Ship the deterministic trigger across every visible `lc-*` and `cc-*` channel. Bind `lc-mega-dev` first as the live canary. The transport adds a `:shitrat:` reaction, the gateway launches a fresh Herdr worktree in the resolved project cwd, and the existing bot posts the worker result to the originating thread without an approval gate.
+Ship the deterministic trigger across every visible `lc-*` and `cc-*` channel. Bind one mapped `lc-*` channel first as the live canary. The transport adds a `:shitrat:` reaction, the gateway launches a fresh Herdr worktree in the resolved project cwd, and the existing bot posts the worker result to the originating thread without an approval gate.

@@ -58,10 +58,10 @@ const shitratWorkerResult = {
     text: "Review complete.",
     evidence: {
       context: {
-        taskId: "mega-review",
+        taskId: "example-review",
         platform: "slack",
-        channelId: "CMEGA",
-        replyThreadId: "slack:CMEGA:1785950000.100",
+        channelId: "CEXAMPLE",
+        replyThreadId: "slack:CEXAMPLE:1785950000.100",
       },
     },
   },
@@ -115,10 +115,10 @@ describe("stream receipts", () => {
     const stream = createStreamTools({ client, now: () => 20 });
     const pending = await stream.pending();
     expect(pending.pending[0].workerResult).toEqual({
-      taskId: "mega-review",
+      taskId: "example-review",
       platform: "slack",
-      channelId: "CMEGA",
-      replyThreadId: "slack:CMEGA:1785950000.100",
+      channelId: "CEXAMPLE",
+      replyThreadId: "slack:CEXAMPLE:1785950000.100",
     });
     const appended = await stream.recordDecision({
       payload: {
@@ -134,8 +134,8 @@ describe("stream receipts", () => {
     expect(appended.event.payload.decision.target).toEqual({
       kind: "platform",
       platform: "slack",
-      conversationId: "CMEGA",
-      threadId: "slack:CMEGA:1785950000.100",
+      conversationId: "CEXAMPLE",
+      threadId: "slack:CEXAMPLE:1785950000.100",
     });
   });
 
@@ -382,7 +382,7 @@ describe("worker lanes", () => {
             type: "worktree_created",
             workspace: { workspace_id: "wSR" },
             root_pane: { pane_id: "wSR:p1" },
-            worktree: { path: "/tmp/mega-shitrat-review", branch: "shitrat/mega-review" },
+            worktree: { path: "/tmp/example-shitrat-review", branch: "shitrat/example-review" },
           },
         };
       }
@@ -418,59 +418,59 @@ describe("worker lanes", () => {
     const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
     const { calls, tools } = fakeHerdr({ dir });
     const result = await tools.dispatchWorker({
-      taskId: "mega-review",
-      lane: "mega-review",
+      taskId: "example-review",
+      lane: "example-review",
       label: "[mega] assessment review",
       task: "Review the assessment logic.",
-      cwd: "/Users/joel/Code/mega-dot-dev/mega-dev",
+      cwd: "/tmp/example-project",
       freshWorkspace: true,
       worktree: true,
       resultContext: {
         platform: "slack",
-        channelId: "CMEGA",
-        replyThreadId: "slack:CMEGA:1785950000.100",
+        channelId: "CEXAMPLE",
+        replyThreadId: "slack:CEXAMPLE:1785950000.100",
       },
     });
 
     expect(result).toMatchObject({
       paneId: "wSR:p1",
       workspaceId: "wSR",
-      cwd: "/tmp/mega-shitrat-review",
-      sourceCwd: "/Users/joel/Code/mega-dot-dev/mega-dev",
+      cwd: "/tmp/example-shitrat-review",
+      sourceCwd: "/tmp/example-project",
       freshWorkspace: true,
       worktree: true,
     });
     expect(calls).toContainEqual([
       "worktree", "create",
-      "--cwd", "/Users/joel/Code/mega-dot-dev/mega-dev",
-      "--branch", "shitrat/mega-review",
+      "--cwd", "/tmp/example-project",
+      "--branch", "shitrat/example-review",
       "--label", "[mega] assessment review",
       "--no-focus", "--json",
     ]);
-    const task = await readFile(join(dir, "tasks", "mega-review.md"), "utf8");
-    expect(task).toContain("Launch contract cwd: `/tmp/mega-shitrat-review`");
-    expect(task).toContain('"replyThreadId":"slack:CMEGA:1785950000.100"');
+    const task = await readFile(join(dir, "tasks", "example-review.md"), "utf8");
+    expect(task).toContain("Launch contract cwd: `/tmp/example-shitrat-review`");
+    expect(task).toContain('"replyThreadId":"slack:CEXAMPLE:1785950000.100"');
     expect(task).toContain("--context");
     expect(task).not.toContain("--data");
 
     const livePane = {
       pane_id: "wSR:p1",
-      label: laneLabel("mega-review"),
+      label: laneLabel("example-review"),
       workspace_id: "wSR",
       agent_status: "working",
     };
     const retry = fakeHerdr({ panes: [gatewayLoop, livePane], dir });
     const idempotent = await retry.tools.dispatchWorker({
-      taskId: "mega-review",
-      lane: "mega-review",
+      taskId: "example-review",
+      lane: "example-review",
       task: "Review the assessment logic.",
-      cwd: "/Users/joel/Code/mega-dot-dev/mega-dev",
+      cwd: "/tmp/example-project",
       freshWorkspace: true,
       worktree: true,
       resultContext: {
         platform: "slack",
-        channelId: "CMEGA",
-        replyThreadId: "slack:CMEGA:1785950000.100",
+        channelId: "CEXAMPLE",
+        replyThreadId: "slack:CEXAMPLE:1785950000.100",
       },
     });
     expect(idempotent).toMatchObject({
@@ -487,7 +487,7 @@ describe("worker lanes", () => {
     await expect(tools.dispatchWorker({
       taskId: "missing-return",
       task: "Review it.",
-      cwd: "/Users/joel/Code/mega-dot-dev/mega-dev",
+      cwd: "/tmp/example-project",
       freshWorkspace: true,
       worktree: true,
     })).rejects.toThrow("fresh Slack work requires resultContext");

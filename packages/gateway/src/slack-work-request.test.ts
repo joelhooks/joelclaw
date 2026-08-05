@@ -26,13 +26,13 @@ function slackMessage(input: {
     shadow: true,
     actor: {
       platformUserId: "UTEAM",
-      userName: "vojta",
-      displayName: "Vojta",
+      userName: "teammate",
+      displayName: "Teammate",
       isBot: input.isBot ?? false,
       isSelf: input.isSelf ?? false,
     },
     platformIds: {
-      conversationId: input.channelId ?? "CMEGA",
+      conversationId: input.channelId ?? "CEXAMPLE",
       messageId: messageTs,
       threadId: null,
       actorId: "UTEAM",
@@ -77,7 +77,7 @@ describe("Slack ShitRat work trigger", () => {
   });
 
   test("accepts lc-* and cc-* channel names only", () => {
-    expect(isShitRatWorkChannel("lc-mega-dev")).toBe(true);
+    expect(isShitRatWorkChannel("lc-example-project")).toBe(true);
     expect(isShitRatWorkChannel("#cc-matt-p")).toBe(true);
     expect(isShitRatWorkChannel("brain-joel")).toBe(false);
   });
@@ -85,10 +85,10 @@ describe("Slack ShitRat work trigger", () => {
   test("builds the root-thread launch context and loads the channel binding", async () => {
     const request = await resolveSlackWorkRequest({
       event: slackMessage({ text: "review assessment :shitrat:" }),
-      resolveChannelName: async () => "lc-mega-dev",
+      resolveChannelName: async () => "lc-example-project",
       loadBinding: async () => ({
-        repo: "/Users/joel/Code/mega-dot-dev/mega-dev",
-        cwd: "/Users/joel/Code/mega-dot-dev/mega-dev",
+        repo: "/tmp/example-project",
+        cwd: "/tmp/example-project",
         brainEntry: ".brain/projects/mega-assessment/mega-assessment-brief.svx",
       }),
     });
@@ -96,14 +96,14 @@ describe("Slack ShitRat work trigger", () => {
     expect(request).toEqual({
       trigger: "shitrat",
       addressedBy: "emoji",
-      channelId: "CMEGA",
-      channelName: "lc-mega-dev",
+      channelId: "CEXAMPLE",
+      channelName: "lc-example-project",
       messageTs: "1785950000.100",
       threadTs: "1785950000.100",
-      replyThreadId: "slack:CMEGA:1785950000.100",
+      replyThreadId: "slack:CEXAMPLE:1785950000.100",
       binding: {
-        repo: "/Users/joel/Code/mega-dot-dev/mega-dev",
-        cwd: "/Users/joel/Code/mega-dot-dev/mega-dev",
+        repo: "/tmp/example-project",
+        cwd: "/tmp/example-project",
         brainEntry: ".brain/projects/mega-assessment/mega-assessment-brief.svx",
       },
     });
@@ -120,7 +120,7 @@ describe("Slack ShitRat work trigger", () => {
     });
 
     expect(request?.threadTs).toBe("1785950000.100");
-    expect(request?.replyThreadId).toBe("slack:CMEGA:1785950000.100");
+    expect(request?.replyThreadId).toBe("slack:CEXAMPLE:1785950000.100");
   });
 
   test("repurposes a direct @joelclaw mention as ShitRat work", async () => {
@@ -130,7 +130,7 @@ describe("Slack ShitRat work trigger", () => {
     });
     const request = await resolveSlackWorkRequest({
       event,
-      resolveChannelName: async () => "lc-mega-dev",
+      resolveChannelName: async () => "lc-example-project",
     });
     expect(request?.addressedBy).toBe("mention");
   });
@@ -142,7 +142,7 @@ describe("Slack ShitRat work trigger", () => {
     ]) {
       const request = await resolveSlackWorkRequest({
         event,
-        resolveChannelName: async () => "lc-mega-dev",
+        resolveChannelName: async () => "lc-example-project",
       });
       expect(request).toBeUndefined();
     }
