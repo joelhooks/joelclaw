@@ -28,7 +28,11 @@ export const DEFAULT_AGGREGATE_GRACE_MS = 60 * 60 * 1000;
  * and the transport deserves to know.
  */
 export const DEFAULT_UNRESPONSIVE_GRACE_MS = DEFAULT_POKE_DEADLINE_MS;
-export const DRIVER_POKE_TEXT = "Unhandled gateway stream work exists. Read the authoritative stream and decide it.";
+export const DRIVER_POKE_TEXT = [
+  "Unhandled gateway stream work exists. Read the authoritative stream and decide it.",
+  "Process at most 20 inputs or four minutes, whichever comes first, then finish the turn.",
+  "The driver will wake you again. A bounded turn lets it verify cursor movement and prevents one backlog from monopolizing the loop.",
+].join(" ");
 
 export type AggregateDeadline = {
   aggregateId: string;
@@ -49,6 +53,7 @@ export type DriverReceipt = {
     | "observed"
     | "poke.started"
     | "poke.answered"
+    | "poke.stalled"
     | "poke.failed"
     | "heartbeat.refreshed"
     | "heartbeat.withheld"
@@ -70,6 +75,8 @@ export type DriverPorts = {
     & { sessionStartedAt?: number }
   >;
   countUnhandled: () => Promise<number>;
+  /** Head event proves whether one settled poke moved the authoritative cursor. */
+  firstUnhandledId: () => Promise<string | undefined>;
   /** Recent terminal/assistant text used only for degeneration detection. */
   readRecentOutput: () => Promise<string>;
   promptAgent: (text: string, timeoutMs: number) => Promise<void>;
@@ -118,6 +125,9 @@ const stateOf = (actor: ActorRefFrom<typeof driverMachine>): DriverState =>
 const handoffNote = (reason: RetireReason, sessionAgeMs: number): string => {
   if (reason === "degeneration") {
     return "Driver forced retire: repeated-token collapse detected in recent session output. Replay is authoritative.";
+  }
+  if (reason === "stalled") {
+    return "Driver forced retire: a settled poke did not move the authoritative stream cursor. Replay is authoritative.";
   }
   const hours = Math.round((sessionAgeMs / 3_600_000) * 10) / 10;
   return `Driver clean retire after ${hours}h wall-clock session age. Replay is authoritative.`;
@@ -187,10 +197,11 @@ export class AgentCommsDriver {
     return Effect.gen(this, function* () {
       this.start();
       const now = this.ports.now();
-      const [agent, unhandled, deadlines, recentOutput] = yield* Effect.all(
+      const [agent, unhandled, firstUnhandledId, deadlines, recentOutput] = yield* Effect.all(
         [
           attempt("inspectAgent", this.ports.inspectAgent),
           attempt("countUnhandled", this.ports.countUnhandled),
+          attempt("firstUnhandledId", this.ports.firstUnhandledId),
           attempt("listDueDeadlines", () => this.ports.listDueDeadlines(now)),
           attempt("readRecentOutput", this.ports.readRecentOutput),
         ],
@@ -288,11 +299,21 @@ export class AgentCommsDriver {
           attempt("promptAgent", () => this.ports.promptAgent(this.#pokeText, this.#pokeDeadlineMs)),
         );
         if (prompted._tag === "Right") {
-          const answeredAt = this.ports.now();
-          // An answered poke is the strongest responsiveness evidence there is.
-          this.#lastResponsiveAt = answeredAt;
-          this.#actor.send({ type: "POKE_ANSWERED", answeredAt });
-          yield* this.#receipt("poke.answered", { answeredAt });
+          const remainingHead = yield* attempt("firstUnhandledIdAfterPoke", this.ports.firstUnhandledId);
+          if (firstUnhandledId !== undefined && remainingHead === firstUnhandledId) {
+            this.#actor.send({ type: "POKE_STALLED", eventId: firstUnhandledId });
+            yield* this.#receipt("poke.stalled", { eventId: firstUnhandledId });
+          } else {
+            const answeredAt = this.ports.now();
+            // Cursor movement plus a settled turn proves the session did useful work.
+            this.#lastResponsiveAt = answeredAt;
+            this.#actor.send({ type: "POKE_ANSWERED", answeredAt });
+            yield* this.#receipt("poke.answered", {
+              answeredAt,
+              previousHead: firstUnhandledId,
+              nextHead: remainingHead,
+            });
+          }
         } else {
           this.#actor.send({ type: "POKE_FAILED", reason: String(prompted.left.cause) });
           yield* this.#receipt("poke.failed", { error: String(prompted.left.cause) });

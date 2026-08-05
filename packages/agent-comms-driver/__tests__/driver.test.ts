@@ -15,6 +15,8 @@ type Fake = {
   now: number;
   agent: { paneExists: boolean; sessionExists: boolean; idle: boolean };
   unhandled: number;
+  firstUnhandledId?: string;
+  advanceOnPrompt: boolean;
   recentOutput: string;
   due: AggregateDeadline[];
   openAggregates: number;
@@ -33,6 +35,7 @@ function harness(): { fake: Fake; ports: DriverPorts } {
     now: 1_000,
     agent: { paneExists: true, sessionExists: true, idle: true },
     unhandled: 0,
+    advanceOnPrompt: true,
     recentOutput: "",
     due: [],
     openAggregates: 0,
@@ -49,10 +52,17 @@ function harness(): { fake: Fake; ports: DriverPorts } {
       now: () => fake.now,
       inspectAgent: async () => fake.agent,
       countUnhandled: async () => fake.unhandled,
+      firstUnhandledId: async () => fake.unhandled > 0
+        ? (fake.firstUnhandledId ?? "event-1")
+        : undefined,
       readRecentOutput: async () => fake.recentOutput,
       promptAgent: async (text) => {
         fake.prompts.push(text);
         if (fake.promptError) throw fake.promptError;
+        if (fake.advanceOnPrompt) {
+          fake.unhandled = 0;
+          fake.firstUnhandledId = undefined;
+        }
       },
       listDueDeadlines: async () => fake.due,
       countOpenAggregates: async () => fake.openAggregates,
@@ -126,11 +136,42 @@ describe("AgentCommsDriver", () => {
 
     expect(await run(driver)).toBe("ready");
     expect(fake.prompts).toHaveLength(1);
+    expect(fake.prompts[0]).toContain("at most 20 inputs or four minutes");
     expect(fake.heartbeat?.key).toBe("test:gateway:heartbeat");
     expect(fake.receipts.map((receipt) => receipt.action)).toContain("poke.answered");
     expect(fake.receipts.findIndex((receipt) => receipt.action === "poke.answered")).toBeLessThan(
       fake.receipts.findIndex((receipt) => receipt.action === "heartbeat.refreshed"),
     );
+  });
+
+  test("retires a settled session that did not move the stream cursor", async () => {
+    const { fake, ports } = harness();
+    fake.unhandled = 1;
+    fake.firstUnhandledId = "stuck-event";
+    fake.advanceOnPrompt = false;
+    const driver = new AgentCommsDriver(ports, {
+      heartbeatKey: "test:gateway:heartbeat",
+      heartbeatTtlMs: 60_000,
+    });
+
+    expect(await run(driver)).toBe("unhealthy");
+    expect(fake.receipts).toContainEqual(expect.objectContaining({
+      action: "poke.stalled",
+      detail: { eventId: "stuck-event" },
+    }));
+    expect(fake.receipts.at(-1)).toMatchObject({
+      action: "heartbeat.withheld",
+      detail: { reason: "driver-unhealthy" },
+    });
+
+    fake.now += 15_000;
+    expect(await run(driver)).toBe("awaitingSuccessor");
+    expect(fake.stops).toBe(1);
+    expect(fake.spawns).toBe(1);
+    expect(fake.handoffs[0]).toMatchObject({
+      reason: "stalled",
+      note: expect.stringContaining("did not move the authoritative stream cursor"),
+    });
   });
 
   test("withholds heartbeat after a failed poke and lets its TTL trip fallback", async () => {

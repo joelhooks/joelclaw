@@ -26,13 +26,56 @@ export type LiveAdapterOptions = {
 };
 
 export const DEFAULT_SUCCESSOR_COMMAND =
-  "cd /Users/joel/Code/joelhooks/joelclaw && claude --model sonnet --effort medium --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway";
+  "cd /Users/joel/Code/joelhooks/joelclaw && claude --model claude-sonnet-4-6 --effort medium --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway";
+
+const GATEWAY_PLUGIN_SUFFIX = "prototypes/agent-comms-gateway/claude-plugin";
+const GATEWAY_AGENT_NAME = "joelclaw-gateway";
+const GATEWAY_MODEL = "claude-sonnet-4-6";
+
+function hasArg(argv: string[], flag: string, expected: (value: string) => boolean): boolean {
+  const index = argv.indexOf(flag);
+  const value = argv[index + 1];
+  return index >= 0 && typeof value === "string" && expected(value);
+}
+
+/** Reject bare Herdr resumes, missing plugin tools, and moving model aliases. */
+export function isCanonicalGatewayProcessInfo(processInfo: unknown): boolean {
+  const info = object(processInfo);
+  const foreground = Array.isArray(info?.foreground_processes) ? info.foreground_processes : [];
+  return foreground.some((entry) => {
+    const process = object(entry);
+    if (!Array.isArray(process?.argv)) return false;
+    const argv = process.argv.filter((value): value is string => typeof value === "string");
+    return hasArg(argv, "--model", (value) => value === GATEWAY_MODEL)
+      && hasArg(argv, "--agent", (value) => value === GATEWAY_AGENT_NAME)
+      && hasArg(argv, "--plugin-dir", (value) => value.replace(/\/$/u, "").endsWith(GATEWAY_PLUGIN_SUFFIX));
+  });
+}
+
+function commandRequiresGatewayPlugin(command: string): boolean {
+  return command.includes(`--agent ${GATEWAY_AGENT_NAME}`) && command.includes("--plugin-dir");
+}
+
+async function paneHasCanonicalGatewayProcess(
+  runCommand: (argv: string[]) => Promise<{ stdout: string; stderr: string }>,
+  paneId: string,
+): Promise<boolean> {
+  try {
+    const raw = await runCommand(["herdr", "pane", "process-info", "--pane", paneId]);
+    const envelope = object(JSON.parse(raw.stdout));
+    return isCanonicalGatewayProcessInfo(object(envelope?.result)?.process_info);
+  } catch {
+    return false;
+  }
+}
 
 export type SpawnGatewaySuccessorResult = {
   spawned: boolean;
   paneId: string;
   /** True when an existing labeled pane had no live agent and was relaunched in place. */
   relaunched?: boolean;
+  /** True when Herdr restored a Claude session without the gateway plugin arguments. */
+  replacedInvalid?: boolean;
 };
 
 /**
@@ -46,6 +89,9 @@ export type SpawnGatewaySuccessorResult = {
 export async function spawnGatewaySuccessorPane(
   runCommand: (argv: string[]) => Promise<{ stdout: string; stderr: string }>,
   opts: { target: string; herdrWorkspace?: string; successorCommand?: string },
+  deps: {
+    stopInvalidAgent?: (paneId: string) => Promise<{ stopped: boolean; pids: number[] }>;
+  } = {},
 ): Promise<SpawnGatewaySuccessorResult> {
   const command = opts.successorCommand ?? DEFAULT_SUCCESSOR_COMMAND;
   const paneResult = await runCommand(["herdr", "pane", "list"]);
@@ -56,7 +102,23 @@ export async function spawnGatewaySuccessorPane(
     const agents = resultList(agentResult.stdout, "agents");
     const live = agents.some((entry) => entry.pane_id === existing.pane_id);
     if (live) {
-      return { spawned: false, paneId: existing.pane_id };
+      const canonical = !commandRequiresGatewayPlugin(command)
+        || await paneHasCanonicalGatewayProcess(runCommand, existing.pane_id);
+      if (canonical) return { spawned: false, paneId: existing.pane_id };
+
+      const stopInvalidAgent = deps.stopInvalidAgent
+        ?? ((paneId: string) => stopAgentInPane(runCommand, paneId));
+      const stopped = await stopInvalidAgent(existing.pane_id);
+      if (!stopped.stopped) {
+        throw new Error(`invalid gateway session in ${existing.pane_id} did not stop`);
+      }
+      await runCommand(["herdr", "pane", "run", existing.pane_id, command]);
+      return {
+        spawned: true,
+        paneId: existing.pane_id,
+        relaunched: true,
+        replacedInvalid: true,
+      };
     }
     await runCommand(["herdr", "pane", "run", existing.pane_id, command]);
     return { spawned: true, paneId: existing.pane_id, relaunched: true };
@@ -402,15 +464,23 @@ export function makeLiveDriverPorts(
           ? panes.find((entry) => entry.pane_id === agent.pane_id)
           : undefined);
       const status = agent?.agent_status;
+      const paneId = typeof pane?.pane_id === "string" ? pane.pane_id : undefined;
+      const expectedCommand = options.successorCommand ?? DEFAULT_SUCCESSOR_COMMAND;
+      const sessionExists = agent !== undefined
+        && paneId !== undefined
+        && (!commandRequiresGatewayPlugin(expectedCommand)
+          || await paneHasCanonicalGatewayProcess(runCommand, paneId));
       return {
         paneExists: pane !== undefined,
-        sessionExists: agent !== undefined,
-        idle: status === "idle" || status === "done",
-        sessionStartedAt: sessionStartedAtFrom(agent),
+        sessionExists,
+        idle: sessionExists && (status === "idle" || status === "done"),
+        ...(sessionExists ? { sessionStartedAt: sessionStartedAtFrom(agent) } : {}),
       };
     },
     countUnhandled: async () =>
       (await stream.pendingForConsumer(GATEWAY_MESSAGE_EVENT_CONSUMER, 1)).length,
+    firstUnhandledId: async () =>
+      (await stream.pendingForConsumer(GATEWAY_MESSAGE_EVENT_CONSUMER, 1))[0]?._id,
     readRecentOutput: async () => {
       try {
         const target = await resolveCliTarget();

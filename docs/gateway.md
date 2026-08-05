@@ -2,13 +2,16 @@
 
 The Agent Comms Gateway is the sole comms policy owner. It runs on flagg as one long-lived Claude Code session plus a zero-policy driver. A separate slim transport daemon owns platform mechanics.
 
-The gateway agent runs Opus 4.8 through the Claude Code `opus` alias:
+The gateway agent pins Claude Sonnet 4.6. It handles fast comms judgment and dispatches harder work to Herdr workers:
 
 ```bash
-claude --model opus \
+claude --model claude-sonnet-4-6 \
+  --effort medium \
   --plugin-dir prototypes/agent-comms-gateway/claude-plugin \
   --agent joelclaw-gateway
 ```
+
+Do not use the moving `sonnet` alias here. A Herdr-restored bare `claude --resume` process is not healthy because it lacks the gateway plugin tools.
 
 The Herdr workspace is `[jc] gateway agent`. Its stable gateway pane label is `📨 gateway loop`. Keep the gateway session and driver in that workspace as separate panes.
 
@@ -72,6 +75,10 @@ The policy contract gives platform choice to the gateway agent. The current deci
 `packages/agent-comms-driver` is a zero-policy host process. It:
 
 - pokes the settled gateway pane when stream work exists
+- limits one poke to 20 inputs or four minutes
+- requires the pinned model, gateway plugin, and gateway agent launch arguments
+- treats a settled poke as healthy only when the authoritative cursor moves
+- retires and replaces sessions that stall or return as bare Herdr resumes
 - appends due `aggregate.deadline.reached` events
 - refreshes the heartbeat only while the gateway session is healthy
 - spawns a successor directly through Herdr when the session disappears

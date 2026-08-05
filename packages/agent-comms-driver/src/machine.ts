@@ -16,7 +16,7 @@ export type AgentObservation = {
   observedAt: number;
 };
 
-export type RetireReason = "age" | "degeneration";
+export type RetireReason = "age" | "degeneration" | "stalled";
 
 export type DriverContext = {
   pokeStartedAt?: number;
@@ -24,6 +24,7 @@ export type DriverContext = {
   spawnRequestedAt?: number;
   lastFailure?: string;
   retireReason?: RetireReason;
+  stalledEventId?: string;
 };
 
 export type DriverEvent =
@@ -34,6 +35,7 @@ export type DriverEvent =
       aggregateGraceMs: number;
     })
   | { type: "POKE_ANSWERED"; answeredAt: number }
+  | { type: "POKE_STALLED"; eventId: string }
   | { type: "POKE_FAILED"; reason: string }
   | { type: "SPAWN_ACCEPTED"; requestedAt: number }
   | { type: "SPAWN_FAILED"; reason: string }
@@ -87,6 +89,12 @@ const shouldForceRetire = ({ event }: { event: DriverEvent }): boolean =>
   && event.sessionExists
   && event.degenerated;
 
+const shouldRetireStalled = ({ context, event }: { context: DriverContext; event: DriverEvent }): boolean =>
+  event.type === "OBSERVED"
+  && event.paneExists
+  && event.sessionExists
+  && context.stalledEventId !== undefined;
+
 const pokePastDeadline = ({ context, event }: { context: DriverContext; event: DriverEvent }): boolean =>
   event.type === "OBSERVED"
   && context.pokeStartedAt !== undefined
@@ -116,6 +124,7 @@ export const driverMachine = setup({
     shouldPoke,
     shouldRetire,
     shouldForceRetire,
+    shouldRetireStalled,
     pokePastDeadline,
     successorPastDeadline,
   },
@@ -130,6 +139,13 @@ export const driverMachine = setup({
       lastPokeAnsweredAt: ({ event }) =>
         event.type === "POKE_ANSWERED" ? event.answeredAt : undefined,
       lastFailure: undefined,
+      stalledEventId: undefined,
+    }),
+    recordStall: assign({
+      pokeStartedAt: undefined,
+      lastFailure: ({ event }) =>
+        event.type === "POKE_STALLED" ? `stream cursor stalled at ${event.eventId}` : "stream cursor stalled",
+      stalledEventId: ({ event }) => event.type === "POKE_STALLED" ? event.eventId : undefined,
     }),
     recordFailure: assign({
       lastFailure: ({ event }) =>
@@ -142,6 +158,7 @@ export const driverMachine = setup({
       spawnRequestedAt: undefined,
       lastFailure: undefined,
       retireReason: undefined,
+      stalledEventId: undefined,
     }),
     recordSpawnRequest: assign({
       spawnRequestedAt: ({ event }) =>
@@ -157,6 +174,10 @@ export const driverMachine = setup({
       retireReason: "degeneration" as const,
       pokeStartedAt: undefined,
       lastFailure: "session output degenerated",
+    }),
+    markStalledRetire: assign({
+      retireReason: "stalled" as const,
+      pokeStartedAt: undefined,
     }),
   },
 }).createMachine({
@@ -192,6 +213,7 @@ export const driverMachine = setup({
     poking: {
       on: {
         POKE_ANSWERED: { target: "ready", actions: "finishPoke" },
+        POKE_STALLED: { target: "unhealthy", actions: "recordStall" },
         POKE_FAILED: { target: "unhealthy", actions: "recordFailure" },
         OBSERVED: [
           { target: "spawning", guard: "shouldForceRetire", actions: "markDegenerationRetire" },
@@ -204,6 +226,7 @@ export const driverMachine = setup({
       on: {
         OBSERVED: [
           { target: "spawning", guard: "shouldForceRetire", actions: "markDegenerationRetire" },
+          { target: "spawning", guard: "shouldRetireStalled", actions: "markStalledRetire" },
           { target: "spawning", guard: "paneOrSessionMissing" },
           { target: "poking", guard: "shouldPoke", actions: "beginPoke" },
           // A healthy idle session has no poke outstanding — that is recovery
