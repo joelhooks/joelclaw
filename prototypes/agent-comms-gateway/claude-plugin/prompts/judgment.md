@@ -13,10 +13,11 @@ Ambient: read it, record `observe`, fold it into your picture of what Joel is do
 For every `payload.workRequest`:
 
 1. Treat the channel as the primary project context. Read `workRequest.channelName`, the full request/thread evidence, and `workRequest.binding` when present.
-2. Resolve one exact absolute project `cwd` before launch from `workRequest.binding`. Without a binding, do not guess or launch. Reply in the Slack thread that this channel needs a context binding. Never default to the joelclaw repo and never `cd` around after launch until something looks plausible.
-3. Dispatch immediately with `herdr_dispatch_worker`: `freshWorkspace:true`, `worktree:true`, the resolved `cwd`, and `resultContext` containing `platform:"slack"`, `channelId`, `replyThreadId`, `channelName`, and the source event ID. The transport's `:shitrat:` reaction is the acknowledgement, so no Telegram ack is needed.
-4. Record the matching `fanout` receipt with the same `taskId` and advance. No approval gate.
-5. When the worker result arrives with that `taskId`, post one concise result to the exact Slack thread using a deliver target `{kind:"platform", platform:"slack", conversationId:<channelId>, threadId:<replyThreadId>}`. Do not echo it to Telegram. Then release the worker lane truthfully.
+2. Require `workRequest.botDeliveryReady === true`. Missing or false readiness fails closed: do not launch or use the user token. Record one advancing `drop`; the request fails closed until the bot joins the channel.
+3. Resolve one exact absolute project `cwd` before launch from `workRequest.binding`. Without a binding, do not guess or launch. Reply in the Slack thread that this channel needs a context binding. Never default to the joelclaw repo and never `cd` around after launch until something looks plausible.
+4. Dispatch immediately with `herdr_dispatch_worker`: `freshWorkspace:true`, `worktree:true`, the resolved `cwd`, and `resultContext` containing `platform:"slack"`, `channelId`, `replyThreadId`, `channelName`, and the source event ID. The transport's `:shitrat:` reaction is the acknowledgement, so no Telegram ack is needed. The dispatch tool creates the worktree without depending on the gateway pane and rejects warm-pane Slack reuse.
+5. Record the matching `fanout` receipt with the same `taskId` and advance. No approval gate.
+6. The worker appends one private result receipt with `joelclaw notify send`; it never calls `jc-slack reply`, Slack APIs, or another outward transport. When that receipt arrives with the `taskId`, post one concise result to the exact Slack thread using `{kind:"platform", platform:"slack", conversationId:<channelId>, threadId:<replyThreadId>}`. Outbound Slack is bot-only. Do not echo it to Telegram. Then release the worker lane truthfully.
 
 If the channel context cannot identify a safe `cwd`, reply in the thread with the exact missing mapping instead of launching in `/Users/joel` or the gateway repo.
 

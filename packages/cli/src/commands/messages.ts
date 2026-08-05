@@ -506,6 +506,7 @@ interface SendSlackReplyDependencies {
   readonly machineId: () => string;
   readonly now: () => number;
   readonly sleep: (milliseconds: number) => Promise<void>;
+  readonly workerReceiptOnly?: () => boolean;
 }
 
 class SlackReplySendError extends Error {
@@ -533,6 +534,7 @@ const defaultSendSlackReplyDependencies: SendSlackReplyDependencies = {
   machineId: hostname,
   now: Date.now,
   sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  workerReceiptOnly: () => process.env.JOELCLAW_GATEWAY_WORKER === "1",
 };
 
 function slackReplyErrorEnvelope(error: unknown): JoelclawEnvelope {
@@ -577,6 +579,17 @@ export function executeMessagesSendSlackReply(
   input: SendSlackReplyInput,
   dependencies: SendSlackReplyDependencies = defaultSendSlackReplyDependencies,
 ): Effect.Effect<JoelclawEnvelope> {
+  if (dependencies.workerReceiptOnly?.()) {
+    return Effect.succeed(
+      slackReplyErrorEnvelope(
+        new SlackReplySendError(
+          "SLACK_REPLY_WORKER_FORBIDDEN",
+          "Gateway workers cannot send Slack replies",
+          "Return one private worker-result receipt. The gateway owns outward delivery.",
+        ),
+      ),
+    );
+  }
   if (!input.confirmSend) {
     return Effect.succeed(
       slackReplyErrorEnvelope(

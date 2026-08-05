@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
-
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { createJournalEvent } from "@joelclaw/message-journal";
 import { Effect } from "effect";
 import {
@@ -306,12 +305,44 @@ describe("messages CLI", () => {
     expect(JSON.stringify(envelope)).not.toContain("private exact text");
   });
 
+  test("forbids Slack sends from gateway workers", async () => {
+    let appendCalls = 0;
+    const envelope = await Effect.runPromise(
+      executeMessagesSendSlackReply(
+        {
+          channelId: "CEXAMPLE",
+          threadTs: "1785944507.600699",
+          textFile: "/tmp/reply.txt",
+          textSha256: textSha256("approved reply"),
+          requestId: slackReplyRequestId,
+          confirmSend: true,
+        },
+        {
+          readTextFile: async () => "approved reply",
+          appendEvent: async () => {
+            appendCalls += 1;
+            return { eventId: "unused" };
+          },
+          traceFlow: async () => ({ kind: "not_found", lookup: "unused" }),
+          machineId: () => "flagg",
+          now: () => 0,
+          sleep: async () => {},
+          workerReceiptOnly: () => true,
+        },
+      ),
+    );
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe("SLACK_REPLY_WORKER_FORBIDDEN");
+    expect(appendCalls).toBe(0);
+  });
+
   test("refuses a Slack reply without explicit send confirmation", async () => {
     let appendCalls = 0;
     const envelope = await Effect.runPromise(
       executeMessagesSendSlackReply(
         {
-          channelId: "C09FC0G8QFR",
+          channelId: "CEXAMPLE",
           threadTs: "1785944507.600699",
           textFile: "/tmp/reply.txt",
           textSha256: textSha256("approved reply"),
@@ -342,7 +373,7 @@ describe("messages CLI", () => {
     const envelope = await Effect.runPromise(
       executeMessagesSendSlackReply(
         {
-          channelId: "C09FC0G8QFR",
+          channelId: "CEXAMPLE",
           threadTs: "1785944507.600699",
           textFile: "/tmp/reply.txt",
           textSha256: textSha256("approved reply"),
@@ -373,7 +404,7 @@ describe("messages CLI", () => {
     const envelope = await Effect.runPromise(
       executeMessagesSendSlackReply(
         {
-          channelId: "C09FC0G8QFR",
+          channelId: "CEXAMPLE",
           threadTs: "1785944507.600699",
           textFile: "/tmp/reply.txt",
           textSha256: textSha256("approved reply"),
@@ -413,7 +444,7 @@ describe("messages CLI", () => {
     const envelope = await Effect.runPromise(
       executeMessagesSendSlackReply(
         {
-          channelId: "C09FC0G8QFR",
+          channelId: "CEXAMPLE",
           threadTs: "1785944507.600699",
           textFile: "/tmp/reply.txt",
           textSha256: textSha256("approved private reply"),
@@ -458,7 +489,7 @@ describe("messages CLI", () => {
       flowId: `slack-reply:${slackReplyRequestId}`,
       target: {
         platform: "slack",
-        channelId: "C09FC0G8QFR",
+        channelId: "CEXAMPLE",
         threadTs: "1785944507.600699",
       },
       platformMessageId: "1785944510.1",
@@ -471,8 +502,8 @@ describe("messages CLI", () => {
         target: {
           kind: "platform",
           platform: "slack",
-          conversationId: "C09FC0G8QFR",
-          threadId: "slack:C09FC0G8QFR:1785944507.600699",
+          conversationId: "CEXAMPLE",
+          threadId: "slack:CEXAMPLE:1785944507.600699",
         },
         text: "approved private reply",
       },
@@ -494,7 +525,7 @@ describe("messages CLI", () => {
     const envelope = await Effect.runPromise(
       executeMessagesSendSlackReply(
         {
-          channelId: "C09FC0G8QFR",
+          channelId: "CEXAMPLE",
           threadTs: "1785944507.600699",
           textFile: "/tmp/reply.txt",
           textSha256: textSha256("approved reply"),

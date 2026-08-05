@@ -187,6 +187,15 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
         && event.authorization.reason === "authorized_joel";
       if (!authorizedJoel && !workRequest) return;
 
+      if (workRequest && options.acknowledgeWorkRequest) {
+        try {
+          await options.acknowledgeWorkRequest(workRequest);
+        } catch (error) {
+          workRequest = { ...workRequest, botDeliveryReady: false };
+          options.onWorkRequestError?.(error, "acknowledge", event);
+        }
+      }
+
       const platformMessageId = event.platformIds.messageId
         ?? event.rawAnchors.sourceMessageId
         ?? undefined;
@@ -225,13 +234,6 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
         occurredAt: Date.parse(event.occurredAt),
         payload,
       });
-      if (workRequest && options.acknowledgeWorkRequest) {
-        try {
-          await options.acknowledgeWorkRequest(workRequest);
-        } catch (error) {
-          options.onWorkRequestError?.(error, "acknowledge", event);
-        }
-      }
     },
   };
 }

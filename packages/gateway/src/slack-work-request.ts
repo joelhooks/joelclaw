@@ -25,6 +25,7 @@ export type SlackWorkRequest = {
   readonly messageTs: string;
   readonly threadTs: string;
   readonly replyThreadId: string;
+  readonly botDeliveryReady?: boolean;
   readonly binding?: SlackChannelContextBinding;
 };
 

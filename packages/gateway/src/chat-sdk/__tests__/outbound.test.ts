@@ -17,6 +17,7 @@ import {
 import { mapNotifySendToIntent } from "../notify-compat";
 import {
   __outboundTestUtils,
+  createSdkDeliveryAdapters,
   gatewayOutboundJournal,
   makeOutboundSender,
   type OutboundFlowAnchor,
@@ -141,6 +142,27 @@ describe("Chat SDK outbound v1", () => {
     );
     await runtime.stop();
     expect(shutdownAttempts).toBe(2);
+  });
+
+  test("Slack delivery stays bot-only when the bot lacks channel membership", async () => {
+    const membershipError = new Error("Slack API error: channel_not_found");
+    const adapters = createSdkDeliveryAdapters({
+      adapters: {
+        slack: {
+          openDM: async () => "slack:D_EXAMPLE:",
+          postMessage: async () => {
+            throw membershipError;
+          },
+        },
+      },
+    } as never);
+
+    const slack = adapters.slack;
+    if (!slack) throw new Error("expected Slack adapter");
+    await expect(slack.postMessage(
+      "slack:CEXAMPLE:1785950000.100",
+      { markdown: "Result" },
+    )).rejects.toBe(membershipError);
   });
 
   test("routes markdown through Telegram's native formatter, journals the platform id, and returns a receipt", async () => {

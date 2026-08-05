@@ -78,6 +78,46 @@ function isWorkRequest(event) {
     && typeof event.payload.workRequest === "object";
 }
 
+function isWorkRequestBotDeliveryReady(event) {
+  return isWorkRequest(event) && event.payload.workRequest.botDeliveryReady === true;
+}
+
+function hasWorkRequestBinding(event) {
+  if (!isWorkRequest(event)) return false;
+  const binding = event.payload.workRequest.binding;
+  return binding && typeof binding === "object"
+    && [binding.cwd, binding.repo].some((value) =>
+      typeof value === "string" && value.trim().length > 0);
+}
+
+export function normalizeSlackReplyThreadId(channelId, replyThreadId) {
+  if (typeof channelId !== "string" || typeof replyThreadId !== "string") {
+    return replyThreadId;
+  }
+  const timestamp = replyThreadId.split(":").at(-1);
+  return /^\d+\.\d+$/u.test(timestamp ?? "")
+    ? `slack:${channelId}:${timestamp}`
+    : replyThreadId;
+}
+
+function slackWorkRequestReturnTarget(event) {
+  if (!isWorkRequest(event)) return null;
+  const workRequest = event.payload.workRequest;
+  if (
+    typeof workRequest.channelId !== "string"
+    || typeof workRequest.replyThreadId !== "string"
+  ) return null;
+  return {
+    kind: "platform",
+    platform: "slack",
+    conversationId: workRequest.channelId,
+    threadId: normalizeSlackReplyThreadId(
+      workRequest.channelId,
+      workRequest.replyThreadId,
+    ),
+  };
+}
+
 function isOutboundDecision(decision) {
   return decision?.verb === "deliver"
     || (decision?.verb === "aggregate" && decision?.action === "close-deliver");
@@ -96,7 +136,7 @@ function slackWorkerReturnTarget(event) {
     kind: "platform",
     platform: "slack",
     conversationId: context.channelId,
-    threadId: context.replyThreadId,
+    threadId: normalizeSlackReplyThreadId(context.channelId, context.replyThreadId),
   };
 }
 
@@ -141,7 +181,12 @@ export function compactPendingEvent(event, { now = Date.now() } = {}) {
         taskId: workerContext.taskId,
         platform: workerContext.platform ?? null,
         channelId: workerContext.channelId ?? null,
-        replyThreadId: workerContext.replyThreadId ?? null,
+        replyThreadId: workerContext.platform === "slack"
+          ? normalizeSlackReplyThreadId(
+              workerContext.channelId,
+              workerContext.replyThreadId,
+            )
+          : workerContext.replyThreadId ?? null,
       }
     : null;
   return {
@@ -155,7 +200,11 @@ export function compactPendingEvent(event, { now = Date.now() } = {}) {
     ...(workRequest ? {
       workRequest: {
         channelName: workRequest.channelName,
-        replyThreadId: workRequest.replyThreadId,
+        botDeliveryReady: workRequest.botDeliveryReady === true,
+        replyThreadId: normalizeSlackReplyThreadId(
+          workRequest.channelId,
+          workRequest.replyThreadId,
+        ),
         binding: workRequest.binding ?? null,
       },
     } : {}),
@@ -329,17 +378,88 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
     return joelPending.filter((event) => !hasDeliverCovering(events, event._id));
   }
 
-  async function assertJoelAckPriority({ toolName, coveringIds = [] } = {}) {
-    const blocked = await unackedJoelInbound();
-    if (blocked.length === 0) return;
+  async function assertJoelAckPriority({ toolName, coveringIds = [], toolArgs = {} } = {}) {
+    const pending = await loadPending(200);
+    const blocked = await unackedJoelInbound({ pending });
     const still = blocked.filter((event) => !coveringIds.includes(event._id));
-    if (still.length === 0) return;
-    const ids = still.map((event) => event._id).join(", ");
-    throw new Error(
-      `Ack Joel first before ${toolName}. Unacked Joel inbound: ${ids}. `
-      + "First tool call must be stream_record_decision deliver decisionSeq:1 rewrite \"on it — …\" with advanceAfter: false. "
-      + "One-shot short answers may omit advanceAfter (defaults true) or set it true.",
-    );
+    if (still.length > 0) {
+      const ids = still.map((event) => event._id).join(", ");
+      throw new Error(
+        `Ack Joel first before ${toolName}. Unacked Joel inbound: ${ids}. `
+        + "First tool call must be stream_record_decision deliver decisionSeq:1 rewrite \"on it — …\" with advanceAfter: false. "
+        + "One-shot short answers may omit advanceAfter (defaults true) or set it true.",
+      );
+    }
+
+    const identityBlocked = pending.filter((event) =>
+      isWorkRequest(event)
+      && !isWorkRequestBotDeliveryReady(event)
+      && !coveringIds.includes(event._id));
+    if (identityBlocked.length > 0) {
+      const ids = identityBlocked.map((event) => event._id).join(", ");
+      throw new Error(
+        `Slack bot membership is required before ${toolName}: ${ids}. `
+        + "Do not launch a worker or send through the user token. Record one advancing drop decision; the request failed closed until the bot joins the channel.",
+      );
+    }
+
+    const boundWorkRequests = pending.filter((event) =>
+      isWorkRequest(event)
+      && isWorkRequestBotDeliveryReady(event)
+      && hasWorkRequestBinding(event)
+      && !coveringIds.includes(event._id));
+    if (boundWorkRequests.length > 0) {
+      const ids = boundWorkRequests.map((event) => event._id).join(", ");
+      if (toolName !== "herdr_dispatch_worker") {
+        throw new Error(
+          `Bound Slack workRequest must use herdr_dispatch_worker before ${toolName}: ${ids}. `
+          + "Generic herdr_prompt reuse is forbidden.",
+        );
+      }
+      const sourceEventId = toolArgs?.resultContext?.sourceEventId;
+      const matched = boundWorkRequests.find((event) => event._id === sourceEventId);
+      const workRequest = matched?.payload?.workRequest;
+      const expectedCwd = workRequest?.binding?.cwd?.trim()
+        || workRequest?.binding?.repo?.trim();
+      const expectedThreadId = workRequest
+        ? normalizeSlackReplyThreadId(
+            workRequest.channelId,
+            workRequest.replyThreadId,
+          )
+        : undefined;
+      const actualThreadId = normalizeSlackReplyThreadId(
+        toolArgs?.resultContext?.channelId,
+        toolArgs?.resultContext?.replyThreadId,
+      );
+      if (
+        !matched
+        || toolArgs?.resultContext?.platform !== "slack"
+        || toolArgs?.freshWorkspace !== true
+        || toolArgs?.worktree !== true
+        || toolArgs?.cwd !== expectedCwd
+        || toolArgs?.resultContext?.channelId !== workRequest.channelId
+        || actualThreadId !== expectedThreadId
+      ) {
+        throw new Error(
+          `Slack dispatch must match pending workRequest ${ids}: sourceEventId, channelId, `
+          + "normalized replyThreadId, binding cwd, resultContext.platform=slack, "
+          + "freshWorkspace:true, and worktree:true",
+        );
+      }
+    }
+
+    const missingBindings = pending.filter((event) =>
+      isWorkRequest(event)
+      && isWorkRequestBotDeliveryReady(event)
+      && !hasWorkRequestBinding(event)
+      && !coveringIds.includes(event._id));
+    if (missingBindings.length > 0) {
+      const ids = missingBindings.map((event) => event._id).join(", ");
+      throw new Error(
+        `Resolve Slack workRequest binding before ${toolName}: ${ids}. `
+        + "Do not launch a worker. First and only decision must deliver the missing-mapping explanation to the request's Slack thread and advance.",
+      );
+    }
   }
 
   async function aggregateJoinStats(decision, inputEventIds) {
@@ -403,7 +523,23 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
       return {
         consumer: GATEWAY_MESSAGE_EVENT_CONSUMER,
         latestHandoff,
-        pending,
+        pending: pending.map((event) => {
+          if (!isWorkRequest(event)) return event;
+          const workRequest = event.payload.workRequest;
+          return {
+            ...event,
+            payload: {
+              ...event.payload,
+              workRequest: {
+                ...workRequest,
+                replyThreadId: normalizeSlackReplyThreadId(
+                  workRequest.channelId,
+                  workRequest.replyThreadId,
+                ),
+              },
+            },
+          };
+        }),
         pendingCompact: compactPendingList(pending, { now: now() }),
         ackRequiredJoel: needsAck.map((event) => event._id),
         replayAuthoritative: true,
@@ -425,24 +561,45 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         }
       }
 
-      // Addressed inbounds keep the ack-first contract. Ambient inbounds flip
-      // the default to observe and require a separate escalation receipt before
-      // any deliver or close-deliver can reach transport.
+      // Bot-ready, bound Slack work requests are already acknowledged by the
+      // transport's reaction: one fanout receipt advances them. Missing bot
+      // membership fails closed with one drop. Missing bindings get one
+      // explanatory Slack-thread deliver and no launch. Ordinary addressed
+      // inbounds keep the ack-first contract; ambient inbounds require observe
+      // or escalation before outbound.
       for (const eventId of inputEventIds) {
         const input = events.find((event) => event._id === eventId)
           ?? pending.find((event) => event._id === eventId);
-        if (!input || !isJoelInbound(input)) continue;
+        if (!input) continue;
         const priorDecisions = decisionsCovering(events, eventId);
         const decision = payload?.decision;
         const verb = decision?.verb;
         if (isWorkRequest(input)) {
-          if (priorDecisions.length === 0 && verb !== "fanout") {
+          if (inputEventIds.length !== 1) {
+            throw new Error(`workRequest ${eventId} must be decided alone`);
+          }
+          if (priorDecisions.length > 0) {
+            throw new Error(`workRequest ${eventId} already has its one canonical decision`);
+          }
+          const botReady = isWorkRequestBotDeliveryReady(input);
+          const expectedVerb = botReady
+            ? (hasWorkRequestBinding(input) ? "fanout" : "deliver")
+            : "drop";
+          if (verb !== expectedVerb) {
             throw new Error(
-              `First decision on workRequest ${eventId} must be fanout. The Slack bot reaction already acknowledged it; do not send a Telegram echo. Got verb=${verb}`,
+              !botReady
+                ? `workRequest ${eventId} must fail closed with one drop because the Slack bot cannot deliver in that channel. Got verb=${verb}`
+                : hasWorkRequestBinding(input)
+                  ? `Bound workRequest ${eventId} must use one fanout decision. The Slack reaction already acknowledged it; do not send a Telegram echo. Got verb=${verb}`
+                  : `Unbound workRequest ${eventId} must use one Slack-thread deliver explaining the missing mapping, with no worker launch. Got verb=${verb}`,
             );
+          }
+          if (expectedVerb === "deliver" && !slackWorkRequestReturnTarget(input)) {
+            throw new Error(`Unbound workRequest ${eventId} is missing its Slack return thread`);
           }
           continue;
         }
+        if (!isJoelInbound(input)) continue;
         if (inboundAddressing(input) === "ambient") {
           if (isOutboundDecision(decision) && !hasEscalationCovering(events, eventId)) {
             throw new Error(
@@ -481,7 +638,8 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
       }
       let candidatePayload = payload;
       const slackReturnTargets = coveredInputs
-        .map(slackWorkerReturnTarget)
+        .map((event) => slackWorkerReturnTarget(event)
+          ?? (!hasWorkRequestBinding(event) ? slackWorkRequestReturnTarget(event) : null))
         .filter(Boolean);
       if (slackReturnTargets.length > 0 && isOutboundDecision(candidatePayload?.decision)) {
         const uniqueTargets = new Set(slackReturnTargets.map((target) => JSON.stringify(target)));
@@ -515,6 +673,9 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         : null;
       const validated = validateDecisionPayload(candidatePayload, { aggregateStats });
       const resolvedAdvance = resolveAdvanceAfter(validated, advanceAfter);
+      if (coveredInputs.some(isWorkRequest) && !resolvedAdvance) {
+        throw new Error("A workRequest's one canonical decision must advance the gateway cursor");
+      }
       const inheritedFlowIds = [...new Set(
         coveredInputs
           .map((event) => event.flowId)

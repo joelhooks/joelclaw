@@ -178,6 +178,7 @@ export type InboundReceivedPayload = {
     messageTs: string;
     threadTs: string;
     replyThreadId: string;
+    botDeliveryReady: boolean;
     binding?: {
       repo?: string;
       cwd?: string;

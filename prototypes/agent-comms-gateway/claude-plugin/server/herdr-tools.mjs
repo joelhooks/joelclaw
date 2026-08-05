@@ -79,6 +79,13 @@ function pruneRegistry(registry, byId) {
   return live;
 }
 
+function sameSlackWorkRequest(entry, cwd, resultContext) {
+  return entry?.sourceCwd === cwd
+    && entry?.resultContext?.sourceEventId === resultContext.sourceEventId
+    && entry?.resultContext?.channelId === resultContext.channelId
+    && entry?.resultContext?.replyThreadId === resultContext.replyThreadId;
+}
+
 function workerBrief({ taskId, task, cwd, resultContext = {} }) {
   const resultData = JSON.stringify({ taskId, ...resultContext });
   return [
@@ -91,13 +98,14 @@ function workerBrief({ taskId, task, cwd, resultContext = {} }) {
     task.trim(),
     "",
     "## Returning your result",
-    "When finished, send your result back through the gateway (this is the ONLY return path):",
+    "When finished, append one private worker-result receipt to the gateway (this is the ONLY return path):",
     "",
     "```bash",
     `joelclaw notify send "worker ${taskId} done: <one-paragraph result>" --kind receipt --source shitrat-worker --context '${resultData}'`,
     "```",
     "",
-    "Then print DONE and stop. Do not commit anything. Do not message Joel any other way.",
+    "This command appends a receipt. It does not authorize a direct Slack post. Never run `jc-slack reply`, call the Slack API, or use any other outward transport.",
+    "Then print DONE and stop. Do not commit anything. The gateway alone decides and sends the one outward result.",
   ].join("\n");
 }
 
@@ -204,17 +212,18 @@ export function createHerdrTools({
       }
 
       const panes = await paneList();
-      const gatewayPane = panes.find((pane) => pane.label === GATEWAY_LOOP_LABEL);
-      const workspace = gatewayPane?.workspace_id;
-      if (!workspace) throw new Error("gateway loop pane not found; cannot place worker");
-
       const { byId, byLabel } = paneIndex(panes);
       const registry = pruneRegistry(await loadRegistry(), byId);
+
+      const slackWork = resultContext.platform === "slack";
+      if (slackWork && (!freshWorkspace || !worktree)) {
+        throw new Error("Slack work requires freshWorkspace:true and worktree:true; warm-pane reuse is forbidden");
+      }
 
       await mkdir(TASK_DIR, { recursive: true });
       const taskFile = `${TASK_DIR}/${taskId}.md`;
       await writeFile(taskFile, workerBrief({ taskId, task, cwd, resultContext }), "utf8");
-      const launch = `pi @${taskFile} "Execute the task in the attached brief. Work autonomously. Print DONE when finished."`;
+      const launch = `JOELCLAW_GATEWAY_WORKER=1 pi @${taskFile} "Execute the task in the attached brief. Work autonomously. Print DONE when finished."`;
 
       if (freshWorkspace) {
         if (
@@ -230,7 +239,10 @@ export function createHerdrTools({
         const existingFresh = byLabel.get(laneLabel(lane))
           ?? (registered?.paneId ? byId.get(registered.paneId) : undefined);
         if (existingFresh?.pane_id) {
-          if (registered?.taskId === taskId) {
+          if (
+            registered?.taskId === taskId
+            && sameSlackWorkRequest(registered, cwd, resultContext)
+          ) {
             return {
               taskId,
               lane,
@@ -308,6 +320,10 @@ export function createHerdrTools({
           resultReturnsVia: "stream message.requested with payload.evidence.context.taskId and Slack resultContext",
         };
       }
+
+      const gatewayPane = panes.find((pane) => pane.label === GATEWAY_LOOP_LABEL);
+      const workspace = gatewayPane?.workspace_id;
+      if (!workspace) throw new Error("gateway loop pane not found; cannot place reusable worker");
 
       const existing = byLabel.get(laneLabel(lane)) ?? byId.get(registry[lane]?.paneId);
       if (existing?.pane_id) {

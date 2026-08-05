@@ -131,22 +131,33 @@ export async function startSlimTransportDaemon(): Promise<void> {
       event,
       resolveChannelName: resolveSlackChannelName,
     });
-    if (request) {
-      void emitGatewayOtel({
-        level: "info",
-        component: "slack-shitrat",
-        action: "slack.shitrat.work_requested",
-        success: true,
-        metadata: {
-          channelId: request.channelId,
-          channelName: request.channelName,
-          threadTs: request.threadTs,
-          actorId: event.actor.platformUserId,
-          bound: Boolean(request.binding?.cwd || request.binding?.repo),
-        },
-      });
-    }
-    return request;
+    if (!request) return undefined;
+
+    const botDeliveryReady = await runtime.adapters.slack?.webClient.conversations
+      .info({ channel: request.channelId })
+      .then((response) =>
+        (response as { channel?: { is_member?: boolean } }).channel?.is_member === true)
+      .catch(() => false) ?? false;
+    const resolved = { ...request, botDeliveryReady };
+    void emitGatewayOtel({
+      level: botDeliveryReady ? "info" : "error",
+      component: "slack-shitrat",
+      action: botDeliveryReady
+        ? "slack.shitrat.work_requested"
+        : "slack.shitrat.bot_membership_required",
+      success: botDeliveryReady,
+      error: botDeliveryReady
+        ? undefined
+        : "Slack bot cannot access the originating channel; work request failed closed",
+      metadata: {
+        channelId: request.channelId,
+        channelName: request.channelName,
+        threadTs: request.threadTs,
+        actorId: event.actor.platformUserId,
+        bound: Boolean(request.binding?.cwd || request.binding?.repo),
+      },
+    });
+    return resolved;
   };
 
   registerChatSdkActingInbound(runtime, {
@@ -158,6 +169,7 @@ export async function startSlimTransportDaemon(): Promise<void> {
       resolveFlowId: resolveInboundFlow,
       resolveWorkRequest,
       acknowledgeWorkRequest: async (request) => {
+        if (request.botDeliveryReady === false) return;
         try {
           await runtime.adapters.slack?.webClient.reactions.add({
             channel: request.channelId,

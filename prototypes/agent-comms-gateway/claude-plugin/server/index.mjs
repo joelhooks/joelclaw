@@ -18,7 +18,7 @@ export const toolDefinitions = [
   { name: "stream_bootstrap", description: "Load the advisory handoff and authoritative pending replay for the gateway cursor.", inputSchema: objectSchema({ limit: integer }) },
   { name: "stream_read_since", description: "Read an independent canonical stream page without moving a consumer cursor.", inputSchema: objectSchema({ recordedAt: integer, limit: integer, cursor: { anyOf: [{ type: "string" }, { type: "null" }] } }, ["recordedAt"]) },
   { name: "stream_pending", description: "Read compact pending events from the gateway cursor. Addressed Joel inbounds needing ack are listed first under ackRequiredJoel. Ambient inbounds require observe or an escalation receipt and must not produce outbound by default.", inputSchema: objectSchema({ limit: integer }) },
-  { name: "stream_record_decision", description: "Validate and append one ADR-0249 decision receipt, then read it back. advanceAfter defaults true for single-input terminal decisions (deliver/observe/drop/route/fanout/close-deliver). Addressed Joel inbound requires deliver first. Ambient inbound requires observe, or escalate with a reason before a later deliver; outbound without that escalation receipt is refused.", inputSchema: objectSchema({ payload: { type: "object" }, flowId: string, origin: { type: "object" }, advanceAfter: { type: "boolean" } }, ["payload"]) },
+  { name: "stream_record_decision", description: "Validate and append one ADR-0249 decision receipt, then read it back. advanceAfter defaults true for single-input terminal decisions (deliver/observe/drop/route/fanout/close-deliver). Ordinary addressed Joel inbound requires deliver first. A bot-ready bound Slack workRequest is reaction-acked and requires one advancing fanout; missing bot membership requires one advancing drop with no worker launch or user-token send; an unbound bot-ready workRequest requires one advancing Slack-thread missing-mapping deliver. Ambient inbound requires observe, or escalate with a reason before a later deliver; outbound without that escalation receipt is refused.", inputSchema: objectSchema({ payload: { type: "object" }, flowId: string, origin: { type: "object" }, advanceAfter: { type: "boolean" } }, ["payload"]) },
   { name: "stream_append_gateway_event", description: "Append and read back a typed handoff, aggregate deadline, or inbound interpretation event.", inputSchema: objectSchema({ semanticKey: string, kind: { enum: ["gateway.handoff", "aggregate.deadline.reached", "inbound.interpreted"] }, payload: { type: "object" }, flowId: string, origin: { type: "object" } }, ["semanticKey", "kind", "payload"]) },
   { name: "stream_advance_after_decision", description: "Advance the gateway cursor only after exactly one read-back decision covers the input.", inputSchema: objectSchema({ eventId: string, decisionEventId: string }, ["eventId", "decisionEventId"]) },
   { name: "stream_advance_own_output", description: "Mechanically advance past a gateway-authored stream output without treating it as new evidence.", inputSchema: objectSchema({ eventId: string }, ["eventId"]) },
@@ -38,7 +38,7 @@ export const toolDefinitions = [
 function withJoelAckGate(stream, toolName, fn) {
   return async (args) => {
     if (typeof stream.assertJoelAckPriority === "function") {
-      await stream.assertJoelAckPriority({ toolName });
+      await stream.assertJoelAckPriority({ toolName, toolArgs: args });
     }
     return fn(args);
   };

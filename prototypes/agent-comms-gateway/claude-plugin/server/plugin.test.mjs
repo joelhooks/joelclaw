@@ -8,6 +8,7 @@ import {
   createStreamTools,
   lintRewrite,
   MAX_AGGREGATE_JOINS,
+  normalizeSlackReplyThreadId,
   resolveAdvanceAfter,
   validateDecisionPayload,
 } from "./stream-tools.mjs";
@@ -61,6 +62,7 @@ const slackWorkRequest = {
       channelId: "CEXAMPLE",
       channelName: "lc-example",
       replyThreadId: "slack:CEXAMPLE:1785950000.100",
+      botDeliveryReady: true,
       binding: { cwd: "/tmp/example", repo: "/tmp/example" },
     },
   },
@@ -126,6 +128,42 @@ describe("stream receipts", () => {
     );
     const cursor = await stream.advanceAfterDecision({ eventId: "input-1", decisionEventId: appended.receipt.eventId });
     expect(cursor.lastEventId).toBe("input-1");
+  });
+
+  test("normalizes stale duplicated Slack thread prefixes", async () => {
+    expect(normalizeSlackReplyThreadId(
+      "CEXAMPLE",
+      "slack:CEXAMPLE:slack:CEXAMPLE:1785950000.100",
+    )).toBe("slack:CEXAMPLE:1785950000.100");
+
+    const staleWorkerResult = {
+      ...shitratWorkerResult,
+      payload: {
+        ...shitratWorkerResult.payload,
+        evidence: {
+          context: {
+            ...shitratWorkerResult.payload.evidence.context,
+            replyThreadId: "slack:CEXAMPLE:slack:CEXAMPLE:1785950000.100",
+          },
+        },
+      },
+    };
+    const client = fakeClient([staleWorkerResult]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    const pending = await stream.pending();
+    expect(pending.pending[0].workerResult.replyThreadId).toBe(
+      "slack:CEXAMPLE:1785950000.100",
+    );
+    const appended = await stream.recordDecision({
+      payload: {
+        ...decisionPayload,
+        inputEventIds: ["worker-result-1"],
+        rewrite: "Review complete.",
+      },
+    });
+    expect(appended.event.payload.decision.target.threadId).toBe(
+      "slack:CEXAMPLE:1785950000.100",
+    );
   });
 
   test("mechanically returns ShitRat worker results to their Slack thread", async () => {
@@ -301,7 +339,97 @@ describe("stream receipts", () => {
     await expect(handlers.herdr_snapshot({})).resolves.toEqual({ ok: true });
   });
 
-  test("Slack workRequest fanout bypasses the ordinary addressed-Joel ack gate", async () => {
+  test("bootstrap normalizes a stale workRequest return thread", async () => {
+    const stale = {
+      ...slackWorkRequest,
+      payload: {
+        ...slackWorkRequest.payload,
+        workRequest: {
+          ...slackWorkRequest.payload.workRequest,
+          replyThreadId: "slack:CEXAMPLE:slack:CEXAMPLE:1785950000.100",
+        },
+      },
+    };
+    const stream = createStreamTools({ client: fakeClient([stale]), now: () => 20 });
+    const boot = await stream.bootstrap();
+    expect(boot.pending[0].payload.workRequest.replyThreadId).toBe(
+      "slack:CEXAMPLE:1785950000.100",
+    );
+    expect(boot.pendingCompact[0].workRequest.replyThreadId).toBe(
+      "slack:CEXAMPLE:1785950000.100",
+    );
+  });
+
+  test("pre-patch workRequest without bot readiness fails closed", async () => {
+    const { botDeliveryReady: _omitted, ...legacyWorkRequest } =
+      slackWorkRequest.payload.workRequest;
+    const stale = {
+      ...slackWorkRequest,
+      _id: "slack-work-readiness-missing",
+      payload: {
+        ...slackWorkRequest.payload,
+        workRequest: legacyWorkRequest,
+      },
+    };
+    const client = fakeClient([stale]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    const pending = await stream.pending();
+    expect(pending.pending[0].workRequest.botDeliveryReady).toBe(false);
+    const handlers = createToolHandlers({
+      stream,
+      herdr: { dispatchWorker: async () => ({ unsafe: true }) },
+      wake: {},
+    });
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
+      .rejects.toThrow("Slack bot membership is required");
+  });
+
+  test("workRequest fails closed when the Slack bot cannot deliver", async () => {
+    const identityBlocked = {
+      ...slackWorkRequest,
+      _id: "slack-work-no-bot",
+      payload: {
+        ...slackWorkRequest.payload,
+        workRequest: {
+          ...slackWorkRequest.payload.workRequest,
+          botDeliveryReady: false,
+        },
+      },
+    };
+    const client = fakeClient([identityBlocked]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    const handlers = createToolHandlers({
+      stream,
+      herdr: { dispatchWorker: async () => ({ unsafe: true }) },
+      wake: {},
+    });
+
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
+      .rejects.toThrow("Slack bot membership is required");
+    await expect(stream.recordDecision({
+      payload: {
+        inputEventIds: ["slack-work-no-bot"],
+        reason: "Bot identity cannot reply in this private channel.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "fanout", taskId: "unsafe-launch" },
+      },
+    })).rejects.toThrow("must fail closed with one drop");
+
+    const dropped = await stream.recordDecision({
+      payload: {
+        inputEventIds: ["slack-work-no-bot"],
+        reason: "Bot identity cannot reply in this private channel.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "drop" },
+      },
+    });
+    expect(dropped.advanceAfter).toBe(true);
+    expect(dropped.event.payload.decision.verb).toBe("drop");
+  });
+
+  test("Joel-authored retried workRequest uses one fanout and advances without deliver ack", async () => {
     const client = fakeClient([slackWorkRequest]);
     const stream = createStreamTools({ client, now: () => 20 });
     const pending = await stream.pending();
@@ -323,8 +451,52 @@ describe("stream receipts", () => {
         decision: { verb: "deliver" },
         rewrite: "on it",
       },
-      advanceAfter: false,
-    })).rejects.toThrow("must be fanout");
+    })).rejects.toThrow("must use one fanout decision");
+
+    const handlers = createToolHandlers({
+      stream,
+      herdr: {
+        dispatchWorker: async () => ({ ok: true }),
+        prompt: async () => ({ unsafe: true }),
+      },
+      wake: {},
+    });
+    await expect(handlers.herdr_prompt({ target: "wZ:p1", text: "reuse this pane" }))
+      .rejects.toThrow("Generic herdr_prompt reuse is forbidden");
+    await expect(handlers.herdr_dispatch_worker({
+      taskId: "x",
+      task: "y",
+      cwd: "/tmp/example",
+      freshWorkspace: true,
+      worktree: true,
+      resultContext: { platform: "slack" },
+    })).rejects.toThrow("sourceEventId");
+    await expect(handlers.herdr_dispatch_worker({
+      taskId: "x",
+      task: "y",
+      cwd: "/tmp/wrong-project",
+      freshWorkspace: true,
+      worktree: true,
+      resultContext: {
+        sourceEventId: "slack-work-1",
+        platform: "slack",
+        channelId: "CWRONG",
+        replyThreadId: "slack:CWRONG:1785950000.100",
+      },
+    })).rejects.toThrow("must match pending workRequest");
+    await expect(handlers.herdr_dispatch_worker({
+      taskId: "x",
+      task: "y",
+      cwd: "/tmp/example",
+      freshWorkspace: true,
+      worktree: true,
+      resultContext: {
+        sourceEventId: "slack-work-1",
+        platform: "slack",
+        channelId: "CEXAMPLE",
+        replyThreadId: "slack:CEXAMPLE:1785950000.100",
+      },
+    })).resolves.toEqual({ ok: true });
 
     const fanout = await stream.recordDecision({
       payload: {
@@ -334,20 +506,77 @@ describe("stream receipts", () => {
         decisionSeq: 1,
         decision: { verb: "fanout", taskId: "slack-work-review" },
       },
-      advanceAfter: false,
     });
-    expect(fanout.advanceAfter).toBe(false);
+    expect(fanout.advanceAfter).toBe(true);
+    expect(fanout.cursor.lastEventId).toBe("slack-work-1");
     expect(fanout.event.payload.decision).toEqual({
       verb: "fanout",
       taskId: "slack-work-review",
     });
+
+    await expect(stream.recordDecision({
+      payload: {
+        inputEventIds: ["slack-work-1"],
+        reason: "A second decision is forbidden.",
+        promptRevision: "abc123",
+        decisionSeq: 2,
+        decision: { verb: "fanout", taskId: "slack-work-review" },
+      },
+    })).rejects.toThrow("already has its one canonical decision");
+  });
+
+  test("unbound workRequest delivers the missing mapping to Slack and blocks launch", async () => {
+    const unbound = {
+      ...slackWorkRequest,
+      _id: "slack-work-unbound",
+      payload: {
+        ...slackWorkRequest.payload,
+        workRequest: {
+          ...slackWorkRequest.payload.workRequest,
+          binding: undefined,
+        },
+      },
+    };
+    const client = fakeClient([unbound]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    const pending = await stream.pending();
+    expect(pending.ackRequiredJoel).toEqual([]);
 
     const handlers = createToolHandlers({
       stream,
       herdr: { dispatchWorker: async () => ({ ok: true }) },
       wake: {},
     });
-    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" })).resolves.toEqual({ ok: true });
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
+      .rejects.toThrow("Do not launch a worker");
+
+    await expect(stream.recordDecision({
+      payload: {
+        inputEventIds: ["slack-work-unbound"],
+        reason: "No channel context binding exists.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "fanout", taskId: "unsafe-launch" },
+      },
+    })).rejects.toThrow("must use one Slack-thread deliver");
+
+    const delivered = await stream.recordDecision({
+      payload: {
+        inputEventIds: ["slack-work-unbound"],
+        reason: "The channel needs an explicit project mapping.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "deliver" },
+        rewrite: "I need a project context binding for #lc-example before I can launch this work.",
+      },
+    });
+    expect(delivered.advanceAfter).toBe(true);
+    expect(delivered.event.payload.decision.target).toEqual({
+      kind: "platform",
+      platform: "slack",
+      conversationId: "CEXAMPLE",
+      threadId: "slack:CEXAMPLE:1785950000.100",
+    });
   });
 
   test("ambient inbound observes silently and escalation unlocks outbound", async () => {
@@ -481,9 +710,9 @@ describe("worker lanes", () => {
     expect(second.calls.some(([family, verb]) => family === "tab" && verb === "create")).toBe(false);
   });
 
-  test("Slack work launches a fresh Herdr worktree in the channel-bound repo", async () => {
+  test("Slack work launches a fresh Herdr worktree without depending on the gateway pane", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
-    const { calls, tools } = fakeHerdr({ dir });
+    const { calls, tools } = fakeHerdr({ panes: [], dir });
     const result = await tools.dispatchWorker({
       taskId: "example-review",
       lane: "example-review",
@@ -493,6 +722,7 @@ describe("worker lanes", () => {
       freshWorkspace: true,
       worktree: true,
       resultContext: {
+        sourceEventId: "slack-work-1",
         platform: "slack",
         channelId: "CEXAMPLE",
         replyThreadId: "slack:CEXAMPLE:1785950000.100",
@@ -518,7 +748,14 @@ describe("worker lanes", () => {
     expect(task).toContain("Launch contract cwd: `/tmp/example-shitrat-review`");
     expect(task).toContain('"replyThreadId":"slack:CEXAMPLE:1785950000.100"');
     expect(task).toContain("--context");
+    expect(task).toContain("append one private worker-result receipt");
+    expect(task).toContain("Never run `jc-slack reply`");
+    expect(task).toContain("The gateway alone decides and sends the one outward result");
     expect(task).not.toContain("--data");
+    expect(calls.some((args) =>
+      args[0] === "pane"
+      && args[1] === "run"
+      && args[3].startsWith("JOELCLAW_GATEWAY_WORKER=1 pi "))).toBe(true);
 
     const livePane = {
       pane_id: "wSR:p1",
@@ -526,7 +763,7 @@ describe("worker lanes", () => {
       workspace_id: "wSR",
       agent_status: "working",
     };
-    const retry = fakeHerdr({ panes: [gatewayLoop, livePane], dir });
+    const retry = fakeHerdr({ panes: [livePane], dir });
     const idempotent = await retry.tools.dispatchWorker({
       taskId: "example-review",
       lane: "example-review",
@@ -535,6 +772,7 @@ describe("worker lanes", () => {
       freshWorkspace: true,
       worktree: true,
       resultContext: {
+        sourceEventId: "slack-work-1",
         platform: "slack",
         channelId: "CEXAMPLE",
         replyThreadId: "slack:CEXAMPLE:1785950000.100",
@@ -546,6 +784,36 @@ describe("worker lanes", () => {
       paneId: "wSR:p1",
     });
     expect(retry.calls.some(([family, verb]) => family === "worktree" && verb === "create")).toBe(false);
+
+    await expect(retry.tools.dispatchWorker({
+      taskId: "example-review",
+      lane: "example-review",
+      task: "A later request must not reuse this worktree.",
+      cwd: "/tmp/example-project",
+      freshWorkspace: true,
+      worktree: true,
+      resultContext: {
+        sourceEventId: "slack-work-2",
+        platform: "slack",
+        channelId: "CEXAMPLE",
+        replyThreadId: "slack:CEXAMPLE:1785950002.300",
+      },
+    })).rejects.toThrow("already owns pane");
+  });
+
+  test("Slack result context refuses warm-pane dispatch", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
+    const { tools } = fakeHerdr({ dir });
+    await expect(tools.dispatchWorker({
+      taskId: "unsafe-slack-reuse",
+      task: "Review it.",
+      cwd: "/tmp/example-project",
+      resultContext: {
+        platform: "slack",
+        channelId: "CEXAMPLE",
+        replyThreadId: "slack:CEXAMPLE:1785950000.100",
+      },
+    })).rejects.toThrow("warm-pane reuse is forbidden");
   });
 
   test("fresh Slack work refuses without a return thread", async () => {

@@ -6,10 +6,6 @@ import type { AdapterPostableMessage } from "chat";
 import Redis from "ioredis";
 import { journalMessage } from "../message-journal";
 import {
-  createSlackUserWebClient,
-  makeSlackDeliveryAdapterWithUserFallback,
-} from "../slack-user-token-fallback";
-import {
   type ExplicitTransportSendReceipt,
   type ExplicitTransportSendRequest,
   makeExplicitTransportSender,
@@ -39,12 +35,10 @@ function makeAdapter(
     postMessage: (threadId, message: SdkPostableMessage) =>
       adapter.postMessage(threadId, message as AdapterPostableMessage),
   };
-  return platform === "slack"
-    ? makeSlackDeliveryAdapterWithUserFallback({
-        botAdapter: deliveryAdapter,
-        userClient: createSlackUserWebClient(),
-      })
-    : deliveryAdapter;
+  // Outbound Slack is bot-only. A user-token fallback makes replies appear as
+  // Joel and breaks the ShitRat identity contract. Missing bot membership must
+  // fail closed instead of impersonating the operator.
+  return deliveryAdapter;
 }
 
 async function rememberExplicitFlow(
