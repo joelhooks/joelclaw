@@ -268,7 +268,7 @@ function errorDetails(error: unknown): {
     return {
       message: `Convex message event ${typeof record.operation === "string" ? record.operation : "trace"} failed`,
       code: typeof record.code === "string" ? record.code : "MESSAGE_EVENT_TRACE_FAILED",
-      fix: "Check the local Convex deployment on 127.0.0.1:3210 and retry.",
+      fix: "Check MESSAGE_EVENT_CONVEX_URL or the fleet JOELCLAW_CENTRAL_URL, then retry.",
     };
   }
 

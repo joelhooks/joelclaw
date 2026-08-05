@@ -6,6 +6,7 @@ import {
   GATEWAY_MESSAGE_EVENT_CONSUMER,
   type GatewayDecisionRecordedPayload,
   gatewayDecisionSemanticKey,
+  resolveMessageEventLogUrl,
 } from "../src/index";
 
 const decisionPayload: GatewayDecisionRecordedPayload = {
@@ -21,6 +22,29 @@ const decisionPayload: GatewayDecisionRecordedPayload = {
 };
 
 describe("gateway stream contracts", () => {
+  test("derives the Convex URL from the fleet Central URL on satellites", () => {
+    const names = [
+      "MESSAGE_EVENT_CONVEX_URL",
+      "CONVEX_SELF_HOSTED_URL",
+      "CONVEX_URL",
+      "JOELCLAW_CENTRAL_URL",
+    ] as const;
+    const previous = new Map(names.map((name) => [name, process.env[name]]));
+    try {
+      for (const name of names) delete process.env[name];
+      process.env.JOELCLAW_CENTRAL_URL = "http://central.example.test:3011/api";
+      expect(resolveMessageEventLogUrl()).toBe("http://central.example.test:3210/");
+      process.env.MESSAGE_EVENT_CONVEX_URL = "http://explicit.example.test:4444";
+      expect(resolveMessageEventLogUrl()).toBe("http://explicit.example.test:4444");
+    } finally {
+      for (const name of names) {
+        const value = previous.get(name);
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
   test("derives the ADR-0249 decision semantic key", () => {
     expect(gatewayDecisionSemanticKey(decisionPayload)).toBe("gateway:event-17:2");
     expect(() => gatewayDecisionSemanticKey({ inputEventIds: [], decisionSeq: 1 })).toThrow(

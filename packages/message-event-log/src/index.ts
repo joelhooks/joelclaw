@@ -348,10 +348,26 @@ export const gatewayDecisionSemanticKey = (
   return `gateway:${firstInputEventId}:${payload.decisionSeq}`;
 };
 
+const resolveCentralConvexUrl = (): string | undefined => {
+  const centralUrl = cleanEnv(process.env.JOELCLAW_CENTRAL_URL);
+  if (!centralUrl) return undefined;
+  try {
+    const url = new URL(centralUrl);
+    url.port = "3210";
+    url.pathname = "/";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+};
+
 export const resolveMessageEventLogUrl = (): string =>
   cleanEnv(process.env.MESSAGE_EVENT_CONVEX_URL) ??
   cleanEnv(process.env.CONVEX_SELF_HOSTED_URL) ??
   cleanEnv(process.env.CONVEX_URL) ??
+  resolveCentralConvexUrl() ??
   "http://127.0.0.1:3210";
 
 export const createMessageEventLogClient = (options: ClientOptions = {}) => {
