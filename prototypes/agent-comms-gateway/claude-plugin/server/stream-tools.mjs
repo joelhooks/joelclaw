@@ -72,6 +72,12 @@ export function inboundAddressing(event) {
   return event?.payload?.addressing === "ambient" ? "ambient" : "addressed";
 }
 
+function isWorkRequest(event) {
+  return event?.kind === "inbound.received"
+    && event?.payload?.workRequest
+    && typeof event.payload.workRequest === "object";
+}
+
 function isOutboundDecision(decision) {
   return decision?.verb === "deliver"
     || (decision?.verb === "aggregate" && decision?.action === "close-deliver");
@@ -315,7 +321,9 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
   async function unackedJoelInbound({ pending: pendingArg, events: eventsArg } = {}) {
     const pending = pendingArg ?? await loadPending(200);
     const joelPending = pending.filter((event) =>
-      isJoelInbound(event) && inboundAddressing(event) === "addressed");
+      isJoelInbound(event)
+      && inboundAddressing(event) === "addressed"
+      && !isWorkRequest(event));
     if (joelPending.length === 0) return [];
     const events = eventsArg ?? await scanAll();
     return joelPending.filter((event) => !hasDeliverCovering(events, event._id));
@@ -427,6 +435,14 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         const priorDecisions = decisionsCovering(events, eventId);
         const decision = payload?.decision;
         const verb = decision?.verb;
+        if (isWorkRequest(input)) {
+          if (priorDecisions.length === 0 && verb !== "fanout") {
+            throw new Error(
+              `First decision on workRequest ${eventId} must be fanout. The Slack bot reaction already acknowledged it; do not send a Telegram echo. Got verb=${verb}`,
+            );
+          }
+          continue;
+        }
         if (inboundAddressing(input) === "ambient") {
           if (isOutboundDecision(decision) && !hasEscalationCovering(events, eventId)) {
             throw new Error(

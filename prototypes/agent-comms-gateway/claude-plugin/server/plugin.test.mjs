@@ -47,6 +47,24 @@ const ambientJoelInbound = {
     content: { text: "message for a human" },
   },
 };
+const slackWorkRequest = {
+  _id: "slack-work-1",
+  kind: "inbound.received",
+  source: "gateway.slack.chat-sdk.message.retry",
+  recordedAt: 13,
+  sequence: 4,
+  payload: {
+    addressing: "addressed",
+    actorId: "U030BJ3CK",
+    content: { text: ":shitrat: review this" },
+    workRequest: {
+      channelId: "CEXAMPLE",
+      channelName: "lc-example",
+      replyThreadId: "slack:CEXAMPLE:1785950000.100",
+      binding: { cwd: "/tmp/example", repo: "/tmp/example" },
+    },
+  },
+};
 const shitratWorkerResult = {
   _id: "worker-result-1",
   kind: "message.requested",
@@ -281,6 +299,55 @@ describe("stream receipts", () => {
     const machine = await stream.recordDecision({ payload: { ...decisionPayload, decisionSeq: 1 } });
     expect(machine.advanceAfter).toBe(true);
     await expect(handlers.herdr_snapshot({})).resolves.toEqual({ ok: true });
+  });
+
+  test("Slack workRequest fanout bypasses the ordinary addressed-Joel ack gate", async () => {
+    const client = fakeClient([slackWorkRequest]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    const pending = await stream.pending();
+    expect(pending.ackRequiredJoel).toEqual([]);
+    expect(pending.pending[0]).toMatchObject({
+      addressing: "addressed",
+      workRequest: {
+        channelName: "lc-example",
+        replyThreadId: "slack:CEXAMPLE:1785950000.100",
+      },
+    });
+
+    await expect(stream.recordDecision({
+      payload: {
+        inputEventIds: ["slack-work-1"],
+        reason: "The Slack reaction already acknowledged this team work request.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "deliver" },
+        rewrite: "on it",
+      },
+      advanceAfter: false,
+    })).rejects.toThrow("must be fanout");
+
+    const fanout = await stream.recordDecision({
+      payload: {
+        inputEventIds: ["slack-work-1"],
+        reason: "Dispatch the channel-bound work request without a Telegram echo.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "fanout", taskId: "slack-work-review" },
+      },
+      advanceAfter: false,
+    });
+    expect(fanout.advanceAfter).toBe(false);
+    expect(fanout.event.payload.decision).toEqual({
+      verb: "fanout",
+      taskId: "slack-work-review",
+    });
+
+    const handlers = createToolHandlers({
+      stream,
+      herdr: { dispatchWorker: async () => ({ ok: true }) },
+      wake: {},
+    });
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" })).resolves.toEqual({ ok: true });
   });
 
   test("ambient inbound observes silently and escalation unlocks outbound", async () => {
