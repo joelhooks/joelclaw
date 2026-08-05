@@ -7,6 +7,11 @@ set -euo pipefail
 
 REPO_URL="${JOELCLAW_REPO_URL:-git@github.com:joelhooks/joelclaw.git}"
 REPO_DIR="${JOELCLAW_REPO_DIR:-$HOME/Code/joelhooks/joelclaw}"
+JC_SLACK_REPO_URL="${JC_SLACK_REPO_URL:-git@github.com:joelhooks/jc-slack.git}"
+JC_SLACK_REPO_DIR="${JC_SLACK_REPO_DIR:-$HOME/Code/joelhooks/jc-slack}"
+if [[ "$JC_SLACK_REPO_DIR" != /* ]]; then
+  JC_SLACK_REPO_DIR="$(pwd -P)/$JC_SLACK_REPO_DIR"
+fi
 CENTRAL_SSH="${JOELCLAW_CENTRAL_SSH:-joel@panda}"
 CENTRAL_URL="${JOELCLAW_CENTRAL_URL:-http://joels-mac-studio.tail7af24.ts.net:3111}"
 SATELLITE_TYPESENSE_URL="${TYPESENSE_URL:-${JOELCLAW_TYPESENSE_URL:-http://joels-mac-studio.tail7af24.ts.net:8108}}"
@@ -56,10 +61,17 @@ ensure_skill_consumer_root() {
   mkdir -p "$parent"
 
   if [[ -L "$root" ]]; then
-    local current_target
-    current_target="$(readlink "$root")"
-    echo "Converting $root from whole-root symlink to composed skill root: $current_target"
+    local source_root
+    local composed_root
+    source_root="$(cd "$root" && pwd -P)"
+    composed_root="$(mktemp -d "$parent/.skills-compose.XXXXXX")"
+    while IFS= read -r -d '' entry; do
+      ln -s "$entry" "$composed_root/$(basename "$entry")"
+    done < <(find "$source_root" -mindepth 1 -maxdepth 1 -print0)
+    chmod 755 "$composed_root"
+    echo "Converting $root from whole-root symlink to composed skill root: $source_root"
     unlink "$root"
+    mv "$composed_root" "$root"
   elif [[ -e "$root" && ! -d "$root" ]]; then
     echo "Cannot create skill consumer root: $root exists and is not a directory" >&2
     exit 1
@@ -175,6 +187,39 @@ REPO_DIR="$(pwd -P)"
 say "installing workspace deps"
 pnpm install
 
+say "installing jc-slack"
+mkdir -p "$(dirname "$JC_SLACK_REPO_DIR")"
+if [[ ! -d "$JC_SLACK_REPO_DIR/.git" ]]; then
+  git clone "$JC_SLACK_REPO_URL" "$JC_SLACK_REPO_DIR"
+elif [[ "$SKIP_GIT_SYNC" == "true" ]]; then
+  echo "Skipping jc-slack sync because JOELCLAW_SKIP_GIT_SYNC=true"
+elif [[ -n "$(git -C "$JC_SLACK_REPO_DIR" status --porcelain)" ]]; then
+  echo "Skipping jc-slack sync because the checkout has local changes"
+elif [[ "$(git -C "$JC_SLACK_REPO_DIR" branch --show-current)" != "main" ]]; then
+  echo "Skipping jc-slack sync because the checkout is not on main"
+else
+  git -C "$JC_SLACK_REPO_DIR" fetch origin main
+  git -C "$JC_SLACK_REPO_DIR" pull --ff-only origin main
+fi
+(
+  cd "$JC_SLACK_REPO_DIR"
+  bun install --frozen-lockfile
+)
+mkdir -p "$HOME/.local/bin"
+JC_SLACK_BIN_LINK="$HOME/.local/bin/jc-slack"
+JC_SLACK_BIN_SOURCE="$JC_SLACK_REPO_DIR/bin/jc-slack"
+if [[ -L "$JC_SLACK_BIN_LINK" ]]; then
+  if [[ "$(readlink "$JC_SLACK_BIN_LINK")" != "$JC_SLACK_BIN_SOURCE" ]]; then
+    echo "Cannot install jc-slack: $JC_SLACK_BIN_LINK points elsewhere" >&2
+    exit 1
+  fi
+elif [[ -e "$JC_SLACK_BIN_LINK" ]]; then
+  echo "Cannot install jc-slack: $JC_SLACK_BIN_LINK exists and is not a symlink" >&2
+  exit 1
+else
+  ln -s "$JC_SLACK_BIN_SOURCE" "$JC_SLACK_BIN_LINK"
+fi
+
 say "writing satellite environment"
 ENV_FILE="$HOME/.config/system-bus.env"
 upsert_env_var "$ENV_FILE" "JOELCLAW_CENTRAL_URL" "$CENTRAL_URL"
@@ -210,6 +255,14 @@ say "linking joelclaw runtime skill pack"
 mkdir -p "$HOME/.pi/agent" "$HOME/.agents" "$HOME/.joelclaw"
 ensure_skill_pack_link "$HOME/.pi/agent/skills" "joelclaw-runtime" "$REPO_DIR/skills"
 ensure_skill_pack_link "$HOME/.agents/skills" "joelclaw-runtime" "$REPO_DIR/skills"
+for root in \
+  "$HOME/.agents/skills" \
+  "$HOME/.pi/agent/skills" \
+  "$HOME/.claude/skills" \
+  "$HOME/.codex/skills" \
+  "$HOME/.cursor/skills"; do
+  ensure_skill_pack_link "$root" "slack-link" "$REPO_DIR/skills/slack-link"
+done
 
 say "ensuring Pi session directory exists"
 mkdir -p "$HOME/.pi/agent/sessions"
