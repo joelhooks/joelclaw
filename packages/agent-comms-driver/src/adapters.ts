@@ -26,7 +26,7 @@ export type LiveAdapterOptions = {
 };
 
 export const DEFAULT_SUCCESSOR_COMMAND =
-  "cd /Users/joel/Code/joelhooks/joelclaw && claude --model claude-sonnet-4-6 --effort medium --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway";
+  "cd /Users/joel/Code/joelhooks/joelclaw && MESSAGE_EVENT_CONVEX_URL=http://127.0.0.1:3210 claude --model claude-sonnet-4-6 --effort medium --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway";
 
 const GATEWAY_PLUGIN_SUFFIX = "prototypes/agent-comms-gateway/claude-plugin";
 const GATEWAY_AGENT_NAME = "joelclaw-gateway";

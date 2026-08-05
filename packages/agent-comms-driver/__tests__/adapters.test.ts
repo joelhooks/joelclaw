@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { MessageEventDocument } from "@joelclaw/message-event-log";
 
 import {
+  DEFAULT_SUCCESSOR_COMMAND,
   isCanonicalGatewayProcessInfo,
   makeDeadlineIndex,
   makeLiveDriverPorts,
@@ -158,6 +159,12 @@ describe("deadline replay", () => {
 });
 
 describe("live adapters", () => {
+  test("pins the gateway stream to local Convex instead of stale fleet routing", () => {
+    expect(DEFAULT_SUCCESSOR_COMMAND).toContain(
+      "MESSAGE_EVENT_CONVEX_URL=http://127.0.0.1:3210 claude",
+    );
+  });
+
   test("requires the pinned Sonnet model and gateway plugin arguments", () => {
     const processInfo = (model: string) => ({
       foreground_processes: [{

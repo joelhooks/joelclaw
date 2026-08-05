@@ -5,13 +5,14 @@ The Agent Comms Gateway is the sole comms policy owner. It runs on flagg as one 
 The gateway agent pins Claude Sonnet 4.6. It handles fast comms judgment and dispatches harder work to Herdr workers:
 
 ```bash
-claude --model claude-sonnet-4-6 \
+MESSAGE_EVENT_CONVEX_URL=http://127.0.0.1:3210 \
+  claude --model claude-sonnet-4-6 \
   --effort medium \
   --plugin-dir prototypes/agent-comms-gateway/claude-plugin \
   --agent joelclaw-gateway
 ```
 
-Do not use the moving `sonnet` alias here. A Herdr-restored bare `claude --resume` process is not healthy because it lacks the gateway plugin tools.
+Do not use the moving `sonnet` alias here. Pin `MESSAGE_EVENT_CONVEX_URL` locally so a stale fleet `JOELCLAW_CENTRAL_URL` cannot send the plugin to the ghost `flagg` node. A Herdr-restored bare `claude --resume` process is not healthy because it lacks the gateway plugin tools.
 
 The Herdr workspace is `[jc] gateway agent`. Its stable gateway pane label is `📨 gateway loop`. Keep the gateway session and driver in that workspace as separate panes.
 
