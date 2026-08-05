@@ -1,200 +1,110 @@
 ---
 name: egghead-slack
 displayName: egghead Slack Intelligence
-description: Joel's private egghead.io Slack integration — channel taxonomy, token config, passive monitoring, and message intelligence pipeline.
-version: 0.2.0
+description: Operate the private egghead Slack integration without leaking workspace data. Covers passive monitoring, explicit ShitRat work triggers, and approval-bound thread replies.
+version: 0.3.0
 author: joel
 tags:
   - slack
-  - egghead
   - channels
   - intelligence
 ---
 
 # egghead Slack Intelligence
 
-Joel's private intelligence layer over the egghead.io Slack workspace. **Joel-only** — channel participation is limited to an exact reply Joel explicitly approves, and private Slack data never becomes public.
+This repository copy is the public-safe operating contract. Private workspace IDs, channel maps, people, message content, and runtime bindings belong in the local runtime overlay. Never add them here.
 
-## Tokens
+## Boundaries
 
-Three tokens in agent-secrets (values unchanged across scope updates):
+- Slack content is private by default.
+- Never publish channel IDs, user IDs, workspace IDs, channel rosters, direct-message maps, customer data, message text, files, or private links.
+- Never print or persist token values.
+- One gateway transport owns outbound Slack communication.
+- Workers return evidence to the gateway. Workers do not post directly.
+- Ordinary channel messages remain passive intelligence.
 
-| Secret | Type | Purpose |
-|--------|------|---------|
-| `slack_bot_token` | `xoxb-*` | Bot: Socket Mode, send DMs to Joel, reactions |
-| `slack_app_token` | `xapp-*` | Socket Mode WebSocket connection |
-| `slack_user_token` | `xoxp-*` | User: read all channels, DMs, files, search |
+## Credentials
 
-### User Token Scopes (current)
-`admin`, `identify`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, `im:history`, `im:read`, `mpim:history`, `users:read`, `users:read.email`, `chat:write`, `canvases:read`, `canvases:write`, `files:read`, `search:read`, `search:read.public`, `search:read.private`, `search:read.mpim`, `search:read.im`, `search:read.files`, `search:read.users`
+Runtime credentials come from `agent-secrets`:
 
-### Bot Token Scopes
-`files:read`, `files:write`, `remote_files:read`, `remote_files:share`, `remote_files:write`, `search:read.files`, `users.profile:read`, `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, `im:history`, `im:read`, `mpim:history`, `reactions:write`, `app_mentions:read`, `connections:write`
+- `slack_bot_token` for Socket Mode, reactions, and bot-authored replies.
+- `slack_app_token` for the Socket Mode connection.
+- `slack_user_token` for approved read-only search and context retrieval.
 
-## Workspace IDs
+Lease credentials only for the command that needs them. Do not copy them into files, logs, prompts, or shell history.
 
-All Slack IDs stored here (private skill, NOT in any git repo):
-- **Workspace**: egghead.io (`T030CS0QL`)
-- **Joel user**: `U030BJ3CK`
-- **Bot user**: `U0AGRUMQXPF` (joelclaw bot)
-- **Joel DM channel**: `D0AHPM2NPJL`
+## Read workflow
 
-## VIP DM Channels
+Use `jc-slack` instead of raw Slack API calls when the command exists:
 
-| Person | User ID | DM Channel | Notes |
-|--------|---------|------------|-------|
-| Kent C. Dodds | `U030CU0CN` | `D030BJ3D1` | MEGA instructor, EpicWeb |
-| Grzegorz Róg | `U03G1P81FBJ` | `D098ZQELPLM` | Slack Connect, MEGA producer |
-| Matt Pocock | `U0211NP2ZN1` | (lookup needed) | Total TypeScript, AI Hero |
-| John Lindquist | `U030CS0R0` | (lookup needed) | egghead cofounder, Script Kit |
-
-22 external Slack Connect DMs total. Notable external users discovered:
-Tony Holdstock-Brown, Antonio Erdeljac, Sean Grove, Dave Kiss, Charly Poly, Matthew Rathbone, Janelle Allen, Justin Gordon
-
-## Channel Taxonomy
-
-729 channels total. Canonical ID→name mapping: `~/Vault/Resources/slack/channels.json` (729 entries, pulled 2026-02-26).
-
-Prefix-based auto-categorization:
-
-| Prefix | Category | Count (approx) | Description |
-|--------|----------|-----------------|-------------|
-| `lc-*` | Launch Control | ~50 | Course launch channels |
-| `cc-*` | Creator Channel | ~200 | 1:1 with creators/instructors |
-| `dd-*` | Ding Ding | ~15 | Revenue reporting (mostly noise) |
-| `brain-*` | Brain | 3 | Team thinking/strategy spaces |
-| `project-*` | Projects | ~15 | Active project channels |
-| `*-chat` | Legacy | many | Legacy individual chats |
-| `sp-*` | Sales/Partner | few | Sales partner channels |
-| `pm-*` | Product Mgmt | few | Product management |
-| `skill-*` | Skill | few | Skill Recordings ops |
-| `egghead-*` | egghead Ops | several | Various egghead channels |
-
-### Priority Channels (ADR-0131)
-
-**High** (cc-*/lc-* with Contact materialization):
-- `cc-matt-p` (`C0211NSK3TP`) — Matt Pocock
-- `cc-john` (`G70JH2Y7P`) — John Lindquist  
-- `cc-ashley-hindle` — active
-- `cc-alex-hillman` — active
-- `epic-instructors` (`C06P7TD6VMM`) — **Private, 14 members.** Kent, Artem, and other Epic Web instructors. Workshop app features, video pipeline, course-builder updates.
-- `cc-kcd` (`G01NK427ZE2`) — **Private.** Kent C. Dodds creator channel (NOT lc-just-javascript)
-- `cc-artem-zakharchenko` (`C044J7QEDRA`) — **Private, 11 members.** Artem's creator channel
-- `lc-total-typescript` (`C03JWTULTN0`) — **Private, 10 members.** Matt's course
-- `lc-ai-hero` (`C07CURG8YB1`) — **Private, 9 members.** Matt's AI platform
-- `lc-course-builder` (`C06KP859BUM`) — **Private, 11 members.** Course builder tool
-- `lc-badass` (`C02PXV4BR61`) — **Private, 12 members.** Badass Courses
-- `lc-epic-web` (`C03QFFWHT7D`) — **Private, 11 members.** Epic Web launch
-
-**Medium** (project-*/brain-*/skill-*):
-- `brain-john` (`C0A2ZA94M0V`) — **Public, 6 members.** Strategy with John
-- `brain-joel` (`C09LKT871PE`) — **Public, 8 members.** Joel's strategy space
-- `project-support-agent` (`C0ACP6SDN73`) — **Public, 8 members.** Support agent project
-- `project-gremlin` (`C0AE33HH9C3`) — **Public, 8 members.** Gremlin project
-- `skill-life` (`C04JPQS5ZUZ`) — **Private, 9 members.** Skill Recordings ops
-
-**Low/noise** (dd-*/sp-*/legacy):
-- `dd-*` — revenue signals, topic-only extraction
-- `*-chat` — legacy, rarely active
-
-## API Patterns
-
-### Search messages
 ```bash
-SLACK_USER=$(secrets lease slack_user_token --ttl 1h)
-curl -s "https://slack.com/api/search.messages?query=QUERY&count=20&sort=timestamp&sort_dir=desc" \
-  -H "Authorization: Bearer $SLACK_USER"
+jc-slack channels --query <term>
+jc-slack search '<query>' --channel <channel-name>
+jc-slack context '<message-permalink>'
+jc-slack board <channel-name-or-id>
 ```
 
-### List DM channels
+Read the source thread before deciding or replying. A permalink is the stable input for thread work.
+
+## ShitRat work trigger
+
+Joel authorized one deterministic participation path:
+
+- A human posts exact `:shitrat:` or directly mentions the existing bot.
+- The source channel name matches `lc-*` or `cc-*`.
+- The bot can see the channel.
+- A private channel-context binding resolves one exact repository, `cwd`, Brain entry, skill set, and validation contract.
+
+The transport acknowledges with the bot-owned `:shitrat:` reaction. The gateway launches a fresh Herdr/Pi worktree in the resolved project. The worker returns its result to the gateway. The gateway posts one result in the originating thread.
+
+This trigger does not require a Task Grant, Reply Grant, or separate Joel approval. An unmapped channel fails closed and receives a binding-needed reply. The gateway never guesses a repository.
+
+## Approval-bound replies
+
+Outside the ShitRat work trigger, a channel reply requires Joel to approve the exact text.
+
+Start with a preview:
+
 ```bash
-curl -s "https://slack.com/api/conversations.list?types=im&limit=500" \
-  -H "Authorization: Bearer $SLACK_USER"
+jc-slack reply '<message-permalink>' --text-file <path>
 ```
 
-### Read DM history
-```bash
-curl -s "https://slack.com/api/conversations.history?channel=DM_CHANNEL_ID&limit=30" \
-  -H "Authorization: Bearer $SLACK_USER"
-```
+The preview returns an approval-bound confirmation command. Run that exact command only after Joel approves the exact reply text. The CLI delegates delivery to the single gateway transport and returns a delivery receipt.
 
-### Download files
-```bash
-curl -s -L -o output.file \
-  -H "Authorization: Bearer $SLACK_USER" \
-  "URL_PRIVATE_DOWNLOAD"
-```
-Requires `files:read` scope on user token.
+Do not bypass this flow with a user token, raw `chat.postMessage`, or a second Slack listener.
 
-### Send DM to Joel (bot token)
-```bash
-SLACK_BOT=$(secrets lease slack_bot_token --ttl 1h)
-curl -s -X POST https://slack.com/api/chat.postMessage \
-  -H "Authorization: Bearer $SLACK_BOT" \
-  -H 'Content-Type: application/json' \
-  -d '{"channel":"U030BJ3CK","text":"message"}'
-```
+## Passive intelligence
 
-### Upload file (3-step)
-`files.getUploadURLExternal` → POST multipart → `files.completeUploadExternal`
+Configured important channels can feed non-bot messages into the private indexing and relay pipeline. Passive messages can be indexed, batched, or escalated. They do not grant permission to reply.
 
-### Resolve external user (Slack Connect)
-```bash
-curl -s "https://slack.com/api/users.info?user=EXTERNAL_USER_ID" \
-  -H "Authorization: Bearer $SLACK_USER"
-```
+Runtime configuration and exact channel bindings live outside this public repository. The local runtime overlay may include private IDs and channel names, but those values must not flow back into commits, tests, docs, screenshots, or published artifacts.
 
-## Backfill Pipeline
+## Backfill
 
-Inngest functions (deployed, registered on the **host worker**):
-- `slack-channel-backfill` — per-channel paginated history → Typesense `slack_messages`
-- `slack-backfill-batch` — fan-out orchestrator for multiple channels
-- Events: `channel/slack.backfill.requested`, `channel/slack.backfill.batch.requested`
-- Flow control: concurrency 2, throttle 10/60s, 1.5s sleep between pages
-- Runtime reason: host worker is required because the function leases `slack_user_token` through local `secrets`; do not move to k8s cluster worker unless token leasing is replaced with a cluster-safe adapter.
-- Freshness gotcha: `conversations.history` only discovers thread parents inside the requested window. The function also expands `reply_count > 0` parents with `conversations.replies` and runs a bounded `search.messages in:<channel> after:<date>` pass so active replies on old threads are indexed too.
-- Repair canary (2026-04-29): 9-channel 24h backfill indexed 43 current Slack messages into `slack_messages` after the search fallback landed.
+The host worker owns Slack history backfills because it can lease local credentials. Backfills paginate channel history, expand active threads, and write private search records. Do not move this work to a cluster worker until credential leasing has a cluster-safe adapter.
 
-## Realtime Important-Channel Intelligence
+Relevant events:
 
-The live gateway no longer treats Slack as Joel-only for selected important channels. It still invokes only on Joel DMs, bot mentions, and tracked mention threads, but configured important channels now collect every non-bot message as passive intelligence.
+- `channel/slack.backfill.requested`
+- `channel/slack.backfill.batch.requested`
+- `channel/message.received`
+- `slack.signal.received`
 
-Runtime config lives in private startup state:
+## Public fixtures
 
-- `~/.joelclaw/scripts/gateway-start.sh`
-- `SLACK_IMPORTANT_CHANNEL_IDS` — comma-separated list of high/medium channel IDs from this skill
-- optional `SLACK_IMPORTANT_CHANNEL_NAMES` fallback for local/dev use
+Tests and examples must use fictional values:
 
-Behavior:
+- channel: `lc-example-project`
+- channel ID: `CEXAMPLE`
+- actor: `UTEAMMATE`
+- repository: `/tmp/example-project`
 
-- important-channel messages from anyone are indexed through `channel/message.received`
-- important-channel messages are queued as `slack.signal.received` with `passiveIntel: true` and `importantChannel: true`
-- Joel-authored messages also carry `joelSignal: true`
-- relay policy batches ordinary channel chatter and escalates only on stronger multi-signal score
-- if Redis is down, non-Joel important-channel messages remain index-only instead of direct-enqueuing the gateway session
+Never paste production Slack values into public fixtures.
 
-This is awareness, not participation. JoelClaw still never posts in channels unless explicitly sent there by Joel.
+## Related code
 
-## Privacy Boundary
-
-**Absolute rules:**
-- JoelClaw posts in Slack channels only when Joel directly instructs it.
-- An exact operator-approved reply starts with a `jc-slack reply` preview, then runs that preview's approval-bound confirmation command. The CLI delegates to the single gateway transport and returns a delivery receipt.
-- JoelClaw responds to other users only inside the explicitly approved thread.
-- JoelClaw NEVER surfaces channel content publicly
-- All intelligence is private context for Joel only
-- **No Slack IDs, channel names, or workspace identifiers in public repos**
-- This skill file is PRIVATE — lives at `~/.pi/agent/skills/egghead-slack/`, NOT in joelclaw repo
-
-**Content shared in Slack is privileged by default:**
-- Loom recordings, screenshots, files, and links shared in Slack channels or DMs are **private** unless Joel explicitly says otherwise
-- Do NOT auto-publish Looms or Slack-sourced content as discoveries, blog posts, or any public-facing content
-- Always ASK Joel before surfacing any Slack-originated content publicly
-- This applies to all channels — cc-*, lc-*, DMs, Slack Connect, everything
-
-## Related ADRs
-
-- ADR-0130: Slack Channel Integration (gateway handler)
-- ADR-0131: Unified Channel Intelligence Pipeline
-- ADR-0132: VIP DM Escalated Handling
-- Gateway channel: `packages/gateway/src/channels/slack.ts`
+- `packages/gateway/src/slack-work-request.ts`
+- `packages/gateway/src/chat-sdk-inbound/`
+- `packages/gateway/src/gateway-decision-executor.ts`
+- `packages/cli/src/commands/messages.ts`
+- `skills/slack-link/SKILL.md`
