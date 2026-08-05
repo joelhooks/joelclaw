@@ -29,6 +29,10 @@ import {
   resolveMessageActionDeclarationFromJournal,
 } from "../message-journal";
 import {
+  createSlackUserWebClient,
+  makeSlackDeliveryAdapterWithUserFallback,
+} from "../slack-user-token-fallback";
+import {
   normalizeTelegramBulletLines,
   type PreparedTelegramMarkdown,
   prepareTelegramMarkdown,
@@ -480,6 +484,18 @@ export async function resolveDeclaredMessageActions(
 export function createSdkDeliveryAdapters(
   runtime: ChatSdkRuntime,
 ): Partial<Record<MessagePlatformType, SdkDeliveryAdapter>> {
+  const slackAdapter = runtime.adapters.slack
+    ? makeSlackDeliveryAdapterWithUserFallback<SdkPostableMessage>({
+        botAdapter: {
+          openDM: (userId) => runtime.adapters.slack!.openDM(userId),
+          postMessage: (threadId, message) => runtime.adapters.slack!.postMessage(
+            threadId,
+            message as AdapterPostableMessage,
+          ),
+        },
+        userClient: createSlackUserWebClient(),
+      })
+    : undefined;
   return {
     ...(runtime.adapters.telegram
       ? {
@@ -492,18 +508,7 @@ export function createSdkDeliveryAdapters(
           },
         }
       : {}),
-    ...(runtime.adapters.slack
-      ? {
-          slack: {
-            openDM: (userId: string) => runtime.adapters.slack!.openDM(userId),
-            postMessage: (threadId: string, message: SdkPostableMessage) =>
-              runtime.adapters.slack!.postMessage(
-                threadId,
-                message as AdapterPostableMessage,
-              ),
-          },
-        }
-      : {}),
+    ...(slackAdapter ? { slack: slackAdapter } : {}),
     ...(runtime.adapters.discord
       ? {
           discord: {

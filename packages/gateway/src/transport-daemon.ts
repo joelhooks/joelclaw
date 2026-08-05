@@ -19,6 +19,10 @@ import {
 import { registerChatSdkActingInbound } from "./chat-sdk-inbound/acting";
 import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
 import { drainDeliverDecisions } from "./gateway-decision-executor";
+import {
+  createSlackUserWebClient,
+  resolveSlackChannelNameWithUserFallback,
+} from "./slack-user-token-fallback";
 import { resolveSlackWorkRequest } from "./slack-work-request";
 import {
   createHeartbeatGateState,
@@ -110,13 +114,15 @@ export async function startSlimTransportDaemon(): Promise<void> {
     conversationId?: string,
   ) => resolveFlowId(command, platform, platformMessageId, conversationId);
   const slackChannelNames = new Map<string, string>();
+  const slackUserWebClient = createSlackUserWebClient();
   const resolveSlackChannelName = async (channelId: string): Promise<string | undefined> => {
     const cached = slackChannelNames.get(channelId);
     if (cached) return cached;
-    const response = await runtime.adapters.slack?.webClient.conversations.info({
-      channel: channelId,
+    const name = await resolveSlackChannelNameWithUserFallback({
+      channelId,
+      botClient: runtime.adapters.slack?.webClient,
+      userClient: slackUserWebClient,
     });
-    const name = response?.channel?.name?.trim();
     if (name) slackChannelNames.set(channelId, name);
     return name;
   };

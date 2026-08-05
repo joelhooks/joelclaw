@@ -6,6 +6,10 @@ import type { AdapterPostableMessage } from "chat";
 import Redis from "ioredis";
 import { journalMessage } from "../message-journal";
 import {
+  createSlackUserWebClient,
+  makeSlackDeliveryAdapterWithUserFallback,
+} from "../slack-user-token-fallback";
+import {
   type ExplicitTransportSendReceipt,
   type ExplicitTransportSendRequest,
   makeExplicitTransportSender,
@@ -30,11 +34,17 @@ function makeAdapter(
 ): SdkDeliveryAdapter | undefined {
   const adapter = getChatSdkRuntime().adapters[platform];
   if (!adapter) return undefined;
-  return {
+  const deliveryAdapter: SdkDeliveryAdapter = {
     openDM: (userId) => adapter.openDM(userId),
     postMessage: (threadId, message: SdkPostableMessage) =>
       adapter.postMessage(threadId, message as AdapterPostableMessage),
   };
+  return platform === "slack"
+    ? makeSlackDeliveryAdapterWithUserFallback({
+        botAdapter: deliveryAdapter,
+        userClient: createSlackUserWebClient(),
+      })
+    : deliveryAdapter;
 }
 
 async function rememberExplicitFlow(
