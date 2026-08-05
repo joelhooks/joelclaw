@@ -1,5 +1,10 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { hostname } from "node:os";
+
 import { Args, Command, Options } from "@effect/cli";
 import {
+  type AppendMessageEventInput,
   getMessageEventLogClient,
   type MessageEventDocument,
   MessageEventLogError,
@@ -484,6 +489,308 @@ export function executeMessagesTrace(
   );
 }
 
+export interface SendSlackReplyInput {
+  readonly channelId: string;
+  readonly threadTs: string;
+  readonly textFile: string;
+  readonly textSha256: string;
+  readonly requestId: string;
+  readonly confirmSend: boolean;
+  readonly waitMs?: number;
+}
+
+interface SendSlackReplyDependencies {
+  readonly readTextFile: (path: string) => Promise<string>;
+  readonly appendEvent: (input: AppendMessageEventInput) => Promise<{ readonly eventId: string }>;
+  readonly traceFlow: (flowId: string) => Promise<MessageEventTraceResult>;
+  readonly machineId: () => string;
+  readonly now: () => number;
+  readonly sleep: (milliseconds: number) => Promise<void>;
+}
+
+class SlackReplySendError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly fix: string,
+  ) {
+    super(message);
+  }
+}
+
+const SLACK_CHANNEL_ID_PATTERN = /^[CDG][A-Z0-9]+$/;
+const SLACK_THREAD_TS_PATTERN = /^\d+\.\d+$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const REQUEST_ID_PATTERN = /^[a-f0-9]{64}$/;
+const MAX_SLACK_REPLY_CHARS = 40_000;
+const MAX_SLACK_REPLY_WAIT_MS = 60_000;
+const SLACK_REPLY_POLL_MS = 250;
+
+const defaultSendSlackReplyDependencies: SendSlackReplyDependencies = {
+  readTextFile: (path) => readFile(path, "utf8"),
+  appendEvent: (input) => getMessageEventLogClient().append(input),
+  traceFlow: (flowId) => getMessageEventLogClient().trace(flowId),
+  machineId: hostname,
+  now: Date.now,
+  sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+};
+
+function slackReplyErrorEnvelope(error: unknown): JoelclawEnvelope {
+  if (error instanceof SlackReplySendError) {
+    return buildErrorEnvelope(
+      "messages send-slack-reply",
+      error.message,
+      error.code,
+      error.fix,
+      error.code === "SLACK_REPLY_CONFIRMATION_REQUIRED"
+        ? [
+            {
+              command:
+                "messages send-slack-reply --channel <id> --thread <ts> --text-file <path> --text-sha256 <sha256> --request-id <request-id> --confirm-send",
+              description: "Send only after Joel explicitly approves this exact Slack reply",
+            },
+          ]
+        : [
+            {
+              command: "messages trace <flow-id>",
+              description: "Inspect the delivery flow before considering a retry",
+            },
+          ],
+    );
+  }
+  const details = errorDetails(error);
+  return buildErrorEnvelope(
+    "messages send-slack-reply",
+    details.message,
+    details.code,
+    details.fix,
+    [
+      {
+        command: "messages audit --since 1h --channel slack",
+        description: "Inspect recent Slack delivery receipts",
+      },
+    ],
+  );
+}
+
+export function executeMessagesSendSlackReply(
+  input: SendSlackReplyInput,
+  dependencies: SendSlackReplyDependencies = defaultSendSlackReplyDependencies,
+): Effect.Effect<JoelclawEnvelope> {
+  if (!input.confirmSend) {
+    return Effect.succeed(
+      slackReplyErrorEnvelope(
+        new SlackReplySendError(
+          "SLACK_REPLY_CONFIRMATION_REQUIRED",
+          "Slack reply not queued because --confirm-send is missing",
+          "Ask Joel to approve the exact reply, then rerun with --confirm-send.",
+        ),
+      ),
+    );
+  }
+  const channelId = input.channelId.trim();
+  if (!SLACK_CHANNEL_ID_PATTERN.test(channelId)) {
+    return Effect.succeed(
+      slackReplyErrorEnvelope(
+        new SlackReplySendError(
+          "SLACK_REPLY_TARGET_INVALID",
+          "Slack channel ID is invalid",
+          "Pass the channel ID parsed from a Slack archive permalink.",
+        ),
+      ),
+    );
+  }
+  const threadTs = input.threadTs.trim();
+  if (!SLACK_THREAD_TS_PATTERN.test(threadTs)) {
+    return Effect.succeed(
+      slackReplyErrorEnvelope(
+        new SlackReplySendError(
+          "SLACK_REPLY_TARGET_INVALID",
+          "Slack thread timestamp is invalid",
+          "Pass the thread timestamp parsed from a Slack archive permalink.",
+        ),
+      ),
+    );
+  }
+  const textSha256 = input.textSha256.trim().toLowerCase();
+  const requestId = input.requestId.trim().toLowerCase();
+  if (!SHA256_PATTERN.test(textSha256) || !REQUEST_ID_PATTERN.test(requestId)) {
+    return Effect.succeed(
+      slackReplyErrorEnvelope(
+        new SlackReplySendError(
+          "SLACK_REPLY_PROOF_INVALID",
+          "Slack reply proof is invalid",
+          "Use jc-slack reply so the approved text hash and stable request ID are generated safely.",
+        ),
+      ),
+    );
+  }
+  const waitMs = Math.min(MAX_SLACK_REPLY_WAIT_MS, Math.max(0, Math.trunc(input.waitMs ?? 20_000)));
+  const flowId = `slack-reply:${requestId}`;
+
+  return Effect.tryPromise({
+    try: async () => {
+      let text: string;
+      try {
+        text = (await dependencies.readTextFile(input.textFile)).trim();
+      } catch {
+        throw new SlackReplySendError(
+          "SLACK_REPLY_TEXT_UNAVAILABLE",
+          "Slack reply text file could not be read",
+          "Write the approved reply to a local text file and pass its path with --text-file.",
+        );
+      }
+      if (!text || text.length > MAX_SLACK_REPLY_CHARS) {
+        throw new SlackReplySendError(
+          "SLACK_REPLY_TEXT_INVALID",
+          `Slack reply must contain 1 to ${MAX_SLACK_REPLY_CHARS} characters`,
+          "Shorten the approved reply and retry with the same target.",
+        );
+      }
+      const actualTextSha256 = createHash("sha256").update(text).digest("hex");
+      if (actualTextSha256 !== textSha256) {
+        throw new SlackReplySendError(
+          "SLACK_REPLY_TEXT_CHANGED",
+          "Slack reply text changed after approval",
+          "Preview the current file again and approve that exact text before sending.",
+        );
+      }
+
+      const origin = {
+        producer: "joelclaw-cli",
+        machineId: dependencies.machineId(),
+      } as const;
+      const target = {
+        kind: "platform",
+        platform: "slack",
+        conversationId: channelId,
+        threadId: `slack:${channelId}:${threadTs}`,
+      } as const;
+      let requested: { readonly eventId: string };
+      try {
+        requested = await dependencies.appendEvent({
+          semanticKey: `slack-reply-request:${flowId}`,
+          kind: "message.requested",
+          source: "operator.jc-slack",
+          flowId,
+          origin,
+          platform: "slack",
+          payload: { target, text },
+        });
+      } catch {
+        return {
+          status: "ambiguous" as const,
+          flowId,
+          requestEventId: null,
+          decisionEventId: null,
+          platformMessageId: null,
+        };
+      }
+      let decision: { readonly eventId: string };
+      try {
+        decision = await dependencies.appendEvent({
+          semanticKey: `gateway:${requested.eventId}:1`,
+          kind: "gateway.decision.recorded",
+          source: "operator.jc-slack",
+          flowId,
+          origin,
+          platform: "slack",
+          correlationId: requested.eventId,
+          payload: {
+            inputEventIds: [requested.eventId],
+            reason: "Joel explicitly approved this jc-slack thread reply",
+            promptRevision: "operator-cli-v1",
+            decisionSeq: 1,
+            rewrite: text,
+            decision: {
+              verb: "deliver",
+              target,
+              rewrite: text,
+            },
+          },
+        });
+      } catch {
+        return {
+          status: "ambiguous" as const,
+          flowId,
+          requestEventId: requested.eventId,
+          decisionEventId: null,
+          platformMessageId: null,
+        };
+      }
+
+      const deadline = dependencies.now() + waitMs;
+      const maxAttempts = Math.max(1, Math.ceil(waitMs / SLACK_REPLY_POLL_MS) + 1);
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const trace = await dependencies.traceFlow(flowId);
+        if (trace.kind === "trace") {
+          const terminalState = trace.projection?.terminalState;
+          if (terminalState === "confirmed") {
+            const confirmed = [...trace.events]
+              .reverse()
+              .find((event) => event.kind === "delivery.confirmed");
+            return {
+              status: "confirmed" as const,
+              flowId,
+              requestEventId: requested.eventId,
+              decisionEventId: decision.eventId,
+              platformMessageId: confirmed?.platformMessageId ?? null,
+            };
+          }
+          if (terminalState && terminalState !== "confirmed") {
+            throw new SlackReplySendError(
+              "SLACK_REPLY_DELIVERY_FAILED",
+              `Slack reply reached terminal state: ${terminalState}`,
+              `Trace ${flowId} before considering a retry; an ambiguous send must not be duplicated.`,
+            );
+          }
+        }
+        if (dependencies.now() >= deadline || attempt === maxAttempts - 1) break;
+        await dependencies.sleep(SLACK_REPLY_POLL_MS);
+      }
+
+      return {
+        status: "queued" as const,
+        flowId,
+        requestEventId: requested.eventId,
+        decisionEventId: decision.eventId,
+        platformMessageId: null,
+      };
+    },
+    catch: (error) => error,
+  }).pipe(
+    Effect.match({
+      onFailure: slackReplyErrorEnvelope,
+      onSuccess: (result) =>
+        buildSuccessEnvelope(
+          "messages send-slack-reply",
+          {
+            status: result.status,
+            flowId: result.flowId,
+            target: { platform: "slack", channelId, threadTs },
+            requestEventId: result.requestEventId,
+            decisionEventId: result.decisionEventId,
+            platformMessageId: result.platformMessageId,
+          },
+          result.status === "confirmed"
+            ? [
+                {
+                  command: `messages trace ${result.flowId}`,
+                  description: "Inspect the confirmed gateway delivery flow",
+                },
+              ]
+            : [
+                {
+                  command: `messages trace ${result.flowId}`,
+                  description:
+                    "Check the gateway-owned Slack delivery receipt; do not retry blindly",
+                },
+              ],
+        ),
+    }),
+  );
+}
+
 const sinceOption = Options.text("since").pipe(
   Options.withDefault("24h"),
   Options.withDescription("Lookback duration, for example 24h or 7d"),
@@ -541,7 +848,51 @@ const traceCmd = Command.make(
     }),
 ).pipe(Command.withDescription("Trace one canonical message flow from Convex"));
 
+const sendSlackReplyCmd = Command.make(
+  "send-slack-reply",
+  {
+    channelId: Options.text("channel").pipe(
+      Options.withDescription("Slack channel ID parsed from the permalink"),
+    ),
+    threadTs: Options.text("thread").pipe(
+      Options.withDescription("Slack thread timestamp parsed from the permalink"),
+    ),
+    textFile: Options.file("text-file").pipe(
+      Options.withDescription("File containing the exact approved reply text"),
+    ),
+    textSha256: Options.text("text-sha256").pipe(
+      Options.withDescription("SHA-256 of the exact approved reply text"),
+    ),
+    requestId: Options.text("request-id").pipe(
+      Options.withDescription("Stable jc-slack request ID for idempotent retries"),
+    ),
+    confirmSend: Options.boolean("confirm-send").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Confirm Joel approved this exact outward Slack reply"),
+    ),
+    waitMs: Options.integer("wait-ms").pipe(
+      Options.withDefault(20_000),
+      Options.withDescription("Wait up to 60000ms for the gateway delivery receipt"),
+    ),
+  },
+  ({ channelId, threadTs, textFile, textSha256, requestId, confirmSend, waitMs }) =>
+    Effect.gen(function* () {
+      const envelope = yield* executeMessagesSendSlackReply({
+        channelId,
+        threadTs,
+        textFile,
+        textSha256,
+        requestId,
+        confirmSend,
+        waitMs,
+      });
+      yield* Console.log(JSON.stringify(envelope, null, 2));
+    }),
+).pipe(
+  Command.withDescription("Queue one operator-approved Slack thread reply through the gateway"),
+);
+
 export const messagesCmd = Command.make("messages").pipe(
-  Command.withDescription("Canonical message traces and legacy private audit"),
-  Command.withSubcommands([auditCmd, traceCmd]),
+  Command.withDescription("Canonical message traces, explicit sends, and legacy private audit"),
+  Command.withSubcommands([auditCmd, traceCmd, sendSlackReplyCmd]),
 );

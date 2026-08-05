@@ -107,6 +107,41 @@ describe("deliver executor", () => {
     expect(result).toEqual({ executed: 1, skipped: 0 });
   });
 
+  test("claims an operator-approved Slack reply before crossing the send boundary", async () => {
+    const event = decisionEvent("slack-operator", {
+      decision: {
+        verb: "deliver",
+        target: {
+          kind: "platform",
+          platform: "slack",
+          conversationId: "CMEGA",
+          threadId: "slack:CMEGA:1785950000.100",
+        },
+      },
+      rewrite: "Approved exact reply.",
+    });
+    event.source = "operator.jc-slack";
+    const calls: string[] = [];
+
+    await expect(
+      drainDeliverDecisions({
+        eventLog: {
+          pendingForConsumer: async () => [event],
+          advanceCursor: async (_consumer, eventId) => {
+            calls.push(`claim:${eventId}`);
+          },
+        },
+        recipientId: "",
+        send: async () => {
+          calls.push("send");
+          throw new Error("post-send receipt persistence failed");
+        },
+      }),
+    ).rejects.toThrow("post-send receipt persistence failed");
+
+    expect(calls).toEqual(["claim:slack-operator", "send"]);
+  });
+
   test("delivers a close-deliver whose text sits on decision.rewrite", async () => {
     // Four real close-delivers on cutover day put the text here and were never
     // sent. Joel never saw those messages; the executor must read both places.

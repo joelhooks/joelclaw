@@ -124,10 +124,19 @@ export async function drainDeliverDecisions(
       await dependencies.eventLog.advanceCursor(EXECUTOR_CONSUMER, event._id);
       continue;
     }
-    // Execute, then advance. A crash between the two re-executes on the next
-    // drain; the explicit sender's flowId-keyed receipts make the duplicate
-    // visible, and a rare duplicate beats a silent gap (fallback doctrine).
     const resolvedTarget = deliveryTarget(decision, dependencies.recipientId);
+    // Ordinary gateway notifications stay at-least-once: a rare duplicate is
+    // preferable to a silent gap. Exact replies approved through jc-slack are
+    // different. Claim those by advancing first, so a post-send crash becomes
+    // an ambiguous receipt that needs reconciliation instead of an auto-reply.
+    const operatorApprovedSlackReply = event.source === "operator.jc-slack";
+    if (operatorApprovedSlackReply) {
+      await dependencies.eventLog.advanceCursor(EXECUTOR_CONSUMER, event._id);
+      log("[gateway:executor] claimed operator-approved Slack reply", {
+        eventId: event._id,
+        flowId: event.flowId,
+      });
+    }
     await dependencies.send({
       ...resolvedTarget,
       content: { raw: text },
@@ -144,7 +153,9 @@ export async function drainDeliverDecisions(
       eventId: event._id,
       flowId: event.flowId,
     });
-    await dependencies.eventLog.advanceCursor(EXECUTOR_CONSUMER, event._id);
+    if (!operatorApprovedSlackReply) {
+      await dependencies.eventLog.advanceCursor(EXECUTOR_CONSUMER, event._id);
+    }
   }
   return { executed, skipped };
 }

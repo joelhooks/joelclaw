@@ -25,6 +25,13 @@ A Slack message permalink in Joel's prompt is executable context.
 2. Use the returned bounded JSON as the source.
 3. If Joel pasted only the link, report the message, useful thread context, and likely request.
 4. If the message contains a work request, follow Joel's prompt and fleet work-tagging rules.
+5. If Joel explicitly asks to reply, post, send, or respond in that Slack thread:
+   - write the exact reply to a temporary text file
+   - run `jc-slack reply '<permalink>' --text-file <path>` to get the approval-bound preview
+   - after Joel approves that preview, run its exact `next_actions[0].command`; it carries the text hash, stable request ID, and `--confirm-send`
+   - report the returned gateway flow and Slack message receipt
+
+Without explicit send approval, draft the reply and stop. Do not turn a direct send request into “paste-ready text” for Joel to shuttle manually.
 
 ## Rules
 
@@ -33,4 +40,6 @@ A Slack message permalink in Joel's prompt is executable context.
 - Do not call Slack with `curl`.
 - Do not lease or print a Slack token. `jc-slack` owns authentication.
 - `jc-slack context` is read-only. Do not react or post unless Joel's request or fleet rules require it.
+- `jc-slack reply` previews by default. Send only with the exact confirmation command from that preview; it uses the single gateway transport.
+- Never claim Slack posting is impossible before checking `jc-slack reply --help`.
 - If `jc-slack` is absent or cannot run, report that exact capability gap. Do not call the link unreadable.

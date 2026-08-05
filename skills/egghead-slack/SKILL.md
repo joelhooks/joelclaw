@@ -13,7 +13,7 @@ tags:
 
 # egghead Slack Intelligence
 
-Joel's private intelligence layer over the egghead.io Slack workspace. **Joel-only** — never participates in channels, never replies to anyone but Joel, never surfaces private data publicly.
+Joel's private intelligence layer over the egghead.io Slack workspace. **Joel-only** — channel participation is limited to an exact reply Joel explicitly approves, and private Slack data never becomes public.
 
 ## Tokens
 
@@ -178,8 +178,9 @@ This is awareness, not participation. JoelClaw still never posts in channels unl
 ## Privacy Boundary
 
 **Absolute rules:**
-- JoelClaw NEVER posts in Slack channels (only Joel's DM)
-- JoelClaw NEVER responds to other users
+- JoelClaw posts in Slack channels only when Joel directly instructs it.
+- An exact operator-approved reply starts with a `jc-slack reply` preview, then runs that preview's approval-bound confirmation command. The CLI delegates to the single gateway transport and returns a delivery receipt.
+- JoelClaw responds to other users only inside the explicitly approved thread.
 - JoelClaw NEVER surfaces channel content publicly
 - All intelligence is private context for Joel only
 - **No Slack IDs, channel names, or workspace identifiers in public repos**

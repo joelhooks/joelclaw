@@ -128,6 +128,8 @@ export type GatewayDecisionRecordedPayload = {
   reason: string;
   promptRevision: string;
   decisionSeq: number;
+  /** Canonical transport text location required by the Convex validator. */
+  rewrite?: string;
   decision: GatewayDecision;
   incident?: GatewayIncidentDecisionReceipt;
 };

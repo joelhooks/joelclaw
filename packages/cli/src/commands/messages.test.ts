@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, test } from "bun:test";
 import { createJournalEvent } from "@joelclaw/message-journal";
 import { Effect } from "effect";
 import {
   executeMessagesAudit,
+  executeMessagesSendSlackReply,
   executeMessagesTrace,
   formatJournalEvent,
   formatMessageEvent,
@@ -46,6 +49,9 @@ function fixtureEvent() {
 
 const unusedTrace = () =>
   Effect.succeed({ kind: "not_found" as const, lookup: "unused" });
+
+const slackReplyRequestId = "a".repeat(64);
+const textSha256 = (text: string) => createHash("sha256").update(text.trim()).digest("hex");
 
 function subcommandNames() {
   if (messagesCmd.descriptor._tag !== "Subcommands") return [];
@@ -105,8 +111,8 @@ describe("messages CLI", () => {
     expect(envelope.ok).toBe(false);
   });
 
-  test("registers audit and trace subcommands", () => {
-    expect(subcommandNames()).toEqual(["audit", "trace"]);
+  test("registers audit, trace, and gateway-owned Slack reply subcommands", () => {
+    expect(subcommandNames()).toEqual(["audit", "trace", "send-slack-reply"]);
   });
 
   test("parses supported durations and rejects malformed lookbacks before querying", async () => {
@@ -298,6 +304,224 @@ describe("messages CLI", () => {
       "flow-b",
     ]);
     expect(JSON.stringify(envelope)).not.toContain("private exact text");
+  });
+
+  test("refuses a Slack reply without explicit send confirmation", async () => {
+    let appendCalls = 0;
+    const envelope = await Effect.runPromise(
+      executeMessagesSendSlackReply(
+        {
+          channelId: "C09FC0G8QFR",
+          threadTs: "1785944507.600699",
+          textFile: "/tmp/reply.txt",
+          textSha256: textSha256("approved reply"),
+          requestId: slackReplyRequestId,
+          confirmSend: false,
+        },
+        {
+          readTextFile: async () => "approved reply",
+          appendEvent: async () => {
+            appendCalls += 1;
+            return { eventId: "unused" };
+          },
+          traceFlow: async () => ({ kind: "not_found", lookup: "unused" }),
+          machineId: () => "flagg",
+          now: () => 0,
+          sleep: async () => {},
+        },
+      ),
+    );
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe("SLACK_REPLY_CONFIRMATION_REQUIRED");
+    expect(appendCalls).toBe(0);
+  });
+
+  test("rejects a reply file that changed after jc-slack approved its hash", async () => {
+    let appendCalls = 0;
+    const envelope = await Effect.runPromise(
+      executeMessagesSendSlackReply(
+        {
+          channelId: "C09FC0G8QFR",
+          threadTs: "1785944507.600699",
+          textFile: "/tmp/reply.txt",
+          textSha256: textSha256("approved reply"),
+          requestId: slackReplyRequestId,
+          confirmSend: true,
+        },
+        {
+          readTextFile: async () => "changed reply",
+          appendEvent: async () => {
+            appendCalls += 1;
+            return { eventId: "unused" };
+          },
+          traceFlow: async () => ({ kind: "not_found", lookup: "unused" }),
+          machineId: () => "flagg",
+          now: () => 0,
+          sleep: async () => {},
+        },
+      ),
+    );
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe("SLACK_REPLY_TEXT_CHANGED");
+    expect(appendCalls).toBe(0);
+  });
+
+  test("returns the stable flow when event recording becomes ambiguous", async () => {
+    let appendCalls = 0;
+    const envelope = await Effect.runPromise(
+      executeMessagesSendSlackReply(
+        {
+          channelId: "C09FC0G8QFR",
+          threadTs: "1785944507.600699",
+          textFile: "/tmp/reply.txt",
+          textSha256: textSha256("approved reply"),
+          requestId: slackReplyRequestId,
+          confirmSend: true,
+        },
+        {
+          readTextFile: async () => "approved reply",
+          appendEvent: async () => {
+            appendCalls += 1;
+            if (appendCalls === 2) throw new Error("private persistence failure");
+            return { eventId: "request-1" };
+          },
+          traceFlow: async () => ({ kind: "not_found", lookup: "unused" }),
+          machineId: () => "flagg",
+          now: () => 0,
+          sleep: async () => {},
+        },
+      ),
+    );
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.result).toMatchObject({
+      status: "ambiguous",
+      flowId: `slack-reply:${slackReplyRequestId}`,
+      requestEventId: "request-1",
+      decisionEventId: null,
+    });
+    expect(envelope.next_actions[0]?.command).toBe(
+      `joelclaw messages trace slack-reply:${slackReplyRequestId}`,
+    );
+    expect(JSON.stringify(envelope)).not.toContain("private persistence failure");
+  });
+
+  test("records one explicit Slack delivery decision and returns its confirmed receipt", async () => {
+    const appended: unknown[] = [];
+    const envelope = await Effect.runPromise(
+      executeMessagesSendSlackReply(
+        {
+          channelId: "C09FC0G8QFR",
+          threadTs: "1785944507.600699",
+          textFile: "/tmp/reply.txt",
+          textSha256: textSha256("approved private reply"),
+          requestId: slackReplyRequestId,
+          confirmSend: true,
+          waitMs: 1_000,
+        },
+        {
+          readTextFile: async () => "approved private reply",
+          appendEvent: async (input) => {
+            appended.push(input);
+            return { eventId: appended.length === 1 ? "request-1" : "decision-1" };
+          },
+          traceFlow: async (flowId) => ({
+            kind: "trace",
+            source: "convex",
+            flowId,
+            projection: {
+              flowId,
+              eventCount: 3,
+              firstOccurredAt: 1,
+              lastOccurredAt: 3,
+              latestEventId: "confirmed-1",
+              latestKind: "delivery.confirmed",
+              terminalState: "confirmed",
+              updatedAt: 3,
+            },
+            events: [{ kind: "delivery.confirmed", platformMessageId: "1785944510.1" }] as never,
+            consumerReceipts: [],
+            truncated: false,
+          }),
+          machineId: () => "flagg",
+          now: () => 1,
+          sleep: async () => {},
+        },
+      ),
+    );
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.result).toMatchObject({
+      status: "confirmed",
+      flowId: `slack-reply:${slackReplyRequestId}`,
+      target: {
+        platform: "slack",
+        channelId: "C09FC0G8QFR",
+        threadTs: "1785944507.600699",
+      },
+      platformMessageId: "1785944510.1",
+    });
+    expect(appended).toHaveLength(2);
+    expect(appended[0]).toMatchObject({
+      kind: "message.requested",
+      flowId: `slack-reply:${slackReplyRequestId}`,
+      payload: {
+        target: {
+          kind: "platform",
+          platform: "slack",
+          conversationId: "C09FC0G8QFR",
+          threadId: "slack:C09FC0G8QFR:1785944507.600699",
+        },
+        text: "approved private reply",
+      },
+    });
+    expect(appended[1]).toMatchObject({
+      kind: "gateway.decision.recorded",
+      correlationId: "request-1",
+      payload: {
+        inputEventIds: ["request-1"],
+        rewrite: "approved private reply",
+        decision: { verb: "deliver", rewrite: "approved private reply" },
+      },
+    });
+    expect(JSON.stringify(envelope)).not.toContain("approved private reply");
+  });
+
+  test("returns queued without retrying when the delivery receipt is not yet terminal", async () => {
+    let appendIndex = 0;
+    const envelope = await Effect.runPromise(
+      executeMessagesSendSlackReply(
+        {
+          channelId: "C09FC0G8QFR",
+          threadTs: "1785944507.600699",
+          textFile: "/tmp/reply.txt",
+          textSha256: textSha256("approved reply"),
+          requestId: slackReplyRequestId,
+          confirmSend: true,
+          waitMs: 0,
+        },
+        {
+          readTextFile: async () => "approved reply",
+          appendEvent: async () => ({ eventId: `event-${++appendIndex}` }),
+          traceFlow: async (lookup) => ({ kind: "not_found", lookup }),
+          machineId: () => "flagg",
+          now: () => 1,
+          sleep: async () => {},
+        },
+      ),
+    );
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.result).toMatchObject({
+      status: "queued",
+      flowId: `slack-reply:${slackReplyRequestId}`,
+    });
+    expect(envelope.next_actions[0]?.command).toBe(
+      `joelclaw messages trace slack-reply:${slackReplyRequestId}`,
+    );
+    expect(appendIndex).toBe(2);
   });
 
   test("never leaks message bodies from query failures", async () => {
