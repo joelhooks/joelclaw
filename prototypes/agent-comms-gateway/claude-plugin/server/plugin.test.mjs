@@ -812,7 +812,7 @@ describe("worker lanes", () => {
     expect(calls.some((args) =>
       args[0] === "pane"
       && args[1] === "run"
-      && args[3].startsWith("JOELCLAW_GATEWAY_WORKER=1 pi "))).toBe(true);
+      && args[3].startsWith("JOELCLAW_GATEWAY_WORKER=1 pi --approve "))).toBe(true);
 
     const livePane = {
       pane_id: "wSR:p1",

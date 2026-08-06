@@ -223,7 +223,10 @@ export function createHerdrTools({
       await mkdir(TASK_DIR, { recursive: true });
       const taskFile = `${TASK_DIR}/${taskId}.md`;
       await writeFile(taskFile, workerBrief({ taskId, task, cwd, resultContext }), "utf8");
-      const launch = `JOELCLAW_GATEWAY_WORKER=1 pi @${taskFile} "Execute the task in the attached brief. Work autonomously. Print DONE when finished."`;
+      // Gateway-created worktrees are isolated clones of an explicitly mapped
+      // repository. Pi's interactive trust prompt can otherwise strand the
+      // worker before it reads the task while Herdr reports it as idle.
+      const launch = `JOELCLAW_GATEWAY_WORKER=1 pi --approve @${taskFile} "Execute the task in the attached brief. Work autonomously. Print DONE when finished."`;
 
       if (freshWorkspace) {
         if (

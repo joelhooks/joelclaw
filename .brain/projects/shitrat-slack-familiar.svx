@@ -257,7 +257,8 @@ The hard-stop repair is mechanical:
 - worker briefs describe `joelclaw notify send` as a private result receipt and forbid direct Slack delivery;
 - the gateway agent has no Bash tool, so it cannot bypass the plugin with `herdr agent prompt` or `jc-slack reply`;
 - worker processes set `JOELCLAW_GATEWAY_WORKER=1`; the gateway-owned Slack reply command refuses sends from that context;
-- fresh dispatch must mechanically match the pending source event, channel, normalized thread, and bound cwd before it can launch.
+- fresh dispatch must mechanically match the pending source event, channel, normalized thread, and bound cwd before it can launch;
+- generated gateway worktrees launch Pi with `--approve`; otherwise Pi's project-trust prompt can strand the worker before task execution while Herdr reports it as idle.
 
 Before another live canary, verify Joel's personal token can read the mapped channel. Read back the resulting thread after the trigger. Exactly one Joel-authored reply with the two Joel-authored lifecycle reactions is success.
 
