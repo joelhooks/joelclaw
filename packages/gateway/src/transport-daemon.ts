@@ -315,6 +315,34 @@ export async function startSlimTransportDaemon(): Promise<void> {
         eventLog,
         recipientId: executorRecipient,
         send: sendExplicitTransport,
+        completeSlackWork: async ({ channelId, messageTs, reaction, taskId }) => {
+          try {
+            const slack = runtime.adapters.slack;
+            if (!slack) throw new Error("Slack adapter unavailable");
+            await slack.webClient.reactions.add({
+              channel: channelId,
+              name: reaction,
+              timestamp: messageTs,
+            });
+            void emitGatewayOtel({
+              level: "info",
+              component: "slack-shitrat",
+              action: "slack.shitrat.completed",
+              success: true,
+              metadata: { channelId, messageTs, taskId, reaction },
+            });
+          } catch (error) {
+            void emitGatewayOtel({
+              level: "error",
+              component: "slack-shitrat",
+              action: "slack.shitrat.completion_reaction_failed",
+              success: false,
+              error: String(error),
+              metadata: { channelId, messageTs, taskId, reaction },
+            });
+            throw error;
+          }
+        },
         log: (message, detail) => console.log(message, detail ?? {}),
       });
     } catch (error) {

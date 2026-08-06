@@ -278,7 +278,15 @@ observed
 any -> rejected | failed | cancelled
 ```
 
-The machine must model dedupe, retries, Herdr crash recovery, cancellation, result harvest, and the public-post gate. Slack reactions remain the visible work-state projection: no tag = unclaimed, `:shitrat:` = started, `:white_check_mark:` = shipped.
+The machine must model dedupe, retries, Herdr crash recovery, cancellation, result harvest, and the public-post gate. Slack reactions are the visible work-state projection:
+
+- no tag = unclaimed;
+- `:shitrat:` = the transport accepted a bot-ready request, added before the durable stream append;
+- `:white_check_mark:` = the gateway delivered the worker result to the original thread.
+
+Completion reaction failure is a projection failure, not permission to resend the result. Record OTEL, advance the executor cursor, and never duplicate the message.
+
+Channel routing is mechanical, not model intuition. The private Channel Context Binding supplies the exact repository, cwd, Brain entry, skills, and validation. Dispatch must match the pending source event, channel, normalized thread, and bound cwd before Herdr can create the worktree.
 
 ### Current recommendation
 

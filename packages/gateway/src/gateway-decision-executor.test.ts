@@ -24,11 +24,18 @@ function harness(events: MessageEventDocument[], recipientId = "joel") {
     replyThreadId?: string;
   }> = [];
   const advanced: string[] = [];
+  const completed: Array<{
+    channelId: string;
+    messageTs: string;
+    reaction: "white_check_mark";
+    taskId: string;
+  }> = [];
   const logged: string[] = [];
   return {
     sent,
     sentRequests,
     advanced,
+    completed,
     logged,
     run: () =>
       drainDeliverDecisions({
@@ -50,6 +57,9 @@ function harness(events: MessageEventDocument[], recipientId = "joel") {
             ...(request.replyThreadId ? { replyThreadId: request.replyThreadId } : {}),
           });
           return { platformMessageId: `sent-${sent.length}` };
+        },
+        completeSlackWork: async (input) => {
+          completed.push(input);
         },
         log: (message) => logged.push(message),
       }),
@@ -104,7 +114,117 @@ describe("deliver executor", () => {
         replyThreadId: "slack:CMEGA:1785950000.100",
       },
     ]);
+    expect(harnessed.completed).toEqual([]);
     expect(result).toEqual({ executed: 1, skipped: 0 });
+  });
+
+  test("adds completion reaction after a ShitRat worker result reaches Slack", async () => {
+    const harnessed = harness([
+      decisionEvent("slack-worker-result", {
+        decision: {
+          verb: "deliver",
+          target: {
+            kind: "platform",
+            platform: "slack",
+            conversationId: "CEXAMPLE",
+            threadId: "slack:CEXAMPLE:1785950000.100",
+          },
+        },
+        rewrite: "Worker finished.",
+        slackWorkCompletion: {
+          channelId: "CEXAMPLE",
+          messageTs: "1785950000.100",
+          reaction: "white_check_mark",
+          taskId: "example-review",
+        },
+      }),
+    ], "");
+
+    await harnessed.run();
+    expect(harnessed.completed).toEqual([{
+      channelId: "CEXAMPLE",
+      messageTs: "1785950000.100",
+      reaction: "white_check_mark",
+      taskId: "example-review",
+    }]);
+    expect(harnessed.advanced).toEqual(["slack-worker-result"]);
+  });
+
+  test("rejects completion metadata that targets another Slack root", async () => {
+    const harnessed = harness([
+      decisionEvent("mismatched-completion", {
+        decision: {
+          verb: "deliver",
+          target: {
+            kind: "platform",
+            platform: "slack",
+            conversationId: "CEXAMPLE",
+            threadId: "slack:CEXAMPLE:1785950000.100",
+          },
+        },
+        rewrite: "Worker finished.",
+        slackWorkCompletion: {
+          channelId: "CEXAMPLE",
+          messageTs: "1785950001.200",
+          reaction: "white_check_mark",
+          taskId: "example-review",
+        },
+      }),
+    ], "");
+
+    await expect(harnessed.run()).rejects.toThrow(
+      "completion must match the delivered Slack target",
+    );
+    expect(harnessed.sent).toEqual([]);
+    expect(harnessed.completed).toEqual([]);
+    expect(harnessed.advanced).toEqual([]);
+  });
+
+  test("completion reaction failure does not resend the delivered result", async () => {
+    const event = decisionEvent("reaction-failure", {
+      decision: {
+        verb: "deliver",
+        target: {
+          kind: "platform",
+          platform: "slack",
+          conversationId: "CEXAMPLE",
+          threadId: "slack:CEXAMPLE:1785950000.100",
+        },
+      },
+      rewrite: "Worker finished.",
+      slackWorkCompletion: {
+        channelId: "CEXAMPLE",
+        messageTs: "1785950000.100",
+        reaction: "white_check_mark",
+        taskId: "example-review",
+      },
+    });
+    const calls: string[] = [];
+
+    const result = await drainDeliverDecisions({
+      eventLog: {
+        pendingForConsumer: async () => [event],
+        advanceCursor: async (_consumer, eventId) => {
+          calls.push(`advance:${eventId}`);
+        },
+      },
+      recipientId: "",
+      send: async () => {
+        calls.push("send");
+        return { platformMessageId: "1785950001.200" };
+      },
+      completeSlackWork: async () => {
+        calls.push("react");
+        throw new Error("reaction failed");
+      },
+      log: (message) => calls.push(message),
+    });
+
+    expect(result).toEqual({ executed: 1, skipped: 0 });
+    expect(calls.filter((call) => call === "send")).toHaveLength(1);
+    expect(calls).toContain("react");
+    expect(calls).toContain("advance:reaction-failure");
+    expect(calls).toContain("[gateway:executor] Slack completion reaction failed");
   });
 
   test("claims an operator-approved Slack reply before crossing the send boundary", async () => {

@@ -124,7 +124,9 @@ function isOutboundDecision(decision) {
 }
 
 function slackWorkerReturnTarget(event) {
-  if (event?.kind !== "message.requested") return null;
+  if (event?.kind !== "message.requested" || event?.source !== "shitrat-worker") {
+    return null;
+  }
   const context = event?.payload?.evidence?.context;
   if (
     context?.platform !== "slack"
@@ -137,6 +139,20 @@ function slackWorkerReturnTarget(event) {
     platform: "slack",
     conversationId: context.channelId,
     threadId: normalizeSlackReplyThreadId(context.channelId, context.replyThreadId),
+  };
+}
+
+function slackWorkerCompletion(event) {
+  const target = slackWorkerReturnTarget(event);
+  const taskId = event?.payload?.evidence?.context?.taskId;
+  if (!target || typeof taskId !== "string") return null;
+  const messageTs = target.threadId.split(":").at(-1);
+  if (!/^\d+\.\d+$/u.test(messageTs ?? "")) return null;
+  return {
+    channelId: target.conversationId,
+    messageTs,
+    reaction: "white_check_mark",
+    taskId,
   };
 }
 
@@ -646,8 +662,18 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         if (uniqueTargets.size !== 1) {
           throw new Error("One decision cannot deliver worker results to multiple Slack threads");
         }
+        const completions = coveredInputs
+          .map(slackWorkerCompletion)
+          .filter(Boolean);
+        const uniqueCompletions = new Set(
+          completions.map((completion) => JSON.stringify(completion)),
+        );
+        if (uniqueCompletions.size > 1) {
+          throw new Error("One decision cannot complete multiple Slack work requests");
+        }
         candidatePayload = {
           ...candidatePayload,
+          ...(completions[0] ? { slackWorkCompletion: completions[0] } : {}),
           decision: {
             ...candidatePayload.decision,
             target: slackReturnTargets[0],

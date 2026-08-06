@@ -38,10 +38,12 @@ function harness(input: {
   const appended: AppendMessageEventInput[] = [];
   const acknowledged: string[] = [];
   const errors: string[] = [];
+  const order: string[] = [];
   const event = slackEvent(input.authorizedJoel);
   const publisher = createStreamInboundPublisher({
     eventLog: {
       append: async (value) => {
+        order.push("append");
         appended.push(value);
         return {
           eventId: "inbound-1",
@@ -66,12 +68,13 @@ function harness(input: {
         }
       : undefined,
     acknowledgeWorkRequest: async (request) => {
+      order.push("acknowledge");
       acknowledged.push(request.replyThreadId);
     },
     onWorkRequestError: (error, phase) => errors.push(`${phase}:${String(error)}`),
     machineId: "flagg-test",
   });
-  return { publisher, event, appended, acknowledged, errors };
+  return { publisher, event, appended, acknowledged, errors, order };
 }
 
 describe("stream inbound ShitRat work requests", () => {
@@ -93,6 +96,7 @@ describe("stream inbound ShitRat work requests", () => {
       },
     });
     expect(tested.acknowledged).toEqual(["slack:CEXAMPLE:1785950000.100"]);
+    expect(tested.order).toEqual(["acknowledge", "append"]);
     expect(tested.errors).toEqual([]);
   });
 

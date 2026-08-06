@@ -164,6 +164,12 @@ describe("stream receipts", () => {
     expect(appended.event.payload.decision.target.threadId).toBe(
       "slack:CEXAMPLE:1785950000.100",
     );
+    expect(appended.event.payload.slackWorkCompletion).toEqual({
+      channelId: "CEXAMPLE",
+      messageTs: "1785950000.100",
+      reaction: "white_check_mark",
+      taskId: "example-review",
+    });
   });
 
   test("mechanically returns ShitRat worker results to their Slack thread", async () => {
@@ -192,6 +198,35 @@ describe("stream receipts", () => {
       platform: "slack",
       conversationId: "CEXAMPLE",
       threadId: "slack:CEXAMPLE:1785950000.100",
+    });
+    expect(appended.event.payload.slackWorkCompletion).toEqual({
+      channelId: "CEXAMPLE",
+      messageTs: "1785950000.100",
+      reaction: "white_check_mark",
+      taskId: "example-review",
+    });
+  });
+
+  test("does not mark Slack-shaped non-worker messages complete", async () => {
+    const copiedContext = {
+      ...shitratWorkerResult,
+      _id: "ordinary-slack-shaped-message",
+      source: "cli/notify",
+    };
+    const client = fakeClient([copiedContext]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    const appended = await stream.recordDecision({
+      payload: {
+        ...decisionPayload,
+        inputEventIds: ["ordinary-slack-shaped-message"],
+        rewrite: "Ordinary notification.",
+      },
+    });
+
+    expect(appended.event.payload.slackWorkCompletion).toBeUndefined();
+    expect(appended.event.payload.decision.target).toEqual({
+      kind: "platform",
+      platform: "telegram",
     });
   });
 

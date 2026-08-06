@@ -131,6 +131,12 @@ export type GatewayDecisionRecordedPayload = {
   /** Canonical transport text location required by the Convex validator. */
   rewrite?: string;
   decision: GatewayDecision;
+  slackWorkCompletion?: {
+    channelId: string;
+    messageTs: string;
+    reaction: "white_check_mark";
+    taskId: string;
+  };
   incident?: GatewayIncidentDecisionReceipt;
 };
 

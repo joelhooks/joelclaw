@@ -30,6 +30,12 @@ export interface DeliverExecutorDependencies {
     correlationId?: string;
     replyThreadId?: string;
   }) => Promise<{ platformMessageId: string }>;
+  readonly completeSlackWork?: (input: {
+    channelId: string;
+    messageTs: string;
+    reaction: "white_check_mark";
+    taskId: string;
+  }) => Promise<void>;
   readonly log?: (message: string, detail?: Record<string, unknown>) => void;
 }
 
@@ -44,6 +50,12 @@ interface DeliverDecisionPayload {
   };
   readonly rewrite?: string;
   readonly reason?: string;
+  readonly slackWorkCompletion?: {
+    readonly channelId: string;
+    readonly messageTs: string;
+    readonly reaction: "white_check_mark";
+    readonly taskId: string;
+  };
 }
 
 // The plugin validator requires the rewrite at the top level, but four real
@@ -57,6 +69,24 @@ const asDeliverText = (payload: DeliverDecisionPayload): string | null => {
   }
   return null;
 };
+
+function assertSlackCompletionMatchesTarget(
+  completion: DeliverDecisionPayload["slackWorkCompletion"],
+  target: {
+    target: { platform: MessagePlatform; recipientId: string };
+    replyThreadId?: string;
+  },
+): void {
+  if (!completion) return;
+  const expectedThreadId = `slack:${completion.channelId}:${completion.messageTs}`;
+  if (
+    target.target.platform !== "slack"
+    || target.target.recipientId !== completion.channelId
+    || target.replyThreadId !== expectedThreadId
+  ) {
+    throw new Error("Slack work completion must match the delivered Slack target");
+  }
+}
 
 function deliveryTarget(
   decision: DeliverDecisionPayload["decision"],
@@ -125,6 +155,7 @@ export async function drainDeliverDecisions(
       continue;
     }
     const resolvedTarget = deliveryTarget(decision, dependencies.recipientId);
+    assertSlackCompletionMatchesTarget(payload.slackWorkCompletion, resolvedTarget);
     // Ordinary gateway notifications stay at-least-once: a rare duplicate is
     // preferable to a silent gap. Exact replies approved through jc-slack are
     // different. Claim those by advancing first, so a post-send crash becomes
@@ -153,6 +184,23 @@ export async function drainDeliverDecisions(
       eventId: event._id,
       flowId: event.flowId,
     });
+    if (payload.slackWorkCompletion && dependencies.completeSlackWork) {
+      try {
+        await dependencies.completeSlackWork(payload.slackWorkCompletion);
+        log("[gateway:executor] completed Slack work reaction", {
+          eventId: event._id,
+          taskId: payload.slackWorkCompletion.taskId,
+        });
+      } catch (error) {
+        // The result message already crossed Slack. A failed projection must not
+        // retry that message and create a duplicate. Leave a receipt and advance.
+        log("[gateway:executor] Slack completion reaction failed", {
+          eventId: event._id,
+          taskId: payload.slackWorkCompletion.taskId,
+          error: String(error),
+        });
+      }
+    }
     if (!operatorApprovedSlackReply) {
       await dependencies.eventLog.advanceCursor(EXECUTOR_CONSUMER, event._id);
     }
