@@ -213,7 +213,7 @@ Herdr creates the workspace and Pi process with that `cwd`. The task brief inclu
 
 Joel authorized `:shitrat:` and direct `@joelclaw` mentions in any `lc-*` or `cc-*` channel as both work consent and one-thread reply consent. This narrow deterministic path does not use Task Grants or Reply Grants. Ordinary channel chatter stays ambient and ADR-0244 still governs every non-triggered public reply.
 
-The existing `@joelclaw` Slack bot is the ShitRat identity for the canary. Do not create a second Slack app or listener. The app's user subscription can receive Joel-visible private-channel events without bot membership. Bot membership is still required for bot-owned reactions and threaded replies. If the bot cannot access the channel, the work request fails closed before launch; the gateway never falls back to Joel's user token for delivery.
+The existing `@joelclaw` app remains the trigger and listener. Do not create a second Slack app or listener. Joel explicitly authorized the personal Slack token leased from agent-secrets to add lifecycle reactions and deliver ShitRat replies as Joel. The personal token is the delivery identity for this exact trigger, even when the bot is not a channel member. Missing personal-token access fails closed before launch.
 
 ### Runtime flow
 
@@ -224,7 +224,7 @@ Slack message
   -> Chat SDK / existing Slack runtime
   -> pure Task Grant policy + exact trigger parser
   -> durable slack.work.requested event
-  -> ShitRat bot adds :shitrat: acknowledgement on the thread root
+  -> gateway adds :shitrat: as Joel on the thread root
   -> live Agent Comms Gateway records a fanout decision + taskId
   -> private Channel Context Binding loads repo, Brain, people, policy, and validation
   -> fresh Herdr workspace starts a Pi orchestrator in an isolated worktree
@@ -232,12 +232,12 @@ Slack message
   -> result.json + Brain/report artifacts
   -> worker result returns with taskId + Slack reply context
   -> gateway matches the fanout receipt
-  -> @joelclaw/ShitRat bot posts one threaded result automatically
+  -> gateway posts one threaded result as Joel via the personal Slack token
 ```
 
-Reuse the live Agent Comms Gateway fanout contract from ADR-0249. Do not build another orchestration service. Workers never post to Slack directly. They append a private result receipt with the task ID and return context. They must not run `jc-slack reply`, call Slack APIs, or use another outward transport. The existing gateway remains the only outward comms owner and emits one bot-owned result.
+Reuse the live Agent Comms Gateway fanout contract from ADR-0249. Do not build another orchestration service. Workers never post to Slack directly. They append a private result receipt with the task ID and return context. They must not run `jc-slack reply`, call Slack APIs, or use another outward transport. The existing gateway remains the only outward comms owner and emits one result as Joel.
 
-Automated acknowledgement must use the bot token so the reaction is visibly ShitRat's. The existing `jc-slack react` path uses Joel's user token and should remain the human-session work-tagging path. The Slack work-state board must recognize bot-owned `:shitrat:` as started before the canary relies on it.
+The exact ShitRat path leases Joel's personal token from agent-secrets for acknowledgement, result delivery, and completion reaction. Ordinary Slack replies keep the approval-bound `jc-slack reply` path. A typed `slackDelivery.identity = "joel"` marker binds this exception to the original channel and thread before the executor can use the personal sender.
 
 ### First live canary fallout and hard stop
 
@@ -250,8 +250,8 @@ The first live retry reached the target thread, but it did not satisfy the contr
 
 The hard-stop repair is mechanical:
 
-- user tokens are read-only ears for channel resolution; all Slack delivery is bot-only;
-- `botDeliveryReady:false` permits one advancing `drop`, no worker launch, and no user-token send;
+- Joel's personal token is the authorized identity for exact ShitRat reactions and replies;
+- missing `userDeliveryReady` permits one advancing `drop` and no worker launch;
 - Slack result context requires `freshWorkspace:true` and `worktree:true`; fresh provisioning no longer depends on the gateway pane;
 - stale `replyThreadId` values are normalized at bootstrap, compact pending output, worker-result routing, and decision targeting;
 - worker briefs describe `joelclaw notify send` as a private result receipt and forbid direct Slack delivery;
@@ -259,7 +259,7 @@ The hard-stop repair is mechanical:
 - worker processes set `JOELCLAW_GATEWAY_WORKER=1`; the gateway-owned Slack reply command refuses sends from that context;
 - fresh dispatch must mechanically match the pending source event, channel, normalized thread, and bound cwd before it can launch.
 
-Do not run another live canary until the existing bot is a verified member of the mapped private channel. Read back membership before the trigger and read back the resulting thread after it. Exactly one bot-owned reply is success.
+Before another live canary, verify Joel's personal token can read the mapped channel. Read back the resulting thread after the trigger. Exactly one Joel-authored reply with the two Joel-authored lifecycle reactions is success.
 
 ### Lifecycle sketch
 
@@ -281,7 +281,7 @@ any -> rejected | failed | cancelled
 The machine must model dedupe, retries, Herdr crash recovery, cancellation, result harvest, and the public-post gate. Slack reactions are the visible work-state projection:
 
 - no tag = unclaimed;
-- `:shitrat:` = the transport accepted a bot-ready request, added before the durable stream append;
+- `:shitrat:` = the transport accepted a personal-token-ready request, added before the durable stream append;
 - `:white_check_mark:` = the gateway delivered the worker result to the original thread.
 
 Completion reaction failure is a projection failure, not permission to resend the result. Record OTEL, advance the executor cursor, and never duplicate the message.

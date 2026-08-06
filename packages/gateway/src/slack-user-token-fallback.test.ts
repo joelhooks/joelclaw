@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   createSlackUserWebClient,
+  isSlackUserChannelReady,
+  makeSlackUserDeliveryAdapter,
   resolveSlackChannelNameWithUserFallback,
   type SlackWebApiClient,
 } from "./slack-user-token-fallback";
@@ -15,19 +17,33 @@ function webClient(input: {
   readonly channelName?: string;
   readonly channelError?: string;
   readonly onInfo?: () => void;
+  readonly postedTs?: string;
+  readonly onPost?: (value: Record<string, unknown>) => void;
+  readonly onReaction?: (value: Record<string, unknown>) => void;
 }): SlackWebApiClient {
   return {
     conversations: {
       info: async () => {
         input.onInfo?.();
         if (input.channelError) throw slackError(input.channelError);
-        return { ok: true, channel: { name: input.channelName } };
+        return { channel: { name: input.channelName } };
+      },
+    },
+    chat: {
+      postMessage: async (value) => {
+        input.onPost?.(value as unknown as Record<string, unknown>);
+        return { ts: input.postedTs };
+      },
+    },
+    reactions: {
+      add: async (value) => {
+        input.onReaction?.(value as unknown as Record<string, unknown>);
       },
     },
   };
 }
 
-describe("Slack user-token visibility fallback", () => {
+describe("Slack personal-token ShitRat delivery", () => {
   test("uses the bot channel name without calling the user client", async () => {
     let userLookups = 0;
     const user = webClient({
@@ -45,17 +61,20 @@ describe("Slack user-token visibility fallback", () => {
     expect(userLookups).toBe(0);
   });
 
-  test("builds a read-only user-token client for channel resolution", async () => {
+  test("builds the user client without exposing its token", async () => {
     const requests: Array<{ readonly url: string; readonly init?: RequestInit }> = [];
     const client = createSlackUserWebClient(
       "xoxp-fictional-user-token",
       async (input, init) => {
         const url = String(input);
         requests.push({ url, init });
-        return new Response(JSON.stringify({
-          ok: true,
-          channel: { name: "lc-fictional-launch" },
-        }), {
+        return new Response(JSON.stringify(
+          url.includes("conversations.info?")
+            ? { ok: true, channel: { name: "lc-fictional-launch" } }
+            : url.endsWith("reactions.add")
+              ? { ok: true }
+              : { ok: true, ts: "1785950001.200" },
+        ), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -63,44 +82,68 @@ describe("Slack user-token visibility fallback", () => {
     );
     if (!client) throw new Error("expected fictional user-token client");
 
-    expect(await client.conversations.info({ channel: "C_FICTIONAL" }))
-      .toEqual({ channel: { name: "lc-fictional-launch" } });
-    expect("chat" in client).toBe(false);
-    expect(requests.map(({ url }) => url)).toEqual([
-      "https://slack.com/api/conversations.info?channel=C_FICTIONAL",
-    ]);
-    expect(requests.map(({ init }) => init?.method)).toEqual(["GET"]);
-    expect(requests.map(({ init }) => init?.body)).toEqual([undefined]);
+    await client.conversations.info({ channel: "C_FICTIONAL" });
+    await client.chat.postMessage({
+      channel: "C_FICTIONAL",
+      text: "fictional result",
+      thread_ts: "1785950000.100",
+    });
+    await client.reactions.add({
+      channel: "C_FICTIONAL",
+      name: "shitrat",
+      timestamp: "1785950000.100",
+    });
+
+    expect(requests.map(({ url }) => url).every((url) =>
+      !url.includes("xoxp-fictional-user-token"))).toBe(true);
+    expect(requests.map(({ init }) => init?.method)).toEqual(["GET", "POST", "POST"]);
   });
 
   test.each(["channel_not_found", "not_in_channel"])(
     "resolves a channel name with the user token after bot %s",
     async (code) => {
-      const bot = webClient({ channelError: code });
-      const user = webClient({ channelName: "lc-fictional-launch" });
-
       expect(await resolveSlackChannelNameWithUserFallback({
         channelId: "C_FICTIONAL",
-        botClient: bot,
-        userClient: user,
+        botClient: webClient({ channelError: code }),
+        userClient: webClient({ channelName: "lc-fictional-launch" }),
       })).toBe("lc-fictional-launch");
     },
   );
 
-  test("fails closed when the user token cannot resolve the channel", async () => {
-    expect(await resolveSlackChannelNameWithUserFallback({
+  test("requires personal-token channel visibility", async () => {
+    expect(await isSlackUserChannelReady({
       channelId: "C_FICTIONAL",
-      botClient: webClient({ channelError: "channel_not_found" }),
-      userClient: webClient({ channelError: "not_in_channel" }),
-    })).toBeUndefined();
+      userClient: webClient({ channelName: "lc-fictional-launch" }),
+    })).toBe(true);
+    expect(await isSlackUserChannelReady({
+      channelId: "C_FICTIONAL",
+      userClient: webClient({ channelError: "channel_not_found" }),
+    })).toBe(false);
   });
 
-  test("fails closed when no user token client exists", async () => {
-    expect(await resolveSlackChannelNameWithUserFallback({
-      channelId: "C_FICTIONAL",
-      botClient: webClient({ channelError: "channel_not_found" }),
-      userClient: undefined,
-    })).toBeUndefined();
-  });
+  test("posts a ShitRat result to the exact Slack thread as Joel", async () => {
+    const posts: Record<string, unknown>[] = [];
+    const adapter = makeSlackUserDeliveryAdapter({
+      userClient: webClient({
+        postedTs: "1785950001.200",
+        onPost: (value) => posts.push(value),
+      }),
+    });
+    if (!adapter) throw new Error("expected user delivery adapter");
 
+    const receipt = await adapter.postMessage(
+      "slack:C_FICTIONAL:1785950000.100",
+      { markdown: "Threaded **fictional** result" },
+    );
+
+    expect(posts).toEqual([{
+      channel: "C_FICTIONAL",
+      text: "Threaded **fictional** result",
+      thread_ts: "1785950000.100",
+    }]);
+    expect(receipt).toMatchObject({
+      id: "1785950001.200",
+      threadId: "slack:C_FICTIONAL:1785950000.100",
+    });
+  });
 });

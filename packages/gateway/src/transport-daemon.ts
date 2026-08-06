@@ -6,7 +6,10 @@ import {
 } from "@joelclaw/message-event-log";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import Redis from "ioredis";
-import { sendExplicitTransport } from "./chat-sdk/explicit-send";
+import {
+  sendExplicitSlackAsUser,
+  sendExplicitTransport,
+} from "./chat-sdk/explicit-send";
 import {
   getChatSdkRuntime,
   startChatSdkRuntime,
@@ -21,6 +24,7 @@ import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
 import { drainDeliverDecisions } from "./gateway-decision-executor";
 import {
   createSlackUserWebClient,
+  isSlackUserChannelReady,
   resolveSlackChannelNameWithUserFallback,
 } from "./slack-user-token-fallback";
 import { resolveSlackWorkRequest } from "./slack-work-request";
@@ -133,22 +137,25 @@ export async function startSlimTransportDaemon(): Promise<void> {
     });
     if (!request) return undefined;
 
-    const botDeliveryReady = await runtime.adapters.slack?.webClient.conversations
-      .info({ channel: request.channelId })
-      .then((response) =>
-        (response as { channel?: { is_member?: boolean } }).channel?.is_member === true)
-      .catch(() => false) ?? false;
-    const resolved = { ...request, botDeliveryReady };
+    const userDeliveryReady = await isSlackUserChannelReady({
+      channelId: request.channelId,
+      userClient: slackUserWebClient,
+    });
+    const resolved = {
+      ...request,
+      botDeliveryReady: false,
+      userDeliveryReady,
+    };
     void emitGatewayOtel({
-      level: botDeliveryReady ? "info" : "error",
+      level: userDeliveryReady ? "info" : "error",
       component: "slack-shitrat",
-      action: botDeliveryReady
+      action: userDeliveryReady
         ? "slack.shitrat.work_requested"
-        : "slack.shitrat.bot_membership_required",
-      success: botDeliveryReady,
-      error: botDeliveryReady
+        : "slack.shitrat.user_delivery_unavailable",
+      success: userDeliveryReady,
+      error: userDeliveryReady
         ? undefined
-        : "Slack bot cannot access the originating channel; work request failed closed",
+        : "Joel's Slack token cannot access the originating channel; work request failed closed",
       metadata: {
         channelId: request.channelId,
         channelName: request.channelName,
@@ -169,9 +176,10 @@ export async function startSlimTransportDaemon(): Promise<void> {
       resolveFlowId: resolveInboundFlow,
       resolveWorkRequest,
       acknowledgeWorkRequest: async (request) => {
-        if (request.botDeliveryReady === false) return;
+        if (request.userDeliveryReady !== true) return;
+        if (!slackUserWebClient) throw new Error("SLACK_USER_TOKEN is unavailable");
         try {
-          await runtime.adapters.slack?.webClient.reactions.add({
+          await slackUserWebClient.reactions.add({
             channel: request.channelId,
             name: process.env.SLACK_SHITRAT_REACTION?.trim() || "shitrat",
             timestamp: request.messageTs,
@@ -315,11 +323,11 @@ export async function startSlimTransportDaemon(): Promise<void> {
         eventLog,
         recipientId: executorRecipient,
         send: sendExplicitTransport,
+        sendSlackWork: sendExplicitSlackAsUser,
         completeSlackWork: async ({ channelId, messageTs, reaction, taskId }) => {
           try {
-            const slack = runtime.adapters.slack;
-            if (!slack) throw new Error("Slack adapter unavailable");
-            await slack.webClient.reactions.add({
+            if (!slackUserWebClient) throw new Error("SLACK_USER_TOKEN is unavailable");
+            await slackUserWebClient.reactions.add({
               channel: channelId,
               name: reaction,
               timestamp: messageTs,

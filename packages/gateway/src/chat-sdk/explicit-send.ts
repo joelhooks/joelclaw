@@ -6,6 +6,10 @@ import type { AdapterPostableMessage } from "chat";
 import Redis from "ioredis";
 import { journalMessage } from "../message-journal";
 import {
+  createSlackUserWebClient,
+  makeSlackUserDeliveryAdapter,
+} from "../slack-user-token-fallback";
+import {
   type ExplicitTransportSendReceipt,
   type ExplicitTransportSendRequest,
   makeExplicitTransportSender,
@@ -35,9 +39,8 @@ function makeAdapter(
     postMessage: (threadId, message: SdkPostableMessage) =>
       adapter.postMessage(threadId, message as AdapterPostableMessage),
   };
-  // Outbound Slack is bot-only. A user-token fallback makes replies appear as
-  // Joel and breaks the ShitRat identity contract. Missing bot membership must
-  // fail closed instead of impersonating the operator.
+  // Ordinary outbound Slack remains bot-owned. The exact ShitRat path uses the
+  // separate sendExplicitSlackAsUser boundary authorized by Joel.
   return deliveryAdapter;
 }
 
@@ -82,19 +85,38 @@ export async function resolveExplicitPlatformMessageFlow(
   return undefined;
 }
 
-/** Public zero-policy boundary used by the gateway agent/plugin. */
-export async function sendExplicitTransport(
-  request: ExplicitTransportSendRequest,
-): Promise<ExplicitTransportSendReceipt> {
-  const adapters = {
-    telegram: makeAdapter("telegram"),
-    slack: makeAdapter("slack"),
-    discord: makeAdapter("discord"),
-  };
+function explicitSender(
+  adapters: Partial<Record<Exclude<MessagePlatform, "imessage">, SdkDeliveryAdapter | undefined>>,
+) {
   return makeExplicitTransportSender({
     adapters,
     journal: { record: journalMessage },
     eventLog: getMessageEventLogClient(),
     rememberFlow: rememberExplicitFlow,
+  });
+}
+
+/** Public zero-policy boundary used by the gateway agent/plugin. */
+export async function sendExplicitTransport(
+  request: ExplicitTransportSendRequest,
+): Promise<ExplicitTransportSendReceipt> {
+  return explicitSender({
+    telegram: makeAdapter("telegram"),
+    slack: makeAdapter("slack"),
+    discord: makeAdapter("discord"),
   })(request);
+}
+
+/** Exact ShitRat Slack boundary authorized to post as Joel via agent-secrets. */
+export async function sendExplicitSlackAsUser(
+  request: ExplicitTransportSendRequest,
+): Promise<ExplicitTransportSendReceipt> {
+  if (request.target.platform !== "slack") {
+    throw new Error("Slack user-token delivery only accepts Slack requests");
+  }
+  const slack = makeSlackUserDeliveryAdapter<SdkPostableMessage>({
+    userClient: createSlackUserWebClient(),
+  });
+  if (!slack) throw new Error("SLACK_USER_TOKEN is unavailable");
+  return explicitSender({ slack })(request);
 }

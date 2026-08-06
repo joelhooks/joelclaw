@@ -63,7 +63,8 @@ function harness(input: {
           messageTs: "1785950000.100",
           threadTs: "1785950000.100",
           replyThreadId: "slack:CEXAMPLE:1785950000.100",
-          botDeliveryReady: true,
+          botDeliveryReady: false,
+          userDeliveryReady: true,
           binding: { cwd: "/tmp/example-project" },
         }
       : undefined,
@@ -91,7 +92,8 @@ describe("stream inbound ShitRat work requests", () => {
         addressedBy: "emoji",
         channelName: "lc-example-project",
         replyThreadId: "slack:CEXAMPLE:1785950000.100",
-        botDeliveryReady: true,
+        botDeliveryReady: false,
+        userDeliveryReady: true,
         binding: { cwd: "/tmp/example-project" },
       },
     });
@@ -137,7 +139,8 @@ describe("stream inbound ShitRat work requests", () => {
         messageTs: "1785950000.100",
         threadTs: "1785950000.100",
         replyThreadId: "slack:CEXAMPLE:1785950000.100",
-        botDeliveryReady: true,
+        botDeliveryReady: false,
+        userDeliveryReady: true,
       }),
       acknowledgeWorkRequest: async () => {
         throw new Error("missing_scope");
@@ -148,7 +151,10 @@ describe("stream inbound ShitRat work requests", () => {
     await publisher.publishEvent(slackEvent(false));
     expect(appended).toHaveLength(1);
     expect(appended[0]?.payload).toMatchObject({
-      workRequest: { botDeliveryReady: false },
+      workRequest: {
+        botDeliveryReady: false,
+        userDeliveryReady: false,
+      },
     });
     expect(errors).toEqual(["acknowledge:Error: missing_scope"]);
   });

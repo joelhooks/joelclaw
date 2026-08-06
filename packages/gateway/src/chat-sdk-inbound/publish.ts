@@ -191,7 +191,11 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
         try {
           await options.acknowledgeWorkRequest(workRequest);
         } catch (error) {
-          workRequest = { ...workRequest, botDeliveryReady: false };
+          workRequest = {
+            ...workRequest,
+            botDeliveryReady: false,
+            userDeliveryReady: false,
+          };
           options.onWorkRequestError?.(error, "acknowledge", event);
         }
       }

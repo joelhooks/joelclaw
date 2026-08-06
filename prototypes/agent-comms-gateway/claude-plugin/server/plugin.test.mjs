@@ -62,7 +62,8 @@ const slackWorkRequest = {
       channelId: "CEXAMPLE",
       channelName: "lc-example",
       replyThreadId: "slack:CEXAMPLE:1785950000.100",
-      botDeliveryReady: true,
+      botDeliveryReady: false,
+      userDeliveryReady: true,
       binding: { cwd: "/tmp/example", repo: "/tmp/example" },
     },
   },
@@ -164,6 +165,11 @@ describe("stream receipts", () => {
     expect(appended.event.payload.decision.target.threadId).toBe(
       "slack:CEXAMPLE:1785950000.100",
     );
+    expect(appended.event.payload.slackDelivery).toEqual({
+      identity: "joel",
+      channelId: "CEXAMPLE",
+      messageTs: "1785950000.100",
+    });
     expect(appended.event.payload.slackWorkCompletion).toEqual({
       channelId: "CEXAMPLE",
       messageTs: "1785950000.100",
@@ -199,6 +205,11 @@ describe("stream receipts", () => {
       conversationId: "CEXAMPLE",
       threadId: "slack:CEXAMPLE:1785950000.100",
     });
+    expect(appended.event.payload.slackDelivery).toEqual({
+      identity: "joel",
+      channelId: "CEXAMPLE",
+      messageTs: "1785950000.100",
+    });
     expect(appended.event.payload.slackWorkCompletion).toEqual({
       channelId: "CEXAMPLE",
       messageTs: "1785950000.100",
@@ -223,6 +234,7 @@ describe("stream receipts", () => {
       },
     });
 
+    expect(appended.event.payload.slackDelivery).toBeUndefined();
     expect(appended.event.payload.slackWorkCompletion).toBeUndefined();
     expect(appended.event.payload.decision.target).toEqual({
       kind: "platform",
@@ -395,9 +407,12 @@ describe("stream receipts", () => {
     );
   });
 
-  test("pre-patch workRequest without bot readiness fails closed", async () => {
-    const { botDeliveryReady: _omitted, ...legacyWorkRequest } =
-      slackWorkRequest.payload.workRequest;
+  test("pre-patch workRequest without delivery readiness fails closed", async () => {
+    const {
+      botDeliveryReady: _botOmitted,
+      userDeliveryReady: _userOmitted,
+      ...legacyWorkRequest
+    } = slackWorkRequest.payload.workRequest;
     const stale = {
       ...slackWorkRequest,
       _id: "slack-work-readiness-missing",
@@ -410,16 +425,17 @@ describe("stream receipts", () => {
     const stream = createStreamTools({ client, now: () => 20 });
     const pending = await stream.pending();
     expect(pending.pending[0].workRequest.botDeliveryReady).toBe(false);
+    expect(pending.pending[0].workRequest.userDeliveryReady).toBe(false);
     const handlers = createToolHandlers({
       stream,
       herdr: { dispatchWorker: async () => ({ unsafe: true }) },
       wake: {},
     });
     await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
-      .rejects.toThrow("Slack bot membership is required");
+      .rejects.toThrow("Joel's Slack token must reach the channel");
   });
 
-  test("workRequest fails closed when the Slack bot cannot deliver", async () => {
+  test("workRequest fails closed when Joel's Slack token cannot deliver", async () => {
     const identityBlocked = {
       ...slackWorkRequest,
       _id: "slack-work-no-bot",
@@ -428,6 +444,7 @@ describe("stream receipts", () => {
         workRequest: {
           ...slackWorkRequest.payload.workRequest,
           botDeliveryReady: false,
+          userDeliveryReady: false,
         },
       },
     };
@@ -440,11 +457,11 @@ describe("stream receipts", () => {
     });
 
     await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
-      .rejects.toThrow("Slack bot membership is required");
+      .rejects.toThrow("Joel's Slack token must reach the channel");
     await expect(stream.recordDecision({
       payload: {
         inputEventIds: ["slack-work-no-bot"],
-        reason: "Bot identity cannot reply in this private channel.",
+        reason: "Joel's Slack token cannot reply in this private channel.",
         promptRevision: "abc123",
         decisionSeq: 1,
         decision: { verb: "fanout", taskId: "unsafe-launch" },
@@ -454,7 +471,7 @@ describe("stream receipts", () => {
     const dropped = await stream.recordDecision({
       payload: {
         inputEventIds: ["slack-work-no-bot"],
-        reason: "Bot identity cannot reply in this private channel.",
+        reason: "Joel's Slack token cannot reply in this private channel.",
         promptRevision: "abc123",
         decisionSeq: 1,
         decision: { verb: "drop" },
@@ -611,6 +628,11 @@ describe("stream receipts", () => {
       platform: "slack",
       conversationId: "CEXAMPLE",
       threadId: "slack:CEXAMPLE:1785950000.100",
+    });
+    expect(delivered.event.payload.slackDelivery).toEqual({
+      identity: "joel",
+      channelId: "CEXAMPLE",
+      messageTs: "1785950000.100",
     });
   });
 

@@ -52,10 +52,10 @@ Joel authorized one deterministic participation path:
 
 - A human posts exact `:shitrat:` or directly mentions the existing bot.
 - The source channel name matches `lc-*` or `cc-*`.
-- The bot can see the channel.
+- Joel's personal Slack token from agent-secrets can see the channel.
 - A private channel-context binding resolves one exact repository, `cwd`, Brain entry, skill set, and validation contract.
 
-The transport acknowledges with the bot-owned `:shitrat:` reaction. The gateway launches a fresh Herdr/Pi worktree in the resolved project. The worker returns its result to the gateway. The gateway posts one result in the originating thread.
+The transport acknowledges with Joel's `:shitrat:` reaction. The gateway launches a fresh Herdr/Pi worktree in the resolved project. The worker returns its result to the gateway. The gateway posts one Joel-authored result in the originating thread, then adds Joel's `:white_check_mark:` reaction.
 
 This trigger does not require a Task Grant, Reply Grant, or separate Joel approval. An unmapped channel fails closed and receives a binding-needed reply. The gateway never guesses a repository.
 
@@ -71,7 +71,7 @@ jc-slack reply '<message-permalink>' --text-file <path>
 
 The preview returns an approval-bound confirmation command. Run that exact command only after Joel approves the exact reply text. The CLI delegates delivery to the single gateway transport and returns a delivery receipt.
 
-Do not bypass this flow with a user token, raw `chat.postMessage`, or a second Slack listener.
+Outside the exact ShitRat trigger, do not bypass this flow with a user token, raw `chat.postMessage`, or a second Slack listener. The gateway's typed ShitRat delivery boundary is the only personal-token exception.
 
 ## Passive intelligence
 

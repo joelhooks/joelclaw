@@ -16,6 +16,7 @@ function decisionEvent(id: string, payload: Record<string, unknown>): MessageEve
 
 function harness(events: MessageEventDocument[], recipientId = "joel") {
   const sent: string[] = [];
+  const sentAsJoel: string[] = [];
   const sentRequests: Array<{
     flowId: string;
     correlationId?: string;
@@ -33,6 +34,7 @@ function harness(events: MessageEventDocument[], recipientId = "joel") {
   const logged: string[] = [];
   return {
     sent,
+    sentAsJoel,
     sentRequests,
     advanced,
     completed,
@@ -57,6 +59,10 @@ function harness(events: MessageEventDocument[], recipientId = "joel") {
             ...(request.replyThreadId ? { replyThreadId: request.replyThreadId } : {}),
           });
           return { platformMessageId: `sent-${sent.length}` };
+        },
+        sendSlackWork: async (request) => {
+          sentAsJoel.push(request.text);
+          return { platformMessageId: `joel-${sentAsJoel.length}` };
         },
         completeSlackWork: async (input) => {
           completed.push(input);
@@ -118,6 +124,34 @@ describe("deliver executor", () => {
     expect(result).toEqual({ executed: 1, skipped: 0 });
   });
 
+  test("uses Joel's personal token for a marked ShitRat Slack reply", async () => {
+    const harnessed = harness([
+      decisionEvent("shitrat-direct-reply", {
+        decision: {
+          verb: "deliver",
+          target: {
+            kind: "platform",
+            platform: "slack",
+            conversationId: "CEXAMPLE",
+            threadId: "slack:CEXAMPLE:1785950000.100",
+          },
+        },
+        rewrite: "This channel needs a repository mapping.",
+        slackDelivery: {
+          identity: "joel",
+          channelId: "CEXAMPLE",
+          messageTs: "1785950000.100",
+        },
+      }),
+    ], "");
+
+    await harnessed.run();
+    expect(harnessed.sent).toEqual([]);
+    expect(harnessed.sentAsJoel).toEqual([
+      "This channel needs a repository mapping.",
+    ]);
+  });
+
   test("adds completion reaction after a ShitRat worker result reaches Slack", async () => {
     const harnessed = harness([
       decisionEvent("slack-worker-result", {
@@ -131,6 +165,11 @@ describe("deliver executor", () => {
           },
         },
         rewrite: "Worker finished.",
+        slackDelivery: {
+          identity: "joel",
+          channelId: "CEXAMPLE",
+          messageTs: "1785950000.100",
+        },
         slackWorkCompletion: {
           channelId: "CEXAMPLE",
           messageTs: "1785950000.100",
@@ -141,6 +180,8 @@ describe("deliver executor", () => {
     ], "");
 
     await harnessed.run();
+    expect(harnessed.sent).toEqual([]);
+    expect(harnessed.sentAsJoel).toEqual(["Worker finished."]);
     expect(harnessed.completed).toEqual([{
       channelId: "CEXAMPLE",
       messageTs: "1785950000.100",
@@ -210,6 +251,10 @@ describe("deliver executor", () => {
       },
       recipientId: "",
       send: async () => {
+        calls.push("generic-send");
+        return { platformMessageId: "1785950001.200" };
+      },
+      sendSlackWork: async () => {
         calls.push("send");
         return { platformMessageId: "1785950001.200" };
       },

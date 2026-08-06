@@ -18,18 +18,23 @@ export interface DeliverExecutorEventLog {
   readonly advanceCursor: (consumer: string, eventId: string) => Promise<unknown>;
 }
 
+type DeliverSendRequest = {
+  target: { platform: MessagePlatform; recipientId: string };
+  content: { raw: string };
+  text: string;
+  flowId: string;
+  origin: { machineId: string; producer: string };
+  correlationId?: string;
+  replyThreadId?: string;
+};
+
 export interface DeliverExecutorDependencies {
   readonly eventLog: DeliverExecutorEventLog;
   readonly recipientId: string;
-  readonly send: (request: {
-    target: { platform: MessagePlatform; recipientId: string };
-    content: { raw: string };
-    text: string;
-    flowId: string;
-    origin: { machineId: string; producer: string };
-    correlationId?: string;
-    replyThreadId?: string;
-  }) => Promise<{ platformMessageId: string }>;
+  readonly send: (request: DeliverSendRequest) => Promise<{ platformMessageId: string }>;
+  readonly sendSlackWork?: (
+    request: DeliverSendRequest,
+  ) => Promise<{ platformMessageId: string }>;
   readonly completeSlackWork?: (input: {
     channelId: string;
     messageTs: string;
@@ -50,6 +55,11 @@ interface DeliverDecisionPayload {
   };
   readonly rewrite?: string;
   readonly reason?: string;
+  readonly slackDelivery?: {
+    readonly identity: "joel";
+    readonly channelId: string;
+    readonly messageTs: string;
+  };
   readonly slackWorkCompletion?: {
     readonly channelId: string;
     readonly messageTs: string;
@@ -70,21 +80,22 @@ const asDeliverText = (payload: DeliverDecisionPayload): string | null => {
   return null;
 };
 
-function assertSlackCompletionMatchesTarget(
-  completion: DeliverDecisionPayload["slackWorkCompletion"],
+function assertSlackMarkerMatchesTarget(
+  marker: { channelId: string; messageTs: string } | undefined,
   target: {
     target: { platform: MessagePlatform; recipientId: string };
     replyThreadId?: string;
   },
+  label: string,
 ): void {
-  if (!completion) return;
-  const expectedThreadId = `slack:${completion.channelId}:${completion.messageTs}`;
+  if (!marker) return;
+  const expectedThreadId = `slack:${marker.channelId}:${marker.messageTs}`;
   if (
     target.target.platform !== "slack"
-    || target.target.recipientId !== completion.channelId
+    || target.target.recipientId !== marker.channelId
     || target.replyThreadId !== expectedThreadId
   ) {
-    throw new Error("Slack work completion must match the delivered Slack target");
+    throw new Error(`${label} must match the delivered Slack target`);
   }
 }
 
@@ -155,7 +166,16 @@ export async function drainDeliverDecisions(
       continue;
     }
     const resolvedTarget = deliveryTarget(decision, dependencies.recipientId);
-    assertSlackCompletionMatchesTarget(payload.slackWorkCompletion, resolvedTarget);
+    assertSlackMarkerMatchesTarget(
+      payload.slackDelivery,
+      resolvedTarget,
+      "Slack delivery identity",
+    );
+    assertSlackMarkerMatchesTarget(
+      payload.slackWorkCompletion,
+      resolvedTarget,
+      "Slack work completion",
+    );
     // Ordinary gateway notifications stay at-least-once: a rare duplicate is
     // preferable to a silent gap. Exact replies approved through jc-slack are
     // different. Claim those by advancing first, so a post-send crash becomes
@@ -168,7 +188,13 @@ export async function drainDeliverDecisions(
         flowId: event.flowId,
       });
     }
-    await dependencies.send({
+    const slackWorkDelivery = payload.slackDelivery?.identity === "joel"
+      || Boolean(payload.slackWorkCompletion);
+    const sender = slackWorkDelivery ? dependencies.sendSlackWork : dependencies.send;
+    if (!sender) {
+      throw new Error("Slack work delivery requires Joel's Slack token sender");
+    }
+    await sender({
       ...resolvedTarget,
       content: { raw: text },
       text,

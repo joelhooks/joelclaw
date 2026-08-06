@@ -78,8 +78,11 @@ function isWorkRequest(event) {
     && typeof event.payload.workRequest === "object";
 }
 
-function isWorkRequestBotDeliveryReady(event) {
-  return isWorkRequest(event) && event.payload.workRequest.botDeliveryReady === true;
+function isWorkRequestDeliveryReady(event) {
+  if (!isWorkRequest(event)) return false;
+  const workRequest = event.payload.workRequest;
+  return workRequest.userDeliveryReady === true
+    || workRequest.botDeliveryReady === true;
 }
 
 function hasWorkRequestBinding(event) {
@@ -142,15 +145,25 @@ function slackWorkerReturnTarget(event) {
   };
 }
 
-function slackWorkerCompletion(event) {
-  const target = slackWorkerReturnTarget(event);
-  const taskId = event?.payload?.evidence?.context?.taskId;
-  if (!target || typeof taskId !== "string") return null;
+function slackDeliveryForTarget(target) {
+  if (!target) return null;
   const messageTs = target.threadId.split(":").at(-1);
   if (!/^\d+\.\d+$/u.test(messageTs ?? "")) return null;
   return {
+    identity: "joel",
     channelId: target.conversationId,
     messageTs,
+  };
+}
+
+function slackWorkerCompletion(event) {
+  const target = slackWorkerReturnTarget(event);
+  const taskId = event?.payload?.evidence?.context?.taskId;
+  const delivery = slackDeliveryForTarget(target);
+  if (!delivery || typeof taskId !== "string") return null;
+  return {
+    channelId: delivery.channelId,
+    messageTs: delivery.messageTs,
     reaction: "white_check_mark",
     taskId,
   };
@@ -217,6 +230,7 @@ export function compactPendingEvent(event, { now = Date.now() } = {}) {
       workRequest: {
         channelName: workRequest.channelName,
         botDeliveryReady: workRequest.botDeliveryReady === true,
+        userDeliveryReady: workRequest.userDeliveryReady === true,
         replyThreadId: normalizeSlackReplyThreadId(
           workRequest.channelId,
           workRequest.replyThreadId,
@@ -409,19 +423,19 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
 
     const identityBlocked = pending.filter((event) =>
       isWorkRequest(event)
-      && !isWorkRequestBotDeliveryReady(event)
+      && !isWorkRequestDeliveryReady(event)
       && !coveringIds.includes(event._id));
     if (identityBlocked.length > 0) {
       const ids = identityBlocked.map((event) => event._id).join(", ");
       throw new Error(
-        `Slack bot membership is required before ${toolName}: ${ids}. `
-        + "Do not launch a worker or send through the user token. Record one advancing drop decision; the request failed closed until the bot joins the channel.",
+        `Joel's Slack token must reach the channel before ${toolName}: ${ids}. `
+        + "Record one advancing drop decision; the request failed closed because personal-token delivery is unavailable.",
       );
     }
 
     const boundWorkRequests = pending.filter((event) =>
       isWorkRequest(event)
-      && isWorkRequestBotDeliveryReady(event)
+      && isWorkRequestDeliveryReady(event)
       && hasWorkRequestBinding(event)
       && !coveringIds.includes(event._id));
     if (boundWorkRequests.length > 0) {
@@ -466,7 +480,7 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
 
     const missingBindings = pending.filter((event) =>
       isWorkRequest(event)
-      && isWorkRequestBotDeliveryReady(event)
+      && isWorkRequestDeliveryReady(event)
       && !hasWorkRequestBinding(event)
       && !coveringIds.includes(event._id));
     if (missingBindings.length > 0) {
@@ -577,9 +591,9 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         }
       }
 
-      // Bot-ready, bound Slack work requests are already acknowledged by the
-      // transport's reaction: one fanout receipt advances them. Missing bot
-      // membership fails closed with one drop. Missing bindings get one
+      // Delivery-ready, bound Slack work requests are already acknowledged by
+      // Joel's reaction: one fanout receipt advances them. Missing personal-token
+      // access fails closed with one drop. Missing bindings get one
       // explanatory Slack-thread deliver and no launch. Ordinary addressed
       // inbounds keep the ack-first contract; ambient inbounds require observe
       // or escalation before outbound.
@@ -597,14 +611,14 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
           if (priorDecisions.length > 0) {
             throw new Error(`workRequest ${eventId} already has its one canonical decision`);
           }
-          const botReady = isWorkRequestBotDeliveryReady(input);
-          const expectedVerb = botReady
+          const deliveryReady = isWorkRequestDeliveryReady(input);
+          const expectedVerb = deliveryReady
             ? (hasWorkRequestBinding(input) ? "fanout" : "deliver")
             : "drop";
           if (verb !== expectedVerb) {
             throw new Error(
-              !botReady
-                ? `workRequest ${eventId} must fail closed with one drop because the Slack bot cannot deliver in that channel. Got verb=${verb}`
+              !deliveryReady
+                ? `workRequest ${eventId} must fail closed with one drop because Joel's Slack token cannot deliver in that channel. Got verb=${verb}`
                 : hasWorkRequestBinding(input)
                   ? `Bound workRequest ${eventId} must use one fanout decision. The Slack reaction already acknowledged it; do not send a Telegram echo. Got verb=${verb}`
                   : `Unbound workRequest ${eventId} must use one Slack-thread deliver explaining the missing mapping, with no worker launch. Got verb=${verb}`,
@@ -671,8 +685,13 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         if (uniqueCompletions.size > 1) {
           throw new Error("One decision cannot complete multiple Slack work requests");
         }
+        const slackDelivery = slackDeliveryForTarget(slackReturnTargets[0]);
+        if (!slackDelivery) {
+          throw new Error("Slack work delivery target has no valid root timestamp");
+        }
         candidatePayload = {
           ...candidatePayload,
+          slackDelivery,
           ...(completions[0] ? { slackWorkCompletion: completions[0] } : {}),
           decision: {
             ...candidatePayload.decision,

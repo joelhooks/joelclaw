@@ -131,6 +131,11 @@ export type GatewayDecisionRecordedPayload = {
   /** Canonical transport text location required by the Convex validator. */
   rewrite?: string;
   decision: GatewayDecision;
+  slackDelivery?: {
+    identity: "joel";
+    channelId: string;
+    messageTs: string;
+  };
   slackWorkCompletion?: {
     channelId: string;
     messageTs: string;
@@ -185,6 +190,7 @@ export type InboundReceivedPayload = {
     threadTs: string;
     replyThreadId: string;
     botDeliveryReady: boolean;
+    userDeliveryReady?: boolean;
     binding?: {
       repo?: string;
       cwd?: string;
