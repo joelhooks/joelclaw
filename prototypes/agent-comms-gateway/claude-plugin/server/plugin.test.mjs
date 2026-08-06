@@ -189,6 +189,13 @@ describe("stream receipts", () => {
       replyThreadId: "slack:CEXAMPLE:1785950000.100",
       phase: "result",
     });
+    await expect(stream.recordDecision({
+      payload: {
+        ...decisionPayload,
+        inputEventIds: ["worker-result-1"],
+        rewrite: "x".repeat(1_201),
+      },
+    })).rejects.toThrow("result rewrite exceeds 1200 characters");
     const appended = await stream.recordDecision({
       payload: {
         ...decisionPayload,
@@ -246,6 +253,13 @@ describe("stream receipts", () => {
         rewrite: undefined,
       },
     })).rejects.toThrow("must deliver to its bound source thread");
+    await expect(stream.recordDecision({
+      payload: {
+        ...decisionPayload,
+        inputEventIds: ["worker-progress-1"],
+        rewrite: "x".repeat(321),
+      },
+    })).rejects.toThrow("progress rewrite exceeds 320 characters");
 
     const appended = await stream.recordDecision({
       payload: {

@@ -111,9 +111,10 @@ function workerBrief({ taskId, task, cwd, resultContext = {} }) {
     "When finished, append one private worker-result receipt to the gateway (this is the ONLY return path):",
     "",
     "```bash",
-    `joelclaw notify send "worker ${taskId} done: <one-paragraph result>" --kind receipt --source shitrat-worker --context '${resultData}'`,
+    `joelclaw notify send "worker ${taskId} done: <answer; root cause; proof; next action; useful link or path>" --kind receipt --source shitrat-worker --context '${resultData}'`,
     "```",
     "",
+    "Keep the private receipt compact and source-grounded. Include enough technical detail for the gateway to explain the result, but do not dump raw logs or write the outward Slack message yourself.",
     "This command appends a receipt. It does not authorize a direct Slack post. Never run `jc-slack reply`, call the Slack API, or use any other outward transport.",
     "Then print DONE and stop. Do not commit anything. The gateway alone decides and sends the one outward result.",
   ].join("\n");

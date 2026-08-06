@@ -719,6 +719,16 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
             target: slackReturnTargets[0],
           },
         };
+        const progressOnly = coveredInputs.every(
+          (event) => event?.payload?.evidence?.context?.workerPhase === "progress",
+        );
+        const slackRewrite = candidatePayload.rewrite ?? candidatePayload.decision?.rewrite;
+        const slackRewriteLimit = progressOnly ? 320 : 1_200;
+        if (typeof slackRewrite === "string" && slackRewrite.length > slackRewriteLimit) {
+          throw new Error(
+            `Slack ShitRat ${progressOnly ? "progress" : "result"} rewrite exceeds ${slackRewriteLimit} characters; summarize and link the durable report`,
+          );
+        }
       }
       if (incidentInputs.length === 1) {
         const incident = reconcileGatewayIncident({

@@ -57,6 +57,8 @@ Joel authorized one deterministic participation path:
 
 The transport immediately adds Joel's `:shitrat:` reaction and posts `Working on it. 🐀` in the source thread. The gateway launches a fresh Herdr/Pi worktree in the resolved project. The worker sends private progress receipts after launch verification and meaningful milestones. The gateway projects those receipts into the source thread. The worker sends one final result receipt; the gateway posts it as Joel, adds Joel's `:white_check_mark:` reaction, then releases the pane and worktree.
 
+The gateway rewrites worker receipts instead of pasting them. Lead with the outcome, explain the cause in plain language, retain only useful technical receipts, and finish with the next action or unresolved risk. Use short Slack paragraphs, flat bullets, `*bold*`, inline code, and `<url|label>` links. Do not use Markdown headings, tables, nested bullet soup, or wall-of-text chronology. Default final results to 1,200 characters and progress updates to 320 characters. Sound like ShitRat: terse, technical, skeptical, ELI5 without deleting the truth.
+
 This trigger does not require a Task Grant, Reply Grant, or separate Joel approval. An unmapped channel fails closed and receives a binding-needed reply. The gateway never guesses a repository.
 
 ## Approval-bound replies
