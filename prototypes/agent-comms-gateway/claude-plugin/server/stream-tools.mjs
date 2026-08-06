@@ -158,7 +158,9 @@ function slackDeliveryForTarget(target) {
 
 function slackWorkerCompletion(event) {
   const target = slackWorkerReturnTarget(event);
-  const taskId = event?.payload?.evidence?.context?.taskId;
+  const context = event?.payload?.evidence?.context;
+  if (context?.workerPhase === "progress") return null;
+  const taskId = context?.taskId;
   const delivery = slackDeliveryForTarget(target);
   if (!delivery || typeof taskId !== "string") return null;
   return {
@@ -216,6 +218,7 @@ export function compactPendingEvent(event, { now = Date.now() } = {}) {
               workerContext.replyThreadId,
             )
           : workerContext.replyThreadId ?? null,
+        phase: workerContext.workerPhase === "progress" ? "progress" : "result",
       }
     : null;
   return {
@@ -604,6 +607,24 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         const priorDecisions = decisionsCovering(events, eventId);
         const decision = payload?.decision;
         const verb = decision?.verb;
+        const workerReturnTarget = slackWorkerReturnTarget(input);
+        if (workerReturnTarget) {
+          if (inputEventIds.length !== 1) {
+            throw new Error(`Slack worker receipt ${eventId} must be decided alone`);
+          }
+          if (priorDecisions.length > 0) {
+            throw new Error(`Slack worker receipt ${eventId} already has its one canonical decision`);
+          }
+          if (verb !== "deliver") {
+            const phase = input?.payload?.evidence?.context?.workerPhase === "progress"
+              ? "progress"
+              : "result";
+            throw new Error(
+              `Slack worker ${phase} ${eventId} must deliver to its bound source thread. Got verb=${verb}`,
+            );
+          }
+          continue;
+        }
         if (isWorkRequest(input)) {
           if (inputEventIds.length !== 1) {
             throw new Error(`workRequest ${eventId} must be decided alone`);

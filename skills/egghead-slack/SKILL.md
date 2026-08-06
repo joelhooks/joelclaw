@@ -55,7 +55,7 @@ Joel authorized one deterministic participation path:
 - Joel's personal Slack token from agent-secrets can see the channel.
 - A private channel-context binding resolves one exact repository, `cwd`, Brain entry, skill set, and validation contract.
 
-The transport acknowledges with Joel's `:shitrat:` reaction. The gateway launches a fresh Herdr/Pi worktree in the resolved project. The worker returns its result to the gateway. The gateway posts one Joel-authored result in the originating thread, then adds Joel's `:white_check_mark:` reaction.
+The transport immediately adds Joel's `:shitrat:` reaction and posts `Working on it. 🐀` in the source thread. The gateway launches a fresh Herdr/Pi worktree in the resolved project. The worker sends private progress receipts after launch verification and meaningful milestones. The gateway projects those receipts into the source thread. The worker sends one final result receipt; the gateway posts it as Joel, adds Joel's `:white_check_mark:` reaction, then releases the pane and worktree.
 
 This trigger does not require a Task Grant, Reply Grant, or separate Joel approval. An unmapped channel fails closed and receives a binding-needed reply. The gateway never guesses a repository.
 

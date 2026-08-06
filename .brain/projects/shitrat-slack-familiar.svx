@@ -279,11 +279,12 @@ observed
 any -> rejected | failed | cancelled
 ```
 
-The machine must model dedupe, retries, Herdr crash recovery, cancellation, result harvest, and the public-post gate. Slack reactions are the visible work-state projection:
+The machine must model dedupe, retries, Herdr crash recovery, cancellation, progress, result harvest, and the public-post gate. Slack reactions and thread messages are the visible work-state projection:
 
 - no tag = unclaimed;
-- `:shitrat:` = the transport accepted a personal-token-ready request, added before the durable stream append;
-- `:white_check_mark:` = the gateway delivered the worker result to the original thread.
+- `:shitrat:` plus `Working on it. 🐀` = the transport accepted a personal-token-ready request before the durable stream append;
+- worker progress receipts = concise Joel-authored updates in the same thread without completion or cleanup;
+- `:white_check_mark:` = the gateway delivered the final worker result to the original thread.
 
 Completion reaction failure is a projection failure, not permission to resend the result. Record OTEL, advance the executor cursor, and never duplicate the message.
 
@@ -291,4 +292,4 @@ Channel routing is mechanical, not model intuition. The private Channel Context 
 
 ### Current recommendation
 
-Ship the deterministic trigger across every visible `lc-*` and `cc-*` channel. Bind one mapped `lc-*` channel first as the live canary. The transport adds a `:shitrat:` reaction, the gateway launches a fresh Herdr worktree in the resolved project cwd, and the existing bot posts the worker result to the originating thread without an approval gate.
+Ship the deterministic trigger across every visible `lc-*` and `cc-*` channel. Bind one mapped `lc-*` channel first as the live canary. The transport reacts and posts the immediate threaded acknowledgement, the gateway launches a fresh Herdr worktree in the resolved project cwd, progress receipts return to that thread, and the gateway posts the final result without an approval gate.

@@ -23,6 +23,7 @@ import { registerChatSdkActingInbound } from "./chat-sdk-inbound/acting";
 import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
 import { drainDeliverDecisions } from "./gateway-decision-executor";
 import {
+  acknowledgeSlackWorkRequestAsUser,
   createSlackUserWebClient,
   isSlackUserChannelReady,
   resolveSlackChannelNameWithUserFallback,
@@ -178,16 +179,23 @@ export async function startSlimTransportDaemon(): Promise<void> {
       acknowledgeWorkRequest: async (request) => {
         if (request.userDeliveryReady !== true) return;
         if (!slackUserWebClient) throw new Error("SLACK_USER_TOKEN is unavailable");
-        try {
-          await slackUserWebClient.reactions.add({
-            channel: request.channelId,
-            name: process.env.SLACK_SHITRAT_REACTION?.trim() || "shitrat",
-            timestamp: request.messageTs,
-          });
-        } catch (error) {
-          if (String(error).includes("already_reacted")) return;
-          throw error;
-        }
+        await acknowledgeSlackWorkRequestAsUser({
+          channelId: request.channelId,
+          messageTs: request.messageTs,
+          reaction: process.env.SLACK_SHITRAT_REACTION?.trim() || "shitrat",
+          text: process.env.SLACK_SHITRAT_WORKING_TEXT?.trim() || "Working on it. 🐀",
+          userClient: slackUserWebClient,
+        });
+        void emitGatewayOtel({
+          level: "info",
+          component: "slack-shitrat",
+          action: "slack.shitrat.acknowledged",
+          success: true,
+          metadata: {
+            channelId: request.channelId,
+            threadTs: request.messageTs,
+          },
+        });
       },
       onWorkRequestError: (error, phase, event) => {
         console.error("[gateway:transport] Slack ShitRat work request failed", {

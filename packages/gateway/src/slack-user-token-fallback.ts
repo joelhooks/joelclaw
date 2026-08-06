@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 const SLACK_MEMBERSHIP_VISIBILITY_ERRORS = new Set([
   "channel_not_found",
   "not_in_channel",
@@ -19,6 +21,7 @@ export interface SlackWebApiClient {
       readonly channel: string;
       readonly text: string;
       readonly thread_ts?: string;
+      readonly client_msg_id?: string;
     }) => Promise<{
       readonly ts?: string;
       readonly message?: { readonly ts?: string };
@@ -145,11 +148,12 @@ export function createSlackUserWebClient(
       },
     },
     chat: {
-      postMessage: async ({ channel, text, thread_ts }) => {
+      postMessage: async ({ channel, text, thread_ts, client_msg_id }) => {
         const result = await call("chat.postMessage", {
           channel,
           text,
           ...(thread_ts ? { thread_ts } : {}),
+          ...(client_msg_id ? { client_msg_id } : {}),
         });
         const message = result.message;
         const messageTs = message && typeof message === "object"
@@ -205,6 +209,41 @@ export async function isSlackUserChannelReady(input: {
   return input.userClient.conversations.info({ channel: input.channelId })
     .then(() => true)
     .catch(() => false);
+}
+
+/** Stable UUID so Slack can deduplicate retries of the immediate work reply. */
+export function slackWorkAcknowledgementId(channelId: string, messageTs: string): string {
+  const hash = createHash("sha256")
+    .update(`shitrat-work-ack:${channelId}:${messageTs}`)
+    .digest("hex")
+    .slice(0, 32);
+  const variant = ((Number.parseInt(hash[16] ?? "0", 16) & 0x3) | 0x8).toString(16);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-${variant}${hash.slice(17, 20)}-${hash.slice(20)}`;
+}
+
+export async function acknowledgeSlackWorkRequestAsUser(input: {
+  readonly channelId: string;
+  readonly messageTs: string;
+  readonly reaction: string;
+  readonly text: string;
+  readonly userClient: SlackWebApiClient;
+}): Promise<void> {
+  try {
+    await input.userClient.reactions.add({
+      channel: input.channelId,
+      name: input.reaction,
+      timestamp: input.messageTs,
+    });
+  } catch (error) {
+    if (readSlackApiErrorCode(error) !== "already_reacted") throw error;
+  }
+
+  await input.userClient.chat.postMessage({
+    channel: input.channelId,
+    text: input.text,
+    thread_ts: input.messageTs,
+    client_msg_id: slackWorkAcknowledgementId(input.channelId, input.messageTs),
+  });
 }
 
 function parseSlackThreadId(

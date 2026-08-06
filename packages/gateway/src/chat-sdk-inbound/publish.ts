@@ -111,6 +111,7 @@ export interface StreamInboundPublisherOptions {
   ) => Promise<InboundReceivedPayload["workRequest"] | undefined>;
   readonly acknowledgeWorkRequest?: (
     workRequest: NonNullable<InboundReceivedPayload["workRequest"]>,
+    event: InboundEvent,
   ) => Promise<void>;
   readonly onWorkRequestError?: (
     error: unknown,
@@ -189,7 +190,7 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
 
       if (workRequest && options.acknowledgeWorkRequest) {
         try {
-          await options.acknowledgeWorkRequest(workRequest);
+          await options.acknowledgeWorkRequest(workRequest, event);
         } catch (error) {
           workRequest = {
             ...workRequest,

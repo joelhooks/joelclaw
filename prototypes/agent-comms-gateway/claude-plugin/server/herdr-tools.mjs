@@ -88,6 +88,7 @@ function sameSlackWorkRequest(entry, cwd, resultContext) {
 
 function workerBrief({ taskId, task, cwd, resultContext = {} }) {
   const resultData = JSON.stringify({ taskId, ...resultContext });
+  const progressData = JSON.stringify({ taskId, workerPhase: "progress", ...resultContext });
   return [
     `# Gateway worker task: ${taskId}`,
     "",
@@ -96,6 +97,15 @@ function workerBrief({ taskId, task, cwd, resultContext = {} }) {
     "Before work, run `pwd` and `git rev-parse --show-toplevel` when this is a Git repo. Stop and report a launch-contract mismatch instead of searching other repositories.",
     "",
     task.trim(),
+    "",
+    "## Progress updates",
+    "After you verify the launch contract and understand the task, append one short private progress receipt:",
+    "",
+    "```bash",
+    `joelclaw notify send "worker ${taskId} progress: <what you found and what you are doing next>" --kind receipt --source shitrat-worker --context '${progressData}'`,
+    "```",
+    "",
+    "Send another progress receipt after a meaningful milestone or after 10 minutes without an update. Do not send heartbeat spam. Never include secrets or private source text. The gateway projects these receipts into the originating Slack thread.",
     "",
     "## Returning your result",
     "When finished, append one private worker-result receipt to the gateway (this is the ONLY return path):",

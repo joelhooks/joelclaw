@@ -187,6 +187,7 @@ describe("stream receipts", () => {
       platform: "slack",
       channelId: "CEXAMPLE",
       replyThreadId: "slack:CEXAMPLE:1785950000.100",
+      phase: "result",
     });
     const appended = await stream.recordDecision({
       payload: {
@@ -216,6 +217,56 @@ describe("stream receipts", () => {
       reaction: "white_check_mark",
       taskId: "example-review",
     });
+  });
+
+  test("routes worker progress to Slack without completing the work", async () => {
+    const progress = {
+      ...shitratWorkerResult,
+      _id: "worker-progress-1",
+      payload: {
+        ...shitratWorkerResult.payload,
+        text: "Assessment brief loaded; tracing the incident next.",
+        evidence: {
+          context: {
+            ...shitratWorkerResult.payload.evidence.context,
+            workerPhase: "progress",
+          },
+        },
+      },
+    };
+    const client = fakeClient([progress]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    const pending = await stream.pending();
+    expect(pending.pending[0].workerResult.phase).toBe("progress");
+    await expect(stream.recordDecision({
+      payload: {
+        ...decisionPayload,
+        inputEventIds: ["worker-progress-1"],
+        decision: { verb: "drop" },
+        rewrite: undefined,
+      },
+    })).rejects.toThrow("must deliver to its bound source thread");
+
+    const appended = await stream.recordDecision({
+      payload: {
+        ...decisionPayload,
+        inputEventIds: ["worker-progress-1"],
+        rewrite: "Assessment brief loaded; tracing the incident next.",
+      },
+    });
+
+    expect(appended.event.payload.decision.target).toEqual({
+      kind: "platform",
+      platform: "slack",
+      conversationId: "CEXAMPLE",
+      threadId: "slack:CEXAMPLE:1785950000.100",
+    });
+    expect(appended.event.payload.slackDelivery).toEqual({
+      identity: "joel",
+      channelId: "CEXAMPLE",
+      messageTs: "1785950000.100",
+    });
+    expect(appended.event.payload.slackWorkCompletion).toBeUndefined();
   });
 
   test("does not mark Slack-shaped non-worker messages complete", async () => {
@@ -805,6 +856,8 @@ describe("worker lanes", () => {
     expect(task).toContain("Launch contract cwd: `/tmp/example-shitrat-review`");
     expect(task).toContain('"replyThreadId":"slack:CEXAMPLE:1785950000.100"');
     expect(task).toContain("--context");
+    expect(task).toContain("append one short private progress receipt");
+    expect(task).toContain('"workerPhase":"progress"');
     expect(task).toContain("append one private worker-result receipt");
     expect(task).toContain("Never run `jc-slack reply`");
     expect(task).toContain("The gateway alone decides and sends the one outward result");
