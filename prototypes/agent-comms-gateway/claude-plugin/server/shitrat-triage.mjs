@@ -5,13 +5,21 @@ const DISPOSITIONS = new Set(["social", "answer", "work"]);
 
 let defaultPool;
 
-function inferWithLuna(prompt) {
+function getDefaultPool() {
   defaultPool ??= createPiProcessPool({
     model: SHITRAT_TRIAGE_MODEL,
     timeoutMs: 12_000,
     maxIdleMs: 10 * 60_000,
   });
-  return defaultPool.infer(prompt);
+  return defaultPool;
+}
+
+export function warmShitratTriage() {
+  getDefaultPool();
+}
+
+function inferWithLuna(prompt) {
+  return getDefaultPool().infer(prompt);
 }
 
 function nonEmpty(value, field) {

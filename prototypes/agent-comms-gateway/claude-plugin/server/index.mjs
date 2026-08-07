@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { createInterface } from "node:readline";
 import { createHerdrTools } from "./herdr-tools.mjs";
-import { createShitratTriage } from "./shitrat-triage.mjs";
+import { createShitratTriage, warmShitratTriage } from "./shitrat-triage.mjs";
 import { createStreamTools } from "./stream-tools.mjs";
 import { createWakeTools } from "./wake-tools.mjs";
 
@@ -94,6 +94,7 @@ export async function handleMcpMessage(message, handlers = createToolHandlers())
 }
 
 async function main() {
+  warmShitratTriage();
   const handlers = createToolHandlers();
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of lines) {
