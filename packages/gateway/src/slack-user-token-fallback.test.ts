@@ -1,12 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
-  acknowledgeSlackWorkRequestAsUser,
   createSlackUserWebClient,
   isSlackUserChannelReady,
   makeSlackUserDeliveryAdapter,
   resolveSlackChannelNameWithUserFallback,
   type SlackWebApiClient,
-  slackWorkAcknowledgementId,
 } from "./slack-user-token-fallback";
 
 function slackError(code: string): Error {
@@ -22,7 +20,6 @@ function webClient(input: {
   readonly postedTs?: string;
   readonly onPost?: (value: Record<string, unknown>) => void;
   readonly onReaction?: (value: Record<string, unknown>) => void;
-  readonly reactionError?: string;
 }): SlackWebApiClient {
   return {
     conversations: {
@@ -41,7 +38,6 @@ function webClient(input: {
     reactions: {
       add: async (value) => {
         input.onReaction?.(value as unknown as Record<string, unknown>);
-        if (input.reactionError) throw slackError(input.reactionError);
       },
     },
   };
@@ -123,43 +119,6 @@ describe("Slack personal-token ShitRat delivery", () => {
       channelId: "C_FICTIONAL",
       userClient: webClient({ channelError: "channel_not_found" }),
     })).toBe(false);
-  });
-
-  test("acknowledges work with one deduplicated threaded status", async () => {
-    const posts: Record<string, unknown>[] = [];
-    const reactions: Record<string, unknown>[] = [];
-    const client = webClient({
-      reactionError: "already_reacted",
-      onPost: (value) => posts.push(value),
-      onReaction: (value) => reactions.push(value),
-    });
-
-    await acknowledgeSlackWorkRequestAsUser({
-      channelId: "C_FICTIONAL",
-      messageTs: "1785950000.100",
-      reaction: "shitrat",
-      text: "Working on it. 🐀",
-      userClient: client,
-    });
-
-    expect(reactions).toEqual([{
-      channel: "C_FICTIONAL",
-      name: "shitrat",
-      timestamp: "1785950000.100",
-    }]);
-    expect(posts).toEqual([{
-      channel: "C_FICTIONAL",
-      text: "Working on it. 🐀",
-      thread_ts: "1785950000.100",
-      client_msg_id: slackWorkAcknowledgementId(
-        "C_FICTIONAL",
-        "1785950000.100",
-      ),
-    }]);
-    expect(slackWorkAcknowledgementId(
-      "C_FICTIONAL",
-      "1785950000.100",
-    )).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
   });
 
   test("posts a ShitRat result to the exact Slack thread as Joel", async () => {

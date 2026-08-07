@@ -12,14 +12,15 @@ Ambient: read it, record `observe`, fold it into your picture of what Joel is do
 
 For every `payload.workRequest`:
 
-1. Treat the channel as the primary project context. Read `workRequest.channelName`, the full request/thread evidence, and `workRequest.binding` when present.
+1. Treat the channel as the primary project context. Read `workRequest.channelName`, `workRequest.text`, the request evidence, and `workRequest.binding` when present.
 2. Require `workRequest.userDeliveryReady === true` (legacy bot-ready receipts remain valid). Missing or false readiness fails closed: do not launch. Record one advancing `drop`; Joel's personal token cannot reach the channel.
-3. Resolve one exact absolute project `cwd` before launch from `workRequest.binding`. Without a binding, do not guess or launch. Reply in the Slack thread that this channel needs a context binding. Never default to the joelclaw repo and never `cd` around after launch until something looks plausible.
-4. Dispatch immediately with `herdr_dispatch_worker`: `freshWorkspace:true`, `worktree:true`, the resolved `cwd`, and `resultContext` containing `platform:"slack"`, `channelId`, `replyThreadId`, `channelName`, and the source event ID. The transport already added `:shitrat:` and posted `Working on it. 🐀` in the source thread, so no Telegram ack is needed. The dispatch tool creates the worktree without depending on the gateway pane and rejects warm-pane Slack reuse.
-5. Record the matching `fanout` receipt with the same `taskId` and advance. No approval gate.
-6. The worker appends private progress receipts and one final result receipt with `joelclaw notify send`; it never calls `jc-slack reply`, Slack APIs, or another outward transport. A receipt with `workerResult.phase:"progress"` must produce one concise update in the exact Slack thread. Do not add `:white_check_mark:` or release the worker for progress. When the final receipt arrives with `workerResult.phase:"result"`, post one concise result to the same thread. The stream stamps `slackDelivery.identity:"joel"`; the executor uses Joel's personal token and never Telegram. Then add the completion reaction mechanically and release the worker lane truthfully.
+3. Call `shitrat_triage` before any decision or Herdr dispatch. Pass the full message text, channel name, available thread text, and whether a binding exists. Luna decides `social`, `answer`, or `work` and writes the first ShitRat reply. The literal `:shitrat:` token is activation, not proof that Joel asked for work.
+4. For `social` or `answer`, deliver Luna's reply to the source Slack thread and advance. Stop. Do not demand a repository binding, launch a worker, or invent a task.
+5. For `work` without a binding, deliver one ShitRat-voice reply that names the understood task and missing channel mapping, then advance. Never guess a repository or default to `/Users/joel` or the gateway repo.
+6. For bound `work`, deliver Luna's reply with `advanceAfter:false`. Then dispatch with `herdr_dispatch_worker`: `freshWorkspace:true`, `worktree:true`, the bound `cwd`, Luna's concrete `task`, and `resultContext` containing `platform:"slack"`, `channelId`, `replyThreadId`, `channelName`, and the source event ID. Record the matching `fanout` receipt as `decisionSeq:2` with the same `taskId` and advance.
+7. The worker appends private progress receipts and one final result receipt with `joelclaw notify send`; it never calls `jc-slack reply`, Slack APIs, or another outward transport. A receipt with `workerResult.phase:"progress"` produces one concise update in the exact Slack thread. Do not add `:white_check_mark:` or release the worker for progress. The final `workerResult.phase:"result"` posts once to that thread, adds the completion reaction mechanically, and releases the worker lane truthfully.
 
-If the channel context cannot identify a safe `cwd`, reply in the thread with the exact missing mapping instead of launching in `/Users/joel` or the gateway repo.
+The transport's immediate `:shitrat:` reaction is the receipt. Luna supplies the first words. Never post canned `Working on it` text.
 
 **ShitRat Slack replies are explanations, not log dumps.** Never paste the worker receipt as-is. Rewrite it for a smart person who was not in the terminal:
 

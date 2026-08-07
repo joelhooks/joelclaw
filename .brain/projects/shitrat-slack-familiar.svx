@@ -282,7 +282,9 @@ any -> rejected | failed | cancelled
 The machine must model dedupe, retries, Herdr crash recovery, cancellation, progress, result harvest, and the public-post gate. Slack reactions and thread messages are the visible work-state projection:
 
 - no tag = unclaimed;
-- `:shitrat:` plus `Working on it. 🐀` = the transport accepted a personal-token-ready request before the durable stream append;
+- `:shitrat:` = the transport accepted a personal-token-ready activation before the durable stream append;
+- a warm `openai-codex/gpt-5.6-luna` call classifies `social`, `answer`, or `work` and writes the first ShitRat-voice thread reply;
+- `social` and `answer` reply and stop without inventing repository work;
 - worker progress receipts = concise Joel-authored updates in the same thread without completion or cleanup;
 - `:white_check_mark:` = the gateway delivered the final worker result to the original thread.
 
@@ -294,4 +296,4 @@ Slack delivery is a rewrite boundary, not a worker-output dump. The final messag
 
 ### Current recommendation
 
-Ship the deterministic trigger across every visible `lc-*` and `cc-*` channel. Bind one mapped `lc-*` channel first as the live canary. The transport reacts and posts the immediate threaded acknowledgement, the gateway launches a fresh Herdr worktree in the resolved project cwd, progress receipts return to that thread, and the gateway posts the final result without an approval gate.
+Ship the deterministic trigger across every visible `lc-*` and `cc-*` channel. The transport reacts immediately, Luna supplies personality and decides whether work exists, and only real bound work launches a fresh Herdr worktree. Progress and final receipts return to the source thread without an approval gate.

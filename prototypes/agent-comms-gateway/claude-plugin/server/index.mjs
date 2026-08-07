@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { createInterface } from "node:readline";
 import { createHerdrTools } from "./herdr-tools.mjs";
+import { createShitratTriage } from "./shitrat-triage.mjs";
 import { createStreamTools } from "./stream-tools.mjs";
 import { createWakeTools } from "./wake-tools.mjs";
 
@@ -18,10 +19,11 @@ export const toolDefinitions = [
   { name: "stream_bootstrap", description: "Load the advisory handoff and authoritative pending replay for the gateway cursor.", inputSchema: objectSchema({ limit: integer }) },
   { name: "stream_read_since", description: "Read an independent canonical stream page without moving a consumer cursor.", inputSchema: objectSchema({ recordedAt: integer, limit: integer, cursor: { anyOf: [{ type: "string" }, { type: "null" }] } }, ["recordedAt"]) },
   { name: "stream_pending", description: "Read compact pending events from the gateway cursor. Addressed Joel inbounds needing ack are listed first under ackRequiredJoel. Ambient inbounds require observe or an escalation receipt and must not produce outbound by default.", inputSchema: objectSchema({ limit: integer }) },
-  { name: "stream_record_decision", description: "Validate and append one ADR-0249 decision receipt, then read it back. advanceAfter defaults true for single-input terminal decisions (deliver/observe/drop/route/fanout/close-deliver). Ordinary addressed Joel inbound requires deliver first. A personal-token-ready bound Slack workRequest is reaction-acked and requires one advancing fanout; missing personal-token access requires one advancing drop with no worker launch; an unbound delivery-ready workRequest requires one advancing Slack-thread missing-mapping deliver. Ambient inbound requires observe, or escalate with a reason before a later deliver; outbound without that escalation receipt is refused.", inputSchema: objectSchema({ payload: { type: "object" }, flowId: string, origin: { type: "object" }, advanceAfter: { type: "boolean" } }, ["payload"]) },
+  { name: "stream_record_decision", description: "Validate and append one ADR-0249 decision receipt, then read it back. Ordinary addressed Joel inbound requires deliver first. A personal-token-ready Slack workRequest first delivers its Luna triage reply to the source thread. Social/answer replies advance and stop. Real work replies with advanceAfter:false, then uses one channel-bound Herdr dispatch and advancing fanout. Missing personal-token access requires one advancing drop. Ambient inbound requires observe, or escalate before outbound.", inputSchema: objectSchema({ payload: { type: "object" }, flowId: string, origin: { type: "object" }, advanceAfter: { type: "boolean" } }, ["payload"]) },
   { name: "stream_append_gateway_event", description: "Append and read back a typed handoff, aggregate deadline, or inbound interpretation event.", inputSchema: objectSchema({ semanticKey: string, kind: { enum: ["gateway.handoff", "aggregate.deadline.reached", "inbound.interpreted"] }, payload: { type: "object" }, flowId: string, origin: { type: "object" } }, ["semanticKey", "kind", "payload"]) },
   { name: "stream_advance_after_decision", description: "Advance the gateway cursor only after exactly one read-back decision covers the input.", inputSchema: objectSchema({ eventId: string, decisionEventId: string }, ["eventId", "decisionEventId"]) },
   { name: "stream_advance_own_output", description: "Mechanically advance past a gateway-authored stream output without treating it as new evidence.", inputSchema: objectSchema({ eventId: string }, ["eventId"]) },
+  { name: "shitrat_triage", description: "Use the warm approved Luna model to classify one Slack :shitrat: activation as social, answerable, or real work and draft the first ShitRat-voice thread reply. Call this before any workRequest decision or Herdr dispatch. The token alone is not work.", inputSchema: objectSchema({ channelName: string, text: string, threadText: { type: "string" }, bound: { type: "boolean" } }, ["channelName", "text", "bound"]) },
   { name: "herdr_snapshot", description: "Read a fresh mechanical snapshot of Herdr agents and panes.", inputSchema: objectSchema({}) },
   { name: "herdr_read", description: "Read output from one Herdr agent target. Full-screen agents (claude, codex, opencode) render in the alternate screen, whose rows never enter host scrollback — use source \"visible\" for those targets; the \"recent-unwrapped\" default only suits scrollback-native agents like pi.", inputSchema: objectSchema({ target: string, lines: integer, source: { enum: ["visible", "recent", "recent-unwrapped", "detection"] } }, ["target"]) },
   { name: "herdr_prompt", description: "Atomically submit a prompt to a live Herdr agent; optionally wait for settlement.", inputSchema: objectSchema({ target: string, text: string, wait: { type: "boolean" }, timeoutMs: integer }, ["target", "text"]) },
@@ -44,7 +46,7 @@ function withJoelAckGate(stream, toolName, fn) {
   };
 }
 
-export function createToolHandlers({ stream = createStreamTools(), herdr = createHerdrTools(), wake = createWakeTools() } = {}) {
+export function createToolHandlers({ stream = createStreamTools(), triage = createShitratTriage(), herdr = createHerdrTools(), wake = createWakeTools() } = {}) {
   return {
     stream_bootstrap: (args) => stream.bootstrap(args),
     stream_read_since: (args) => stream.readSince(args),
@@ -53,6 +55,7 @@ export function createToolHandlers({ stream = createStreamTools(), herdr = creat
     stream_append_gateway_event: (args) => stream.appendGatewayEvent(args),
     stream_advance_after_decision: (args) => stream.advanceAfterDecision(args),
     stream_advance_own_output: (args) => stream.advanceOwnOutput(args),
+    shitrat_triage: (args) => triage.triage(args),
     // Herdr work is real work. If Joel is waiting on an ack, refuse and force the deliver first.
     herdr_snapshot: withJoelAckGate(stream, "herdr_snapshot", (args) => herdr.snapshot(args)),
     herdr_read: withJoelAckGate(stream, "herdr_read", (args) => herdr.read(args)),

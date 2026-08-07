@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHerdrTools, laneFromTaskId, laneLabel, MAX_WORKER_LANES } from "./herdr-tools.mjs";
 import { createToolHandlers, handleMcpMessage, toolDefinitions } from "./index.mjs";
+import { createShitratTriage, SHITRAT_TRIAGE_MODEL } from "./shitrat-triage.mjs";
 import {
   createStreamTools,
   lintRewrite,
@@ -115,6 +116,63 @@ function fakeClient(seed = [inputEvent]) {
     advanceCursor: async (consumer, eventId) => ({ consumer, lastEventId: eventId, lastSequence: 1, updatedAt: 30 }),
   };
 }
+
+describe("Luna ShitRat triage", () => {
+  test("treats attribution as social instead of manufacturing repo work", async () => {
+    let prompt = "";
+    const triage = createShitratTriage({
+      infer: async (value) => {
+        prompt = value;
+        return JSON.stringify({
+          disposition: "social",
+          reply: "A postmortem with receipts? Disgustingly responsible. 🐀",
+          task: null,
+          reason: "Joel is sharing a result, not asking for work.",
+        });
+      },
+    });
+    const result = await triage.triage({
+      channelName: "cc-fictional",
+      text: "TMI postmortem from :shitrat: — stabilized and tested",
+      bound: true,
+    });
+    expect(result).toMatchObject({
+      model: SHITRAT_TRIAGE_MODEL,
+      disposition: "social",
+      task: null,
+    });
+    expect(prompt).toContain("Do not treat the token alone as work");
+  });
+
+  test("returns a concrete task only when Luna classifies real work", async () => {
+    const triage = createShitratTriage({
+      infer: async () => "```json\n{\"disposition\":\"work\",\"reply\":\"I’ll trace the schema drift and bring back the guilty commit. 🐀\",\"task\":\"Trace production schema drift and identify the introducing commit.\",\"reason\":\"Explicit investigation request.\"}\n```",
+    });
+    await expect(triage.triage({
+      channelName: "lc-fictional",
+      text: ":shitrat: find why production schema drifted",
+      bound: true,
+    })).resolves.toMatchObject({
+      disposition: "work",
+      task: "Trace production schema drift and identify the introducing commit.",
+    });
+  });
+
+  test("rejects personality sludge that exceeds the Slack reply bound", async () => {
+    const triage = createShitratTriage({
+      infer: async () => JSON.stringify({
+        disposition: "social",
+        reply: "x".repeat(321),
+        task: null,
+        reason: "too much",
+      }),
+    });
+    await expect(triage.triage({
+      channelName: "cc-fictional",
+      text: "credit to :shitrat:",
+    })).rejects.toThrow("exceeds 320 characters");
+  });
+});
 
 describe("stream receipts", () => {
   test("validates one complete decision and reads it back", async () => {
@@ -546,7 +604,7 @@ describe("stream receipts", () => {
     expect(dropped.event.payload.decision.verb).toBe("drop");
   });
 
-  test("Joel-authored retried workRequest uses one fanout and advances without deliver ack", async () => {
+  test("bound workRequest delivers Luna triage before one channel-bound fanout", async () => {
     const client = fakeClient([slackWorkRequest]);
     const stream = createStreamTools({ client, now: () => 20 });
     const pending = await stream.pending();
@@ -555,6 +613,7 @@ describe("stream receipts", () => {
       addressing: "addressed",
       workRequest: {
         channelName: "lc-example",
+        text: ":shitrat: review this",
         replyThreadId: "slack:CEXAMPLE:1785950000.100",
       },
     });
@@ -562,13 +621,30 @@ describe("stream receipts", () => {
     await expect(stream.recordDecision({
       payload: {
         inputEventIds: ["slack-work-1"],
-        reason: "The Slack reaction already acknowledged this team work request.",
+        reason: "Skipped Luna triage.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "fanout", taskId: "unsafe-launch" },
+      },
+    })).rejects.toThrow("must first deliver the Luna triage reply");
+
+    const triageReply = await stream.recordDecision({
+      payload: {
+        inputEventIds: ["slack-work-1"],
+        reason: "Luna classified this as repository work.",
         promptRevision: "abc123",
         decisionSeq: 1,
         decision: { verb: "deliver" },
-        rewrite: "on it",
+        rewrite: "I’ll inspect the review path and bring back the sharp bits. 🐀",
       },
-    })).rejects.toThrow("must use one fanout decision");
+      advanceAfter: false,
+    });
+    expect(triageReply.advanceAfter).toBe(false);
+    expect(triageReply.event.payload.decision.target).toMatchObject({
+      platform: "slack",
+      conversationId: "CEXAMPLE",
+      threadId: "slack:CEXAMPLE:1785950000.100",
+    });
 
     const handlers = createToolHandlers({
       stream,
@@ -618,9 +694,9 @@ describe("stream receipts", () => {
     const fanout = await stream.recordDecision({
       payload: {
         inputEventIds: ["slack-work-1"],
-        reason: "Dispatch the channel-bound work request without a Telegram echo.",
+        reason: "Dispatch the work Luna classified after its threaded reply.",
         promptRevision: "abc123",
-        decisionSeq: 1,
+        decisionSeq: 2,
         decision: { verb: "fanout", taskId: "slack-work-review" },
       },
     });
@@ -634,15 +710,36 @@ describe("stream receipts", () => {
     await expect(stream.recordDecision({
       payload: {
         inputEventIds: ["slack-work-1"],
-        reason: "A second decision is forbidden.",
+        reason: "A second fanout is forbidden.",
         promptRevision: "abc123",
-        decisionSeq: 2,
+        decisionSeq: 3,
         decision: { verb: "fanout", taskId: "slack-work-review" },
       },
-    })).rejects.toThrow("already has its one canonical decision");
+    })).rejects.toThrow("already has its fanout decision");
   });
 
-  test("unbound workRequest delivers the missing mapping to Slack and blocks launch", async () => {
+  test("bound social triage replies once without manufacturing work", async () => {
+    const client = fakeClient([slackWorkRequest]);
+    const stream = createStreamTools({ client, now: () => 20 });
+    const delivered = await stream.recordDecision({
+      payload: {
+        inputEventIds: ["slack-work-1"],
+        reason: "Luna classified the activation as social attribution.",
+        promptRevision: "abc123",
+        decisionSeq: 1,
+        decision: { verb: "deliver" },
+        rewrite: "A postmortem with receipts? Disgustingly responsible. 🐀",
+      },
+    });
+    expect(delivered.advanceAfter).toBe(true);
+    expect(delivered.cursor.lastEventId).toBe("slack-work-1");
+    expect(delivered.event.payload.decision.target).toMatchObject({
+      platform: "slack",
+      conversationId: "CEXAMPLE",
+    });
+  });
+
+  test("unbound work triage replies in Slack and blocks launch", async () => {
     const unbound = {
       ...slackWorkRequest,
       _id: "slack-work-unbound",
@@ -675,16 +772,16 @@ describe("stream receipts", () => {
         decisionSeq: 1,
         decision: { verb: "fanout", taskId: "unsafe-launch" },
       },
-    })).rejects.toThrow("must use one Slack-thread deliver");
+    })).rejects.toThrow("must first deliver the Luna triage reply");
 
     const delivered = await stream.recordDecision({
       payload: {
         inputEventIds: ["slack-work-unbound"],
-        reason: "The channel needs an explicit project mapping.",
+        reason: "Luna found real work but the channel has no project mapping.",
         promptRevision: "abc123",
         decisionSeq: 1,
         decision: { verb: "deliver" },
-        rewrite: "I need a project context binding for #lc-example before I can launch this work.",
+        rewrite: "I know what you want, but `#lc-example` has no project map. Point me at the repo and I’ll get filthy. 🐀",
       },
     });
     expect(delivered.advanceAfter).toBe(true);
@@ -780,7 +877,7 @@ test("MCP exposes all production tool families", async () => {
   const listed = await handleMcpMessage({ id: 1, method: "tools/list" }, createToolHandlers({
     stream: {}, herdr: {}, wake: {},
   }));
-  expect(listed.tools).toHaveLength(18);
+  expect(listed.tools).toHaveLength(19);
 });
 
 describe("worker lanes", () => {

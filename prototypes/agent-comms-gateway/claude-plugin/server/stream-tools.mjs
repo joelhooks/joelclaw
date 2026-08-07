@@ -204,7 +204,8 @@ function isTerminalDecision(decision) {
 export function compactPendingEvent(event, { now = Date.now() } = {}) {
   const recordedAt = typeof event?.recordedAt === "number" ? event.recordedAt : now;
   const ageSec = Math.max(0, Math.round((now - recordedAt) / 1000));
-  const text = eventText(event).replace(/\s+/gu, " ").trim().slice(0, 80);
+  const fullText = eventText(event).replace(/\s+/gu, " ").trim().slice(0, 2_000);
+  const text = fullText.slice(0, 80);
   const workRequest = event?.payload?.workRequest;
   const workerContext = event?.payload?.evidence?.context;
   const workerResult = workerContext?.taskId
@@ -232,6 +233,7 @@ export function compactPendingEvent(event, { now = Date.now() } = {}) {
     ...(workRequest ? {
       workRequest: {
         channelName: workRequest.channelName,
+        text: fullText,
         botDeliveryReady: workRequest.botDeliveryReady === true,
         userDeliveryReady: workRequest.userDeliveryReady === true,
         replyThreadId: normalizeSlackReplyThreadId(
@@ -391,6 +393,11 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
       isOutboundDecision(event.payload?.decision));
   }
 
+  function hasFanoutCovering(events, eventId) {
+    return decisionsCovering(events, eventId).some((event) =>
+      event.payload?.decision?.verb === "fanout");
+  }
+
   function hasEscalationCovering(events, eventId) {
     return decisionsCovering(events, eventId).some((event) =>
       event.payload?.decision?.verb === "escalate");
@@ -445,7 +452,7 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
       const ids = boundWorkRequests.map((event) => event._id).join(", ");
       if (toolName !== "herdr_dispatch_worker") {
         throw new Error(
-          `Bound Slack workRequest must use herdr_dispatch_worker before ${toolName}: ${ids}. `
+          `Bound Slack workRequest must use shitrat_triage, then either reply-and-stop or herdr_dispatch_worker before ${toolName}: ${ids}. `
           + "Generic herdr_prompt reuse is forbidden.",
         );
       }
@@ -489,8 +496,8 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
     if (missingBindings.length > 0) {
       const ids = missingBindings.map((event) => event._id).join(", ");
       throw new Error(
-        `Resolve Slack workRequest binding before ${toolName}: ${ids}. `
-        + "Do not launch a worker. First and only decision must deliver the missing-mapping explanation to the request's Slack thread and advance.",
+        `Triage unbound Slack workRequest before ${toolName}: ${ids}. `
+        + "Do not launch a worker. Social/answer activations reply and stop; real work replies with the missing project mapping.",
       );
     }
   }
@@ -594,10 +601,10 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         }
       }
 
-      // Delivery-ready, bound Slack work requests are already acknowledged by
-      // Joel's reaction: one fanout receipt advances them. Missing personal-token
-      // access fails closed with one drop. Missing bindings get one
-      // explanatory Slack-thread deliver and no launch. Ordinary addressed
+      // Delivery-ready Slack work requests first deliver Luna's triage reply.
+      // Social/answer replies advance and stop. Real work holds the cursor,
+      // dispatches once, then advances with one fanout receipt. Missing
+      // personal-token access fails closed with one drop. Ordinary addressed
       // inbounds keep the ack-first contract; ambient inbounds require observe
       // or escalation before outbound.
       for (const eventId of inputEventIds) {
@@ -629,24 +636,41 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
           if (inputEventIds.length !== 1) {
             throw new Error(`workRequest ${eventId} must be decided alone`);
           }
-          if (priorDecisions.length > 0) {
-            throw new Error(`workRequest ${eventId} already has its one canonical decision`);
-          }
           const deliveryReady = isWorkRequestDeliveryReady(input);
-          const expectedVerb = deliveryReady
-            ? (hasWorkRequestBinding(input) ? "fanout" : "deliver")
-            : "drop";
-          if (verb !== expectedVerb) {
-            throw new Error(
-              !deliveryReady
-                ? `workRequest ${eventId} must fail closed with one drop because Joel's Slack token cannot deliver in that channel. Got verb=${verb}`
-                : hasWorkRequestBinding(input)
-                  ? `Bound workRequest ${eventId} must use one fanout decision. The Slack reaction already acknowledged it; do not send a Telegram echo. Got verb=${verb}`
-                  : `Unbound workRequest ${eventId} must use one Slack-thread deliver explaining the missing mapping, with no worker launch. Got verb=${verb}`,
-            );
+          if (!deliveryReady) {
+            if (priorDecisions.length > 0) {
+              throw new Error(`delivery-blocked workRequest ${eventId} already has its terminal decision`);
+            }
+            if (verb !== "drop") {
+              throw new Error(
+                `workRequest ${eventId} must fail closed with one drop because Joel's Slack token cannot deliver in that channel. Got verb=${verb}`,
+              );
+            }
+            continue;
           }
-          if (expectedVerb === "deliver" && !slackWorkRequestReturnTarget(input)) {
-            throw new Error(`Unbound workRequest ${eventId} is missing its Slack return thread`);
+
+          if (priorDecisions.length === 0) {
+            if (verb !== "deliver") {
+              throw new Error(
+                `workRequest ${eventId} must first deliver the Luna triage reply to its Slack thread. Got verb=${verb}`,
+              );
+            }
+            if (!slackWorkRequestReturnTarget(input)) {
+              throw new Error(`workRequest ${eventId} is missing its Slack return thread`);
+            }
+            continue;
+          }
+
+          if (!hasWorkRequestBinding(input)) {
+            throw new Error(`unbound workRequest ${eventId} already has its terminal triage reply`);
+          }
+          if (hasFanoutCovering(events, eventId)) {
+            throw new Error(`Bound workRequest ${eventId} already has its fanout decision`);
+          }
+          if (!hasDeliverCovering(events, eventId) || verb !== "fanout") {
+            throw new Error(
+              `Bound workRequest ${eventId} may fan out only after its Luna triage reply. Got verb=${verb}`,
+            );
           }
           continue;
         }
@@ -690,7 +714,7 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
       let candidatePayload = payload;
       const slackReturnTargets = coveredInputs
         .map((event) => slackWorkerReturnTarget(event)
-          ?? (!hasWorkRequestBinding(event) ? slackWorkRequestReturnTarget(event) : null))
+          ?? slackWorkRequestReturnTarget(event))
         .filter(Boolean);
       if (slackReturnTargets.length > 0 && isOutboundDecision(candidatePayload?.decision)) {
         const uniqueTargets = new Set(slackReturnTargets.map((target) => JSON.stringify(target)));
@@ -722,11 +746,13 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
         const progressOnly = coveredInputs.every(
           (event) => event?.payload?.evidence?.context?.workerPhase === "progress",
         );
+        const triageOnly = coveredInputs.every(isWorkRequest);
         const slackRewrite = candidatePayload.rewrite ?? candidatePayload.decision?.rewrite;
-        const slackRewriteLimit = progressOnly ? 320 : 1_200;
+        const slackRewriteLimit = progressOnly || triageOnly ? 320 : 1_200;
+        const rewriteKind = progressOnly ? "progress" : triageOnly ? "triage" : "result";
         if (typeof slackRewrite === "string" && slackRewrite.length > slackRewriteLimit) {
           throw new Error(
-            `Slack ShitRat ${progressOnly ? "progress" : "result"} rewrite exceeds ${slackRewriteLimit} characters; summarize and link the durable report`,
+            `Slack ShitRat ${rewriteKind} rewrite exceeds ${slackRewriteLimit} characters; summarize and link the durable report`,
           );
         }
       }
@@ -750,7 +776,16 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
       const validated = validateDecisionPayload(candidatePayload, { aggregateStats });
       const resolvedAdvance = resolveAdvanceAfter(validated, advanceAfter);
       if (coveredInputs.some(isWorkRequest) && !resolvedAdvance) {
-        throw new Error("A workRequest's one canonical decision must advance the gateway cursor");
+        const heldForBoundWork = validated.decision?.verb === "deliver"
+          && coveredInputs.every((event) =>
+            isWorkRequest(event)
+            && hasWorkRequestBinding(event)
+            && decisionsCovering(events, event._id).length === 0);
+        if (!heldForBoundWork) {
+          throw new Error(
+            "Only the first Luna triage reply for bound work may hold the gateway cursor",
+          );
+        }
       }
       const inheritedFlowIds = [...new Set(
         coveredInputs
