@@ -76,18 +76,30 @@ async function recreateCollection(apiKey: string): Promise<void> {
   if (!response.ok) throw new Error(`Create observations collection failed (${response.status}): ${await response.text()}`)
 }
 
+// Docs use slug as id, so import?action=upsert is idempotent; pruning by
+// exported-id diff is all that deleting a source file needs. The previous
+// filter-delete of the whole collection ran hourly and wedged Typesense
+// 30.2's batched indexer on 2026-08-05 (stuck writer held the collection
+// lock, searches exhausted the threadpool, /health stayed green for 4 days).
+// Never reintroduce a mass filter-delete on a serving collection.
+async function pruneStaleDocuments(apiKey: string, keep: Set<string>): Promise<string[]> {
+  const response = await fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents/export?include_fields=id`, { headers: headers(apiKey) })
+  if (!response.ok) throw new Error(`Export observation ids failed (${response.status}): ${await response.text()}`)
+  const ids = (await response.text()).trim().split("\n").filter(Boolean)
+    .map((line) => (JSON.parse(line) as { id?: string }).id ?? "").filter(Boolean)
+  const stale = ids.filter((id) => !keep.has(id))
+  for (const id of stale) {
+    const deleted = await fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents/${encodeURIComponent(id)}`, { method: "DELETE", headers: headers(apiKey) })
+    if (!deleted.ok && deleted.status !== 404) throw new Error(`Prune stale observation ${id} failed (${deleted.status}): ${await deleted.text()}`)
+  }
+  return stale
+}
+
 async function indexObservations(rebuild: boolean) {
   const apiKey = resolveTypesenseApiKey()
   const check = await fetch(`${TYPESENSE_URL}/collections/${COLLECTION}`, { headers: headers(apiKey) })
   if (rebuild || check.status === 404) await recreateCollection(apiKey)
   else if (!check.ok) throw new Error(`Check observations collection failed (${check.status}): ${await check.text()}`)
-  else {
-    const cleared = await fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents?filter_by=started_at:>=0`, {
-      method: "DELETE",
-      headers: headers(apiKey),
-    })
-    if (!cleared.ok) throw new Error(`Clear observations projection failed (${cleared.status}): ${await cleared.text()}`)
-  }
   const paths = readdirSync(OBSERVATIONS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".svx"))
     .map((entry) => join(OBSERVATIONS_DIR, entry.name))
@@ -112,7 +124,11 @@ async function indexObservations(rebuild: boolean) {
     const failures = results.filter((result) => !result.success)
     if (failures.length) throw new Error(`Index observations failed for ${failures.length} documents: ${failures[0].error ?? "unknown error"}`)
   }
-  return { collection: COLLECTION, directory: OBSERVATIONS_DIR, rebuilt: rebuild, indexed: docs.length, skipped }
+  // A file that failed to parse keeps its existing indexed copy; pruning it
+  // would turn a transient parse error into silent index loss.
+  const keep = new Set([...docs.map((doc) => doc.id), ...skipped.map((entry) => basename(entry.file, ".svx"))])
+  const pruned = rebuild ? [] : await pruneStaleDocuments(apiKey, keep)
+  return { collection: COLLECTION, directory: OBSERVATIONS_DIR, rebuilt: rebuild, indexed: docs.length, pruned: pruned.length, skipped }
 }
 
 export async function searchObservations(query: string, limit: number, machine: string, runtime: string) {
