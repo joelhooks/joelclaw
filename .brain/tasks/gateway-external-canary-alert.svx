@@ -21,3 +21,98 @@ live canary. Do not start a poller or listener. Do not start, restart,
 reconfigure, or repair the gateway or transport.
 
 This lane is a receipt reader. It has no repair authority.
+
+## Receipt — run `508b35ca-c1e5-47f4-9de1-3b7264770b0c`
+
+Recorded 2026-07-29 UTC from line 1 of
+`~/.joelclaw/receipts/gateway-external-delivery-canary.jsonl`.
+
+- Status: failed after 686,777 ms.
+- Failed path: `quiet-aggregate`. It had no terminal event or terminal state,
+  produced zero digests, and was observed 38,562 ms after its 600,000 ms
+  deadline.
+- Control path: `immediate` passed in 37,773 ms with terminal state
+  `confirmed` and terminal event `mx77bjxhq37jrs3gvhxwswbt9h8bekkm`.
+- Oldest unhandled external input: none. Pending external input count was zero.
+- Aggregate health: 18 open aggregates. Fifteen had no deadline. Three were
+  overdue:
+  - `flagg-health-webhooks-frontprojection-2026-07-28-3`: 1d 5h 14m
+    58.752s overdue; deadline 2026-07-28T18:16:06.132Z.
+  - `flagg-health-webhooks-frontprojection-2026-07-28-4`: 1d 4h 15m
+    41.404s overdue; deadline 2026-07-28T19:15:23.480Z.
+  - `flagg-health-webhooks-frontprojection-2026-07-28-5`: 1d 3h 0m
+    27.498s overdue; deadline 2026-07-28T20:30:37.386Z.
+- OTEL confirmation: searching the full run ID under component
+  `gateway-external-canary` returned exactly one event,
+  `b7e2fbc6-6026-47b3-b281-ab8777c86358`, at
+  2026-07-29T23:31:08.644Z. Its action was
+  `gateway.external_canary.failed`, `success` was false, and its duration and
+  three failure clauses matched the JSONL receipt.
+- Operator handoff: session `w1P:p1` acknowledged active handling. It is fixing
+  the judgment prompt and rerunning the canary. This reader sent no duplicate
+  operator-action notification and made no gateway or transport change.
+
+## Receipt — run `1b2b438e-a6bd-419b-b2bd-5f389a20cf92`
+
+Recorded 2026-07-29 UTC from line 2 of
+`~/.joelclaw/receipts/gateway-external-delivery-canary.jsonl`.
+
+- Status: failed after 156,652 ms, but no delivery path failed.
+- Immediate path: passed in 18,790 ms with terminal state `confirmed` and
+  terminal event `mx72kgnadc9rrc8ww9ahf6fn9n8be4az`.
+- Quiet aggregate path: passed in 84,099 ms with terminal state `digested`, one
+  digest, and terminal event `mx772wb2v3rjv9jmgk5rdzj8cd8bfbg1`.
+- Oldest unhandled external input: none. Pending external input count was zero.
+- Aggregate health caused the failed run: 18 open aggregates. Fifteen had no
+  deadline. Three were overdue:
+  - `flagg-health-webhooks-frontprojection-2026-07-28-3`: 1d 5h 20m
+    42.900s overdue; deadline 2026-07-28T18:16:06.132Z.
+  - `flagg-health-webhooks-frontprojection-2026-07-28-4`: 1d 4h 21m
+    25.552s overdue; deadline 2026-07-28T19:15:23.480Z.
+  - `flagg-health-webhooks-frontprojection-2026-07-28-5`: 1d 3h 6m
+    11.646s overdue; deadline 2026-07-28T20:30:37.386Z.
+- OTEL confirmation: searching the full run ID under component
+  `gateway-external-canary` returned exactly one event,
+  `b7973e1d-7080-4a46-a669-818acb222c42`, at
+  2026-07-29T23:36:50.729Z. Its action was
+  `gateway.external_canary.failed`, `success` was false, and its duration and
+  two aggregate-health failure clauses matched the JSONL receipt.
+- Operator handoff: the operator session acknowledged both delivery paths as
+  passed and already chartered the pre-existing aggregate hygiene debt for
+  cleanup. This reader sent no duplicate operator-action notification and made
+  no gateway or transport change.
+
+## Receipt — run `8931070f-b7e3-482d-9a97-1c460dc0eb49`
+
+Recorded 2026-08-04 UTC from line 3 of
+`~/.joelclaw/receipts/gateway-external-delivery-canary.jsonl`.
+
+- Status: failed after 1,225,797 ms.
+- Immediate path: failed the 600,000 ms SLO. No terminal event or terminal
+  state was recorded. The path was observed 1,404 ms after its deadline.
+- Quiet aggregate path: failed the 600,000 ms SLO. No terminal event or
+  terminal state was recorded. It produced zero digests and was observed
+  23,610 ms after its deadline.
+- Oldest unhandled external input: event
+  `mx7b53kvc4my5qths5h06z7kkh8bs4d6`, recorded
+  2026-08-03T15:30:44.279Z. It was 1d 1h 6m 42.434s old. There were 91
+  pending external inputs.
+- Aggregate health: 22 open aggregates. Eighteen had no deadline. Four were
+  overdue:
+  - `flagg-health-webhooks-frontprojection-2026-07-28-3`: 6d 22h 21m
+    20.581s overdue; deadline 2026-07-28T18:16:06.132Z.
+  - `flagg-health-webhooks-frontprojection-2026-07-28-4`: 6d 21h 22m
+    3.233s overdue; deadline 2026-07-28T19:15:23.480Z.
+  - `flagg-health-webhooks-frontprojection-2026-07-28-5`: 6d 20h 6m
+    49.327s overdue; deadline 2026-07-28T20:30:37.386Z.
+  - `campaign-pulse-welcome-email-lag-2026-07-30b`: 5d 12h 35m
+    49.689s overdue; deadline 2026-07-30T04:01:37.024Z.
+- OTEL confirmation: searching the full run ID under component
+  `gateway-external-canary` returned exactly one event,
+  `53f17896-9f82-40ec-8b3f-efa7e33cd416`, at
+  2026-08-04T16:37:27.310Z. Its action was
+  `gateway.external_canary.failed`, `success` was false, and its duration and
+  five failure clauses matched the JSONL receipt.
+- Operator action requested: investigate the unhandled external backlog and
+  both missing terminal outcomes. Also resolve or explicitly deadline the 22
+  open aggregates. This reader made no gateway or transport change.

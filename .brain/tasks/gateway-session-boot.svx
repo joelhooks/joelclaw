@@ -13,13 +13,15 @@ Launch (the driver and humans both use this):
 
 ```bash
 cd /Users/joel/Code/joelhooks/joelclaw
-claude --model sonnet --effort medium --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway
+MESSAGE_EVENT_CONVEX_URL=http://127.0.0.1:3210 claude --model claude-sonnet-4-6 --effort medium --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway
 ```
 
-The loop runs Opus 4.8 (Joel, 2026-07-21, cutover sitting): comms judgment fits Opus and an always-on loop must not burn the Max window at Fable rates.
+The loop pins Sonnet 4.6 for fast, lower-cost comms judgment. It also pins the message-event stream to local Convex; stale fleet routing can otherwise resolve the retired `flagg` ghost. It dispatches harder work to Herdr workers instead of carrying a more expensive model in the always-on loop. Never restore it as bare `claude --resume`; that process lacks the plugin tools.
 
 Rules that survive any prompt-file revision:
 
+- The driver validates the foreground process arguments. A moving model alias, missing plugin, missing agent, or bare Herdr resume triggers replacement.
+- One driver poke handles at most 20 inputs or four minutes. A settled turn must move the stream cursor or the driver retires it.
 - Your judgment lives in the plugin's `prompts/` files. Edit them when Joel steers you; bump `promptRevision` in every decision receipt.
 - Every consumed external event gets exactly one `gateway.decision.recorded` receipt before the cursor advances. Silence is illegal.
 - Use the smallest interruption that preserves truth.
