@@ -1,0 +1,43 @@
+---
+title: "Typesense Wedge Incident 2026-08-05"
+type: "resource"
+status: "active"
+created_at: "2026-08-09"
+tags:
+  - typesense
+  - central
+  - incident
+  - session-index-health
+  - observations
+---
+
+# Typesense wedge incident, 2026-08-05 → 2026-08-09
+
+Central Typesense (30.2, `com.joelclaw.central.typesense`) served nothing but `/health` 200s for four days. Every `joelclaw session search` hung to its 5-minute client timeout. Pi sessions stalled mid-turn on `session_search` tool calls. Diagnosed and fixed 2026-08-09.
+
+## Mechanism
+
+1. `com.joelclaw.observations-index` (hourly LaunchAgent) ran `joelclaw observations index`, which filter-deleted the entire `observations` collection (`filter_by=started_at:>=0`, `batch_size=1000000000`) before each reimport.
+2. 2026-08-05 08:02:22: one of those writes wedged in the batched indexer (`Stuck req_key: 1785942142199061` — the key is a microsecond epoch and decodes to that exact moment) while holding the collection lock.
+3. 08:02:30–08:03:18: searches piled up behind the lock. `inflight_searches` went 0 → 16 in 48 seconds. Threadpool (16 threads) exhausted.
+4. 08:07:17: raft apply of write 181302 queued behind the dead pool and froze. Task queue grew past 8,700 over four days.
+5. `/health` is served off a lightweight path and stayed 200 the whole time. `session-index-health` only probed Inngest and the worker, so nothing alarmed.
+
+Unauthenticated requests get a fast 401 **before** the threadpool. Only an authenticated request reaches the data path. A health probe must be authed to see this failure.
+
+## Fixes shipped (all on `main`, 2026-08-09)
+
+- `joelclaw` `b759b904`: `session-index-health` probes authed `/collections` every 60s; `typesense_unavailable` kickstarts Typesense only, behind the existing 3-failure threshold and 900s cooldown. Verified live: it flagged the real wedge on its first pass.
+- `joelclaw` `cc1275a4`: `observations index` prunes by exported-id diff instead of wiping the collection hourly. Docs were already keyed by slug, so upsert was always idempotent. Never reintroduce a mass filter-delete on a serving collection.
+- `infra/central/native/sudoers-joelclaw-central` (opt-in, installed on flagg): joel may `launchctl kickstart -k` central services without a password. Exact commands only; postgres/redis excluded.
+- `pi-notes` `8a8c3da` (found during the same investigation): the document host self-reaps when its pi session dies. Before this, 87 orphaned vite servers held ~26 GB RSS on flagg.
+
+## Standing lessons
+
+- A green `/health` proves the process is up, not that it serves. Probe the data path, authenticated. Same lesson as campaign-launch-gates: config-green is not behavior-green.
+- Mass filter-deletes on a serving Typesense collection can deadlock 30.2's batched indexer against concurrent searches. Prune by id diff.
+- Wedge symptom signature, for future diagnosis: `Threadpool exhaustion detected` + `inflight_searches` pinned at 16 + `applying:` frozen on one index in `raft_server.cpp:759` lines.
+
+## Open follow-up
+
+- 170 of 441 files in `dark-wizard/.brain/observations` fail parsing (mostly `Invalid observation sessionId`) and have never been indexed. `observations index` now reports them in `skipped` hourly. Data repair pending.
