@@ -5,6 +5,7 @@ description: "Set up self-hosted Inngest on macOS as a durable background task m
 version: 1.0.0
 author: Joel Hooks
 tags: [joelclaw, inngest, workflows, events, local]
+disable-model-invocation: true
 ---
 
 # Self-Hosted Inngest on macOS

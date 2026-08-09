@@ -5,6 +5,7 @@ description: "Monitor ADR-0217 real workloads across Redis queue, Restate, Dkron
 version: 0.1.0
 author: Joel Hooks
 tags: [runtime, monitor, queue, restate, dkron, inngest, tui, adr-0217]
+disable-model-invocation: true
 ---
 
 # Runtime Monitor

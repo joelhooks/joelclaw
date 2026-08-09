@@ -5,6 +5,7 @@ description: "Optimize websites, docs, and product surfaces for agent discoverab
 version: 0.1.0
 author: Joel Hooks
 tags: [web, agents, seo, aeo, ux, content]
+disable-model-invocation: true
 ---
 
 # Agent Discovery

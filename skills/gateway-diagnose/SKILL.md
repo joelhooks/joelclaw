@@ -5,6 +5,7 @@ description: "Diagnose gateway failures by reading daemon logs, session transcri
 version: 1.1.5
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
+disable-model-invocation: true
 ---
 
 # Gateway Diagnosis

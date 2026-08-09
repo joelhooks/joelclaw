@@ -5,6 +5,7 @@ description: "Static-first Next.js 16 architecture patterns: cached shells with 
 version: 1.0.0
 author: Joel Hooks
 tags: [nextjs, architecture, caching, performance, rsc, static]
+disable-model-invocation: true
 ---
 
 # Static-First Next.js 16 Patterns

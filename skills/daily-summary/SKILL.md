@@ -1,5 +1,7 @@
 ---
+name: daily-summary
 description: Generate a daily system activity summary across all joelclaw subsystems. Triggers on 'daily summary', 'what happened today', 'system report', 'today's tally', 'activity summary', 'what did we do', 'daily report'.
+disable-model-invocation: true
 ---
 
 # Daily Summary

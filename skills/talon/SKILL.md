@@ -1,6 +1,7 @@
 ---
 name: talon
 description: Operate Talon, the Rust infrastructure watchdog daemon that supervises the system-bus worker and monitors k8s. ADR-0159.
+disable-model-invocation: true
 ---
 
 # Talon — Infrastructure Watchdog Daemon

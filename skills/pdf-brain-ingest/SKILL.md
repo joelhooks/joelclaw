@@ -5,6 +5,7 @@ description: "Ingest PDF/Markdown/TXT files into joelclaw's docs memory pipeline
 version: 2.0.0
 author: Joel Hooks
 tags: [joelclaw, docs, pdf, markdown, ingest, inngest, typesense, memory, opendataloader]
+disable-model-invocation: true
 ---
 
 # PDF Brain Ingest v2 (ADR-0234)

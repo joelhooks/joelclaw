@@ -9,6 +9,7 @@ tags:
   - mux
   - media
   - webhooks
+disable-model-invocation: true
 ---
 
 # mux-video (RETIRED)

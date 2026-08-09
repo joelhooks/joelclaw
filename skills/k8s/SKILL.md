@@ -13,6 +13,7 @@ description: >-
 version: 1.0.0
 author: Joel Hooks
 tags: [joelclaw, kubernetes, talos, colima, infrastructure]
+disable-model-invocation: true
 ---
 
 # k8s Cluster Operations — joelclaw on Talos

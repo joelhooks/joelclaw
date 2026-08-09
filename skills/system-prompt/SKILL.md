@@ -5,6 +5,7 @@ description: "Design and review system prompts for any joelclaw agent surface (g
 version: 1.0.0
 author: Joel Hooks
 tags: [joelclaw, prompt, system-prompt, agent, design]
+disable-model-invocation: true
 ---
 
 # System Prompt Design

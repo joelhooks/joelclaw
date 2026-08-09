@@ -5,6 +5,7 @@ description: "Operate the joelclaw gateway daemon — the always-on pi session t
 version: 1.0.5
 author: Joel Hooks
 tags: [joelclaw, gateway, daemon, redis, telegram]
+disable-model-invocation: true
 ---
 
 # Gateway Operations

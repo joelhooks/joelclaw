@@ -5,6 +5,7 @@ description: "Operate the joelclaw event bus, gateway, observability, and agent 
 version: 2.0.0
 author: Joel Hooks
 tags: [joelclaw, cli, inngest, gateway, otel, agent-loop, infrastructure]
+disable-model-invocation: true
 ---
 
 # joelclaw — CLI & Event Bus

@@ -5,6 +5,7 @@ description: "Add, enrich, and manage contacts in Joel's Vault. Fire the Inngest
 version: 1.0.0
 author: joel
 tags: [joelclaw, contacts, vault, enrichment, people]
+disable-model-invocation: true
 ---
 
 # Contacts

@@ -5,6 +5,7 @@ description: Create and maintain Architecture Decision Records (ADRs) optimized 
 version: 1.2.0
 author: Joel Hooks
 tags: [adr, architecture, decision-records, documentation, workflows, visual-explainer]
+disable-model-invocation: true
 ---
 
 # ADR Skill

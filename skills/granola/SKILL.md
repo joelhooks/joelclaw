@@ -9,6 +9,7 @@ tags:
   - meetings
   - transcripts
   - mcp
+disable-model-invocation: true
 ---
 
 # Granola Meeting Intelligence

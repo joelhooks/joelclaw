@@ -5,6 +5,7 @@ description: "Audit Joel's Pi/joelclaw skills: loaded roots, duplicates, stale o
 version: 0.1.0
 author: Joel Hooks, adapted from Peter Steinberger's agent-scripts skill-cleaner
 tags: [joelclaw, pi, skills, maintenance, prompt-budget]
+disable-model-invocation: true
 ---
 
 # Skill Cleaner

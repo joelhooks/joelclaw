@@ -8,6 +8,7 @@ tags:
   - slack
   - channels
   - intelligence
+disable-model-invocation: true
 ---
 
 # egghead Slack Intelligence

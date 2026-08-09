@@ -5,6 +5,7 @@ description: "Design and build agent-first CLIs with HATEOAS JSON responses, con
 version: 1.1.0
 author: Joel Hooks
 tags: [joelclaw, cli, agentic, ux, json]
+disable-model-invocation: true
 ---
 
 # Agent-First CLI Design

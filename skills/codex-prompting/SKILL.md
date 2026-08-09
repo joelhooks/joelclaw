@@ -5,6 +5,7 @@ description: "Use this skill for any request to trigger, coordinate, or craft pr
 version: 1.0.2
 author: Joel Hooks
 tags: [codex, prompting, automation, pi, operations]
+disable-model-invocation: true
 ---
 
 # Codex Prompting Skill

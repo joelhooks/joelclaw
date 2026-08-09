@@ -10,6 +10,7 @@ tags:
   - macos
   - pi
   - operations
+disable-model-invocation: true
 ---
 
 # Fleet Operations

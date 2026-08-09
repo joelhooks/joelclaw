@@ -8,6 +8,7 @@ tags:
   - meta
   - skills
   - workflow
+disable-model-invocation: true
 ---
 
 # Add Skill

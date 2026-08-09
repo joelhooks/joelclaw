@@ -12,6 +12,7 @@ tags:
   - sqlite
   - libsql
   - services
+disable-model-invocation: true
 ---
 
 # Executor

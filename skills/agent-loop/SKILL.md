@@ -1,6 +1,7 @@
 ---
 name: agent-loop
 description: Start, monitor, and cancel durable multi-agent coding loops via Inngest. Use when the user wants to run autonomous coding workloads, execute a PRD with multiple stories, kick off an AFK coding session, have agents implement features from a plan, or manage running loops. Triggers on "start a coding loop", "run this PRD", "implement these stories", "go AFK and code this", "check loop status", "cancel the loop", "joelclaw loop", or any request for autonomous multi-story code execution.
+disable-model-invocation: true
 ---
 
 # Agent Loop

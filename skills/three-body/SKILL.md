@@ -1,6 +1,7 @@
 ---
 name: three-body
 description: Operate Joel's ASUSTOR NAS host `three-body` safely. Use when Joel mentions three-body, ASUSTOR, NAS instability, SMB/NFS mounts, mounted drives disappearing, `/share`, `/volume1`, `/volume2`, `TMBackup-Joel`, `joelclaw`, `data`, Flagg NAS mounts, or asks to SSH into the NAS.
+disable-model-invocation: true
 ---
 
 # Three Body

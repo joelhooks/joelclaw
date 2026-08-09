@@ -1,6 +1,7 @@
 ---
 name: gogcli
 description: "Google Workspace CLI for agents. Use gog to access Gmail, Calendar, Drive, Contacts, Tasks, Sheets, Docs, Slides, Forms, Chat, and more. Triggers on: 'check my email', 'what's on my calendar', 'search gmail', 'list calendar events', 'send email', 'check tasks', 'search drive', 'list contacts', 'create event', 'upload to drive', 'read spreadsheet', or any Google Workspace task."
+disable-model-invocation: true
 ---
 
 # gogcli — Google Workspace in the Terminal

@@ -5,6 +5,7 @@ description: "Manage feed subscriptions that track blogs, repos, and living page
 version: 1.0.0
 author: Joel Hooks
 tags: [joelclaw, monitor, feeds, subscriptions, rss, github, discovery]
+disable-model-invocation: true
 ---
 
 # Resource Monitor — Track What Matters

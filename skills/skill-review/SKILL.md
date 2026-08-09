@@ -5,6 +5,7 @@ description: "Audit and maintain the joelclaw skill inventory. Use when checking
 version: 1.1.0
 author: Joel Hooks
 tags: [joelclaw, skills, maintenance, gardening, automation]
+disable-model-invocation: true
 ---
 
 # Skill Review & Gardening

@@ -5,6 +5,7 @@ description: "Triage Joel's email inboxes via the joelclaw email CLI. Scan, cate
 version: 2.1.0
 author: Joel Hooks
 tags: [joelclaw, email, triage, inbox, front]
+disable-model-invocation: true
 ---
 
 # Email Triage

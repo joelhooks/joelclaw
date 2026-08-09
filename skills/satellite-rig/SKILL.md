@@ -11,6 +11,7 @@ tags:
   - sessions
   - ssh
   - ops
+disable-model-invocation: true
 ---
 
 # Satellite Rig

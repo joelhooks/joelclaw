@@ -13,6 +13,7 @@ tags:
   - asustor
   - docker
   - storage
+disable-model-invocation: true
 ---
 
 # Garage

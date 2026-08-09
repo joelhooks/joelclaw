@@ -5,6 +5,7 @@ description: "Run comprehensive joelclaw health checks, including postboot/daily
 version: 1.1.0
 author: Joel Hooks
 tags: [joelclaw, health, diagnostics, checks, operations]
+disable-model-invocation: true
 ---
 
 # joelclaw System Health Check

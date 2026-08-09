@@ -9,6 +9,7 @@ tags:
   - extensions
   - tooling
   - reliability
+disable-model-invocation: true
 ---
 
 # Pi Extension Authoring

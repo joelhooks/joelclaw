@@ -14,6 +14,7 @@ tags:
   - parallel
   - chained
   - adr-0217
+disable-model-invocation: true
 ---
 
 # Agent Workloads

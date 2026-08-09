@@ -1,6 +1,7 @@
 ---
 name: loop-diagnosis
 description: Diagnose and fix stalled agent loops using the joelclaw CLI. Use when loops appear stuck, stories aren't progressing, or the event chain broke. Triggers on "loop stalled", "why isn't the loop progressing", "diagnose loops", "fix stuck loop", "loop not moving", "what happened to the loop", "stories stuck at pending", or any request to debug loop infrastructure.
+disable-model-invocation: true
 ---
 
 # Loop Diagnosis

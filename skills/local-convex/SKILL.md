@@ -12,6 +12,7 @@ tags:
   - postgres
   - asustor
   - local
+disable-model-invocation: true
 ---
 
 # Local Convex

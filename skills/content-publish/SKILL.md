@@ -9,6 +9,7 @@ tags:
   - convex
   - publishing
   - web
+disable-model-invocation: true
 ---
 
 # Content Publish

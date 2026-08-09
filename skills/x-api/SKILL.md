@@ -9,6 +9,7 @@ tags:
   - x
   - twitter
   - api
+disable-model-invocation: true
 ---
 
 # X/Twitter API Skill

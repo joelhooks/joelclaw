@@ -11,6 +11,7 @@ tags:
   - shitrat
   - automation
   - optimizer
+disable-model-invocation: true
 ---
 
 # Daily SHITRAT

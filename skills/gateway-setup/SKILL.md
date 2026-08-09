@@ -5,6 +5,7 @@ description: "Set up a persistent AI agent gateway on macOS with Redis event bri
 version: 1.0.0
 author: Joel Hooks
 tags: [joelclaw, gateway, setup, redis, telegram]
+disable-model-invocation: true
 ---
 
 # Gateway Setup for AI Agents on macOS

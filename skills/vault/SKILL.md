@@ -5,6 +5,7 @@ description: "Operate Joel's Obsidian Vault through the joelclaw CLI. Use when r
 version: 1.0.0
 author: Joel Hooks
 tags: [joelclaw, vault, adr, cli, para, governance]
+disable-model-invocation: true
 ---
 
 # Vault CLI Operations
