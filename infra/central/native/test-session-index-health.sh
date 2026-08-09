@@ -24,6 +24,8 @@ printf '%s\n' 'fixture' >"${TEST_ROOT}/sessions.db"
 printf '%s\n' '1' >"${TEST_ROOT}/fail-recovery"
 printf '%s\n' '0' >"${TEST_ROOT}/fail-otel"
 printf '%s\n' '0' >"${TEST_ROOT}/fail-inngest"
+printf '%s\n' '0' >"${TEST_ROOT}/fail-typesense"
+printf 'api-key = test-key\n' >"${TEST_ROOT}/typesense.ini"
 
 cat >"${TEST_ROOT}/bin/curl" <<'MOCK'
 #!/bin/sh
@@ -33,6 +35,7 @@ case "$*" in
     [ "$(cat "${TEST_ROOT}/fail-otel")" = "0" ]
     ;;
   *127.0.0.1:8288/health*) [ "$(cat "${TEST_ROOT}/fail-inngest")" = "0" ] ;;
+  *127.0.0.1:8108/collections*) [ "$(cat "${TEST_ROOT}/fail-typesense")" = "0" ] ;;
   *) exit 0 ;;
 esac
 MOCK
@@ -53,6 +56,7 @@ run_probe() {
   RUNS_ROOT="${TEST_ROOT}/runs" \
   SESSION_INDEX_PATH="${TEST_ROOT}/sessions.db" \
   SQLITE3_BIN="${TEST_ROOT}/bin/sqlite3" \
+  TYPESENSE_INI="${TEST_ROOT}/typesense.ini" \
   MAX_INDEX_LAG_SECONDS=300 \
   RECOVER_AFTER_FAILURES=3 \
   RECOVERY_COOLDOWN_SECONDS=900 \
@@ -109,5 +113,18 @@ run_probe
 [ "$(wc -l <"${TEST_ROOT}/launchctl.log" | tr -d ' ')" = "3" ]
 [ "$(tail -n 1 "${TEST_ROOT}/launchctl.log")" = "kickstart -k system/com.joelclaw.central.inngest" ]
 printf '%s\n' '0' >"${TEST_ROOT}/fail-inngest"
+
+# typesense_unavailable restarts only Typesense. The 2026-08-07 wedge kept
+# /health green while the authed data path timed out, so the probe failing
+# must implicate Typesense itself, never Inngest or the worker.
+printf '%s\n' '1' >"${TEST_ROOT}/fail-typesense"
+printf '%s\n' '1' >"${TEST_ROOT}/state/last-recovery-epoch"
+run_probe
+run_probe
+run_probe
+[ "$(cat "${TEST_ROOT}/state/consecutive-failures")" = "0" ]
+[ "$(wc -l <"${TEST_ROOT}/launchctl.log" | tr -d ' ')" = "4" ]
+[ "$(tail -n 1 "${TEST_ROOT}/launchctl.log")" = "kickstart -k system/com.joelclaw.central.typesense" ]
+printf '%s\n' '0' >"${TEST_ROOT}/fail-typesense"
 
 printf 'PASS session-index-health system-domain recovery, scoped cooldown, retry, and OTEL delivery (%s)\n' "${TEST_ROOT}"

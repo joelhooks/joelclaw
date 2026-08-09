@@ -7,6 +7,8 @@ SESSION_INDEX_PATH="${SESSION_INDEX_PATH:-/Users/joel/.joelclaw/search/sessions.
 SQLITE3_BIN="${SQLITE3_BIN:-/usr/bin/sqlite3}"
 WORKER_URL="${WORKER_URL:-http://127.0.0.1:3111}"
 INNGEST_URL="${INNGEST_URL:-http://127.0.0.1:8288}"
+TYPESENSE_URL="${TYPESENSE_URL:-http://127.0.0.1:8108}"
+TYPESENSE_INI="${TYPESENSE_INI:-${CENTRAL_ROOT}/etc/typesense/typesense.ini}"
 MAX_INDEX_LAG_SECONDS="${MAX_INDEX_LAG_SECONDS:-300}"
 RECOVER_AFTER_FAILURES="${RECOVER_AFTER_FAILURES:-3}"
 RECOVERY_COOLDOWN_SECONDS="${RECOVERY_COOLDOWN_SECONDS:-900}"
@@ -42,6 +44,18 @@ log() {
 
 http_ok() {
   curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS "$1" >/dev/null 2>&1
+}
+
+# /health stays 200 while the search threadpool is dead (2026-08-07 wedge:
+# applying stuck, 16/16 threads blocked, 8700+ queued, /health green for two
+# days). Unauthenticated requests get a fast 401 before the threadpool, so the
+# probe must be authenticated to touch the data path.
+typesense_ok() {
+  [ -r "${TYPESENSE_INI}" ] || { log "typesense probe skipped: ${TYPESENSE_INI} unreadable"; return 0; }
+  key="$(sed -n 's/^[[:space:]]*api-key[[:space:]]*=[[:space:]]*//p' "${TYPESENSE_INI}" | head -n 1)"
+  [ -n "${key}" ] || { log "typesense probe skipped: no api-key in ${TYPESENSE_INI}"; return 0; }
+  curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS \
+    -H "X-TYPESENSE-API-KEY: ${key}" "${TYPESENSE_URL}/collections" >/dev/null 2>&1
 }
 
 newest_raw_epoch() {
@@ -166,8 +180,10 @@ recover() {
   # healthy Inngest 54 times after the 2026-07-19 reboot.
   restart_inngest=0
   restart_worker=0
+  restart_typesense=0
   case "${reason}" in
     inngest_unavailable) restart_inngest=1 ;;
+    typesense_unavailable) restart_typesense=1 ;;
     *) restart_worker=1 ;;
   esac
 
@@ -179,6 +195,7 @@ recover() {
 
   inngest_rc=0
   worker_rc=0
+  typesense_rc=0
   if [ "${restart_inngest}" -eq 1 ]; then
     log "recovering Inngest (reason=${reason})"
     launchctl kickstart -k system/com.joelclaw.central.inngest || inngest_rc=$?
@@ -187,8 +204,12 @@ recover() {
     log "recovering host worker (reason=${reason})"
     launchctl kickstart -k system/com.joel.system-bus-worker || worker_rc=$?
   fi
-  if [ "${inngest_rc}" -ne 0 ] || [ "${worker_rc}" -ne 0 ]; then
-    log "recovery attempt incomplete inngest=${inngest_rc} worker=${worker_rc} (cooldown stamped, retry after ${RECOVERY_COOLDOWN_SECONDS}s)"
+  if [ "${restart_typesense}" -eq 1 ]; then
+    log "recovering Typesense (reason=${reason})"
+    launchctl kickstart -k system/com.joelclaw.central.typesense || typesense_rc=$?
+  fi
+  if [ "${inngest_rc}" -ne 0 ] || [ "${worker_rc}" -ne 0 ] || [ "${typesense_rc}" -ne 0 ]; then
+    log "recovery attempt incomplete inngest=${inngest_rc} worker=${worker_rc} typesense=${typesense_rc} (cooldown stamped, retry after ${RECOVERY_COOLDOWN_SECONDS}s)"
     return 1
   fi
   write_number "${FAILURE_FILE}" 0
@@ -223,6 +244,10 @@ if ! http_ok "${INNGEST_URL}/health"; then
 elif ! http_ok "${WORKER_URL}/api/inngest"; then
   status="degraded"
   reason="worker_unavailable"
+  actionable=1
+elif ! typesense_ok; then
+  status="degraded"
+  reason="typesense_unavailable"
   actionable=1
 elif [ "${raw}" -eq 0 ]; then
   status="degraded"

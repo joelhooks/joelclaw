@@ -1,0 +1,16 @@
+# /etc/sudoers.d/joelclaw-central
+#
+# Lets joel (and therefore local agents running as joel) restart central
+# services without a password. Exact commands only — no wildcards, because
+# sudoers wildcards match across argument boundaries.
+#
+# Deliberately excluded: postgres, redis (stateful, restart has blast radius —
+# add explicitly if wanted), and anything outside the central service set.
+#
+# Install with: sudo ./install-central-kickstart-sudoers.sh
+joel ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/com.joelclaw.central.typesense
+joel ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/com.joelclaw.central.inngest
+joel ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/com.joelclaw.central.executor
+joel ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/com.joelclaw.central.executor-dashboard
+joel ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/com.joelclaw.central.session-index-health
+joel ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/com.joel.system-bus-worker
