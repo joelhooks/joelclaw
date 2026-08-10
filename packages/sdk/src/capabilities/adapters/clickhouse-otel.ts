@@ -200,7 +200,7 @@ function buildWhere(input: {
   const query = input.query?.trim()
   if (query && query !== "*") {
     const q = sqlString(query)
-    filters.push(`(positionCaseInsensitive(search_text, ${q}) > 0 OR positionCaseInsensitive(action, ${q}) > 0 OR positionCaseInsensitive(error, ${q}) > 0 OR positionCaseInsensitive(component, ${q}) > 0 OR positionCaseInsensitive(source, ${q}) > 0 OR positionCaseInsensitive(metadata_json, ${q}) > 0)`)
+    filters.push(`positionCaseInsensitive(search_text, ${q}) > 0`)
     debug.push(`q:=${query}`)
   }
 
@@ -298,7 +298,11 @@ async function facetCounts(config: ClickHouseAdapterConfig, whereSql: string, fi
 }
 
 async function loadFacets(config: ClickHouseAdapterConfig, whereSql: string): Promise<Record<string, unknown>[]> {
-  return Promise.all(["level", "source", "component", "success"].map((field) => facetCounts(config, whereSql, field)))
+  const facets: Record<string, unknown>[] = []
+  for (const field of ["level", "source", "component", "success"]) {
+    facets.push(await facetCounts(config, whereSql, field))
+  }
+  return facets
 }
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
@@ -400,7 +404,8 @@ export const clickhouseOtelAdapter: CapabilityPort<typeof commands> = {
           const final = yield* Effect.promise(() => resolveFinalClause(config))
           const result = yield* Effect.promise(() => queryClickHouse(`SELECT id, toUnixTimestamp64Milli(timestamp) AS timestamp, sessionId, systemId, level, source, component, action, success, duration_ms, error, metadata_keys FROM ${tableName(config)} ${final} ${where.sql} ORDER BY timestamp DESC LIMIT ${limit} OFFSET ${offset} FORMAT JSON`, config))
           if (!result.ok) return yield* Effect.fail(failFromResult(result, "OTEL_QUERY_FAILED", "Check ClickHouse health and otel_events schema"))
-          const [found, facets] = yield* Effect.promise(() => Promise.all([countRows(config, where.sql), loadFacets(config, where.sql)]))
+          const found = yield* Effect.promise(() => countRows(config, where.sql))
+          const facets = yield* Effect.promise(() => loadFacets(config, where.sql))
           return { query: args.query, found, page, limit, filterBy: where.debug, adapter: "clickhouse-otel", events: dataRows(result.data).map(simplifyRow), facets }
         }
         case "correlate": {
