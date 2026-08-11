@@ -25,7 +25,7 @@ Maintained by the container-service reliability contract from the workload-class
 
 ## Vocabulary
 
-- **gateway agent** — the always-on Claude Fable agent loop: a long-lived interactive Claude Code session in a dedicated herdr workspace on flagg (Max auth); owns all comms policy in both directions (ADR-0249 amended the container-service shape).
+- **gateway agent**, the always-on Claude agent loop: a long-lived interactive Claude Code session in the named Herdr session `system`, inside a dedicated workspace on flagg (Max auth); owns all comms policy in both directions (ADR-0249 amended the container-service shape). Human work stays in Herdr `default`.
 - **driver** — the zero-policy host process that gives the session wake mechanics: pokes the pane when unhandled stream events exist, fires aggregate deadlines, watches the heartbeat, SPAWNs successors via the wake registry, trips the fallback. It says *there is work*, never what to do.
 - **cycle** — the loop's renewal: retire at ~150k tokens or a quiet moment, write a capped advisory `gateway.handoff` note, exit; the successor boots from prompt files + note + authoritative stream replay + herdr snapshot. Crash recovery is the same path minus the note.
 - **decision receipt** — `gateway.decision.recorded`: exactly one per consumed event, tagged verb (`deliver | aggregate | escalate | fanout | route | drop`) + one-sentence reason + prompt revision; the cursor never advances past an event without one.

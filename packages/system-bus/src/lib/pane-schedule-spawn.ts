@@ -3,6 +3,13 @@ import { basename, dirname } from "node:path";
 import type { PaneScheduleEntry } from "./pane-schedule";
 
 export const SCHEDULED_BEATS_WORKSPACE_LABEL = "[jc] scheduled beats";
+export const DEFAULT_AUTOMATION_HERDR_SESSION = "system";
+
+export function scopeHerdrCommand(argv: string[], session?: string): string[] {
+  const name = session?.trim();
+  if (!name || argv[0] !== "herdr" || argv[1] === "--session") return argv;
+  return ["herdr", "--session", name, ...argv.slice(1)];
+}
 /**
  * Beats never land in the gateway's own workspace — that is the sprawl this
  * path exists to end. The workspace is identified by the pane that hosts the
@@ -284,6 +291,8 @@ export function planSpawnBeat(input: {
 export type SpawnBeatPorts = {
   /** Defaults to a real herdr subprocess runner when omitted. */
   runCommand?: CommandRunner;
+  /** Named herdr session that owns automated beat lanes. */
+  herdrSession?: string;
   briefExists?: (path: string) => boolean;
   readBriefTitle?: (path: string) => string;
   /** Durable lane registry: brief path -> pane id. Survives label rewrites. */
@@ -322,7 +331,11 @@ export async function executeSpawnBeat(
   entry: PaneScheduleEntry,
   ports: SpawnBeatPorts = {},
 ): Promise<SpawnBeatResult> {
-  const runCommand = ports.runCommand ?? defaultCommand;
+  const baseRunCommand = ports.runCommand ?? defaultCommand;
+  const herdrSession =
+    ports.herdrSession?.trim() || DEFAULT_AUTOMATION_HERDR_SESSION;
+  const runCommand = (argv: string[]) =>
+    baseRunCommand(scopeHerdrCommand(argv, herdrSession));
   const briefExists = ports.briefExists ?? ((path: string) => existsSync(path));
   const label =
     entry.briefPath && ports.readBriefTitle

@@ -10,6 +10,12 @@ import {
   stopAgentInPane,
 } from "../src";
 
+function withoutNamedHerdrSession(argv: string[]): string[] {
+  return argv[0] === "herdr" && argv[1] === "--session"
+    ? ["herdr", ...argv.slice(3)]
+    : argv;
+}
+
 function event(
   id: string,
   recordedAt: number,
@@ -187,7 +193,8 @@ describe("live adapters", () => {
   test("parses Herdr pane/session state and treats blocked as unsettled", async () => {
     const stream = streamFake();
     const redis = redisFake();
-    const runCommand = async (argv: string[]) => {
+    const runCommand = async (rawArgv: string[]) => {
+      const argv = withoutNamedHerdrSession(rawArgv);
       if (argv[1] === "agent") {
         return {
           stdout: JSON.stringify({ result: { agents: [{ pane_id: "w1:p2", name: "gateway", agent_status: "blocked" }] } }),
@@ -237,7 +244,8 @@ describe("live adapters", () => {
   test("rejects a Herdr-restored bare Claude resume as a gateway session", async () => {
     const stream = streamFake();
     const redis = redisFake();
-    const runCommand = async (argv: string[]) => {
+    const runCommand = async (rawArgv: string[]) => {
+      const argv = withoutNamedHerdrSession(rawArgv);
       if (argv[1] === "agent") {
         return {
           stdout: JSON.stringify({ result: { agents: [{ pane_id: "w1:p2", name: "gateway", agent_status: "idle" }] } }),
@@ -276,13 +284,20 @@ describe("live adapters", () => {
     const calls: string[][] = [];
     let paneListPayload = '{"result":{"panes":[]}}';
     let agentListPayload = '{"result":{"agents":[]}}';
-    const runCommand = async (argv: string[]) => {
+    const runCommand = async (rawArgv: string[]) => {
+      const argv = withoutNamedHerdrSession(rawArgv);
       calls.push(argv);
       if (argv[0] === "herdr" && argv[1] === "pane" && argv[2] === "list") {
         return { stdout: paneListPayload, stderr: "" };
       }
       if (argv[0] === "herdr" && argv[1] === "agent" && argv[2] === "list") {
         return { stdout: agentListPayload, stderr: "" };
+      }
+      if (argv[0] === "herdr" && argv[1] === "workspace" && argv[2] === "list") {
+        return {
+          stdout: '{"result":{"workspaces":[{"workspace_id":"wT","label":"[jc] gateway agent"}]}}',
+          stderr: "",
+        };
       }
       if (argv[0] === "herdr" && argv[1] === "tab" && argv[2] === "create") {
         return { stdout: '{"result":{"tab":"wT:t2","root_pane":{"pane_id":"wT:p9"}}}', stderr: "" };
@@ -312,6 +327,56 @@ describe("live adapters", () => {
     await ports.requestSuccessor();
     expect(calls.slice(before).filter((argv) => argv[2] === "create")).toHaveLength(0);
     expect(calls.slice(before).filter((argv) => argv[2] === "run")).toHaveLength(0);
+    await ports.close();
+  });
+
+  test("defaults blank gateway session config to the named system session", async () => {
+    const stream = streamFake();
+    const redis = redisFake();
+    const calls: string[][] = [];
+    const ports = makeLiveDriverPorts(
+      {
+        target: "📨 gateway loop",
+        successorBriefPath: "/tmp/scratch.svx",
+        herdrSession: "   ",
+        herdrWorkspace: "w2C",
+        successorCommand: "echo boot",
+      },
+      {
+        stream: stream.client,
+        redis: redis.client,
+        runCommand: async (argv) => {
+          calls.push(argv);
+          const command = argv.slice(3);
+          if (command[0] === "pane" && command[1] === "list") {
+            return { stdout: '{"result":{"panes":[]}}', stderr: "" };
+          }
+          if (command[0] === "workspace" && command[1] === "list") {
+            return { stdout: '{"result":{"workspaces":[]}}', stderr: "" };
+          }
+          if (command[0] === "workspace" && command[1] === "create") {
+            return {
+              stdout: '{"result":{"root_pane":{"pane_id":"w1:p1","workspace_id":"w1"}}}',
+              stderr: "",
+            };
+          }
+          return { stdout: '{"result":{}}', stderr: "" };
+        },
+      },
+    );
+
+    await ports.requestSuccessor();
+    expect(calls.every((argv) => argv.slice(0, 3).join(" ") === "herdr --session system"))
+      .toBe(true);
+    expect(calls).toContainEqual([
+      "herdr",
+      "--session",
+      "system",
+      "workspace",
+      "create",
+      "--label",
+      "[jc] gateway agent",
+    ]);
     await ports.close();
   });
 

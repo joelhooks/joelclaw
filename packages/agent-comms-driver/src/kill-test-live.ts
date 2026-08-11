@@ -13,7 +13,10 @@ import {
 import { Effect, Layer } from "effect";
 import Redis from "ioredis";
 
-import { spawnGatewaySuccessorPane } from "./adapters";
+import {
+  DEFAULT_GATEWAY_HERDR_SESSION,
+  scopeHerdrCommand,
+} from "./adapters";
 import { DEFAULT_HEARTBEAT_KEY } from "./driver";
 import {
   KILL_DRILL_SOURCE,
@@ -25,6 +28,7 @@ import {
 export const WEEKLY_KILL_DRILL_BRIEF_PATH =
   ".brain/tasks/agent-comms-gateway-weekly-kill-drill.svx" as const;
 export const WEEKLY_KILL_DRILL_MARKER = "[weekly-kill-drill]" as const;
+const DRIVER_LAUNCH_AGENT_LABEL = "com.joelclaw.agent-comms-driver";
 
 export type CommandResult = { stdout: string; stderr: string };
 export type CommandRunner = (argv: string[]) => Promise<CommandResult>;
@@ -36,7 +40,15 @@ export type LiveKillDrillOptions = {
   heartbeatKey?: string;
   receiptPath?: string;
   restartDelay?: string;
+  herdrSession?: string;
 };
+
+function currentUserLaunchDomain(): string {
+  if (typeof process.getuid !== "function") {
+    throw new Error("gateway kill drill requires a Unix launchd user domain");
+  }
+  return `gui/${process.getuid()}`;
+}
 
 async function command(argv: string[]): Promise<CommandResult> {
   const child = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
@@ -254,7 +266,11 @@ export function makeLiveKillDrillPorts(
     redis?: Redis;
   } = {},
 ): KillDrillPorts & { close: () => Promise<void> } {
-  const runCommand = dependencies.runCommand ?? command;
+  const baseRunCommand = dependencies.runCommand ?? command;
+  const herdrSession =
+    options.herdrSession?.trim() || DEFAULT_GATEWAY_HERDR_SESSION;
+  const runCommand = (argv: string[]) =>
+    baseRunCommand(scopeHerdrCommand(argv, herdrSession));
   const stream = dependencies.stream ?? createMessageEventLogClient();
   const redis = dependencies.redis ?? new Redis(
     options.redisUrl ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379",
@@ -271,23 +287,50 @@ export function makeLiveKillDrillPorts(
     wait: (milliseconds) => Bun.sleep(milliseconds),
     stopAgent: async () => {
       // The kill must take down the whole agent side: session AND driver.
-      // A running driver self-heals a closed pane faster than the heartbeat
-      // TTL lapses (proven live 2026-07-21), so pane-only death never reaches
-      // the fallback this drill exists to prove.
-      // Kill exactly the driver via its pidfile — a name-pattern pkill would
-      // match this drill's own pnpm/bun processes and kill the drill mid-run.
+      // Boot out the KeepAlive LaunchAgent first. SIGTERM alone lets launchd
+      // recreate the driver before the heartbeat TTL can prove fallback.
+      const launchDomain = currentUserLaunchDomain();
       let driverStopped = false;
       try {
-        const pid = Number.parseInt(
-          (await Bun.file("/tmp/joelclaw/agent-comms-driver.pid").text()).trim(),
-          10,
-        );
-        if (Number.isSafeInteger(pid) && pid > 1) {
-          process.kill(pid, "SIGTERM");
-          driverStopped = true;
+        await runCommand([
+          "launchctl",
+          "bootout",
+          `${launchDomain}/${DRIVER_LAUNCH_AGENT_LABEL}`,
+        ]);
+        driverStopped = true;
+      } catch (bootoutError) {
+        // A failed bootout is safe to treat as manual mode only when launchd
+        // proves no KeepAlive job remains loaded.
+        let launchAgentLoaded = true;
+        try {
+          await runCommand([
+            "launchctl",
+            "print",
+            `${launchDomain}/${DRIVER_LAUNCH_AGENT_LABEL}`,
+          ]);
+        } catch {
+          launchAgentLoaded = false;
         }
-      } catch {
-        driverStopped = false;
+        if (launchAgentLoaded) {
+          throw new Error("driver LaunchAgent remained loaded after bootout", {
+            cause: bootoutError,
+          });
+        }
+
+        // Manual development runs have no loaded LaunchAgent. Stop only the
+        // pidfile owner, never a broad process-name pattern.
+        try {
+          const pid = Number.parseInt(
+            (await Bun.file("/tmp/joelclaw/agent-comms-driver.pid").text()).trim(),
+            10,
+          );
+          if (Number.isSafeInteger(pid) && pid > 1) {
+            process.kill(pid, "SIGTERM");
+            driverStopped = true;
+          }
+        } catch {
+          driverStopped = false;
+        }
       }
       const paneId = await resolvePaneId(runCommand, options.agentTarget);
       const result = parseEnvelope((await runCommand(["herdr", "pane", "close", paneId])).stdout);
@@ -315,47 +358,39 @@ export function makeLiveKillDrillPorts(
     traceStream: (flowId): Promise<MessageEventTraceResult> => stream.trace(flowId),
     tracePlatform: traceJournal,
     restartAgent: async () => {
-      // herdr-native restart (Joel, cutover sitting 2026-07-21): restart the
-      // driver, which spawns the gateway session itself — the same self-heal
-      // path production uses. GATEWAY_DRIVER_PANE names the driver's pane;
-      // without it the driver runs as a detached child.
+      // Restore the supervised driver. A detached replacement beside a
+      // KeepAlive LaunchAgent can produce two owners after the drill.
       const workspace = process.env.GATEWAY_HERDR_WORKSPACE?.trim();
-      const driverEnv = [
-        `GATEWAY_AGENT_TARGET='${options.agentTarget}'`,
-        workspace ? `GATEWAY_HERDR_WORKSPACE='${workspace}'` : "",
-        `GATEWAY_SUCCESSOR_BRIEF_PATH='${options.successorBriefPath}'`,
-        // Carry timing config through restarts — losing it once regressed the
-        // poke deadline to a value that flapped the heartbeat (2026-07-21).
-        process.env.GATEWAY_POKE_DEADLINE_MS?.trim()
-          ? `GATEWAY_POKE_DEADLINE_MS='${process.env.GATEWAY_POKE_DEADLINE_MS.trim()}'`
-          : "",
-      ].filter(Boolean).join(" ");
-      const driverCommand = `${driverEnv} pnpm --filter @joelclaw/agent-comms-driver start`;
-      const driverPane = process.env.GATEWAY_DRIVER_PANE?.trim();
+      const launchDomain = currentUserLaunchDomain();
+      const launchAgentPlist =
+        process.env.GATEWAY_DRIVER_LAUNCH_AGENT_PLIST?.trim()
+        || `${process.env.HOME ?? "/Users/joel"}/Library/LaunchAgents/${DRIVER_LAUNCH_AGENT_LABEL}.plist`;
       let driverRestart: Record<string, unknown>;
-      if (driverPane) {
-        // `herdr pane run` types into the pane and prints nothing on success.
-        const runOut = await runCommand(["herdr", "pane", "run", driverPane, driverCommand]);
-        driverRestart = { pane: driverPane, stdout: runOut.stdout.trim() };
-      } else {
-        const child = Bun.spawn(["sh", "-c", driverCommand], {
-          stdout: "ignore",
-          stderr: "ignore",
-          cwd: "/Users/joel/Code/joelhooks/joelclaw",
-        });
-        child.unref();
-        driverRestart = { detachedPid: child.pid };
+      try {
+        const bootstrap = await runCommand([
+          "launchctl",
+          "bootstrap",
+          launchDomain,
+          launchAgentPlist,
+        ]);
+        driverRestart = { launchAgent: DRIVER_LAUNCH_AGENT_LABEL, stdout: bootstrap.stdout.trim() };
+      } catch {
+        const kickstart = await runCommand([
+          "launchctl",
+          "kickstart",
+          "-k",
+          `${launchDomain}/${DRIVER_LAUNCH_AGENT_LABEL}`,
+        ]);
+        driverRestart = { launchAgent: DRIVER_LAUNCH_AGENT_LABEL, stdout: kickstart.stdout.trim() };
       }
-      // Also spawn the gateway pane directly so recovery does not wait a full
-      // driver observation cycle; the label check makes the race idempotent.
-      const spawned = await spawnGatewaySuccessorPane(runCommand, {
-        target: options.agentTarget,
-        ...(workspace ? { herdrWorkspace: workspace } : {}),
-        ...(process.env.GATEWAY_SUCCESSOR_COMMAND?.trim()
-          ? { successorCommand: process.env.GATEWAY_SUCCESSOR_COMMAND.trim() }
-          : {}),
-      });
-      return { herdr: spawned, driver: driverRestart };
+      // The supervised driver is the single recovery owner. It will create or
+      // reuse the gateway pane on its next pass. Spawning here as well races
+      // two list-then-create operations and can produce duplicate gateways.
+      return {
+        herdr: { session: herdrSession, recoveryOwner: "agent-comms-driver" },
+        driver: driverRestart,
+        ...(workspace ? { workspace } : {}),
+      };
     },
     recordReceipt: options.receiptPath
       ? makeKillDrillReceiptRecorder(options.receiptPath)

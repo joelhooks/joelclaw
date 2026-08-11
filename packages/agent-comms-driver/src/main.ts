@@ -1,6 +1,6 @@
 import { Config, Effect, Schedule } from "effect";
 
-import { makeLiveDriverPorts } from "./adapters";
+import { DEFAULT_GATEWAY_HERDR_SESSION, makeLiveDriverPorts } from "./adapters";
 import {
   AgentCommsDriver,
   DEFAULT_HEARTBEAT_REFRESH_MS,
@@ -49,6 +49,9 @@ const main = Effect.gen(function* () {
     Config.withDefault("/tmp/joelclaw/agent-comms-driver.jsonl"),
   );
 
+  const herdrSession = yield* Config.string("GATEWAY_HERDR_SESSION").pipe(
+    Config.withDefault(DEFAULT_GATEWAY_HERDR_SESSION),
+  );
   const herdrWorkspace = yield* Config.string("GATEWAY_HERDR_WORKSPACE").pipe(
     Config.withDefault(""),
   );
@@ -60,6 +63,7 @@ const main = Effect.gen(function* () {
     successorBriefPath,
     redisUrl,
     receiptPath,
+    herdrSession,
     ...(herdrWorkspace ? { herdrWorkspace } : {}),
     ...(successorCommand ? { successorCommand } : {}),
   });

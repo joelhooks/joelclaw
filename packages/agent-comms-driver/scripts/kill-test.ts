@@ -26,6 +26,7 @@ const ports = makeLiveKillDrillPorts({
   successorBriefPath: resolve(required("GATEWAY_SUCCESSOR_BRIEF_PATH")),
   redisUrl: process.env.REDIS_URL?.trim(),
   heartbeatKey: process.env.GATEWAY_HEARTBEAT_KEY?.trim(),
+  herdrSession: process.env.GATEWAY_HERDR_SESSION?.trim(),
   receiptPath: process.env.GATEWAY_KILL_DRILL_RECEIPT_PATH?.trim()
     ?? "/tmp/joelclaw/agent-comms-kill-drill.jsonl",
 });

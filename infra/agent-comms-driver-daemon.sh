@@ -16,8 +16,9 @@ REPO_ROOT="${REPO_ROOT:-$HOME/Code/joelhooks/joelclaw}"
   exit 78
 }
 
-export GATEWAY_AGENT_TARGET="📨"
-export GATEWAY_HERDR_WORKSPACE="w2C"
+export GATEWAY_AGENT_TARGET="📨 gateway loop"
+export GATEWAY_HERDR_SESSION="system"
+export GATEWAY_HERDR_WORKSPACE="[jc] gateway agent"
 export GATEWAY_SUCCESSOR_BRIEF_PATH="$REPO_ROOT/.brain/tasks/gateway-session-boot.svx"
 
 cd "$REPO_ROOT"

@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import type { PaneScheduleEntry } from "../../lib/pane-schedule";
-import { dispatchDuePaneSchedule, paneSchedule } from "./pane-schedule";
+import {
+  beatLaneRegistryKey,
+  dispatchDuePaneSchedule,
+  paneSchedule,
+} from "./pane-schedule";
 
 const spawnEntry: PaneScheduleEntry = {
   version: 1,
@@ -22,6 +26,11 @@ const wakeEntry: PaneScheduleEntry = {
   requestedBy: "test",
   createdAt: "2026-07-22T15:00:00.000Z",
 };
+
+test("beat lane registry is isolated by herdr session", () => {
+  expect(beatLaneRegistryKey("system")).toBe("pane:beats:lanes:system");
+  expect(beatLaneRegistryKey("observer")).toBe("pane:beats:lanes:observer");
+});
 
 test("pane schedule cancellation matches the schedule id", () => {
   const cancelOn = ((paneSchedule as unknown as { opts?: { cancelOn?: unknown[] } }).opts?.cancelOn ?? [])[0];

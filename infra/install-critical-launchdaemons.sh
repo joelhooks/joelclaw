@@ -23,6 +23,7 @@ HEADLESS_RUNTIME_LABELS=(
   com.joel.gateway
   com.joelclaw.agent-mail
   com.joelclaw.herdr-server
+  com.joelclaw.herdr-system-server
   com.joelclaw.wiki-serve
   com.joelclaw.wiki-serve-check
 )
@@ -263,8 +264,22 @@ bootstrap_system_daemon() {
   launchctl kickstart -k "system/${label}" >/dev/null 2>&1 || true
 }
 
+is_herdr_server_label() {
+  [ "$1" = "com.joelclaw.herdr-server" ] \
+    || [ "$1" = "com.joelclaw.herdr-system-server" ]
+}
+
+herdr_socket_for_label() {
+  if [ "$1" = "com.joelclaw.herdr-system-server" ]; then
+    printf '%s\n' "${TARGET_HOME}/.config/herdr/sessions/system/herdr.sock"
+  else
+    printf '%s\n' "${TARGET_HOME}/.config/herdr/herdr.sock"
+  fi
+}
+
 herdr_server_has_owner() {
-  local socket_path="${TARGET_HOME}/.config/herdr/herdr.sock"
+  local socket_path
+  socket_path="$(herdr_socket_for_label "$1")"
   [ -S "$socket_path" ] && /usr/sbin/lsof -t "$socket_path" >/dev/null 2>&1
 }
 
@@ -294,15 +309,15 @@ if [ "$HOSTNAME_SHORT" != "$K8S_HOST" ]; then
 fi
 sleep 2
 
-HERDR_SYSTEM_PRESERVED=false
+HERDR_PRESERVED_LABELS=""
 for label in "${CRITICAL_LABELS[@]}"; do
-  if [ "$label" = "com.joelclaw.herdr-server" ] && herdr_server_has_owner; then
+  if is_herdr_server_label "$label" && herdr_server_has_owner "$label"; then
     # Removing a loaded herdr job can kill every live pane. Remove only the
     # on-disk user plist, then either load a waiting system wrapper for a
     # detached incumbent or leave an already-loaded system job untouched.
     rm -f "${LAUNCH_AGENTS_DIR}/${label}.plist"
     if launchctl print "system/${label}" >/dev/null 2>&1; then
-      HERDR_SYSTEM_PRESERVED=true
+      HERDR_PRESERVED_LABELS="${HERDR_PRESERVED_LABELS} ${label}"
     else
       remove_system_service "$label"
     fi
@@ -314,9 +329,9 @@ for label in "${CRITICAL_LABELS[@]}"; do
 done
 
 for label in "${CRITICAL_LABELS[@]}"; do
-  if [ "$label" = "com.joelclaw.herdr-server" ] && [ "$HERDR_SYSTEM_PRESERVED" = true ]; then
-    continue
-  fi
+  case " ${HERDR_PRESERVED_LABELS} " in
+    *" ${label} "*) continue ;;
+  esac
   bootstrap_system_daemon "$label"
 done
 
