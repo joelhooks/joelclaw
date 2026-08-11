@@ -7,49 +7,50 @@ import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
 const DOCS_COLLECTION = "docs";
+const DOCS_TYPESENSE_URL = process.env.DOCS_TYPESENSE_URL || typesense.TYPESENSE_URL;
 const THREE_BODY_ROOT = "/Volumes/three-body";
 const MANIFEST_FILE_NAME = "manifest.clean.jsonl";
 const PAGE_SIZE = 250;
 const MAX_PAGES = 40;
 const DOCS_BACKLOG_BATCH_SIZE = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_BATCH_SIZE ?? "12", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_BATCH_SIZE ?? "12", 10),
 );
 const DOCS_BACKLOG_BATCH_SLEEP_SECONDS = Math.max(
   0,
-  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_BATCH_SLEEP_SECONDS ?? "2", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_BATCH_SLEEP_SECONDS ?? "2", 10),
 );
 const DOCS_REINDEX_BATCH_SIZE = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_REINDEX_BATCH_SIZE ?? "12", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_REINDEX_BATCH_SIZE ?? "12", 10),
 );
 const DOCS_REINDEX_BATCH_SLEEP_SECONDS = Math.max(
   0,
-  Number.parseInt(process.env.JOELCLAW_DOCS_REINDEX_BATCH_SLEEP_SECONDS ?? "2", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_REINDEX_BATCH_SLEEP_SECONDS ?? "2", 10),
 );
 const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
 const INNGEST_GQL_URL = `${INNGEST_URL}/v0/gql`;
 const INNGEST_GQL_TIMEOUT_MS = Math.max(
   5_000,
-  Number.parseInt(process.env.JOELCLAW_INNGEST_GQL_TIMEOUT_MS ?? "20000", 10)
+  Number.parseInt(process.env.JOELCLAW_INNGEST_GQL_TIMEOUT_MS ?? "20000", 10),
 );
 const DOCS_BACKLOG_DRIVER_CRON =
   process.env.JOELCLAW_DOCS_BACKLOG_DRIVER_CRON?.trim() || "*/4 * * * *";
 const DOCS_BACKLOG_DRIVER_LOOKBACK_HOURS = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_DRIVER_LOOKBACK_HOURS ?? "8", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_DRIVER_LOOKBACK_HOURS ?? "8", 10),
 );
 const DOCS_BACKLOG_DRIVER_MAX_ENTRIES = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_DRIVER_MAX_ENTRIES ?? "24", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_DRIVER_MAX_ENTRIES ?? "24", 10),
 );
 const DOCS_BACKLOG_DRIVER_MAX_RUNNING = Math.max(
   0,
-  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_DRIVER_MAX_RUNNING ?? "2", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_DRIVER_MAX_RUNNING ?? "2", 10),
 );
 const DOCS_BACKLOG_DRIVER_MAX_QUEUED = Math.max(
   0,
-  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_DRIVER_MAX_QUEUED ?? "24", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_DRIVER_MAX_QUEUED ?? "24", 10),
 );
 const DOCS_BACKLOG_DRIVER_IDEMPOTENCY_PREFIX =
   process.env.JOELCLAW_DOCS_BACKLOG_DRIVER_IDEMPOTENCY_PREFIX?.trim() || "driver";
@@ -57,37 +58,34 @@ const DOCS_INGEST_JANITOR_CRON =
   process.env.JOELCLAW_DOCS_INGEST_JANITOR_CRON?.trim() || "*/6 * * * *";
 const DOCS_INGEST_JANITOR_LOOKBACK_HOURS = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_LOOKBACK_HOURS ?? "24", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_LOOKBACK_HOURS ?? "24", 10),
 );
 const DOCS_INGEST_JANITOR_SCAN_LIMIT = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_SCAN_LIMIT ?? "120", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_SCAN_LIMIT ?? "120", 10),
 );
 const DOCS_INGEST_JANITOR_STALE_MINUTES = Math.max(
   5,
-  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_STALE_MINUTES ?? "15", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_STALE_MINUTES ?? "15", 10),
 );
 const DOCS_INGEST_JANITOR_MAX_RECOVERIES = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_MAX_RECOVERIES ?? "8", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_MAX_RECOVERIES ?? "8", 10),
 );
 const DOCS_INGEST_JANITOR_ALERT_SDK_UNREACHABLE_THRESHOLD = Math.max(
   1,
   Number.parseInt(
     process.env.JOELCLAW_DOCS_INGEST_JANITOR_ALERT_SDK_UNREACHABLE_THRESHOLD ?? "3",
-    10
-  )
+    10,
+  ),
 );
 const DOCS_INGEST_JANITOR_ALERT_STALE_THRESHOLD = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_ALERT_STALE_THRESHOLD ?? "3", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_ALERT_STALE_THRESHOLD ?? "3", 10),
 );
 const DOCS_INGEST_JANITOR_ALERT_FINALIZATION_THRESHOLD = Math.max(
   1,
-  Number.parseInt(
-    process.env.JOELCLAW_DOCS_INGEST_JANITOR_ALERT_FINALIZATION_THRESHOLD ?? "2",
-    10
-  )
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_JANITOR_ALERT_FINALIZATION_THRESHOLD ?? "2", 10),
 );
 const SUPPORTED_DOCS_EXTENSIONS = new Set([".pdf", ".md", ".txt"]);
 
@@ -266,7 +264,7 @@ export function shouldDispatchBacklogDriver(input: {
 }
 
 export function classifyFinalizationFailure(
-  message: string | null | undefined
+  message: string | null | undefined,
 ): Exclude<DocsFinalizationFailureClass, "stale_running"> {
   const normalized = (message ?? "").toLowerCase();
   if (normalized.includes("unable to reach sdk url")) return "sdk_unreachable";
@@ -312,9 +310,7 @@ async function inngestGql<T>(query: string, variables?: Record<string, unknown>)
     errors?: Array<{ message?: string }>;
   };
   if (payload.errors?.length) {
-    const message = payload.errors
-      .map((error) => error.message ?? "unknown_error")
-      .join("; ");
+    const message = payload.errors.map((error) => error.message ?? "unknown_error").join("; ");
     throw new Error(`Inngest GQL error: ${message}`);
   }
   if (!payload.data) {
@@ -344,7 +340,7 @@ async function resolveDocsIngestFunctionId(): Promise<string> {
 
 async function loadDocsIngestQueueDepth(
   docsIngestFunctionId: string,
-  lookbackHours: number
+  lookbackHours: number,
 ): Promise<DocsIngestQueueDepth> {
   const data = await inngestGql<{
     runs?: {
@@ -374,7 +370,7 @@ async function loadDocsIngestQueueDepth(
     {
       from: hoursAgoIso(lookbackHours),
       functionIDs: [docsIngestFunctionId],
-    }
+    },
   );
 
   const runs = (data.runs?.edges ?? [])
@@ -393,7 +389,7 @@ async function loadDocsIngestQueueDepth(
 async function listRunningDocsIngestRuns(
   docsIngestFunctionId: string,
   lookbackHours: number,
-  scanLimit: number
+  scanLimit: number,
 ): Promise<InngestRunRecord[]> {
   const data = await inngestGql<{
     runs?: {
@@ -425,7 +421,7 @@ async function listRunningDocsIngestRuns(
       from: hoursAgoIso(lookbackHours),
       functionIDs: [docsIngestFunctionId],
       first: Math.max(1, scanLimit),
-    }
+    },
   );
 
   return (data.runs?.edges ?? [])
@@ -433,9 +429,7 @@ async function listRunningDocsIngestRuns(
     .filter((node): node is InngestRunRecord => Boolean(node));
 }
 
-function flattenRunTraceSpans(
-  span: InngestRunTraceSpan | null | undefined
-): InngestRunTraceSpan[] {
+function flattenRunTraceSpans(span: InngestRunTraceSpan | null | undefined): InngestRunTraceSpan[] {
   if (!span) return [];
   const children = span.childrenSpans ?? [];
   return [span, ...children.flatMap((child) => flattenRunTraceSpans(child))];
@@ -476,7 +470,7 @@ async function loadRunTriggerEventData(runId: string): Promise<Record<string, un
         }
       }
     `,
-    { runID: runId }
+    { runID: runId },
   );
 
   const trigger = triggerData.runTrigger;
@@ -500,7 +494,7 @@ async function loadRunTriggerEventData(runId: string): Promise<Record<string, un
         }
       }
     `,
-    { eventID: triggerEventId }
+    { eventID: triggerEventId },
   );
 
   const event = eventData.event;
@@ -513,7 +507,7 @@ async function loadRunTriggerEventData(runId: string): Promise<Record<string, un
 
 function buildJanitorRecoveryPayload(
   runId: string,
-  eventData: Record<string, unknown> | null
+  eventData: Record<string, unknown> | null,
 ): RecoverableDocsRun["payload"] {
   if (!eventData) return undefined;
   const nasPath = asString(eventData.nasPath);
@@ -536,7 +530,7 @@ function buildJanitorRecoveryPayload(
 
 async function inspectRunForRecovery(
   run: InngestRunRecord,
-  staleAfterMinutes: number
+  staleAfterMinutes: number,
 ): Promise<RecoverableDocsRun | null> {
   const runData = await inngestGql<{
     runTrace?: InngestRunTraceSpan | null;
@@ -573,12 +567,12 @@ async function inspectRunForRecovery(
         }
       }
     `,
-    { runID: run.id }
+    { runID: run.id },
   );
 
   const allSpans = flattenRunTraceSpans(runData.runTrace);
   const failedFinalizationSpan = allSpans.find(
-    (span) => span.name === "Finalization" && span.status === "FAILED"
+    (span) => span.name === "Finalization" && span.status === "FAILED",
   );
 
   let failureClass: DocsFinalizationFailureClass | null = null;
@@ -607,7 +601,7 @@ async function inspectRunForRecovery(
             }
           }
         `,
-        { outputID: outputId }
+        { outputID: outputId },
       );
 
       const error = outputData.runTraceSpanOutputByID?.error;
@@ -656,7 +650,7 @@ async function cancelRun(runId: string): Promise<string | null> {
         }
       }
     `,
-    { runID: runId }
+    { runID: runId },
   );
   return data.cancelRun?.status ?? null;
 }
@@ -666,7 +660,9 @@ function normalizePathKey(value: string): string {
 }
 
 function sanitizeManifestFilename(raw: string): string {
-  const extension = extname(raw).replace(/[^a-zA-Z0-9.]/g, "").slice(0, 20);
+  const extension = extname(raw)
+    .replace(/[^a-zA-Z0-9.]/g, "")
+    .slice(0, 20);
   const maxBaseLength = Math.max(1, 200 - extension.length);
 
   let base = raw
@@ -767,9 +763,7 @@ async function resolveManifestPath(requestedPath: unknown): Promise<string> {
     }
   }
 
-  throw new NonRetriableError(
-    `Manifest file not found. Checked: ${candidatePaths.join(", ")}`
-  );
+  throw new NonRetriableError(`Manifest file not found. Checked: ${candidatePaths.join(", ")}`);
 }
 
 async function loadManifestEntries(manifestPath: string): Promise<ManifestBacklogEntry[]> {
@@ -825,9 +819,10 @@ function mapDocsRecord(document: Record<string, unknown>): DocsRecord | null {
 }
 
 async function fetchDocById(docId: string): Promise<DocsRecord> {
-  const response = await typesense.typesenseRequest(
+  const response = await typesense.typesenseRequestAt(
+    DOCS_TYPESENSE_URL,
     `/collections/${DOCS_COLLECTION}/documents/${encodeURIComponent(docId)}`,
-    { method: "GET" }
+    { method: "GET" },
   );
 
   if (response.status === 404) {
@@ -858,9 +853,10 @@ async function listDocsRecords(): Promise<DocsRecord[]> {
       include_fields: "id,title,nas_path,tags,storage_category,source_host",
     });
 
-    const response = await typesense.typesenseRequest(
+    const response = await typesense.typesenseRequestAt(
+      DOCS_TYPESENSE_URL,
       `/collections/${DOCS_COLLECTION}/documents/search?${params.toString()}`,
-      { method: "GET" }
+      { method: "GET" },
     );
 
     if (!response.ok) {
@@ -885,7 +881,7 @@ async function listDocsRecords(): Promise<DocsRecord[]> {
 
 function ingestEventFromDoc(
   doc: DocsRecord,
-  idempotencyKey?: string
+  idempotencyKey?: string,
 ): {
   name: "docs/ingest.requested";
   data: {
@@ -930,13 +926,13 @@ export const docsEnrich = inngest.createFunction(
             docId: event.data.docId,
           },
         },
-        async () => fetchDocById(event.data.docId)
+        async () => fetchDocById(event.data.docId),
       );
     });
 
     const enqueue = await step.sendEvent(
       "requeue-ingest",
-      ingestEventFromDoc(doc, `enrich:${doc.id}:${Date.now()}`)
+      ingestEventFromDoc(doc, `enrich:${doc.id}:${Date.now()}`),
     );
 
     await step.run("emit-otel", async () => {
@@ -952,7 +948,7 @@ export const docsEnrich = inngest.createFunction(
             eventIds: enqueue.ids,
           },
         },
-        async () => ({ queued: true })
+        async () => ({ queued: true }),
       );
     });
 
@@ -961,7 +957,7 @@ export const docsEnrich = inngest.createFunction(
       nasPath: doc.nasPath,
       queuedEventIds: enqueue.ids,
     };
-  }
+  },
 );
 
 export const docsBacklog = inngest.createFunction(
@@ -983,7 +979,7 @@ export const docsBacklog = inngest.createFunction(
     };
 
     const manifestPath = await step.run("resolve-manifest-path", async () =>
-      resolveManifestPath(eventData.manifestPath)
+      resolveManifestPath(eventData.manifestPath),
     );
     const maxEntries = asPositiveInt(eventData.maxEntries);
     const booksOnly = asBoolean(eventData.booksOnly, true);
@@ -1076,7 +1072,7 @@ export const docsBacklog = inngest.createFunction(
               skippedByCategory: planning.skippedByCategory,
             },
           },
-          async () => ({ queued: 0 })
+          async () => ({ queued: 0 }),
         );
       });
 
@@ -1111,7 +1107,7 @@ export const docsBacklog = inngest.createFunction(
             sourceHost: candidate.sourceHost,
             idempotencyKey: `${idempotencyPrefix}:${candidate.entryId}`,
           },
-        }))
+        })),
       );
       queued += sendResult.ids.length;
       batchSizes.push(sendResult.ids.length);
@@ -1120,7 +1116,7 @@ export const docsBacklog = inngest.createFunction(
       if (!isLastBatch && DOCS_BACKLOG_BATCH_SLEEP_SECONDS > 0) {
         await step.sleep(
           `pace-backlog-batch-${batchNumber}`,
-          `${DOCS_BACKLOG_BATCH_SLEEP_SECONDS}s`
+          `${DOCS_BACKLOG_BATCH_SLEEP_SECONDS}s`,
         );
       }
     }
@@ -1151,7 +1147,7 @@ export const docsBacklog = inngest.createFunction(
             skippedByCategory: planning.skippedByCategory,
           },
         },
-        async () => ({ queued })
+        async () => ({ queued }),
       );
     });
 
@@ -1173,7 +1169,7 @@ export const docsBacklog = inngest.createFunction(
       skippedAlreadyIndexed: planning.skippedAlreadyIndexed,
       skippedByCategory: planning.skippedByCategory,
     };
-  }
+  },
 );
 
 export const docsReindex = inngest.createFunction(
@@ -1206,7 +1202,7 @@ export const docsReindex = inngest.createFunction(
               requestedDocId: event.data.docId ?? null,
             },
           },
-          async () => ({ queued: 0 })
+          async () => ({ queued: 0 }),
         );
       });
       return {
@@ -1225,8 +1221,8 @@ export const docsReindex = inngest.createFunction(
       const sendResult = await step.sendEvent(
         `queue-batch-${batchIndex}`,
         batch.map((doc, docOffset) =>
-          ingestEventFromDoc(doc, `reindex:${doc.id}:${batchIndex}:${docOffset}:${Date.now()}`)
-        )
+          ingestEventFromDoc(doc, `reindex:${doc.id}:${batchIndex}:${docOffset}:${Date.now()}`),
+        ),
       );
       queued += sendResult.ids.length;
       batches.push(sendResult.ids.length);
@@ -1235,7 +1231,7 @@ export const docsReindex = inngest.createFunction(
       if (!isLastBatch && DOCS_REINDEX_BATCH_SLEEP_SECONDS > 0) {
         await step.sleep(
           `pace-reindex-batch-${batchIndex}`,
-          `${DOCS_REINDEX_BATCH_SLEEP_SECONDS}s`
+          `${DOCS_REINDEX_BATCH_SLEEP_SECONDS}s`,
         );
       }
     }
@@ -1257,7 +1253,7 @@ export const docsReindex = inngest.createFunction(
             batchSizes: batches,
           },
         },
-        async () => ({ queued })
+        async () => ({ queued }),
       );
     });
 
@@ -1270,7 +1266,7 @@ export const docsReindex = inngest.createFunction(
       batchSleepSeconds: DOCS_REINDEX_BATCH_SLEEP_SECONDS,
       batchSizes: batches,
     };
-  }
+  },
 );
 
 export const docsBacklogDriver = inngest.createFunction(
@@ -1297,20 +1293,17 @@ export const docsBacklogDriver = inngest.createFunction(
 
     const force = asBoolean(eventData.force, false);
     const reason = asString(eventData.reason) ?? null;
-    const maxEntries =
-      asPositiveInt(eventData.maxEntries) ?? DOCS_BACKLOG_DRIVER_MAX_ENTRIES;
-    const maxRunning =
-      asNonNegativeInt(eventData.maxRunning) ?? DOCS_BACKLOG_DRIVER_MAX_RUNNING;
-    const maxQueued =
-      asNonNegativeInt(eventData.maxQueued) ?? DOCS_BACKLOG_DRIVER_MAX_QUEUED;
+    const maxEntries = asPositiveInt(eventData.maxEntries) ?? DOCS_BACKLOG_DRIVER_MAX_ENTRIES;
+    const maxRunning = asNonNegativeInt(eventData.maxRunning) ?? DOCS_BACKLOG_DRIVER_MAX_RUNNING;
+    const maxQueued = asNonNegativeInt(eventData.maxQueued) ?? DOCS_BACKLOG_DRIVER_MAX_QUEUED;
     const lookbackHours =
       asPositiveInt(eventData.lookbackHours) ?? DOCS_BACKLOG_DRIVER_LOOKBACK_HOURS;
     const booksOnly = asBoolean(eventData.booksOnly, true);
     const onlyMissing = asBoolean(eventData.onlyMissing, true);
     const includePodcasts = asBoolean(eventData.includePodcasts, false);
     const idempotencyPrefix =
-      asString(eventData.idempotencyPrefix)
-      ?? formatHourlyIdempotencyPrefix(DOCS_BACKLOG_DRIVER_IDEMPOTENCY_PREFIX);
+      asString(eventData.idempotencyPrefix) ??
+      formatHourlyIdempotencyPrefix(DOCS_BACKLOG_DRIVER_IDEMPOTENCY_PREFIX);
 
     const docsIngestFunctionId = await step.run("resolve-docs-ingest-function-id", async () => {
       return resolveDocsIngestFunctionId();
@@ -1347,7 +1340,7 @@ export const docsBacklogDriver = inngest.createFunction(
               sampleRunIds: queueDepth.sampleRunIds,
             },
           },
-          async () => ({ dispatched: false })
+          async () => ({ dispatched: false }),
         );
       });
 
@@ -1399,7 +1392,7 @@ export const docsBacklogDriver = inngest.createFunction(
             eventIds: queued.ids,
           },
         },
-        async () => ({ dispatched: true, queuedEvents: queued.ids.length })
+        async () => ({ dispatched: true, queuedEvents: queued.ids.length }),
       );
     });
 
@@ -1420,7 +1413,7 @@ export const docsBacklogDriver = inngest.createFunction(
       sampleRunIds: queueDepth.sampleRunIds,
       queuedEventIds: queued.ids,
     };
-  }
+  },
 );
 
 type DocsJanitorClassCounts = Record<DocsFinalizationFailureClass, number>;
@@ -1455,8 +1448,7 @@ export const docsIngestJanitor = inngest.createFunction(
     const lookbackHours =
       asPositiveInt(eventData.lookbackHours) ?? DOCS_INGEST_JANITOR_LOOKBACK_HOURS;
     const scanLimit = asPositiveInt(eventData.scanLimit) ?? DOCS_INGEST_JANITOR_SCAN_LIMIT;
-    const staleMinutes =
-      asPositiveInt(eventData.staleMinutes) ?? DOCS_INGEST_JANITOR_STALE_MINUTES;
+    const staleMinutes = asPositiveInt(eventData.staleMinutes) ?? DOCS_INGEST_JANITOR_STALE_MINUTES;
     const maxRecoveries =
       asPositiveInt(eventData.maxRecoveries) ?? DOCS_INGEST_JANITOR_MAX_RECOVERIES;
 
@@ -1606,7 +1598,7 @@ export const docsIngestJanitor = inngest.createFunction(
           recovered: requeuedRunIds.length,
           canceled: canceledRunIds.length,
           requeueSkipped: Object.keys(requeueSkipped).length,
-        })
+        }),
       );
     });
 
@@ -1677,5 +1669,5 @@ export const docsIngestJanitor = inngest.createFunction(
       selectedRunIds: selected.map((item) => item.runId),
       requeueEventIds,
     };
-  }
+  },
 );

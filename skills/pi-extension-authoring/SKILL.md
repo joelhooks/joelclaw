@@ -102,7 +102,7 @@ For package updates:
 pi update
 
 # Keep npm-global tools current. Do not install the unrelated `pi` npm package.
-npm install -g @earendil-works/pi-coding-agent@latest pi-mcp-adapter@latest pi-gitnexus@latest pi-subagents@latest pi-interactive-shell@latest
+npm install -g @earendil-works/pi-coding-agent@latest pi-mcp-adapter@latest pi-subagents@latest pi-interactive-shell@latest
 
 # If Bun's shadow global is present, either point ~/.bun/bin/pi at ~/.local/bin/pi
 # or force the exact current version. Bun may block fresh releases via minimum-release-age.
@@ -111,7 +111,7 @@ bun add -g --minimum-release-age=0 @earendil-works/pi-coding-agent@$(pi --versio
 which -a pi
 pi --version
 pi list
-npm list -g --depth=0 | rg '@earendil-works/pi-coding-agent|@mariozechner/pi-coding-agent|pi-gitnexus|pi-mcp-adapter|pi-subagents|pi-interactive-shell'
+npm list -g --depth=0 | rg '@earendil-works/pi-coding-agent|@mariozechner/pi-coding-agent|pi-mcp-adapter|pi-subagents|pi-interactive-shell'
 ```
 
 Smoke-test both base Pi and full extension/tool startup with an approved model:
@@ -127,9 +127,9 @@ If multiple `pi` binaries exist, verify they resolve to the same version. On Pan
 
 ## Common fixes
 
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| `This extension ctx is stale after session replacement or reload` | Delayed callback used old `pi`/ctx | Cache plain data; inject via `before_agent_start` return or use `withSession` |
-| `cannot load optional dependency` | Package not installed from extension realpath | Install deps from the source repo realpath or make the dependency lazy/fail-open |
-| Duplicate startup messages/traces | Extension loaded twice via package + symlink | Remove one active path from settings/package `pi.extensions` |
-| Skill conflict warning | Skill directory name differs from frontmatter `name` | Rename directory or frontmatter so they match |
+| Symptom                                                           | Likely cause                                         | Fix                                                                              |
+| ----------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `This extension ctx is stale after session replacement or reload` | Delayed callback used old `pi`/ctx                   | Cache plain data; inject via `before_agent_start` return or use `withSession`    |
+| `cannot load optional dependency`                                 | Package not installed from extension realpath        | Install deps from the source repo realpath or make the dependency lazy/fail-open |
+| Duplicate startup messages/traces                                 | Extension loaded twice via package + symlink         | Remove one active path from settings/package `pi.extensions`                     |
+| Skill conflict warning                                            | Skill directory name differs from frontmatter `name` | Rename directory or frontmatter so they match                                    |

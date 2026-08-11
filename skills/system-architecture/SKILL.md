@@ -29,6 +29,7 @@ Freshness notes:
 Treat older “Panda is the whole system” wording as stale unless re-verified against live receipts.
 
 Use it for:
+
 - "why did this run / not run"
 - "which worker handles this function"
 - "what is listening on port X"
@@ -40,6 +41,7 @@ Use it for:
 ## Ground-Truth Scope + Evidence Snapshot
 
 This document is grounded in direct reads of:
+
 - `apps/docs-api/src/index.ts`
 - `packages/restate/Dockerfile`
 - `packages/restate/src/index.ts`
@@ -78,6 +80,7 @@ This document is grounded in direct reads of:
 - canonical OTel events plus durable Brain `.svx` receipts (the former system-log JSONL is archived and retired)
 
 ### Related docs verified
+
 - `docs/architecture.md` — Restate/Firecracker runtime + workload execution flow
 - `docs/deploy.md` — Restate worker deploy + auth/identity/PVC procedures
 - `docs/cli.md` — workload command tree + runtime bridge
@@ -86,6 +89,7 @@ This document is grounded in direct reads of:
 ### Refresh receipt: 2026-06-15
 
 This refresh folds in work from:
+
 - Central vocabulary + Project Thread docs (`6b3a1b05`, `CONTEXT.md`, `docs/gateway.md`)
 - Flagg Central scaffold and Gate 5 migration runbooks (`6e02a6cd`, `d36b52f2`, `infra/central/*`)
 - worker-hosted Run capture (`f06501a8`, `docs/inngest-functions.md`, `packages/system-bus/src/serve.ts`)
@@ -102,22 +106,25 @@ The old mental model was "Panda is joelclaw." That is no longer precise enough.
 
 Use these terms:
 
-| Term | Meaning | Current truth |
-|---|---|---|
-| Network | Users + Machines coordinated by one Central | Logical boundary, not the tailnet/k8s cluster |
-| Central | single authoritative joelclaw service for the Network | Flagg is authoritative for agent-mail and Run capture; verify remaining service families individually during migration |
-| Central host target | Machine consolidating Central responsibilities | Flagg / Mac Studio, `machine_id=mac-studio-central` |
-| Relay Machine | machine that hosts account-bound/local-hardware-bound relays while delegating state to Central | Panda becomes this after cutover; satellites stay thin |
-| Satellite Machine | thin local Pi/Codex/Claude runner with capture/search/repair hooks | Blaine and Flagg bootstrap through `scripts/setup-satellite-rig.sh` |
-| Run | one captured agent invocation | raw JSONL + metadata first, SQLite FTS is the live search index |
-| Conversation | sibling Run label for an interactive context | not the source of truth |
-| Project Thread | private `#brain-joel` operator workroom for a bounded objective | coordination only; does not authorize public replies |
+| Term                | Meaning                                                                                        | Current truth                                                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Network             | Users + Machines coordinated by one Central                                                    | Logical boundary, not the tailnet/k8s cluster                                                                          |
+| Central             | single authoritative joelclaw service for the Network                                          | Flagg is authoritative for agent-mail and Run capture; verify remaining service families individually during migration |
+| Central host target | Machine consolidating Central responsibilities                                                 | Flagg / Mac Studio, `machine_id=mac-studio-central`                                                                    |
+| Relay Machine       | machine that hosts account-bound/local-hardware-bound relays while delegating state to Central | Panda becomes this after cutover; satellites stay thin                                                                 |
+| Satellite Machine   | thin local Pi/Codex/Claude runner with capture/search/repair hooks                             | Blaine and Flagg bootstrap through `scripts/setup-satellite-rig.sh`                                                    |
+| Run                 | one captured agent invocation                                                                  | raw JSONL + metadata first, SQLite FTS is the live search index                                                        |
+| Conversation        | sibling Run label for an interactive context                                                   | not the source of truth                                                                                                |
+| Project Thread      | private `#brain-joel` operator workroom for a bounded objective                                | coordination only; does not authorize public replies                                                                   |
 
 Current authority split (verified 2026-07-10):
+
 - **Flagg is authoritative for agent-mail and Run capture ingress.** The agent-mail daemon binds Flagg loopback; Blaine and Panda use SSH connector LaunchAgents so every `joelclaw mail` client reaches the same mailbox without exposing the service on the tailnet.
 - **Panda is migration debt plus Relay responsibilities.** Its independent agent-mail daemon and Talon are removed. A reboot-survivable SSH connector now binds Panda IPv4 loopback `127.0.0.1:3111` and forwards legacy `/api/runs` and `/webhooks` ingress to Flagg. The legacy system worker still owns the IPv6 listener until its system LaunchDaemon is booted out with sudo.
 - **Satellites stay thin**. They run Pi/Codex/Claude, local capture hooks, and connectors to Central. Do not install independent stateful Central services on a satellite without a specific reason.
 - **SQLite indexes Runs**. NAS/local Run blobs are the source of truth; `sessions.db` is the compact live FTS index. The retired Typesense `runs_dev` and `run_chunks_dev` collections must not be recreated.
+- **Flagg splits book search from the operational Typesense node.** The system LaunchDaemon on `127.0.0.1:8108` holds operational projections. The user LaunchAgent `com.joelclaw.typesense-books` on `127.0.0.1:8110` holds `docs` and `docs_chunks_v2`. `DOCS_TYPESENSE_URL` routes book readers and writers. A tailnet-only TCP forward exposes `8110` to Blaine.
+- **The book node is not a replica.** A Typesense replica would copy every collection and repeat the same memory and startup cost. The separate process gives book indexing its own failure and restart boundary.
 
 Cutover rule: avoid split-brain. Panda and Flagg must not both accept authoritative writes for the same Central service family. Gate 5 permits shadow smoke tests and migration rehearsal, but authority flips only inside an approved freeze/cutover window.
 
@@ -187,6 +194,7 @@ Mac Studio "Flagg" (host macOS; target Central host)
 Flagg Gate 4 is complete: shadow Central recovered after hard reboot with no GUI login. Gate 5 is not complete until Flagg owns Central state, workers, endpoints, and verification while Panda is frozen as rollback-only.
 
 ### Known runtime endpoints
+
 - Colima VM IP: `192.168.64.2` (`colima status --json`)
 - Kubernetes API (stable operator tunnel): `https://127.0.0.1:16443`
 - Talos API (stable operator tunnel): `127.0.0.1:15000`
@@ -201,6 +209,7 @@ Flagg Gate 4 is complete: shadow Central recovered after hard reboot with no GUI
   - do **not** use `http://panda:3000` or `http://panda.tail7af24.ts.net:3000`; Panda has no durable Central web listener there.
 
 ### Tailscale mesh state
+
 - `tailscale status --json` failed in this environment: **UNKNOWN — needs manual verification**
 
 ---
@@ -211,25 +220,25 @@ Flagg Gate 4 is complete: shadow Central recovered after hard reboot with no GUI
 
 > Snapshot source: `launchctl print gui/$(id -u)/<label>` and plist inspection.
 
-| Launchd label | State | PID (snapshot) | Role | Ports / endpoints |
-|---|---:|---:|---|---|
-| `com.joel.system-bus-worker` | running | 75292 | Host worker supervisor (`worker-supervisor`) | supervises child bun on 3111 |
-| `com.joel.restate-worker` | retired / rollback-only | — | Historical host Restate wrapper (`scripts/restate/start.sh`) | superseded by `deployment/restate-worker` on 9080 |
-| `com.joel.gateway` | running | 81275 | Gateway daemon (`packages/gateway/src/daemon.ts`) | WS `:3018`, Redis bridge |
-| `com.joel.caddy` | running | 9347 | Reverse proxy | 3443, 5443, 6443, 7443, 8290, 8443, 9443 |
-| `com.joel.talon` | running | 96359 | Infra watchdog | health `127.0.0.1:9999` |
-| `com.joel.agent-secrets` | running | 98048 | Secret lease daemon | no public port |
-| `com.joel.imsg-rpc` | running | 61110 | iMessage JSON-RPC socket daemon | Unix socket `/tmp/imsg.sock` |
-| `com.joel.kube-operator-access` | running | varies | stable kubectl/talos operator tunnel | local 16443 (kube), 15000 (talos) |
-| `com.joel.voice-agent` | running | 71887 | voice agent runtime | local 8081 |
-| `com.joel.local-sandbox-janitor` | scheduled | (launchd timer) | ADR-0221 local sandbox janitor (`scripts/local-sandbox-janitor.sh` → `joelclaw workload sandboxes janitor`) | logs in `/tmp/joelclaw/local-sandbox-janitor.{log,err}` |
-| `com.joelclaw.agent-mail` | spawn scheduled | (none in launchctl snapshot) | agent-mail MCP HTTP service | observed listener `127.0.0.1:8765` (python process) |
-| `com.joel.colima` | not running | — | startup helper for Colima | n/a |
-| `com.joel.k8s-reboot-heal` | not running | — | periodic k8s heal script | n/a |
-| `com.joel.system-bus-sync` | not running | — | sync guard watcher | n/a |
-| `com.joel.gateway-tripwire` | not running | — | gateway tripwire script | n/a |
-| `com.joel.content-sync-watcher` | not running | — | fs watch -> content/updated event | n/a |
-| `com.joel.vault-log-sync` | not running | — | Vault log sync watcher | n/a |
+| Launchd label                    |                   State |               PID (snapshot) | Role                                                                                                        | Ports / endpoints                                       |
+| -------------------------------- | ----------------------: | ---------------------------: | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `com.joel.system-bus-worker`     |                 running |                        75292 | Host worker supervisor (`worker-supervisor`)                                                                | supervises child bun on 3111                            |
+| `com.joel.restate-worker`        | retired / rollback-only |                            — | Historical host Restate wrapper (`scripts/restate/start.sh`)                                                | superseded by `deployment/restate-worker` on 9080       |
+| `com.joel.gateway`               |                 running |                        81275 | Gateway daemon (`packages/gateway/src/daemon.ts`)                                                           | WS `:3018`, Redis bridge                                |
+| `com.joel.caddy`                 |                 running |                         9347 | Reverse proxy                                                                                               | 3443, 5443, 6443, 7443, 8290, 8443, 9443                |
+| `com.joel.talon`                 |                 running |                        96359 | Infra watchdog                                                                                              | health `127.0.0.1:9999`                                 |
+| `com.joel.agent-secrets`         |                 running |                        98048 | Secret lease daemon                                                                                         | no public port                                          |
+| `com.joel.imsg-rpc`              |                 running |                        61110 | iMessage JSON-RPC socket daemon                                                                             | Unix socket `/tmp/imsg.sock`                            |
+| `com.joel.kube-operator-access`  |                 running |                       varies | stable kubectl/talos operator tunnel                                                                        | local 16443 (kube), 15000 (talos)                       |
+| `com.joel.voice-agent`           |                 running |                        71887 | voice agent runtime                                                                                         | local 8081                                              |
+| `com.joel.local-sandbox-janitor` |               scheduled |              (launchd timer) | ADR-0221 local sandbox janitor (`scripts/local-sandbox-janitor.sh` → `joelclaw workload sandboxes janitor`) | logs in `/tmp/joelclaw/local-sandbox-janitor.{log,err}` |
+| `com.joelclaw.agent-mail`        |         spawn scheduled | (none in launchctl snapshot) | agent-mail MCP HTTP service                                                                                 | observed listener `127.0.0.1:8765` (python process)     |
+| `com.joel.colima`                |             not running |                            — | startup helper for Colima                                                                                   | n/a                                                     |
+| `com.joel.k8s-reboot-heal`       |             not running |                            — | periodic k8s heal script                                                                                    | n/a                                                     |
+| `com.joel.system-bus-sync`       |             not running |                            — | sync guard watcher                                                                                          | n/a                                                     |
+| `com.joel.gateway-tripwire`      |             not running |                            — | gateway tripwire script                                                                                     | n/a                                                     |
+| `com.joel.content-sync-watcher`  |             not running |                            — | fs watch -> content/updated event                                                                           | n/a                                                     |
+| `com.joel.vault-log-sync`        |             not running |                            — | Vault log sync watcher                                                                                      | n/a                                                     |
 
 ## Flagg Central launchd scaffold
 
@@ -237,13 +246,13 @@ Flagg Gate 4 is complete: shadow Central recovered after hard reboot with no GUI
 
 These labels are part of the Flagg Central shadow/cutover scaffold. They are not proof that Flagg is authoritative.
 
-| Launchd label | Domain | Role | Ports / endpoints |
-|---|---|---|---|
-| `com.joelclaw.central.colima` | system LaunchDaemon | starts the dedicated `joelclaw-central` Colima/Docker substrate as service infrastructure | Docker socket under `/Users/joelclaw/.colima/joelclaw-central/docker.sock` |
-| `com.joelclaw.central.compose` | system LaunchDaemon | starts the shadow Central Compose stack | Redis, Typesense, Inngest, Restate, MinIO bound to `127.0.0.1` by default |
-| `com.joelclaw.central.health` | system LaunchDaemon | bounded health + recovery state machine | `health.sh` can invoke `recover.sh --all` after repeated degraded passes |
-| `com.joelclaw.central.nas-mounts` | system LaunchDaemon | mounts/verifies Flagg NAS tiers | `/Volumes/nas-nvme`, `/Volumes/three-body` |
-| `com.joelclaw.chorus-rhizomatic` | system LaunchDaemon | **Parked historical canary**; no briefing injection or live claims; stop pending steering sudo | Old endpoint `127.0.0.1:4821/mcp`; old satellite tunnel `127.0.0.1:7331` |
+| Launchd label                     | Domain              | Role                                                                                           | Ports / endpoints                                                          |
+| --------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `com.joelclaw.central.colima`     | system LaunchDaemon | starts the dedicated `joelclaw-central` Colima/Docker substrate as service infrastructure      | Docker socket under `/Users/joelclaw/.colima/joelclaw-central/docker.sock` |
+| `com.joelclaw.central.compose`    | system LaunchDaemon | starts the shadow Central Compose stack                                                        | Redis, Typesense, Inngest, Restate, MinIO bound to `127.0.0.1` by default  |
+| `com.joelclaw.central.health`     | system LaunchDaemon | bounded health + recovery state machine                                                        | `health.sh` can invoke `recover.sh --all` after repeated degraded passes   |
+| `com.joelclaw.central.nas-mounts` | system LaunchDaemon | mounts/verifies Flagg NAS tiers                                                                | `/Volumes/nas-nvme`, `/Volumes/three-body`                                 |
+| `com.joelclaw.chorus-rhizomatic`  | system LaunchDaemon | **Parked historical canary**; no briefing injection or live claims; stop pending steering sudo | Old endpoint `127.0.0.1:4821/mcp`; old satellite tunnel `127.0.0.1:7331`   |
 
 Flagg reboot acceptance rule: Central is not eligible for cutover until `infra/central/scripts/reboot-proof.sh` passes from another machine after hard reboot with no GUI login.
 
@@ -272,6 +281,7 @@ Source: `infra/worker-supervisor/src/main.rs`
   - `worker.supervisor.health_check.restart`
 
 ### Worker supervision split note
+
 - Talon is running (`com.joel.talon`), but host worker is still launched via `com.joel.system-bus-worker` -> `worker-supervisor`.
 - ADR + system-log indicate Talon can defer worker supervision during coexistence.
 
@@ -280,25 +290,26 @@ Source: `infra/worker-supervisor/src/main.rs`
 ## Kubernetes process inventory
 
 ## Node
+
 - `joelclaw-controlplane-1` (Talos v1.12.4, k8s v1.35.0, internal IP `10.5.0.2`)
 
 ## Core services
 
-| Service | Workload kind | Service type | Service port(s) | NodePort(s) / exposure | Role |
-|---|---|---|---|---|---|
-| Inngest | StatefulSet `inngest` | NodePort (`inngest-svc`) | 8288, 8289 | 8288, 8289 | Event API + connect ws |
-| Redis | StatefulSet `redis` | NodePort | 6379 | 6379 | Queue/state/pubsub |
-| Typesense | StatefulSet `typesense` | NodePort | 8108 | 8108 via Colima/Lima host publish | Search + telemetry store |
-| Restate | StatefulSet `restate` | NodePort | 8080, 9070, 9071 | 8080, 9070, 9071 | Durable workflow ingress + admin + metrics |
-| system-bus-worker | Deployment | ClusterIP | 3111 | in-cluster only | Cluster-role worker (12 functions) |
-| restate-worker | Deployment | ClusterIP | 9080 | in-cluster only | `dagOrchestrator` + `dagWorker` + queue drainer in full agent image |
-| docs-api | Deployment | NodePort | 3838 | 3838 | PDF/docs API + agentic search + taxonomy graph |
-| dkron | StatefulSet | ClusterIP (`dkron-svc`) + headless peer svc (`dkron-peer`) | 8080, 8946, 6868 | in-cluster only; operator access via short-lived CLI-managed tunnel | Distributed cron scheduler for Restate pipelines |
-| livekit-server | Deployment (Helm) | NodePort | 80, 7881 | 7880 (for svc port 80), 7881 | LiveKit signaling + rtc tcp |
-| bluesky-pds | Deployment (Helm-managed) | NodePort | 3000 | 3000 | AT Proto PDS |
-| minio | StatefulSet | ClusterIP + NodePort | 9000, 9001 | 30900, 30901 | Legacy local S3-compatible runtime |
-| aistor-s3-api (`aistor` ns) | NodePort service (operator-managed) | NodePort | 443, 9000 | 31000 (+ dynamic management NodePort) | AIStor S3 API (TLS + management) |
-| aistor-s3-console (`aistor` ns) | NodePort service (operator-managed) | NodePort | 9443 | 31001 | AIStor web console |
+| Service                         | Workload kind                       | Service type                                               | Service port(s)  | NodePort(s) / exposure                                              | Role                                                                |
+| ------------------------------- | ----------------------------------- | ---------------------------------------------------------- | ---------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Inngest                         | StatefulSet `inngest`               | NodePort (`inngest-svc`)                                   | 8288, 8289       | 8288, 8289                                                          | Event API + connect ws                                              |
+| Redis                           | StatefulSet `redis`                 | NodePort                                                   | 6379             | 6379                                                                | Queue/state/pubsub                                                  |
+| Typesense                       | StatefulSet `typesense`             | NodePort                                                   | 8108             | 8108 via Colima/Lima host publish                                   | Search + telemetry store                                            |
+| Restate                         | StatefulSet `restate`               | NodePort                                                   | 8080, 9070, 9071 | 8080, 9070, 9071                                                    | Durable workflow ingress + admin + metrics                          |
+| system-bus-worker               | Deployment                          | ClusterIP                                                  | 3111             | in-cluster only                                                     | Cluster-role worker (12 functions)                                  |
+| restate-worker                  | Deployment                          | ClusterIP                                                  | 9080             | in-cluster only                                                     | `dagOrchestrator` + `dagWorker` + queue drainer in full agent image |
+| docs-api                        | Deployment                          | NodePort                                                   | 3838             | 3838                                                                | PDF/docs API + agentic search + taxonomy graph                      |
+| dkron                           | StatefulSet                         | ClusterIP (`dkron-svc`) + headless peer svc (`dkron-peer`) | 8080, 8946, 6868 | in-cluster only; operator access via short-lived CLI-managed tunnel | Distributed cron scheduler for Restate pipelines                    |
+| livekit-server                  | Deployment (Helm)                   | NodePort                                                   | 80, 7881         | 7880 (for svc port 80), 7881                                        | LiveKit signaling + rtc tcp                                         |
+| bluesky-pds                     | Deployment (Helm-managed)           | NodePort                                                   | 3000             | 3000                                                                | AT Proto PDS                                                        |
+| minio                           | StatefulSet                         | ClusterIP + NodePort                                       | 9000, 9001       | 30900, 30901                                                        | Legacy local S3-compatible runtime                                  |
+| aistor-s3-api (`aistor` ns)     | NodePort service (operator-managed) | NodePort                                                   | 443, 9000        | 31000 (+ dynamic management NodePort)                               | AIStor S3 API (TLS + management)                                    |
+| aistor-s3-console (`aistor` ns) | NodePort service (operator-managed) | NodePort                                                   | 9443             | 31001                                                               | AIStor web console                                                  |
 
 ### Restate / Firecracker runtime note
 
@@ -310,6 +321,7 @@ Source: `infra/worker-supervisor/src/main.rs`
 - **Colima stability**: nestedVirtualization is OFF by default (crashes VM under Docker build load). Toggle ON only for Firecracker testing sessions, then toggle OFF. See k8s skill for recovery procedures.
 
 ### Control-plane access
+
 - kube API exposed locally at `127.0.0.1:16443` via `com.joel.kube-operator-access` (`ssh -S none -o ControlPath=none -L 16443:10.5.0.2:6443`)
 - Talos API exposed locally at `127.0.0.1:15000` via the same daemon (`ssh -S none -o ControlPath=none -L 15000:10.5.0.2:50000`)
 - NodePort/runtime app ports still come from Colima/Lima forwarding; the operator daemon exists specifically because the direct host-published 6443 path was not boring after the rebuild
@@ -319,18 +331,21 @@ Source: `infra/worker-supervisor/src/main.rs`
 ## 3) Worker Architecture (Role Split + Registration)
 
 Source files:
+
 - `packages/system-bus/src/serve.ts`
 - `packages/system-bus/src/inngest/functions/index.host.ts`
 - `packages/system-bus/src/inngest/functions/index.cluster.ts`
 - `packages/system-bus/src/inngest/client.ts`
 
 ## Role model
+
 - `WORKER_ROLE` parsed as `host` (default) or `cluster`.
 - Registered function set is role-dependent:
   - host uses `hostFunctionDefinitions`
   - cluster uses `clusterFunctionDefinitions`
 
 ## Ground-truth counts
+
 - Measured from the imported definition arrays on 2026-07-29:
   - Host function set: **163**
   - Cluster function set: **14**
@@ -348,7 +363,9 @@ Source files:
   - `swarm-orchestrator`, `swarm-agent-exec`
 
 ## App registration isolation
+
 From `inngest/client.ts`:
+
 - app id resolves to:
   - `system-bus-host` when role is host
   - `system-bus-cluster` when role is cluster
@@ -357,7 +374,9 @@ From `inngest/client.ts`:
 This prevents host and cluster workers from overwriting each other’s function graphs.
 
 ## serveHost behavior
+
 From `serve.ts`:
+
 - host role default `serveHost`: `http://host.docker.internal:3111`
 - cluster role default `serveHost`: unset (connect-mode default)
 - `INNGEST_SERVE_HOST` overrides either role.
@@ -367,6 +386,7 @@ From `serve.ts`:
 - Bun server `idleTimeout=255` because registration PUTs can exceed the default 10s while the self-hosted runtime is under cron/backlog pressure.
 
 Kubernetes cluster worker manifest sets:
+
 - `INNGEST_BASE_URL=http://inngest-svc:8288`
 - `INNGEST_SERVE_HOST=http://system-bus-worker:3111`
 - `TYPESENSE_URL=http://typesense:8108`
@@ -375,12 +395,15 @@ Kubernetes cluster worker manifest sets:
 Panda host worker config should advertise an SDK callback URL the Inngest pod can actually reach. Current docs call out `INNGEST_SERVE_HOST=http://100.93.201.72:3111` on Panda. Do not assume `host.lima.internal` or `host.docker.internal` works from inside Talos unless a live pod-to-host probe proves it.
 
 ## Registration mechanics
+
 - Worker exposes `GET|POST|PUT /api/inngest`.
 - Worker sends a delayed self-sync `PUT /api/inngest` ~5s after startup.
 - `worker-supervisor` also performs startup PUT sync.
 
 ## Host is primary today
+
 From index comments + function lists:
+
 - ADR-0089 transition: host remains authoritative for broad function ownership.
 - Cluster is intentionally limited to cluster-safe subset (12 functions).
 
@@ -472,42 +495,44 @@ From index comments + function lists:
 
 > Exposure sources: k8s service manifests, Caddyfile, `kubectl get svc`, `lsof` listeners.
 
-| Port | Listener / owner | What it is | Exposure path |
-|---:|---|---|---|
-| 3111 | host bun worker | host system-bus worker HTTP (`/`, `/api/inngest`, `/api/runs`, `/webhooks`, `/observability/emit`) | local host; proxied via Caddy 3443 + webhook path via 8443; Run capture currently exposed at `https://panda.tail7af24.ts.net/api/runs` |
-| 8080 | ssh forward (Colima) -> restate | Restate ingress / workflow API | NodePort + host forward |
-| 8288 | ssh forward (Colima) -> Inngest svc | Inngest API + dashboard backend | NodePort + host forward; proxied via Caddy 9443 |
-| 8289 | ssh forward (Colima) -> Inngest ws | Inngest connect websocket | NodePort + host forward; proxied via Caddy 8290 |
-| 6379 | ssh forward (Colima) -> Redis | Redis | NodePort + host forward |
-| 8108 | Typesense NodePort via Colima/Lima host publish | Typesense API | stable host access for worker + CLI observability/search |
-| 9070 | ssh forward (Colima) -> restate | Restate admin API | NodePort + host forward |
-| 9071 | ssh forward (Colima) -> restate | Restate metrics | NodePort + host forward |
-| 9080 | k8s `restate-worker` service | Restate worker HTTP (`dagOrchestrator`, `dagWorker`, queue drainer) | ClusterIP only |
-| random high local port | transient `kubectl port-forward` (CLI-managed) -> `svc/dkron-svc:8080` | Dkron HTTP API | ClusterIP only; short-lived operator tunnel |
-| 3838 | ssh forward (Colima) -> docs-api | docs-api HTTP | NodePort + host forward; proxied via Caddy 5443 |
-| 7880 | ssh forward (Colima) -> livekit-server | LiveKit signaling | NodePort 7880; proxied via Caddy 7443 |
-| 7881 | ssh forward (Colima) -> livekit-server | LiveKit RTC TCP | NodePort 7881 |
-| 3000 | k8s bluesky-pds NodePort | Bluesky PDS HTTP | NodePort 3000 |
-| 30900 | k8s minio-nodeport | Legacy MinIO S3 API (HTTP) | NodePort 30900 |
-| 30901 | k8s minio-nodeport | Legacy MinIO console (HTTP) | NodePort 30901 |
-| 31000 | k8s aistor-s3-api (`aistor` ns) | AIStor S3 API (TLS) | NodePort 31000 |
-| 31001 | k8s aistor-s3-console (`aistor` ns) | AIStor console (TLS) | NodePort 31001 |
-| 3443 | Caddy | HTTPS reverse proxy to `localhost:3111` | tailnet HTTPS |
-| 5443 | Caddy | HTTPS reverse proxy to `localhost:3838` | tailnet HTTPS |
-| 7443 | Caddy | HTTPS reverse proxy to `localhost:7880` | tailnet HTTPS |
-| 9443 | Caddy | HTTPS reverse proxy to `localhost:8288` | tailnet HTTPS |
-| 8290 | Caddy | HTTPS reverse proxy to `localhost:8289` | tailnet HTTPS |
-| 8443 | Caddy (HTTP) | webhook/public ingress router | expected Funnel target |
-| 6443 | Caddy | reverse proxy to local 6333 (Qdrant) | tailnet HTTPS |
-| 3018 | gateway daemon | gateway websocket stream port | local |
-| 9999 | talon | Talon health endpoint | local `127.0.0.1` |
-| 8765 | agent-mail HTTP service | MCP agent-mail API | local `127.0.0.1` |
-| 4821 | Flagg `com.joelclaw.chorus-rhizomatic` | parked historical Chorus service; not a live memory dependency | Stop pending steering sudo |
-| 7331 | historical satellite tunnel to Flagg Chorus | parked; not a live client route | Old path: local `127.0.0.1:7331/mcp` -> Flagg `127.0.0.1:4821/mcp` |
-| 15000 | `com.joel.kube-operator-access` | Talos API | stable local talosctl endpoint |
-| 16443 | `com.joel.kube-operator-access` | Kubernetes API | stable local kubectl endpoint |
+|                   Port | Listener / owner                                                       | What it is                                                                                         | Exposure path                                                                                                                          |
+| ---------------------: | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+|                   3111 | host bun worker                                                        | host system-bus worker HTTP (`/`, `/api/inngest`, `/api/runs`, `/webhooks`, `/observability/emit`) | local host; proxied via Caddy 3443 + webhook path via 8443; Run capture currently exposed at `https://panda.tail7af24.ts.net/api/runs` |
+|                   8080 | ssh forward (Colima) -> restate                                        | Restate ingress / workflow API                                                                     | NodePort + host forward                                                                                                                |
+|                   8288 | ssh forward (Colima) -> Inngest svc                                    | Inngest API + dashboard backend                                                                    | NodePort + host forward; proxied via Caddy 9443                                                                                        |
+|                   8289 | ssh forward (Colima) -> Inngest ws                                     | Inngest connect websocket                                                                          | NodePort + host forward; proxied via Caddy 8290                                                                                        |
+|                   6379 | ssh forward (Colima) -> Redis                                          | Redis                                                                                              | NodePort + host forward                                                                                                                |
+|                   8108 | Flagg system LaunchDaemon; historical Panda NodePort                   | Operational Typesense API                                                                          | non-book projections; tailnet-only TCP forward from Flagg                                                                              |
+|                   8110 | Flagg user LaunchAgent `com.joelclaw.typesense-books`                  | Book Typesense API                                                                                 | `docs` + `docs_chunks_v2`; tailnet-only TCP forward from Flagg                                                                         |
+|                   9070 | ssh forward (Colima) -> restate                                        | Restate admin API                                                                                  | NodePort + host forward                                                                                                                |
+|                   9071 | ssh forward (Colima) -> restate                                        | Restate metrics                                                                                    | NodePort + host forward                                                                                                                |
+|                   9080 | k8s `restate-worker` service                                           | Restate worker HTTP (`dagOrchestrator`, `dagWorker`, queue drainer)                                | ClusterIP only                                                                                                                         |
+| random high local port | transient `kubectl port-forward` (CLI-managed) -> `svc/dkron-svc:8080` | Dkron HTTP API                                                                                     | ClusterIP only; short-lived operator tunnel                                                                                            |
+|                   3838 | ssh forward (Colima) -> docs-api                                       | docs-api HTTP                                                                                      | NodePort + host forward; proxied via Caddy 5443                                                                                        |
+|                   7880 | ssh forward (Colima) -> livekit-server                                 | LiveKit signaling                                                                                  | NodePort 7880; proxied via Caddy 7443                                                                                                  |
+|                   7881 | ssh forward (Colima) -> livekit-server                                 | LiveKit RTC TCP                                                                                    | NodePort 7881                                                                                                                          |
+|                   3000 | k8s bluesky-pds NodePort                                               | Bluesky PDS HTTP                                                                                   | NodePort 3000                                                                                                                          |
+|                  30900 | k8s minio-nodeport                                                     | Legacy MinIO S3 API (HTTP)                                                                         | NodePort 30900                                                                                                                         |
+|                  30901 | k8s minio-nodeport                                                     | Legacy MinIO console (HTTP)                                                                        | NodePort 30901                                                                                                                         |
+|                  31000 | k8s aistor-s3-api (`aistor` ns)                                        | AIStor S3 API (TLS)                                                                                | NodePort 31000                                                                                                                         |
+|                  31001 | k8s aistor-s3-console (`aistor` ns)                                    | AIStor console (TLS)                                                                               | NodePort 31001                                                                                                                         |
+|                   3443 | Caddy                                                                  | HTTPS reverse proxy to `localhost:3111`                                                            | tailnet HTTPS                                                                                                                          |
+|                   5443 | Caddy                                                                  | HTTPS reverse proxy to `localhost:3838`                                                            | tailnet HTTPS                                                                                                                          |
+|                   7443 | Caddy                                                                  | HTTPS reverse proxy to `localhost:7880`                                                            | tailnet HTTPS                                                                                                                          |
+|                   9443 | Caddy                                                                  | HTTPS reverse proxy to `localhost:8288`                                                            | tailnet HTTPS                                                                                                                          |
+|                   8290 | Caddy                                                                  | HTTPS reverse proxy to `localhost:8289`                                                            | tailnet HTTPS                                                                                                                          |
+|                   8443 | Caddy (HTTP)                                                           | webhook/public ingress router                                                                      | expected Funnel target                                                                                                                 |
+|                   6443 | Caddy                                                                  | reverse proxy to local 6333 (Qdrant)                                                               | tailnet HTTPS                                                                                                                          |
+|                   3018 | gateway daemon                                                         | gateway websocket stream port                                                                      | local                                                                                                                                  |
+|                   9999 | talon                                                                  | Talon health endpoint                                                                              | local `127.0.0.1`                                                                                                                      |
+|                   8765 | agent-mail HTTP service                                                | MCP agent-mail API                                                                                 | local `127.0.0.1`                                                                                                                      |
+|                   4821 | Flagg `com.joelclaw.chorus-rhizomatic`                                 | parked historical Chorus service; not a live memory dependency                                     | Stop pending steering sudo                                                                                                             |
+|                   7331 | historical satellite tunnel to Flagg Chorus                            | parked; not a live client route                                                                    | Old path: local `127.0.0.1:7331/mcp` -> Flagg `127.0.0.1:4821/mcp`                                                                     |
+|                  15000 | `com.joel.kube-operator-access`                                        | Talos API                                                                                          | stable local talosctl endpoint                                                                                                         |
+|                  16443 | `com.joel.kube-operator-access`                                        | Kubernetes API                                                                                     | stable local kubectl endpoint                                                                                                          |
 
 ### Notes
+
 - Host NodePort exposure appears through an `ssh` listener process (Colima portForwarder=ssh).
 - Exact per-port ssh forward command line is **UNKNOWN — needs manual verification** (process introspection restricted in this environment).
 - Numeric ports such as `6379`, `8108`, `8288`, `8289`, `8080`, `9070`, `9071`, `9000`, and `9001` can refer to Panda live k8s/NodePort surfaces or Flagg shadow Compose loopback surfaces depending on the host. Check `hostname`, `CENTRAL_BIND_ADDR`, `JOELCLAW_CENTRAL_URL`, and the current shell env before diagnosing.
@@ -536,9 +561,14 @@ From index comments + function lists:
 ## Typesense
 
 From current runtime code:
+
 - `observations` and `brain_graph_nodes` collections (disposable projections for Brain-backed recall; rebuildable from canonical Brain/observation sources)
 - `machines_dev` as the enrollment/migration mirror for the local capture-auth registry
-- docs-api also points at `http://typesense:8108` for docs search/index surfaces.
+- Flagg operational node: `/Users/Shared/joelclaw/data/typesense` on `127.0.0.1:8108`, owned by the system LaunchDaemon.
+- Flagg book node: `~/.joelclaw/typesense-books/data` on `127.0.0.1:8110`, owned by the user LaunchAgent.
+- `DOCS_TYPESENSE_URL` selects the book node for docs-api, docs ingest, `joelclaw docs`, and the book subset of unified search. `TYPESENSE_URL` remains the operational node.
+- The book node holds only `docs` and `docs_chunks_v2`. Do not recreate these collections on the operational node after cutover.
+- The exported JSONL and collection schemas under `~/.joelclaw/backups/typesense-books/` are the migration rollback source. Never copy a live Typesense data directory as a backup.
 
 ## Firecracker runtime storage
 
@@ -551,6 +581,7 @@ From current runtime code:
 - Firecracker snapshot restore is currently operator-proven at ~9ms on the Colima VZ nested-virt path.
 
 ## Inngest state
+
 - StatefulSet PVC mounted at `/data`
 - `INNGEST_SQLITE_DIR=/data`
 
@@ -574,16 +605,17 @@ From current runtime code:
 ## NAS (ADR-0088 + ADR-0187)
 
 Tiering policy:
+
 - Tier 1 local SSD (hot runtime state)
 - Tier 2 NAS NVMe (`/Volumes/nas-nvme` ↔ `/volume2/data`)
 - Tier 3 NAS HDD (`/Volumes/three-body`)
 
 ### Access paths
 
-| From | NVMe tier (1.5TB) | HDD tier (56TB) | Method |
-|------|-----------|----------|--------|
-| macOS host | `/Volumes/nas-nvme` | `/Volumes/three-body` | NFS mount via LaunchDaemon |
-| k8s pods | PVC `nas-nvme` | PVC `nas-hdd` | NFS PV (192.168.1.163) |
+| From              | NVMe tier (1.5TB)   | HDD tier (56TB)       | Method                      |
+| ----------------- | ------------------- | --------------------- | --------------------------- |
+| macOS host        | `/Volumes/nas-nvme` | `/Volumes/three-body` | NFS mount via LaunchDaemon  |
+| k8s pods          | PVC `nas-nvme`      | PVC `nas-hdd`         | NFS PV (192.168.1.163)      |
 | host-worker funcs | `/Volumes/nas-nvme` | `/Volumes/three-body` | Direct path (runs on macOS) |
 
 ### k8s ↔ NAS networking
@@ -597,6 +629,7 @@ The VZ NAT on eth0 does NOT forward LAN traffic. Route persisted in Colima provi
 **Always use IP 192.168.1.163, never hostname three-body** — DNS doesn't resolve from k8s.
 
 Degradation contract (ADR-0187):
+
 - writes must fallback `local -> remote -> queued`
 - queue spool default: `/tmp/joelclaw/nas-queue`
 
@@ -627,6 +660,7 @@ Degradation contract (ADR-0187):
 - Old `4821`/`7331` endpoints and tunnels are not live routing guidance.
 
 ## Vault and durable receipts
+
 - Obsidian vault at `/Users/joel/Vault`
 - Durable project/system receipts belong in Brain `.svx`.
 - The former `/Users/joel/Vault/system/system-log.jsonl` journal is archived and retired; runtime telemetry is canonical OTel in Typesense/ClickHouse.
@@ -662,6 +696,7 @@ Degradation contract (ADR-0187):
 ## External webhook ingress
 
 Expected path:
+
 1. Internet provider -> Tailscale Funnel :443
 2. Funnel -> local `:8443`
 3. Caddy path route `/webhooks/*` -> worker `:3111`
@@ -670,6 +705,7 @@ Expected path:
 ## Run capture ingress
 
 Expected path:
+
 1. Machine hook reads `JOELCLAW_CENTRAL_URL` (satellite setup exports `https://panda.tail7af24.ts.net`)
 2. hook sends `POST /api/runs` with bearer token from `~/.joelclaw/auth.json`
 3. Tailscale/Funnel/Caddy path reaches Panda host worker `localhost:3111`
@@ -683,29 +719,31 @@ Primary command tree root: `packages/cli/src/cli.ts`.
 
 ## Endpoint map by command family
 
-| Command family | Primary backend |
-|---|---|
-| `send` | Inngest Event API `POST /e/<event-key>` |
-| `runs`, `run`, `functions`, `event`, `events` | Inngest GraphQL `POST /v0/gql` |
-| `status` | Inngest/worker health probes + k8s checks + agent-mail liveness |
-| `gateway *` | Redis keys/channels + launchd/system ops |
-| `workload *` | workload planner + Redis queue admission + Restate `dagOrchestrator` / `dagWorker` runtime |
-| `docs *` | docs-api REST API (`/search`, `/docs/*`, `/chunks/*`, `/concepts*`) |
-| `restate cron *` | Dkron REST API via direct `--base-url` or short-lived `kubectl port-forward` to `svc/dkron-svc` |
-| `otel *` | ClickHouse OTEL store via capability adapter |
-| `recall *` | disposable Typesense `observations` + `brain_graph_nodes` projections; Brain `.svx` remains canonical |
-| `sessions *` | Central SQLite `sessions.db` / raw Pi session JSONL fallback |
-| `satellite *` | thin-Machine local probes + optional Central gateway repair request over SSH |
-| `mail *` | Agent-mail MCP HTTP (`127.0.0.1:8765`) via CLI adapter wrappers |
-| `inngest *` | worker launchd + Talon + k8s + Typesense diagnostics |
+| Command family                                | Primary backend                                                                                       |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `send`                                        | Inngest Event API `POST /e/<event-key>`                                                               |
+| `runs`, `run`, `functions`, `event`, `events` | Inngest GraphQL `POST /v0/gql`                                                                        |
+| `status`                                      | Inngest/worker health probes + k8s checks + agent-mail liveness                                       |
+| `gateway *`                                   | Redis keys/channels + launchd/system ops                                                              |
+| `workload *`                                  | workload planner + Redis queue admission + Restate `dagOrchestrator` / `dagWorker` runtime            |
+| `docs *`                                      | docs-api REST API (`/search`, `/docs/*`, `/chunks/*`, `/concepts*`)                                   |
+| `restate cron *`                              | Dkron REST API via direct `--base-url` or short-lived `kubectl port-forward` to `svc/dkron-svc`       |
+| `otel *`                                      | ClickHouse OTEL store via capability adapter                                                          |
+| `recall *`                                    | disposable Typesense `observations` + `brain_graph_nodes` projections; Brain `.svx` remains canonical |
+| `sessions *`                                  | Central SQLite `sessions.db` / raw Pi session JSONL fallback                                          |
+| `satellite *`                                 | thin-Machine local probes + optional Central gateway repair request over SSH                          |
+| `mail *`                                      | Agent-mail MCP HTTP (`127.0.0.1:8765`) via CLI adapter wrappers                                       |
+| `inngest *`                                   | worker launchd + Talon + k8s + Typesense diagnostics                                                  |
 
 Run capture is currently hook/script-driven, not a normal operator command family:
+
 - Claude Code: `scripts/joelclaw-capture-session.ts`
 - Codex: `scripts/joelclaw-capture-codex-session.js`
 - Pi: runtime extension hook
 - Central endpoint: `POST /api/runs`
 
 Config source:
+
 - `~/.config/system-bus.env` (plus env overrides)
 - defaults:
   - `INNGEST_URL=http://localhost:8288`
@@ -755,27 +793,27 @@ Config source:
 
 ## 10) Key ADR Topology Decisions
 
-| ADR | Title | Status | Topology impact |
-|---|---|---|---|
-| ADR-0048 | Webhook gateway | shipped | `/webhooks/:provider` normalization + signature verification + Inngest emission |
-| ADR-0088 | NAS-backed storage tiering | shipped | Defines SSD/NAS NVMe/NAS HDD storage contract |
-| ADR-0089 | Single-source worker deployment | shipped | Host/cluster role split + single canonical source |
-| ADR-0144 | Gateway hexagonal architecture | shipped | Gateway as composition root; heavy logic in `@joelclaw/*` |
-| ADR-0155 | Three-stage story pipeline | shipped | Simplified story function flow through Inngest durable steps |
-| ADR-0156 | Graceful worker restart | superseded | Historical restart strategy; superseded by Talon ADR |
-| ADR-0159 | Talon watchdog daemon | shipped | Compiled watchdog + infra supervision model |
-| ADR-0038 | Embedded pi gateway daemon | shipped | Always-on gateway session architecture |
-| ADR-0051 | Tailscale Funnel ingress | shipped | Public webhook ingress via Funnel/Caddy pattern |
-| ADR-0148 | k8s resilience policy | accepted | NodePort-first exposure, probe requirements, restart recovery checklist |
-| ADR-0158 | worker-supervisor binary | superseded | Legacy supervisor ADR now superseded, but binary remains in active launchd path |
-| ADR-0182 | node-0 localhost resilience | shipped | endpoint class fallback (`localhost -> vm -> svc_dns`) |
-| ADR-0187 | NAS degradation fallback contract | accepted | mandatory local/remote/queued write fallback |
-| ADR-0212 | AIStor as local S3 runtime | accepted | maintained local S3 runtime in `aistor` namespace; legacy MinIO retained for rollback |
-| ADR-0243 | Runs-based memory capture | active | Machine hooks POST Runs to Central `/api/runs`; raw blobs are source of truth; Typesense is derived |
-| ADR-0244 | Reply Grants | active | public channel replies require explicit per-thread grants; Project Threads do not authorize public posting |
-| ADR-0245 | Project Threads as operator workrooms | active | bounded objectives coordinate through private `#brain-joel` threads with receipts |
-| ADR-0246 | Mac Studio Central migration | active | Flagg shadow bootstrap, no split-brain, whole-Central cutover only after freeze/approval |
-| ADR-0247 | New Central services start on Flagg | active | new Central-oriented services should prefer Flagg/shadow path instead of deepening Panda-only assumptions |
+| ADR      | Title                                 | Status     | Topology impact                                                                                            |
+| -------- | ------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------- |
+| ADR-0048 | Webhook gateway                       | shipped    | `/webhooks/:provider` normalization + signature verification + Inngest emission                            |
+| ADR-0088 | NAS-backed storage tiering            | shipped    | Defines SSD/NAS NVMe/NAS HDD storage contract                                                              |
+| ADR-0089 | Single-source worker deployment       | shipped    | Host/cluster role split + single canonical source                                                          |
+| ADR-0144 | Gateway hexagonal architecture        | shipped    | Gateway as composition root; heavy logic in `@joelclaw/*`                                                  |
+| ADR-0155 | Three-stage story pipeline            | shipped    | Simplified story function flow through Inngest durable steps                                               |
+| ADR-0156 | Graceful worker restart               | superseded | Historical restart strategy; superseded by Talon ADR                                                       |
+| ADR-0159 | Talon watchdog daemon                 | shipped    | Compiled watchdog + infra supervision model                                                                |
+| ADR-0038 | Embedded pi gateway daemon            | shipped    | Always-on gateway session architecture                                                                     |
+| ADR-0051 | Tailscale Funnel ingress              | shipped    | Public webhook ingress via Funnel/Caddy pattern                                                            |
+| ADR-0148 | k8s resilience policy                 | accepted   | NodePort-first exposure, probe requirements, restart recovery checklist                                    |
+| ADR-0158 | worker-supervisor binary              | superseded | Legacy supervisor ADR now superseded, but binary remains in active launchd path                            |
+| ADR-0182 | node-0 localhost resilience           | shipped    | endpoint class fallback (`localhost -> vm -> svc_dns`)                                                     |
+| ADR-0187 | NAS degradation fallback contract     | accepted   | mandatory local/remote/queued write fallback                                                               |
+| ADR-0212 | AIStor as local S3 runtime            | accepted   | maintained local S3 runtime in `aistor` namespace; legacy MinIO retained for rollback                      |
+| ADR-0243 | Runs-based memory capture             | active     | Machine hooks POST Runs to Central `/api/runs`; raw blobs are source of truth; Typesense is derived        |
+| ADR-0244 | Reply Grants                          | active     | public channel replies require explicit per-thread grants; Project Threads do not authorize public posting |
+| ADR-0245 | Project Threads as operator workrooms | active     | bounded objectives coordinate through private `#brain-joel` threads with receipts                          |
+| ADR-0246 | Mac Studio Central migration          | active     | Flagg shadow bootstrap, no split-brain, whole-Central cutover only after freeze/approval                   |
+| ADR-0247 | New Central services start on Flagg   | active     | new Central-oriented services should prefer Flagg/shadow path instead of deepening Panda-only assumptions  |
 
 ---
 
@@ -787,6 +825,7 @@ Config source:
 ### Contract Types
 
 **Request**: `SandboxExecutionRequest`
+
 - `workflowId`, `requestId`, `storyId`: identifiers
 - `task`: story prompt/task to execute
 - `agent`: `{ name, variant?, model?, program? }`
@@ -798,6 +837,7 @@ Config source:
 - `sessionId?`: tracking identifier
 
 **Result**: `SandboxExecutionResult`
+
 - `requestId`: correlation ID
 - `state`: `"pending" | "running" | "completed" | "failed" | "cancelled"`
 - `startedAt`, `completedAt?`, `durationMs?`: timing
@@ -806,6 +846,7 @@ Config source:
 - `output?`: stdout/stderr output
 
 **Artifacts**: `ExecutionArtifacts`
+
 - `headSha`: git SHA after execution
 - `touchedFiles`: list of modified/untracked files from `git status --porcelain`
 - `patch?`: git patch content (format-patch or diff)
@@ -817,6 +858,7 @@ Config source:
 **Function**: `materializeRepo(targetPath, baseSha, options)`
 
 **Behavior**:
+
 - Clone repo if target path doesn't exist (requires `remoteUrl`)
 - Fetch + checkout if target path exists
 - SHA verification after checkout
@@ -826,6 +868,7 @@ Config source:
 **Returns**: `{ path, sha, freshClone, durationMs }`
 
 **Key options**:
+
 - `remoteUrl?`: remote URL for fresh clone
 - `branch?`: branch/ref to fetch (default: `"main"`)
 - `depth?`: shallow clone depth (default: `1`)
@@ -837,6 +880,7 @@ Config source:
 **Function**: `generatePatchArtifact(options)`
 
 **Behavior**:
+
 - Captures touched-file inventory via `getTouchedFiles()`
 - Generates git patch from `baseSha..headSha`:
   - Uses `git format-patch` if commits exist in range
@@ -846,6 +890,7 @@ Config source:
 - Serializable to JSON via `writeArtifactBundle()`
 
 **Key options**:
+
 - `repoPath`: path to git repo
 - `baseSha`: base SHA (start of diff range)
 - `headSha?`: head SHA (default: HEAD)
@@ -861,6 +906,7 @@ Config source:
 **Authoritative output is patch bundle + metadata.**
 
 Sandbox runs **do not** merge to main or push to remote. The runtime:
+
 1. Materializes repo at `baseSha` in sandbox-local workspace
 2. Executes agent task
 3. Runs verification commands
@@ -868,6 +914,7 @@ Sandbox runs **do not** merge to main or push to remote. The runtime:
 5. Emits `SandboxExecutionResult` event with `ExecutionArtifacts`
 
 Promotion is a separate operator decision:
+
 - Restate workflow receives `ExecutionArtifacts`
 - Operator reviews patch + verification summary
 - Operator applies patch to host repo (or discards)
@@ -880,6 +927,7 @@ This keeps sandbox runs isolated and reversible.
 **Job spec generation**: `generateJobSpec(request, options)`
 
 Cold k8s Jobs for isolated story execution:
+
 - Deterministic Job naming keyed by `requestId`
 - Runtime image contract: Git, Bun, agent tooling, `/workspace` directory
 - Environment-driven config: `WORKFLOW_ID`, `REQUEST_ID`, `STORY_ID`, `TASK_PROMPT_B64`, `BASE_SHA`, etc.
@@ -890,6 +938,7 @@ Cold k8s Jobs for isolated story execution:
 - Security: non-root (UID 1000), no privilege escalation, capabilities dropped
 
 **Runtime contract**:
+
 1. Decode `TASK_PROMPT_B64` from env
 2. Call `materializeRepo()` at `BASE_SHA`
 3. Execute agent with task
@@ -1097,10 +1146,15 @@ Update this skill **in the same change** whenever any of these change:
    - `docs/runbooks/satellite-rig-setup.md`
    - Flagg/Panda cutover status, Central host identity, or Relay Machine role changes
 10. Run capture / memory ingestion changes
-   - `/api/runs`, `memory/run.captured`, capture hook scripts, Machine auth, Run blob paths, `capture-auth.db`, `sessions.db`, `runs_dev`, `machines_dev`
+
+- `/api/runs`, `memory/run.captured`, capture hook scripts, Machine auth, Run blob paths, `capture-auth.db`, `sessions.db`, `runs_dev`, `machines_dev`
+
 11. Flagg Central scaffold changes
-   - `infra/central/*`, Central LaunchDaemon templates, NAS proof scripts, shadow Compose services, reboot proof, Gate 5 status
+
+- `infra/central/*`, Central LaunchDaemon templates, NAS proof scripts, shadow Compose services, reboot proof, Gate 5 status
+
 12. Rhizomatic / Chorus parked-state cleanup
-   - service stop state, removal of obsolete tunnels/injection, and preservation of historical receipts; never restore live claims without a new Brain-owned decision
+
+- service stop state, removal of obsolete tunnels/injection, and preservation of historical receipts; never restore live claims without a new Brain-owned decision
 
 If any item above changed and this skill was not updated, this skill is stale and non-canonical.

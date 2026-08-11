@@ -1,0 +1,26 @@
+[server]
+api-address = 127.0.0.1
+api-port = 8110
+peering-port = 8109
+snapshot-interval-seconds = 300
+api-key = __API_KEY__
+data-dir = __HOME__/.joelclaw/typesense-books/data
+log-dir = __HOME__/.joelclaw/typesense-books/logs
+enable-search-analytics = false
+enable-cors = false
+enable-access-logging = false
+max-memory-ratio = 0.50
+memory-used-max-percentage = 90
+disk-used-max-percentage = 90
+thread-pool-size = 8
+num-collections-parallel-load = 2
+num-documents-parallel-load = 4096
+max-indexing-concurrency = 8
+db-write-buffer-size = 268435456
+db-max-write-buffer-number = 6
+db-max-log-file-size = 134217728
+db-keep-log-file-num = 8
+cache-num-entries = 10000
+embedding-cache-num-entries = 1000
+log-slow-requests-time-ms = 10000
+log-slow-searches-time-ms = 5000

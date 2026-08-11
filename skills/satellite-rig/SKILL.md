@@ -61,6 +61,7 @@ DOCS_KEY="$(secrets lease pdf_brain_api_token --ttl 1h)"
   printf 'export PDF_BRAIN_API_TOKEN=%q\n' "$DOCS_KEY"
   printf 'export JOELCLAW_CENTRAL_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:3111'
   printf 'export JOELCLAW_TYPESENSE_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:8108'
+  printf 'export JOELCLAW_DOCS_TYPESENSE_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:8110'
   printf 'export JOELCLAW_DOCS_API_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:3838'
   cat scripts/setup-satellite-rig.sh
 } | ssh joel@100.72.79.112 'bash -s'
@@ -78,6 +79,7 @@ TARGET=joel@flagg
   printf 'export PDF_BRAIN_API_TOKEN=%q\n' "$DOCS_KEY"
   printf 'export JOELCLAW_CENTRAL_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:3111'
   printf 'export JOELCLAW_TYPESENSE_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:8108'
+  printf 'export JOELCLAW_DOCS_TYPESENSE_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:8110'
   printf 'export JOELCLAW_DOCS_API_URL=%q\n' 'http://joels-mac-studio.tail7af24.ts.net:3838'
   printf 'export JOELCLAW_REPO_DIR="$HOME/Code/joelhooks/joelclaw-runtime"\n'
   cat scripts/setup-satellite-rig.sh
@@ -94,7 +96,7 @@ On the satellite:
 ```bash
 ~/.bun/bin/joelclaw          # compiled binary
 ~/.local/bin/joelclaw        # wrapper that sources ~/.config/system-bus.env, then execs binary
-~/.config/system-bus.env     # 0600, contains JOELCLAW_CENTRAL_URL, TYPESENSE_URL, TYPESENSE_API_KEY, DOCS_API_URL, PDF_BRAIN_API_TOKEN
+~/.config/system-bus.env     # 0600, contains Central, main Typesense, docs Typesense, docs API, and their credentials
 ~/.joelclaw/auth.json        # machine run-capture token, created separately by machine registration
 ~/.pi/agent/skills           # real consumer root
 ~/.pi/agent/skills/joelclaw-runtime  # symlink to repo skills pack
@@ -145,6 +147,7 @@ printf "compiled="; file "$HOME/.bun/bin/joelclaw"
 printf "wrapper="; file "$HOME/.local/bin/joelclaw"
 printf "env_perms="; stat -f "%Sp %Su:%Sg" "$HOME/.config/system-bus.env"
 printf "typesense_health="; curl --max-time 5 -fsS "$TYPESENSE_URL/health"; printf "\n"
+printf "docs_typesense_health="; curl --max-time 5 -fsS "$DOCS_TYPESENSE_URL/health"; printf "\n"
 printf "docs_api_health="; curl --max-time 5 -fsS "$DOCS_API_URL/health"; printf "\n"
 
 joelclaw sessions search "joel-writing-style" --source typesense --machine blaine --runtime all --limit 1 \

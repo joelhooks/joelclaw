@@ -166,21 +166,41 @@ def post_batch(
     endpoint = f"{url}/collections/{collection}/documents/import?action={action}&batch_size={len(batch)}"
     # Retry transient 503/502/504 with exponential backoff — Typesense returns
     # 503 "Not Ready or Lagging" while raft catches up queued writes after a
-    # pod restart; 503 is NOT an import error, it's a server-not-ready signal.
+    # pod restart. Never retry `create`: a lost response is ambiguous because
+    # Typesense may have committed the first request, making replay unsafe.
+    retry_safe = action != "create"
     max_attempts = 12
     delay = 2.0
     for attempt in range(1, max_attempts + 1):
-        code, resp = http_request(
-            "POST",
-            endpoint,
-            api_key,
-            body=body,
-            content_type="text/plain",
-            timeout=600,
-        )
+        try:
+            code, resp = http_request(
+                "POST",
+                endpoint,
+                api_key,
+                body=body,
+                content_type="text/plain",
+                timeout=600,
+            )
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            if not retry_safe:
+                raise RuntimeError(
+                    "create import transport failed with an ambiguous result; "
+                    "the batch was not retried"
+                ) from error
+            if attempt >= max_attempts:
+                raise RuntimeError(
+                    f"import batch transport failed after {max_attempts} attempts: {error}"
+                ) from error
+            sleep_for = min(delay * attempt, 30.0)
+            print(
+                f"[retry] batch transport error: {error} sleeping {sleep_for:.1f}s "
+                f"(attempt {attempt}/{max_attempts})"
+            )
+            time.sleep(sleep_for)
+            continue
         if code == 200:
             break
-        if code in (502, 503, 504) and attempt < max_attempts:
+        if retry_safe and code in (502, 503, 504) and attempt < max_attempts:
             sleep_for = min(delay * attempt, 30.0)
             print(
                 f"[retry] batch -> {code}: {resp[:120]!r} sleeping {sleep_for:.1f}s (attempt {attempt}/{max_attempts})"
@@ -196,6 +216,10 @@ def post_batch(
             results.append(json.loads(line))
         except json.JSONDecodeError as e:
             raise RuntimeError(f"unparseable import response line: {line!r}") from e
+    if len(results) != len(batch):
+        raise RuntimeError(
+            f"import batch acknowledgement mismatch: sent {len(batch)}, received {len(results)}"
+        )
     return results
 
 
@@ -217,6 +241,7 @@ def run(
     ckpt_file = checkpoint_path(ckpt_dir, collection, source)
     state = read_checkpoint(ckpt_file)
     resume_from = state.get("last_committed_line", 0)
+    committed_line = resume_from
     print(
         f"[start] collection={collection} source={source} batch_size={batch_size} action={action}"
     )
@@ -264,9 +289,16 @@ def run(
                 print(
                     f"[ERR]   batch@lines {batch_start_line}-{line_no} errors={len(errors_in_batch)}/{len(batch)} first={msg} doc_sample={sample}"
                 )
-                if fail_fast:
-                    return 2
-            processed_docs += len(batch) - len(errors_in_batch)
+                print(
+                    f"[stop]  checkpoint remains at line {committed_line}; fix the batch before resuming"
+                )
+                if action == "create":
+                    print(
+                        "[stop]  create cannot safely replay a partially committed batch; "
+                        "inspect the errors and resume with an idempotent action"
+                    )
+                return 2 if fail_fast else 1
+            processed_docs += len(batch)
             batches += 1
             state = {
                 "last_committed_line": line_no,
@@ -278,6 +310,7 @@ def run(
                 "updated_at": time.time(),
             }
             write_checkpoint(ckpt_file, state)
+            committed_line = line_no
             elapsed = max(time.time() - start_ts, 1e-3)
             rate = (processed_docs - state.get("docs", 0) + processed_docs) / elapsed
             print(
@@ -295,9 +328,16 @@ def run(
                 print(
                     f"[ERR]   final batch@lines {batch_start_line}-{line_no} errors={len(errors_in_batch)}/{len(batch)} first={msg}"
                 )
-                if fail_fast:
-                    return 2
-            processed_docs += len(batch) - len(errors_in_batch)
+                print(
+                    f"[stop]  checkpoint remains at line {committed_line}; fix the batch before resuming"
+                )
+                if action == "create":
+                    print(
+                        "[stop]  create cannot safely replay a partially committed batch; "
+                        "inspect the errors and resume with an idempotent action"
+                    )
+                return 2 if fail_fast else 1
+            processed_docs += len(batch)
             batches += 1
             state = {
                 "last_committed_line": line_no,
@@ -309,6 +349,7 @@ def run(
                 "updated_at": time.time(),
             }
             write_checkpoint(ckpt_file, state)
+            committed_line = line_no
             print(
                 f"[ok]    final batch lines {batch_start_line}-{line_no} docs+={len(batch)} total={processed_docs}"
             )
@@ -341,7 +382,7 @@ def main() -> int:
     p.add_argument(
         "--fail-fast",
         action="store_true",
-        help="stop on first batch with errors",
+        help="return status 2 instead of 1 on the first failed batch",
     )
     p.add_argument(
         "--keep-auto-embed",

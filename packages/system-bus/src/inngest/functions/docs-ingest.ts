@@ -4,7 +4,11 @@ import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { NonRetriableError } from "inngest";
-import { type BookChunkingResult, chunkBookText, renderChunkForEmbedding } from "../../lib/book-chunk";
+import {
+  type BookChunkingResult,
+  chunkBookText,
+  renderChunkForEmbedding,
+} from "../../lib/book-chunk";
 import { infer } from "../../lib/inference";
 import { type LlmUsage } from "../../lib/pi-output";
 import * as typesense from "../../lib/typesense";
@@ -27,20 +31,21 @@ import { inngest } from "../client";
 export const DOCS_COLLECTION = "docs";
 export const DOCS_CHUNKS_COLLECTION = "docs_chunks";
 export const DOCS_CHUNKS_V2_COLLECTION = "docs_chunks_v2";
+const DOCS_TYPESENSE_URL = process.env.DOCS_TYPESENSE_URL || typesense.TYPESENSE_URL;
 const DOCS_TMP_DIR = "/tmp/docs-ingest";
 const THREE_BODY_ROOT = "/Volumes/three-body";
 const MANIFEST_FILE_NAME = "manifest.clean.jsonl";
 const DOCS_INGEST_CONCURRENCY = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_CONCURRENCY ?? "1", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_CONCURRENCY ?? "1", 10),
 );
 const DOCS_INGEST_THROTTLE_LIMIT = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_THROTTLE_LIMIT ?? "20", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_THROTTLE_LIMIT ?? "20", 10),
 );
 const DOCS_INGEST_THROTTLE_PERIOD = `${Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_THROTTLE_PERIOD_SECONDS ?? "60", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_THROTTLE_PERIOD_SECONDS ?? "60", 10),
 )}s` as `${number}s`;
 
 function getManifestCandidatePaths(): string[] {
@@ -57,14 +62,14 @@ const DOCS_TAXONOMY_MODEL =
   process.env.JOELCLAW_DOCS_TAXONOMY_MODEL?.trim() || "anthropic/claude-haiku-4-5";
 const DOCS_TAXONOMY_TIMEOUT_MS = Math.max(
   10_000,
-  Number.parseInt(process.env.JOELCLAW_DOCS_TAXONOMY_TIMEOUT_MS ?? "60000", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_TAXONOMY_TIMEOUT_MS ?? "60000", 10),
 );
 const MANIFEST_LOOKUP_TIMEOUT_MS = Math.max(
   1_000,
-  Number.parseInt(process.env.JOELCLAW_DOCS_MANIFEST_TIMEOUT_MS ?? "5000", 10)
+  Number.parseInt(process.env.JOELCLAW_DOCS_MANIFEST_TIMEOUT_MS ?? "5000", 10),
 );
 const DOCS_ALLOW_RULES_FALLBACK = /^(1|true|yes)$/i.test(
-  process.env.JOELCLAW_DOCS_ALLOW_RULES_FALLBACK ?? ""
+  process.env.JOELCLAW_DOCS_ALLOW_RULES_FALLBACK ?? "",
 );
 export type DocsFileType = "pdf" | "md" | "txt";
 type EvidenceTier = "section" | "snippet";
@@ -233,7 +238,7 @@ async function sha256File(path: string): Promise<string> {
 async function runProcess(
   cmd: string[],
   stdinText?: string,
-  timeoutMs?: number
+  timeoutMs?: number,
 ): Promise<{ exitCode: number; stdout: string; stderr: string; timedOut: boolean }> {
   const proc = Bun.spawn(cmd, {
     stdin: "pipe",
@@ -310,9 +315,7 @@ function normalizeNasPath(value: unknown): string | null {
 
 function normalizeNasPathArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => normalizeNasPath(item))
-    .filter((item): item is string => item != null);
+  return value.map((item) => normalizeNasPath(item)).filter((item): item is string => item != null);
 }
 
 export function mergeDocumentPathAliases(input: {
@@ -341,7 +344,8 @@ export function mergeDocumentPathAliases(input: {
 
   const preferredCanonical = normalizeNasPath(input.existingNasPath);
   const canonicalNasPath = preferredCanonical
-    ? deduped.find((path) => normalizePathKey(path) === normalizePathKey(preferredCanonical)) ?? deduped[0]!
+    ? (deduped.find((path) => normalizePathKey(path) === normalizePathKey(preferredCanonical)) ??
+      deduped[0]!)
     : deduped[0]!;
   return {
     canonicalNasPath,
@@ -388,7 +392,7 @@ function manifestCategoryDir(category: string | null | undefined): string {
 }
 
 function normalizeManifestStorageCategory(
-  category: string | null | undefined
+  category: string | null | undefined,
 ): StorageCategory | undefined {
   if (!category) return undefined;
   const normalized = category.trim().toLowerCase();
@@ -400,7 +404,7 @@ function normalizeManifestStorageCategory(
 function buildManifestDestinationPath(
   filename: string,
   sourcePath: string,
-  enrichmentCategory: string | null | undefined
+  enrichmentCategory: string | null | undefined,
 ): string {
   const sanitized = sanitizeFilenameForManifest(filename);
   const lowerSourcePath = sourcePath.toLowerCase();
@@ -441,7 +445,7 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
 
 const CONCEPT_ID_SET = new Set<ConceptId>(TAXONOMY_CORE_V1.map((concept) => concept.id));
 const TAXONOMY_REFERENCE = TAXONOMY_CORE_V1.map(
-  (concept) => `- ${concept.id}: ${concept.prefLabel} (${concept.scopeNote})`
+  (concept) => `- ${concept.id}: ${concept.prefLabel} (${concept.scopeNote})`,
 ).join("\n");
 let manifestInferenceIndexPromise: Promise<Map<string, ManifestInferenceRecord>> | null = null;
 
@@ -506,7 +510,7 @@ async function loadManifestInferenceIndex(): Promise<Map<string, ManifestInferen
       const destinationPath = buildManifestDestinationPath(
         filename,
         sourcePath,
-        typeof parsed.enrichmentCategory === "string" ? parsed.enrichmentCategory : null
+        typeof parsed.enrichmentCategory === "string" ? parsed.enrichmentCategory : null,
       );
       const key = normalizePathKey(destinationPath);
       const next: ManifestInferenceRecord = {
@@ -515,14 +519,16 @@ async function loadManifestInferenceIndex(): Promise<Map<string, ManifestInferen
         destinationPath,
         sourcePath,
         enrichmentCategory: normalizeManifestStorageCategory(
-          typeof parsed.enrichmentCategory === "string" ? parsed.enrichmentCategory : null
+          typeof parsed.enrichmentCategory === "string" ? parsed.enrichmentCategory : null,
         ),
         enrichmentDocumentType:
           typeof parsed.enrichmentDocumentType === "string"
             ? parsed.enrichmentDocumentType.trim()
             : undefined,
         enrichmentProvider:
-          typeof parsed.enrichmentProvider === "string" ? parsed.enrichmentProvider.trim() : undefined,
+          typeof parsed.enrichmentProvider === "string"
+            ? parsed.enrichmentProvider.trim()
+            : undefined,
         tags: asStringArray(parsed.tags),
       };
 
@@ -551,7 +557,7 @@ async function loadManifestInferenceIndex(): Promise<Map<string, ManifestInferen
 }
 
 export async function resolveManifestInference(
-  nasPath: string
+  nasPath: string,
 ): Promise<ManifestInferenceRecord | null> {
   const index = await loadManifestInferenceIndex();
   return index.get(normalizePathKey(nasPath)) ?? null;
@@ -598,7 +604,6 @@ Rules:
     input.textSample.slice(0, 8_000),
   ].join("\n");
 
-  const startedAt = Date.now();
   try {
     const inferResult = await infer(taxonomyUserPrompt, {
       task: "classification",
@@ -619,9 +624,10 @@ Rules:
 
     const assistantText = inferResult.text.trim();
     const rawPayload = inferResult.data ?? parseJsonObject(assistantText);
-    const payload = (typeof rawPayload === "object" && rawPayload !== null && !Array.isArray(rawPayload))
-      ? (rawPayload as Record<string, unknown>)
-      : {};
+    const payload =
+      typeof rawPayload === "object" && rawPayload !== null && !Array.isArray(rawPayload)
+        ? (rawPayload as Record<string, unknown>)
+        : {};
     const provider = inferResult.provider;
     const model = inferResult.model ?? DOCS_TAXONOMY_MODEL;
     const usage = inferResult.usage;
@@ -639,7 +645,8 @@ Rules:
     }
 
     const storageCategory =
-      typeof payload?.storageCategory === "string" && isStorageCategory(payload.storageCategory.trim())
+      typeof payload?.storageCategory === "string" &&
+      isStorageCategory(payload.storageCategory.trim())
         ? (payload.storageCategory.trim() as StorageCategory)
         : undefined;
     const reason =
@@ -697,19 +704,23 @@ Rules:
   }
 }
 
-export async function extractPdfText(path: string): Promise<{ text: string; pageCount: number | null }> {
+export async function extractPdfText(
+  path: string,
+): Promise<{ text: string; pageCount: number | null }> {
   // Primary: opendataloader-pdf — structured markdown with tables, headings, reading order
   const tmpDir = `/tmp/odl-${Date.now()}`;
   // Set JAVA_HOME for opendataloader-pdf (requires Java 11+)
-  const javaHome = process.env.JAVA_HOME || "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home";
-  const odlProc = Bun.spawn(
-    ["opendataloader-pdf", path, "-o", tmpDir, "-f", "markdown", "-q"],
-    {
-      env: { ...process.env, JAVA_HOME: javaHome, PATH: `/opt/homebrew/opt/openjdk/bin:${process.env.PATH}` },
-      stdout: "pipe",
-      stderr: "pipe",
-    }
-  );
+  const javaHome =
+    process.env.JAVA_HOME || "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home";
+  const odlProc = Bun.spawn(["opendataloader-pdf", path, "-o", tmpDir, "-f", "markdown", "-q"], {
+    env: {
+      ...process.env,
+      JAVA_HOME: javaHome,
+      PATH: `/opt/homebrew/opt/openjdk/bin:${process.env.PATH}`,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const odlResult = {
     exitCode: await odlProc.exited,
     stdout: await new Response(odlProc.stdout).text(),
@@ -751,9 +762,16 @@ export async function extractPdfText(path: string): Promise<{ text: string; page
     "print(json.dumps({'text': '\\n\\n'.join(parts), 'page_count': len(reader.pages)}))",
   ].join("\n");
 
-  const result = await runProcess(
-    ["uv", "run", "--with", "pypdf", "python3", "-c", pythonScript, path]
-  );
+  const result = await runProcess([
+    "uv",
+    "run",
+    "--with",
+    "pypdf",
+    "python3",
+    "-c",
+    pythonScript,
+    path,
+  ]);
 
   if (result.exitCode === 0) {
     try {
@@ -774,7 +792,7 @@ export async function extractPdfText(path: string): Promise<{ text: string; page
   const fallback = await runProcess(["strings", "-n", "6", path]);
   if (fallback.exitCode !== 0) {
     throw new NonRetriableError(
-      `PDF extraction failed for ${path}: ${result.stderr.trim() || fallback.stderr.trim() || "unknown error"}`
+      `PDF extraction failed for ${path}: ${result.stderr.trim() || fallback.stderr.trim() || "unknown error"}`,
     );
   }
 
@@ -798,9 +816,7 @@ async function estimatePdfPageCount(path: string): Promise<number | null> {
     "reader = PdfReader(sys.argv[1])",
     "print(json.dumps({'page_count': len(reader.pages)}))",
   ].join("\n");
-  const result = await runProcess(
-    ["uv", "run", "--with", "pypdf", "python3", "-c", script, path]
-  );
+  const result = await runProcess(["uv", "run", "--with", "pypdf", "python3", "-c", script, path]);
   if (result.exitCode === 0) {
     try {
       const parsed = JSON.parse(result.stdout) as { page_count?: unknown };
@@ -841,7 +857,7 @@ async function resolveAccessiblePath(requestedPath: string): Promise<string> {
     }
     // Nothing found — throw with the original path for a clear error
     throw new NonRetriableError(
-      `docs-ingest file not found at requested path or NAS fallbacks: ${requestedPath}`
+      `docs-ingest file not found at requested path or NAS fallbacks: ${requestedPath}`,
     );
   }
 }
@@ -1003,7 +1019,7 @@ function renderRetrievalText(input: {
   const heading = input.headingPath.length > 0 ? input.headingPath.join(" > ") : "Document";
   const conceptLabels = renderConceptLabels(input.conceptIds);
   return normalizeWhitespace(
-    `[DOC: ${input.title}]\n[PATH: ${heading}]\n[CONCEPTS: ${conceptLabels}]\n\n${input.content}`
+    `[DOC: ${input.title}]\n[PATH: ${heading}]\n[CONCEPTS: ${conceptLabels}]\n\n${input.content}`,
   );
 }
 
@@ -1037,7 +1053,10 @@ export function resolveBackfillConcepts(input: {
   if (inferredPrimary) {
     return {
       primaryConceptId: inferredPrimary,
-      conceptIds: [inferredPrimary, ...fromRules.filter((conceptId) => conceptId !== inferredPrimary)],
+      conceptIds: [
+        inferredPrimary,
+        ...fromRules.filter((conceptId) => conceptId !== inferredPrimary),
+      ],
     };
   }
 
@@ -1059,9 +1078,9 @@ export function buildBackfillClassification(input: {
   if (!manifestInference) return null;
 
   const hasBackfillInference = Boolean(
-    manifestInference.enrichmentCategory
-    || manifestInference.enrichmentDocumentType
-    || manifestInference.enrichmentProvider
+    manifestInference.enrichmentCategory ||
+    manifestInference.enrichmentDocumentType ||
+    manifestInference.enrichmentProvider,
   );
   if (!hasBackfillInference) return null;
 
@@ -1108,7 +1127,9 @@ export async function classifyDocsTaxonomy(input: {
 }> {
   const component = input.component ?? "docs-ingest";
   const manifestInference = await resolveManifestInference(input.file.nasPath);
-  const mergedTags = [...new Set([...(input.requestedTags ?? []), ...(manifestInference?.tags ?? [])])];
+  const mergedTags = [
+    ...new Set([...(input.requestedTags ?? []), ...(manifestInference?.tags ?? [])]),
+  ];
 
   const labels = collectConceptLabels({
     file: input.file,
@@ -1132,10 +1153,10 @@ export async function classifyDocsTaxonomy(input: {
   let preferredStorageCategory: string | undefined =
     input.explicitStorageCategory ?? manifestInference?.enrichmentCategory;
   const hasBackfillInference = Boolean(
-    manifestInference
-      && (manifestInference.enrichmentCategory
-        || manifestInference.enrichmentDocumentType
-        || manifestInference.enrichmentProvider)
+    manifestInference &&
+    (manifestInference.enrichmentCategory ||
+      manifestInference.enrichmentDocumentType ||
+      manifestInference.enrichmentProvider),
   );
   const backfillClassification = buildBackfillClassification({
     resolved,
@@ -1191,7 +1212,7 @@ export async function classifyDocsTaxonomy(input: {
         },
       });
       throw new Error(
-        `docs-ingest requires taxonomy inference (backfill or llm) for ${input.file.nasPath}`
+        `docs-ingest requires taxonomy inference (backfill or llm) for ${input.file.nasPath}`,
       );
     }
   }
@@ -1239,7 +1260,7 @@ export async function classifyDocsTaxonomy(input: {
         unmappedLabels: classification.diagnostics.unmappedLabels,
       },
     },
-    async () => classification
+    async () => classification,
   );
 
   return {
@@ -1328,9 +1349,10 @@ type ExistingDocumentPathAliases = {
 };
 
 async function getExistingDocumentPathAliases(docId: string): Promise<ExistingDocumentPathAliases> {
-  const response = await typesense.typesenseRequest(
+  const response = await typesense.typesenseRequestAt(
+    DOCS_TYPESENSE_URL,
     `/collections/${DOCS_COLLECTION}/documents/${encodeURIComponent(docId)}?include_fields=nas_path,nas_paths`,
-    { method: "GET" }
+    { method: "GET" },
   );
 
   if (response.status === 404) {
@@ -1414,16 +1436,18 @@ type TypesenseCollectionSchema = {
 
 async function ensureCollectionFields(
   collection: string,
-  fields: Array<Record<string, unknown>>
+  fields: Array<Record<string, unknown>>,
 ): Promise<void> {
   if (fields.length === 0) return;
-  const schemaResponse = await typesense.typesenseRequest(`/collections/${collection}`, {
-    method: "GET",
-  });
+  const schemaResponse = await typesense.typesenseRequestAt(
+    DOCS_TYPESENSE_URL,
+    `/collections/${collection}`,
+    { method: "GET" },
+  );
   if (!schemaResponse.ok) {
     const errorText = await schemaResponse.text();
     throw new Error(
-      `Failed to inspect Typesense schema for ${collection}: ${schemaResponse.status} ${errorText}`
+      `Failed to inspect Typesense schema for ${collection}: ${schemaResponse.status} ${errorText}`,
     );
   }
 
@@ -1431,7 +1455,7 @@ async function ensureCollectionFields(
   const existing = new Set(
     (schema.fields ?? [])
       .map((field) => (typeof field.name === "string" ? field.name : null))
-      .filter((field): field is string => field != null)
+      .filter((field): field is string => field != null),
   );
 
   const missing = fields.filter((field) => {
@@ -1442,20 +1466,24 @@ async function ensureCollectionFields(
 
   if (missing.length === 0) return;
 
-  const patchResponse = await typesense.typesenseRequest(`/collections/${collection}`, {
-    method: "PATCH",
-    body: JSON.stringify({ fields: missing }),
-  });
+  const patchResponse = await typesense.typesenseRequestAt(
+    DOCS_TYPESENSE_URL,
+    `/collections/${collection}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ fields: missing }),
+    },
+  );
   if (!patchResponse.ok) {
     const errorText = await patchResponse.text();
     throw new Error(
-      `Failed to patch Typesense schema for ${collection}: ${patchResponse.status} ${errorText}`
+      `Failed to patch Typesense schema for ${collection}: ${patchResponse.status} ${errorText}`,
     );
   }
 }
 
 export async function ensureDocsCollections(): Promise<void> {
-  await typesense.ensureCollection(DOCS_COLLECTION, {
+  await typesense.ensureCollectionAt(DOCS_TYPESENSE_URL, DOCS_COLLECTION, {
     name: DOCS_COLLECTION,
     fields: [
       { name: "id", type: "string" },
@@ -1509,7 +1537,7 @@ export async function ensureDocsCollections(): Promise<void> {
 
   // ADR-0234: pre-computed embeddings via ollama (GPU-accelerated, ~150x faster than Typesense CPU)
   // No auto-embed — raw float[] vectors stored directly
-  await typesense.ensureCollection(DOCS_CHUNKS_V2_COLLECTION, {
+  await typesense.ensureCollectionAt(DOCS_TYPESENSE_URL, DOCS_CHUNKS_V2_COLLECTION, {
     name: DOCS_CHUNKS_V2_COLLECTION,
     fields: [
       ...chunkFields,
@@ -1526,16 +1554,19 @@ export async function ensureDocsCollections(): Promise<void> {
 
 export async function deleteDocChunks(
   docId: string,
-  collection: string = DOCS_CHUNKS_COLLECTION
+  collection: string = DOCS_CHUNKS_COLLECTION,
 ): Promise<void> {
   const filterBy = encodeURIComponent(`doc_id:=${docId}`);
-  const response = await typesense.typesenseRequest(
+  const response = await typesense.typesenseRequestAt(
+    DOCS_TYPESENSE_URL,
     `/collections/${collection}/documents?filter_by=${filterBy}`,
-    { method: "DELETE" }
+    { method: "DELETE" },
   );
   if (!response.ok && response.status !== 404) {
     const errorText = await response.text();
-    throw new Error(`Failed to delete existing chunk docs for ${docId} in ${collection}: ${errorText}`);
+    throw new Error(
+      `Failed to delete existing chunk docs for ${docId} in ${collection}: ${errorText}`,
+    );
   }
 }
 
@@ -1559,12 +1590,15 @@ export const docsIngest = inngest.createFunction(
       .filter((tag: unknown): tag is string => typeof tag === "string")
       .map((tag: string) => tag.trim())
       .filter((tag: string) => tag.length > 0);
-    const sourceHost = typeof event.data.sourceHost === "string" ? event.data.sourceHost.trim() : undefined;
+    const sourceHost =
+      typeof event.data.sourceHost === "string" ? event.data.sourceHost.trim() : undefined;
     const explicitStorageCategory =
-      typeof event.data.storageCategory === "string" ? event.data.storageCategory.trim() : undefined;
+      typeof event.data.storageCategory === "string"
+        ? event.data.storageCategory.trim()
+        : undefined;
     const requestedNasPath =
       [event.data.filePath, event.data.nasPath].find(
-        (path): path is string => typeof path === "string" && path.trim().length > 0
+        (path): path is string => typeof path === "string" && path.trim().length > 0,
       ) ?? "";
     const addedAt = Date.now();
 
@@ -1590,7 +1624,7 @@ export const docsIngest = inngest.createFunction(
           metadata.sizeBytes = result.sizeBytes;
           metadata.sha256 = result.sha256;
           return result;
-        }
+        },
       );
     });
 
@@ -1614,7 +1648,7 @@ export const docsIngest = inngest.createFunction(
           metadata.characterCount = result.characterCount;
           metadata.pageCount = result.pageCount;
           return result;
-        }
+        },
       );
     });
 
@@ -1663,7 +1697,11 @@ export const docsIngest = inngest.createFunction(
         addedAt,
       });
 
-      await typesense.upsert(DOCS_COLLECTION, document as unknown as Record<string, unknown>);
+      await typesense.upsertAt(
+        DOCS_TYPESENSE_URL,
+        DOCS_COLLECTION,
+        document as unknown as Record<string, unknown>,
+      );
       await emitOtelEvent({
         level: "info",
         source: "worker",
@@ -1717,7 +1755,7 @@ export const docsIngest = inngest.createFunction(
             profileVersion: "book-chunk.v1",
           },
         },
-        async () => chunking.stats
+        async () => chunking.stats,
       );
 
       await emitOtelEvent({
@@ -1806,5 +1844,5 @@ export const docsIngest = inngest.createFunction(
       snippetChunks: chunkSummary.snippetCount,
       chunkErrors: chunkSummary.errors,
     };
-  }
+  },
 );

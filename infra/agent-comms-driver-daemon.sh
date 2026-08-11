@@ -4,6 +4,9 @@ set -euo pipefail
 export HOME="/Users/joel"
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.local/share/fnm/aliases/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+# Source fleet env overrides (sets JOELCLAW_CENTRAL_URL, MESSAGE_EVENT_CONVEX_URL, etc.)
+[ -f "$HOME/.config/system-bus.env" ] && set -a && . "$HOME/.config/system-bus.env" && set +a
+
 PNPM_BIN="${PNPM_BIN:-$HOME/.local/share/fnm/aliases/default/bin/pnpm}"
 REPO_ROOT="${REPO_ROOT:-$HOME/Code/joelhooks/joelclaw}"
 

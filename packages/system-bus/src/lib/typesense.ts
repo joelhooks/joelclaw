@@ -9,15 +9,15 @@ export const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";
 const TYPESENSE_WRITE_MAX_RETRIES = Math.max(
   0,
-  Number.parseInt(process.env.TYPESENSE_WRITE_MAX_RETRIES ?? "5", 10)
+  Number.parseInt(process.env.TYPESENSE_WRITE_MAX_RETRIES ?? "5", 10),
 );
 const TYPESENSE_WRITE_BASE_BACKOFF_MS = Math.max(
   50,
-  Number.parseInt(process.env.TYPESENSE_WRITE_BASE_BACKOFF_MS ?? "250", 10)
+  Number.parseInt(process.env.TYPESENSE_WRITE_BASE_BACKOFF_MS ?? "250", 10),
 );
 const TYPESENSE_WRITE_MAX_BACKOFF_MS = Math.max(
   TYPESENSE_WRITE_BASE_BACKOFF_MS,
-  Number.parseInt(process.env.TYPESENSE_WRITE_MAX_BACKOFF_MS ?? "4000", 10)
+  Number.parseInt(process.env.TYPESENSE_WRITE_MAX_BACKOFF_MS ?? "4000", 10),
 );
 const TYPESENSE_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
@@ -45,7 +45,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function retryTypesenseWrite(request: () => Promise<Response>): Promise<Response> {
+async function retryTypesenseWrite(
+  request: () => Promise<Response>,
+  options: { retrySafe?: boolean } = {},
+): Promise<Response> {
+  const retrySafe = options.retrySafe ?? true;
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= TYPESENSE_WRITE_MAX_RETRIES; attempt += 1) {
@@ -54,7 +58,7 @@ async function retryTypesenseWrite(request: () => Promise<Response>): Promise<Re
       if (response.ok) return response;
 
       const retryable = TYPESENSE_RETRYABLE_STATUSES.has(response.status);
-      if (!retryable || attempt >= TYPESENSE_WRITE_MAX_RETRIES) {
+      if (!retrySafe || !retryable || attempt >= TYPESENSE_WRITE_MAX_RETRIES) {
         return response;
       }
 
@@ -62,14 +66,14 @@ async function retryTypesenseWrite(request: () => Promise<Response>): Promise<Re
       await response.text().catch(() => {});
     } catch (error) {
       lastError = error;
-      if (attempt >= TYPESENSE_WRITE_MAX_RETRIES) {
+      if (!retrySafe || attempt >= TYPESENSE_WRITE_MAX_RETRIES) {
         throw error;
       }
     }
 
     const backoff = Math.min(
       TYPESENSE_WRITE_MAX_BACKOFF_MS,
-      TYPESENSE_WRITE_BASE_BACKOFF_MS * 2 ** attempt
+      TYPESENSE_WRITE_BASE_BACKOFF_MS * 2 ** attempt,
     );
     const jitter = Math.floor(Math.random() * Math.max(25, Math.floor(backoff * 0.2)));
     await sleep(backoff + jitter);
@@ -79,15 +83,20 @@ async function retryTypesenseWrite(request: () => Promise<Response>): Promise<Re
   throw new Error("Typesense write failed after retries");
 }
 
-export async function typesenseRequest(
+export async function typesenseRequest(path: string, init?: RequestInit): Promise<Response> {
+  return typesenseRequestAt(TYPESENSE_URL, path, init);
+}
+
+export async function typesenseRequestAt(
+  baseUrl: string,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
 ): Promise<Response> {
-  return fetch(`${TYPESENSE_URL}${path}`, {
-    ...(init ?? {}),
+  return fetch(`${baseUrl.replace(/\/+$/u, "")}${path}`, {
+    ...init,
     headers: {
       ...headers(),
-      ...(init?.headers ?? {}),
+      ...init?.headers,
     },
   });
 }
@@ -389,7 +398,9 @@ export async function querySystemKnowledge(
       return "";
     }
 
-    const data = (await resp.json()) as { results?: Array<{ hits?: TypesenseHit[]; error?: string }> };
+    const data = (await resp.json()) as {
+      results?: Array<{ hits?: TypesenseHit[]; error?: string }>;
+    };
     if (!data.results) return "";
 
     const allHits: Array<{ source: string; hit: TypesenseHit }> = [];
@@ -406,26 +417,33 @@ export async function querySystemKnowledge(
 
     // Take top N by text_match score across all collections
     allHits.sort((a, b) => {
-      const scoreA = Number(a.hit.text_match_info?.score ?? a.hit.hybrid_search_info?.rank_fusion_score ?? 0);
-      const scoreB = Number(b.hit.text_match_info?.score ?? b.hit.hybrid_search_info?.rank_fusion_score ?? 0);
+      const scoreA = Number(
+        a.hit.text_match_info?.score ?? a.hit.hybrid_search_info?.rank_fusion_score ?? 0,
+      );
+      const scoreB = Number(
+        b.hit.text_match_info?.score ?? b.hit.hybrid_search_info?.rank_fusion_score ?? 0,
+      );
       return scoreB - scoreA;
     });
 
-    return allHits.slice(0, limit).map(({ source, hit }) => {
-      const doc = hit.document as Record<string, unknown>;
-      switch (source) {
-        case SYSTEM_KNOWLEDGE_COLLECTION:
-          return `### [${doc.type}] ${doc.title}\n${String(doc.content ?? "").slice(0, 1000)}`;
-        case "memory_observations":
-          return `### [memory] ${String(doc.observation ?? "").slice(0, 1000)}`;
-        case "system_log":
-          return `### [slog] ${doc.action}: ${String(doc.detail ?? "").slice(0, 500)}`;
-        case "discoveries":
-          return `### [discovery] ${doc.title}\n${String(doc.summary ?? "").slice(0, 500)}`;
-        default:
-          return `### [${source}] ${doc.title ?? doc.id}\n${String(doc.content ?? doc.observation ?? "").slice(0, 500)}`;
-      }
-    }).join("\n\n");
+    return allHits
+      .slice(0, limit)
+      .map(({ source, hit }) => {
+        const doc = hit.document as Record<string, unknown>;
+        switch (source) {
+          case SYSTEM_KNOWLEDGE_COLLECTION:
+            return `### [${doc.type}] ${doc.title}\n${String(doc.content ?? "").slice(0, 1000)}`;
+          case "memory_observations":
+            return `### [memory] ${String(doc.observation ?? "").slice(0, 1000)}`;
+          case "system_log":
+            return `### [slog] ${doc.action}: ${String(doc.detail ?? "").slice(0, 500)}`;
+          case "discoveries":
+            return `### [discovery] ${doc.title}\n${String(doc.summary ?? "").slice(0, 500)}`;
+          default:
+            return `### [${source}] ${doc.title ?? doc.id}\n${String(doc.content ?? doc.observation ?? "").slice(0, 500)}`;
+        }
+      })
+      .join("\n\n");
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("404") || msg.includes("ECONNREFUSED")) return "";
@@ -446,7 +464,7 @@ function asTrimmedString(value: unknown): string | null {
  */
 export async function resolveVectorField(
   collection: string,
-  preferredField = DEFAULT_VECTOR_FIELD
+  preferredField = DEFAULT_VECTOR_FIELD,
 ): Promise<string> {
   const cacheKey = `${collection}:${preferredField}`;
   const cached = vectorFieldCache.get(cacheKey);
@@ -459,7 +477,9 @@ export async function resolveVectorField(
     }
 
     const schema = (await response.json()) as TypesenseCollectionSchema;
-    const fields = Array.isArray(schema.fields) ? (schema.fields as TypesenseCollectionField[]) : [];
+    const fields = Array.isArray(schema.fields)
+      ? (schema.fields as TypesenseCollectionField[])
+      : [];
 
     const preferredVectorField = fields.find((field) => {
       const name = asTrimmedString(field.name);
@@ -482,12 +502,20 @@ export async function resolveVectorField(
 
 /** Upsert a single document */
 export async function upsert(collection: string, doc: Record<string, unknown>): Promise<void> {
+  return upsertAt(TYPESENSE_URL, collection, doc);
+}
+
+export async function upsertAt(
+  baseUrl: string,
+  collection: string,
+  doc: Record<string, unknown>,
+): Promise<void> {
   const resp = await retryTypesenseWrite(() =>
-    fetch(`${TYPESENSE_URL}/collections/${collection}/documents?action=upsert`, {
+    fetch(`${baseUrl.replace(/\/+$/u, "")}/collections/${collection}/documents?action=upsert`, {
       method: "POST",
       headers: headers(),
       body: JSON.stringify(doc),
-    })
+    }),
   );
   if (!resp.ok) {
     const text = await resp.text();
@@ -499,22 +527,42 @@ export async function upsert(collection: string, doc: Record<string, unknown>): 
 export async function bulkImport(
   collection: string,
   docs: Record<string, unknown>[],
-  action: "upsert" | "create" | "update" = "upsert"
+  action: "upsert" | "create" | "update" = "upsert",
+): Promise<{ success: number; errors: number }> {
+  return bulkImportAt(TYPESENSE_URL, collection, docs, action);
+}
+
+export async function bulkImportAt(
+  baseUrl: string,
+  collection: string,
+  docs: Record<string, unknown>[],
+  action: "upsert" | "create" | "update" = "upsert",
 ): Promise<{ success: number; errors: number }> {
   const body = docs.map((d) => JSON.stringify(d)).join("\n");
-  const resp = await retryTypesenseWrite(() =>
-    fetch(`${TYPESENSE_URL}/collections/${collection}/documents/import?action=${action}`, {
-      method: "POST",
-      headers: headers(),
-      body,
-    })
+  const resp = await retryTypesenseWrite(
+    () =>
+      fetch(
+        `${baseUrl.replace(/\/+$/u, "")}/collections/${collection}/documents/import?action=${action}`,
+        {
+          method: "POST",
+          headers: headers(),
+          body,
+        },
+      ),
+    { retrySafe: action !== "create" },
   );
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`Typesense bulk import failed (${resp.status}): ${text}`);
   }
   const text = await resp.text();
-  const lines = text.trim().split("\n");
+  const trimmed = text.trim();
+  const lines = trimmed.length > 0 ? trimmed.split("\n") : [];
+  if (lines.length !== docs.length) {
+    throw new Error(
+      `Typesense bulk import acknowledgement mismatch: sent ${docs.length}, received ${lines.length}`,
+    );
+  }
   let success = 0;
   let errors = 0;
   for (const line of lines) {
@@ -531,6 +579,13 @@ export async function bulkImport(
 
 /** Search a single collection */
 export async function search(params: TypesenseSearchParams): Promise<TypesenseSearchResult> {
+  return searchAt(TYPESENSE_URL, params);
+}
+
+export async function searchAt(
+  baseUrl: string,
+  params: TypesenseSearchParams,
+): Promise<TypesenseSearchResult> {
   const searchParams = new URLSearchParams({
     q: params.q,
     query_by: params.query_by,
@@ -548,22 +603,23 @@ export async function search(params: TypesenseSearchParams): Promise<TypesenseSe
   }
 
   const configuredCutoffMs = Number.parseInt(process.env.TYPESENSE_SEARCH_CUTOFF_MS ?? "1500", 10);
-  const defaultCutoffMs = Number.isFinite(configuredCutoffMs) && configuredCutoffMs > 0
-    ? configuredCutoffMs
-    : 1500;
+  const defaultCutoffMs =
+    Number.isFinite(configuredCutoffMs) && configuredCutoffMs > 0 ? configuredCutoffMs : 1500;
   const searchCutoffMs = params.search_cutoff_ms ?? defaultCutoffMs;
   if (Number.isFinite(searchCutoffMs) && searchCutoffMs > 0) {
     searchParams.set("search_cutoff_ms", String(searchCutoffMs));
   }
 
-  const configuredTimeoutMs = Number.parseInt(process.env.TYPESENSE_SEARCH_TIMEOUT_MS ?? "5000", 10);
-  const timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs >= 100
-    ? configuredTimeoutMs
-    : 5000;
+  const configuredTimeoutMs = Number.parseInt(
+    process.env.TYPESENSE_SEARCH_TIMEOUT_MS ?? "5000",
+    10,
+  );
+  const timeoutMs =
+    Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs >= 100 ? configuredTimeoutMs : 5000;
 
   const resp = await fetch(
-    `${TYPESENSE_URL}/collections/${params.collection}/documents/search?${searchParams}`,
-    { headers: headers(), signal: AbortSignal.timeout(timeoutMs) }
+    `${baseUrl.replace(/\/+$/u, "")}/collections/${params.collection}/documents/search?${searchParams}`,
+    { headers: headers(), signal: AbortSignal.timeout(timeoutMs) },
   );
   if (!resp.ok) {
     const text = await resp.text();
@@ -573,13 +629,10 @@ export async function search(params: TypesenseSearchParams): Promise<TypesenseSe
 }
 
 /** Read a document by ID */
-export async function getDoc(
-  collection: string,
-  id: string
-): Promise<Record<string, unknown>> {
+export async function getDoc(collection: string, id: string): Promise<Record<string, unknown>> {
   const resp = await fetch(
     `${TYPESENSE_URL}/collections/${collection}/documents/${encodeURIComponent(id)}`,
-    { headers: headers() }
+    { headers: headers() },
   );
   if (!resp.ok) {
     const text = await resp.text();
@@ -590,10 +643,10 @@ export async function getDoc(
 
 /** Delete a document by ID */
 export async function deleteDoc(collection: string, id: string): Promise<void> {
-  const resp = await fetch(
-    `${TYPESENSE_URL}/collections/${collection}/documents/${id}`,
-    { method: "DELETE", headers: headers() }
-  );
+  const resp = await fetch(`${TYPESENSE_URL}/collections/${collection}/documents/${id}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
   if (!resp.ok && resp.status !== 404) {
     const text = await resp.text();
     throw new Error(`Typesense delete failed (${resp.status}): ${text}`);
@@ -603,16 +656,26 @@ export async function deleteDoc(collection: string, id: string): Promise<void> {
 /** Create a collection if it does not already exist. */
 export async function ensureCollection(
   collection: string,
-  schema: Record<string, unknown>
+  schema: Record<string, unknown>,
 ): Promise<void> {
-  const exists = await typesenseRequest(`/collections/${collection}`, { method: "GET" });
+  return ensureCollectionAt(TYPESENSE_URL, collection, schema);
+}
+
+export async function ensureCollectionAt(
+  baseUrl: string,
+  collection: string,
+  schema: Record<string, unknown>,
+): Promise<void> {
+  const exists = await typesenseRequestAt(baseUrl, `/collections/${collection}`, {
+    method: "GET",
+  });
   if (exists.ok) return;
   if (exists.status !== 404) {
     const text = await exists.text();
     throw new Error(`Typesense collection check failed (${exists.status}): ${text}`);
   }
 
-  const create = await typesenseRequest("/collections", {
+  const create = await typesenseRequestAt(baseUrl, "/collections", {
     method: "POST",
     body: JSON.stringify(schema),
   });
@@ -639,7 +702,16 @@ export async function createCollection(schema: Record<string, unknown>): Promise
 
 export interface KnowledgeDoc {
   id: string;
-  type: "adr" | "skill" | "lesson" | "pattern" | "retro" | "failed_target" | "decision" | "insight" | "turn_note";
+  type:
+    | "adr"
+    | "skill"
+    | "lesson"
+    | "pattern"
+    | "retro"
+    | "failed_target"
+    | "decision"
+    | "insight"
+    | "turn_note";
   title: string;
   content: string;
   source?: string;
@@ -679,7 +751,11 @@ export async function ensureKnowledge(
     }
 
     // Found — check if content matches
-    const current = (await existing.json()) as { content?: string; title?: string; status?: string };
+    const current = (await existing.json()) as {
+      content?: string;
+      title?: string;
+      status?: string;
+    };
     const contentChanged = current.content !== doc.content;
     const titleChanged = current.title !== doc.title;
     const statusChanged = doc.status !== undefined && current.status !== doc.status;
@@ -736,7 +812,7 @@ function isImmutableTypesenseFieldName(name: string): boolean {
 
 async function ensureCollectionFields(
   collection: string,
-  fields: TypesenseSchemaFieldSpec[]
+  fields: TypesenseSchemaFieldSpec[],
 ): Promise<void> {
   if (fields.length === 0) return;
 
@@ -751,7 +827,7 @@ async function ensureCollectionFields(
   if (!schemaResponse.ok) {
     const errorText = await schemaResponse.text();
     throw new Error(
-      `Failed to inspect Typesense schema for ${collection}: ${schemaResponse.status} ${errorText}`
+      `Failed to inspect Typesense schema for ${collection}: ${schemaResponse.status} ${errorText}`,
     );
   }
 
@@ -763,7 +839,7 @@ async function ensureCollectionFields(
         const name = (field as TypesenseCollectionField).name;
         return typeof name === "string" ? name : null;
       })
-      .filter((field): field is string => field != null)
+      .filter((field): field is string => field != null),
   );
 
   const missing = desiredFields.filter((field) => {
@@ -780,7 +856,7 @@ async function ensureCollectionFields(
   if (!patchResponse.ok) {
     const errorText = await patchResponse.text();
     throw new Error(
-      `Failed to patch Typesense schema for ${collection}: ${patchResponse.status} ${errorText}`
+      `Failed to patch Typesense schema for ${collection}: ${patchResponse.status} ${errorText}`,
     );
   }
 }
