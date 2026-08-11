@@ -7,87 +7,117 @@
  * discoveries, transcripts, voice_transcripts, docs, docs_chunks_v2,
  * system_knowledge, and pi_mono_artifacts.
  */
-import { Args, Command, Options } from "@effect/cli"
-import { embed } from "@joelclaw/inference-router"
-import { Console, Effect } from "effect"
-import { respond, respondError } from "../response"
-import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
+import { Args, Command, Options } from "@effect/cli";
+import { embed } from "@joelclaw/inference-router";
+import { Console, Effect } from "effect";
+import { respond, respondError } from "../response";
+import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth";
 
-const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
-const SEARCH_EMBED_DIMS = 384
+const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
+const DOCS_TYPESENSE_URL = process.env.DOCS_TYPESENSE_URL || TYPESENSE_URL;
+const SEARCH_EMBED_DIMS = 384;
+const DOCS_COLLECTION_NAMES = new Set(["docs", "docs_chunks_v2"]);
 
 interface SearchHit {
-  collection: string
-  title: string
-  snippet: string
-  path?: string
-  score?: number
-  type?: string
+  collection: string;
+  title: string;
+  snippet: string;
+  path?: string;
+  score?: number;
+  type?: string;
 }
 
 type SearchCollection = {
-  readonly name: string
-  readonly queryBy: string
-  readonly titleField: string
-  readonly supportsSemantic: boolean
-  readonly semanticVectorField?: string
-}
+  readonly name: string;
+  readonly queryBy: string;
+  readonly titleField: string;
+  readonly supportsSemantic: boolean;
+  readonly semanticVectorField?: string;
+};
 
 const COLLECTIONS: readonly SearchCollection[] = [
   { name: "vault_notes", queryBy: "title,content", titleField: "title", supportsSemantic: true },
-  { name: "memory_observations", queryBy: "observation", titleField: "observation", supportsSemantic: true, semanticVectorField: "embedding" },
+  {
+    name: "memory_observations",
+    queryBy: "observation",
+    titleField: "observation",
+    supportsSemantic: true,
+    semanticVectorField: "embedding",
+  },
   { name: "blog_posts", queryBy: "title,content", titleField: "title", supportsSemantic: true },
-  { name: "system_log", queryBy: "detail,tool,action", titleField: "detail", supportsSemantic: false },
+  {
+    name: "system_log",
+    queryBy: "detail,tool,action",
+    titleField: "detail",
+    supportsSemantic: false,
+  },
   { name: "discoveries", queryBy: "title,summary", titleField: "title", supportsSemantic: true },
-  { name: "transcripts", queryBy: "title,text,speaker,channel", titleField: "title", supportsSemantic: true },
+  {
+    name: "transcripts",
+    queryBy: "title,text,speaker,channel",
+    titleField: "title",
+    supportsSemantic: true,
+  },
   { name: "voice_transcripts", queryBy: "content", titleField: "content", supportsSemantic: true },
   { name: "docs", queryBy: "title,summary,filename", titleField: "title", supportsSemantic: false },
-  { name: "docs_chunks_v2", queryBy: "retrieval_text,content", titleField: "title", supportsSemantic: true },
-  { name: "system_knowledge", queryBy: "title,content", titleField: "title", supportsSemantic: true },
-  { name: "pi_mono_artifacts", queryBy: "title,content,author,path,decision_tags", titleField: "title", supportsSemantic: true },
-]
+  {
+    name: "docs_chunks_v2",
+    queryBy: "retrieval_text,content",
+    titleField: "title",
+    supportsSemantic: true,
+  },
+  {
+    name: "system_knowledge",
+    queryBy: "title,content",
+    titleField: "title",
+    supportsSemantic: true,
+  },
+  {
+    name: "pi_mono_artifacts",
+    queryBy: "title,content,author,path,decision_tags",
+    titleField: "title",
+    supportsSemantic: true,
+  },
+];
 
-const COLLECTION_NAMES = COLLECTIONS.map((c) => c.name)
+const COLLECTION_NAMES = COLLECTIONS.map((c) => c.name);
 
 class CollectionSelectionError extends Error {
-  readonly code = "INVALID_COLLECTION"
+  readonly code = "INVALID_COLLECTION";
 
   constructor(readonly collection: string) {
-    super(
-      `Unsupported collection '${collection}'. Allowed: ${COLLECTION_NAMES.join(", ")}`
-    )
-    this.name = "CollectionSelectionError"
+    super(`Unsupported collection '${collection}'. Allowed: ${COLLECTION_NAMES.join(", ")}`);
+    this.name = "CollectionSelectionError";
   }
 }
 
 function resolveRequestedCollections(collection?: string): readonly SearchCollection[] {
-  if (!collection) return COLLECTIONS
+  if (!collection) return COLLECTIONS;
 
-  const requested = collection.trim()
-  if (requested.length === 0) return COLLECTIONS
+  const requested = collection.trim();
+  if (requested.length === 0) return COLLECTIONS;
 
   const matches = COLLECTIONS.filter(
-    (candidate) =>
-      candidate.name === requested || candidate.name.startsWith(requested)
-  )
+    (candidate) => candidate.name === requested || candidate.name.startsWith(requested),
+  );
 
   if (matches.length === 0) {
-    throw new CollectionSelectionError(requested)
+    throw new CollectionSelectionError(requested);
   }
 
-  return matches
+  return matches;
 }
 
 function buildSearchRequest(
   collection: SearchCollection,
   query: string,
   options: {
-    perPage: number
-    semantic?: boolean
-    filter?: string
-    facet?: string
-    queryEmbedding?: number[]
-  }
+    perPage: number;
+    semantic?: boolean;
+    filter?: string;
+    facet?: string;
+    queryEmbedding?: number[];
+  },
 ): Record<string, unknown> {
   const search: Record<string, unknown> = {
     collection: collection.name,
@@ -96,37 +126,95 @@ function buildSearchRequest(
     per_page: options.perPage,
     highlight_full_fields: collection.queryBy,
     exclude_fields: "embedding",
+  };
+
+  if (options.facet) search.facet_by = options.facet;
+  if (options.filter) search.filter_by = options.filter;
+
+  if (
+    options.semantic &&
+    collection.supportsSemantic &&
+    collection.semanticVectorField &&
+    options.queryEmbedding
+  ) {
+    search.vector_query = formatSearchVectorQuery(
+      collection.semanticVectorField,
+      options.queryEmbedding,
+      options.perPage * 2,
+    );
   }
 
-  if (options.facet) search.facet_by = options.facet
-  if (options.filter) search.filter_by = options.filter
-
-  if (options.semantic && collection.supportsSemantic && collection.semanticVectorField && options.queryEmbedding) {
-    search.vector_query = formatSearchVectorQuery(collection.semanticVectorField, options.queryEmbedding, options.perPage * 2)
-  }
-
-  return search
+  return search;
 }
 
 function formatSearchVectorQuery(field: string, embedding: number[], fetchLimit: number): string {
-  const vector = embedding.map((value) => Number.isFinite(value) ? Number(value.toFixed(8)) : 0)
-  return `${field}:([${vector.join(",")}], k:${fetchLimit}, alpha:0.7)`
+  const vector = embedding.map((value) => (Number.isFinite(value) ? Number(value.toFixed(8)) : 0));
+  return `${field}:([${vector.join(",")}], k:${fetchLimit}, alpha:0.7)`;
 }
 
-async function buildSearchQueryEmbedding(collections: readonly SearchCollection[], query: string, semantic?: boolean): Promise<number[] | undefined> {
-  if (!semantic || !collections.some((collection) => collection.supportsSemantic && collection.semanticVectorField)) {
-    return undefined
+function buildSearchBatches(
+  collections: readonly SearchCollection[],
+  urls: { main: string; docs: string } = {
+    main: TYPESENSE_URL,
+    docs: DOCS_TYPESENSE_URL,
+  },
+): Array<{ url: string; collections: SearchCollection[] }> {
+  const batches = new Map<string, SearchCollection[]>();
+  for (const collection of collections) {
+    const url = DOCS_COLLECTION_NAMES.has(collection.name) ? urls.docs : urls.main;
+    const existing = batches.get(url) ?? [];
+    existing.push(collection);
+    batches.set(url, existing);
+  }
+  return [...batches].map(([url, selected]) => ({ url, collections: selected }));
+}
+
+function unwrapSearchBatchResults<T>(results: readonly PromiseSettledResult<T>[]): T[] {
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failure) {
+    throw failure.reason instanceof Error
+      ? failure.reason
+      : new Error(`Typesense search node failed: ${String(failure.reason)}`);
+  }
+  return results.map((result) => (result as PromiseFulfilledResult<T>).value);
+}
+
+function assertCompleteSearchResponses<
+  T extends { results?: Array<{ code?: number; error?: string; [key: string]: unknown }> },
+>(responses: readonly T[]): T[] {
+  for (const response of responses) {
+    const failedResult = response.results?.find((result) => result.error);
+    if (failedResult?.error) {
+      const code = failedResult.code == null ? "" : ` (${failedResult.code})`;
+      throw new Error(`Typesense search result failed${code}: ${failedResult.error}`);
+    }
+  }
+  return [...responses];
+}
+
+async function buildSearchQueryEmbedding(
+  collections: readonly SearchCollection[],
+  query: string,
+  semantic?: boolean,
+): Promise<number[] | undefined> {
+  if (
+    !semantic ||
+    !collections.some((collection) => collection.supportsSemantic && collection.semanticVectorField)
+  ) {
+    return undefined;
   }
 
   try {
     const result = await embed(query, {
       priority: "query",
       dimensions: SEARCH_EMBED_DIMS,
-    })
-    return result.embedding
+    });
+    return result.embedding;
   } catch {
     // Search must fail open to keyword search if the embedding lane is down.
-    return undefined
+    return undefined;
   }
 }
 
@@ -134,68 +222,75 @@ async function multiSearch(
   query: string,
   apiKey: string,
   options: {
-    collection?: string
-    perPage: number
-    facet?: string
-    filter?: string
-    semantic?: boolean
-  }
-): Promise<{ hits: SearchHit[]; facets: Record<string, { value: string; count: number }[]>; totalFound: number }> {
-  const collections = resolveRequestedCollections(options.collection)
-  const queryEmbedding = await buildSearchQueryEmbedding(collections, query, options.semantic)
+    collection?: string;
+    perPage: number;
+    facet?: string;
+    filter?: string;
+    semantic?: boolean;
+  },
+): Promise<{
+  hits: SearchHit[];
+  facets: Record<string, { value: string; count: number }[]>;
+  totalFound: number;
+}> {
+  const collections = resolveRequestedCollections(options.collection);
+  const queryEmbedding = await buildSearchQueryEmbedding(collections, query, options.semantic);
 
-  const searches = collections.map((collection) =>
-    buildSearchRequest(collection, query, {
-      perPage: options.perPage,
-      semantic: options.semantic,
-      filter: options.filter,
-      facet: options.facet,
-      queryEmbedding,
-    })
-  )
+  const settledResponses = await Promise.allSettled(
+    buildSearchBatches(collections).map(async (batch) => {
+      const searches = batch.collections.map((collection) =>
+        buildSearchRequest(collection, query, {
+          perPage: options.perPage,
+          semantic: options.semantic,
+          filter: options.filter,
+          facet: options.facet,
+          queryEmbedding,
+        }),
+      );
+      const resp = await fetch(`${batch.url.replace(/\/+$/u, "")}/multi_search`, {
+        method: "POST",
+        headers: {
+          "X-TYPESENSE-API-KEY": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ searches }),
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Typesense search failed (${resp.status}): ${text}`);
+      }
+      return (await resp.json()) as any;
+    }),
+  );
+  const responses = assertCompleteSearchResponses(unwrapSearchBatchResults(settledResponses));
 
-  const resp = await fetch(`${TYPESENSE_URL}/multi_search`, {
-    method: "POST",
-    headers: {
-      "X-TYPESENSE-API-KEY": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ searches }),
-  })
+  const hits: SearchHit[] = [];
+  const allFacets: Record<string, { value: string; count: number }[]> = {};
+  let totalFound = 0;
 
-  if (!resp.ok) {
-    const text = await resp.text()
-    throw new Error(`Typesense search failed (${resp.status}): ${text}`)
-  }
-
-  const data = (await resp.json()) as any
-  const hits: SearchHit[] = []
-  const allFacets: Record<string, { value: string; count: number }[]> = {}
-  let totalFound = 0
-
-  for (const result of data.results) {
-    const collName = result.request_params?.collection_name || "unknown"
-    totalFound += result.found || 0
+  for (const result of responses.flatMap((data) => data.results ?? [])) {
+    const collName = result.request_params?.collection_name || "unknown";
+    totalFound += result.found || 0;
 
     for (const h of result.hits || []) {
-      const doc = h.document
-      const coll = COLLECTIONS.find((c) => c.name === collName)
-      const titleField = coll?.titleField || "title"
+      const doc = h.document;
+      const coll = COLLECTIONS.find((c) => c.name === collName);
+      const titleField = coll?.titleField || "title";
 
       // Get highlighted snippet or raw content
-      let snippet = ""
+      let snippet = "";
       for (const hl of h.highlights || []) {
         if (hl.snippet) {
-          snippet = hl.snippet
-          break
+          snippet = hl.snippet;
+          break;
         }
       }
       if (!snippet) {
-        const raw = doc[titleField] || doc.content || doc.observation || doc.detail || ""
-        snippet = typeof raw === "string" ? raw.slice(0, 200) : String(raw)
+        const raw = doc[titleField] || doc.content || doc.observation || doc.detail || "";
+        snippet = typeof raw === "string" ? raw.slice(0, 200) : String(raw);
       }
 
-      const title = doc.title || doc[titleField] || ""
+      const title = doc.title || doc[titleField] || "";
 
       hits.push({
         collection: collName,
@@ -204,61 +299,70 @@ async function multiSearch(
         path: doc.path || doc.slug || doc.source_url || undefined,
         score: h.text_match_info?.score || h.hybrid_search_info?.rank_fusion_score || undefined,
         type: doc.type || collName.replace("_", "-"),
-      })
+      });
     }
 
     for (const fc of result.facet_counts || []) {
-      if (!allFacets[fc.field_name]) allFacets[fc.field_name] = []
-      allFacets[fc.field_name].push(...fc.counts.map((c: any) => ({ value: c.value, count: c.count })))
+      if (!allFacets[fc.field_name]) allFacets[fc.field_name] = [];
+      allFacets[fc.field_name].push(
+        ...fc.counts.map((c: any) => ({ value: c.value, count: c.count })),
+      );
     }
   }
 
-  return { hits, facets: allFacets, totalFound }
+  return { hits, facets: allFacets, totalFound };
 }
 
 // --- CLI Definition ---
 
-const queryArg = Args.text({ name: "query" }).pipe(Args.withDescription("Search query"))
+const queryArg = Args.text({ name: "query" }).pipe(Args.withDescription("Search query"));
 
 const collectionOpt = Options.text("collection").pipe(
   Options.withAlias("c"),
   Options.withDescription(`Limit to a specific collection (${COLLECTION_NAMES.join(", ")})`),
-  Options.optional
-)
+  Options.optional,
+);
 
 const limitOpt = Options.integer("limit").pipe(
   Options.withAlias("n"),
   Options.withDescription("Results per collection"),
-  Options.withDefault(5)
-)
+  Options.withDefault(5),
+);
 
 const filterOpt = Options.text("filter").pipe(
   Options.withAlias("f"),
   Options.withDescription("Typesense filter_by expression (e.g. type:=adr)"),
-  Options.optional
-)
+  Options.optional,
+);
 
 const facetOpt = Options.text("facet").pipe(
   Options.withDescription("Facet by field (e.g. type, tags, source)"),
-  Options.optional
-)
+  Options.optional,
+);
 
 const semanticOpt = Options.boolean("semantic").pipe(
   Options.withAlias("s"),
   Options.withDescription("Enable hybrid semantic+keyword search"),
-  Options.withDefault(false)
-)
+  Options.withDefault(false),
+);
 
 export const search = Command.make(
   "search",
-  { query: queryArg, collection: collectionOpt, limit: limitOpt, filter: filterOpt, facet: facetOpt, semantic: semanticOpt },
+  {
+    query: queryArg,
+    collection: collectionOpt,
+    limit: limitOpt,
+    filter: filterOpt,
+    facet: facetOpt,
+    semantic: semanticOpt,
+  },
   ({ query, collection, limit, filter, facet, semantic }) =>
     Effect.gen(function* () {
       try {
-        const apiKey = resolveTypesenseApiKey()
-        const collValue = collection._tag === "Some" ? collection.value : undefined
-        const filterValue = filter._tag === "Some" ? filter.value : undefined
-        const facetValue = facet._tag === "Some" ? facet.value : undefined
+        const apiKey = resolveTypesenseApiKey();
+        const collValue = collection._tag === "Some" ? collection.value : undefined;
+        const filterValue = filter._tag === "Some" ? filter.value : undefined;
+        const facetValue = facet._tag === "Some" ? facet.value : undefined;
 
         const result = yield* Effect.promise(() =>
           multiSearch(query, apiKey, {
@@ -267,47 +371,49 @@ export const search = Command.make(
             filter: filterValue,
             facet: facetValue,
             semantic,
-          })
-        )
+          }),
+        );
 
-        yield* Console.log(respond("search", {
-          query,
-          collection: collValue,
-          semantic,
-          totalFound: result.totalFound,
-          hits: result.hits,
-          facets: Object.keys(result.facets).length > 0 ? result.facets : undefined,
-        }, [
-          {
-            command: `search "${query}" --semantic`,
-            description: "Re-run with hybrid semantic search",
-          },
-          {
-            command: `otel search "${query}"`,
-            description: "Search observability events in ClickHouse",
-          },
-          {
-            command: `search "${query}" --collection vault_notes --facet type`,
-            description: "Search vault with type facets",
-          },
-          {
-            command: `search "${query}" --filter "type:=adr"`,
-            description: "Filter to ADRs only",
-          },
-        ]))
+        yield* Console.log(
+          respond(
+            "search",
+            {
+              query,
+              collection: collValue,
+              semantic,
+              totalFound: result.totalFound,
+              hits: result.hits,
+              facets: Object.keys(result.facets).length > 0 ? result.facets : undefined,
+            },
+            [
+              {
+                command: `search "${query}" --semantic`,
+                description: "Re-run with hybrid semantic search",
+              },
+              {
+                command: `otel search "${query}"`,
+                description: "Search observability events in ClickHouse",
+              },
+              {
+                command: `search "${query}" --collection vault_notes --facet type`,
+                description: "Search vault with type facets",
+              },
+              {
+                command: `search "${query}" --filter "type:=adr"`,
+                description: "Filter to ADRs only",
+              },
+            ],
+          ),
+        );
       } catch (err: any) {
         if (isTypesenseApiKeyError(err)) {
-          yield* Console.log(respondError(
-            "search",
-            err.message,
-            err.code,
-            err.fix,
-            [
+          yield* Console.log(
+            respondError("search", err.message, err.code, err.fix, [
               { command: "status", description: "Check system health" },
               { command: "inngest status", description: "Check worker/server status" },
-            ]
-          ))
-          return
+            ]),
+          );
+          return;
         }
 
         if (err instanceof CollectionSelectionError) {
@@ -319,32 +425,42 @@ export const search = Command.make(
               `Use one of: ${COLLECTION_NAMES.join(", ")}`,
               [
                 { command: "capabilities", description: "Discover supported search flows" },
-                { command: "otel search <query>", description: "Search OTEL events", params: { query: { required: true } } },
-              ]
-            )
-          )
-          return
+                {
+                  command: "otel search <query>",
+                  description: "Search OTEL events",
+                  params: { query: { required: true } },
+                },
+              ],
+            ),
+          );
+          return;
         }
 
-        const message = err instanceof Error ? err.message : String(err)
-        const isUnreachable = message.includes("ECONNREFUSED") || message.includes("Connection refused")
-        yield* Console.log(respondError(
-          "search",
-          message,
-          isUnreachable ? "TYPESENSE_UNREACHABLE" : "SEARCH_FAILED",
-          isUnreachable
-            ? "Start Typesense port-forward: kubectl port-forward -n joelclaw svc/typesense 8108:8108 &"
-            : "Check Typesense health and search parameters",
-          [{ command: "status", description: "Check all services" }]
-        ))
+        const message = err instanceof Error ? err.message : String(err);
+        const isUnreachable =
+          message.includes("ECONNREFUSED") || message.includes("Connection refused");
+        yield* Console.log(
+          respondError(
+            "search",
+            message,
+            isUnreachable ? "TYPESENSE_UNREACHABLE" : "SEARCH_FAILED",
+            isUnreachable
+              ? "Start Typesense port-forward: kubectl port-forward -n joelclaw svc/typesense 8108:8108 &"
+              : "Check Typesense health and search parameters",
+            [{ command: "status", description: "Check all services" }],
+          ),
+        );
       }
-    })
-)
+    }),
+);
 
 export const __searchTestUtils = {
   COLLECTIONS,
   resolveRequestedCollections,
   buildSearchRequest,
+  buildSearchBatches,
+  unwrapSearchBatchResults,
+  assertCompleteSearchResponses,
   formatSearchVectorQuery,
   CollectionSelectionError,
-}
+};

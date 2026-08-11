@@ -5,6 +5,7 @@ import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { DOCS_COLLECTION } from "./docs-ingest";
 
+const DOCS_TYPESENSE_URL = process.env.DOCS_TYPESENSE_URL || typesense.TYPESENSE_URL;
 const BOOKS_ROOT = "/Volumes/three-body/books";
 const TYPESENSE_PAGE_SIZE = 250;
 const REINDEX_BATCH_SIZE = 10;
@@ -69,7 +70,7 @@ async function listCollectionPdfDocs(): Promise<CollectionPdfDoc[]> {
   const seen = new Set<string>();
 
   for (let page = 1; page <= 100; page += 1) {
-    const result = await typesense.search({
+    const result = await typesense.searchAt(DOCS_TYPESENSE_URL, {
       collection: DOCS_COLLECTION,
       q: "*",
       query_by: "title",
@@ -153,7 +154,7 @@ export const docsReindexBatch = inngest.createFunction(
               .filter((path: string | undefined): path is string => Boolean(path))
               .filter(
                 (path: string) =>
-                  path.toLowerCase().endsWith(".pdf") && !path.split("/").pop()?.startsWith("._")
+                  path.toLowerCase().endsWith(".pdf") && !path.split("/").pop()?.startsWith("._"),
               )
               .filter((path: string) => {
                 const key = normalizePathKey(path);
@@ -176,7 +177,7 @@ export const docsReindexBatch = inngest.createFunction(
 
           metadata.resolved = resolved.length;
           return resolved;
-        }
+        },
       );
     });
 
@@ -201,14 +202,16 @@ export const docsReindexBatch = inngest.createFunction(
             ...(target.title ? { title: target.title } : {}),
             ...(skipExistingArtifacts ? { skipExistingArtifacts: true } : {}),
           },
-        }))
+        })),
       );
 
       queuedCount += sendResult.ids.length;
       batchSizes.push(sendResult.ids.length);
 
       if (gateway?.progress && queuedCount % 50 === 0) {
-        await gateway.progress(`📚 Batch reindex: ${queuedCount}/${targets.length} PDFs dispatched`);
+        await gateway.progress(
+          `📚 Batch reindex: ${queuedCount}/${targets.length} PDFs dispatched`,
+        );
       }
     }
 
@@ -234,5 +237,5 @@ export const docsReindexBatch = inngest.createFunction(
       batches: batchSizes.length,
       batchSizes,
     };
-  }
+  },
 );

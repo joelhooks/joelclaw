@@ -16,11 +16,7 @@ import { embedTexts } from "../../lib/embed-ollama";
 import { infer } from "../../lib/inference";
 import * as typesense from "../../lib/typesense";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
-import {
-  type ConceptId,
-  getConceptById,
-  type StorageCategory,
-} from "../../taxonomy/core-v1";
+import { type ConceptId, getConceptById, type StorageCategory } from "../../taxonomy/core-v1";
 import type { ConceptSource } from "../../taxonomy/resolve";
 import { inngest } from "../client";
 import {
@@ -39,6 +35,8 @@ import {
   type ValidatedDocsFile,
   validateFile,
 } from "./docs-ingest";
+
+const DOCS_TYPESENSE_URL = process.env.DOCS_TYPESENSE_URL || typesense.TYPESENSE_URL;
 
 type ExistingDocState = {
   addedAt?: number;
@@ -103,9 +101,10 @@ function buildRetrievalText(input: {
 }
 
 async function loadExistingDocState(docId: string): Promise<ExistingDocState> {
-  const response = await typesense.typesenseRequest(
+  const response = await typesense.typesenseRequestAt(
+    DOCS_TYPESENSE_URL,
     `/collections/${DOCS_COLLECTION}/documents/${encodeURIComponent(docId)}?include_fields=added_at,nas_path,nas_paths,source_host,storage_category,tags,title`,
-    { method: "GET" }
+    { method: "GET" },
   );
 
   if (response.status === 404) {
@@ -138,9 +137,10 @@ async function loadExistingDocState(docId: string): Promise<ExistingDocState> {
   for (const path of asStringArray(payload.nas_paths)) addPath(path);
 
   return {
-    addedAt: typeof payload.added_at === "number" && Number.isFinite(payload.added_at)
-      ? Math.floor(payload.added_at)
-      : undefined,
+    addedAt:
+      typeof payload.added_at === "number" && Number.isFinite(payload.added_at)
+        ? Math.floor(payload.added_at)
+        : undefined,
     canonicalNasPath,
     nasPaths,
     sourceHost: asString(payload.source_host),
@@ -227,7 +227,7 @@ export const docsReindexV2 = inngest.createFunction(
           metadata.docId = file.docId;
           metadata.title = file.title;
 
-          if (skipExistingArtifacts && await hasArtifact(file.docId, "md")) {
+          if (skipExistingArtifacts && (await hasArtifact(file.docId, "md"))) {
             const existingMeta = await loadMetadataArtifact(file.docId);
             metadata.skipped = true;
             metadata.mdPath = markdownArtifactPath(file.docId);
@@ -246,7 +246,9 @@ export const docsReindexV2 = inngest.createFunction(
           const extracted = await extractPdfText(file.nasPath);
           const markdown = extracted.text.replace(/\r\n?/g, "\n").trim();
           if (!markdown) {
-            throw new NonRetriableError(`docs-reindex-v2 extracted empty markdown for ${file.nasPath}`);
+            throw new NonRetriableError(
+              `docs-reindex-v2 extracted empty markdown for ${file.nasPath}`,
+            );
           }
 
           const mdPath = await saveMarkdownArtifact(file.docId, markdown);
@@ -264,7 +266,7 @@ export const docsReindexV2 = inngest.createFunction(
             pageCount: extracted.pageCount,
             file,
           };
-        }
+        },
       );
     });
 
@@ -284,11 +286,13 @@ export const docsReindexV2 = inngest.createFunction(
           metadata,
         },
         async () => {
-          if (skipExistingArtifacts && await hasArtifact(convert.docId, "meta")) {
+          if (skipExistingArtifacts && (await hasArtifact(convert.docId, "meta"))) {
             metadata.skipped = true;
             metadata.metaPath = metadataArtifactPath(convert.docId);
             if (gateway?.progress) {
-              await gateway.progress(`📚 ${convert.file.title}: Step 2/4 complete (classify-summarize)`);
+              await gateway.progress(
+                `📚 ${convert.file.title}: Step 2/4 complete (classify-summarize)`,
+              );
             }
             return {
               docId: convert.docId,
@@ -313,7 +317,8 @@ export const docsReindexV2 = inngest.createFunction(
           const summaryPrompt = markdown.slice(0, 8_000);
           const summaryResult = await infer(summaryPrompt, {
             task: "summary",
-            system: "You are a librarian. Summarize this book in 2-3 sentences for a retrieval index.",
+            system:
+              "You are a librarian. Summarize this book in 2-3 sentences for a retrieval index.",
             component: "docs-reindex-v2",
             action: "docs.summary.generate",
             noTools: true,
@@ -345,7 +350,7 @@ export const docsReindexV2 = inngest.createFunction(
             storageCategory: classificationResult.classification.storageCategory,
             documentType: inferDocumentType(
               { ...convert.file, title: resolvedTitle },
-              classificationResult.classification.storageCategory
+              classificationResult.classification.storageCategory,
             ),
             tags: classificationResult.tags,
             summary,
@@ -368,7 +373,7 @@ export const docsReindexV2 = inngest.createFunction(
             docId: convert.docId,
             metaPath,
           };
-        }
+        },
       );
     });
 
@@ -388,12 +393,16 @@ export const docsReindexV2 = inngest.createFunction(
           metadata,
         },
         async () => {
-          if (skipExistingArtifacts && await hasArtifact(convert.docId, "chunks")) {
+          if (skipExistingArtifacts && (await hasArtifact(convert.docId, "chunks"))) {
             const existingChunks = await requireChunks(convert.docId);
             metadata.skipped = true;
             metadata.chunksPath = chunksArtifactPath(convert.docId);
-            metadata.sectionCount = existingChunks.filter((chunk) => chunk.chunk_type === "section").length;
-            metadata.snippetCount = existingChunks.filter((chunk) => chunk.chunk_type === "snippet").length;
+            metadata.sectionCount = existingChunks.filter(
+              (chunk) => chunk.chunk_type === "section",
+            ).length;
+            metadata.snippetCount = existingChunks.filter(
+              (chunk) => chunk.chunk_type === "snippet",
+            ).length;
             if (gateway?.progress) {
               await gateway.progress(`📚 ${convert.file.title}: Step 3/4 complete (chunk)`);
             }
@@ -436,7 +445,7 @@ export const docsReindexV2 = inngest.createFunction(
             sectionCount: chunking.stats.section_chunks,
             snippetCount: chunking.stats.snippet_chunks,
           };
-        }
+        },
       );
     });
 
@@ -487,7 +496,11 @@ export const docsReindexV2 = inngest.createFunction(
             addedAt,
           });
 
-          await typesense.upsert(DOCS_COLLECTION, document as unknown as Record<string, unknown>);
+          await typesense.upsertAt(
+            DOCS_TYPESENSE_URL,
+            DOCS_COLLECTION,
+            document as unknown as Record<string, unknown>,
+          );
           await deleteDocChunks(convert.docId, DOCS_CHUNKS_V2_COLLECTION);
 
           const chunkRecords = chunks.map((chunk) => ({
@@ -546,10 +559,11 @@ export const docsReindexV2 = inngest.createFunction(
             }));
 
             const upsertStart = Date.now();
-            const batchResult = await typesense.bulkImport(
+            const batchResult = await typesense.bulkImportAt(
+              DOCS_TYPESENSE_URL,
               DOCS_CHUNKS_V2_COLLECTION,
               withEmbeddings,
-              "upsert"
+              "upsert",
             );
             totalSuccess += batchResult.success;
             totalErrors += batchResult.errors;
@@ -572,6 +586,12 @@ export const docsReindexV2 = inngest.createFunction(
                 cumulativeSuccess: totalSuccess,
               },
             });
+
+            if (batchResult.errors > 0) {
+              throw new Error(
+                `Typesense rejected ${batchResult.errors} of ${batch.length} chunks for ${convert.docId}`,
+              );
+            }
           }
 
           metadata.indexed = totalSuccess;
@@ -587,7 +607,7 @@ export const docsReindexV2 = inngest.createFunction(
             indexed: totalSuccess,
             errors: totalErrors,
           };
-        }
+        },
       );
     });
 
@@ -602,5 +622,5 @@ export const docsReindexV2 = inngest.createFunction(
       indexed: indexed.indexed,
       errors: indexed.errors,
     };
-  }
+  },
 );

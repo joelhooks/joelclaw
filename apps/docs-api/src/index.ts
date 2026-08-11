@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
@@ -6,31 +5,6 @@ import { join, relative } from "node:path";
 process.on("unhandledRejection", (error) => {
   console.error("[docs-api] unhandled rejection:", error instanceof Error ? error.message : error);
 });
-
-class LRUCache<T> {
-  private cache = new Map<string, {value: T, ts: number}>();
-  constructor(private maxSize: number, private ttlMs: number) {}
-  get(key: string): T | undefined {
-    const e = this.cache.get(key);
-    if (!e) return undefined;
-    if (Date.now() - e.ts > this.ttlMs) {
-      this.cache.delete(key);
-      return undefined;
-    }
-    return e.value;
-  }
-  set(key: string, value: T) {
-    if (this.cache.size >= this.maxSize) {
-      const oldest = this.cache.keys().next().value;
-      if (oldest) this.cache.delete(oldest);
-    }
-    this.cache.set(key, {value, ts: Date.now()});
-  }
-}
-
-const docCache = new LRUCache<Record<string, unknown>>(200, 600000);
-const chunkCache = new LRUCache<Record<string, unknown>>(500, 600000);
-const tocCache = new LRUCache<unknown>(100, 600000);
 
 type NextAction = {
   command: string;
@@ -149,7 +123,8 @@ const PROTOCOL_VERSION = 1 as const;
 const SERVICE_VERSION = "0.2.0";
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number.parseInt(process.env.PORT || "3838", 10);
-const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://typesense:8108";
+const TYPESENSE_URL =
+  process.env.DOCS_TYPESENSE_URL || process.env.TYPESENSE_URL || "http://typesense:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";
 const API_TOKEN = process.env.PDF_BRAIN_API_TOKEN || process.env.pdf_brain_api_token || "";
 const DOCS_CHUNKS_COLLECTION = (process.env.DOCS_CHUNKS_COLLECTION || "docs_chunks_v2") as
@@ -157,9 +132,15 @@ const DOCS_CHUNKS_COLLECTION = (process.env.DOCS_CHUNKS_COLLECTION || "docs_chun
   | "docs_chunks_v2";
 const DOCS_ARTIFACTS_DIR = process.env.DOCS_ARTIFACTS_DIR || "/Volumes/three-body/docs-artifacts";
 const DOCS_ARTIFACTS_SSH_HOST = process.env.DOCS_ARTIFACTS_SSH_HOST || "";
-const DOCS_ARTIFACTS_SSH_ROOT = process.env.DOCS_ARTIFACTS_SSH_ROOT || "/volume1/joelclaw/docs-artifacts";
-const DOCS_ARTIFACTS_PREFER_SSH = ["1", "true", "yes", "on"].includes((process.env.DOCS_ARTIFACTS_PREFER_SSH || "").toLowerCase());
-const ARTIFACT_READ_TIMEOUT_MS = Number.parseInt(process.env.DOCS_ARTIFACT_READ_TIMEOUT_MS || "5000", 10);
+const DOCS_ARTIFACTS_SSH_ROOT =
+  process.env.DOCS_ARTIFACTS_SSH_ROOT || "/volume1/joelclaw/docs-artifacts";
+const DOCS_ARTIFACTS_PREFER_SSH = ["1", "true", "yes", "on"].includes(
+  (process.env.DOCS_ARTIFACTS_PREFER_SSH || "").toLowerCase(),
+);
+const ARTIFACT_READ_TIMEOUT_MS = Number.parseInt(
+  process.env.DOCS_ARTIFACT_READ_TIMEOUT_MS || "5000",
+  10,
+);
 const EMBEDDING_MODEL = "nomic-embed-text-v1.5 (768-dim)";
 const OPTIONAL_PATH_PREFIX = "/api/docs";
 const DOCS_INCLUDE_FIELDS =
@@ -298,11 +279,7 @@ const TAXONOMY_CONCEPTS: TaxonomyConcept[] = [
     prefLabel: "Design",
     altLabels: ["ux", "ui", "product design", "visual design"],
     broader: [],
-    narrower: [
-      "jc:docs:design:game",
-      "jc:docs:design:systems",
-      "jc:docs:design:product",
-    ],
+    narrower: ["jc:docs:design:game", "jc:docs:design:systems", "jc:docs:design:product"],
     related: ["jc:docs:marketing"],
     scopeNote: "Interface, product, systems, and visual design practices.",
   },
@@ -528,7 +505,10 @@ function quoteFilterValues(values: string[]): string {
   return values.map((value) => quoteFilterValue(value)).join(",");
 }
 
-function getFacetCounts(response: TypesenseSearchResponse, fieldName: string): Record<string, number> {
+function getFacetCounts(
+  response: TypesenseSearchResponse,
+  fieldName: string,
+): Record<string, number> {
   const facet = response.facet_counts?.find((entry) => entry.field_name === fieldName);
   const counts: Record<string, number> = {};
 
@@ -537,7 +517,8 @@ function getFacetCounts(response: TypesenseSearchResponse, fieldName: string): R
     const value =
       typeof rawValue === "string" || typeof rawValue === "number" ? String(rawValue) : null;
     if (!value) continue;
-    counts[value] = typeof entry.count === "number" && Number.isFinite(entry.count) ? entry.count : 0;
+    counts[value] =
+      typeof entry.count === "number" && Number.isFinite(entry.count) ? entry.count : 0;
   }
 
   return counts;
@@ -604,10 +585,10 @@ function buildDocArtifactPaths(docId: string): {
 } | null {
   const normalizedDocId = docId.trim();
   if (
-    normalizedDocId.length === 0
-    || normalizedDocId.includes("/")
-    || normalizedDocId.includes("\\")
-    || normalizedDocId.includes("..")
+    normalizedDocId.length === 0 ||
+    normalizedDocId.includes("/") ||
+    normalizedDocId.includes("\\") ||
+    normalizedDocId.includes("..")
   ) {
     return null;
   }
@@ -621,7 +602,9 @@ function buildDocArtifactPaths(docId: string): {
 }
 
 function timeoutMs(): number {
-  return Number.isFinite(ARTIFACT_READ_TIMEOUT_MS) && ARTIFACT_READ_TIMEOUT_MS > 0 ? ARTIFACT_READ_TIMEOUT_MS : 5000;
+  return Number.isFinite(ARTIFACT_READ_TIMEOUT_MS) && ARTIFACT_READ_TIMEOUT_MS > 0
+    ? ARTIFACT_READ_TIMEOUT_MS
+    : 5000;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -640,7 +623,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 
 function toRemoteArtifactPath(path: string): string | null {
   const rel = relative(DOCS_ARTIFACTS_DIR, path);
-  if (rel.startsWith("..") || rel.includes("..") || rel.startsWith("/") || rel.startsWith("\\")) return null;
+  if (rel.startsWith("..") || rel.includes("..") || rel.startsWith("/") || rel.startsWith("\\"))
+    return null;
   return `${DOCS_ARTIFACTS_SSH_ROOT.replace(/\/+$/u, "")}/${rel.replace(/\\/gu, "/")}`;
 }
 
@@ -649,29 +633,33 @@ async function readSshArtifactText(path: string): Promise<string | null> {
   const remotePath = toRemoteArtifactPath(path);
   if (!remotePath) return null;
 
-  return withTimeout(new Promise<string | null>((resolve, reject) => {
-    const child = spawn("ssh", [
-      "-o", "BatchMode=yes",
-      "-o", "ConnectTimeout=8",
-      DOCS_ARTIFACTS_SSH_HOST,
-      "cat",
-      remotePath,
-    ], { stdio: ["ignore", "pipe", "pipe"] });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
-    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve(Buffer.concat(stdout).toString("utf8"));
-      } else if (code === 1) {
-        resolve(null);
-      } else {
-        reject(new Error(`ssh artifact read failed (${code}): ${Buffer.concat(stderr).toString("utf8").slice(0, 500)}`));
-      }
-    });
-  }), timeoutMs() * 4, "ssh_artifact_read");
+  return withTimeout(
+    (async () => {
+      const child = Bun.spawn(
+        [
+          "ssh",
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "ConnectTimeout=8",
+          DOCS_ARTIFACTS_SSH_HOST,
+          "cat",
+          remotePath,
+        ],
+        { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      if (code === 0) return stdout;
+      if (code === 1) return null;
+      throw new Error(`ssh artifact read failed (${code}): ${stderr.slice(0, 500)}`);
+    })(),
+    timeoutMs() * 4,
+    "ssh_artifact_read",
+  );
 }
 
 async function readLocalArtifactText(path: string): Promise<string | null> {
@@ -834,9 +822,9 @@ function mapSearchHit(hit: TypesenseSearchHit, expanded = false): SearchHitResul
   };
 }
 
-async function fetchParentSections(parentChunkIds: string[]): Promise<
-  Map<string, { id: string; headingPath: string[]; content: string }>
-> {
+async function fetchParentSections(
+  parentChunkIds: string[],
+): Promise<Map<string, { id: string; headingPath: string[]; content: string }>> {
   const uniqueParentIds = [...new Set(parentChunkIds.filter((id) => id.length > 0))];
   if (uniqueParentIds.length === 0) {
     return new Map();
@@ -935,7 +923,9 @@ async function typesenseSearch(
   collection: TypesenseCollection,
   params: URLSearchParams,
 ): Promise<TypesenseSearchResponse> {
-  const response = await typesenseRequest(`/collections/${collection}/documents/search?${params.toString()}`);
+  const response = await typesenseRequest(
+    `/collections/${collection}/documents/search?${params.toString()}`,
+  );
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Typesense search failed (${response.status}): ${text}`);
@@ -943,7 +933,10 @@ async function typesenseSearch(
   return (await response.json()) as TypesenseSearchResponse;
 }
 
-async function typesenseGetById(collection: TypesenseCollection, id: string): Promise<{
+async function typesenseGetById(
+  collection: TypesenseCollection,
+  id: string,
+): Promise<{
   status: number;
   body: Record<string, unknown> | null;
 }> {
@@ -1078,20 +1071,23 @@ async function listTopDocsForConcept(conceptId: string) {
     }),
   );
 
-  const topCounts = (response.facet_counts?.find((entry) => entry.field_name === "doc_id")?.counts || [])
+  const topCounts = (
+    response.facet_counts?.find((entry) => entry.field_name === "doc_id")?.counts || []
+  )
     .map((entry) => {
       const docId =
         typeof entry.value === "string" || typeof entry.value === "number"
           ? String(entry.value)
           : null;
-      const chunkCount = typeof entry.count === "number" && Number.isFinite(entry.count) ? entry.count : 0;
+      const chunkCount =
+        typeof entry.count === "number" && Number.isFinite(entry.count) ? entry.count : 0;
       if (!docId) return null;
       return { docId, chunkCount };
     })
     .filter((entry): entry is { docId: string; chunkCount: number } => entry !== null)
     .slice(0, 5);
 
-  const docs = await Promise.all(
+  const docs: Array<Record<string, unknown> | null> = await Promise.all(
     topCounts.map(async ({ docId, chunkCount }) => {
       const docResponse = await typesenseGetById("docs", docId);
       if (docResponse.status === 404) {
@@ -1099,7 +1095,7 @@ async function listTopDocsForConcept(conceptId: string) {
       }
 
       return {
-        ...(docResponse.body || {}),
+        ...docResponse.body,
         chunkCount,
       };
     }),
@@ -1204,10 +1200,7 @@ async function handleDocMarkdown(docId: string, path: string): Promise<Response>
   const command = `GET ${path}`;
   const artifactPaths = buildDocArtifactPaths(docId);
   if (!artifactPaths) {
-    return jsonResponse(
-      fail(command, "INVALID_DOC_ID", `Invalid document id: ${docId}`),
-      400,
-    );
+    return jsonResponse(fail(command, "INVALID_DOC_ID", `Invalid document id: ${docId}`), 400);
   }
 
   const content = await readArtifactText(artifactPaths.markdown);
@@ -1251,10 +1244,7 @@ async function handleDocSummary(docId: string, path: string): Promise<Response> 
   const command = `GET ${path}`;
   const artifactPaths = buildDocArtifactPaths(docId);
   if (!artifactPaths) {
-    return jsonResponse(
-      fail(command, "INVALID_DOC_ID", `Invalid document id: ${docId}`),
-      400,
-    );
+    return jsonResponse(fail(command, "INVALID_DOC_ID", `Invalid document id: ${docId}`), 400);
   }
 
   const metadata = await readArtifactJson(artifactPaths.meta);
@@ -1267,24 +1257,20 @@ async function handleDocSummary(docId: string, path: string): Promise<Response> 
 
   const summaryTitle = asString(metadata.title) || undefined;
   return jsonResponse(
-    ok(
-      command,
-      metadata,
-      [
-        {
-          command: `GET /docs/${docId}/markdown`,
-          description: "Read the full markdown artifact",
-        },
-        {
-          command: `GET /docs/${docId}/toc`,
-          description: "Browse the document TOC",
-        },
-        {
-          command: buildSearchWithinDocCommand(docId, summaryTitle),
-          description: "Search within this book using the summary context",
-        },
-      ],
-    ),
+    ok(command, metadata, [
+      {
+        command: `GET /docs/${docId}/markdown`,
+        description: "Read the full markdown artifact",
+      },
+      {
+        command: `GET /docs/${docId}/toc`,
+        description: "Browse the document TOC",
+      },
+      {
+        command: buildSearchWithinDocCommand(docId, summaryTitle),
+        description: "Search within this book using the summary context",
+      },
+    ]),
   );
 }
 
@@ -1292,10 +1278,7 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
   const command = `GET ${path}`;
   const q = url.searchParams.get("q")?.trim() || "";
   if (!q) {
-    return jsonResponse(
-      fail(command, "INVALID_QUERY", "Missing q query parameter"),
-      400,
-    );
+    return jsonResponse(fail(command, "INVALID_QUERY", "Missing q query parameter"), 400);
   }
 
   const page = requirePositiveInt(firstQueryParam(url.searchParams, "page"), 1);
@@ -1335,10 +1318,12 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
   let expandedConcepts: string[] = [];
 
   if (expand && initialHits.length < perPage) {
-    const seedConceptIds = buildConceptFacetsFromCounts(initialFacetCounts).map((facet) => facet.concept);
-    const relatedConceptIds = [...new Set(
-      seedConceptIds.flatMap((conceptId) => getConceptById(conceptId)?.related || []),
-    )].filter((conceptId) => !seedConceptIds.includes(conceptId));
+    const seedConceptIds = buildConceptFacetsFromCounts(initialFacetCounts).map(
+      (facet) => facet.concept,
+    );
+    const relatedConceptIds = [
+      ...new Set(seedConceptIds.flatMap((conceptId) => getConceptById(conceptId)?.related || [])),
+    ].filter((conceptId) => !seedConceptIds.includes(conceptId));
 
     if (relatedConceptIds.length > 0) {
       expandedConcepts = relatedConceptIds;
@@ -1382,14 +1367,8 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
     const parentChunkIds = mergedHits
       .filter((hit) => hit.chunkType === "snippet" && hit.parentChunkId)
       .map((hit) => hit.parentChunkId || "");
-    
-    const cacheKey = parentChunkIds.sort().join("|");
-    let parents = chunkCache.get(cacheKey) as Map<string, { id: string; headingPath: string[]; content: string }> | undefined;
-    
-    if (!parents) {
-      parents = await fetchParentSections(parentChunkIds);
-      chunkCache.set(cacheKey, parents);
-    }
+
+    const parents = await fetchParentSections(parentChunkIds);
 
     mergedHits = mergedHits.map((hit) => {
       if (hit.chunkType !== "snippet" || !hit.parentChunkId) {
@@ -1408,7 +1387,9 @@ async function handleSearch(url: URL, path: string): Promise<Response> {
     });
   }
 
-  const hits: SearchHitResult[] = mergedHits.map(({ parentChunkId: _parentChunkId, ...hit }) => hit);
+  const hits: SearchHitResult[] = mergedHits.map(
+    ({ parentChunkId: _parentChunkId, ...hit }) => hit,
+  );
   // Gracefully degrade if docSummaries fetch fails (e.g. Typesense under load)
   let docSummaries: Record<string, unknown> = {};
   try {
@@ -1556,10 +1537,7 @@ async function handleDocsSearch(url: URL, path: string): Promise<Response> {
   const command = `GET ${path}`;
   const q = url.searchParams.get("q")?.trim() || "";
   if (!q) {
-    return jsonResponse(
-      fail(command, "INVALID_QUERY", "Missing q query parameter"),
-      400,
-    );
+    return jsonResponse(fail(command, "INVALID_QUERY", "Missing q query parameter"), 400);
   }
 
   const concept = firstQueryParam(url.searchParams, "concept");
@@ -1626,7 +1604,7 @@ async function handleDocById(id: string, path: string): Promise<Response> {
   const command = `GET ${path}`;
 
   // Check cache first
-  const cachedDoc = docCache.get(id);
+  const cachedDoc = docByIdCache.get(id);
   if (cachedDoc) {
     const docId = asString(cachedDoc.id) || id;
     return jsonResponse(
@@ -1640,23 +1618,15 @@ async function handleDocById(id: string, path: string): Promise<Response> {
 
   const response = await typesenseGetById("docs", id);
   if (response.status === 404) {
-    return jsonResponse(
-      fail(command, "NOT_FOUND", `Document not found: ${id}`),
-      404,
-    );
+    return jsonResponse(fail(command, "NOT_FOUND", `Document not found: ${id}`), 404);
   }
 
   const doc = response.body || {};
-  docCache.set(id, doc);
-
   const docId = asString(doc.id) || id;
-  docByIdCache.set(docId, doc);
+  docByIdCache.set(id, doc);
+  if (docId !== id) docByIdCache.set(docId, doc);
   return jsonResponse(
-    ok(
-      command,
-      doc,
-      buildDocExplorationNextActions(docId, asString(doc.title) || docId),
-    ),
+    ok(command, doc, buildDocExplorationNextActions(docId, asString(doc.title) || docId)),
   );
 }
 
@@ -1769,7 +1739,7 @@ async function handleDocToc(docId: string, path: string): Promise<Response> {
   const command = `GET ${path}`;
 
   // Check cache first
-  const cachedSections = tocCache.get(docId);
+  const cachedSections = docTocCache.get(docId);
   if (cachedSections) {
     const toc: Array<{
       depth: number;
@@ -1834,7 +1804,7 @@ async function handleDocToc(docId: string, path: string): Promise<Response> {
   }
 
   const sections = await listDocSectionChunks(docId);
-  tocCache.set(docId, sections);
+  docTocCache.set(docId, sections);
 
   const toc: Array<{
     depth: number;
@@ -1902,10 +1872,7 @@ async function handleChunkById(id: string, path: string, url: URL): Promise<Resp
   const command = `GET ${path}`;
   const response = await typesenseGetById(DOCS_CHUNKS_COLLECTION, id);
   if (response.status === 404) {
-    return jsonResponse(
-      fail(command, "NOT_FOUND", `Chunk not found: ${id}`),
-      404,
-    );
+    return jsonResponse(fail(command, "NOT_FOUND", `Chunk not found: ${id}`), 404);
   }
 
   const includeEmbedding = parseBoolean(
@@ -1914,7 +1881,7 @@ async function handleChunkById(id: string, path: string, url: URL): Promise<Resp
   );
   const lite = parseBoolean(firstQueryParam(url.searchParams, "lite"), false);
 
-  const chunk = { ...(response.body || {}) };
+  const chunk = { ...response.body };
   const docId = asString(chunk.doc_id);
   const prevChunkId = asString(chunk.prev_chunk_id);
   const nextChunkId = asString(chunk.next_chunk_id);
@@ -2024,10 +1991,7 @@ async function handleConceptById(conceptId: string, path: string): Promise<Respo
   const command = `GET ${path}`;
   const concept = getConceptById(conceptId);
   if (!concept) {
-    return jsonResponse(
-      fail(command, "NOT_FOUND", `Concept not found: ${conceptId}`),
-      404,
-    );
+    return jsonResponse(fail(command, "NOT_FOUND", `Concept not found: ${conceptId}`), 404);
   }
 
   const counts = await getConceptCounts();
@@ -2070,10 +2034,7 @@ async function handleConceptDocs(url: URL, conceptId: string, path: string): Pro
   const command = `GET ${path}`;
   const concept = getConceptById(conceptId);
   if (!concept) {
-    return jsonResponse(
-      fail(command, "NOT_FOUND", `Concept not found: ${conceptId}`),
-      404,
-    );
+    return jsonResponse(fail(command, "NOT_FOUND", `Concept not found: ${conceptId}`), 404);
   }
 
   const page = requirePositiveInt(firstQueryParam(url.searchParams, "page"), 1);
@@ -2137,12 +2098,9 @@ async function handleConceptDocs(url: URL, conceptId: string, path: string): Pro
 
 function unauthorized(path: string): Response {
   return jsonResponse(
-    fail(
-      `GET ${path}`,
-      "UNAUTHORIZED",
-      "Bearer token required",
-      { fix: "Set Authorization: Bearer <token>" },
-    ),
+    fail(`GET ${path}`, "UNAUTHORIZED", "Bearer token required", {
+      fix: "Set Authorization: Bearer <token>",
+    }),
     401,
   );
 }
@@ -2225,8 +2183,7 @@ const server = Bun.serve({
                 ],
                 collections: {
                   active: DOCS_CHUNKS_COLLECTION,
-                  note:
-                    "v2 uses nomic-embed-text-v1.5 (768-dim, retrieval-tuned). v1 used MiniLM-L12 (384-dim).",
+                  note: "v2 uses nomic-embed-text-v1.5 (768-dim, retrieval-tuned). v1 used MiniLM-L12 (384-dim).",
                 },
               },
               mountedPrefixes: ["/", OPTIONAL_PATH_PREFIX],
@@ -2314,10 +2271,7 @@ const server = Bun.serve({
         return await handleChunkById(decodeURIComponent(chunksMatch[1] || ""), path, url);
       }
 
-      return jsonResponse(
-        fail(`GET ${path}`, "NOT_FOUND", `No route for ${path}`),
-        404,
-      );
+      return jsonResponse(fail(`GET ${path}`, "NOT_FOUND", `No route for ${path}`), 404);
     } catch (error) {
       return jsonResponse(
         fail(
