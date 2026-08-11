@@ -193,7 +193,7 @@ old gateway is live in `default`.
 1. Install and verify `com.joelclaw.herdr-system-server`. Do not start a gateway yet.
 2. Record `joelclaw wake list --format json` and the legacy `pane:beats:lanes` hash.
 3. Stop the host system-bus worker. Let any working beat lane settle.
-4. Boot out `gui/$(id -u)/com.joelclaw.agent-comms-driver`. Verify no driver process remains.
+4. Boot out `user/$(id -u)/com.joelclaw.agent-comms-driver`. Verify no driver process remains.
 5. Close the old gateway with `herdr --session default pane close <verified-pane-id>`.
 6. Verify no gateway pane exists in `default`, `observer`, or `system`.
 7. Install the corrected driver launcher and bootstrap exactly one driver LaunchAgent.

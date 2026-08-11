@@ -9,7 +9,7 @@ BACKUP="$GATEWAY_START.pre-cutover"
 PANE_ID="${1:-}"
 HERDR_SESSION="${GATEWAY_HERDR_SESSION:-system}"
 DRIVER_LABEL="com.joelclaw.agent-comms-driver"
-DRIVER_DOMAIN="gui/$(id -u)"
+DRIVER_DOMAIN="user/$(id -u)"
 
 [ -n "$PANE_ID" ] || {
   echo "FATAL: usage: $0 <verified-system-gateway-pane-id>" >&2

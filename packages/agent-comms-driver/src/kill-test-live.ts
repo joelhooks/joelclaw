@@ -47,7 +47,7 @@ function currentUserLaunchDomain(): string {
   if (typeof process.getuid !== "function") {
     throw new Error("gateway kill drill requires a Unix launchd user domain");
   }
-  return `gui/${process.getuid()}`;
+  return `user/${process.getuid()}`;
 }
 
 async function command(argv: string[]): Promise<CommandResult> {
