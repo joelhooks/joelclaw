@@ -19,6 +19,8 @@ export type LiveAdapterOptions = {
   receiptPath?: string;
   spawnDelay?: string;
   successorIdentity?: string;
+  /** Named herdr session that owns the gateway runtime. Defaults to `system`. */
+  herdrSession?: string;
   /** herdr workspace that hosts the gateway session's pane (successor spawns land here). */
   herdrWorkspace?: string;
   /** Shell command that boots a gateway session inside a fresh pane. */
@@ -31,6 +33,13 @@ export const DEFAULT_SUCCESSOR_COMMAND =
 const GATEWAY_PLUGIN_SUFFIX = "prototypes/agent-comms-gateway/claude-plugin";
 const GATEWAY_AGENT_NAME = "joelclaw-gateway";
 const GATEWAY_MODEL = "claude-sonnet-4-6";
+export const DEFAULT_GATEWAY_HERDR_SESSION = "system";
+
+export function scopeHerdrCommand(argv: string[], session?: string): string[] {
+  const name = session?.trim();
+  if (!name || argv[0] !== "herdr" || argv[1] === "--session") return argv;
+  return ["herdr", "--session", name, ...argv.slice(1)];
+}
 
 function hasArg(argv: string[], flag: string, expected: (value: string) => boolean): boolean {
   const index = argv.indexOf(flag);
@@ -79,7 +88,7 @@ export type SpawnGatewaySuccessorResult = {
 };
 
 /**
- * herdr-native successor spawn shared by the driver and the kill drill.
+ * Herdr-native successor spawn owned by the supervised driver.
  *
  * - No labeled pane → create one, label it, boot the gateway command.
  * - Labeled pane with a live agent session → treat as pending successor (no-op).
@@ -123,10 +132,27 @@ export async function spawnGatewaySuccessorPane(
     await runCommand(["herdr", "pane", "run", existing.pane_id, command]);
     return { spawned: true, paneId: existing.pane_id, relaunched: true };
   }
-  const workspace = opts.herdrWorkspace?.trim();
-  const createArgs = workspace
-    ? ["herdr", "tab", "create", "--workspace", workspace, "--label", "📨 gateway loop"]
-    : ["herdr", "workspace", "create", "--label", "[jc] gateway agent"];
+  const workspaceSelector = opts.herdrWorkspace?.trim();
+  let workspaceId: string | undefined;
+  if (workspaceSelector) {
+    const workspaceResult = await runCommand(["herdr", "workspace", "list"]);
+    const workspaces = resultList(workspaceResult.stdout, "workspaces");
+    const workspace = workspaces.find(
+      (entry) => entry.workspace_id === workspaceSelector || entry.label === workspaceSelector,
+    );
+    workspaceId = typeof workspace?.workspace_id === "string" ? workspace.workspace_id : undefined;
+  }
+  const createArgs = workspaceId
+    ? ["herdr", "tab", "create", "--workspace", workspaceId, "--label", "📨 gateway loop"]
+    : [
+        "herdr",
+        "workspace",
+        "create",
+        "--label",
+        workspaceSelector && !/^w[^:]*$/u.test(workspaceSelector)
+          ? workspaceSelector
+          : "[jc] gateway agent",
+      ];
   const created = object(JSON.parse((await runCommand(createArgs)).stdout));
   const result = object(created?.result);
   const rootPane = object(result?.root_pane);
@@ -394,7 +420,11 @@ export function makeLiveDriverPorts(
   options: LiveAdapterOptions,
   dependencies: LiveAdapterDependencies = {},
 ): DriverPorts & { close: () => Promise<void> } {
-  const runCommand = dependencies.runCommand ?? command;
+  const baseRunCommand = dependencies.runCommand ?? command;
+  const herdrSession =
+    options.herdrSession?.trim() || DEFAULT_GATEWAY_HERDR_SESSION;
+  const runCommand = (argv: string[]) =>
+    baseRunCommand(scopeHerdrCommand(argv, herdrSession));
   const stream = dependencies.stream ?? createMessageEventLogClient();
   const deadlines = makeDeadlineReader(stream);
   const redis = dependencies.redis ?? new Redis(

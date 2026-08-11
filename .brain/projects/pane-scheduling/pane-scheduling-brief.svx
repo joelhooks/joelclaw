@@ -26,7 +26,8 @@ survive restarts because `step.sleepUntil` does. Fired panes appear in
 the **observer family herdr session** (Joel, charter), labeled ⏰.
 Pending schedules are visible somewhere Joel actually looks. Misfires
 (machine asleep at T) fire on recovery flagged **late**, never silently
-dropped.
+dropped. Automated SPAWN lanes now live in the named Herdr session
+`system`. Human work stays in `default`.
 
 ## Vocabulary
 
@@ -43,8 +44,9 @@ dropped.
   scheduled jobs") — no new daemons, no cron files; durability and
   event-driven revival come free. The dispatcher executes; it already
   owns herdr wake machinery and the family registry.
-- Spawned/revived panes live in the observer family session (Joel,
-  charter) — automation stays with automation; labels make it scannable.
+- Spawned panes live in the named `system` session. Observer-family work
+  stays in `observer`. Human work stays in `default`. Session-scoped lane
+  registries prevent pane IDs from one Herdr server matching another.
 - Skills: `herdr-orchestration`; repo law for inngest functions
   (joelclaw `.claude/CLAUDE.md` validation checklist).
 - Gates stay sacred: revived/spawned panes are ordinary pi sessions —
@@ -55,6 +57,12 @@ dropped.
 ## Decision ledger
 
 <!-- one line per closed question: gist + link -->
+
+- **Automation leaves Herdr `default` (2026-08-11)**: Joel chose `default`
+  for human work and named session `system` for the Agent Comms Gateway and
+  scheduled SPAWN lanes. The worker now invokes `herdr --session system` and
+  stores lane IDs under `pane:beats:lanes:system`. This avoids bare pane ID
+  collisions across Herdr servers.
 
 - **SPAWN proven live end to end (2026-07-15)**: `joelclaw wake in 2m` → inngest sleepUntil → due signal (late: false, fired 1s after target) → dispatcher fate → fresh-tab fallback → pi booted the brief → "SCHEDULED PANE ALIVE: 05:28:18 UTC". Two deployment lessons on the record: new inngest functions need a bus restart (worker-supervisor child kill), and tab-create returns root_pane where split returns pane (parse fixed, tested). WAKE and REVIVE still await their live proof.
 

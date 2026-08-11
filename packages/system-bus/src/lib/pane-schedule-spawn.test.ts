@@ -4,10 +4,12 @@ import {
   beatLaneKey,
   beatLaneLabel,
   buildSpawnLaunchCommand,
+  DEFAULT_AUTOMATION_HERDR_SESSION,
   executeSpawnBeat,
   planSpawnBeat,
   SCHEDULED_BEATS_WORKSPACE_LABEL,
   scheduledBeatLabel,
+  scopeHerdrCommand,
 } from "./pane-schedule-spawn";
 
 const spawnEntry: PaneScheduleEntry = {
@@ -22,6 +24,22 @@ const spawnEntry: PaneScheduleEntry = {
 };
 
 describe("pane schedule spawn planning", () => {
+  test("scopes automation commands to the named system session", () => {
+    expect(DEFAULT_AUTOMATION_HERDR_SESSION).toBe("system");
+    expect(scopeHerdrCommand(["herdr", "pane", "list"], "system")).toEqual([
+      "herdr",
+      "--session",
+      "system",
+      "pane",
+      "list",
+    ]);
+    expect(scopeHerdrCommand(["joelclaw", "wake", "list"], "system")).toEqual([
+      "joelclaw",
+      "wake",
+      "list",
+    ]);
+  });
+
   test("builds a stable beat lane label from the brief title", () => {
     expect(scheduledBeatLabel("Hourly Campaign Pulse")).toBe("⏰ Hourly Campaign Pulse");
     expect(beatLaneLabel(spawnEntry, () => "title: Campaign Pulse\n", () => true)).toBe(
@@ -144,7 +162,7 @@ describe("executeSpawnBeat", () => {
       readBriefTitle: () => "Campaign Pulse",
       runCommand: async (argv) => {
         calls.push(argv);
-        if (argv.join(" ") === "herdr pane list") {
+        if (argv.join(" ") === "herdr --session system pane list") {
           return {
             stdout: JSON.stringify({
               result: {
@@ -154,7 +172,7 @@ describe("executeSpawnBeat", () => {
             stderr: "",
           };
         }
-        if (argv.join(" ") === "herdr agent list") {
+        if (argv.join(" ") === "herdr --session system agent list") {
           return {
             stdout: JSON.stringify({
               result: { agents: [{ pane_id: "w9:p1", agent_status: "idle" }] },
@@ -162,7 +180,7 @@ describe("executeSpawnBeat", () => {
             stderr: "",
           };
         }
-        if (argv.join(" ") === "herdr workspace list") {
+        if (argv.join(" ") === "herdr --session system workspace list") {
           return {
             stdout: JSON.stringify({
               result: {
@@ -184,18 +202,60 @@ describe("executeSpawnBeat", () => {
       created: false,
       ack: true,
     });
-    expect(calls.some((argv) => argv[0] === "herdr" && argv[1] === "tab" && argv[2] === "create")).toBe(
-      false,
-    );
+    expect(calls.some((argv) => argv[3] === "tab" && argv[4] === "create")).toBe(false);
     expect(
       calls.some(
         (argv) =>
-          argv[0] === "herdr" &&
-          argv[1] === "agent" &&
-          argv[2] === "prompt" &&
-          argv[3] === "w9:p1",
+          argv.slice(0, 3).join(" ") === "herdr --session system" &&
+          argv[3] === "agent" &&
+          argv[4] === "prompt" &&
+          argv[5] === "w9:p1",
       ),
     ).toBe(true);
+  });
+
+  test("targets the named herdr session while creating a beat lane", async () => {
+    const calls: string[][] = [];
+    const result = await executeSpawnBeat(spawnEntry, {
+      herdrSession: "system",
+      briefExists: () => true,
+      readBriefTitle: () => "Campaign Pulse",
+      runCommand: async (argv) => {
+        calls.push(argv);
+        const command = argv.slice(3);
+        if (command.join(" ") === "pane list") {
+          return { stdout: JSON.stringify({ result: { panes: [] } }), stderr: "" };
+        }
+        if (command.join(" ") === "agent list") {
+          return { stdout: JSON.stringify({ result: { agents: [] } }), stderr: "" };
+        }
+        if (command.join(" ") === "workspace list") {
+          return {
+            stdout: JSON.stringify({
+              result: {
+                workspaces: [
+                  { workspace_id: "wBeats", label: SCHEDULED_BEATS_WORKSPACE_LABEL },
+                ],
+              },
+            }),
+            stderr: "",
+          };
+        }
+        if (command[0] === "tab" && command[1] === "create") {
+          return {
+            stdout: JSON.stringify({
+              result: { root_pane: { pane_id: "wBeats:p2", workspace_id: "wBeats" } },
+            }),
+            stderr: "",
+          };
+        }
+        return { stdout: "{}", stderr: "" };
+      },
+    });
+
+    expect(result.status).toBe("spawned");
+    expect(calls.every((argv) => argv.slice(0, 3).join(" ") === "herdr --session system"))
+      .toBe(true);
   });
 
   test("creates one pane in the beats workspace when the lane is missing", async () => {
@@ -206,13 +266,13 @@ describe("executeSpawnBeat", () => {
       readBriefTitle: () => "Campaign Pulse",
       runCommand: async (argv) => {
         calls.push(argv);
-        if (argv.join(" ") === "herdr pane list") {
+        if (argv.join(" ") === "herdr --session system pane list") {
           return { stdout: JSON.stringify({ result: { panes: [] } }), stderr: "" };
         }
-        if (argv.join(" ") === "herdr agent list") {
+        if (argv.join(" ") === "herdr --session system agent list") {
           return { stdout: JSON.stringify({ result: { agents: [] } }), stderr: "" };
         }
-        if (argv.join(" ") === "herdr workspace list") {
+        if (argv.join(" ") === "herdr --session system workspace list") {
           return {
             stdout: JSON.stringify({
               result: {
@@ -222,7 +282,7 @@ describe("executeSpawnBeat", () => {
             stderr: "",
           };
         }
-        if (argv[0] === "herdr" && argv[1] === "tab" && argv[2] === "create") {
+        if (argv[3] === "tab" && argv[4] === "create") {
           return {
             stdout: JSON.stringify({
               result: { root_pane: { pane_id: "wBeats:p2", workspace_id: "wBeats" } },
@@ -244,6 +304,8 @@ describe("executeSpawnBeat", () => {
     });
     expect(calls).toContainEqual([
       "herdr",
+      "--session",
+      "system",
       "tab",
       "create",
       "--workspace",
@@ -252,7 +314,15 @@ describe("executeSpawnBeat", () => {
       label,
       "--no-focus",
     ]);
-    expect(calls).toContainEqual(["herdr", "pane", "rename", "wBeats:p2", label]);
+    expect(calls).toContainEqual([
+      "herdr",
+      "--session",
+      "system",
+      "pane",
+      "rename",
+      "wBeats:p2",
+      label,
+    ]);
   });
 
   test("leaves the schedule unacked while the lane is busy", async () => {
@@ -261,7 +331,7 @@ describe("executeSpawnBeat", () => {
       briefExists: () => true,
       readBriefTitle: () => "Campaign Pulse",
       runCommand: async (argv) => {
-        if (argv.join(" ") === "herdr pane list") {
+        if (argv.join(" ") === "herdr --session system pane list") {
           return {
             stdout: JSON.stringify({
               result: {
@@ -271,7 +341,7 @@ describe("executeSpawnBeat", () => {
             stderr: "",
           };
         }
-        if (argv.join(" ") === "herdr agent list") {
+        if (argv.join(" ") === "herdr --session system agent list") {
           return {
             stdout: JSON.stringify({
               result: { agents: [{ pane_id: "w9:p1", agent_status: "working" }] },
@@ -279,7 +349,7 @@ describe("executeSpawnBeat", () => {
             stderr: "",
           };
         }
-        if (argv.join(" ") === "herdr workspace list") {
+        if (argv.join(" ") === "herdr --session system workspace list") {
           return { stdout: JSON.stringify({ result: { workspaces: [] } }), stderr: "" };
         }
         throw new Error(`unexpected command ${argv.join(" ")}`);
@@ -325,6 +395,8 @@ describe("beat lane survives a pane rename", () => {
   });
 
   test("the lane key is the brief path, not the mutable label", () => {
-    expect(beatLaneKey(spawnEntry)).toBe(spawnEntry.briefPath);
+    expect(beatLaneKey(spawnEntry)).toBe(
+      "/repo/campaign-pulse/asset-hourly-pulse-runbook.svx",
+    );
   });
 });

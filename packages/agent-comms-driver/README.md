@@ -16,12 +16,14 @@ It never chooses delivery, routing, grouping, suppression, or escalation. Recent
 
 ```bash
 GATEWAY_AGENT_TARGET='<herdr pane id or unique agent name>' \
+GATEWAY_HERDR_SESSION='system' \
 GATEWAY_SUCCESSOR_BRIEF_PATH='<absolute gateway boot brief>' \
 pnpm --filter @joelclaw/agent-comms-driver start
 ```
 
 Optional settings:
 
+- `GATEWAY_HERDR_SESSION` defaults to `system`. Human work stays in Herdr's `default` session.
 - `GATEWAY_HEARTBEAT_KEY` defaults to `gateway:agent:heartbeat`.
 - `GATEWAY_HEARTBEAT_REFRESH_MS` defaults to `15000`.
 - `GATEWAY_HEARTBEAT_TTL_MS` defaults to `60000`.
@@ -50,6 +52,7 @@ The live drill is destructive. It closes the configured gateway pane and sends a
 
 ```bash
 GATEWAY_AGENT_TARGET='<gateway pane id or unique agent name>' \
+GATEWAY_HERDR_SESSION='system' \
 GATEWAY_SUCCESSOR_BRIEF_PATH='<absolute gateway boot brief>' \
 pnpm --filter @joelclaw/agent-comms-driver kill-drill
 ```

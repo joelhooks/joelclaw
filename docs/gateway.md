@@ -14,7 +14,7 @@ MESSAGE_EVENT_CONVEX_URL=http://127.0.0.1:3210 \
 
 Do not use the moving `sonnet` alias here. Pin `MESSAGE_EVENT_CONVEX_URL` locally so a stale fleet `JOELCLAW_CENTRAL_URL` cannot send the plugin to the ghost `flagg` node. A Herdr-restored bare `claude --resume` process is not healthy because it lacks the gateway plugin tools.
 
-The Herdr workspace is `[jc] gateway agent`. Its stable gateway pane label is `📨 gateway loop`. Keep the gateway session and driver in that workspace as separate panes.
+The gateway lives in the named Herdr session `system`, inside workspace `[jc] gateway agent`. Its stable pane label is `📨 gateway loop`. Human work stays in Herdr's `default` session. Keep the gateway session and driver in the system workspace as separate panes.
 
 ## Runtime split
 
@@ -156,10 +156,13 @@ Do not write the heartbeat by hand to make a red check green. That would hide a 
 
 ## Routine checks
 
-Inspect the three runtime parts:
+The named `system` server is supervised by the system LaunchDaemon source at
+`infra/launchd/com.joelclaw.herdr-system-server.plist`. Check the target session,
+not bare Herdr commands:
 
 ```bash
-herdr pane list
+launchctl print system/com.joelclaw.herdr-system-server
+herdr --session system pane list
 joelclaw gateway status
 joelclaw gateway diagnose --hours 1 --lines 120
 ```
@@ -182,12 +185,32 @@ Single-owner rule:
 
 Never start another listener or gateway session as a repair. A Telegram `409` is evidence of a duplicate poller.
 
+## Move automation out of Herdr default
+
+This is a single-owner cutover. Do not start the gateway in `system` while the
+old gateway is live in `default`.
+
+1. Install and verify `com.joelclaw.herdr-system-server`. Do not start a gateway yet.
+2. Record `joelclaw wake list --format json` and the legacy `pane:beats:lanes` hash.
+3. Stop the host system-bus worker. Let any working beat lane settle.
+4. Boot out `gui/$(id -u)/com.joelclaw.agent-comms-driver`. Verify no driver process remains.
+5. Close the old gateway with `herdr --session default pane close <verified-pane-id>`.
+6. Verify no gateway pane exists in `default`, `observer`, or `system`.
+7. Install the corrected driver launcher and bootstrap exactly one driver LaunchAgent.
+8. Verify one canonical `📨 gateway loop` pane exists only in `system`.
+9. Restart the host system-bus worker. Do not copy old pane IDs into `pane:beats:lanes:system`.
+10. Prove one scheduled SPAWN and one gateway decision before closing old automation panes.
+
+Pending schedules stay in `pane:schedules:pending`. A stopped worker does not delete
+them. The reconciler fires overdue schedules after the worker returns.
+
 ## Start the driver
 
-The production target is the stable pane label. The successor brief remains required by the package interface, even though successor spawning is now Herdr-native.
+The production target is the stable pane label inside the named `system` session. The successor brief remains required by the package interface, even though successor spawning is now Herdr-native.
 
 ```bash
 GATEWAY_AGENT_TARGET='📨 gateway loop' \
+GATEWAY_HERDR_SESSION='system' \
 GATEWAY_HERDR_WORKSPACE='[jc] gateway agent' \
 GATEWAY_SUCCESSOR_BRIEF_PATH="$PWD/.brain/tasks/gateway-session-boot.svx" \
 pnpm --filter @joelclaw/agent-comms-driver start
@@ -195,6 +218,7 @@ pnpm --filter @joelclaw/agent-comms-driver start
 
 Optional defaults:
 
+- `GATEWAY_HERDR_SESSION=system`
 - `GATEWAY_HEARTBEAT_KEY=gateway:agent:heartbeat`
 - `GATEWAY_HEARTBEAT_REFRESH_MS=15000`
 - `GATEWAY_HEARTBEAT_TTL_MS=60000`
@@ -210,6 +234,7 @@ The kill drill proves the real fallback. It closes the real gateway pane and sen
 
 ```bash
 GATEWAY_AGENT_TARGET='📨 gateway loop' \
+GATEWAY_HERDR_SESSION='system' \
 GATEWAY_HERDR_WORKSPACE='[jc] gateway agent' \
 GATEWAY_SUCCESSOR_BRIEF_PATH="$PWD/.brain/tasks/gateway-session-boot.svx" \
 pnpm --filter @joelclaw/agent-comms-driver kill-drill
@@ -238,25 +263,20 @@ A failed weekly drill does not arm its successor.
 
 ## Rollback
 
-Rollback is scripted, but the current script has two unsafe edges: it checks the backup after shutdown starts, and pane-close failure is non-fatal. Do not invoke it without this preflight.
-
-First, record the live gateway pane ID. Then run:
+Rollback is scripted. It boots out the supervised driver and scopes pane closure
+to the named Herdr session. First, record the live gateway pane ID. Then run:
 
 ```bash
 PANE_ID='<verified gateway pane id>'
 BACKUP="$HOME/.joelclaw/scripts/gateway-start.sh.pre-cutover"
 
 test -f "$BACKUP" || { echo "missing rollback backup: $BACKUP" >&2; exit 1; }
-pkill -f agent-comms-driver || true
-herdr pane close "$PANE_ID"
-test -z "$(herdr pane list | jq -r '.result.panes[]? | select(.label == "📨 gateway loop") | .pane_id')" || {
-  echo "gateway pane is still live; aborting rollback" >&2
-  exit 1
-}
+herdr --session system pane get "$PANE_ID" >/dev/null
 scripts/gateway-cutover-rollback.sh "$PANE_ID"
 ```
 
-The script repeats the driver stop and pane close, restores the pre-cutover start script, restarts the gateway daemon, and sends a probe. Re-closing the verified-absent pane is harmless.
+The script stops the supervised driver, closes and verifies the system gateway pane,
+restores the pre-cutover start script, restarts the gateway daemon, and sends a probe.
 
 After success, verify the probe appeared in Telegram and inspect its receipt.
 

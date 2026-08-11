@@ -8,6 +8,7 @@ import {
   validatePaneSchedule,
 } from "../../lib/pane-schedule";
 import {
+  DEFAULT_AUTOMATION_HERDR_SESSION,
   executeSpawnBeat,
   type SpawnBeatPorts,
   type SpawnBeatResult,
@@ -49,12 +50,20 @@ function extractFailedScheduleId(data: unknown): string | undefined {
  * pi name-sync extension rewriting its pane label out from under us. */
 export const BEAT_LANE_REGISTRY_KEY = "pane:beats:lanes";
 
+export function beatLaneRegistryKey(session: string): string {
+  return `${BEAT_LANE_REGISTRY_KEY}:${session}`;
+}
+
 function defaultSpawnPorts(): SpawnBeatPorts {
+  const herdrSession =
+    process.env.HERDR_AUTOMATION_SESSION?.trim() || DEFAULT_AUTOMATION_HERDR_SESSION;
+  const registryKey = beatLaneRegistryKey(herdrSession);
   return {
+    herdrSession,
     readLanePane: async (laneKey) =>
-      (await getRedisClient().hget(BEAT_LANE_REGISTRY_KEY, laneKey)) ?? undefined,
+      (await getRedisClient().hget(registryKey, laneKey)) ?? undefined,
     writeLanePane: async (laneKey, paneId) => {
-      await getRedisClient().hset(BEAT_LANE_REGISTRY_KEY, laneKey, paneId);
+      await getRedisClient().hset(registryKey, laneKey, paneId);
     },
   };
 }
@@ -95,7 +104,8 @@ export async function dispatchDuePaneSchedule(
     (async (scheduleId: string) => getRedisClient().hdel(PANE_SCHEDULE_REGISTRY_KEY, scheduleId));
 
   if (entry.verb === "spawn") {
-    const spawnResult = await spawn(entry, deps.spawnPorts ?? defaultSpawnPorts());
+    const spawnPorts = deps.spawnPorts ?? defaultSpawnPorts();
+    const spawnResult = await spawn(entry, spawnPorts);
     let acked = false;
     if (spawnResult.ack) {
       await hdel(entry.scheduleId);
@@ -115,6 +125,8 @@ export async function dispatchDuePaneSchedule(
         firedAt: firedAtIso,
         status: spawnResult.status,
         acked,
+        herdrSession:
+          spawnPorts.herdrSession?.trim() || DEFAULT_AUTOMATION_HERDR_SESSION,
         ...(spawnResult.status === "spawned" || spawnResult.status === "reused" || spawnResult.status === "busy"
           ? { paneId: spawnResult.paneId, label: spawnResult.label }
           : {}),
