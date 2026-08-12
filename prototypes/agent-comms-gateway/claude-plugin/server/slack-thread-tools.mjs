@@ -190,14 +190,20 @@ export function createSlackThreadTools({
       }
     }
 
+    let needsLaunch = false;
     if (!paneId) {
-      const panes = await run("herdr", ["pane", "list"]);
+      const [workspaces, panes] = await Promise.all([
+        run("herdr", ["workspace", "list"]),
+        run("herdr", ["pane", "list"]),
+      ]);
+      const plannedWorkspace = workspaces?.result?.workspaces?.find((candidate) =>
+        candidate.label === workspaceLabel);
       const plannedPane = panes?.result?.panes?.find((candidate) =>
-        candidate.label === `🐀 ${channelName} thread`
-        || candidate.workspace_label === workspaceLabel);
+        candidate.workspace_id === plannedWorkspace?.workspace_id);
       if (plannedPane?.pane_id) {
         paneId = plannedPane.pane_id;
         workspaceId = plannedPane.workspace_id;
+        needsLaunch = !plannedPane.agent;
       }
     }
 
@@ -212,6 +218,10 @@ export function createSlackThreadTools({
       if (!paneId || !workspaceId) {
         throw new Error(`Slack thread workspace returned no pane/workspace: ${JSON.stringify(created)}`);
       }
+      needsLaunch = true;
+    }
+
+    if (needsLaunch) {
       await run("herdr", ["pane", "rename", paneId, `🐀 ${channelName} thread`]);
       await run("herdr", [
         "pane", "run", paneId,
