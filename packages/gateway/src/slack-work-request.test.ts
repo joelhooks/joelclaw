@@ -96,6 +96,7 @@ describe("Slack ShitRat work trigger", () => {
     expect(request).toEqual({
       trigger: "shitrat",
       addressedBy: "emoji",
+      activation: "new",
       channelId: "CEXAMPLE",
       channelName: "lc-example-project",
       messageTs: "1785950000.100",
@@ -121,6 +122,36 @@ describe("Slack ShitRat work trigger", () => {
 
     expect(request?.threadTs).toBe("1785950000.100");
     expect(request?.replyThreadId).toBe("slack:CEXAMPLE:1785950000.100");
+  });
+
+  test("continues every human reply in an active root thread", async () => {
+    const request = await resolveSlackWorkRequest({
+      event: slackMessage({
+        text: "and can you check the retry path?",
+        messageTs: "1785950001.200",
+        threadTs: "1785950000.100",
+      }),
+      resolveChannelName: async () => "lc-example-project",
+      hasActiveThreadSession: async (channelId, threadTs) =>
+        channelId === "CEXAMPLE" && threadTs === "1785950000.100",
+    });
+
+    expect(request?.addressedBy).toBe("thread-session");
+    expect(request?.activation).toBe("follow-up");
+    expect(request?.replyThreadId).toBe("slack:CEXAMPLE:1785950000.100");
+  });
+
+  test("ignores unmentioned replies without an active thread session", async () => {
+    const request = await resolveSlackWorkRequest({
+      event: slackMessage({
+        text: "humans talking among themselves",
+        messageTs: "1785950001.200",
+        threadTs: "1785950000.100",
+      }),
+      resolveChannelName: async () => "lc-example-project",
+      hasActiveThreadSession: async () => false,
+    });
+    expect(request).toBeUndefined();
   });
 
   test("repurposes a direct @joelclaw mention as ShitRat work", async () => {

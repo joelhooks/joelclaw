@@ -1,0 +1,59 @@
+---
+title: "Slack Thread Familiar"
+type: "brief"
+status: "active"
+created_at: "2026-08-12"
+privacy: "private"
+---
+
+# Slack Thread Familiar
+
+## Finish line
+
+An exact ShitRat activation gives the Slack root thread one durable Pi session. Every later human reply in that thread reaches the same session without another mention. The session infers a project only from verified channel bindings and recent active project work, binds once without silently changing `cwd`, returns concise replies through the gateway, survives process restarts, and retires only after explicit resolution plus a quiet timeout. Tests prove routing, inference, restoration, fail-closed verification, and cleanup. A live canary proves one activated Slack thread continues across at least two human turns.
+
+## Vocabulary
+
+- **Thread session** — The durable Slack root-thread identity, Pi session, Herdr pane, project binding, cursor, and lifecycle record.
+- **Neutral session** — A thread session in the private ShitRat control repo when no project candidate verifies with enough confidence. It can talk and collect evidence but cannot perform project work.
+- **Project candidate** — A mechanically verified repository from private channel bindings or recent active Herdr work. Inference cannot search arbitrary local repositories.
+- **Binding** — The one verified project root and `cwd` assigned to a thread session. A bound session changes projects only through an explicit verified rebind.
+- **Explicit resolution** — A human message that clearly closes the thread. Resolution starts, but does not skip, the quiet timeout.
+- **Quiet timeout** — The grace period after explicit resolution during which another human reply reopens the same session before cleanup.
+
+## Notes
+
+Joel authorized execution on 2026-08-12: “omg just build” and “you got this.”
+
+Every human reply after activation enters the thread session. Project candidates come from private bindings plus recent active work. Low-confidence threads start neutral. Visible Slack state stays replies plus reactions. Use the existing Slack listener, gateway, personal-token delivery boundary, Herdr, and Pi. Do not start another listener or give Slack credentials to Pi sessions.
+
+Review `/Users/joel/Code/joelhooks/pi-discord-threads` for its durable thread registry, one-active-run rule, follow-up steering, Pi session lineage, and recovery behavior. Reuse the patterns, not the Discord-specific daemon.
+
+Use XState v5 for the thread lifecycle. The existing event stream remains the decision and delivery source. The thread registry is private runtime state and must not expose Slack topology in public fixtures.
+
+## Decision ledger
+
+- Thread ownership — One Slack root thread owns one durable Pi session, Herdr workspace, verified binding, and turn cursor.
+- Project inference — Luna chooses only from mechanically verified private bindings and recent live worker roots; confidence below `0.76` stays neutral.
+- Neutral safety — Neutral sessions run in `/Users/joel/.joelclaw/slack-thread-neutral` with no tools, skills, extensions, or context files.
+- Turn durability — Each turn is keyed by the canonical source event ID, persists `claimed → launched → completed`, and emits a durable result event before Slack delivery.
+- Recovery — The transport's sole mechanical reaper recovers settled launched turns, emits missing result events, retires quiet resolved sessions, and closes their Herdr workspaces.
+- Registry safety — Cross-process mutations use a lockfile with dead-owner recovery; claims and retirement read and write under the same lock.
+
+## Implementation receipt
+
+Implemented in the existing gateway and Slack listener. Focused validation passed: 66 tests across thread routing, project candidates, registry lifecycle, Luna triage, stream receipts, personal-token delivery, and durable thread-session tooling. Biome, Oxlint, and `git diff --check` passed. Gateway TypeScript reports only the four pre-existing unrelated errors in `channels/redis.ts` and `transport-slim.test.ts`.
+
+Live Slack canary and daemon restart remain the deployment gate.
+
+## Latent
+
+- The live quiet-time value can be tuned after the canary; code must make it configurable.
+- A later slice may expose operator commands for listing and manually rebinding thread sessions.
+
+## Out of scope
+
+- A second Slack app, listener, poller, or gateway loop.
+- Searching every repository under `/Users/joel/Code` to guess a project.
+- Posting raw Pi transcripts or tool events to Slack.
+- Moving the existing gateway onto the `pi-discord-threads` daemon.

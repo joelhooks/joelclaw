@@ -505,6 +505,9 @@ importers:
       unified:
         specifier: ^11.0.5
         version: 11.0.5
+      xstate:
+        specifier: 5.31.1
+        version: 5.31.1
     devDependencies:
       '@types/bun':
         specifier: latest

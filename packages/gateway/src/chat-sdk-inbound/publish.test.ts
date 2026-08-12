@@ -58,6 +58,7 @@ function harness(input: {
       ? {
           trigger: "shitrat",
           addressedBy: "emoji",
+          activation: "new",
           channelId: "CEXAMPLE",
           channelName: "lc-example-project",
           messageTs: "1785950000.100",
@@ -90,6 +91,7 @@ describe("stream inbound ShitRat work requests", () => {
       workRequest: {
         trigger: "shitrat",
         addressedBy: "emoji",
+        activation: "new",
         channelName: "lc-example-project",
         replyThreadId: "slack:CEXAMPLE:1785950000.100",
         botDeliveryReady: false,
@@ -134,6 +136,7 @@ describe("stream inbound ShitRat work requests", () => {
       resolveWorkRequest: async () => ({
         trigger: "shitrat",
         addressedBy: "emoji",
+        activation: "new",
         channelId: "CEXAMPLE",
         channelName: "lc-example-project",
         messageTs: "1785950000.100",

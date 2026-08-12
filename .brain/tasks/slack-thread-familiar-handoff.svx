@@ -1,0 +1,165 @@
+---
+title: "Slack Thread Familiar Handoff"
+type: "handoff"
+status: "active"
+created_at: "2026-08-08"
+privacy: "private"
+---
+
+# Slack Thread Familiar Handoff
+
+## Goal
+
+Turn Slack ShitRat into a thread-bound familiar:
+
+- One Slack thread gets one persistent Pi session.
+- The session keeps thread context through completion.
+- It monitors later replies in that thread.
+- It infers the discussed project from thread and channel evidence.
+- It verifies the inferred project before binding or launching.
+- It retires after explicit resolution plus a quiet timeout.
+- Review `/Users/joel/Code/joelhooks/pi-discord-threads` as the working prototype.
+
+## Grill decisions settled
+
+- **Session shape** — Thread session owns context through completion.
+- **Project authority** — Infer, verify, then bind the thread.
+- **Retirement** — Explicit resolution plus quiet timeout.
+
+Use `grill-master` next. Charter a working brief before implementation.
+
+## Immediate next steps
+
+1. Read repo instructions and Brain in `pi-discord-threads`.
+2. Trace its full lifecycle:
+   - thread discovery;
+   - session creation;
+   - message routing;
+   - follow-up monitoring;
+   - session restore;
+   - completion and cleanup.
+3. Compare that loop with the current Slack gateway.
+4. Finish breadth-first grilling.
+5. Create `.brain/projects/<effort>/` in `joelclaw`.
+6. Charter one step per unresolved decision.
+7. Do not implement during charter unless the brief explicitly authorizes execution.
+
+## Current Slack implementation
+
+Already shipped:
+
+- Mechanical `:shitrat:` reaction.
+- Warm `openai-codex/gpt-5.6-luna` triage.
+- Luna classifies `social`, `answer`, or `work`.
+- Social and answer activations reply and stop.
+- Bound work replies first, then launches one fresh Herdr worktree.
+- Workers emit private progress and final receipts.
+- Gateway posts updates in the originating thread.
+- Final result adds `:white_check_mark:` and releases the worker.
+- Worker never receives Slack credentials.
+- Slack replies have 320-character triage/progress and 1,200-character final limits.
+- Slack voice is plain, technical, and ShitRat-shaped.
+
+Commits:
+
+- `02d63d45` — Luna activation triage.
+- `d952451e` — Prewarm Luna process.
+
+Validation:
+
+- 274 gateway tests passed.
+- Biome and Oxlint passed.
+- The exact social postmortem message classified as `social`.
+- Luna generated: “The receipts are stacked and the patient appears to have stopped bleeding. Good postmortem; keep the scar tissue.”
+
+## Private channel context
+
+`cc-brave` maps to:
+
+```text
+/Users/joel/Code/mega-dot-dev/mega-dev
+```
+
+Brain entry:
+
+```text
+.brain/projects/mega-assessment/mega-assessment-brief.svx
+```
+
+Private mapping file:
+
+```text
+/Users/joel/.joelclaw/slack-channel-contexts.json
+```
+
+Do not publish channel topology.
+
+## Architecture correction
+
+Current channel bindings are only a safe launch fallback. They must not remain the sole project authority.
+
+Likely resolution order:
+
+1. Existing thread binding.
+2. Explicit repository or Brain links.
+3. Parent message and thread vocabulary.
+4. Channel context.
+5. Recent related threads or active project sessions.
+6. Verified candidate repository evidence.
+7. Ask or fail closed if verification cannot prove one candidate.
+
+Project inference must never wander through repositories until something looks plausible.
+
+## Current limitation
+
+Today’s gateway treats each activation as an event plus an optional worker. It does not provide durable thread-session ownership.
+
+The new thread actor or session should own:
+
+- Slack root timestamp;
+- inferred and verified project;
+- bound `cwd`;
+- Pi session identity;
+- Herdr pane and workspace;
+- message cursor;
+- lifecycle state;
+- progress and final delivery;
+- retries;
+- cancellation;
+- quiet timeout;
+- cleanup receipt.
+
+Use an explicit XState v5 machine when implementation starts.
+
+## Dirty and private state
+
+Do not overwrite:
+
+```text
+/Users/joel/Code/joelhooks/joelclaw-runtime/skills/egghead-slack/SKILL.md
+```
+
+It has a local runtime-overlay edit on branch:
+
+```text
+debris/session-backup-recovery
+```
+
+The canonical public skill changes are committed in `joelclaw`.
+
+## Session names
+
+- Pi session: `🐀 Slack Thread Familiar`
+- Herdr workspace: `[jc] Slack thread familiar`
+- Herdr tab: `🐀 Designing thread-bound ShitRat`
+- Steering pane: `w3E:p1`
+
+## Existing unrelated validation blockers
+
+Full gateway TypeScript still has four old errors:
+
+- `packages/gateway/src/channels/redis.ts:825`
+- `packages/gateway/src/channels/redis.ts:826`
+- `packages/gateway/src/transport-slim.test.ts:82` twice
+
+Brain check also has unrelated unsupported support files.

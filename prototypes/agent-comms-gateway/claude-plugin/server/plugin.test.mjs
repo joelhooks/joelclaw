@@ -648,48 +648,33 @@ describe("stream receipts", () => {
 
     const handlers = createToolHandlers({
       stream,
+      slackThreads: {
+        runTurn: async () => ({ ok: true, sessionId: "thread-session-1" }),
+      },
       herdr: {
-        dispatchWorker: async () => ({ ok: true }),
+        dispatchWorker: async () => ({ unsafe: true }),
         prompt: async () => ({ unsafe: true }),
       },
       wake: {},
     });
     await expect(handlers.herdr_prompt({ target: "wZ:p1", text: "reuse this pane" }))
-      .rejects.toThrow("Generic herdr_prompt reuse is forbidden");
-    await expect(handlers.herdr_dispatch_worker({
-      taskId: "x",
-      task: "y",
-      cwd: "/tmp/example",
-      freshWorkspace: true,
-      worktree: true,
-      resultContext: { platform: "slack" },
-    })).rejects.toThrow("sourceEventId");
-    await expect(handlers.herdr_dispatch_worker({
-      taskId: "x",
-      task: "y",
-      cwd: "/tmp/wrong-project",
-      freshWorkspace: true,
-      worktree: true,
-      resultContext: {
-        sourceEventId: "slack-work-1",
-        platform: "slack",
-        channelId: "CWRONG",
-        replyThreadId: "slack:CWRONG:1785950000.100",
-      },
+      .rejects.toThrow("Generic herdr prompting");
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
+      .rejects.toThrow("one-shot worker dispatch");
+    await expect(handlers.slack_thread_run({
+      sourceEventId: "slack-work-1",
+      channelId: "CWRONG",
+      channelName: "lc-example",
+      threadTs: "1785950000.100",
+      text: "review this",
     })).rejects.toThrow("must match pending workRequest");
-    await expect(handlers.herdr_dispatch_worker({
-      taskId: "x",
-      task: "y",
-      cwd: "/tmp/example",
-      freshWorkspace: true,
-      worktree: true,
-      resultContext: {
-        sourceEventId: "slack-work-1",
-        platform: "slack",
-        channelId: "CEXAMPLE",
-        replyThreadId: "slack:CEXAMPLE:1785950000.100",
-      },
-    })).resolves.toEqual({ ok: true });
+    await expect(handlers.slack_thread_run({
+      sourceEventId: "slack-work-1",
+      channelId: "CEXAMPLE",
+      channelName: "lc-example",
+      threadTs: "1785950000.100",
+      text: "review this",
+    })).resolves.toEqual({ ok: true, sessionId: "thread-session-1" });
 
     const fanout = await stream.recordDecision({
       payload: {
@@ -715,7 +700,7 @@ describe("stream receipts", () => {
         decisionSeq: 3,
         decision: { verb: "fanout", taskId: "slack-work-review" },
       },
-    })).rejects.toThrow("already has its fanout decision");
+    })).rejects.toThrow("already has its thread-session fanout decision");
   });
 
   test("bound social triage replies once without manufacturing work", async () => {
@@ -739,7 +724,7 @@ describe("stream receipts", () => {
     });
   });
 
-  test("unbound work triage replies in Slack and blocks launch", async () => {
+  test("unbound work may start only in a neutral thread session", async () => {
     const unbound = {
       ...slackWorkRequest,
       _id: "slack-work-unbound",
@@ -758,11 +743,19 @@ describe("stream receipts", () => {
 
     const handlers = createToolHandlers({
       stream,
-      herdr: { dispatchWorker: async () => ({ ok: true }) },
+      slackThreads: { runTurn: async () => ({ ok: true, bound: false }) },
+      herdr: { dispatchWorker: async () => ({ unsafe: true }) },
       wake: {},
     });
     await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
-      .rejects.toThrow("Do not launch a worker");
+      .rejects.toThrow("neutral session");
+    await expect(handlers.slack_thread_run({
+      sourceEventId: "slack-work-unbound",
+      channelId: "CEXAMPLE",
+      channelName: "lc-example",
+      threadTs: "1785950000.100",
+      text: "review this",
+    })).resolves.toEqual({ ok: true, bound: false });
 
     await expect(stream.recordDecision({
       payload: {
@@ -877,7 +870,7 @@ test("MCP exposes all production tool families", async () => {
   const listed = await handleMcpMessage({ id: 1, method: "tools/list" }, createToolHandlers({
     stream: {}, herdr: {}, wake: {},
   }));
-  expect(listed.tools).toHaveLength(19);
+  expect(listed.tools).toHaveLength(24);
 });
 
 describe("worker lanes", () => {

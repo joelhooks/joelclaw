@@ -183,7 +183,8 @@ export type InboundReceivedPayload = {
   addressing?: "addressed" | "ambient";
   workRequest?: {
     trigger: "shitrat";
-    addressedBy: "emoji" | "mention";
+    addressedBy: "emoji" | "mention" | "thread-session";
+    activation: "new" | "follow-up";
     channelId: string;
     channelName: string;
     messageTs: string;
@@ -191,6 +192,7 @@ export type InboundReceivedPayload = {
     replyThreadId: string;
     botDeliveryReady: boolean;
     userDeliveryReady?: boolean;
+    threadText?: string;
     binding?: {
       repo?: string;
       cwd?: string;

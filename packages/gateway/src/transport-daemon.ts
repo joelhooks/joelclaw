@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import type { FlowIdType, InboundEvent } from "@joelclaw/message-contract";
 import {
   getMessageEventLogClient,
@@ -22,6 +24,7 @@ import {
 import { registerChatSdkActingInbound } from "./chat-sdk-inbound/acting";
 import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
 import { drainDeliverDecisions } from "./gateway-decision-executor";
+import { SlackThreadSessionRegistry } from "./slack-thread-session";
 import {
   createSlackUserWebClient,
   isSlackUserChannelReady,
@@ -43,6 +46,7 @@ const PID_DIR = "/tmp/joelclaw";
 const PID_FILE = `${PID_DIR}/gateway.pid`;
 const HEARTBEAT_FILE = `${PID_DIR}/last-heartbeat.ts`;
 const HEARTBEAT_INTERVAL_MS = 15 * 60_000;
+const execFileAsync = promisify(execFile);
 
 function redisOptions() {
   return {
@@ -119,6 +123,46 @@ export async function startSlimTransportDaemon(): Promise<void> {
   ) => resolveFlowId(command, platform, platformMessageId, conversationId);
   const slackChannelNames = new Map<string, string>();
   const slackUserWebClient = createSlackUserWebClient();
+  const slackThreadSessions = new SlackThreadSessionRegistry();
+  const slackThreadReapIntervalMs = Number.parseInt(
+    process.env.SLACK_SHITRAT_THREAD_REAP_INTERVAL_MS ?? "60000",
+    10,
+  );
+  const requestSlackThreadReap = async (): Promise<void> => {
+    const pluginServer = "/Users/joel/Code/joelhooks/joelclaw/prototypes/agent-comms-gateway/claude-plugin/server/slack-thread-reap.mjs";
+    const result = await execFileAsync("bun", [pluginServer], {
+      timeout: 30_000,
+      env: process.env,
+    });
+    const retired = JSON.parse(result.stdout.trim() || "{\"retired\":[]}") as {
+      readonly retired?: readonly string[];
+    };
+    if ((retired.retired?.length ?? 0) === 0) return;
+    void emitGatewayOtel({
+      level: "info",
+      component: "slack-shitrat",
+      action: "slack.shitrat.thread_sessions_retired",
+      success: true,
+      metadata: { count: retired.retired!.length, threadIds: retired.retired },
+    });
+  };
+  const slackThreadReapTimer = setInterval(() => {
+    void requestSlackThreadReap().catch((error) => {
+      console.error("[gateway:transport] Slack thread session reap failed", {
+        error: String(error),
+      });
+      void emitGatewayOtel({
+        level: "error",
+        component: "slack-shitrat",
+        action: "slack.shitrat.thread_session_reap_failed",
+        success: false,
+        error: String(error),
+      });
+    });
+  }, Number.isFinite(slackThreadReapIntervalMs)
+    ? Math.max(5_000, slackThreadReapIntervalMs)
+    : 60_000);
+  slackThreadReapTimer.unref?.();
   const resolveSlackChannelName = async (channelId: string): Promise<string | undefined> => {
     const cached = slackChannelNames.get(channelId);
     if (cached) return cached;
@@ -134,6 +178,10 @@ export async function startSlimTransportDaemon(): Promise<void> {
     const request = await resolveSlackWorkRequest({
       event,
       resolveChannelName: resolveSlackChannelName,
+      hasActiveThreadSession: async (channelId, threadTs) => {
+        const session = await slackThreadSessions.get(channelId, threadTs);
+        return Boolean(session && session.status !== "retired");
+      },
     });
     if (!request) return undefined;
 
@@ -141,8 +189,35 @@ export async function startSlimTransportDaemon(): Promise<void> {
       channelId: request.channelId,
       userClient: slackUserWebClient,
     });
+    const threadSession = userDeliveryReady
+      ? request.activation === "follow-up"
+        ? await slackThreadSessions.noteHumanReply(
+            request.channelId,
+            request.threadTs,
+          )
+        : await slackThreadSessions.activate({
+            channelId: request.channelId,
+            channelName: request.channelName,
+            threadTs: request.threadTs,
+          })
+      : undefined;
+    const threadMessages = slackUserWebClient?.conversations.replies
+      ? await slackUserWebClient.conversations.replies({
+          channel: request.channelId,
+          ts: request.threadTs,
+          limit: 100,
+        }).then((value) => value.messages ?? []).catch(() => [])
+      : [];
+    const threadText = threadMessages
+      .map((message) => message.text?.trim())
+      .filter((text): text is string => Boolean(text))
+      .slice(-24)
+      .join("\n")
+      .slice(-8_000);
     const resolved = {
       ...request,
+      ...(threadSession?.binding ? { binding: threadSession.binding } : {}),
+      ...(threadText ? { threadText } : {}),
       botDeliveryReady: false,
       userDeliveryReady,
     };
@@ -161,7 +236,9 @@ export async function startSlimTransportDaemon(): Promise<void> {
         channelName: request.channelName,
         threadTs: request.threadTs,
         actorId: event.actor.platformUserId,
-        bound: Boolean(request.binding?.cwd || request.binding?.repo),
+        bound: Boolean(threadSession?.binding?.cwd || threadSession?.binding?.repo),
+        activation: request.activation,
+        threadSessionStatus: threadSession?.status,
       },
     });
     return resolved;
@@ -178,14 +255,16 @@ export async function startSlimTransportDaemon(): Promise<void> {
       acknowledgeWorkRequest: async (request) => {
         if (request.userDeliveryReady !== true) return;
         if (!slackUserWebClient) throw new Error("SLACK_USER_TOKEN is unavailable");
-        try {
-          await slackUserWebClient.reactions.add({
-            channel: request.channelId,
-            name: process.env.SLACK_SHITRAT_REACTION?.trim() || "shitrat",
-            timestamp: request.messageTs,
-          });
-        } catch (error) {
-          if (!String(error).includes("already_reacted")) throw error;
+        if (request.activation === "new") {
+          try {
+            await slackUserWebClient.reactions.add({
+              channel: request.channelId,
+              name: process.env.SLACK_SHITRAT_REACTION?.trim() || "shitrat",
+              timestamp: request.messageTs,
+            });
+          } catch (error) {
+            if (!String(error).includes("already_reacted")) throw error;
+          }
         }
         void emitGatewayOtel({
           level: "info",
@@ -194,7 +273,8 @@ export async function startSlimTransportDaemon(): Promise<void> {
           success: true,
           metadata: {
             channelId: request.channelId,
-            threadTs: request.messageTs,
+            threadTs: request.threadTs,
+            activation: request.activation,
           },
         });
       },
@@ -377,6 +457,7 @@ export async function startSlimTransportDaemon(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     console.log("[gateway:transport] shutting down", { signal });
     clearInterval(heartbeatTimer);
+    clearInterval(slackThreadReapTimer);
     clearInterval(executorTimer);
     await Promise.allSettled([
       runtime.stop(),

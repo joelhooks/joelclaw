@@ -19,7 +19,8 @@ export type SlackChannelContextBinding = {
 
 export type SlackWorkRequest = {
   readonly trigger: "shitrat";
-  readonly addressedBy: "emoji" | "mention";
+  readonly addressedBy: "emoji" | "mention" | "thread-session";
+  readonly activation: "new" | "follow-up";
   readonly channelId: string;
   readonly channelName: string;
   readonly messageTs: string;
@@ -27,6 +28,7 @@ export type SlackWorkRequest = {
   readonly replyThreadId: string;
   readonly botDeliveryReady?: boolean;
   readonly userDeliveryReady?: boolean;
+  readonly threadText?: string;
   readonly binding?: SlackChannelContextBinding;
 };
 
@@ -78,17 +80,17 @@ export async function resolveSlackWorkRequest(input: {
   readonly event: InboundEvent;
   readonly resolveChannelName: (channelId: string) => Promise<string | undefined>;
   readonly loadBinding?: (channelName: string) => Promise<SlackChannelContextBinding | undefined>;
+  readonly hasActiveThreadSession?: (
+    channelId: string,
+    threadTs: string,
+  ) => Promise<boolean>;
 }): Promise<SlackWorkRequest | undefined> {
   const { event } = input;
   if (event.platform !== "slack" || event.type !== "message") return undefined;
   if (event.actor.isBot === true || event.actor.isSelf) return undefined;
   const tokenTriggered = hasShitRatTrigger(event.text);
-  if (!tokenTriggered && !event.isMention) return undefined;
-
   const channelId = event.platformIds.conversationId;
   if (!channelId || channelId.startsWith("D")) return undefined;
-  const channelName = await input.resolveChannelName(channelId);
-  if (!channelName || !isShitRatWorkChannel(channelName)) return undefined;
 
   const messageTs = event.platformIds.messageId
     ?? event.rawAnchors.sourceMessageId
@@ -101,11 +103,20 @@ export async function resolveSlackWorkRequest(input: {
   const threadTs = rawThreadTs && rawThreadTs !== messageTs
     ? rawThreadTs
     : messageTs;
+  const followUp = !tokenTriggered && !event.isMention && rawThreadTs
+    ? await input.hasActiveThreadSession?.(channelId, threadTs) === true
+    : false;
+  if (!tokenTriggered && !event.isMention && !followUp) return undefined;
+  const channelName = await input.resolveChannelName(channelId);
+  if (!channelName || !isShitRatWorkChannel(channelName)) return undefined;
   const binding = await (input.loadBinding ?? loadSlackChannelContextBinding)(channelName);
 
   return {
     trigger: "shitrat",
-    addressedBy: tokenTriggered ? "emoji" : "mention",
+    addressedBy: followUp
+      ? "thread-session"
+      : tokenTriggered ? "emoji" : "mention",
+    activation: followUp ? "follow-up" : "new",
     channelId,
     channelName,
     messageTs,

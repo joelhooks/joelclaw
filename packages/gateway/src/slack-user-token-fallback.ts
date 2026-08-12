@@ -13,6 +13,18 @@ export interface SlackWebApiClient {
         readonly is_member?: boolean;
       };
     }>;
+    readonly replies?: (input: {
+      readonly channel: string;
+      readonly ts: string;
+      readonly limit?: number;
+    }) => Promise<{
+      readonly messages?: ReadonlyArray<{
+        readonly ts?: string;
+        readonly user?: string;
+        readonly text?: string;
+        readonly bot_id?: string;
+      }>;
+    }>;
   };
   readonly chat: {
     readonly postMessage: (input: {
@@ -87,11 +99,11 @@ export function createSlackUserWebClient(
   if (!userToken) return undefined;
 
   const call = async (
-    method: "chat.postMessage" | "conversations.info" | "reactions.add",
+    method: "chat.postMessage" | "conversations.info" | "conversations.replies" | "reactions.add",
     body: Record<string, string>,
   ): Promise<Record<string, unknown>> => {
     const url = new URL(`https://slack.com/api/${method}`);
-    const request: RequestInit = method === "conversations.info"
+    const request: RequestInit = method.startsWith("conversations.")
       ? {
           method: "GET",
           headers: { authorization: `Bearer ${userToken}` },
@@ -104,7 +116,7 @@ export function createSlackUserWebClient(
           },
           body: JSON.stringify(body),
         };
-    if (method === "conversations.info") {
+    if (method.startsWith("conversations.")) {
       for (const [key, value] of Object.entries(body)) url.searchParams.set(key, value);
     }
     const response = await fetchApi(url, request);
@@ -142,6 +154,25 @@ export function createSlackUserWebClient(
               : {}),
           },
         };
+      },
+      replies: async ({ channel, ts, limit = 100 }) => {
+        const result = await call("conversations.replies", {
+          channel,
+          ts,
+          limit: String(limit),
+        });
+        const messages = Array.isArray(result.messages)
+          ? result.messages
+              .filter((value): value is Record<string, unknown> =>
+                Boolean(value && typeof value === "object"))
+              .map((value) => ({
+                ...(typeof value.ts === "string" ? { ts: value.ts } : {}),
+                ...(typeof value.user === "string" ? { user: value.user } : {}),
+                ...(typeof value.text === "string" ? { text: value.text } : {}),
+                ...(typeof value.bot_id === "string" ? { bot_id: value.bot_id } : {}),
+              }))
+          : [];
+        return { messages };
       },
     },
     chat: {

@@ -127,7 +127,10 @@ function isOutboundDecision(decision) {
 }
 
 function slackWorkerReturnTarget(event) {
-  if (event?.kind !== "message.requested" || event?.source !== "shitrat-worker") {
+  if (
+    event?.kind !== "message.requested"
+    || !new Set(["shitrat-worker", "shitrat-thread-session"]).has(event?.source)
+  ) {
     return null;
   }
   const context = event?.payload?.evidence?.context;
@@ -135,7 +138,8 @@ function slackWorkerReturnTarget(event) {
     context?.platform !== "slack"
     || typeof context.channelId !== "string"
     || typeof context.replyThreadId !== "string"
-    || typeof context.taskId !== "string"
+    || ![context.taskId, context.threadSessionId].some((value) =>
+      typeof value === "string" && value.trim())
   ) return null;
   return {
     kind: "platform",
@@ -160,7 +164,7 @@ function slackWorkerCompletion(event) {
   const target = slackWorkerReturnTarget(event);
   const context = event?.payload?.evidence?.context;
   if (context?.workerPhase === "progress") return null;
-  const taskId = context?.taskId;
+  const taskId = context?.taskId ?? context?.threadSessionId;
   const delivery = slackDeliveryForTarget(target);
   if (!delivery || typeof taskId !== "string") return null;
   return {
@@ -233,7 +237,11 @@ export function compactPendingEvent(event, { now = Date.now() } = {}) {
     ...(workRequest ? {
       workRequest: {
         channelName: workRequest.channelName,
+        activation: workRequest.activation ?? "new",
         text: fullText,
+        threadText: typeof workRequest.threadText === "string"
+          ? workRequest.threadText.slice(-8_000)
+          : "",
         botDeliveryReady: workRequest.botDeliveryReady === true,
         userDeliveryReady: workRequest.userDeliveryReady === true,
         replyThreadId: normalizeSlackReplyThreadId(
@@ -450,40 +458,25 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
       && !coveringIds.includes(event._id));
     if (boundWorkRequests.length > 0) {
       const ids = boundWorkRequests.map((event) => event._id).join(", ");
-      if (toolName !== "herdr_dispatch_worker") {
+      if (toolName !== "slack_thread_run") {
         throw new Error(
-          `Bound Slack workRequest must use shitrat_triage, then either reply-and-stop or herdr_dispatch_worker before ${toolName}: ${ids}. `
-          + "Generic herdr_prompt reuse is forbidden.",
+          `Bound Slack workRequest must use shitrat_triage, then either reply-and-stop or slack_thread_run before ${toolName}: ${ids}. `
+          + "Generic herdr prompting and one-shot worker dispatch are forbidden for thread sessions.",
         );
       }
-      const sourceEventId = toolArgs?.resultContext?.sourceEventId;
-      const matched = boundWorkRequests.find((event) => event._id === sourceEventId);
-      const workRequest = matched?.payload?.workRequest;
-      const expectedCwd = workRequest?.binding?.cwd?.trim()
-        || workRequest?.binding?.repo?.trim();
-      const expectedThreadId = workRequest
-        ? normalizeSlackReplyThreadId(
-            workRequest.channelId,
-            workRequest.replyThreadId,
-          )
-        : undefined;
-      const actualThreadId = normalizeSlackReplyThreadId(
-        toolArgs?.resultContext?.channelId,
-        toolArgs?.resultContext?.replyThreadId,
-      );
-      if (
-        !matched
-        || toolArgs?.resultContext?.platform !== "slack"
-        || toolArgs?.freshWorkspace !== true
-        || toolArgs?.worktree !== true
-        || toolArgs?.cwd !== expectedCwd
-        || toolArgs?.resultContext?.channelId !== workRequest.channelId
-        || actualThreadId !== expectedThreadId
-      ) {
+      const matched = boundWorkRequests.find((event) => {
+        const workRequest = event.payload.workRequest;
+        const timestamp = normalizeSlackReplyThreadId(
+          workRequest.channelId,
+          workRequest.replyThreadId,
+        ).split(":").at(-1);
+        return toolArgs?.sourceEventId === event._id
+          && toolArgs?.channelId === workRequest.channelId
+          && toolArgs?.threadTs === timestamp;
+      });
+      if (!matched) {
         throw new Error(
-          `Slack dispatch must match pending workRequest ${ids}: sourceEventId, channelId, `
-          + "normalized replyThreadId, binding cwd, resultContext.platform=slack, "
-          + "freshWorkspace:true, and worktree:true",
+          `Slack thread run must match pending workRequest ${ids}: exact sourceEventId, channelId, and normalized root thread`,
         );
       }
     }
@@ -495,10 +488,27 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
       && !coveringIds.includes(event._id));
     if (missingBindings.length > 0) {
       const ids = missingBindings.map((event) => event._id).join(", ");
-      throw new Error(
-        `Triage unbound Slack workRequest before ${toolName}: ${ids}. `
-        + "Do not launch a worker. Social/answer activations reply and stop; real work replies with the missing project mapping.",
-      );
+      if (toolName !== "slack_thread_run") {
+        throw new Error(
+          `Triage unbound Slack workRequest before ${toolName}: ${ids}. `
+          + "Real work may use slack_thread_run in a neutral session; do not guess a project or use generic Herdr tools.",
+        );
+      }
+      const matched = missingBindings.find((event) => {
+        const workRequest = event.payload.workRequest;
+        const timestamp = normalizeSlackReplyThreadId(
+          workRequest.channelId,
+          workRequest.replyThreadId,
+        ).split(":").at(-1);
+        return toolArgs?.sourceEventId === event._id
+          && toolArgs?.channelId === workRequest.channelId
+          && toolArgs?.threadTs === timestamp;
+      });
+      if (!matched) {
+        throw new Error(
+          `Neutral Slack thread run must match pending workRequest ${ids}: exact sourceEventId, channelId, and normalized root thread`,
+        );
+      }
     }
   }
 
@@ -661,15 +671,12 @@ export function createStreamTools({ client = createMessageEventLogClient(), now 
             continue;
           }
 
-          if (!hasWorkRequestBinding(input)) {
-            throw new Error(`unbound workRequest ${eventId} already has its terminal triage reply`);
-          }
           if (hasFanoutCovering(events, eventId)) {
-            throw new Error(`Bound workRequest ${eventId} already has its fanout decision`);
+            throw new Error(`workRequest ${eventId} already has its thread-session fanout decision`);
           }
           if (!hasDeliverCovering(events, eventId) || verb !== "fanout") {
             throw new Error(
-              `Bound workRequest ${eventId} may fan out only after its Luna triage reply. Got verb=${verb}`,
+              `workRequest ${eventId} may record thread-session fanout only after its Luna triage reply. Got verb=${verb}`,
             );
           }
           continue;

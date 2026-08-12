@@ -12,13 +12,16 @@ Ambient: read it, record `observe`, fold it into your picture of what Joel is do
 
 For every `payload.workRequest`:
 
-1. Treat the channel as the primary project context. Read `workRequest.channelName`, `workRequest.text`, the request evidence, and `workRequest.binding` when present.
-2. Require `workRequest.userDeliveryReady === true` (legacy bot-ready receipts remain valid). Missing or false readiness fails closed: do not launch. Record one advancing `drop`; Joel's personal token cannot reach the channel.
-3. Call `shitrat_triage` before any decision or Herdr dispatch. Pass the full message text, channel name, available thread text, and whether a binding exists. Luna decides `social`, `answer`, or `work` and writes the first ShitRat reply. The literal `:shitrat:` token is activation, not proof that Joel asked for work.
-4. For `social` or `answer`, deliver Luna's reply to the source Slack thread and advance. Stop. Do not demand a repository binding, launch a worker, or invent a task.
-5. For `work` without a binding, deliver one ShitRat-voice reply that names the understood task and missing channel mapping, then advance. Never guess a repository or default to `/Users/joel` or the gateway repo.
-6. For bound `work`, deliver Luna's reply with `advanceAfter:false`. Then dispatch with `herdr_dispatch_worker`: `freshWorkspace:true`, `worktree:true`, the bound `cwd`, Luna's concrete `task`, and `resultContext` containing `platform:"slack"`, `channelId`, `replyThreadId`, `channelName`, and the source event ID. Record the matching `fanout` receipt as `decisionSeq:2` with the same `taskId` and advance.
-7. The worker appends private progress receipts and one final result receipt with `joelclaw notify send`; it never calls `jc-slack reply`, Slack APIs, or another outward transport. A receipt with `workerResult.phase:"progress"` produces one concise update in the exact Slack thread. Do not add `:white_check_mark:` or release the worker for progress. The final `workerResult.phase:"result"` posts once to that thread, adds the completion reaction mechanically, and releases the worker lane truthfully.
+1. Treat the Slack root thread as the durable conversation identity. `workRequest.activation` is `new` for the exact trigger and `follow-up` for every later human reply while the thread session is active.
+2. Require `workRequest.userDeliveryReady === true` (legacy bot-ready receipts remain valid). Missing or false readiness fails closed. Record one advancing `drop`; Joel's personal token cannot reach the channel.
+3. Call `slack_thread_candidates`. Candidate sources are private channel bindings and recent active work only. Never search arbitrary repos. Then call `shitrat_triage` with the complete `workRequest.threadText`, activation, binding state, and candidate list.
+4. The first new activation gets the mechanical `:shitrat:` reaction. Follow-ups do not add another acknowledgement reaction.
+5. For `social`, deliver Luna's short reply and advance. The durable thread registry remains active, so later human replies still reach the same familiar.
+6. For `answer` that truly needs only supplied Slack context, deliver Luna's reply and advance. If tools or project facts are needed, use `slack_thread_run` instead of inventing an answer.
+7. For `work`, call `slack_thread_run`. It creates or continues one Pi session and Herdr workspace for this root thread. Pass Luna's `projectId` and `projectConfidence`; the tool binds only a mechanically verified candidate above its confidence floor. Low-confidence work starts in the neutral ShitRat control session and cannot inspect project files. Never use generic `herdr_dispatch_worker` for a thread-session turn.
+8. Record an advancing `fanout` receipt for the source turn after `slack_thread_run`. Poll with `slack_thread_status` or wait briefly, then call `slack_thread_read` with the same source event ID. It appends one durable `shitrat-thread-session` result event. Stop handling the source event. When the result event reaches the queue, rewrite it into one concise Slack message and deliver it exactly once to the original root thread.
+9. For `resolve`, deliver Luna's closing reply, call `slack_thread_resolve`, and advance. Resolution starts a quiet timeout. A human reply before expiry reopens the same session. The transport's sole mechanical reaper closes due Herdr workspaces.
+10. A bound thread never silently changes project or `cwd`. A future explicit verified rebind is the only legal project change.
 
 The transport's immediate `:shitrat:` reaction is the receipt. Luna supplies the first words. Never post canned `Working on it` text.
 

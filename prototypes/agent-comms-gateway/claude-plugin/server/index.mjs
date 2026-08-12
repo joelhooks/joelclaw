@@ -2,6 +2,7 @@
 import { createInterface } from "node:readline";
 import { createHerdrTools } from "./herdr-tools.mjs";
 import { createShitratTriage, warmShitratTriage } from "./shitrat-triage.mjs";
+import { createSlackThreadTools } from "./slack-thread-tools.mjs";
 import { createStreamTools } from "./stream-tools.mjs";
 import { createWakeTools } from "./wake-tools.mjs";
 
@@ -23,7 +24,12 @@ export const toolDefinitions = [
   { name: "stream_append_gateway_event", description: "Append and read back a typed handoff, aggregate deadline, or inbound interpretation event.", inputSchema: objectSchema({ semanticKey: string, kind: { enum: ["gateway.handoff", "aggregate.deadline.reached", "inbound.interpreted"] }, payload: { type: "object" }, flowId: string, origin: { type: "object" } }, ["semanticKey", "kind", "payload"]) },
   { name: "stream_advance_after_decision", description: "Advance the gateway cursor only after exactly one read-back decision covers the input.", inputSchema: objectSchema({ eventId: string, decisionEventId: string }, ["eventId", "decisionEventId"]) },
   { name: "stream_advance_own_output", description: "Mechanically advance past a gateway-authored stream output without treating it as new evidence.", inputSchema: objectSchema({ eventId: string }, ["eventId"]) },
-  { name: "shitrat_triage", description: "Use the warm approved Luna model to classify one Slack :shitrat: activation as social, answerable, or real work and draft the first ShitRat-voice thread reply. Call this before any workRequest decision or Herdr dispatch. The token alone is not work.", inputSchema: objectSchema({ channelName: string, text: string, threadText: { type: "string" }, bound: { type: "boolean" } }, ["channelName", "text", "bound"]) },
+  { name: "shitrat_triage", description: "Use the warm approved Luna model to classify one new or follow-up Slack thread turn, infer only from verified project candidates, and draft the ShitRat-voice reply. Call before any workRequest decision or thread-session run.", inputSchema: objectSchema({ channelName: string, text: string, threadText: { type: "string" }, bound: { type: "boolean" }, activation: { enum: ["new", "follow-up"] }, projectCandidates: { type: "array", items: { type: "object" } } }, ["channelName", "text", "bound"]) },
+  { name: "slack_thread_candidates", description: "Load mechanically verified project candidates for one Slack thread from private bindings and recent active work. This never searches arbitrary repos.", inputSchema: objectSchema({ channelName: string, binding: { type: "object" } }, ["channelName"]) },
+  { name: "slack_thread_run", description: "Create or continue the durable Pi session owned by one Slack root thread. Requires the pending source event ID for idempotency. The thread stays neutral unless a verified candidate meets Luna's confidence floor.", inputSchema: objectSchema({ sourceEventId: string, channelId: string, channelName: string, threadTs: string, text: string, threadText: { type: "string" }, binding: { type: "object" }, projectId: string, projectConfidence: { type: "number" } }, ["sourceEventId", "channelId", "channelName", "threadTs", "text"]) },
+  { name: "slack_thread_status", description: "Read one Slack thread session's durable binding and live Herdr status.", inputSchema: objectSchema({ channelId: string, threadTs: string }, ["channelId", "threadTs"]) },
+  { name: "slack_thread_read", description: "Read one settled Pi turn by its source event ID and mark that turn complete.", inputSchema: objectSchema({ sourceEventId: string, channelId: string, threadTs: string, lines: integer }, ["sourceEventId", "channelId", "threadTs"]) },
+  { name: "slack_thread_resolve", description: "Mark a Slack thread explicitly resolved and start its configurable quiet timeout. A human reply before expiry reopens it.", inputSchema: objectSchema({ channelId: string, threadTs: string, quietTimeoutMs: integer }, ["channelId", "threadTs"]) },
   { name: "herdr_snapshot", description: "Read a fresh mechanical snapshot of Herdr agents and panes.", inputSchema: objectSchema({}) },
   { name: "herdr_read", description: "Read output from one Herdr agent target. Full-screen agents (claude, codex, opencode) render in the alternate screen, whose rows never enter host scrollback — use source \"visible\" for those targets; the \"recent-unwrapped\" default only suits scrollback-native agents like pi.", inputSchema: objectSchema({ target: string, lines: integer, source: { enum: ["visible", "recent", "recent-unwrapped", "detection"] } }, ["target"]) },
   { name: "herdr_prompt", description: "Atomically submit a prompt to a live Herdr agent; optionally wait for settlement.", inputSchema: objectSchema({ target: string, text: string, wait: { type: "boolean" }, timeoutMs: integer }, ["target", "text"]) },
@@ -46,7 +52,7 @@ function withJoelAckGate(stream, toolName, fn) {
   };
 }
 
-export function createToolHandlers({ stream = createStreamTools(), triage = createShitratTriage(), herdr = createHerdrTools(), wake = createWakeTools() } = {}) {
+export function createToolHandlers({ stream = createStreamTools(), triage = createShitratTriage(), slackThreads = createSlackThreadTools(), herdr = createHerdrTools(), wake = createWakeTools() } = {}) {
   return {
     stream_bootstrap: (args) => stream.bootstrap(args),
     stream_read_since: (args) => stream.readSince(args),
@@ -56,6 +62,11 @@ export function createToolHandlers({ stream = createStreamTools(), triage = crea
     stream_advance_after_decision: (args) => stream.advanceAfterDecision(args),
     stream_advance_own_output: (args) => stream.advanceOwnOutput(args),
     shitrat_triage: (args) => triage.triage(args),
+    slack_thread_candidates: (args) => slackThreads.candidates(args),
+    slack_thread_run: withJoelAckGate(stream, "slack_thread_run", (args) => slackThreads.runTurn(args)),
+    slack_thread_status: (args) => slackThreads.status(args),
+    slack_thread_read: (args) => slackThreads.read(args),
+    slack_thread_resolve: (args) => slackThreads.resolve(args),
     // Herdr work is real work. If Joel is waiting on an ack, refuse and force the deliver first.
     herdr_snapshot: withJoelAckGate(stream, "herdr_snapshot", (args) => herdr.snapshot(args)),
     herdr_read: withJoelAckGate(stream, "herdr_read", (args) => herdr.read(args)),
