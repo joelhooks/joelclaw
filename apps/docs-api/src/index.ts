@@ -1,5 +1,10 @@
 import { access, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import {
+  docsReadinessReasons,
+  isArtifactSourceUnavailable,
+  isValidArtifactDocId,
+} from "./readiness";
 
 // Prevent unhandled rejections from crashing the server
 process.on("unhandledRejection", (error) => {
@@ -126,6 +131,10 @@ const PORT = Number.parseInt(process.env.PORT || "3838", 10);
 const TYPESENSE_URL =
   process.env.DOCS_TYPESENSE_URL || process.env.TYPESENSE_URL || "http://typesense:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";
+const TYPESENSE_REQUEST_TIMEOUT_MS = Number.parseInt(
+  process.env.DOCS_TYPESENSE_REQUEST_TIMEOUT_MS || "15000",
+  10,
+);
 const API_TOKEN = process.env.PDF_BRAIN_API_TOKEN || process.env.pdf_brain_api_token || "";
 const DOCS_CHUNKS_COLLECTION = (process.env.DOCS_CHUNKS_COLLECTION || "docs_chunks_v2") as
   | "docs_chunks"
@@ -584,14 +593,7 @@ function buildDocArtifactPaths(docId: string): {
   chunks: string;
 } | null {
   const normalizedDocId = docId.trim();
-  if (
-    normalizedDocId.length === 0 ||
-    normalizedDocId.includes("/") ||
-    normalizedDocId.includes("\\") ||
-    normalizedDocId.includes("..")
-  ) {
-    return null;
-  }
+  if (docId !== normalizedDocId || !isValidArtifactDocId(normalizedDocId)) return null;
 
   const artifactDir = join(DOCS_ARTIFACTS_DIR, normalizedDocId);
   return {
@@ -618,6 +620,20 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+async function childExitWithTimeout(
+  child: ReturnType<typeof Bun.spawn>,
+  ms: number,
+  label: string,
+): Promise<number> {
+  try {
+    return await withTimeout(child.exited, ms, label);
+  } catch (error) {
+    child.kill();
+    await child.exited.catch(() => undefined);
+    throw error;
   }
 }
 
@@ -651,14 +667,14 @@ async function readSshArtifactText(path: string): Promise<string | null> {
       const [stdout, stderr, code] = await Promise.all([
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
-        child.exited,
+        childExitWithTimeout(child, timeoutMs() * 4, "ssh_artifact_read"),
       ]);
       if (code === 0) return stdout;
       if (code === 1) return null;
       throw new Error(`ssh artifact read failed (${code}): ${stderr.slice(0, 500)}`);
     })(),
-    timeoutMs() * 4,
-    "ssh_artifact_read",
+    timeoutMs() * 5,
+    "ssh_artifact_operation",
   );
 }
 
@@ -666,8 +682,7 @@ async function readLocalArtifactText(path: string): Promise<string | null> {
   try {
     return await withTimeout(readFile(path, "utf8"), timeoutMs(), "local_artifact_read");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
-    if (error instanceof Error && error.message === "local_artifact_read_timeout") return null;
+    if (isArtifactSourceUnavailable(error)) return null;
     throw error;
   }
 }
@@ -690,16 +705,43 @@ async function readArtifactJson(path: string): Promise<Record<string, unknown> |
   return JSON.parse(raw) as Record<string, unknown>;
 }
 
+async function sshArtifactsDirExists(): Promise<boolean> {
+  if (!DOCS_ARTIFACTS_SSH_HOST) return false;
+
+  return withTimeout(
+    (async () => {
+      const child = Bun.spawn(
+        [
+          "ssh",
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "ConnectTimeout=8",
+          DOCS_ARTIFACTS_SSH_HOST,
+          "test",
+          "-d",
+          DOCS_ARTIFACTS_SSH_ROOT,
+        ],
+        { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+      );
+      return (await childExitWithTimeout(child, timeoutMs() * 4, "ssh_artifacts_dir")) === 0;
+    })(),
+    timeoutMs() * 4,
+    "ssh_artifacts_dir",
+  ).catch(() => false);
+}
+
 async function artifactsDirExists(): Promise<boolean> {
+  if (DOCS_ARTIFACTS_PREFER_SSH && (await sshArtifactsDirExists())) return true;
+
   try {
     await access(DOCS_ARTIFACTS_DIR);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return false;
-    }
-    throw error;
+    if (!isArtifactSourceUnavailable(error)) throw error;
   }
+
+  return sshArtifactsDirExists();
 }
 
 function mapDocSummary(doc: Record<string, unknown>): DocSummaryResult | null {
@@ -913,9 +955,15 @@ async function typesenseRequest(path: string, init: RequestInit = {}): Promise<R
   const headers = new Headers(init.headers || {});
   headers.set("X-TYPESENSE-API-KEY", TYPESENSE_API_KEY);
 
+  const timeout =
+    Number.isFinite(TYPESENSE_REQUEST_TIMEOUT_MS) && TYPESENSE_REQUEST_TIMEOUT_MS > 0
+      ? TYPESENSE_REQUEST_TIMEOUT_MS
+      : 15_000;
+
   return fetch(buildTypesenseUrl(path), {
     ...init,
     headers,
+    signal: init.signal ?? AbortSignal.timeout(timeout),
   });
 }
 
@@ -1106,19 +1154,31 @@ async function listTopDocsForConcept(conceptId: string) {
 
 async function handleHealth(path: string): Promise<Response> {
   const command = `GET ${path}`;
+  const nextActions = [
+    {
+      command: "GET /status",
+      description: "Inspect docs-api version and collection status",
+    },
+    {
+      command: "GET /",
+      description: "Read the API guide and agent instructions",
+    },
+  ];
 
   const healthResult: Record<string, unknown> = {
     service: "docs-api",
-    status: "ok",
+    status: "degraded",
     host: HOST,
     port: PORT,
     authRequired: true,
     typesenseUrl: TYPESENSE_URL,
   };
+  let typesenseOk = false;
 
   if (TYPESENSE_API_KEY) {
     try {
       const response = await typesenseRequest("/health");
+      typesenseOk = response.ok;
       healthResult.typesense = {
         status: response.status,
         ok: response.ok,
@@ -1136,64 +1196,88 @@ async function handleHealth(path: string): Promise<Response> {
     };
   }
 
-  return jsonResponse(
-    ok(command, healthResult, [
-      {
-        command: "GET /status",
-        description: "Inspect docs-api version and collection status",
-      },
-      {
-        command: "GET /",
-        description: "Read the API guide and agent instructions",
-      },
-    ]),
-  );
+  if (!typesenseOk) {
+    return jsonResponse(
+      fail(
+        command,
+        "DEPENDENCY_UNAVAILABLE",
+        "Docs search dependency is unavailable",
+        healthResult,
+        nextActions,
+      ),
+      503,
+    );
+  }
+
+  healthResult.status = "ok";
+  return jsonResponse(ok(command, healthResult, nextActions));
 }
 
 async function handleStatus(path: string): Promise<Response> {
   const command = `GET ${path}`;
+  const nextActions = [
+    {
+      command: "GET /",
+      description: "Read the API guide and agent instructions",
+    },
+    {
+      command: "GET /search?q=<query>",
+      description: "Search the active chunks collection",
+    },
+    {
+      command: "GET /docs",
+      description: "List indexed documents",
+    },
+  ];
   let artifactsAvailable = false;
   let docsCount = 0;
   let chunksCount = 0;
+  let dependencyError: string | null = null;
+
   try {
     [artifactsAvailable, docsCount, chunksCount] = await Promise.all([
       artifactsDirExists(),
       getCollectionDocumentCount("docs"),
       getCollectionDocumentCount(DOCS_CHUNKS_COLLECTION),
     ]);
-  } catch {
-    // Degrade gracefully if Typesense unreachable
+  } catch (error) {
+    dependencyError = error instanceof Error ? error.message : String(error);
   }
 
-  return jsonResponse(
-    ok(
-      command,
-      {
-        service: "docs-api",
-        version: SERVICE_VERSION,
-        activeCollection: DOCS_CHUNKS_COLLECTION,
-        embeddingModel: EMBEDDING_MODEL,
-        artifactsDir: DOCS_ARTIFACTS_DIR,
-        artifactsAvailable,
-        docsCount,
-        chunksCount,
-      },
-      [
-        {
-          command: "GET /",
-          description: "Read the API guide and agent instructions",
-        },
-        {
-          command: "GET /search?q=<query>",
-          description: "Search the active chunks collection",
-        },
-        {
-          command: "GET /docs",
-          description: "List indexed documents",
-        },
-      ],
-    ),
-  );
+  const readiness = docsReadinessReasons({
+    typesenseOk: dependencyError === null,
+    docsCount,
+    chunksCount,
+    artifactsAvailable,
+  });
+  const statusResult = {
+    service: "docs-api",
+    version: SERVICE_VERSION,
+    activeCollection: DOCS_CHUNKS_COLLECTION,
+    embeddingModel: EMBEDDING_MODEL,
+    artifactsDir: DOCS_ARTIFACTS_DIR,
+    artifactsAvailable,
+    docsCount,
+    chunksCount,
+    ready: readiness.length === 0,
+    readiness,
+    ...(dependencyError === null ? {} : { dependencyError }),
+  };
+
+  if (readiness.length > 0) {
+    return jsonResponse(
+      fail(
+        command,
+        "DOCS_NOT_READY",
+        "One or more required docs read surfaces are unavailable",
+        statusResult,
+        nextActions,
+      ),
+      503,
+    );
+  }
+
+  return jsonResponse(ok(command, statusResult, nextActions));
 }
 
 async function handleDocMarkdown(docId: string, path: string): Promise<Response> {

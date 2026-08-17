@@ -5,7 +5,10 @@
   <key>Label</key>
   <string>com.joelclaw.typesense-books</string>
   <key>LimitLoadToSessionType</key>
-  <string>Background</string>
+  <array>
+    <string>Aqua</string>
+    <string>Background</string>
+  </array>
   <key>ProgramArguments</key>
   <array>
     <string>__HOME__/.joelclaw/scripts/typesense-books-start.sh</string>

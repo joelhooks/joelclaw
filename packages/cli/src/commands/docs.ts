@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
@@ -15,6 +16,10 @@ const DOCS_CHUNKS_V1_COLLECTION = "docs_chunks";
 const DOCS_CHUNKS_V2_COLLECTION = "docs_chunks_v2";
 const DOCS_CHUNKS_COLLECTION = process.env.DOCS_CHUNKS_COLLECTION || DOCS_CHUNKS_V2_COLLECTION;
 const DOCS_ARTIFACTS_DIR = process.env.DOCS_ARTIFACTS_DIR || "/Volumes/three-body/docs-artifacts";
+const DOCS_ARTIFACT_READ_TIMEOUT_MS = Number.parseInt(
+  process.env.DOCS_ARTIFACT_READ_TIMEOUT_MS || "5000",
+  10,
+);
 const DOCS_API_URL = (
   process.env.DOCS_API_URL ||
   process.env.JOELCLAW_DOCS_API_URL ||
@@ -26,6 +31,7 @@ const DOCS_API_TOKEN =
   process.env.pdf_brain_api_token ||
   process.env.DOCS_API_TOKEN ||
   "";
+let leasedDocsApiToken: string | undefined;
 const DEFAULT_LIMIT = 10;
 const DEFAULT_LIST_LIMIT = 20;
 const DEFAULT_RECONCILE_SAMPLE = 20;
@@ -230,11 +236,23 @@ async function resolveManifestPath(explicitPath?: string): Promise<string> {
 }
 
 async function pathExists(path: string): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await access(path);
+    const timeout =
+      Number.isFinite(DOCS_ARTIFACT_READ_TIMEOUT_MS) && DOCS_ARTIFACT_READ_TIMEOUT_MS > 0
+        ? DOCS_ARTIFACT_READ_TIMEOUT_MS
+        : 5000;
+    await Promise.race([
+      access(path),
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("path_access_timeout")), timeout);
+      }),
+    ]);
     return true;
   } catch {
     return false;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -261,14 +279,32 @@ function buildDocArtifactPaths(docId: string): {
   };
 }
 
+function isLocalArtifactSourceUnavailable(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message === "local_artifact_read_timeout") return true;
+  return new Set(["ENOENT", "EIO", "ENOTCONN", "ESTALE", "ETIMEDOUT"]).has(
+    (error as NodeJS.ErrnoException).code ?? "",
+  );
+}
+
 async function readArtifactText(path: string): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await readFile(path, "utf8");
+    const timeout =
+      Number.isFinite(DOCS_ARTIFACT_READ_TIMEOUT_MS) && DOCS_ARTIFACT_READ_TIMEOUT_MS > 0
+        ? DOCS_ARTIFACT_READ_TIMEOUT_MS
+        : 5000;
+    return await Promise.race([
+      readFile(path, "utf8"),
+      new Promise<string>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("local_artifact_read_timeout")), timeout);
+      }),
+    ]);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return null;
-    }
+    if (isLocalArtifactSourceUnavailable(error)) return null;
     throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -286,10 +322,46 @@ type DocsApiEnvelope = {
   error?: { message?: string; code?: string };
 };
 
+function docsStatusReady(
+  docsCount: number,
+  chunksCount: number,
+  artifactsAvailable: boolean,
+): boolean {
+  return docsCount > 0 && chunksCount > 0 && artifactsAvailable;
+}
+
+function normalizeDocsApiToken(value: string): string | null {
+  const token = value.trim();
+  if (token.length < 16 || /\s/u.test(token) || token.startsWith("{") || token.startsWith("[")) {
+    return null;
+  }
+  return token;
+}
+
+function resolveDocsApiToken(): string | null {
+  if (DOCS_API_TOKEN) return normalizeDocsApiToken(DOCS_API_TOKEN);
+  if (leasedDocsApiToken !== undefined) return leasedDocsApiToken;
+
+  try {
+    const output = execFileSync("secrets", ["lease", "pdf_brain_api_token", "--ttl", "15m"], {
+      encoding: "utf8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const token = normalizeDocsApiToken(output);
+    if (token) leasedDocsApiToken = token;
+    return token;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchDocsApiResult(path: string): Promise<unknown | null> {
-  if (!DOCS_API_URL || !DOCS_API_TOKEN) return null;
+  if (!DOCS_API_URL) return null;
+  const token = resolveDocsApiToken();
+  if (!token) return null;
   const response = await fetch(`${DOCS_API_URL}${path}`, {
-    headers: { Authorization: `Bearer ${DOCS_API_TOKEN}` },
+    headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(60_000),
   });
   if (response.status === 404) return null;
@@ -311,6 +383,13 @@ async function readRemoteMarkdownArtifact(docId: string): Promise<string | null>
 
 async function readRemoteSummaryArtifact(docId: string): Promise<unknown | null> {
   return fetchDocsApiResult(`/docs/${encodeURIComponent(docId)}/summary`);
+}
+
+async function docsArtifactsAvailable(): Promise<boolean> {
+  if (await pathExists(DOCS_ARTIFACTS_DIR)) return true;
+  const status = await fetchDocsApiResult("/status");
+  if (!status || typeof status !== "object") return false;
+  return (status as { artifactsAvailable?: unknown }).artifactsAvailable === true;
 }
 
 function contentEquivalentKey(path: string): string {
@@ -1571,7 +1650,7 @@ const statusCmd = Command.make("status", {}, () =>
             safeTsSearch(DOCS_COLLECTION, buildDocsParams()),
             safeTsSearch(DOCS_CHUNKS_V1_COLLECTION, buildChunksParams()),
             safeTsSearch(DOCS_CHUNKS_V2_COLLECTION, buildChunksParams()),
-            pathExists(DOCS_ARTIFACTS_DIR),
+            docsArtifactsAvailable(),
           ]),
         );
 
@@ -1581,7 +1660,11 @@ const statusCmd = Command.make("status", {}, () =>
           : DOCS_CHUNKS_COLLECTION === DOCS_CHUNKS_V2_COLLECTION
             ? chunksV2Result
             : undefined;
-      const ok = (docsResult.found ?? 0) > 0 && (activeChunksResult?.found ?? 0) > 0;
+      const ok = docsStatusReady(
+        docsResult.found ?? 0,
+        activeChunksResult?.found ?? 0,
+        artifactsAvailable,
+      );
 
       yield* Console.log(
         respond(
@@ -2006,6 +2089,9 @@ const batchReindexCmd = Command.make(
 export const __docsTestUtils = {
   buildDocsSearchParams,
   formatDocsVectorQuery,
+  docsStatusReady,
+  isLocalArtifactSourceUnavailable,
+  normalizeDocsApiToken,
 };
 
 export const docsCmd = Command.make("docs", {}, () =>
