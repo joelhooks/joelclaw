@@ -16,6 +16,10 @@ LAUNCH_AGENTS_DIR="${TARGET_HOME}/Library/LaunchAgents"
 SERVICE_PLACEMENT_FILE="${REPO_ROOT}/packages/endpoint-resolver/config/service-placement.json"
 HOSTNAME_SHORT="${JOELCLAW_HOSTNAME_OVERRIDE:-$(hostname -s)}"
 JQ_BIN="${JQ_BIN:-/opt/homebrew/bin/jq}"
+AGENT_SECRETS_SERVICE_USER="${AGENT_SECRETS_SERVICE_USER:-joelclaw}"
+AGENT_SECRETS_SOCKET_GROUP="${AGENT_SECRETS_SOCKET_GROUP:-joelclaw-secrets}"
+AGENT_SECRETS_SERVICE_ROOT="${AGENT_SECRETS_SERVICE_ROOT:-/Users/Shared/joelclaw}"
+AGENT_SECRETS_SERVICE_HOME="${AGENT_SECRETS_SERVICE_HOME:-/Users/${AGENT_SECRETS_SERVICE_USER}}"
 
 HEADLESS_RUNTIME_LABELS=(
   com.joel.agent-secrets
@@ -73,6 +77,54 @@ require_directory() {
   }
 }
 
+require_owner_mode() {
+  local path="$1"
+  local owner="$2"
+  local group="$3"
+  local mode="$4"
+  local actual
+  actual="$(stat -f '%Su:%Sg:%Lp' "$path")"
+  [ "$actual" = "${owner}:${group}:${mode}" ] || {
+    echo "Unsafe ownership or mode for $path: $actual, expected ${owner}:${group}:${mode}"
+    exit 1
+  }
+}
+
+validate_agent_secrets_service_runtime() {
+  local store="${AGENT_SECRETS_SERVICE_HOME}/.agent-secrets"
+  local socket="${AGENT_SECRETS_SERVICE_ROOT}/run/agent-secrets.sock"
+  local config="${store}/config.json"
+  local marker="${store}/service-account-migration.json"
+  local expected_identity
+
+  require_owner_mode "$store" "$AGENT_SECRETS_SERVICE_USER" "$AGENT_SECRETS_SOCKET_GROUP" 700
+  require_owner_mode "${AGENT_SECRETS_SERVICE_ROOT}/run" "$AGENT_SECRETS_SERVICE_USER" "$AGENT_SECRETS_SOCKET_GROUP" 710
+  require_owner_mode "${AGENT_SECRETS_SERVICE_ROOT}/logs" "$AGENT_SECRETS_SERVICE_USER" "$AGENT_SECRETS_SOCKET_GROUP" 700
+  for path in "$config" "$marker" "${store}/identity.age" "${store}/secrets.age"; do
+    require_owner_mode "$path" "$AGENT_SECRETS_SERVICE_USER" "$AGENT_SECRETS_SOCKET_GROUP" 600
+    [ -s "$path" ] || { echo "Empty agent-secrets service file: $path"; exit 1; }
+  done
+
+  "$JQ_BIN" -e \
+    --arg directory "$store" \
+    --arg socket "$socket" \
+    --arg group "$AGENT_SECRETS_SOCKET_GROUP" \
+    '.directory == $directory and .socket_path == $socket and .socket_mode == "0660" and .socket_group == $group' \
+    "$config" >/dev/null || {
+      echo "Invalid agent-secrets service config: $config"
+      exit 1
+    }
+  "$JQ_BIN" -e '.version == 1 and (.identity_sha256 | test("^[0-9a-f]{64}$"))' "$marker" >/dev/null || {
+    echo "Invalid agent-secrets migration marker: $marker"
+    exit 1
+  }
+  expected_identity="$("$JQ_BIN" -r '.identity_sha256' "$marker")"
+  [ "$(shasum -a 256 "${store}/identity.age" | awk '{print $1}')" = "$expected_identity" ] || {
+    echo "Agent-secrets service identity does not match migration marker"
+    exit 1
+  }
+}
+
 preflight_selected_assets() {
   local label
   local plist
@@ -88,10 +140,34 @@ preflight_selected_assets() {
 
   if [ "$HOSTNAME_SHORT" = "$HEADLESS_RUNTIME_HOST" ]; then
     require_executable "${TARGET_HOME}/.local/bin/secrets"
+    "${TARGET_HOME}/.local/bin/secrets" daemon restart --help >/dev/null 2>&1 || {
+      echo "Installed secrets binary lacks service-account restart support"
+      exit 1
+    }
+    require_executable "${REPO_ROOT}/infra/install-agent-secrets-service-account.sh"
+    id "$AGENT_SECRETS_SERVICE_USER" >/dev/null 2>&1 || {
+      echo "Missing agent-secrets service account: $AGENT_SECRETS_SERVICE_USER"
+      exit 1
+    }
+    /usr/bin/dscl . -read "/Groups/${AGENT_SECRETS_SOCKET_GROUP}" >/dev/null 2>&1 || {
+      echo "Missing ${AGENT_SECRETS_SOCKET_GROUP}; run infra/install-agent-secrets-service-account.sh first"
+      exit 1
+    }
+    require_directory "${AGENT_SECRETS_SERVICE_HOME}/.agent-secrets"
+    for path in \
+      "${AGENT_SECRETS_SERVICE_HOME}/.agent-secrets/config.json" \
+      "${AGENT_SECRETS_SERVICE_HOME}/.agent-secrets/identity.age" \
+      "${AGENT_SECRETS_SERVICE_HOME}/.agent-secrets/secrets.age" \
+      "${AGENT_SECRETS_SERVICE_HOME}/.agent-secrets/service-account-migration.json"; do
+      [ -f "$path" ] || {
+        echo "Incomplete agent-secrets service migration; missing $path"
+        exit 1
+      }
+    done
+    validate_agent_secrets_service_runtime
     require_executable "${TARGET_HOME}/.local/bin/worker-supervisor"
     require_executable "${TARGET_HOME}/.local/bin/herdr"
     require_executable "${TARGET_HOME}/.bun/bin/bun"
-    require_executable "${REPO_ROOT}/infra/agent-secrets-daemon.sh"
     require_executable "${TARGET_HOME}/.joelclaw/scripts/gateway-start.sh"
     require_executable "${REPO_ROOT}/infra/agent-mail-daemon.sh"
     require_executable "${REPO_ROOT}/infra/gateway-daemon.sh"
@@ -122,6 +198,19 @@ preflight_selected_assets() {
     require_executable "${REPO_ROOT}/infra/k8s-reboot-heal.sh"
     require_executable "${REPO_ROOT}/infra/kube-operator-access.sh"
   fi
+}
+
+sync_agent_secrets_service_binary() {
+  [ "$HOSTNAME_SHORT" = "$HEADLESS_RUNTIME_HOST" ] || return 0
+  install -d -o "$AGENT_SECRETS_SERVICE_USER" -g "$AGENT_SECRETS_SOCKET_GROUP" -m 755 \
+    "${AGENT_SECRETS_SERVICE_ROOT}/bin"
+  install -d -o "$AGENT_SECRETS_SERVICE_USER" -g "$AGENT_SECRETS_SOCKET_GROUP" -m 700 \
+    "${AGENT_SECRETS_SERVICE_ROOT}/logs"
+  install -d -o "$AGENT_SECRETS_SERVICE_USER" -g "$AGENT_SECRETS_SOCKET_GROUP" -m 710 \
+    "${AGENT_SECRETS_SERVICE_ROOT}/run"
+  install -o "$AGENT_SECRETS_SERVICE_USER" -g "$AGENT_SECRETS_SOCKET_GROUP" -m 755 \
+    "${TARGET_HOME}/.local/bin/secrets" \
+    "${AGENT_SECRETS_SERVICE_ROOT}/bin/secrets"
 }
 
 ensure_runtime_dirs() {
@@ -285,6 +374,7 @@ herdr_server_has_owner() {
 
 preflight_selected_assets
 ensure_runtime_dirs
+sync_agent_secrets_service_binary
 remove_headless_bridge
 stop_manual_fallbacks
 if [ "$HOSTNAME_SHORT" = "$HEADLESS_RUNTIME_HOST" ]; then

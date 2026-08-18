@@ -231,7 +231,15 @@ Installed only on the host assigned `k8s` in `packages/endpoint-resolver/config/
 - `infra/launchd/com.joel.k8s-reboot-heal.plist`
 - `infra/launchd/com.joel.kube-operator-access.plist`
 
-Canonical installer:
+One-time agent-secrets service-account migration on Flagg:
+
+```bash
+sudo ~/Code/joelhooks/joelclaw/infra/install-agent-secrets-service-account.sh
+```
+
+The first run may stop after it creates `joelclaw-secrets`. Restart Joel's login/session processes so they inherit the new group, then run the command again for cutover. The cutover moves daemon ownership to `joelclaw`, keeps the original Joel-owned store as rollback material, and gives Joel's CLI access only through the dedicated socket group. Routine cycles use `secrets daemon restart`; sudo is break-glass only.
+
+Canonical installer after that migration:
 
 ```bash
 sudo ~/Code/joelhooks/joelclaw/infra/install-critical-launchdaemons.sh
@@ -255,9 +263,11 @@ What the installer does:
 - removes the deprecated `com.joel.colima-tunnel` daemon instead of reinstalling it, because Colima/Lima already owns docker-published host ports for `joelclaw-controlplane-1`
 - removes the deprecated `com.joel.typesense-portforward` daemon instead of reinstalling it, because Typesense is now exposed by the `typesense` NodePort service on stable host port `8108` and a separate `kubectl port-forward` daemon only adds churn
 - removes stale manual kube operator tunnels on `16443` and `15000` before reinstalling the canonical daemon
-- bootstraps the critical services directly into the `system` launchd domain, using `UserName=joel` where the process should run as Joel
+- bootstraps the critical services directly into the `system` launchd domain; agent-secrets runs as `joelclaw`, while operator-owned processes use `UserName=joel` only when required
 
 Agent-mail note: `com.joelclaw.agent-mail` now goes through `infra/agent-mail-daemon.sh`, which resolves the joelclaw-managed `joelhooks/mcp_agent_mail` checkout instead of baking a third-party path into the plist. If the local checkout still lives under a legacy directory name, that is fine as long as the git `origin` remote is `joelhooks/mcp_agent_mail`. The launchd plist and wrapper both raise `NumberOfFiles` to 8192 because git-backed mailbox writes can temporarily hold hundreds of descriptors under multi-agent traffic; the wrapper fallback matters when the installed system plist is stale.
+
+Agent-secrets note: `com.joel.agent-secrets` owns its store under `/Users/joelclaw/.agent-secrets` and exposes only `/Users/Shared/joelclaw/run/agent-secrets.sock` as `joelclaw:joelclaw-secrets` mode `0660`. Joel's `~/.agent-secrets/config.json` points the CLI at that socket; it does not grant filesystem access to the service store.
 
 Gateway note: `com.joel.gateway` starts through `infra/gateway-daemon.sh`, which waits for agent-secrets readiness before running the private gateway start script. LaunchDaemons start concurrently, and the gateway leases channel tokens only once, so this readiness gate prevents a boot race from leaving Telegram and Slack disabled until a manual restart.
 
