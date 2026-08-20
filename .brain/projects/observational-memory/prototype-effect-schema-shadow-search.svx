@@ -1,0 +1,18 @@
+---
+title: "Prototype the Effect Schema Shadow Session Search"
+type: "step"
+kind: "prototype"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./observational-memory-brief.svx"
+blockers:
+  - "./settle-effect-schema-observation-v2.svx"
+created_at: "2026-08-19"
+---
+
+# Prototype the Effect Schema Shadow Session Search
+
+## Step
+
+Build the earliest touchable proof as a read-only shadow CLI. For the same real queries, show current raw results beside proposed project reflection → supporting observations → evidence links. Parse every fixture and output through the settled Effect Schemas; demonstrate schema versioning and a teaching parse failure; retain source pointers to accepted Runs and raw transcript windows. Do not replace production `session search`. Closed only after Joel judges the result useful and names any contract corrections.

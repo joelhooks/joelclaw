@@ -1,0 +1,24 @@
+---
+title: "Research Effect Schema Contracts for Observational Memory"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "closed"
+assignee: "pi (flagg, herdr pane w56:pC, 2026-08-19)"
+closed_at: "2026-08-19"
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-08-19"
+---
+
+# Research Effect Schema Contracts for Observational Memory
+
+## Step
+
+Resolved when a linked asset uses the installed `effect`, `pi-effect`, and official Effect source to recommend the exact Effect Schema patterns for versioned observations, reflections, evidence references, projector cursors, migrations, encoded persistence, parse errors, and derived TypeScript types in this repository. Verify the repository's actual Effect version and APIs. Compare the recommendation with the existing schema-v1 observation pages and current persistence boundaries. Do not implement behavior.
+
+## Result (2026-08-19)
+
+[Asset: Effect Schema Contracts for Observational Memory](./asset-effect-schema-observational-contracts.svx) records the v3.19.17 joelclaw contract, the v4 content-grill reference, official Effect source receipts, schema-v1 gaps, persistence and parse-error rules, and the recommendation to put the semantic core in a new standalone repository. `joelclaw` remains the accepted-Run integration/composition root, and `joelclaw-observer` remains the host adapter. The command and source receipt report is `/tmp/observational-memory-effect-schema-research.md`. No implementation source or brief was changed.
+
+Proposed decision-ledger entry: use versioned Effect Schemas for observations, reflections, evidence, projector state, migrations, persistence, and search; keep the semantic core in a new standalone repo shaped like content-grill, with joelclaw and joelclaw-observer as adapters.

@@ -2,7 +2,8 @@
 title: "Prototype: Distill One Real Day of Sessions"
 type: "step"
 kind: "prototype"
-status: "open"
+status: "closed"
+closed_at: "2026-08-19"
 assignee: "pi worker (steered by claude session 14d06369)"
 interaction: "HITL"
 parent: "./observational-memory-brief.svx"
@@ -43,3 +44,7 @@ conformant, zero .md. Index: /user/observations/2026-07-12-index/.
    contained a literal `{editionId}` URL that compiled as a Svelte
    expression. The page-writer needs an escaping pass for `{` outside code
    spans. Page-scoped failure held (build succeeded, page skipped loudly).
+
+## Result (2026-08-19)
+
+Closed as superseded, not accepted. The run produced useful findings but never received the required Joel read-through. [Prototype the Effect Schema Shadow Session Search](./prototype-effect-schema-shadow-search.svx) replaces it with the current distilled-first retrieval contract and an explicit HITL judgment gate.

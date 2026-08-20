@@ -2,7 +2,8 @@
 title: "Fix Codex Session-Capture Delivery"
 type: "step"
 kind: "task"
-status: "open"
+status: "closed"
+closed_at: "2026-08-19"
 interaction: "AFK"
 parent: "./observational-memory-brief.svx"
 blockers: []
@@ -19,3 +20,7 @@ session/path; flagg has a 17.3MB transcript unindexed). Diagnose the capture
 script/hook, restore delivery to Central `/api/runs`, backfill the stale
 window, and verify freshness ✅ on both machines. Receipts in
 [session-capture-coverage-2026-07](../../resources/session-capture-coverage-2026-07.svx).
+
+## Result (2026-08-19)
+
+Closed as moved outside this effort, not as fleet-complete. Flagg Codex delivery now has a fresh accepted and searchable Stop-hook proof. Blaine still belongs to the separate capture/archive repair surface. The 2026-08-19 finish-line amendment makes accepted Runs this effort's input and explicitly excludes runtime transport repair.

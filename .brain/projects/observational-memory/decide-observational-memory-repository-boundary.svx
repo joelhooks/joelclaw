@@ -1,0 +1,19 @@
+---
+title: "Decide the Observational Memory Repository Boundary"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./observational-memory-brief.svx"
+blockers:
+  - "./audit-current-observational-retrieval.svx"
+  - "./research-effect-schema-observational-contracts.svx"
+created_at: "2026-08-19"
+---
+
+# Decide the Observational Memory Repository Boundary
+
+## Step
+
+Decide whether the Effect Schema observational projection becomes a new focused repository, remains inside `joelclaw`, or uses a split where a new core repo owns domain/ports/machines and `joelclaw` owns runtime adapters. Use `/Users/joel/Code/joelhooks/content-grill` as the SOTA new-repo reference: pnpm workspaces + Turbo, Effect v4 domain schemas and `Context.Service` ports, XState v5 lifecycle machines, strict TypeScript 7, Oxlint/Ultracite/Oxfmt, Lefthook gates, vendored Effect/XState sources, and thin CLI composition roots. Resolve package boundaries, repository ownership, release/adapter coupling, and where the grill-master brief moves if ownership changes.

@@ -1,0 +1,22 @@
+---
+title: "Worker: Research Effect Schema Observational Contracts"
+type: "task"
+status: "active"
+assignee: ""
+created_at: "2026-08-19"
+---
+
+# Worker: Research Effect Schema Observational Contracts
+
+Read [Chart the joelclaw Observational Memory Write Loop](../projects/observational-memory/observational-memory-brief.svx), then claim [Research Effect Schema Contracts for Observational Memory](../projects/observational-memory/research-effect-schema-observational-contracts.svx) using the grill-master claim format before research.
+
+Use the installed `effect` and `pi-effect` skills plus `effect_source`. Verify this repo's actual Effect version and APIs from official source. Research exact schema patterns for versioned observations, reflections, evidence references, projector state, migrations, encoded persistence, teaching parse errors, and derived TypeScript types. Compare them with schema-v1 observation pages. Do not edit implementation source or the brief. Steering owns the brief ledger to preserve one writer.
+
+Deliverables:
+
+- A source-grounded asset beside the step with official Effect source references.
+- `## Result`, `status: "closed"`, and `closed_at` on the step.
+- A proposed one-line decision-ledger entry in the result.
+- `/tmp/observational-memory-effect-schema-research.md` with commands, source references, findings, uncertainties, and the proposed ledger line.
+
+Work autonomously, do not commit, print a DONE summary.

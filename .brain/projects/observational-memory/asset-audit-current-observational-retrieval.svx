@@ -1,0 +1,103 @@
+---
+title: "Current Observational Retrieval Audit"
+type: "asset"
+parent: "./audit-current-observational-retrieval.svx"
+created_at: "2026-08-20"
+privacy: "private"
+---
+
+# Current Observational Retrieval Audit
+
+## Result
+
+**VERDICT: NOT PROVEN as one live accepted-Run → Observer → Reflector → retrieval path.** The system has working pieces, but the write and read paths have split.
+
+The strongest current boundary is:
+
+- **Capture/runtime:** `joelclaw` accepts Runs, persists authoritative blobs, appends `sessions.db`, emits runtime receipts, and owns CLI compatibility.
+- **Observer write loop:** `joelclaw-observer` writes `.svx` pages and runs the Reflector against the Brain tree.
+- **Projection/retrieval:** `joelclaw` currently owns two inconsistent projections: the legacy Typesense `observations` command and the newer SQLite `critical.db` path.
+- **Consumer:** `content-grill` is a separate context plane. Its session adapter shells to `joelclaw`; it does not own observational memory.
+
+### Live path and break
+
+1. `packages/system-bus/src/routes/run-capture.ts:461-478` returns `202` with `status: "accepted"`, a `run_id`, JSONL hash, byte count, and offset.
+2. The same route sends `memory/run.captured` with `conversation_id`, source identity, offsets, and the persisted blob path (`run-capture.ts:405-458`).
+3. `packages/system-bus/src/inngest/functions/memory/run-captured.ts:1-9` explicitly says the function appends `sessions.db` and must not recreate retired Typesense `runs_dev`/`run_chunks_dev`. Its `append-session-index` step targets `~/.joelclaw/search/sessions.db` and preserves `conversation_id` (`run-captured.ts:112-135`).
+4. After indexing, the function emits `memory/run.indexed` (`run-captured.ts:241-254`). No Observer function consumes that event. The separate Inngest Observer listens to `memory/session.compaction.pending` and `memory/session.ended` (`packages/system-bus/src/inngest/functions/observe.ts:387-395`), then writes `memory_observations` in Typesense (`observe.ts:650-840`). That is a parallel legacy memory pipeline, not the accepted-Run Brain-page path.
+5. The deployed `joelclaw-observer` release still scans `run_chunks_dev` directly (`~/.joelclaw/observer-release/.pi/extensions/observer/lib.ts:435-448`). The current capture writer says that projection is retired. The Observer cursor's newest value is `2026-07-20T04:07:22.578Z`, so there is no receipt of Observer input after the cutover.
+6. The Observer's `.svx` writer and schema checks exist in the release extension. The current tree has 1,310 observation files: 301 top-level and 1,009 under `archive/`. The newest top-level pages are hourly Slack work-state pages, not transcript Observer epochs. This does not prove current accepted Runs are being distilled.
+7. The Reflector is live separately. `~/Library/LaunchAgents/com.joelclaw.observer-dream.plist` invokes `~/.joelclaw/bin/observer-dream.sh`; the release script calls `applyReflectorDream` over the Brain observation tree and writes rollups, archive moves, and a dream receipt. `/tmp/observer-dream.log` has a successful receipt on `2026-08-19T13:10:05.440Z` with 319 pages read, 124 eligible pages, 18 rollups, and 124 archive moves. This proves file-level reflection, not fresh accepted-Run input or projection refresh.
+
+### Retrieval behavior
+
+The July shipped step claimed that `joelclaw sessions search` replaced raw session search with Typesense observations. That behavior still exists in source and in the installed CLI:
+
+- `packages/cli/src/commands/sessions.ts:1214-1226` routes default search to `searchObservations()` and returns `source: "observations"`.
+- `joelclaw sessions search "observer topology" --limit 2` returned `found: 19` and observation-page hits with canonical Brain URLs on `2026-08-20`.
+- `joelclaw sessions search "observer topology" --raw --source local --limit 2` returned the SQLite session index path `/Users/joel/.joelclaw/search/sessions.db` plus raw local transcript hits. Raw drill-down still works.
+
+The newer critical projection is a separate path:
+
+- `packages/cli/src/lib/critical-search.ts:758-799` rebuilds `critical.db` from local observation files, Brain files, vault files, knowledge files, and an archived `memory_observations` export. It records source health and capture-conversation resolution as coverage metadata.
+- `packages/cli/src/capabilities/adapters/typesense-recall.ts:25-105` makes `joelclaw recall` SQLite-first and returns `backend: "sqlite-fts5"`, freshness, serving host, and `observerSessionReference` data.
+- Live `joelclaw recall "observer topology" --limit 3` returned SQLite FTS5 results in 22ms.
+- Live `critical.db` metadata says `built_at: 2026-08-03T06:17:00.708Z`, `document_count: 35941`, and `files:observations` high-water `2026-08-03T06:17:05.000Z`. On `2026-08-20`, `joelclaw knowledge search` reported the projection as `stale`; the Typesense observations source was `error` with 39 malformed export rows.
+- `joelclaw observations index --rebuild` remains exposed, but it is the legacy Typesense writer. It is not the SQLite critical projection builder and was not run during this audit because it mutates a serving projection.
+
+The current system therefore has a false sense of one replacement: `sessions search` defaults to the old Typesense observation collection, while `recall` and `knowledge search` use the SQLite critical projection. The two surfaces can disagree on freshness and contents.
+
+## Ownership decision
+
+**Recommendation: put the canonical observational projection in a dedicated new repo. Keep `joelclaw` as the accepted-Run/runtime adapter and compatibility CLI. Do not put the projection contract inside `content-grill`.**
+
+The new-repo boundary is supported by the SOTA `content-grill` setup:
+
+- `content-grill/AGENTS.md:25-34,86-97` separates Effect Schema domain, ports, adapters, machines, and CLI. Domain has no I/O; adapters implement ports; the CLI is the composition root.
+- `content-grill/VISION.md:23-29` makes schemas and hexagonal boundaries explicit, and keeps operator context out of default queries.
+- `content-grill/packages/adapters/src/slurp/agent-session.ts:41-79` treats `joelclaw` as an external process adapter. It calls `joelclaw sessions search ... --raw`, decodes the returned envelope, and converts bounded hits into `AgentSession` receipts.
+- `content-grill` is a context plane for topic sparring. Its current brief keeps agent sessions disabled by default, makes operator privacy a separate tier, and reserves full transcript bodies. It is a consumer of bounded receipts, not the owner of accepted Runs, observation pages, or Reflector compaction.
+
+The new repo should own:
+
+- Effect Schemas for accepted Run deltas, observation epochs, reflections, evidence references, projector state, migrations, freshness, and search results.
+- The Observer → Reflector → rebuildable projection domain and its tests.
+- A source adapter port for accepted Runs and a read adapter port for transcript drill-down.
+- The canonical distilled-first search contract.
+
+`joelclaw` should own:
+
+- Run capture authentication, durable blob persistence, `memory/run.captured`, `sessions.db`, and runtime telemetry.
+- A thin adapter implementing the new repo's accepted-Run source port.
+- A compatibility command or package adapter for `sessions search`, `recall`, and raw evidence inspection.
+
+The existing `joelclaw-observer` repo is the nearest implementation home for the activated Pi extension and already owns the `.svx` writer and Reflector library. Its current `AGENTS.md` calls it the Observer write loop. It does not yet own the canonical typed projection contract, and its deployed input is stale. Treat it as a possible home for the new repo boundary or split the extension from the projection package; do not duplicate the contract inside `joelclaw`.
+
+## Shipped, current, stale, and drift
+
+| Classification | Evidence | Finding |
+|---|---|---|
+| Shipped | `.brain/projects/observational-memory/build-observations-recall-typesense.svx` | Typesense `observations` index and default observation-first `sessions search` shipped on 2026-07-12. |
+| Current | `run-captured.ts`, `session-index.ts`, live `recall`, live `knowledge search` | Accepted Runs now feed `sessions.db` and SQLite critical search. This is a later recovery path, not the old Typesense contract. |
+| Current | `observer-dream.sh`, `/tmp/observer-dream.log` | Reflector applies rollups and archives observation pages on a daily LaunchAgent. |
+| Stale/broken | `observer-release/.pi/extensions/observer/lib.ts:435-448` | Observer input still queries retired `run_chunks_dev`; cursor has not advanced beyond 2026-07-20. |
+| Stale/inconsistent | `sessions.ts:1214-1226` versus `typesense-recall.ts:25-115` | `sessions search` still reads Typesense observations; `recall` reads SQLite critical.db. They are not one retrieval contract. |
+| Drift | `/Users/joel/.joelclaw/search/critical.db` metadata | Critical projection is stale, contains a Typesense observations export error, and was built on 2026-08-03. |
+| Drift | `~/Code/joelhooks/content-grill` git status | The SOTA workspace split is uncommitted working-tree migration: old root files are deleted and new `apps/`/`packages/` files are untracked. Its architecture is evidence of shape, not a shipped dependency. |
+| Drift | `~/.joelclaw/observer-release` git status | Release checkout has modified `bin/observer-tick.sh` and untracked `.brain/tasks/.brain`, `.brain/tasks/.pi`, `BRAIN.md`, and a launch-agent file. Do not treat it as a clean release receipt. |
+| Drift | `joelclaw` git status | The working tree has tracked implementation changes plus a large pre-existing untracked observation archive and other files. This audit did not modify or clean them. |
+
+## Uncertainties and limits
+
+- I did not run `joelclaw observations index --rebuild`, because it mutates the serving Typesense collection and the task allows only this asset, the step, and `/tmp` report edits.
+- The live Observer pane was not poked. The missing persisted session file referenced by `~/.joelclaw/observer-session.json` and stale family metadata are enough to reject a clean live-runtime claim, but they do not explain every historical page.
+- The current critical database was inspected read-only. Its recorded source counts are build-time metadata, not a fresh rebuild.
+- The old Inngest `memory/observe-session` function may still be active for explicit `memory/session.ended` events. That path writes `memory_observations`; it is not evidence that accepted Run deltas reach the Brain Observer.
+
+## Proposed decision-ledger line
+
+- [Audit Current Observational Retrieval Against the Shipped Contract](./audit-current-observational-retrieval.svx) — current accepted Runs append to `sessions.db`, the deployed Observer still reads retired `run_chunks_dev`, and retrieval is split between Typesense `sessions search` and SQLite `recall`; move the canonical Effect Schema Observer/Reflector/projection contract to a dedicated repo, keep `joelclaw` as adapter/runtime, and leave `content-grill` as a bounded consumer.
+
+## Scope note
+
+No implementation source or brief was edited. This asset records the current behavior and the ownership recommendation only.

@@ -1,0 +1,35 @@
+---
+title: "Redefine Session Search as an Effect Schema Observational Projection"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "closed"
+assignee: "pi (flagg, herdr pane w56:p1, 2026-08-19)"
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-08-19"
+closed_at: "2026-08-19"
+---
+
+# Redefine Session Search as an Effect Schema Observational Projection
+
+## Step
+
+Reality reopened two settled decisions: the schema-v1 observation contract and the shipped observation-first `sessions search` replacement. Decide the retrieval contract, the Observer and Reflector boundary, the role of raw transcripts, and whether the replacement prototype or production system owns typed schemas.
+
+This step supersedes only the affected parts of [Decide the Observation Schema and Brain Placement](./decide-observation-schema.svx) and [Build Observation Recall: Typesense Projection + sessions-search Replacement](./build-observations-recall-typesense.svx). Their resolutions remain historical receipts.
+
+## Result (2026-08-19)
+
+Joel settled the following contract in a live grilling:
+
+1. **Accepted Runs are evidence input.** Runtime hooks, raw transcript transport, outboxes, and fleet backfill remain a separate capture and repair surface. This effort does not read each runtime's private native store as its primary architecture.
+2. **Observer cadence follows accepted work.** New accepted Run deltas become observations after each Stop-triggered capture. SessionEnd finalizes trailing work. The capture layer's twice-daily fleet repair closes missed-hook gaps.
+3. **Reflector scope is project/workstream.** It combines observations across sessions that belong to the same project or workstream. It does not synthesize one global fleet personality from unrelated work.
+4. **Search is distilled-first.** `session search` returns project-scoped reflections first, then supporting observations. Every result exposes evidence links. Raw transcript text requires an explicit `--raw` or inspect path.
+5. **Effect Schema is canonical.** Observations, reflections, evidence links, projector state, persisted records, migrations, and search results are defined by Effect Schema. TypeScript types derive from those schemas. Schema parsing and versioning are observable acceptance gates, not prototype decoration.
+6. **First proof is a shadow CLI.** It shows current raw results beside proposed reflection → observation → evidence results without replacing production search. Joel judges this prototype before behavior work unlocks.
+7. **Projection law.** The observer and reflector are idempotent, source-grounded, versioned, rebuildable from accepted Runs, and health-checked. No observation or reflection becomes durable truth without session, Run, turn/window, timestamp, and transcript-hash provenance.
+8. **Execution authority.** Task steps may implement the system only after the blocking research, Effect Schema contract decision, and shadow prototype close.
+
+Reference model: [Mastra Observational Memory](https://mastra.ai/docs/memory/observational-memory). Adopt the Observer/Reflector separation and background compaction. Do not copy its token thresholds blindly; joelclaw's natural boundaries are accepted Run deltas, Stop, SessionEnd, idle/finalization, and fleet repair.

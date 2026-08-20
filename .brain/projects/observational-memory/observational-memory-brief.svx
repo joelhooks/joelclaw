@@ -25,6 +25,17 @@ distilled layer reaches every agent context (rhizomatic briefing + a recall
 surface) — the ADR's functional bar: "every context we run in has the ability
 to understand all of the work that we're doing."
 
+**Finish-line amendment (Joel, 2026-08-19):** `session search` is done only when it returns project/workstream reflections first, then supporting observations with source links. Raw transcript text requires explicit `--raw` or inspect access. Accepted Runs are the evidence input. The projection must be idempotent, rebuildable, versioned, freshness-checked, and defined by canonical Effect Schemas with derived TypeScript types. A read-only shadow CLI must prove the contract before production replacement.
+
+## Vocabulary
+
+- **Accepted Run** — immutable captured evidence consumed by the Observer; runtime transport and native stores remain a separate repair surface.
+- **Observation** — an Effect Schema-validated, source-linked projection of one accepted Run epoch; useful state, not transcript summary sludge.
+- **Reflection** — an Effect Schema-validated synthesis across observations in one project or workstream, with every evidence edge preserved.
+- **Evidence drill-down** — explicit bounded access to raw Run or transcript windows through `--raw` or inspect; never the default search result.
+- **Observational projection** — the rebuildable, versioned Observer → Reflector → search view derived from accepted Runs.
+- **Lifecycle machine** — an explicit XState v5 actor for finite projector modes, retries, failure, pause, rebuild, and cancellation; never boolean status soup.
+
 ## Notes
 
 - **Prior art in-house**: the Bugle pipeline IS an observer (gather →
@@ -57,8 +68,18 @@ to understand all of the work that we're doing."
   `/skill:session-search`, `/skill:effect-ts`, `/skill:joel-writing-style`.
 
 - **Standing call (Joel, 2026-07-13): no opaque spinners.** Long-running work is delegated to visible sub-agents/panes; orchestrator tool calls stay seconds-short; progress streams. Spec: extension ticket Addendum 5.
+- **Standing call (Joel, 2026-08-19): Effect Schema owns the projection contract.** Observations, reflections, evidence references, projector state, migrations, persisted boundaries, and search results derive their TypeScript types from canonical Effect Schemas.
+- **Execution authorization (Joel, 2026-08-19):** implementation task steps may execute only after the current-behavior audit, Effect Schema research and contract decision, and shadow CLI prototype close.
+- **Capture boundary (Joel, 2026-08-19):** Stop hooks are primary evidence delivery; SessionEnd finalizes; a twice-daily fleet backfill repairs gaps. Capture transport remains outside this effort's implementation ownership.
+- **New-repo reference (Joel, 2026-08-19):** inspect `/Users/joel/Code/joelhooks/content-grill` before settling ownership. If this becomes a new repo, carry forward its SOTA fence: pnpm/Turbo packages, Effect v4 Schema domain, `Context.Service` ports, XState v5 lifecycle machines, strict TypeScript 7, Oxlint/Ultracite/Oxfmt, Lefthook, and vendored official sources. Do not cargo-cult names or product rules.
 
 ## Decision ledger
+
+- [Redefine Session Search as an Effect Schema Observational Projection](./redefine-session-search-effect-schema.svx) — accepted Runs feed a project-scoped Observer/Reflector projection; Effect Schema is canonical; search returns reflections then observations with explicit raw evidence drill-down; build waits for the shadow prototype.
+- [Audit Current Observational Retrieval Against the Shipped Contract](./audit-current-observational-retrieval.svx) — accepted Runs append to `sessions.db`, the deployed Observer still reads retired `run_chunks_dev`, and retrieval is split between Typesense `sessions search` and SQLite `recall`; the canonical projection needs a dedicated repo with `joelclaw` as adapter/runtime.
+- [Research Effect Schema Contracts for Observational Memory](./research-effect-schema-observational-contracts.svx) — use versioned Effect v4 Schemas for observations, reflections, evidence, projector state, migrations, persistence, and search; follow the `content-grill` domain/ports/adapters/machines fence in a new repo, with `joelclaw` and `joelclaw-observer` as adapters.
+- [Prototype: Distill One Real Day of Sessions](./prototype-observer-distillation.svx) — closed as superseded without Joel acceptance; the Effect Schema shadow-search prototype now owns the HITL proof.
+- [Fix Codex Session-Capture Delivery](./fix-codex-capture-delivery.svx) — moved to the separate capture/archive repair surface; Flagg is proven live, Blaine remains transport work.
 
 - [Research Salience Decay](./research-salience-decay-mechanisms.svx) — survey shipped ([asset](./salience-decay-survey.svx)): the pattern everywhere is rank-decay/blur/validity-close, never deletion; v1 score recommended (14-day half-life recency × repo scope × log-token work), telemetry gap named (deliberate-recall events only, impressions poison the signal). Reflector unblocked.
 
@@ -101,4 +122,4 @@ to understand all of the work that we're doing."
 - External-stream observation (mail/Slack/Front/Discord) — the Bugle owns it. *(2026-07-13: returning as a fresh effort — [stream-observation map](../stream-observation/stream-observation-brief.svx); the boundary redraw is that map's grilling ticket.)*
 - Public or multi-user anything; paid-API inference.
 - Rebuilding session capture itself — capture exists; gaps found by the
-  coverage research ticket get fixed, not redesigned.
+  coverage research ticket get fixed, not redesigned. Stop/SessionEnd hook wiring and the twice-daily fleet repair are dependencies, not Observer/Reflector behavior. [Fix Codex Session-Capture Delivery](./fix-codex-capture-delivery.svx) was closed and moved here when reality redrew the boundary.
