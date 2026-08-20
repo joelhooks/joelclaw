@@ -1,0 +1,18 @@
+---
+title: "Rebuild the Projection and Switch Session Search"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./observational-memory-brief.svx"
+blockers:
+  - "./implement-effect-schema-observational-projection.svx"
+created_at: "2026-08-19"
+---
+
+# Rebuild the Projection and Switch Session Search
+
+## Step
+
+Resolved when existing accepted Runs and compatible observation pages rebuild into the versioned projection; `session search` defaults to reflections then supporting observations with evidence links; `--raw` and inspect retain bounded evidence access; rollback is mechanical; health checks cover freshness, schema failures, and projector lag; and the twice-daily capture repair can replay missed evidence without duplicating observations.

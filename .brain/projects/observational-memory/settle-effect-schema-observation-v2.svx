@@ -1,0 +1,18 @@
+---
+title: "Settle the Effect Schema Observation and Reflection Contracts"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./observational-memory-brief.svx"
+blockers:
+  - "./decide-observational-memory-repository-boundary.svx"
+created_at: "2026-08-19"
+---
+
+# Settle the Effect Schema Observation and Reflection Contracts
+
+## Step
+
+Decide the canonical Effect Schemas and invariants for Observation v2, Reflection v1, EvidenceReference, ProjectorState, schema migrations, and distilled-first search results. Resolve project/workstream identity, provenance windows, sensitive-data policy, contradiction/supersession semantics, parse-failure behavior, and compatibility with existing `.svx` observation pages. Closed only when the schemas are precise enough for the shadow prototype to compile without inventing domain decisions.

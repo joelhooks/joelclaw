@@ -1,0 +1,18 @@
+---
+title: "Verify the Observational Session Search Finish Line"
+type: "step"
+kind: "prototype"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./observational-memory-brief.svx"
+blockers:
+  - "./migrate-switch-observational-search.svx"
+created_at: "2026-08-19"
+---
+
+# Verify the Observational Session Search Finish Line
+
+## Step
+
+Run the agreed real-query comparison and failure drills against production-shaped data. Joel verifies that reflections answer first, observations support them, evidence is one explicit step away, project boundaries hold, raw transcript sludge stays out of default results, schema/version errors teach rather than disappear, and a clean rebuild returns the same projection. Close the effort only when maintenance receipts also prove Stop freshness, SessionEnd finalization, and twice-daily repair recovery.

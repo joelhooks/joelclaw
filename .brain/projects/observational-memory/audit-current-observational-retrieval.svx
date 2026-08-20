@@ -1,0 +1,31 @@
+---
+title: "Audit Current Observational Retrieval Against the Shipped Contract"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "closed"
+assignee: "pi (flagg, herdr pane w56:pB, 2026-08-20)"
+claimed_at: "2026-08-20T00:37:12Z"
+closed_at: "2026-08-20"
+parent: "./observational-memory-brief.svx"
+blockers: []
+created_at: "2026-08-19"
+---
+
+# Audit Current Observational Retrieval Against the Shipped Contract
+
+## Step
+
+Resolved when a linked asset maps the live path from accepted Run through Observer, observation files, Reflector, projections, and `joelclaw sessions search`; identifies where current behavior drifted from [Build Observation Recall: Typesense Projection + sessions-search Replacement](./build-observations-recall-typesense.svx); and records concrete source files, schemas, stores, commands, tests, and runtime receipts. Distinguish implemented behavior from stale Brain claims. Do not change production behavior.
+
+## Result
+
+Closed. [Current Observational Retrieval Audit](./asset-audit-current-observational-retrieval.svx) and `/tmp/observational-memory-current-audit.md` record the source and runtime evidence.
+
+The accepted Run path now ends at `sessions.db`; `memory/run.indexed` has no Observer consumer. The deployed Observer still reads retired `run_chunks_dev`, and its cursor has not advanced beyond 2026-07-20. The Reflector still mutates `.brain/observations` on its daily schedule. Retrieval is split: default `joelclaw sessions search` still queries the Typesense observation collection, while `joelclaw recall` and `knowledge search` use stale SQLite `critical.db`.
+
+Ownership is explicit: the canonical Effect Schema Observer/Reflector/projection contract belongs in a dedicated new repo. `joelclaw` should remain the accepted-Run, storage, runtime, and compatibility adapter. `content-grill` is the SOTA shape for a bounded consumer and adapter, not the owner of observational memory.
+
+Proposed decision-ledger line:
+
+- [Audit Current Observational Retrieval Against the Shipped Contract](./audit-current-observational-retrieval.svx) — current accepted Runs append to `sessions.db`, the deployed Observer still reads retired `run_chunks_dev`, and retrieval is split between Typesense `sessions search` and SQLite `recall`; move the canonical Effect Schema Observer/Reflector/projection contract to a dedicated repo, keep `joelclaw` as adapter/runtime, and leave `content-grill` as a bounded consumer.

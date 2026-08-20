@@ -1,0 +1,22 @@
+---
+title: "Worker: Audit Current Observational Retrieval"
+type: "task"
+status: "active"
+assignee: ""
+created_at: "2026-08-19"
+---
+
+# Worker: Audit Current Observational Retrieval
+
+Read [Chart the joelclaw Observational Memory Write Loop](../projects/observational-memory/observational-memory-brief.svx), then claim [Audit Current Observational Retrieval Against the Shipped Contract](../projects/observational-memory/audit-current-observational-retrieval.svx) using the grill-master claim format before research.
+
+Work only on that step and its new linked asset. Inspect real source, tests, CLI behavior, stores, functions, and runtime receipts. Distinguish shipped behavior, current behavior, stale Brain claims, and uncommitted drift. Do not edit implementation source or the brief. Steering owns the brief ledger to preserve one writer.
+
+Deliverables:
+
+- A source-grounded asset beside the step.
+- `## Result`, `status: "closed"`, and `closed_at` on the step.
+- A proposed one-line decision-ledger entry in the result.
+- `/tmp/observational-memory-current-audit.md` with commands, files inspected, findings, uncertainties, and the proposed ledger line.
+
+Work autonomously, do not commit, print a DONE summary.

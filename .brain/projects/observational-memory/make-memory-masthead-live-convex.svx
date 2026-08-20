@@ -5,7 +5,8 @@ kind: "task"
 status: "open"
 interaction: "AFK"
 parent: "./observational-memory-brief.svx"
-blockers: []
+blockers:
+  - "./prototype-effect-schema-shadow-search.svx"
 created_at: "2026-07-13"
 ---
 

@@ -1,0 +1,165 @@
+---
+title: "Effect Schema Contracts for Observational Memory"
+type: "asset"
+parent: "./research-effect-schema-observational-contracts.svx"
+created_at: "2026-08-19"
+privacy: "private"
+---
+
+# Effect Schema Contracts for Observational Memory
+
+## Verdict
+
+Use Effect Schema as the only runtime contract for the observational projection. Keep the semantic core in a new standalone observational-memory repository. Keep `joelclaw` as the accepted-Run integration and CLI composition root. Keep `joelclaw-observer` as the Pi/host adapter until a later migration proves otherwise.
+
+This is not a recommendation to create the repository in this step. It is the repository-boundary finding required before the contract decision.
+
+## Version receipts
+
+- `joelclaw` resolves `effect` to **3.19.17** in `pnpm-lock.yaml` and `node_modules/.pnpm/effect@3.19.17`. Its package ranges are floating (`^3.19.17`), so the lockfile is the actual version.
+- The installed project uses Effect 3 APIs: `Schema.Struct`, `Schema.Union`, `Schema.TaggedStruct`, `Schema.decodeUnknown`, `Schema.encode`, and `Schema.parseJson`. Official Effect v3 source confirms these APIs at [Schema.ts](https://github.com/Effect-TS/effect/blob/20596061bd24dd7f18c5b5c839111310d730d6e9/packages/effect/src/Schema.ts#L335-L415), [encoding and decoding](https://github.com/Effect-TS/effect/blob/20596061bd24dd7f18c5b5c839111310d730d6e9/packages/effect/src/Schema.ts#L496-L602), and [parseJson](https://github.com/Effect-TS/effect/blob/20596061bd24dd7f18c5b5c839111310d730d6e9/packages/effect/src/Schema.ts#L4795-L4851).
+- `effect_source` status was run. It reported the project as Effect v3, but refused search because the dependency specs are floating. The existing root `.agent_sources/github.com/Effect-TS/effect` checkout is not an official Effect checkout: its remote is `joelhooks/joelclaw`. I did not use it as source evidence.
+- I inspected an official v3 checkout at `/tmp/effect-v3-source`, commit `20596061bd24dd7f18c5b5c839111310d730d6e9`, package version `3.22.1`. This is a newer v3 minor than the installed `3.19.17`; the cited APIs are present in the installed package too.
+- The SOTA reference repo, `/Users/joel/Code/joelhooks/content-grill`, pins **Effect `4.0.0-rc.110`** and **XState `5.32.5`** in its repo instructions. Its official Effect mirror is at commit `66114151c2b4640bf773f2b3456ce70d679422f6`. Its v4 APIs are not interchangeable with this repo's v3 APIs.
+
+## Recommended contract shape
+
+### Observation v2
+
+Make the canonical observation a `Schema.Struct` with a required literal version and explicit provenance. Suggested fields:
+
+- `type: Schema.Literal("observation")`
+- `schemaVersion: Schema.Literal(2)`
+- `observationId`: deterministic ID from accepted Run, session, window, and contract version
+- `project` and `workstream`: normalized identity, with one explicit global value only when the evidence is genuinely global
+- `source`: accepted Run IDs, session ID, turn/window bounds, observed timestamps, and transcript hash
+- `privacy`: closed literal set; sensitive data is never weakened by a later projection
+- `derivation`: producer kind, model or deterministic producer, prompt/contract hash
+- `gist`, `observations`, `decisions`, and `openQuestions`: bounded structured content
+- `evidence`: `Schema.Array(EvidenceReferenceSchema)` with at least one edge for every durable claim
+
+Do not make the body headings the contract. The existing `.svx` headings remain a rendering format. The schema should validate the parsed document model before the `.svx` adapter renders it.
+
+Use `Schema.Struct` and derive the type from the schema. In v3, the project pattern is visible in `packages/message-contract/src/events.ts` and `packages/message-journal/src/schema.ts`. In v4, the same rule is used by `content-grill/packages/domain/src/*.ts`.
+
+### EvidenceReference
+
+Use a discriminated union. In the current v3 repository, use `Schema.Union` of `Schema.TaggedStruct` cases because v3 has `TaggedStruct` but no `Schema.TaggedUnion` helper:
+
+- `AcceptedRun`: `runId`, accepted-at timestamp, source path or stable external reference
+- `TranscriptWindow`: `runId`, session ID, turn/window bounds, transcript hash
+- `Observation`: source observation ID and source schema version
+- `Reflection`: source reflection ID and source schema version
+
+Every case carries a stable `evidenceId`. A URL or file path is a navigation field, not the identity. Raw transcript text does not belong in this schema.
+
+If the core moves to an Effect v4 repository, use `Schema.TaggedUnion` or `Schema.Union([...]).pipe(Schema.toTaggedUnion("_tag"))`. The official v4 source gives the exhaustive `cases`, `guards`, and `match` utilities at [Schema.ts](https://github.com/Effect-TS/effect/blob/66114151c2b4640bf773f2b3456ce70d679422f6/packages/effect/src/Schema.ts#L6233-L6410). The v3 equivalent is `Schema.TaggedStruct` plus `Schema.Union` at [Schema.ts](https://github.com/Effect-TS/effect/blob/20596061bd24dd7f18c5b5c839111310d730d6e9/packages/effect/src/Schema.ts#L2936-L3012).
+
+### Reflection v1
+
+Keep reflections separate from observations. A reflection is a project/workstream projection over observation IDs and their evidence edges:
+
+- `type: Schema.Literal("reflection")`
+- `schemaVersion: Schema.Literal(1)`
+- deterministic `reflectionId`
+- project/workstream identity
+- validity window and observed-at timestamps
+- `sourceObservationIds`
+- transitive `evidence`
+- `claims` or rendered reflection content
+- `supersedes` and `supersededBy` only when a claim has an explicit replacement
+- `derivation` with the reflector contract hash
+
+A reflection may compact nodes. It must not discard evidence edges. The reflector must preserve the union of source citations, not only the pages used for the visible paragraph.
+
+### ProjectorState
+
+Persist operational cursor state separately from observation and reflection truth:
+
+- `stateVersion`: literal projector-state contract version
+- `lastAcceptedRunId` and source cursor
+- `lastAcceptedAt`
+- `sourceSnapshotHash`
+- `lastObservationId` and `lastReflectionId`
+- `schemaVersion` for the projection contract
+- `status`: `idle | projecting | healthy | failed | blocked`
+- `lastFailure`: structured stage, source ID, parse summary, and timestamp
+
+The persisted state is a stable domain record. Do not persist an internal XState snapshot as the public contract. XState owns the in-memory lifecycle; the projector-state schema owns restart and migration behavior.
+
+The content-grill reference makes this seam concrete. `SlurpCursorSchema` and `SlurpRunSchema` are separate records in `packages/domain/src/slurp.ts:6-44`, while `packages/machines/src/slurp-run.ts:6-95` owns lifecycle transitions. Copy that separation, not the exact names.
+
+## Versioning and migrations
+
+Put `schemaVersion` in every persisted semantic record. Decode the outer version envelope first. Select one version-specific schema. Migrate that decoded old value into the current canonical type. Validate the migrated value with the current schema before writing it. Do not make the canonical schema a permissive union of every historical shape.
+
+For v3, use `Schema.transform` or `Schema.transformOrFail` for a bidirectional migration schema where round-tripping is truthful. The official v3 source documents the transformation boundary and its encoded/type sides at [Schema.ts](https://github.com/Effect-TS/effect/blob/20596061bd24dd7f18c5b5c839111310d730d6e9/packages/effect/src/Schema.ts#L3831-L3949). For v4, the replacement is `Schema.decodeTo`, which documents source encoded → target type and the reverse encoding path at [Schema.ts](https://github.com/Effect-TS/effect/blob/66114151c2b4640bf773f2b3456ce70d679422f6/packages/effect/src/Schema.ts#L5490-L5595).
+
+Migrations should be pure functions or schema transformations with a named migration ID. Record the migration ID in the projector receipt. A migration failure leaves the last valid projection in place and emits a failure receipt. It does not silently drop the record.
+
+The existing `packages/message-journal/src/migrations.ts:21-145` is useful repository precedent for ordered migration files, a migration ledger, and typed migration failures. It is a database migration runner, not a replacement for semantic record migrations.
+
+## Encoded persistence
+
+The persistence adapter owns bytes and file format. The schema owns the value boundary:
+
+1. Read bytes.
+2. Parse JSON or the `.svx` frontmatter/body envelope.
+3. Decode unknown data with the version-specific schema.
+4. Migrate to the canonical type.
+5. Encode the canonical type before writing.
+6. Write atomically and retain the source hash.
+
+For joelclaw's installed v3, use `Schema.decodeUnknown` and `Schema.encode` in Effect programs, or the sync variants only inside already-synchronous adapters. `Schema.parseJson` can compose JSON-string decoding with a schema. The JSON adapter in the v4 `content-grill` reference shows the simpler boundary at `packages/adapters/src/json-store.ts:21-31` and `65-87`: parse JSON, schema-decode, schema-encode, then write.
+
+For a future v4 core, use `Schema.decodeUnknownEffect` and `Schema.encodeEffect`. Official v4 source states that unknown decoding returns an Effect failing with `SchemaError` at [Schema.ts](https://github.com/Effect-TS/effect/blob/66114151c2b4640bf773f2b3456ce70d679422f6/packages/effect/src/Schema.ts#L1487-L1524), and typed encoding returns the schema's encoded value at [Schema.ts](https://github.com/Effect-TS/effect/blob/66114151c2b4640bf773f2b3456ce70d679422f6/packages/effect/src/Schema.ts#L1978-L2015).
+
+For `.svx`, do not pretend Effect Schema parses YAML. A document adapter must parse frontmatter and body into an `unknown` document model, then decode it. The adapter must preserve the original file and source hash. It must not turn the rendered headings into an untyped escape hatch.
+
+## Teaching parse errors
+
+Parse failure is an observable projection outcome, not an empty result.
+
+- v3 exposes `ParseError` with the nested issue and `TreeFormatter`/`ArrayFormatter`. Official source: [ParseResult.ts](https://github.com/Effect-TS/effect/blob/20596061bd24dd7f18c5b5c839111310d730d6e9/packages/effect/src/ParseResult.ts#L214-L266) and [formatters](https://github.com/Effect-TS/effect/blob/20596061bd24dd7f18c5b5c839111310d730d6e9/packages/effect/src/ParseResult.ts#L1764-L1785).
+- v4 wraps issues in `SchemaError` and exposes `Schema.isSchemaError`; its default message is derived from the issue tree. Official source: [Schema.ts](https://github.com/Effect-TS/effect/blob/66114151c2b4640bf773f2b3456ce70d679422f6/packages/effect/src/Schema.ts#L1178-L1213).
+- The projector error receipt should include `stage`, `recordKind`, `schemaVersion`, `recordId` or source ID, the formatted issue paths, and the source hash. It should exclude raw transcript text and secrets.
+- Do not copy the current content-grill JSON store's `catch { return undefined }` behavior into the authoritative projection. That behavior is acceptable for a disposable slurp cache, but it makes a semantic projection look healthy while losing malformed rows.
+
+## Existing schema-v1 comparison
+
+The current observer contract is a text validator, not an Effect Schema:
+
+- `validateObservation` checks required frontmatter markers, privacy, epoch bounds, prompt hash shape, and required headings with string tests at `joelclaw-observer/.pi/extensions/observer/lib.ts:327-340`.
+- `validateReflectorObservation` checks `schemaVersion: 1`, kind, source pages, and headings at `lib.ts:342-368`.
+- `parseReflectorObservation` returns a hand-written type with optional fields and casts privacy after a small allow-list check at `lib.ts:1139-1195`.
+- Rollups deliberately keep `type: observation` and `schemaVersion: 1`, copy a subset of bullets, and retain source-page paths at `lib.ts:1303-1357`. This is a useful citation receipt, but it is not a canonical Reflection type.
+- A live schema-v1 page can have producer-specific frontmatter such as `sourceKind`, `identityKind: work-state-pass`, `producerRunId`, and `channels` without the session/window fields required by the session observation validator. The sample is `.brain/observations/2026-08-17-slack-work-state-pass-2026-08-17T01-17-00Z.svx:1-24`.
+
+Recommendation: keep existing schema-v1 pages readable and searchable. Add a versioned legacy adapter that classifies `schemaVersion: 1` pages by producer kind. Do not claim that every existing v1 page can migrate losslessly to Observation v2. A legacy Slack work-state page is an external-context observation, not an accepted-Run session observation.
+
+## Repository boundary finding
+
+**Recommendation: build the observational-memory semantic core in a new repo, not as more implementation code in `joelclaw`.**
+
+Evidence:
+
+- `content-grill` is the machine's clean reference for this shape. Its repo law places Effect Schema in `packages/domain`, ports in `packages/ports`, adapters behind those ports, and XState lifecycle code in `packages/machines`. `AGENTS.md` explicitly requires domain-only schemas and `Context.Service` ports. `packages/domain/src/receipt.ts:9-97` shows shared provenance plus a tagged union, `packages/ports/src/index.ts:1-149` shows typed service seams, and `packages/machines/src/slurp-run.ts:1-95` shows a finite lifecycle.
+- Observational memory has the same boundary, but with more consequential persistence and migration rules: accepted Runs in, Observation/Reflection `.svx` files out, Typesense/search projections beside them, and projector state for resumability. That is a bounded product, not a helper module inside an already broad monorepo.
+- `joelclaw` currently owns transport, capture, CLI, system-bus, and shared contracts. Its actual Effect pin is v3.19.17. Adding this semantic core there would force the projection contract to share the current v3 dependency and the monorepo's unrelated release surface.
+- `joelclaw-observer` already exists as a separate repo, but it is a Pi extension and host-runtime adapter. Its `AGENTS.md` says the constitution and schema are decided elsewhere. It should not become the long-term semantic core by accretion.
+
+The new repo should expose ports for accepted-Run input, file-backed observation/reflection truth, projector state, and rebuildable search projection. `joelclaw` should adapt its CLI and capture surfaces to those ports. `joelclaw-observer` should adapt Stop/SessionEnd execution to the accepted-Run input port. The new repo must not redesign capture transport or start another poller.
+
+The first implementation target should therefore use the content-grill layout and Effect v4/XState v5 reference, while the `joelclaw` adapter remains a small v3 integration boundary. Do not mix v4 schemas into current joelclaw packages without a separately approved dependency migration.
+
+## Open uncertainties
+
+- The repository name and ownership are not settled. This research recommends a new repo but does not create one.
+- The accepted Run wire shape is owned by the capture work and still needs an adapter contract. This asset only requires its stable identity, time/window bounds, and transcript hash.
+- `.svx` parsing and rendering still need a document-adapter decision. Effect Schema should validate the parsed document model, not replace a YAML/MDSvX parser.
+- The exact sensitive-data policy for migrated v1 pages needs the existing redaction boundary and shadow CLI proof. This research does not weaken that policy.
+- `effect_source` needs a pinned dependency spec or a correctly configured official mirror before future automated source searches can be trusted in this repo.
+
+## Proposed one-line decision-ledger entry
+
+- [Research Effect Schema Contracts for Observational Memory](./research-effect-schema-observational-contracts.svx) — use versioned Effect Schemas for observations, reflections, evidence, projector state, migrations, persistence, and search; keep the semantic core in a new standalone repo shaped like `content-grill`, with `joelclaw` and `joelclaw-observer` as adapters.

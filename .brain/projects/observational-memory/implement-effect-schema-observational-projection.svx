@@ -1,0 +1,18 @@
+---
+title: "Implement the Effect Schema Observational Projection"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./observational-memory-brief.svx"
+blockers:
+  - "./prototype-effect-schema-shadow-search.svx"
+created_at: "2026-08-19"
+---
+
+# Implement the Effect Schema Observational Projection
+
+## Step
+
+Resolved when the approved Effect Schemas own observation, reflection, evidence, cursor, migration, persistence, and search-result boundaries; accepted Run deltas project idempotently after Stop; SessionEnd finalizes trailing work; project-scoped reflection preserves evidence edges; and failures emit health receipts without corrupting the last valid projection. This build work is authorized by [Redefine Session Search as an Effect Schema Observational Projection](./redefine-session-search-effect-schema.svx) only after the prototype blocker closes.
