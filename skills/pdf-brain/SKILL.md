@@ -30,6 +30,8 @@ Trigger cues (explicit or implied):
 
 ### CLI path (preferred for interactive sessions)
 
+There is no separate `pdf-brain` binary. Use `joelclaw docs …`. A PATH alias `pdf-brain` → `joelclaw docs` may exist for old muscle memory.
+
 ```bash
 # Search across all books — semantic by default (nomic 768-dim)
 joelclaw docs search "distributed consensus" --limit 8
