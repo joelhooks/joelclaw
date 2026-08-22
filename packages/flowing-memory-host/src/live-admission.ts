@@ -56,7 +56,7 @@ const githubIdentity = (remote: string) => {
   const name = scopeKey(match[2] ?? "", "unknown");
   return {
     canonicalRepository: `github.com/${owner}/${name}`,
-    project: `${owner}/${name}`,
+    project: `${owner}.${name}`,
     repositoryHost: "github.com",
     repositoryName: name,
     repositoryOwner: owner,

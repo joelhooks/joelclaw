@@ -254,8 +254,8 @@ describe("live admission scope policy", () => {
   it("keeps same-named repositories isolated by owner", async () => {
     const first = await resolveTrustedAdmissionConfig(inputFor(await repository("first", "app")));
     const second = await resolveTrustedAdmissionConfig(inputFor(await repository("second", "app")));
-    expect(first?.project).toBe("first/app");
-    expect(second?.project).toBe("second/app");
+    expect(first?.project).toBe("first.app");
+    expect(second?.project).toBe("second.app");
   });
 
   it("defers a wake without trusted cwd evidence", async () => {
