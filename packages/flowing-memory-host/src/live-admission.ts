@@ -117,13 +117,7 @@ export const resolveTrustedAdmissionConfig = async (
   }
   const identity = githubIdentity(remoteResult.value);
   if (identity === undefined) return fallbackConfig("untrusted-repository");
-  const branchResult = await git(
-    rootResult.value,
-    "symbolic-ref",
-    "--quiet",
-    "--short",
-    "HEAD",
-  );
+  const branchResult = await git(rootResult.value, "symbolic-ref", "--quiet", "--short", "HEAD");
   const policy = await repositoryPolicy(rootResult.value);
   return {
     ...baseConfig,

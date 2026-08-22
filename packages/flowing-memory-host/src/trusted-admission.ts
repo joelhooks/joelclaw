@@ -41,10 +41,7 @@ export const makeTrustedNativeAdmissionPort = (input: {
     | TrustedAdmissionConfigV1
     | ((
         nativeInput: Parameters<NativeAdmissionPort["admit"]>[0],
-      ) =>
-        | Promise<TrustedAdmissionConfigV1 | undefined>
-        | TrustedAdmissionConfigV1
-        | undefined);
+      ) => Promise<TrustedAdmissionConfigV1 | undefined> | TrustedAdmissionConfigV1 | undefined);
   readonly evidenceDirectory: string;
   readonly ledger: AdmissionLedgerClient;
 }): NativeAdmissionPort => ({
