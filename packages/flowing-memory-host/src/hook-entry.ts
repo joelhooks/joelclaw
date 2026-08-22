@@ -50,9 +50,9 @@ const main = async () => {
     process.env.JOELCLAW_FLOWING_MEMORY_WAKE_SPOOL ??
     path.join(homedir(), ".joelclaw", "flowing-memory", "native-wakes.jsonl");
   await submitNativeWake({
-    ...(process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET === undefined
-      ? {}
-      : { socketPath: process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET }),
+    socketPath:
+      process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET ??
+      path.join(homedir(), ".joelclaw", "flowing-memory", "collector.sock"),
     spoolPath,
     wake: decoded.wake,
   });

@@ -98,7 +98,9 @@ describe("native adapter pack", () => {
   it("maps Pi session_start and registers the complete lifecycle map", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "fm-pi-extension-"));
     const spoolPath = path.join(root, "wakes.jsonl");
+    const previousSocket = process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET;
     const previousSpool = process.env.JOELCLAW_FLOWING_MEMORY_WAKE_SPOOL;
+    process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET = path.join(root, "missing.sock");
     process.env.JOELCLAW_FLOWING_MEMORY_WAKE_SPOOL = spoolPath;
     const handlers = new Map<string, (event: unknown, context: unknown) => void | Promise<void>>();
     try {
@@ -127,6 +129,8 @@ describe("native adapter pack", () => {
         runtime: "pi",
       });
     } finally {
+      if (previousSocket === undefined) delete process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET;
+      else process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET = previousSocket;
       if (previousSpool === undefined) delete process.env.JOELCLAW_FLOWING_MEMORY_WAKE_SPOOL;
       else process.env.JOELCLAW_FLOWING_MEMORY_WAKE_SPOOL = previousSpool;
     }
