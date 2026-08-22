@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   appendFile,
   lstat,
@@ -16,6 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AdmissionCommandV1 } from "@joelclaw-memory/domain";
 
+import { resolveTrustedAdmissionConfig } from "../src/live-admission.js";
 import flowingMemoryPiExtension from "../src/pi-extension.js";
 import { runtimeProcessIsIdle } from "../src/idle-probe.js";
 import {
@@ -82,6 +84,17 @@ describe("native adapter pack", () => {
     },
   );
 
+  it("carries a canonical cwd into the trusted wake", () => {
+    const result = decodeNativeEvent("pi", {
+      ...wakeInput("pi", "/tmp/native-session.jsonl"),
+      cwd: "/tmp/project/../project",
+    });
+    expect(result).toMatchObject({
+      _tag: "Accepted",
+      wake: { cwd: "/tmp/project", runtime: "pi" },
+    });
+  });
+
   it("maps Pi session_start and registers the complete lifecycle map", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "fm-pi-extension-"));
     const spoolPath = path.join(root, "wakes.jsonl");
@@ -98,8 +111,10 @@ describe("native adapter pack", () => {
         },
       });
       expect([...handlers.keys()]).toEqual(["session_start", "turn_end", "session_shutdown"]);
+      const sessionCwd = path.join(root, "session-cwd");
       const context = {
         sessionManager: {
+          getCwd: () => sessionCwd,
           getSessionFile: () => path.join(root, "session.jsonl"),
           getSessionId: () => "pi-extension-session",
         },
@@ -107,6 +122,7 @@ describe("native adapter pack", () => {
       await handlers.get("session_start")?.({}, context);
       const lines = (await readFile(spoolPath, "utf8")).trim().split("\n");
       expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+        cwd: sessionCwd,
         eventName: "session_start",
         runtime: "pi",
       });
@@ -182,6 +198,7 @@ describe("native adapter pack", () => {
       expect(decoded).toMatchObject({
         _tag: "Accepted",
         wake: {
+          cwd,
           runtime: "grok",
           sessionId,
           transcriptPath: path.join(sessionDirectory, "updates.jsonl"),
@@ -196,13 +213,74 @@ describe("native adapter pack", () => {
   });
 });
 
+describe("live admission scope policy", () => {
+  const inputFor = (cwd?: string) => ({
+    fromByte: 0,
+    prefixBytes: new Uint8Array([123, 125, 10]),
+    segmentBytes: new Uint8Array([123, 125, 10]),
+    toByteExclusive: 3,
+    wake: {
+      close: false,
+      ...(cwd === undefined ? {} : { cwd }),
+      eventId: "scope-policy-event",
+      eventName: "turn_end",
+      incarnationId: "scope-policy-incarnation",
+      occurredAt: new Date().toISOString(),
+      runtime: "pi" as const,
+      schemaVersion: 1 as const,
+      sessionId: "scope-policy-session",
+      transcriptPath: "/tmp/scope-policy.jsonl",
+    },
+  });
+
+  const repository = async (owner: string, name: string) => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-scope-"));
+    execFileSync("git", ["-C", root, "init", "-q"]);
+    execFileSync("git", [
+      "-C",
+      root,
+      "remote",
+      "add",
+      "origin",
+      `git@github.com:${owner}/${name}.git`,
+    ]);
+    return root;
+  };
+
+  it("keeps same-named repositories isolated by owner", async () => {
+    const first = await resolveTrustedAdmissionConfig(inputFor(await repository("first", "app")));
+    const second = await resolveTrustedAdmissionConfig(inputFor(await repository("second", "app")));
+    expect(first?.project).toBe("first/app");
+    expect(second?.project).toBe("second/app");
+  });
+
+  it("defers a wake without trusted cwd evidence", async () => {
+    await expect(resolveTrustedAdmissionConfig(inputFor())).resolves.toBeUndefined();
+  });
+
+  it("fails closed when a repository privacy policy is malformed", async () => {
+    const root = await repository("joelhooks", "sensitive-app");
+    await writeFile(path.join(root, ".flowing-memory.json"), "not-json\n");
+    await expect(resolveTrustedAdmissionConfig(inputFor(root))).resolves.toMatchObject({
+      privacy: "sensitive",
+      projection: "disabled",
+    });
+  });
+});
+
 describe("trusted native admission", () => {
   it("decodes native JSONL, redacts a secret, and builds one acceptance-bound Run", () => {
     const occurredAt = new Date().toISOString();
     const transcriptPath = "/tmp/trusted-native-session.jsonl";
+    const syntheticSecrets = [
+      ["ghp", "abcdefghijklmnopqrstuvwxyz0123456789AB"].join("_"),
+      ["sk", "ant", "api03", "abcdefghijklmnopqrstuvwxyz"].join("-"),
+      ["xoxb", "1234567890", "abcdefghijklmnopqrstuvwxyz"].join("-"),
+      ["AI", "zaabcdefghijklmnopqrstuvwxyz1234567890"].join(""),
+    ];
     const line = `${JSON.stringify({
       message: {
-        content: "Use token ghp_abcdefghijklmnopqrstuvwxyz0123456789AB for the canary.",
+        content: `Use tokens ${syntheticSecrets.join(", ")} for the canary.`,
         role: "user",
       },
       timestamp: occurredAt,
@@ -238,7 +316,59 @@ describe("trusted native admission", () => {
     );
     expect(built.command._tag).toBe("accept");
     expect(built.acceptedRun?.turns[0]?.text).toContain("[REDACTED]");
-    expect(built.acceptedRun?.turns[0]?.text).not.toContain("ghp_");
+    expect(built.acceptedRun?.turns[0]?.text).not.toMatch(/ghp_|sk-ant-|xoxb-|AIza/u);
+    expect(built.acceptedRun?.redaction).toMatchObject({
+      _tag: "redacted",
+      redactionCount: 4,
+    });
+  });
+
+  it("keeps sessions without a repository in the fleet fallback scope", () => {
+    const occurredAt = new Date().toISOString();
+    const line = `${JSON.stringify({
+      message: { content: "Fallback memory", role: "user" },
+      timestamp: occurredAt,
+      type: "message",
+    })}\n`;
+    const decoded = decodeNativeEvent("pi", {
+      event_name: "turn_end",
+      occurred_at: occurredAt,
+      session_id: "fleet-fallback-session",
+      transcript_path: "/tmp/fleet-fallback.jsonl",
+    });
+    if (decoded._tag !== "Accepted") throw new Error("expected wake");
+    const bytes = new TextEncoder().encode(line);
+    const built = buildTrustedAdmissionV1(
+      {
+        fromByte: 0,
+        prefixBytes: bytes,
+        segmentBytes: bytes,
+        toByteExclusive: bytes.byteLength,
+        wake: decoded.wake,
+      },
+      {
+        adapterInstanceIdHash: "a".repeat(64),
+        canonicalRepository: "github.com/joelclaw/fleet",
+        principalIdHash: "b".repeat(64),
+        privacy: "private",
+        project: "joelclaw-fleet",
+        repositoryHost: "github.com",
+        repositoryName: "fleet",
+        repositoryOwner: "joelclaw",
+        scopeResolution: "fleetFallback",
+        workstream: "default",
+      },
+    );
+    expect(built.command._tag).toBe("accept");
+    if (built.command._tag !== "accept") throw new Error("expected acceptance");
+    expect(built.command.acceptance.scope).toMatchObject({
+      _tag: "fleetFallback",
+      boundary: "fallback-no-repo",
+      scope: {
+        project: "joelclaw-fleet",
+        workstream: "default",
+      },
+    });
   });
 
   it("decodes Grok ACP message chunks without admitting thought chunks", () => {

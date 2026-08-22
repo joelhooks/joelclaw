@@ -5,6 +5,7 @@ import { decodeNativeEvent, FLOWING_MEMORY_INTERNAL_MARKER_V1 } from "./adapters
 import { submitNativeWake } from "./collector.js";
 
 interface PiSessionManager {
+  readonly getCwd: () => string;
   readonly getSessionFile: () => string | undefined;
   readonly getSessionId: () => string;
 }
@@ -33,6 +34,7 @@ const enqueue = async (
   const decoded = decodeNativeEvent(
     "pi",
     {
+      cwd: context.sessionManager.getCwd(),
       event_name: eventName,
       internal_marker:
         process.env.JOELCLAW_FLOWING_MEMORY_INTERNAL === "1"

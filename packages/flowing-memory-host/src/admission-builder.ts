@@ -45,9 +45,12 @@ export interface TrustedAdmissionConfigV1 {
   readonly principalIdHash: string;
   readonly privacy: PrivacyTier;
   readonly project: string;
+  readonly projection?: "disabled" | "enabled";
   readonly repositoryHost: string;
   readonly repositoryName: string;
   readonly repositoryOwner: string;
+  readonly scopeFallbackReason?: "no-repository" | "untrusted-repository";
+  readonly scopeResolution?: "fleetFallback" | "repository";
   readonly workstream: string;
 }
 
@@ -160,11 +163,19 @@ const decodeJsonlTurns = (bytes: Uint8Array, fallbackTime: string): readonly Nat
 
 const secretPatterns = [
   /\bgh[oprsu]_[A-Za-z0-9]{20,}\b/gu,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/gu,
+  /\bsk-(?:ant-[A-Za-z0-9_-]+|proj-[A-Za-z0-9_-]+|[A-Za-z0-9_-]{20,})\b/gu,
   /\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}\b/gu,
+  /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/gu,
   /\bAKIA[A-Z0-9]{16}\b/gu,
+  /\bAIza[A-Za-z0-9_-]{30,}\b/gu,
+  /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/gu,
+  /\bnpm_[A-Za-z0-9]{20,}\b/gu,
   /-----BEGIN (?:OPENSSH |RSA |EC )?PRIVATE KEY-----[\s\S]*?-----END (?:OPENSSH |RSA |EC )?PRIVATE KEY-----/gu,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/gu,
-  /\b(?:api[_-]?key|authorization|password|secret|token)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{20,}/giu,
+  /\bBearer\s+[A-Za-z0-9_./+=-]{20,}/giu,
+  /\b(?:api[_-]?key|authorization|credential|password|private[_-]?key|secret|token)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{20,}/giu,
+  /\b(?:postgres(?:ql)?|mysql|redis):\/\/[^\s:/]+:[^\s@]{8,}@[^\s]+/giu,
 ] as const;
 
 const redact = (text: string) => {
@@ -227,18 +238,19 @@ const buildPolicies = (
     schemaVersion: 1,
   });
   const scopeFromByte = input.fromByte === input.toByteExclusive ? 0 : input.fromByte;
-  const scope = decodeDomain(ScopeResolutionAttestationV1Schema)({
-    _tag: "repository",
-    basis: "canonical-repository",
-    boundary: scopeFromByte === 0 ? "session-start" : "turn-boundary",
+  const commonScope = {
+    boundary:
+      config.scopeResolution === "fleetFallback"
+        ? ("fallback-no-repo" as const)
+        : scopeFromByte === 0
+          ? ("session-start" as const)
+          : ("turn-boundary" as const),
     fromByte: scopeFromByte,
-    repository,
-    repositoryIdentityHash: canonicalRepositoryIdentityHash(repository),
     resolvedAt,
     resolverPolicyHash: hash("scope-resolver:flowing-memory-host:v1"),
-    schemaVersion: 1,
+    schemaVersion: 1 as const,
     scope: {
-      _tag: "ProjectWorkstream",
+      _tag: "ProjectWorkstream" as const,
       project: config.project,
       workstream: config.workstream,
     },
@@ -252,7 +264,22 @@ const buildPolicies = (
         input.wake.sessionId,
       ]),
     ),
-  });
+  };
+  const scope = decodeDomain(ScopeResolutionAttestationV1Schema)(
+    config.scopeResolution === "fleetFallback"
+      ? {
+          _tag: "fleetFallback",
+          ...commonScope,
+          reason: config.scopeFallbackReason ?? "no-repository",
+        }
+      : {
+          _tag: "repository",
+          ...commonScope,
+          basis: "canonical-repository",
+          repository,
+          repositoryIdentityHash: canonicalRepositoryIdentityHash(repository),
+        },
+  );
   const privacyLayers = [
     decodeDomain(PrivacyPolicyLayerV1Schema)({
       _tag: "fleet",
@@ -268,16 +295,17 @@ const buildPolicies = (
     schemaVersion: 1,
     tier: config.privacy,
   });
+  const projectionDecision = config.projection ?? "enabled";
   const projectionLayers = [
     decodeDomain(ProjectionPolicyLayerV1Schema)({
       _tag: "fleet",
-      decision: "enabled",
-      policyHash: hash("projection:flowing-memory-host:v1"),
+      decision: projectionDecision,
+      policyHash: hash("projection:flowing-memory-host:v2"),
     }),
   ];
   const projection = decodeDomain(ProjectionPolicyAttestationV1Schema)({
-    decision: "enabled",
-    disableEffect: "none",
+    decision: projectionDecision,
+    disableEffect: projectionDecision === "enabled" ? "none" : "future-windows",
     effectiveFromByte: input.fromByte,
     layers: projectionLayers,
     policyHash: projectionPolicyHash(projectionLayers),
@@ -403,7 +431,7 @@ export const buildTrustedAdmissionV1 = (
     toByteExclusive: input.toByteExclusive,
     toTurn: turns.at(-1)?.turn,
   });
-  const redactionPolicyHash = hash("secret-scan:flowing-memory-host:v1");
+  const redactionPolicyHash = hash("secret-scan:flowing-memory-host:v2");
   const policySnapshotId = capturePolicySnapshotId({
     privacy: policies.privacy,
     projection: policies.projection,
@@ -419,7 +447,7 @@ export const buildTrustedAdmissionV1 = (
     redactionPolicyHash,
     scannedAt: semanticAcceptedAt,
     scannerId: "flowing-memory-secret-scan",
-    scannerVersion: "1",
+    scannerVersion: "2",
     schemaVersion: 2,
   });
   const finality = input.wake.close

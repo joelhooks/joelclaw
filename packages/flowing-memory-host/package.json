@@ -16,7 +16,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@joelclaw-memory/domain": "link:../../../joelclaw-memory/packages/domain"
+    "@joelclaw-memory/domain": "link:../../../joelclaw-memory/packages/domain",
+    "@joelclaw-memory/postgres": "link:../../../joelclaw-memory/packages/postgres",
+    "effect": "4.0.0-rc.110",
+    "tsx": "4.20.6"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",

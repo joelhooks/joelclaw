@@ -37,12 +37,22 @@ const writeImmutable = async (target: string, bytes: Uint8Array) => {
 };
 
 export const makeTrustedNativeAdmissionPort = (input: {
-  readonly config: TrustedAdmissionConfigV1;
+  readonly config:
+    | TrustedAdmissionConfigV1
+    | ((
+        nativeInput: Parameters<NativeAdmissionPort["admit"]>[0],
+      ) =>
+        | Promise<TrustedAdmissionConfigV1 | undefined>
+        | TrustedAdmissionConfigV1
+        | undefined);
   readonly evidenceDirectory: string;
   readonly ledger: AdmissionLedgerClient;
 }): NativeAdmissionPort => ({
   admit: async (nativeInput) => {
-    const built = buildTrustedAdmissionV1(nativeInput, input.config);
+    const config =
+      typeof input.config === "function" ? await input.config(nativeInput) : input.config;
+    if (config === undefined) return { disposition: "deferred" };
+    const built = buildTrustedAdmissionV1(nativeInput, config);
     if (built.acceptedRun !== undefined) {
       const acceptance = built.command._tag === "accept" ? built.command.acceptance : undefined;
       if (acceptance === undefined) {

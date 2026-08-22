@@ -9,6 +9,7 @@ export type NativeRuntime = "claude" | "codex" | "cursor" | "grok" | "pi";
 
 export interface NativeWakeV1 {
   readonly close: boolean;
+  readonly cwd?: string;
   readonly eventId: string;
   readonly exclusion?: "inference-session";
   readonly incarnationId: string;
@@ -69,6 +70,7 @@ const canonicalEventId = (input: {
 
 const accepted = (input: {
   readonly close: boolean;
+  readonly cwd?: string;
   readonly eventName: string;
   readonly occurredAt?: string;
   readonly runtime: NativeRuntime;
@@ -91,6 +93,7 @@ const accepted = (input: {
     _tag: "Accepted",
     wake: {
       close: input.close,
+      ...(input.cwd === undefined ? {} : { cwd: path.resolve(input.cwd) }),
       ...(input.exclusion === undefined ? {} : { exclusion: input.exclusion }),
       eventId: canonicalEventId({ ...input, occurredAt, incarnationId }),
       incarnationId,
@@ -148,6 +151,8 @@ export const decodeNativeEvent = (
     return { _tag: "Skipped", reason: "inference-session" };
   }
   const occurredAt = text(input.occurred_at);
+  const cwd = firstText(input, "cwd", "workspace_root");
+  const cwdOption = cwd === undefined ? {} : { cwd };
   switch (runtime) {
     case "pi": {
       const eventName = text(input.event_name);
@@ -161,6 +166,7 @@ export const decodeNativeEvent = (
       }
       return accepted({
         close: eventName === "session_shutdown",
+        ...cwdOption,
         eventName,
         ...(occurredAt === undefined ? {} : { occurredAt }),
         runtime,
@@ -183,6 +189,7 @@ export const decodeNativeEvent = (
       }
       return accepted({
         close: eventName === "SessionEnd",
+        ...cwdOption,
         eventName,
         ...(occurredAt === undefined ? {} : { occurredAt }),
         runtime,
@@ -211,6 +218,7 @@ export const decodeNativeEvent = (
       }
       return accepted({
         close: canonicalEventName === "SessionEnd",
+        ...cwdOption,
         eventName: canonicalEventName,
         ...(occurredAt === undefined ? {} : { occurredAt }),
         runtime,
@@ -231,6 +239,7 @@ export const decodeNativeEvent = (
       }
       return accepted({
         close: eventName === "sessionEnd",
+        ...cwdOption,
         eventName,
         ...(occurredAt === undefined ? {} : { occurredAt }),
         runtime,
@@ -473,8 +482,10 @@ export const decodeGrokEvent = (
   const transcriptPath = grokUpdatesPath(input, sessionId);
   if (transcriptPath === undefined) return { _tag: "Rejected", code: "invalid-source" };
   const occurredAt = firstText(input, "occurred_at", "timestamp");
+  const cwd = firstText(input, "cwd", "workspaceRoot", "workspace_root");
   return accepted({
     close: eventName === "SessionEnd",
+    ...(cwd === undefined ? {} : { cwd }),
     eventName,
     ...(occurredAt === undefined ? {} : { occurredAt }),
     runtime: "grok",
