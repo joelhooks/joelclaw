@@ -933,6 +933,7 @@ describe("collector byte boundaries", () => {
       {
         event_name: "turn_end",
         internal_marker: FLOWING_MEMORY_INTERNAL_MARKER_V1,
+        occurred_at: "2026-08-22T20:00:00.000Z",
         session_id: "luna-session",
         transcript_path: transcriptPath,
       },
@@ -940,6 +941,7 @@ describe("collector byte boundaries", () => {
     );
     const later = decodeNativeEvent("pi", {
       event_name: "turn_end",
+      occurred_at: "2026-08-22T20:00:00.001Z",
       session_id: "luna-session",
       transcript_path: transcriptPath,
     });
@@ -962,8 +964,8 @@ describe("collector byte boundaries", () => {
       streamRoot: path.join(root, "streams"),
     });
     expect(admissions).toBe(0);
-    expect(receipt.excluded).toBe(1);
-    expect(receipt.replayed).toBe(1);
+    expect(receipt.excluded).toBe(2);
+    expect(receipt.replayed).toBe(0);
     expect(JSON.parse(await readFile(path.join(root, "state.json"), "utf8"))).toMatchObject({
       excludedSessions: ["pi:luna-session"],
     });
