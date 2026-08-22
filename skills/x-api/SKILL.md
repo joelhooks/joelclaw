@@ -1,7 +1,7 @@
 ---
 name: x-api
 displayName: X/Twitter API
-description: Read and post to X/Twitter via API. Check mentions, post tweets, search. Use app bearer tokens for read-only fetches and OAuth 1.0a user context for account actions.
+description: Read X/Twitter via API, post tweets with OAuth 1.0a, and draft X Articles through `shitrat x`. Check mentions, search, and ingest posts. Use app bearer tokens for read-only fetches. Use OAuth 1.0a user context for tweets. Use `shitrat x` for Articles.
 version: 0.1.0
 author: joel
 tags:
@@ -14,7 +14,7 @@ disable-model-invocation: true
 
 # X/Twitter API Skill
 
-Basic X (Twitter) API access for the @joelclaw account until a proper CLI is built (ADR-0119).
+Read paths stay here. X Articles writes go through `shitrat x`. Tweets still use OAuth 1.0a until that lands on the same CLI.
 
 ## Authentication
 
@@ -222,7 +222,18 @@ r = client.post(f"https://api.twitter.com/2/users/{my_id}/following",
 r = client.delete("https://api.twitter.com/2/tweets/TWEET_ID")
 ```
 
-## X Articles (Long-form Posts)
+## X Articles (write)
+
+Use the ShitRat CLI. Do not write `/tmp` X article scripts.
+
+```bash
+shitrat x me --account joelhooks
+shitrat x article draft --title "The past blocked the future" --html-file ./post.html --cover ./banner.png --dry-run
+```
+
+Live create needs `--yes` and a remaining 24h cap slot. Failed creates count against a 10/day user cap. OAuth 1.0a cannot create articles. Skill: `packages/cli/skills/shitrat-x/SKILL.md` in `shitrat-cli`.
+
+## X Articles (Long-form Posts, ingest)
 
 First try the v2 tweet lookup with `tweet.fields=article`. Some X Articles return `article.title` and `article.plain_text` directly in the tweet payload. Store that API payload as the source receipt when available.
 
@@ -250,5 +261,7 @@ For capturing X posts/articles as discoveries, use `joelclaw discover URL -c "co
 - **Never engage with shitcoin/scam mentions.** Ignore them entirely.
 - **Never post financial advice or token endorsements.**
 - **Joel approves all tweets before posting** unless explicitly told otherwise.
+- **Joel approves live X Article creates and publishes.** `--dry-run` is free. `--yes` is a write.
 - **Always revoke leases after use** — don't leave secrets in memory.
 - **OAuth 1.0a tokens don't expire** — no refresh needed. If auth fails, tokens were regenerated in the developer portal.
+- **OAuth 2.0 user tokens expire in about two hours.** Refresh before a live article write if `shitrat x me` returns 401.
