@@ -22,6 +22,10 @@ import { homedir, tmpdir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { parse as parseToml } from "toml"
 import {
+  AGENT_SECRETS_EXECUTABLE,
+  minimalChildEnv,
+} from "../packages/cli/src/recall/process-boundary"
+import {
   FLOWING_RELEASE_MANIFEST_FILENAME,
   PINNED_MEMORY_COMMIT,
   PINNED_READ_ARTIFACT_SHA256,
@@ -34,7 +38,10 @@ import {
 
 const FLOWING_ADAPTER = "flowing-memory-recall"
 const ROLLBACK_ADAPTER = "typesense-recall"
-const SECRET_NAME = "flowing-runtime-url"
+export const FLOWING_MEMORY_RUNTIME_DATABASE_SECRET_NAME =
+  "flowing_memory_runtime_database_url"
+const CREDENTIAL_PREFLIGHT_CLIENT_ID = "joelclaw-recall-cutover-preflight"
+const CREDENTIAL_PREFLIGHT_TTL = "1m"
 
 type Mode = "cutover" | "rollback"
 
@@ -54,6 +61,8 @@ export type RecallCutoverInput = {
   readonly receiptPath?: string
   readonly rollbackRoot?: string
   readonly verifiedRelease?: VerifiedRelease
+  /** Test seam. Production always uses the installed agent-secrets CLI. */
+  readonly credentialExecutablePath?: string
   readonly now?: Date
 }
 
@@ -211,7 +220,7 @@ export function updateRecallConfig(input: {
   if (input.readExecutable) {
     updated = replaceTomlTableKeys(updated, "capabilities.recall.adapters.flowing-memory-recall", {
       read_executable: input.readExecutable,
-      credential_secret_name: SECRET_NAME,
+      credential_secret_name: FLOWING_MEMORY_RUNTIME_DATABASE_SECRET_NAME,
       credential_format: "raw",
     })
   }
@@ -303,6 +312,34 @@ function verifyCandidateBinary(path: string, expectedSha256: string): string {
   const after = sha256(readFileSync(path))
   if (after !== before) throw new Error("candidate CLI changed during verification")
   return after
+}
+
+/**
+ * Proves the configured reader credential exists without bringing its value
+ * into this process. The lease command's stdout and stderr go directly to the
+ * null device: they are never captured, printed, added to argv, or retained in
+ * a result, error, journal, or receipt.
+ */
+function assertCredentialLeaseAvailable(executable: string): void {
+  const lease = spawnSync(
+    executable,
+    [
+      "lease",
+      FLOWING_MEMORY_RUNTIME_DATABASE_SECRET_NAME,
+      "--ttl",
+      CREDENTIAL_PREFLIGHT_TTL,
+      "--client-id",
+      CREDENTIAL_PREFLIGHT_CLIENT_ID,
+    ],
+    {
+      env: minimalChildEnv(process.env),
+      stdio: "ignore",
+      timeout: 10_000,
+    },
+  )
+  if (lease.error || lease.signal || lease.status !== 0) {
+    throw new Error("flowing recall credential preflight failed")
+  }
 }
 
 type CutoverJournal = {
@@ -419,6 +456,10 @@ export function runRecallCutover(input: RecallCutoverInput): RecallCutoverResult
     if (sha256(binaryAfter) !== existingJournal.previousBinaryDigest) {
       throw new Error("rollback binary does not match the recorded previous digest")
     }
+  }
+
+  if (input.mode === "cutover") {
+    assertCredentialLeaseAvailable(input.credentialExecutablePath ?? AGENT_SECRETS_EXECUTABLE)
   }
 
   const nextAdapter = input.mode === "cutover" ? FLOWING_ADAPTER : ROLLBACK_ADAPTER

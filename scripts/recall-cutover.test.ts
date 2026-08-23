@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -8,7 +16,13 @@ import { parseMinimalToml } from "../packages/cli/src/capabilities/config"
 import { resolveFlowingRecallPortConfig } from "../packages/cli/src/recall/flowing-port"
 import { PINNED_READ_ARTIFACT_SHA256 } from "../packages/cli/src/recall/release-manifest"
 import { testRelease } from "../packages/cli/src/recall/test-fixtures"
-import { runRecallCutover, updateRecallConfig } from "./recall-cutover"
+import {
+  FLOWING_MEMORY_RUNTIME_DATABASE_SECRET_NAME,
+  runRecallCutover,
+  updateRecallConfig,
+} from "./recall-cutover"
+
+const SECRET_SENTINEL = "must-never-leave-agent-secrets"
 
 function candidateSource(): string {
   return `#!${process.execPath}
@@ -59,9 +73,16 @@ function fixture() {
   const rollbackRoot = join(root, "rollback")
   const artifactPath = join(root, "flowing-memory-read")
   const candidateBinaryPath = join(root, "candidate-joelclaw")
+  const credentialExecutablePath = join(root, "secrets")
+  const credentialArgvPath = join(root, "credential-argv.txt")
   writeFileSync(binaryPath, "installed binary fixture")
   writeFileSync(candidateBinaryPath, candidateSource())
   chmodSync(candidateBinaryPath, 0o700)
+  writeFileSync(
+    credentialExecutablePath,
+    `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(credentialArgvPath)}\nprintf '%s' ${JSON.stringify(SECRET_SENTINEL)}\nprintf '%s' ${JSON.stringify(SECRET_SENTINEL)} >&2\nexit 0\n`,
+  )
+  chmodSync(credentialExecutablePath, 0o700)
   const candidateBinarySha256 = createHash("sha256")
     .update(readFileSync(candidateBinaryPath))
     .digest("hex")
@@ -92,6 +113,8 @@ function fixture() {
     artifactPath,
     candidateBinaryPath,
     candidateBinarySha256,
+    credentialExecutablePath,
+    credentialArgvPath,
   }
 }
 
@@ -116,6 +139,9 @@ describe("recall cutover config", () => {
     expect(updated).toContain('[[unrelated.items]]\nname = "preserve-array-table"')
     expect(updated).toContain('adapter = "flowing-memory-recall" # preserve inline comment')
     expect(updated).toContain('read_executable = "/private/release/read"')
+    expect(updated).toContain(
+      `credential_secret_name = "${FLOWING_MEMORY_RUNTIME_DATABASE_SECRET_NAME}"`,
+    )
     expect(updated).toContain('credential_format = "raw"')
     const parsed = parseMinimalToml(updated) as {
       capabilities?: { recall?: { enabled?: unknown; custom_timeout_ms?: unknown } }
@@ -179,6 +205,41 @@ describe("recall cutover config", () => {
     expect(result.installedBinaryDigest).not.toBe(result.previousBinaryDigest)
     expect(result.wroteConfig).toBe(false)
     expect(readFileSync(paths.configPath, "utf8")).toBe(before)
+  })
+
+  test("missing credential blocks apply before binary, config, journal, or backup changes", () => {
+    const paths = fixture()
+    writeFileSync(
+      paths.credentialExecutablePath,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(paths.credentialArgvPath)}\nprintf '%s' ${JSON.stringify(SECRET_SENTINEL)}\nprintf '%s' ${JSON.stringify(SECRET_SENTINEL)} >&2\nexit 17\n`,
+    )
+    chmodSync(paths.credentialExecutablePath, 0o700)
+    const binaryBefore = readFileSync(paths.binaryPath)
+    const configBefore = readFileSync(paths.configPath)
+
+    let caught: unknown
+    try {
+      runRecallCutover({
+        mode: "cutover",
+        dryRun: false,
+        ...paths,
+        verifiedRelease: verifiedRelease(paths.artifactPath),
+      })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toBe("flowing recall credential preflight failed")
+    expect(String(caught)).not.toContain(SECRET_SENTINEL)
+    expect(readFileSync(paths.binaryPath)).toEqual(binaryBefore)
+    expect(readFileSync(paths.configPath)).toEqual(configBefore)
+    expect(existsSync(paths.receiptPath)).toBe(false)
+    expect(existsSync(paths.rollbackRoot)).toBe(false)
+
+    const credentialArgv = readFileSync(paths.credentialArgvPath, "utf8")
+    expect(credentialArgv).toContain(FLOWING_MEMORY_RUNTIME_DATABASE_SECRET_NAME)
+    expect(credentialArgv).not.toContain(SECRET_SENTINEL)
   })
 
   test("allows a 0600 config under an owner-owned non-writable 0755 parent", () => {
@@ -271,20 +332,26 @@ describe("recall cutover config", () => {
   test("cutover and rollback preserve config and restore the exact binary", () => {
     const paths = fixture()
     const candidate = readFileSync(paths.candidateBinaryPath, "utf8")
-    runRecallCutover({
+    const cutoverResult = runRecallCutover({
       mode: "cutover",
       dryRun: false,
       ...paths,
       verifiedRelease: verifiedRelease(paths.artifactPath),
       now: new Date("2026-08-23T00:00:00.000Z"),
     })
+    expect(JSON.stringify(cutoverResult)).not.toContain(SECRET_SENTINEL)
     const cutoverConfig = readFileSync(paths.configPath, "utf8")
     expect(cutoverConfig).toContain('adapter = "flowing-memory-recall"')
     expect(cutoverConfig).toContain("custom_timeout_ms = 4321")
     expect(statSync(paths.configPath).mode & 0o777).toBe(0o600)
     expect(statSync(paths.receiptPath).mode & 0o777).toBe(0o600)
-    const receipt = JSON.parse(readFileSync(paths.receiptPath, "utf8"))
+    const receiptBody = readFileSync(paths.receiptPath, "utf8")
+    expect(receiptBody).not.toContain(SECRET_SENTINEL)
+    const receipt = JSON.parse(receiptBody)
     expect(receipt.state).toBe("active")
+    const credentialArgv = readFileSync(paths.credentialArgvPath, "utf8")
+    expect(credentialArgv).toContain(FLOWING_MEMORY_RUNTIME_DATABASE_SECRET_NAME)
+    expect(credentialArgv).not.toContain(SECRET_SENTINEL)
     expect(readFileSync(paths.binaryPath, "utf8")).toBe(candidate)
 
     runRecallCutover({
