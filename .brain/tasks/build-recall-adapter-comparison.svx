@@ -1,0 +1,42 @@
+---
+title: "Build the non-default recall adapter and comparison"
+status: "active"
+assignee: "shitrat-recall-adapter-compare"
+privacy: "private"
+---
+
+# Build the non-default recall adapter and comparison
+
+Claim this task by setting `assignee` to your agent name. Work only in this worktree. Do not commit, push, deploy, rebuild the production CLI, change the production recall binding, restart services, or mutate any live search/database store.
+
+Read `AGENTS.md`, `BRAIN.md`, `/Users/joel/Code/joelhooks/joelclaw-memory/.brain/projects/joelclaw-memory/production-memory-cutover.svx`, its council and flowing-read receipts, and the current CLI/SDK capability, recall, critical-search, gateway, and tests.
+
+The semantic source contract is committed at `joelhooks/joelclaw-memory@afcd3bb5`. Its stable boundary is `joelclaw-memory flowing-recall-read --query-file -`, one encoded `MemorySearchQueryV1` on stdin, one `FlowingMemoryReadEnvelopeV1` JSON document on stdout, exit 0 for success and 3 for typed unavailable.
+
+## Build
+
+1. A provider-neutral v1 composed recall contract in `joelclaw`, with separate typed lanes:
+   - flowing reflections and observations;
+   - curated Brain, system-knowledge, and vault pages;
+   - resolved scope/access metadata;
+   - explicit unavailable lanes.
+   Never cross-rank or flatten these lanes in the canonical result.
+2. A non-default flowing recall adapter behind the existing capability registry. Require exact project/workstream and explicit principal, purpose, decided-at, privacy tiers, limits, and supersession choice. Invoke a configured immutable read command through stdin with a hard deadline. Lease the restricted runtime credential without putting it in argv, logs, receipts, or errors. Decode and validate the schema-versioned envelope. No fallback.
+3. A separately ranked curated port over `critical.db`, fixed to `brain_pages`, `system_knowledge`, and `vault_notes`. Do not change `CRITICAL_COLLECTIONS`, the production database, or current recall behavior.
+4. A composer that routes to both ports, preserves their independent rank/freshness/health, and returns per-lane unavailability without pretending one lane answered for another.
+5. An offline comparison command that requires exact scope/access, calls:
+   - the actual CLI SQLite-first current adapter;
+   - the actual SDK in-process Typesense adapter;
+   - the new composed adapter.
+   Write one private `0600`, schema-versioned receipt. Record actual backend, duration, typed failure, health/freshness, ordered IDs/kinds/scores, scope/privacy/evidence IDs, overlap, duplicates, and old out-of-scope hits. Never write transcript/evidence bodies, credentials, environment dumps, or machine topology.
+6. Keep `DEFAULT_CAPABILITY_CONFIG.recall.adapter` unchanged. Existing CLI, SDK, gateway, and production callers must continue taking the old path.
+
+Prefer existing capability contracts and deep modules. Do not introduce runtime shadow/prefer/legacy modes. Do not import Effect v4 into the Effect v3 CLI. Do not carry `budget`, category, hold/discard, or raw-transcript semantics into the new contract.
+
+The command/read executable path and credential lease command must be configurable and safe when absent. Tests use fake process boundaries, not the live service.
+
+## Checks
+
+Add focused tests for schema round-trip, separate lanes/no cross-ranking, exact scope/access, stdin-only private payload, timeout, exit 3 unavailable, malformed JSON, contract mismatch, secret absence from argv/errors/receipt, curated collection filtering, one-lane partial failure, both current backends being called, receipt permissions/content, and unchanged default binding.
+
+Run package tests/typecheck/build/format and the broadest practical repo checks. Write `/tmp/recall-adapter-comparison-implementation.md` with files, contracts, production/test call stacks, validation, open blockers, and proof that the default binding did not change. End the pane response with `DONE` and the path.

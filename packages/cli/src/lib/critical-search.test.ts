@@ -574,3 +574,68 @@ describe("critical search database", () => {
     expect(() => searchCriticalDb({ query: "anything", dbPath: missing })).toThrow(CriticalDbUnavailableError)
   })
 })
+
+describe("privacy predicate", () => {
+  async function privacyFixture() {
+    const paths = fixture()
+    const page = (slug: string, privacy: string, repeats: number) => `---
+title: Quokka ${slug}
+type: decision
+privacy: ${privacy}
+---
+# Quokka ${slug}
+
+${"quokka ".repeat(repeats)}
+`
+    // The two private pages carry the term more often, so BM25 ranks them above
+    // the public one. Without a SQL predicate they consume a LIMIT 1 window.
+    writeFileSync(join(paths.brain, "quokka-a.svx"), page("a", "private", 12))
+    writeFileSync(join(paths.brain, "quokka-b.svx"), page("b", "sensitive", 10))
+    writeFileSync(join(paths.brain, "quokka-c.svx"), page("c", "public", 1))
+    await buildCriticalDb({
+      dbPath: paths.db,
+      observationsDir: paths.observations,
+      brainRoots: [paths.brain],
+      vaultDir: paths.vault,
+      skillsDir: paths.skills,
+      memoryArchivePath: paths.archive,
+      allowNonFlagg: true,
+    })
+    return paths
+  }
+
+  test("existing callers are unchanged when the option is absent", async () => {
+    const paths = await privacyFixture()
+    const result = searchCriticalDb({ query: "quokka", dbPath: paths.db, collections: ["brain_pages"] })
+    expect(result.hits.map((hit) => hit.privacy).sort()).toEqual(["private", "public", "sensitive"])
+  })
+
+  test("filters in SQL before ORDER BY and LIMIT", async () => {
+    const paths = await privacyFixture()
+    const unfiltered = searchCriticalDb({ query: "quokka", dbPath: paths.db, collections: ["brain_pages"], limit: 1 })
+    expect(unfiltered.hits[0]?.privacy).not.toBe("public")
+
+    const filtered = searchCriticalDb({
+      query: "quokka",
+      dbPath: paths.db,
+      collections: ["brain_pages"],
+      privacy: ["public"],
+      limit: 1,
+    })
+    expect(filtered.hits).toHaveLength(1)
+    expect(filtered.hits[0]?.privacy).toBe("public")
+    expect(filtered.found).toBe(1)
+  })
+
+  test("treats a document with no privacy value as private", async () => {
+    const paths = await privacyFixture()
+    const db = new Database(paths.db, { strict: true })
+    db.query("UPDATE documents SET privacy = '' WHERE title LIKE 'Quokka c%'").run()
+    db.close()
+
+    const asPublic = searchCriticalDb({ query: "quokka", dbPath: paths.db, collections: ["brain_pages"], privacy: ["public"] })
+    expect(asPublic.hits).toHaveLength(0)
+    const asPrivate = searchCriticalDb({ query: "quokka", dbPath: paths.db, collections: ["brain_pages"], privacy: ["private"] })
+    expect(asPrivate.hits.map((hit) => hit.title)).toContain("Quokka c")
+  })
+})

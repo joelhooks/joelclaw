@@ -37,6 +37,7 @@ import { otelCmd } from "./commands/otel";
 import { pdsCmd } from "./commands/pds";
 import { queueCmd } from "./commands/queue";
 import { recallCmd } from "./commands/recall";
+import { recallCompareCmd } from "./commands/recall-compare";
 import { recoverCmd } from "./commands/recover";
 import { refresh } from "./commands/refresh";
 import { restateCmd } from "./commands/restate";
@@ -328,6 +329,7 @@ const root = Command.make("joelclaw", {}, () =>
     reviewCmd,
     approvalsCmd,
     recallCmd,
+    recallCompareCmd,
     memoryCmd,
     retroCmd,
     vaultCmd,

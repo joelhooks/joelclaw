@@ -1,5 +1,6 @@
 import { clickhouseOtelAdapter } from "./adapters/clickhouse-otel"
 import { scriptedDeployAdapter } from "./adapters/deploy-scripted"
+import { flowingMemoryRecallAdapter } from "./adapters/flowing-memory-recall"
 import { gatewayRedisNotifyAdapter } from "./adapters/gateway-redis"
 import { runbookHealAdapter } from "./adapters/heal-runbook"
 import { mcpAgentMailAdapter } from "./adapters/mcp-agent-mail"
@@ -14,6 +15,8 @@ export const capabilityRegistry = createCapabilityRegistry()
   .register(clickhouseOtelAdapter)
   .register(typesenseOtelAdapter)
   .register(typesenseRecallAdapter)
+  // Registered, never default. `DEFAULT_CAPABILITY_CONFIG.recall.adapter` stays `typesense-recall`.
+  .register(flowingMemoryRecallAdapter)
   .register(mcpAgentMailAdapter)
   .register(redisSubscriptionsAdapter)
   .register(scriptedDeployAdapter)

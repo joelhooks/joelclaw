@@ -851,6 +851,15 @@ export function searchCriticalDb(input: {
   type?: string
   dbPath?: string
   now?: Date
+  sessionsDbPath?: string
+  /**
+   * Optional privacy allow-list, applied in SQL before ORDER BY and LIMIT.
+   * Omit it and the query is exactly what it was before: no predicate, every
+   * existing caller unchanged. Supply it and disallowed documents can never
+   * consume the bounded result window. A document with a null or empty privacy
+   * column counts as `private`, which matches how readers default it.
+   */
+  privacy?: readonly string[]
 }): CriticalSearchResult {
   const started = performance.now()
   const dbPath = resolve(input.dbPath ?? process.env.JOELCLAW_CRITICAL_DB ?? DEFAULT_CRITICAL_DB_PATH)
@@ -874,6 +883,11 @@ export function searchCriticalDb(input: {
     if (input.type) {
       clauses.push("d.type = ?")
       params.push(input.type)
+    }
+    if (input.privacy?.length) {
+      const tiers = [...new Set(input.privacy.map((tier) => tier.trim().toLowerCase()))]
+      clauses.push(`COALESCE(NULLIF(TRIM(LOWER(d.privacy)), ''), 'private') IN (${tiers.map(() => "?").join(",")})`)
+      params.push(...tiers)
     }
     const limit = Math.min(Math.max(input.limit ?? 10, 1), 100)
     const rows = db.query(`
