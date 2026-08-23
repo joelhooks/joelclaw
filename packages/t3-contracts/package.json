@@ -1,0 +1,15 @@
+{
+  "name": "@joelclaw/t3-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Vendored copy of @t3tools/contracts (T3 Code wire contracts). Read-only; re-vendor with ./sync.sh.",
+  "exports": {
+    ".": "./vendor/index.ts",
+    "./settings": "./vendor/settings.ts",
+    "./relay": "./vendor/relay.ts"
+  },
+  "dependencies": {
+    "effect": "4.0.0-beta.103"
+  }
+}

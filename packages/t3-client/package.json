@@ -1,0 +1,22 @@
+{
+  "name": "@joelclaw/t3-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless client for a T3 Code server: pair, start turns, stream thread events, respond to approvals. Plain-promise facade over the typed WebSocket contract.",
+  "bin": {
+    "t3c": "./bin/t3c.mjs"
+  },
+  "exports": {
+    ".": "./src/client.ts",
+    "./events": "./src/events.ts",
+    "./credentials": "./src/credentials.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@joelclaw/t3-contracts": "workspace:*",
+    "effect": "4.0.0-beta.103"
+  }
+}
