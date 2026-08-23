@@ -5,6 +5,11 @@
  */
 
 import { spawnSync } from "node:child_process";
+import {
+  createComposedRecallRequest,
+  formatRecallLanes,
+  runComposedRecallCli,
+} from "@joelclaw/recall";
 import type { GatewaySendMessageData } from "../../lib/channel-delivery-audit";
 import { infer } from "../../lib/inference";
 import { type LlmUsage } from "../../lib/pi-output";
@@ -14,6 +19,7 @@ import { TodoistTaskAdapter } from "../../tasks";
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
 import { buildEmailThreadCacheDocument } from "./vip-email-cache";
+import { VIP_MEMORY_RECALL_POLICY } from "./vip-email-recall-policy";
 import { isVipSender } from "./vip-utils";
 
 const FRONT_API = "https://api2.frontapp.com";
@@ -31,6 +37,7 @@ const MEMORY_RECALL_TIMEOUT_MS = Number(
   ?? "15000"
 );
 const GITHUB_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GITHUB_TIMEOUT_MS ?? "1500");
+
 const BRIEF_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_TRIAGE_TIMEOUT_MS ?? "20000");
 const OPUS_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_OPUS_TIMEOUT_MS ?? "45000");
 const MIN_OPUS_TIME_REMAINING_MS = Number(process.env.JOELCLAW_VIP_MIN_OPUS_REMAINING_MS ?? "30000");
@@ -222,21 +229,6 @@ type FrontThreadContext = {
 type FollowedLink = {
   url: string;
   content: string;
-};
-
-type RecallCliHit = {
-  id?: unknown;
-  observation?: unknown;
-};
-
-type RecallCliEnvelope = {
-  ok?: unknown;
-  result?: {
-    hits?: RecallCliHit[];
-  };
-  error?: {
-    message?: unknown;
-  };
 };
 
 function emptyVipAnalysis(summary = "No actionable follow-up required."): VipAnalysis {
@@ -1465,75 +1457,40 @@ export const vipEmailReceived = inngest.createFunction(
       step.run("search-memory-recall", async () => {
         const t0 = Date.now();
         const query = `${fromName || from} ${subject}`.trim();
-        const proc = spawnSync("joelclaw", ["recall", query, "--limit", "8", "--json"], {
-          encoding: "utf-8",
-          timeout: MEMORY_RECALL_TIMEOUT_MS,
-          stdio: ["ignore", "pipe", "pipe"],
-          env: { ...process.env, TERM: "dumb" },
-        });
-
-        const durationMs = Date.now() - t0;
-
-        if (proc.status !== 0) {
+        try {
+          const parsed = await runComposedRecallCli({
+            request: createComposedRecallRequest({
+              query,
+              scope: VIP_MEMORY_RECALL_POLICY.scope,
+              access: VIP_MEMORY_RECALL_POLICY.access,
+              limits: { curated: 8, observations: 8, reflections: 8 },
+            }),
+            timeoutMs: MEMORY_RECALL_TIMEOUT_MS,
+          });
+          const lanes = formatRecallLanes(parsed, { maxItemsPerLane: 8 });
+          return {
+            lines: lanes.flatMap((lane) => [
+              `[${lane.name} | ${lane.health} | ${lane.source}]`,
+              ...lane.lines,
+            ]),
+            durationMs: Date.now() - t0,
+            gap: null,
+          };
+        } catch (error) {
+          const code =
+            error && typeof error === "object" && "code" in error && typeof error.code === "string"
+              ? error.code
+              : "VIP_RECALL_FAILED";
           return {
             lines: [] as string[],
-            recalledMemories: [] as Array<{ id: string; observation: string }>,
-            durationMs,
+            durationMs: Date.now() - t0,
             gap: {
               item: "Memory recall",
-              why_missing: (proc.stderr ?? proc.stdout ?? "recall command failed").slice(0, 180),
-              how_to_get_it: "Ensure Typesense is reachable and `joelclaw recall` works in this environment",
+              why_missing: code,
+              how_to_get_it: "Check the composed recall adapter and requested lane health",
             },
           };
         }
-
-        const parsed = (() => {
-          try {
-            return JSON.parse(proc.stdout ?? "{}") as RecallCliEnvelope;
-          } catch {
-            return null;
-          }
-        })();
-
-        if (!parsed || parsed.ok !== true) {
-          const envelopeError = parsed?.error?.message;
-          const detail =
-            typeof envelopeError === "string" && envelopeError.trim().length > 0
-              ? envelopeError.trim()
-              : "recall returned invalid JSON envelope";
-          return {
-            lines: [] as string[],
-            recalledMemories: [] as Array<{ id: string; observation: string }>,
-            durationMs,
-            gap: {
-              item: "Memory recall",
-              why_missing: detail.slice(0, 180),
-              how_to_get_it: "Ensure `joelclaw recall --json` returns ok=true with hit IDs",
-            },
-          };
-        }
-
-        const hits = Array.isArray(parsed.result?.hits) ? parsed.result.hits : [];
-        const recalledMemories = hits
-          .map((hit) => ({
-            id: typeof hit.id === "string" ? hit.id.trim() : "",
-            observation: typeof hit.observation === "string" ? hit.observation.trim() : "",
-          }))
-          .filter((hit) => hit.id.length > 0 && hit.observation.length > 0)
-          .slice(0, 8);
-
-        return {
-          lines: recalledMemories.map((hit) => hit.observation),
-          recalledMemories,
-          durationMs,
-          gap: recalledMemories.length > 0
-            ? null
-            : {
-                item: "Memory recall",
-                why_missing: "Recall returned zero usable memory hits",
-                how_to_get_it: "Check memory corpus population and recall query quality",
-              },
-        };
       }),
       step.run("search-github-projects", async () => {
         const t0 = Date.now();
@@ -1594,7 +1551,6 @@ export const vipEmailReceived = inngest.createFunction(
     const followedLinks = (linkResult.links ?? []) as FollowedLink[];
     const granolaMeetings = (granolaResult.meetings ?? []) as GranolaMeeting[];
     const memoryContext = (memoryResult.lines ?? []) as string[];
-    const recalledMemories = (memoryResult.recalledMemories ?? []) as Array<{ id: string; observation: string }>;
     const githubRepos = (githubResult.repos ?? []) as GitHubRepo[];
 
     const analysisPrompt = buildAnalysisPrompt({
@@ -1780,40 +1736,7 @@ export const vipEmailReceived = inngest.createFunction(
       telegramBriefHtml,
     );
 
-    const echoFizzleResponseText = [
-      `Summary: ${analysis.executive_summary}`,
-      ...analysis.interaction_signals.slice(0, 6).map((signal) => `Signal: ${signal}`),
-      ...createdTodos.created.slice(0, 6).map((todo) => `Todo: ${todo.content}`),
-      ...analysis.questions_for_human.slice(0, 3).map((question) => `Question: ${question}`),
-    ].join("\n").trim();
-
-    const echoFizzleDispatch =
-      recalledMemories.length > 0 && echoFizzleResponseText.length > 0
-        ? await step.sendEvent("emit-memory-echo-fizzle", {
-            name: "memory/echo-fizzle.requested",
-            data: {
-              recalledMemories: recalledMemories.slice(0, 8).map((memory) => ({
-                id: memory.id,
-                observation: memory.observation,
-              })),
-              agentResponse: echoFizzleResponseText,
-            },
-          })
-            .then(() => ({
-              emitted: true,
-              recalledMemories: recalledMemories.length,
-            }))
-            .catch((error) => ({
-              emitted: false,
-              recalledMemories: recalledMemories.length,
-              error: error instanceof Error ? error.message.slice(0, 220) : String(error).slice(0, 220),
-            }))
-        : {
-            emitted: false,
-            recalledMemories: recalledMemories.length,
-            reason: "missing-memory-context-or-response",
-          };
-
+    // Flowing IDs never enter the legacy Typesense echo/fizzle mutation loop.
     const totalDurationMs = Date.now() - startedAt;
 
     return {
@@ -1837,7 +1760,6 @@ export const vipEmailReceived = inngest.createFunction(
       telegramQueued: true,
       timings,
       granolaRangeDurations: granolaResult.rangeDurations,
-      echoFizzleDispatch,
       totalDurationMs,
       budgetMs: TOTAL_BUDGET_MS,
       budgetExceeded: totalDurationMs > TOTAL_BUDGET_MS,

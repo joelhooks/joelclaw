@@ -21,6 +21,7 @@
     "@joelclaw/message-event-log": "workspace:*",
     "@joelclaw/message-journal": "workspace:*",
     "@joelclaw/queue": "workspace:*",
+    "@joelclaw/recall": "workspace:*",
     "@joelclaw/restate": "workspace:*",
     "@joelclaw/sdk": "workspace:*",
     "@joelclaw/system-bus": "workspace:^",

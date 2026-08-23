@@ -1,8 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { Command, Options } from "@effect/cli"
+import { RECALL_LANE_ORDER } from "@joelclaw/recall"
 import { Console, Effect } from "effect"
+import { resolveCapabilitiesConfig } from "../capabilities/config"
 import { Inngest } from "../inngest"
+import { type CriticalFreshness, readFreshness } from "../lib/critical-search"
+import { inspectFlowingRecallPortSettings } from "../recall/flowing-port"
 import { respond } from "../response"
 
 type AgentDispatchCanaryProbe = {
@@ -150,6 +154,82 @@ function readLatestAgentDispatchCanarySummary(
   return parsed.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
 }
 
+export function buildRecallStatus(input: {
+  readonly cwd?: string
+  readonly now?: Date
+  readonly readCuratedFreshness?: (now: Date) => CriticalFreshness
+  readonly resolveFlowingStatus?: () => { readonly ok: boolean; readonly code?: string }
+} = {}) {
+  const config = resolveCapabilitiesConfig({ cwd: input.cwd })
+  const adapter = config.capabilities.recall?.adapter ?? "unconfigured"
+  // Status is a hot path. It checks structural readiness without hashing the
+  // standalone artifact; the request boundary re-verifies the pinned digest.
+  const flowingConfig = input.resolveFlowingStatus?.() ?? inspectFlowingRecallPortSettings(
+    config.capabilities.recall?.adapters?.["flowing-memory-recall"],
+  )
+  const flowing = flowingConfig.ok
+    ? {
+        ok: true,
+        status: "configured",
+        warning: "release digest, credential, and source health are verified at request time",
+      }
+    : {
+        ok: false,
+        status: flowingConfig.code,
+        warning: "flowing recall cannot answer with the current release configuration",
+      }
+  let curated: {
+    ok: boolean
+    available: boolean
+    status: string
+    builtAt?: string
+    warning?: string
+  }
+  try {
+    const freshness = input.readCuratedFreshness?.(input.now ?? new Date())
+      ?? readFreshness(undefined, input.now ?? new Date())
+    curated = {
+      ok: freshness.status === "ok",
+      available: true,
+      status: freshness.status,
+      builtAt: freshness.builtAt,
+      ...(freshness.status === "ok"
+        ? {}
+        : { warning: `curated search is ${freshness.status}; rebuild critical.db as a separate operator action` }),
+    }
+  } catch {
+    curated = {
+      ok: false,
+      available: false,
+      status: "unavailable",
+      warning: "curated search freshness could not be read",
+    }
+  }
+
+  const rollbackActive = adapter === "typesense-recall"
+  return {
+    // Staleness and the dated rollback adapter are degraded warnings, not
+    // global outages. A missing composed lane is hard only on the flowing path.
+    ok: rollbackActive || (adapter === "flowing-memory-recall" && flowing.ok && curated.available),
+    adapter,
+    degraded: rollbackActive,
+    ...(rollbackActive
+      ? { warning: "dated typesense-recall rollback adapter is active; composed recall is disabled" }
+      : {}),
+    requestedLanes: adapter === "flowing-memory-recall"
+      ? [...RECALL_LANE_ORDER]
+      : ["legacy-typesense-recall"],
+    answeringLanes: adapter === "flowing-memory-recall"
+      ? [
+          ...(flowing.ok ? ["flowing-reflections", "flowing-observations"] : []),
+          ...(curated.available ? ["curated-pages"] : []),
+        ]
+      : ["legacy-typesense-recall"],
+    flowing,
+    curated,
+  }
+}
+
 async function runAgentDispatchCanaryProbe(): Promise<AgentDispatchCanaryStatus> {
   const scriptPath = resolveAgentDispatchCanaryScriptPath()
   const startedAt = Date.now()
@@ -243,6 +323,7 @@ export const statusCmd = Command.make(
       const inngestClient = yield* Inngest
       const checks = yield* inngestClient.health()
       const latestAgentDispatchCanary = readLatestAgentDispatchCanarySummary()
+      const recall = buildRecallStatus()
       const canary = agentDispatchCanary
         ? yield* Effect.tryPromise({
             try: () => runAgentDispatchCanaryProbe(),
@@ -256,10 +337,11 @@ export const statusCmd = Command.make(
 
       const result = {
         ...checks,
+        recall,
         latestAgentDispatchCanary,
         agentDispatchCanary: canary,
       }
-      const allOk = Object.values(checks).every((c) => c.ok) && canary.ok
+      const allOk = Object.values(checks).every((c) => c.ok) && canary.ok && recall.ok
 
       const next = []
       if (!checks.server?.ok) {
@@ -267,6 +349,12 @@ export const statusCmd = Command.make(
       }
       if (!checks.worker?.ok) {
         next.push({ command: `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`, description: "Restart worker" })
+      }
+      if (!recall.curated.ok) {
+        next.push({
+          command: "bun scripts/build-critical-search-db.ts",
+          description: "Rebuild stale curated search as a separate reviewed operator action",
+        })
       }
       if (!agentDispatchCanary) {
         next.push({ command: "joelclaw status --agent-dispatch-canary", description: "Run the deterministic non-LLM agent-dispatch timeout canary" })
@@ -331,6 +419,7 @@ export const functionsCmd = Command.make(
 )
 
 export const __statusTestables = {
+  buildRecallStatus,
   readLatestAgentDispatchCanarySummary,
   resolveAgentDispatchCanaryScriptPath,
 }

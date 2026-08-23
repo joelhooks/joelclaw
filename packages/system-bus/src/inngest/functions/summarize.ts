@@ -56,7 +56,15 @@ export const summarize = inngest.createFunction(
     });
 
     const memoryContext = await step.run("prefetch-memory", async () =>
-      prefetchMemoryContext(title, { limit: 5 })
+      prefetchMemoryContext(title, {
+        limit: 5,
+        scope: { project: "joelclaw-fleet", workstream: "default" },
+        access: {
+          principalRef: "service:summarize",
+          purpose: "content-summarization",
+          allowedPrivacy: ["public", "private"],
+        },
+      })
     );
     const promptWithMemory = memoryContext
       ? `${summaryPrompt}\n\nPrevious related memory:\n${memoryContext}`

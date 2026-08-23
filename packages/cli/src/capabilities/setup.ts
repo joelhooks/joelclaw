@@ -15,7 +15,7 @@ export const capabilityRegistry = createCapabilityRegistry()
   .register(clickhouseOtelAdapter)
   .register(typesenseOtelAdapter)
   .register(typesenseRecallAdapter)
-  // Registered, never default. `DEFAULT_CAPABILITY_CONFIG.recall.adapter` stays `typesense-recall`.
+  // Production default. `typesense-recall` remains registered for the dated rollback window.
   .register(flowingMemoryRecallAdapter)
   .register(mcpAgentMailAdapter)
   .register(redisSubscriptionsAdapter)

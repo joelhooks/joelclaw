@@ -76,8 +76,21 @@ export interface OtelEmitInput {
 
 export type RecallBudget = "auto" | "lean" | "balanced" | "deep"
 
+export type RecallPrivacyTier = "public" | "private" | "sensitive"
+
 export interface RecallQueryOptions {
+  readonly project: string
+  readonly workstream: string
+  readonly principalRef: string
+  readonly purpose: string
+  readonly allowedPrivacy: readonly RecallPrivacyTier[]
+  readonly includeSuperseded?: boolean
+  readonly reflectionLimit?: number
+  readonly observationLimit?: number
+  readonly curatedLimit?: number
+  /** One-release shorthand applied independently to each lane. */
   readonly limit?: number
+  /** Provider-era compatibility fields are accepted but ignored. */
   readonly minScore?: number
   readonly includeHold?: boolean
   readonly includeDiscard?: boolean

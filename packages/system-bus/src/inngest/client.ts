@@ -2069,6 +2069,7 @@ export type Events = {
         observation: string;
       }>;
       agentResponse: string;
+      sourceAdapter: "typesense-recall";
     };
   };
   "memory/maintenance.weekly.requested": {

@@ -1,3 +1,8 @@
+import {
+  createComposedRecallRequest,
+  formatRecallLanes,
+  runComposedRecallCli,
+} from "@joelclaw/recall";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import type { ChatInputCommandInteraction, MessageCreateOptions } from "discord.js";
 import type Redis from "ioredis";
@@ -5,9 +10,14 @@ import type { EnqueueFn } from "../../channels/redis";
 import { compactSession, newSession, reloadSession } from "../../command-queue";
 import { ALLOWED_MODELS, ALLOWED_THINKING_LEVELS, loadGatewayConfig, saveGatewayConfig } from "../../commands/config";
 import { injectChannelContext } from "../../formatting";
+import { DISCORD_PUBLIC_RECALL_POLICY } from "../../recall-enrichment";
 import { renderApprovalCard } from "../components/approval-card";
 import { renderRunCard } from "../components/run-card";
-import { renderSearchResultCard, type SearchResultItem } from "../components/search-result-card";
+import {
+  renderRecallResultCard,
+  renderSearchResultCard,
+  type SearchResultItem,
+} from "../components/search-result-card";
 import { renderSessionCard } from "../components/session-card";
 import { renderStatusContainer } from "../components/status-container";
 import { stripAnsi } from "../helpers/format";
@@ -193,17 +203,40 @@ export async function handleDiscordSlashCommand(
     });
   }
 
-  if (name === "search" || name === "recall") {
+  if (name === "recall") {
     const query = interaction.options.getString("query", true).trim();
-    const command = name === "recall" ? "recall" : "search";
-    const result = await runJoelclawCommand([command, query]);
+    try {
+      const parsed = await runComposedRecallCli({
+        request: createComposedRecallRequest({
+          query,
+          scope: DISCORD_PUBLIC_RECALL_POLICY.scope,
+          access: DISCORD_PUBLIC_RECALL_POLICY.access,
+          limits: { curated: 6, observations: 6, reflections: 6 },
+        }),
+      });
+      return renderRecallResultCard({
+        query,
+        lanes: formatRecallLanes(parsed, { maxItemsPerLane: 2 }),
+      });
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error && typeof error.code === "string"
+          ? error.code
+          : "RECALL_FAILED";
+      return failedCommandCard("Recall", { exitCode: 1, stdout: "", stderr: code });
+    }
+  }
+
+  if (name === "search") {
+    const query = interaction.options.getString("query", true).trim();
+    const result = await runJoelclawCommand(["search", query]);
     if (result.exitCode !== 0) {
-      return failedCommandCard(`${command} ${query}`, result);
+      return failedCommandCard("Search", result);
     }
 
     return renderSearchResultCard({
       query,
-      source: name === "recall" ? "recall" : "search",
+      source: "search",
       results: parseSearchResults(result.stdout),
     });
   }

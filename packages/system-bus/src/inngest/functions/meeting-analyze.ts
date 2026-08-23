@@ -18,10 +18,10 @@ import { spawnSync } from "node:child_process";
 import Redis from "ioredis";
 import { cacheWrap } from "../../lib/cache";
 import { infer } from "../../lib/inference";
+import type { KnowledgeDoc } from "../../lib/typesense";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
-import type { KnowledgeDoc } from "../../lib/typesense";
 
 const REDIS_KEY_PROCESSED = "granola:processed";
 const REDIS_TTL_DAYS = 90;
@@ -461,7 +461,15 @@ export const meetingAnalyze = inngest.createFunction(
           .join(", ")
         : "";
       const query = [meetingTitle, participants].filter(Boolean).join(" ");
-      return prefetchMemoryContext(query, { limit: 5 });
+      return prefetchMemoryContext(query, {
+        limit: 5,
+        scope: { project: "joelclaw-fleet", workstream: "default" },
+        access: {
+          principalRef: "service:meeting-analyze",
+          purpose: "meeting-analysis",
+          allowedPrivacy: ["public", "private"],
+        },
+      });
     });
 
     // Step 4: LLM analysis

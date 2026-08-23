@@ -26,6 +26,7 @@
     "@joelclaw/message-event-log": "workspace:*",
     "@joelclaw/message-journal": "workspace:*",
     "@joelclaw/queue": "workspace:*",
+    "@joelclaw/recall": "workspace:*",
     "@joelclaw/telemetry": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/core": "^2.5.1",

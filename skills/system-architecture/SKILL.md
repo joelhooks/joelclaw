@@ -19,7 +19,7 @@ This skill is the **single source of truth** for joelclaw system wiring.
 
 Freshness notes:
 
-- **2026-07-17 memory retirement:** `memory_observations` and the system-log JSONL/`slog` path are retired. `joelclaw recall` now queries disposable Brain/observation projections. Chorus/Rhizomatic is parked with no briefing injection or live claims; service stop still needs steering sudo. Claude auto-memory is a pointer index, not a content store.
+- **2026-08-23 recall cutover:** `memory_observations` and the system-log JSONL/`slog` path are retired. Production `joelclaw recall` composes lane-separated flowing reflections, flowing observations, and curated Brain pages. Every request has explicit scope and access. Chorus/Rhizomatic is parked with no briefing injection or live claims; service stop still needs steering sudo. Claude auto-memory is a pointer index, not a content store.
 - **2026-07-10 topology:** the old Panda-centric mental model is migration debt. Current responsibility lanes:
 
 - **Central**: Flagg/Mac Studio. It is authoritative for agent-mail and Run capture ingress; verify each remaining service family during migration.
@@ -447,6 +447,36 @@ From index comments + function lists:
 8. If raw blobs exist but SQLite is stale, recover Inngest/worker registration first, then backfill with `scripts/backfill-session-index.ts`. Do not replay thousands of `memory/run.captured` events casually.
 9. The public Vercel app is not a Run ingress or search surface. Its `POST /api/runs` and `POST /api/runs/search` routes return `410`. Machine hooks must use the Central system-bus endpoint, and operators must use `joelclaw sessions search`.
 
+## Recall flow: scoped request → CLI composition root → lane-preserving result
+
+1. Interactive callers run in a trusted GitHub checkout or pass both `--project`
+   and `--workstream`. Automatic callers send one exact
+   `ComposedRecallRequestV1` through `joelclaw recall --request-file -` on
+   private stdin.
+2. Every request names principal, purpose, allowed privacy tiers, supersession
+   policy, and independent limits for reflections, observations, and curated
+   pages. The deprecated `--limit` flag is ignored.
+3. The CLI reads the pinned flowing-memory artifact and curated `critical.db`
+   projection, then returns three separate lanes: `flowing-reflections`,
+   `flowing-observations`, and `curated-pages`. Never merge their scores.
+4. Unavailable lanes return typed envelopes and exit 3. The gateway shows a
+   generic unavailable marker. Optional Inngest enrichment records redacted
+   telemetry and returns no context. Restate returns a generic degraded marker.
+5. Use `joelclaw sessions search "<query>" --source both --extract` for exact
+   Run/session wording, commands, and transcript evidence. Composed recall is a
+   broad memory surface, not raw transcript search.
+6. `typesense-recall` is config-selected rollback only. Status reports it as a
+   visible degraded warning without turning global health red.
+
+**Accepted cluster decision (2026-08-23):** automatic recall inside the
+system-bus and Restate cluster images is intentionally disabled/degraded after
+retiring old observation recall. `packages/recall` is present for module
+resolution, but the images do not receive a local semantic store or compiled
+`joelclaw` recall binary. Callers must take their explicit optional-enrichment
+degrade path. This is not a hidden deployment dependency. Re-enable cluster
+recall only after a separately reviewed secure remote flowing-read substrate
+exists.
+
 ## Queue flow: `joelclaw queue emit` → Restate drainer → durable dispatch
 
 1. CLI `joelclaw queue emit <event>` persists a `QueueEventEnvelope` into Redis stream `joelclaw:queue:events` and indexes it in sorted set `joelclaw:queue:priority`.
@@ -562,7 +592,7 @@ From index comments + function lists:
 
 From current runtime code:
 
-- `observations` and `brain_graph_nodes` collections (disposable projections for Brain-backed recall; rebuildable from canonical Brain/observation sources)
+- The old `observations` and `brain_graph_nodes` recall collections are not production recall sources. `typesense-recall` remains registered only as the dated, visible degraded rollback adapter.
 - `machines_dev` as the enrollment/migration mirror for the local capture-auth registry
 - Flagg operational node: `/Users/Shared/joelclaw/data/typesense` on `127.0.0.1:8108`, owned by the system LaunchDaemon.
 - Flagg book node: `~/.joelclaw/typesense-books/data` on `127.0.0.1:8110`, owned by the user LaunchAgent.
@@ -729,8 +759,8 @@ Primary command tree root: `packages/cli/src/cli.ts`.
 | `docs *`                                      | docs-api REST API (`/search`, `/docs/*`, `/chunks/*`, `/concepts*`)                                   |
 | `restate cron *`                              | Dkron REST API via direct `--base-url` or short-lived `kubectl port-forward` to `svc/dkron-svc`       |
 | `otel *`                                      | ClickHouse OTEL store via capability adapter                                                          |
-| `recall *`                                    | disposable Typesense `observations` + `brain_graph_nodes` projections; Brain `.svx` remains canonical |
-| `sessions *`                                  | Central SQLite `sessions.db` / raw Pi session JSONL fallback                                          |
+| `recall *`                                    | CLI composition root: flowing reflections + flowing observations + curated `critical.db` pages; exact scope/access required |
+| `sessions *`                                  | Exact evidence drill-down through Central SQLite `sessions.db` / raw Pi session JSONL fallback         |
 | `satellite *`                                 | thin-Machine local probes + optional Central gateway repair request over SSH                          |
 | `mail *`                                      | Agent-mail MCP HTTP (`127.0.0.1:8765`) via CLI adapter wrappers                                       |
 | `inngest *`                                   | worker launchd + Talon + k8s + Typesense diagnostics                                                  |

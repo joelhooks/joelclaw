@@ -18,6 +18,7 @@
   "dependencies": {
     "@joelclaw-memory/domain": "link:../../../joelclaw-memory/packages/domain",
     "@joelclaw-memory/postgres": "link:../../../joelclaw-memory/packages/postgres",
+    "@joelclaw/recall": "workspace:*",
     "effect": "4.0.0-rc.110",
     "tsx": "4.20.6"
   },

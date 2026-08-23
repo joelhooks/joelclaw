@@ -29,17 +29,43 @@ Phrases that indicate a recall is needed (case-insensitive):
 
 Search these sources **in parallel** where possible, with timeouts on each:
 
-### 1. Brain-backed recall (fastest broad cut)
-```bash
-joelclaw recall "<keywords>" --limit 10
-```
-`joelclaw recall` queries disposable `observations` and `brain_graph_nodes` projections. Brain `.svx` is canonical; the retired `memory_observations` collection is not a source.
+### 1. Composed recall (fastest broad cut)
 
-### 2. Session transcripts
+```bash
+joelclaw recall "<keywords>" \
+  --project joelhooks.joelclaw \
+  --workstream main \
+  --allowed-privacy public,private \
+  --reflection-limit 10 \
+  --observation-limit 10 \
+  --curated-limit 10
+```
+
+Inside a trusted GitHub checkout, interactive recall can resolve project and
+workstream from the repository. Outside one, pass both explicitly. Automatic
+callers must send one `ComposedRecallRequestV1` over private stdin with an exact
+scope, principal, purpose, privacy grant, and lane-local limits.
+
+The production result preserves three independent lanes:
+
+- `flowing-reflections`
+- `flowing-observations`
+- `curated-pages`
+
+Do not merge their scores or ranks. Brain `.svx` and accepted flowing-memory
+records remain canonical; curated search is rebuildable. The retired
+`memory_observations`, `observations`, and `brain_graph_nodes` recall paths are
+not production sources. `--limit` is deprecated and ignored.
+
+### 2. Session transcript drill-down
+
 ```bash
 joelclaw sessions search "<keywords>" --source both --limit 10 --extract
 ```
-Use raw local/SSH fallback when the derived Typesense session index is stale.
+
+Use `sessions search` when recall points to a Run/session, when exact wording or
+commands matter, or when the composed lanes are unavailable. Use raw local/SSH
+fallback when the derived SQLite session index is stale.
 
 ### 3. Brain notes
 ```bash

@@ -32,8 +32,9 @@ and `.brain/projects/memory-system-repair/` (fixes + open decisions).
 > the retired stack — `memory_observations`, write gates, and reflect/promote
 > into `MEMORY.md`. That collection was archived to NAS and dropped; its
 > functions and MEM/FRIC suites were deleted. `joelclaw recall` kept its
-> command name but now reads disposable Brain/observation projections. Do NOT
-> follow old copies of this skill or write `memory/observation.submitted` events.
+> command name but now composes flowing reflections, flowing observations, and
+> curated Brain pages. Do NOT follow old copies of this skill or write
+> `memory/observation.submitted` events.
 
 ## Where everything lives
 
@@ -124,11 +125,14 @@ must not be recreated.
 - **Teach the curator**: react to its DMs. The taste bench (2026-07-17)
   proved one grade changes nothing measurable; ~20–30 graded sends with
   both polarities is the dataset that could. Every 👍/👎 counts.
-- **Query**: use Brain-backed `joelclaw recall` for broad retrieval,
-  `joelclaw sessions search` for captured session history, and
-  `joelclaw docs search` for books. Recall's Typesense collections are
-  disposable projections; read the source Brain `.svx` before making a
-  durable claim.
+- **Query**: use composed `joelclaw recall` for broad retrieval. It keeps
+  `flowing-reflections`, `flowing-observations`, and `curated-pages` separate;
+  never compare scores across lanes. Interactive use must run in a trusted
+  GitHub checkout or pass `--project` and `--workstream`; automatic callers must
+  also name principal, purpose, and allowed privacy through private stdin. Use
+  `joelclaw sessions search <query> --source both --extract` to drill into exact
+  captured session evidence, and `joelclaw docs search` for books. Read the
+  canonical Brain `.svx` or accepted flowing record before a durable claim.
 
 ## Retired and parked surfaces (don't build on these)
 

@@ -15,6 +15,7 @@ import {
   buildMemorySearchQueryPayload,
   DEFAULT_FLOWING_TIMEOUT_MS,
   FLOWING_READ_ARGS,
+  inspectFlowingRecallPortSettings,
   PRIVATE_LEGACY_LIMIT,
   readFlowingRecall,
   resolveFlowingRecallPortConfig,
@@ -88,6 +89,16 @@ const sha256Of = (path: string) =>
   createHash("sha256").update(readFileSync(path)).digest("hex");
 
 describe("resolveFlowingRecallPortConfig", () => {
+  test("status inspection checks structure without hashing an artifact", () => {
+    expect(
+      inspectFlowingRecallPortSettings({
+        read_executable: "/not-read-or-hashed/by-status",
+        credential_secret_name: "flowing-runtime-url",
+        credential_format: "raw",
+      }),
+    ).toEqual({ ok: true })
+  })
+
   test("is safe when nothing is configured", () => {
     const outcome = resolveFlowingRecallPortConfig({ settings: undefined });
     expect(outcome.ok).toBe(false);
@@ -263,7 +274,10 @@ describe("the exit-code and envelope pairing", () => {
     const outcome = await port.run();
     const lane = outcome.lanes["flowing-reflections"];
     expect(lane._tag).toBe("RecallLaneUnavailableV1");
-    if (lane._tag === "RecallLaneUnavailableV1") expect(lane.code).toBe("store-unavailable");
+    if (lane._tag === "RecallLaneUnavailableV1") {
+      expect(lane.code).toBe("store-unavailable");
+      expect(lane.message).toBe("flowing recall source unavailable: store-unavailable");
+    }
   });
 
   test("exit 0 with an unavailable envelope is a contract violation", async () => {
@@ -555,16 +569,35 @@ describe("failure modes", () => {
     expect(lane.code).toBe("credential-unavailable");
   });
 
-  test("the leased secret never appears in a lane message", async () => {
+  test("child diagnostics never appear in a lane message", async () => {
+    const query = testRequest().text;
     const port = harness({
       exitCode: 1,
-      process: { stderr: `connection to ${TEST_SECRET} refused` },
+      process: { stderr: `connection to ${TEST_SECRET} refused while reading ${query}` },
     });
     const outcome = await port.run();
     const lane = outcome.lanes["flowing-reflections"];
     if (lane._tag !== "RecallLaneUnavailableV1") throw new Error("expected unavailable");
+    expect(lane.message).toBe("flowing recall read exited 1");
     expect(lane.message).not.toContain(TEST_SECRET);
-    expect(lane.message).toContain("[redacted]");
+    expect(lane.message).not.toContain(query);
+  });
+
+  test("thrown process errors never echo the query", async () => {
+    const query = testRequest().text;
+    const outcome = await readFlowingRecall({
+      request: testRequest(),
+      config: TEST_FLOWING_CONFIG,
+      parentEnv: {},
+      leaseCredential: async () => ({ ok: true, value: TEST_SECRET }),
+      runProcess: async () => {
+        throw new Error(`failed to process ${query}`);
+      },
+    });
+    const lane = outcome.lanes["flowing-reflections"];
+    if (lane._tag !== "RecallLaneUnavailableV1") throw new Error("expected unavailable");
+    expect(lane.message).toBe("flowing recall read process failed");
+    expect(lane.message).not.toContain(query);
   });
 
   test("an unscoped request is refused without touching the boundary", async () => {

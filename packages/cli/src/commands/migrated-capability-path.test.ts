@@ -5,7 +5,7 @@ import { validateJoelclawEnvelope } from "../response"
 
 const CLI_ENTRY = resolve(process.cwd(), "packages/cli/src/cli.ts")
 
-function runCli(commandArgs: string[], env: Record<string, string>): unknown {
+function runCli(commandArgs: string[], env: Record<string, string>, expectedExit = 0): unknown {
   const proc = spawnSync("bun", ["run", CLI_ENTRY, ...commandArgs], {
     cwd: resolve(process.cwd()),
     env: {
@@ -15,7 +15,7 @@ function runCli(commandArgs: string[], env: Record<string, string>): unknown {
     encoding: "utf8",
   })
 
-  expect(proc.status).toBe(0)
+  expect(proc.status).toBe(expectedExit)
   expect(proc.stderr.trim()).toBe("")
 
   const output = proc.stdout.trim()
@@ -52,9 +52,13 @@ describe("phase-4 command capability routing", () => {
   })
 
   test("recall routes through capability disable gate and keeps envelope", () => {
-    const envelope = runCli(["recall", "capability route check"], {
-      JOELCLAW_CAPABILITY_RECALL_ENABLED: "off",
-    }) as Record<string, any>
+    const envelope = runCli(
+      ["recall", "capability route check"],
+      {
+        JOELCLAW_CAPABILITY_RECALL_ENABLED: "off",
+      },
+      1,
+    ) as Record<string, any>
 
     const validation = validateJoelclawEnvelope(envelope)
     expect(validation.valid).toBe(true)

@@ -189,7 +189,7 @@ const root = Command.make("joelclaw", {}, () =>
               "joelclaw approvals {list|approve|deny|categories|history|reset}",
             call: "joelclaw call <message> [--to <phone>]",
             recall:
-              "joelclaw recall <query> [--limit N] [--min-score F] [--raw]",
+              "joelclaw recall <query> [--project P --workstream W] [--limit N] | joelclaw recall --request-file -",
             memory:
               "joelclaw memory {write <text> [--category ops|rules|arch|projects|prefs|people|memory] [--tags a,b]|search <query>|recent}",
             retro: "joelclaw retro <brief-path> [--session-id <id>] [--repo <path>]",

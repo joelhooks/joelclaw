@@ -7,7 +7,6 @@ import { mcpAgentMailAdapter } from "./adapters/mcp-agent-mail"
 import { redisSubscriptionsAdapter } from "./adapters/redis-subscriptions"
 import { secretsCliAdapter } from "./adapters/secrets-cli"
 import { typesenseOtelAdapter } from "./adapters/typesense-otel"
-import { typesenseRecallAdapter } from "./adapters/typesense-recall"
 import { type CapabilityContext, type CapabilityError, capabilityError } from "./contract"
 
 function resolveOtelAdapter() {
@@ -22,7 +21,6 @@ const capabilityRegistry = {
   mail: mcpAgentMailAdapter,
   notify: gatewayRedisNotifyAdapter,
   otel: resolveOtelAdapter(),
-  recall: typesenseRecallAdapter,
   secrets: secretsCliAdapter,
   subscribe: redisSubscriptionsAdapter,
 } as const
@@ -90,7 +88,9 @@ export async function executeSdkCapabilityCommand<TResult = unknown>(
   }
 
   const result = await Effect.runPromise(
-    adapter.execute(subcommand as never, options.args as never, buildRuntimeContext(options.cwd)).pipe(Effect.either),
+    adapter
+      .execute(subcommand as never, options.args as never, buildRuntimeContext(options.cwd))
+      .pipe(Effect.either),
   )
 
   if (result._tag === "Left") {

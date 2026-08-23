@@ -1,4 +1,5 @@
 import { Args, Command, Options } from "@effect/cli"
+import { createComposedRecallRequest, runComposedRecallCli } from "@joelclaw/recall"
 import { Console, Effect } from "effect"
 import { loadConfig } from "../config"
 import { Inngest } from "../inngest"
@@ -875,15 +876,47 @@ async function memorySearchProbe(apiKey: string, query: string): Promise<{ found
   }
 }
 
-function runRecallProbe(query: string): {
+async function runRecallProbe(query: string): Promise<{
   command: string[]
   exitCode: number
   stdout: string
   stderr: string
   ok: boolean
   parsed?: Record<string, unknown>
-} {
-  return runJoelclawJsonCommand(["recall", query, "--limit", "3", "--json"])
+}> {
+  try {
+    const recall = await runComposedRecallCli({
+      request: createComposedRecallRequest({
+        query,
+        scope: { project: "joelhooks.joelclaw", workstream: "main" },
+        access: {
+          principalRef: "service:memory-e2e",
+          purpose: "memory-e2e-probe",
+          allowedPrivacy: ["public", "private"],
+        },
+        limits: { curated: 3, observations: 3, reflections: 3 },
+      }),
+    })
+    return {
+      command: ["joelclaw", "recall", "--request-file", "-"],
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      ok: true,
+      parsed: recall.envelope,
+    }
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error && typeof error.code === "string"
+      ? error.code
+      : "RECALL_PROBE_FAILED"
+    return {
+      command: ["joelclaw", "recall", "--request-file", "-"],
+      exitCode: 1,
+      stdout: "",
+      stderr: code,
+      ok: false,
+    }
+  }
 }
 
 function executeJsonCommand(
@@ -3678,7 +3711,7 @@ const inngestMemoryE2ECmd = Command.make(
       const searchProbe = yield* Effect.tryPromise(() => memorySearchProbe(apiKey, probeId))
       const searchProbeOk = searchProbe.hitCount > 0
 
-      const recall = runRecallProbe(probeId)
+      const recall = yield* Effect.promise(() => runRecallProbe(probeId))
       const recallOk = recall.ok
 
       const ok = eventAccepted && observeRunCompleted && typesenseChanged && searchProbeOk && recallOk
@@ -3725,7 +3758,10 @@ const inngestMemoryE2ECmd = Command.make(
           },
         }, [
           { command: "joelclaw inngest memory-e2e", description: "Re-run memory Typesense E2E probe" },
-          { command: "joelclaw recall <query> --json", description: "Run recall directly with JSON output" },
+          {
+            command: "joelclaw recall <query>",
+            description: "Run composed recall with lane-local output",
+          },
           { command: "joelclaw status", description: "Check worker and service health" },
         ], ok))
       } catch (error) {

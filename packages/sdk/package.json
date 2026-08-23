@@ -12,6 +12,7 @@
     "@joelclaw/inference-router": "workspace:*",
     "@joelclaw/message-event-log": "workspace:*",
     "@joelclaw/queue": "workspace:*",
+    "@joelclaw/recall": "workspace:*",
     "@joelclaw/telemetry": "workspace:*",
     "effect": "^3.19.17",
     "ioredis": "^5.9.3"

@@ -11,6 +11,7 @@ import * as typesense from "../lib/typesense";
 import { emitOtelEvent } from "../observability/emit";
 
 const OBSERVATIONS_COLLECTION = "memory_observations";
+const LEGACY_RECALL_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,255}$/iu;
 
 export const ECHO_BOOST = 0.1;
 export const FIZZLE_PENALTY = -0.05;
@@ -18,6 +19,15 @@ export const FIZZLE_PENALTY = -0.05;
 interface RecalledMemory {
   id: string;
   observation: string;
+}
+
+type EchoFizzlePorts = {
+  readonly search: typeof typesense.search;
+  readonly bulkImport: typeof typesense.bulkImport;
+}
+
+export function isLegacyRecallId(value: unknown): value is string {
+  return typeof value === "string" && LEGACY_RECALL_ID_PATTERN.test(value);
 }
 
 function asFiniteNumber(value: unknown, fallback = 0): number {
@@ -66,16 +76,20 @@ export function wasMemoryReferenced(observation: string, agentResponse: string):
  */
 export async function trackEchoFizzle(
   recalledMemories: RecalledMemory[],
-  agentResponse: string
+  agentResponse: string,
+  sourceAdapter: string,
+  ports: EchoFizzlePorts = { search: typesense.search, bulkImport: typesense.bulkImport }
 ): Promise<{ echoes: number; fizzles: number }> {
   let echoes = 0;
   let fizzles = 0;
+  if (sourceAdapter !== "typesense-recall") return { echoes, fizzles };
 
   for (const memory of recalledMemories) {
+    if (!isLegacyRecallId(memory.id)) continue;
     const isEcho = wasMemoryReferenced(memory.observation, agentResponse);
     const boost = isEcho ? ECHO_BOOST : FIZZLE_PENALTY;
 
-    const response = await typesense.search({
+    const response = await ports.search({
       collection: OBSERVATIONS_COLLECTION,
       q: "*",
       query_by: "observation",
@@ -86,10 +100,13 @@ export async function trackEchoFizzle(
 
     const hit = Array.isArray(response.hits) ? response.hits[0] : undefined;
     const doc = (hit?.document ?? {}) as Record<string, unknown>;
+    // This mutation loop is rollback-only. Never upsert an ID that was not
+    // already present in the legacy Typesense collection.
+    if (doc.id !== memory.id) continue;
     const currentPriority = asFiniteNumber(doc.retrieval_priority, 0);
     const currentRecallCount = asFiniteNumber(doc.recall_count, 0);
 
-    await typesense.bulkImport(
+    await ports.bulkImport(
       OBSERVATIONS_COLLECTION,
       [
         {
@@ -153,7 +170,11 @@ export const echoFizzle = inngest.createFunction(
 
     let result;
     try {
-      result = await trackEchoFizzle(recalledMemories, agentResponse);
+      result = await trackEchoFizzle(
+        recalledMemories,
+        agentResponse,
+        event.data.sourceAdapter
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await emitOtelEvent({

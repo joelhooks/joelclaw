@@ -537,7 +537,15 @@ export const o11yTriage = inngest.createFunction(
         .slice(0, 8)
         .map((item) => [item.component, item.action, item.error ?? ""].filter(Boolean).join(" "))
         .join(" | ");
-      const memory = await prefetchMemoryContext(query, { limit: 5 });
+      const memory = await prefetchMemoryContext(query, {
+        limit: 5,
+        scope: { project: "joelhooks.joelclaw", workstream: "main" },
+        access: {
+          principalRef: "service:o11y-triage",
+          purpose: "o11y-incident-triage",
+          allowedPrivacy: ["public", "private"],
+        },
+      });
       if (!memory) return "";
       return `Previous fixes for similar issues:\n${memory}`;
     });

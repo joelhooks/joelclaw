@@ -197,6 +197,22 @@ export interface ResolveFlowingRecallPortConfigInput {
   readonly expectedArtifactSha256?: string;
 }
 
+export function inspectFlowingRecallPortSettings(
+  settings: Record<string, unknown> | undefined,
+): { readonly ok: true } | { readonly ok: false; readonly code: "not-configured" } {
+  const readExecutable = asString(settings?.read_executable)
+  const credentialSecretName = asString(settings?.credential_secret_name)
+  const credentialFormat = asString(settings?.credential_format).toLowerCase()
+  if (
+    !readExecutable ||
+    !credentialSecretName ||
+    (credentialFormat && credentialFormat !== "raw" && credentialFormat !== "json")
+  ) {
+    return { ok: false, code: "not-configured" }
+  }
+  return { ok: true }
+}
+
 /**
  * Reads adapter settings. Everything is configurable and everything is safe when
  * absent: an unconfigured port reports `not-configured` instead of guessing a
@@ -565,7 +581,10 @@ export async function readFlowingRecall(
     timeoutMs: Math.min(input.config.timeoutMs, 15_000),
   });
   if (!lease.ok) {
-    return finish(allFlowingLanesUnavailable("credential-unavailable", lease.message));
+    return finish(allFlowingLanesUnavailable(
+      "credential-unavailable",
+      "flowing recall credential lease failed",
+    ));
   }
 
   const secret = lease.value;
@@ -576,7 +595,10 @@ export async function readFlowingRecall(
   // this point may run if the release moved during the lease.
   const afterLease = reverifyReleaseBinding(input.config.release);
   if (!afterLease.ok) {
-    return finish(allFlowingLanesUnavailable("untrusted-executable", afterLease.message));
+    return finish(allFlowingLanesUnavailable(
+      "untrusted-executable",
+      "flowing recall release changed after verification",
+    ));
   }
 
   const env = minimalChildEnv(input.parentEnv ?? process.env, {
@@ -591,12 +613,13 @@ export async function readFlowingRecall(
       env,
       timeoutMs: input.config.timeoutMs,
     });
-  } catch (error) {
-    const message = redactSecret(error instanceof Error ? error.message : String(error), secret);
-    return finish(allFlowingLanesUnavailable("process-failed", message));
+  } catch {
+    return finish(allFlowingLanesUnavailable(
+      "process-failed",
+      "flowing recall read process failed",
+    ));
   }
 
-  const stderr = redactSecret(proc.stderr, secret);
   const stdout = redactSecret(proc.stdout, secret);
 
   if (proc.timedOut) {
@@ -621,14 +644,17 @@ export async function readFlowingRecall(
     return finish(
       allFlowingLanesUnavailable(
         "process-failed",
-        `flowing recall read exited ${proc.exitCode}: ${stderr || "no diagnostic output"}`,
+        `flowing recall read exited ${proc.exitCode}`,
       ),
     );
   }
 
   const decoded = decodeFlowingEnvelope(stdout);
   if (!decoded.ok) {
-    return finish(allFlowingLanesUnavailable(decoded.code, decoded.message));
+    return finish(allFlowingLanesUnavailable(
+      decoded.code,
+      `flowing recall response failed ${decoded.code}`,
+    ));
   }
 
   // The source assigns exit 3 to every unavailable envelope and exit 0 to every
@@ -645,7 +671,7 @@ export async function readFlowingRecall(
     return finish(
       allFlowingLanesUnavailable(
         decoded.envelope.code,
-        redactSecret(decoded.envelope.message, secret),
+        `flowing recall source unavailable: ${decoded.envelope.code}`,
       ),
     );
   }

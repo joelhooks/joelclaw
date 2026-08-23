@@ -16,6 +16,11 @@ beforeAll(async () => {
     stderr: "pipe",
   })
   expect(await build.exited).toBe(0)
+  mkdirSync(join(root, ".joelclaw"), { recursive: true })
+  writeFileSync(
+    join(root, ".joelclaw", "config.toml"),
+    '[capabilities.recall]\nadapter = "typesense-recall"\n',
+  )
   server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -97,7 +102,7 @@ afterAll(() => {
 
 function run(args: string[], env: Record<string, string | undefined>) {
   const child = Bun.spawn([binary, ...args], {
-    cwd: process.cwd(),
+    cwd: root,
     env: {
       ...process.env,
       TYPESENSE_URL: `http://127.0.0.1:${server.port}`,
@@ -128,7 +133,16 @@ describe("compiled critical-search fallback", () => {
         chmodSync(dbPath, 0o000)
       }
       if (fixture === "schema-mismatch") schemaMismatchDb(dbPath)
-      const [exit, stdout, stderr] = await run(["recall", "fallback result", "--limit", "1"], {
+      const [exit, stdout, stderr] = await run([
+        "recall",
+        "fallback result",
+        "--project",
+        "joelhooks.joelclaw",
+        "--workstream",
+        "main",
+        "--limit",
+        "1",
+      ], {
         JOELCLAW_CRITICAL_DB: dbPath,
       })
       expect(exit, stderr).toBe(0)
@@ -138,7 +152,16 @@ describe("compiled critical-search fallback", () => {
   }
 
   test("compiled recall surfaces the answering replica", async () => {
-    const [exit, stdout, stderr] = await run(["recall", "critical replica", "--limit", "1"], {
+    const [exit, stdout, stderr] = await run([
+      "recall",
+      "critical replica",
+      "--project",
+      "joelhooks.joelclaw",
+      "--workstream",
+      "main",
+      "--limit",
+      "1",
+    ], {
       JOELCLAW_CRITICAL_DB: join(root, "missing-replica-recall.db"),
       JOELCLAW_CRITICAL_SEARCH_REPLICAS: `nas-a=http://127.0.0.1:${server.port}`,
       JOELCLAW_CRITICAL_SEARCH_TOKEN: "replica-test-token",

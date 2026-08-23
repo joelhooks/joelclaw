@@ -90,10 +90,16 @@ function researchPipeline(researchTopic: string): DagNodeInput[] {
     },
     {
       id: "memory-recall",
-      task: `search agent memory for: ${researchTopic}`,
-      handler: "shell",
+      task: "search optional agent memory",
+      handler: "recall",
       config: {
-        command: `joelclaw recall "${researchTopic.replace(/"/g, '\\"').slice(0, 80)}" 2>/dev/null | head -40 || echo "recall unavailable"`,
+        query: researchTopic.slice(0, 1_000),
+        scope: { project: "joelclaw-fleet", workstream: "default" },
+        access: {
+          principalRef: "service:restate-research",
+          purpose: "research-pipeline",
+          allowedPrivacy: ["public", "private"],
+        },
       },
     },
     {
@@ -195,10 +201,16 @@ function enrichContactPipeline(
 
   nodes.push({
     id: "memory-recall",
-    task: `search agent memory for ${name}`,
-    handler: "shell",
+    task: "search optional agent memory for contact enrichment",
+    handler: "recall",
     config: {
-      command: `joelclaw recall '${safe}' 2>/dev/null | head -80 || echo 'recall unavailable'`,
+      query: name.slice(0, 1_000),
+      scope: { project: "joelclaw-fleet", workstream: "default" },
+      access: {
+        principalRef: "service:restate-contact-enrichment",
+        purpose: "contact-enrichment",
+        allowedPrivacy: ["public", "private"],
+      },
     },
   });
 

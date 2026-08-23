@@ -1,8 +1,8 @@
 {
   "name": "@joelclaw/gateway",
   "version": "0.1.0",
-  "type": "module",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "bun --watch src/daemon.ts",
     "start": "bun run src/daemon.ts",
@@ -23,6 +23,7 @@
     "@joelclaw/message-journal": "workspace:*",
     "@joelclaw/message-store": "workspace:*",
     "@joelclaw/model-fallback": "workspace:*",
+    "@joelclaw/recall": "workspace:*",
     "@joelclaw/telemetry": "workspace:*",
     "@joelclaw/vault-reader": "workspace:*",
     "@mariozechner/pi-ai": "0.70.2",

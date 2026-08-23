@@ -30,7 +30,7 @@ export interface CapabilityConfigResolveOptions {
 
 export const DEFAULT_CAPABILITY_CONFIG: Record<string, Omit<ResolvedCapabilityConfig, "source">> = {
   otel: { enabled: true, adapter: "clickhouse-otel", adapters: {} },
-  recall: { enabled: true, adapter: "typesense-recall", adapters: {} },
+  recall: { enabled: true, adapter: "flowing-memory-recall", adapters: {} },
   secrets: { enabled: true, adapter: "agent-secrets-cli", adapters: {} },
   mail: { enabled: true, adapter: "mcp-agent-mail", adapters: {} },
   deploy: { enabled: true, adapter: "scripted-deploy", adapters: {} },
@@ -301,7 +301,11 @@ function resolveAdapter(
     source = "project"
   }
 
-  const envValue = env[envCapabilityKey(capability, "ADAPTER")]?.trim()
+  // Recall rollback is a durable config operation. An ambient environment
+  // variable must not silently downgrade the scoped composed adapter.
+  const envValue = capability === "recall"
+    ? undefined
+    : env[envCapabilityKey(capability, "ADAPTER")]?.trim()
   if (envValue) {
     value = envValue
     source = "env"

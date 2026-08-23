@@ -1,6 +1,12 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  createComposedRecallRequest,
+  formatRecallText,
+  type RecallPrivacyTier,
+  runComposedRecallCli,
+} from "@joelclaw/recall";
 import * as restate from "@restatedev/restate-sdk";
 import { emitOtel, notifyGateway, previewOutput } from "../otel";
 
@@ -11,6 +17,9 @@ const MAX_OUTPUT_BYTES = 16_384;
 const DEFAULT_HANDLER_TIMEOUT_MS = 120_000;
 const MAX_HANDLER_TIMEOUT_MS = 60 * 60_000;
 
+export const RESTATE_RECALL_UNAVAILABLE_MARKER =
+  "Recall unavailable. Continue without memory enrichment.";
+
 const PI_PATH_DIRS = [
   `${process.env.HOME}/.local/bin`,
   `${process.env.HOME}/.bun/bin`,
@@ -19,7 +28,7 @@ const PI_PATH_DIRS = [
 
 // --- Types ---
 
-export type DagHandler = "noop" | "shell" | "http" | "infer" | "microvm";
+export type DagHandler = "noop" | "shell" | "http" | "infer" | "microvm" | "recall";
 
 export interface DagNodeInput {
   id: string;
@@ -99,7 +108,7 @@ const normalizeNode = (node: DagNodeInput): DagNodeNormalized => {
   if (!task) throw new Error(`DAG node ${id} requires a non-empty task`);
 
   const handler = node.handler ?? "noop";
-  const validHandlers: DagHandler[] = ["noop", "shell", "http", "infer", "microvm"];
+  const validHandlers: DagHandler[] = ["noop", "shell", "http", "infer", "microvm", "recall"];
   if (!validHandlers.includes(handler)) {
     throw new Error(`DAG node ${id} has invalid handler: ${handler}`);
   }
@@ -260,6 +269,84 @@ async function executeShell(
   }
 
   return truncate(JSON.stringify(result));
+}
+
+export function buildDagNodeContentTelemetry(
+  handler: DagHandler,
+  task: string,
+  output?: string,
+  pipeline?: string,
+): { readonly task: string; readonly outputPreview?: string } {
+  const privateInputPipeline = pipeline === "research" || pipeline?.startsWith("enrich-contact:")
+  const taskLabel = handler === "recall"
+    ? "optional recall enrichment"
+    : privateInputPipeline
+      ? pipeline === "research"
+        ? "research pipeline node"
+        : "contact enrichment pipeline node"
+      : task
+  return {
+    task: taskLabel,
+    ...(output === undefined || handler === "recall" ? {} : { outputPreview: previewOutput(output) }),
+  };
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`recall handler requires config.${field}`);
+  }
+  return value.trim();
+}
+
+export async function executeRecall(
+  config: Record<string, unknown>,
+  timeoutMs: number,
+  runRecall: typeof runComposedRecallCli = runComposedRecallCli,
+): Promise<string> {
+  try {
+    const scope = config.scope;
+    const access = config.access;
+    if (!scope || typeof scope !== "object" || !access || typeof access !== "object") {
+      throw new Error("recall handler requires explicit config.scope and config.access");
+    }
+    const scopeRecord = scope as Record<string, unknown>;
+    const accessRecord = access as Record<string, unknown>;
+    const allowedPrivacy = accessRecord.allowedPrivacy;
+    if (
+      !Array.isArray(allowedPrivacy) ||
+      !allowedPrivacy.every(
+        (tier): tier is RecallPrivacyTier =>
+          tier === "public" || tier === "private" || tier === "sensitive",
+      )
+    ) {
+      throw new Error("recall handler requires explicit allowedPrivacy");
+    }
+
+    const parsed = await runRecall({
+      request: createComposedRecallRequest({
+        query: requiredString(config.query, "query"),
+        scope: {
+          project: requiredString(scopeRecord.project, "scope.project"),
+          workstream: requiredString(scopeRecord.workstream, "scope.workstream"),
+        },
+        access: {
+          principalRef: requiredString(accessRecord.principalRef, "access.principalRef"),
+          purpose: requiredString(accessRecord.purpose, "access.purpose"),
+          allowedPrivacy,
+        },
+        limits: { curated: 5, observations: 5, reflections: 5 },
+      }),
+      timeoutMs,
+    });
+    if (!parsed.lanes.some((lane) => lane._tag === "available" && lane.items.length > 0)) {
+      return "";
+    }
+    return formatRecallText(parsed, { maxItemsPerLane: 5 });
+  } catch {
+    // Restate recall is optional enrichment. Missing CLI or stores are explicit
+    // downstream context, not a reason to fail unrelated research/contact DAGs.
+    return RESTATE_RECALL_UNAVAILABLE_MARKER;
+  }
 }
 
 async function executeHttp(config: Record<string, unknown>, timeoutMs: number): Promise<string> {
@@ -429,7 +516,12 @@ export const dagWorker = restate.service({
             nodeId: input.nodeId,
             handler: input.handler,
             wave: input.wave,
-            task: input.task,
+            ...buildDagNodeContentTelemetry(
+              input.handler,
+              input.task,
+              undefined,
+              input.pipeline,
+            ),
             dependsOn: input.dependsOn,
             depCount: Object.keys(input.dependencyOutputs).length,
           },
@@ -449,7 +541,6 @@ export const dagWorker = restate.service({
 
       // Execute the handler inside ctx.run for durability
       let output: string;
-      let failed = false;
       let errorMsg: string | undefined;
 
       try {
@@ -457,6 +548,8 @@ export const dagWorker = restate.service({
           switch (input.handler) {
             case "shell":
               return executeShell(resolvedConfig, depEnv, handlerTimeoutMs);
+            case "recall":
+              return executeRecall(resolvedConfig, handlerTimeoutMs);
             case "http":
               return executeHttp(resolvedConfig, handlerTimeoutMs);
             case "infer":
@@ -469,7 +562,6 @@ export const dagWorker = restate.service({
           }
         });
       } catch (err) {
-        failed = true;
         errorMsg = err instanceof Error ? err.message : String(err);
 
         // OTEL: node failed
@@ -479,14 +571,19 @@ export const dagWorker = restate.service({
             action: "dag.node.failed",
             component: "dag-worker",
             success: false,
-            error: errorMsg,
+            error: input.handler === "recall" ? "RECALL_ENRICHMENT_FAILED" : errorMsg,
             metadata: {
               workflowId: input.workflowId,
               pipeline: input.pipeline,
               nodeId: input.nodeId,
               handler: input.handler,
               wave: input.wave,
-              task: input.task,
+              ...buildDagNodeContentTelemetry(
+                input.handler,
+                input.task,
+                undefined,
+                input.pipeline,
+              ),
               durationMs: Date.now() - startMs,
             },
           });
@@ -510,9 +607,8 @@ export const dagWorker = restate.service({
             nodeId: input.nodeId,
             handler: input.handler,
             wave: input.wave,
-            task: input.task,
+            ...buildDagNodeContentTelemetry(input.handler, input.task, output, input.pipeline),
             durationMs,
-            outputPreview: previewOutput(output),
             outputBytes: output.length,
           },
         });

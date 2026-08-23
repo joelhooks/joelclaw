@@ -1,4 +1,9 @@
 import { spawn } from "node:child_process"
+import {
+  createComposedRecallRequest,
+  formatRecallText,
+  runComposedRecallCli,
+} from "@joelclaw/recall"
 import { executeSdkCapabilityCommand, type SdkCapability } from "./capabilities"
 import { JoelclawCapabilityError, JoelclawEnvelopeError, JoelclawProcessError } from "./errors"
 import type {
@@ -33,12 +38,6 @@ type ProcessRunResult = {
 
 type InternalRunOptions = JoelclawRunOptions & {
   throwOnEnvelopeError?: boolean
-}
-
-type RecallCapabilityPayload = {
-  raw: boolean
-  text?: string
-  payload?: Record<string, unknown>
 }
 
 function appendOption(args: string[], name: string, value: string | number | undefined): void {
@@ -715,84 +714,50 @@ export class JoelclawClient {
     })
   }
 
-  async recall<TResult = unknown>(
-    query: string,
-    options: RecallQueryOptions = {},
-  ): Promise<JoelclawEnvelope<TResult>> {
-    const inProcess = await this.runSdkCapability<TResult>({
-      capability: "recall",
-      subcommand: "query",
-      args: {
-        query,
-        limit: options.limit ?? 5,
-        minScore: options.minScore ?? 0,
-        raw: false,
-        includeHold: options.includeHold ?? false,
-        includeDiscard: options.includeDiscard ?? false,
-        budget: options.budget ?? "auto",
-        category: options.category ?? "",
+  private recallRequest(query: string, options: RecallQueryOptions) {
+    const sharedLimit = options.limit ?? 5
+    return createComposedRecallRequest({
+      query,
+      scope: { project: options.project, workstream: options.workstream },
+      access: {
+        principalRef: options.principalRef,
+        purpose: options.purpose,
+        allowedPrivacy: options.allowedPrivacy,
       },
-      command: "joelclaw recall",
+      includeSuperseded: options.includeSuperseded,
+      limits: {
+        curated: options.curatedLimit ?? sharedLimit,
+        observations: options.observationLimit ?? sharedLimit,
+        reflections: options.reflectionLimit ?? sharedLimit,
+      },
     })
-
-    if (inProcess) return inProcess
-    if (!this.shouldUseSubprocessFallback()) {
-      throw new Error("subprocess transport is disabled")
-    }
-
-    const args = ["recall", query]
-    appendOption(args, "limit", options.limit)
-    appendOption(args, "min-score", options.minScore)
-    appendFlag(args, "include-hold", options.includeHold)
-    appendFlag(args, "include-discard", options.includeDiscard)
-    appendOption(args, "budget", options.budget)
-    appendOption(args, "category", options.category)
-
-    return await this.runOrThrow<TResult>(args)
   }
 
-  async recallRaw(query: string, options: Omit<RecallQueryOptions, "includeHold" | "includeDiscard"> = {}): Promise<string> {
-    if (this.shouldTryInProcess()) {
-      const result = await executeSdkCapabilityCommand<RecallCapabilityPayload>({
-        capability: "recall",
-        subcommand: "query",
-        args: {
-          query,
-          limit: options.limit ?? 5,
-          minScore: options.minScore ?? 0,
-          raw: true,
-          includeHold: false,
-          includeDiscard: false,
-          budget: options.budget ?? "auto",
-          category: options.category ?? "",
-        },
-      })
+  async recall<TResult = unknown>(
+    query: string,
+    options: RecallQueryOptions,
+  ): Promise<JoelclawEnvelope<TResult>> {
+    const parsed = await runComposedRecallCli({
+      request: this.recallRequest(query, options),
+      bin: this.#bin,
+      cwd: this.#defaults.cwd,
+      env: { ...process.env, ...this.#defaults.env },
+      timeoutMs: this.#defaults.timeoutMs,
+    })
+    return parsed.envelope as unknown as JoelclawEnvelope<TResult>
+  }
 
-      if (result.ok) {
-        return result.result.text?.trim() ?? ""
-      }
-
-      if (this.#transport === "inprocess") {
-        throw new JoelclawCapabilityError({
-          capability: "recall",
-          subcommand: "query",
-          error: result.error,
-        })
-      }
-    }
-
-    if (!this.shouldUseSubprocessFallback()) {
-      throw new Error("subprocess transport is disabled")
-    }
-
-    const args = ["recall", query, "--raw"]
-    appendOption(args, "limit", options.limit)
-    appendOption(args, "min-score", options.minScore)
-    appendOption(args, "budget", options.budget)
-    appendOption(args, "category", options.category)
-
-    const raw = await this.runText(args)
-    return raw.trim()
+  async recallRaw(query: string, options: RecallQueryOptions): Promise<string> {
+    const parsed = await runComposedRecallCli({
+      request: this.recallRequest(query, options),
+      bin: this.#bin,
+      cwd: this.#defaults.cwd,
+      env: { ...process.env, ...this.#defaults.env },
+      timeoutMs: this.#defaults.timeoutMs,
+    })
+    // Historical method name retained for one release. It now returns formatted
+    // composed lane summaries, never raw transcript bodies.
+    return formatRecallText(parsed, { maxItemsPerLane: options.limit ?? 5 })
   }
 
   async vaultRead<TResult = unknown>(ref: string): Promise<JoelclawEnvelope<TResult>> {

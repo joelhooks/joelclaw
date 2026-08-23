@@ -218,7 +218,15 @@ export const checkEmail = inngest.createFunction(
         .slice(0, 12)
         .map((c) => `${c.subject} ${c.from}`)
         .join(" | ");
-      return prefetchMemoryContext(query, { limit: 5 });
+      return prefetchMemoryContext(query, {
+        limit: 5,
+        scope: { project: "joelclaw-fleet", workstream: "default" },
+        access: {
+          principalRef: "service:check-email",
+          purpose: "email-triage",
+          allowedPrivacy: ["public", "private"],
+        },
+      });
     });
 
     // Step 2: LLM triage — categorize all emails

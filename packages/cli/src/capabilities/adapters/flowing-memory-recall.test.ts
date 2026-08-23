@@ -65,18 +65,15 @@ function contextFor(cwd: string) {
 }
 
 describe("the default recall binding", () => {
-  test("stays on the old adapter", () => {
-    expect(DEFAULT_CAPABILITY_CONFIG.recall?.adapter).toBe("typesense-recall");
-    expect(DEFAULT_CAPABILITY_CONFIG.recall?.adapter).not.toBe(FLOWING_MEMORY_RECALL_ADAPTER);
-  });
-
-  test("registers the composed adapter without binding to it", () => {
+  test("uses the composed adapter and keeps the old adapter registered for rollback", () => {
+    expect(DEFAULT_CAPABILITY_CONFIG.recall?.adapter).toBe(FLOWING_MEMORY_RECALL_ADAPTER);
     expect(capabilityRegistry.get("recall", FLOWING_MEMORY_RECALL_ADAPTER)).toBe(
       flowingMemoryRecallAdapter,
     );
     expect(capabilityRegistry.adaptersFor("recall")).toContain(FLOWING_MEMORY_RECALL_ADAPTER);
+    expect(capabilityRegistry.adaptersFor("recall")).toContain("typesense-recall");
     const resolved = resolveCapabilitiesConfig({ cwd: mkdtempSync(join(tmpdir(), "x-")), env: {} });
-    expect(resolved.capabilities.recall?.adapter).toBe("typesense-recall");
+    expect(resolved.capabilities.recall?.adapter).toBe(FLOWING_MEMORY_RECALL_ADAPTER);
   });
 });
 
@@ -213,5 +210,47 @@ describe("configured settings reach the registered adapter", () => {
 
     expect(outcome._tag).toBe("Failure");
     expect(spawned).toBe(false);
+  });
+
+  test("emits lane telemetry without query or access bodies", async () => {
+    const { root, executable, sha256 } = trustedExecutable();
+    const { cwd } = projectConfig({
+      read_executable: executable,
+      credential_secret_name: "flowing-runtime-url",
+    });
+    const events: Array<{ action: string; metadata: Record<string, unknown> }> = [];
+    const adapter = createFlowingMemoryRecallAdapter({
+      trustedReleaseRoot: root,
+      expectedArtifactSha256: sha256,
+      leaseCredential: async () => ({ ok: true, value: TEST_SECRET }),
+      runProcess: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify(flowingSuccessEnvelope()),
+        stderr: "",
+        timedOut: false,
+        missingExecutable: false,
+      }),
+      curatedSearch: () => curatedSearchResult([{ id: "brain-1" }]),
+      parentEnv: { PATH: "/usr/bin" },
+      emitTelemetry: async (event) => {
+        events.push({ action: event.action, metadata: event.metadata });
+      },
+    });
+
+    await Effect.runPromise(adapter.execute("query", queryArgs, contextFor(cwd)));
+    expect(events.map((event) => event.action)).toEqual([
+      "memory.recall.started",
+      "memory.recall.completed",
+    ]);
+    const serialized = JSON.stringify(events);
+    expect(serialized).not.toContain(queryArgs.query);
+    expect(serialized).not.toContain(queryArgs.principalRef);
+    expect(serialized).not.toContain(queryArgs.purpose);
+    expect(serialized).toContain("scopeHash");
+    expect(serialized).toContain("principalClass");
+    expect(serialized).toContain("laneName");
+    expect(serialized).toContain("healthStatus");
+    expect(serialized).toContain("itemCount");
+    expect(serialized).toContain("source");
   });
 });

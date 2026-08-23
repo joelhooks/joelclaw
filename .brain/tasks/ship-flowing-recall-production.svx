@@ -1,0 +1,124 @@
+---
+title: "Ship Flowing Recall Production"
+type: "task"
+status: "completed"
+privacy: "private"
+assignee: "pi worker (flagg, herdr pane w56:p1Z, 2026-08-23)"
+created_at: "2026-08-23"
+---
+
+# Ship Flowing Recall Production
+
+## Outcome
+
+Make composed flowing + curated recall the production implementation without silent fallback, cross-ranking, raw transcript injection, or unscoped access. Keep the old adapter registered for a dated rollback window only.
+
+## Accepted product decisions
+
+- Retire old observation recall. Do not backfill, expose a legacy lane, or silently fall back. Historical evidence remains available through explicit `sessions search`.
+- Flowing lanes use exact `project/workstream` scope. Curated pages stay global but are marked `retrieval-scope`.
+- Interactive CLI resolves scope from the current GitHub repository. Outside a trusted repository it must require explicit `--project` and `--workstream`; never silently choose fleet default.
+- Interactive access defaults to principal `operator:joel`, purpose `interactive-recall`, and privacy `public,private`. Sensitive requires explicit opt-in.
+- Automatic callers must pass explicit scope, principal, purpose, and privacy. Callers with no project context may deliberately choose `joelclaw-fleet/default`; the choice must be visible in code.
+- CLI is the one recall composition root. SDK recall routes through the CLI process boundary instead of binding a second in-process adapter.
+- Query bodies must not enter argv, telemetry, receipts, or errors. Use stdin for SDK and automatic process calls.
+- Any requested unavailable lane must produce a typed envelope and nonzero exit. Callers must observe it.
+
+## Source receipts
+
+Read:
+
+- `/tmp/recall-prod-cutover-source-grill.md`
+- `/Users/joel/Code/joelhooks/joelclaw-memory/.brain/projects/joelclaw-memory/production-memory-cutover.svx`
+- `/Users/joel/Code/.worktrees/joelhooks/joelclaw-memory/recall-read-release/.brain/projects/joelclaw-memory/recall-adapter-comparison-receipt-2026-08-22.svx`
+
+Correct two stale grill claims before using it:
+
+- `825a1fad` is already remote `joelclaw/main` and is this worktree's HEAD.
+- `afcd3bb` is already an ancestor of remote `joelclaw-memory/main` at `289791b`.
+- `fm_pending_wakes_v1` is durable wake authority, not necessarily an active backlog. Use lifecycle/status fields and the existing `flowing-memory-status` active/blocked checks.
+
+## Required implementation
+
+### 1. Shared scope resolution
+
+Extract the GitHub repository/workstream resolver so capture and recall use one implementation without importing Effect v4 into the Effect v3 CLI. Prefer one small Effect-free workspace package. Preserve capture behavior. Add tests for GitHub SSH/HTTPS remotes, detached HEAD, no repository, untrusted remote, and CLI refusal outside a trusted repo.
+
+### 2. One CLI composition root
+
+Make `joelclaw recall` build the accepted `ComposedRecallRequestV1` and execute the registered `flowing-memory-recall` adapter.
+
+Support private stdin/file input for the exact request. Positional interactive queries remain supported, but query text must not appear in subprocess argv for SDK or automatic callers.
+
+Retire provider-era behavior. Compatibility flags may remain accepted for one release only if they cannot weaken scope, access, privacy, health, or lane boundaries. `--raw` must not emit transcript bodies. Point users to explicit `sessions search` for evidence.
+
+Change the production default to `flowing-memory-recall` only after the command path and tests are complete. Keep `typesense-recall` registered as the rollback adapter.
+
+### 3. SDK convergence
+
+Remove the hardcoded in-process Typesense recall root. SDK `recall()` and `recallRaw()` must use the same CLI composition root through stdin, with explicit scope/access options. Preserve other SDK capabilities and transport behavior. Do not copy the composer into SDK.
+
+### 4. Automatic callers
+
+Replace direct `memory_observations` prefetch reads and shell callers with the unified recall path for:
+
+- gateway prompt enrichment;
+- Discord `/recall`;
+- VIP email;
+- `check-email`;
+- `o11y-triage`;
+- `meeting-analyze`;
+- `summarize`.
+
+Each caller must name explicit scope/access policy. Use `joelclaw-fleet/default` only as a deliberate constant for callers with no repository context. O11y work may use `joelhooks.joelclaw/main` if the source proves that scope is correct.
+
+Add one shared parser/formatter for composed lanes. It must preserve lane names and ordering and reject unknown shapes. Never recreate one blended `hits` list or compare scores across lanes.
+
+### 5. Unavailability and telemetry
+
+- A requested unavailable lane exits nonzero with typed codes.
+- Emit `memory.recall.started`, `memory.recall.completed`, and `memory.recall.failed` without query text.
+- Preserve `component: recall-cli` for existing evidence consumers.
+- Add lane name, health status, item count, source, scope hash, principal class, and duration. Never include query/access bodies, paths, endpoints, credentials, evidence text, or record summaries.
+- Update status/probes to show the actual answering lanes.
+
+### 6. Echo/fizzle isolation
+
+Flowing IDs must never enter `memory/echo-fizzle.requested` or the Typesense mutation loop. Remove echo/fizzle dispatch from migrated callers or constrain it to legacy IDs while the rollback window remains. Add a regression test.
+
+### 7. Release/config/install and rollback
+
+Add a deterministic install/cutover surface that:
+
+- verifies the pinned standalone semantic release and manifest;
+- writes or updates only the recall config with private mode and atomic replacement;
+- records the previous adapter and binary digest;
+- supports dry run;
+- supports rollback to `typesense-recall` without touching accepted Runs, semantic records, hooks, collector, Brain, or raw search;
+- never prints credentials or private paths in public receipts.
+
+Do not deploy or mutate live config until review passes.
+
+### 8. Curated freshness
+
+Do not fabricate healthy. Add a visible operator warning/probe for stale curated search. Rebuilding `critical.db` is a separate operational action; do not mutate it during implementation.
+
+## Acceptance
+
+- Focused tests cover scope/access, stdin privacy, CLI/SDK convergence, caller parsing, nonzero unavailable exit, telemetry redaction, echo/fizzle isolation, install dry-run, rollback, and default adapter selection.
+- Existing CLI and SDK tests pass or only documented unrelated baseline failures remain.
+- `pnpm check-types`, relevant package builds, lint/format, and scratch compiled CLI pass.
+- No query appears in `ps`, argv, OTEL payloads, or receipts during a live canary.
+- Production default source is `flowing-memory-recall`; live config remains unchanged until the parent deploy gate.
+- Write `/tmp/recall-prod-cutover-implementation.md` with files changed, tests, residual risks, exact dry-run deploy command, exact cutover command, and exact rollback command.
+
+## Implementation receipt
+
+- `/tmp/recall-prod-cutover-implementation.md`
+
+## Boundaries
+
+- One writer in this worktree.
+- Do not commit, push, deploy, restart services, rebuild the installed production CLI, mutate live databases, rebuild `critical.db`, or change live config.
+- Do not read private query/result bodies beyond existing fixtures.
+- Do not delete the old adapter during the rollback window.

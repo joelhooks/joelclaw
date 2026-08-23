@@ -19,7 +19,7 @@ describe("capability config resolution", () => {
     })
     expect(DEFAULT_CAPABILITY_CONFIG.recall).toMatchObject({
       enabled: true,
-      adapter: "typesense-recall",
+      adapter: "flowing-memory-recall",
     })
     expect(DEFAULT_CAPABILITY_CONFIG.subscribe).toMatchObject({
       enabled: true,
@@ -101,6 +101,21 @@ adapter = "project-adapter"
     expect(notify?.source.adapter).toBe("flag")
     expect(notify?.source.enabled).toBe("flag")
 
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test("recall ignores the ambient adapter downgrade and uses durable config", () => {
+    const root = mkdtempSync("/tmp/joelclaw-recall-config-")
+    const userPath = join(root, "config.toml")
+    writeFileSync(userPath, '[capabilities.recall]\nadapter = "flowing-memory-recall"\n')
+    const config = resolveCapabilitiesConfig({
+      cwd: root,
+      env: { JOELCLAW_CAPABILITY_RECALL_ADAPTER: "typesense-recall" },
+      projectConfigPath: join(root, "missing-project.toml"),
+      userConfigPath: userPath,
+    })
+    expect(config.capabilities.recall?.adapter).toBe("flowing-memory-recall")
+    expect(config.capabilities.recall?.source.adapter).toBe("user")
     rmSync(root, { recursive: true, force: true })
   })
 

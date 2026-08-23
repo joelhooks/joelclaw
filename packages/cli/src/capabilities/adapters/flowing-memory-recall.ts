@@ -1,14 +1,14 @@
 /**
- * Non-default `recall` adapter: composed flowing + curated retrieval.
+ * Production `recall` adapter: composed flowing + curated retrieval.
  *
- * It is registered in the capability registry but nothing binds to it.
- * `DEFAULT_CAPABILITY_CONFIG.recall.adapter` stays `typesense-recall`, so the
- * CLI, the SDK, the gateway, and every production caller keep the old path
- * until someone deliberately selects this adapter with config, an environment
- * variable, or `--adapter`.
+ * `typesense-recall` remains registered only for the dated rollback window.
+ * The adapter never falls back to it and reports every requested unavailable
+ * lane in the composed result.
  */
 
+import { createHash } from "node:crypto";
 import { Effect, ParseResult, Schema } from "effect";
+import { createOtelEventPayload, ingestOtelPayload } from "../../lib/otel-ingest";
 import type { ComposeRecallInput } from "../../recall/composer";
 import { composeRecall } from "../../recall/composer";
 import {
@@ -93,6 +93,39 @@ const decodeRequest = Schema.decodeUnknownEither(ComposedRecallRequestV1Schema);
  * `critical.db`. Tests build their own adapter instance with fakes and register
  * it in their own registry, so the production adapter has no mutable test state.
  */
+export type RecallTelemetryInput = {
+  readonly level: "debug" | "info" | "warn" | "error";
+  readonly action: "memory.recall.started" | "memory.recall.completed" | "memory.recall.failed";
+  readonly success: boolean;
+  readonly durationMs?: number;
+  readonly error?: string;
+  readonly metadata: Record<string, unknown>;
+};
+
+async function emitComposedRecallTelemetry(input: RecallTelemetryInput): Promise<void> {
+  if (process.env.JOELCLAW_RECALL_OTEL === "0") return;
+  await ingestOtelPayload(createOtelEventPayload({
+    level: input.level,
+    source: "cli",
+    component: "recall-cli",
+    action: input.action,
+    success: input.success,
+    durationMs: input.durationMs,
+    error: input.error,
+    metadata: input.metadata,
+  }), { timeoutMs: 1_500 });
+}
+
+function requestTelemetryMetadata(request: ReturnType<typeof buildComposedRequest>) {
+  return {
+    scopeHash: createHash("sha256")
+      .update(`${request.scope.project}\u0000${request.scope.workstream}`)
+      .digest("hex"),
+    principalClass: request.access.principalRef.split(":", 1)[0] || "unknown",
+    requestedLanes: ["flowing-reflections", "flowing-observations", "curated-pages"],
+  };
+}
+
 export interface FlowingMemoryRecallOverrides {
   readonly runProcess?: ComposeRecallInput["runProcess"];
   readonly leaseCredential?: ComposeRecallInput["leaseCredential"];
@@ -101,6 +134,7 @@ export interface FlowingMemoryRecallOverrides {
   readonly trustedReleaseRoot?: string;
   readonly expectedMemoryCommit?: string;
   readonly expectedArtifactSha256?: string;
+  readonly emitTelemetry?: (input: RecallTelemetryInput) => Promise<void>;
 }
 
 export function createFlowingMemoryRecallAdapter(
@@ -144,6 +178,16 @@ export function createFlowingMemoryRecallAdapter(
 
       const settings =
         context.config.capabilities.recall?.adapters?.[FLOWING_MEMORY_RECALL_ADAPTER];
+      const startedAt = Date.now();
+      const emitTelemetry = overrides.emitTelemetry ?? emitComposedRecallTelemetry;
+      const telemetryBase = requestTelemetryMetadata(request.right);
+
+      yield* Effect.promise(() => emitTelemetry({
+        level: "debug",
+        action: "memory.recall.started",
+        success: true,
+        metadata: telemetryBase,
+      }).catch(() => undefined));
 
       const outcome = yield* Effect.tryPromise({
         try: () =>
@@ -164,13 +208,52 @@ export function createFlowingMemoryRecallAdapter(
               ? { expectedArtifactSha256: overrides.expectedArtifactSha256 }
               : {}),
           }),
-        catch: (error) =>
+        catch: () =>
           capabilityError(
             "COMPOSED_RECALL_FAILED",
-            error instanceof Error ? error.message : String(error),
-            "Inspect the per-lane unavailability in the composed result.",
+            "Composed recall failed before it could produce typed lanes",
+            "Inspect recall configuration and memory.recall.failed telemetry.",
           ),
-      });
+      }).pipe(
+        Effect.tapError((error) => Effect.promise(() => emitTelemetry({
+          level: "error",
+          action: "memory.recall.failed",
+          success: false,
+          durationMs: Date.now() - startedAt,
+          error: error.code,
+          metadata: telemetryBase,
+        }).catch(() => undefined))),
+      );
+
+      const lanes = [
+        outcome.result.lanes.flowingReflections,
+        outcome.result.lanes.flowingObservations,
+        outcome.result.lanes.curatedPages,
+      ].map((lane) => ({
+        laneName: lane.lane,
+        healthStatus: lane._tag === "RecallLaneAvailableV1" ? lane.health._tag : "Unavailable",
+        itemCount: lane._tag === "RecallLaneAvailableV1" ? lane.items.length : 0,
+        source: lane.source,
+        ...(lane._tag === "RecallLaneUnavailableV1" ? { unavailableCode: lane.code } : {}),
+      }));
+      const unavailableCodes = outcome.result.unavailable.map((lane) => ({
+        laneName: lane.lane,
+        code: lane.code,
+      }));
+
+      yield* Effect.promise(() => emitTelemetry({
+        level: unavailableCodes.length > 0 ? "error" : "info",
+        action: unavailableCodes.length > 0 ? "memory.recall.failed" : "memory.recall.completed",
+        success: unavailableCodes.length === 0,
+        durationMs: Date.now() - startedAt,
+        ...(unavailableCodes.length > 0 ? { error: "RECALL_LANE_UNAVAILABLE" } : {}),
+        metadata: {
+          ...telemetryBase,
+          lanes,
+          returned: lanes.reduce((total, lane) => total + lane.itemCount, 0),
+          unavailable: unavailableCodes,
+        },
+      }).catch(() => undefined));
 
       return {
         raw: false,
