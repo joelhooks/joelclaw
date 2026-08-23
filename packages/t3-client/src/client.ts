@@ -146,30 +146,31 @@ export async function connectT3(credentials: T3Credentials): Promise<T3Session> 
 
   const scope = await Effect.runPromise(Scope.make());
   const run = <A, E>(effect: Effect.Effect<A, E, never>) => Effect.runPromise(effect);
-  let context: Awaited<ReturnType<typeof buildContext>>;
-  async function buildContext() {
-    return await run(Layer.buildWithScope(protocolLayer, scope));
-  }
+
+  // Everything from the layer build through the health probe allocates into
+  // `scope`, so a failure anywhere in here has to close it before rethrowing.
+  let client: any;
   try {
-    context = await buildContext();
+    const context = await run(Layer.buildWithScope(protocolLayer, scope));
+    client = await run(
+      RpcClient.make(WsRpcGroup).pipe(Effect.provide(context), Scope.provide(scope)),
+    );
+    // Connection health probe: fail fast if the socket never came up.
+    await run(client[WS_METHODS.serverGetConfig]({}).pipe(Effect.timeout("20 seconds")));
   } catch (error) {
     await run(Scope.close(scope, Exit.succeed(undefined)));
     throw error;
   }
-  const client: any = await run(
-    RpcClient.make(WsRpcGroup).pipe(Effect.provide(context), Scope.provide(scope)),
-  );
 
-  // Connection health probe: fail fast if the socket never came up.
-  await run(client[WS_METHODS.serverGetConfig]({}).pipe(Effect.timeout("20 seconds")));
-
+  // Timed out so a half-open socket rejects instead of hanging forever, which
+  // is what lets `withReconnect` notice the connection is dead and retry.
   const dispatch = (command: Record<string, unknown>) =>
     run(
       client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
         commandId: randomUUID(),
         createdAt: nowIso(),
         ...command,
-      }),
+      }).pipe(Effect.timeout("30 seconds")),
     );
 
   const shellSnapshot = async (): Promise<ShellSnapshot> => {
@@ -305,28 +306,31 @@ export async function connectT3(credentials: T3Credentials): Promise<T3Session> 
             case "thread.activity-appended": {
               const activity = event.payload.activity;
               const kindText = String(activity.kind);
+              const tone = String(activity.tone);
               queue.push({
                 kind: "activity",
                 threadId,
                 activityKind: kindText,
-                tone: String(activity.tone),
+                tone,
                 summary: String(activity.summary),
                 payload: activity.payload,
               });
-              if (/approval/i.test(kindText)) {
+              // `tone` is a typed literal set that includes "approval"; `kind`
+              // is an unconstrained provider string, so it only hints at the
+              // user-input case the tone cannot express.
+              const reason =
+                tone === "approval"
+                  ? "approval"
+                  : /user-input|question/i.test(kindText)
+                    ? "user-input"
+                    : undefined;
+              if (reason) {
                 queue.push({
                   kind: "attention",
                   threadId,
-                  reason: "approval",
+                  reason,
                   summary: String(activity.summary),
-                  payload: activity.payload,
-                });
-              } else if (/user-input|question/i.test(kindText)) {
-                queue.push({
-                  kind: "attention",
-                  threadId,
-                  reason: "user-input",
-                  summary: String(activity.summary),
+                  requestId: event.metadata?.requestId,
                   payload: activity.payload,
                 });
               }
@@ -339,22 +343,36 @@ export async function connectT3(credentials: T3Credentials): Promise<T3Session> 
       ),
     );
 
-    // Turn settlement is authoritative on the shell stream.
+    // Turn settlement is authoritative on the shell stream. Pull this thread out
+    // of either the opening snapshot or a later upsert.
+    const threadOf = (item: any) =>
+      item?.kind === "snapshot"
+        ? item.snapshot?.threads?.find((t: any) => t.id === threadId)
+        : item?.kind === "thread-upserted" && item.thread?.id === threadId
+          ? item.thread
+          : undefined;
+
+    // Settle only on a turn we have watched go running, keyed by turnId. Without
+    // that pin, an unrelated upsert (title regen, pin, snooze) on a thread whose
+    // previous turn already completed would settle the watch immediately.
+    let runningTurnId: string | undefined;
     const settled = client[ORCHESTRATION_WS_METHODS.subscribeShell]({}).pipe(
-      Stream.filter(
-        (item: any) =>
-          item.kind === "thread-upserted" &&
-          item.thread.id === threadId &&
-          item.thread.latestTurn != null &&
-          item.thread.latestTurn.state !== "running",
-      ),
+      Stream.filter((item: any) => {
+        const turn = threadOf(item)?.latestTurn;
+        if (turn == null) return false;
+        if (turn.state === "running") {
+          runningTurnId = turn.turnId;
+          return false;
+        }
+        return runningTurnId !== undefined && turn.turnId === runningTurnId;
+      }),
       Stream.take(1),
       Stream.runHead,
       // Let trailing thread events (the final message frame) drain first so
       // turn-settled is the last event a consumer sees.
       Effect.tap(() => Effect.sleep("500 millis")),
       Effect.map((head: any) => {
-        const turn = (head?.value ?? head)?.thread?.latestTurn;
+        const turn = threadOf(head?.value ?? head)?.latestTurn;
         queue.push({
           kind: "turn-settled",
           threadId,
@@ -381,9 +399,9 @@ export async function connectT3(credentials: T3Credentials): Promise<T3Session> 
       [Symbol.asyncIterator]: () => {
         const iterator = iterable();
         const originalReturn = iterator.return?.bind(iterator);
-        iterator.return = async (value?: unknown) => {
+        iterator.return = async () => {
           Effect.runFork(Fiber.interrupt(fiber));
-          return originalReturn ? originalReturn(value) : { done: true, value: undefined };
+          return originalReturn ? originalReturn() : { done: true, value: undefined };
         };
         return iterator;
       },

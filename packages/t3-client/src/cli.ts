@@ -28,22 +28,34 @@ interface ParsedArgs {
   readonly flags: Record<string, string | boolean>;
 }
 
+/** Flags that never take a value, so they cannot eat the following argument. */
+const BOOLEAN_FLAGS = new Set(["no-watch", "json"]);
+
 function parseArgs(argv: Array<string>): ParsedArgs {
   const positional: Array<string> = [];
   const flags: Record<string, string | boolean> = {};
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
-    if (arg.startsWith("--")) {
-      const name = arg.slice(2);
-      const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--")) {
-        flags[name] = next;
-        i += 1;
-      } else {
-        flags[name] = true;
-      }
-    } else {
+    if (!arg.startsWith("--")) {
       positional.push(arg);
+      continue;
+    }
+    const body = arg.slice(2);
+    const eq = body.indexOf("=");
+    if (eq !== -1) {
+      flags[body.slice(0, eq)] = body.slice(eq + 1);
+      continue;
+    }
+    if (BOOLEAN_FLAGS.has(body)) {
+      flags[body] = true;
+      continue;
+    }
+    const next = argv[i + 1];
+    if (next !== undefined && !next.startsWith("--")) {
+      flags[body] = next;
+      i += 1;
+    } else {
+      flags[body] = true;
     }
   }
   return { positional, flags };
@@ -64,6 +76,7 @@ function printEvent(event: GatewayEvent): void {
       break;
     case "attention":
       console.log(`[ATTENTION:${event.reason}] ${event.summary}`);
+      if (event.requestId) console.log(`  requestId: ${event.requestId}`);
       console.log(`  payload: ${JSON.stringify(event.payload)}`);
       break;
     case "turn-settled":
@@ -92,7 +105,7 @@ async function main(): Promise<void> {
 
   switch (command) {
     case "pair": {
-      const token = positional[0] ?? fail("usage: t3c pair '<pairing-url-or-token>' --url <base>");
+      const token = positional[0] || fail("usage: t3c pair '<pairing-url-or-token>' --url <base>");
       const baseUrl = typeof flags.url === "string" ? flags.url : fail("--url <http-base> required");
       const credentials = await exchangePairingToken({
         baseUrl,
@@ -146,7 +159,7 @@ async function main(): Promise<void> {
       return;
     }
     case "start": {
-      const prompt = positional[0] ?? fail('usage: t3c start --root <dir> "<prompt>"');
+      const prompt = positional[0] || fail('usage: t3c start --root <dir> "<prompt>"');
       const root = typeof flags.root === "string" ? flags.root : fail("--root <workspaceRoot> required");
       const model = typeof flags.model === "string" ? flags.model : undefined;
       const [modelInstanceId, modelName] = model?.includes("/")
@@ -170,7 +183,7 @@ async function main(): Promise<void> {
       return;
     }
     case "watch": {
-      const threadId = positional[0] ?? fail("usage: t3c watch <threadId>");
+      const threadId = positional[0] || fail("usage: t3c watch <threadId>");
       await withSession(async (session) => {
         for await (const event of session.watchThread(threadId)) printEvent(event);
       });
@@ -199,7 +212,7 @@ async function main(): Promise<void> {
       return;
     }
     case "interrupt": {
-      const threadId = positional[0] ?? fail("usage: t3c interrupt <threadId>");
+      const threadId = positional[0] || fail("usage: t3c interrupt <threadId>");
       await withSession((session) => session.interruptTurn(threadId));
       console.log("interrupt dispatched");
       return;

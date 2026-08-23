@@ -62,10 +62,11 @@ capped backoff and hands each live session to `use`.
 ## Gateway wiring notes
 
 - `attention` events (reason `approval` | `user-input`) are the
-  Discord-button hook: relay `summary`, dig `requestId` out of `payload`,
-  answer with `respondApproval` / `respondUserInput`. Derivation from
-  activity kinds is best-effort v1 — verify against a live approval before
-  trusting it blind.
+  Discord-button hook: relay `summary`, answer with `respondApproval` /
+  `respondUserInput` using `requestId`. `approval` comes from the typed
+  activity tone; `user-input` is still matched off the provider's activity
+  kind, so verify that half against a live prompt. `requestId` is optional —
+  fall back to `payload` when it is absent.
 - `turn-settled` is always the final event of a watched turn and carries the
   last non-empty assistant text.
 - This package does not send anything to Discord itself. Single-owner comms:
@@ -75,3 +76,21 @@ Proven against T3 contracts 0.0.33 (t3code `beab6886f`), 2026-08-23. The
 original spike lives in the t3code checkout at
 `apps/server/scratch/gateway-spike.ts` and can be deleted once this package
 has a green smoke run.
+
+## Known issues
+
+Deferred, all known and none of them fixed yet:
+
+- `watchThread` throws away the opening snapshot frames, so watching a thread
+  whose turn already settled hangs, and a reconnect never learns that an
+  approval is already pending.
+- The `watchThread` queue is unbounded and starts its fiber at call time, not
+  at first iteration, so a slow consumer buys memory growth.
+- The 500ms drain before `turn-settled` is a timer, not an acknowledgement;
+  a slow final message frame can still land after it.
+- `withReconnect` retries forever, including on a fatal auth error that will
+  never succeed.
+- A brand-new project with no model default silently borrows the model from
+  the most recently updated thread in *any* project.
+- The vendored-contracts `sync.sh` copies files without smoke-checking that
+  the copy still compiles or matches the server it came from.

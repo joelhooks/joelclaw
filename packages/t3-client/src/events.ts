@@ -48,14 +48,18 @@ export type GatewayEvent =
     }
   | {
       /**
-       * Best-effort: derived from activity events whose kind mentions
-       * approval/user-input. The raw payload rides along so the gateway can
-       * dig out the requestId to answer with.
+       * Derived from activity events: `approval` from the typed activity tone,
+       * `user-input` from the provider's activity kind. `requestId` is the
+       * orchestration event's own request id — pass it straight to
+       * `respondApproval` / `respondUserInput`. It is optional because not
+       * every attention-worthy activity carries one; the raw payload still
+       * rides along as the fallback.
        */
       readonly kind: "attention";
       readonly threadId: string;
       readonly reason: "approval" | "user-input";
       readonly summary: string;
+      readonly requestId?: string;
       readonly payload: unknown;
     }
   | {
