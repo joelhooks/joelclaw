@@ -14,9 +14,9 @@ import {
 export const DEFAULT_HEARTBEAT_KEY = "gateway:agent:heartbeat";
 export const DEFAULT_HEARTBEAT_REFRESH_MS = 15_000;
 export const DEFAULT_HEARTBEAT_TTL_MS = 60_000;
-// Measured live 2026-07-21: real gateway turns run 1-3 minutes. A 120s
-// deadline scored healthy turns as failures and flapped the heartbeat.
-export const DEFAULT_POKE_DEADLINE_MS = 300_000;
+// Measured live 2026-07-21: real gateway turns run 1-3 minutes. The prompt
+// contract promises a four-minute bound, so the driver enforces that wall clock.
+export const DEFAULT_POKE_DEADLINE_MS = 240_000;
 export const DEFAULT_SUCCESSOR_DEADLINE_MS = 120_000;
 /** Wall-clock session age before a clean idle retire. Prefer honest age over fragile token parsing. */
 export const DEFAULT_MAX_SESSION_AGE_MS = 4 * 60 * 60 * 1000;
@@ -30,8 +30,9 @@ export const DEFAULT_AGGREGATE_GRACE_MS = 60 * 60 * 1000;
 export const DEFAULT_UNRESPONSIVE_GRACE_MS = DEFAULT_POKE_DEADLINE_MS;
 export const DRIVER_POKE_TEXT = [
   "Unhandled gateway stream work exists. Read the authoritative stream and decide it.",
-  "Process at most 20 inputs or four minutes, whichever comes first, then finish the turn.",
-  "The driver will wake you again. A bounded turn lets it verify cursor movement and prevents one backlog from monopolizing the loop.",
+  "Call stream_pending exactly once; it returns at most 20 inputs.",
+  "Decide only that page or stop after four minutes, whichever comes first, then finish the turn.",
+  "Never request another page in the same turn. The driver will wake you again.",
 ].join(" ");
 
 export type AggregateDeadline = {
@@ -71,8 +72,7 @@ export type DriverPorts = {
     Omit<
       AgentObservation,
       "hasUnhandledWork" | "degenerated" | "sessionAgeMs" | "openAggregates" | "observedAt"
-    >
-    & { sessionStartedAt?: number }
+    > & { sessionStartedAt?: number }
   >;
   countUnhandled: () => Promise<number>;
   /** Head event proves whether one settled poke moved the authoritative cursor. */
@@ -224,9 +224,8 @@ export class AgentCommsDriver {
       } else {
         this.#sessionStartedAt = undefined;
       }
-      const sessionAgeMs = this.#sessionStartedAt === undefined
-        ? 0
-        : Math.max(0, now - this.#sessionStartedAt);
+      const sessionAgeMs =
+        this.#sessionStartedAt === undefined ? 0 : Math.max(0, now - this.#sessionStartedAt);
 
       const collapse = detectRepeatedTokenCollapse(recentOutput);
       const degenerated = collapse.degenerated;
@@ -283,7 +282,9 @@ export class AgentCommsDriver {
           yield* this.#receipt("session.retire.stopped", { reason });
         }
 
-        const spawned = yield* Effect.either(attempt("requestSuccessor", this.ports.requestSuccessor));
+        const spawned = yield* Effect.either(
+          attempt("requestSuccessor", this.ports.requestSuccessor),
+        );
         if (spawned._tag === "Right") {
           this.#actor.send({ type: "SPAWN_ACCEPTED", requestedAt: this.ports.now() });
           yield* this.#receipt("successor.spawn.requested", reason ? { reason } : undefined);
@@ -296,10 +297,15 @@ export class AgentCommsDriver {
       if (this.state === "poking") {
         yield* this.#receipt("poke.started", { unhandled });
         const prompted = yield* Effect.either(
-          attempt("promptAgent", () => this.ports.promptAgent(this.#pokeText, this.#pokeDeadlineMs)),
+          attempt("promptAgent", () =>
+            this.ports.promptAgent(this.#pokeText, this.#pokeDeadlineMs),
+          ),
         );
         if (prompted._tag === "Right") {
-          const remainingHead = yield* attempt("firstUnhandledIdAfterPoke", this.ports.firstUnhandledId);
+          const remainingHead = yield* attempt(
+            "firstUnhandledIdAfterPoke",
+            this.ports.firstUnhandledId,
+          );
           if (firstUnhandledId !== undefined && remainingHead === firstUnhandledId) {
             this.#actor.send({ type: "POKE_STALLED", eventId: firstUnhandledId });
             yield* this.#receipt("poke.stalled", { eventId: firstUnhandledId });
@@ -336,7 +342,7 @@ export class AgentCommsDriver {
    * Heartbeat on its own cadence, independent of the work pass.
    *
    * This exists because `runPass` blocks on `promptAgent` for up to the poke
-   * deadline (300s) while the key lives 60s. The pass that owned the key could
+   * deadline (240s) while the key lives 60s. The pass that owned the key could
    * not refresh it precisely when the session was busiest, so a healthy gateway
    * went dark mid-turn and the transport delivered raw. Measured 2026-07-27:
    * 12.6% of the day blind.
@@ -353,8 +359,8 @@ export class AgentCommsDriver {
       this.#markResponsiveness(agent, now);
       // A work pass older than the TTL means it is blocked in a poke and the key
       // would already be gone. Record those: they are this fiber earning its keep.
-      const covering = this.#lastWorkPassAt !== undefined
-        && now - this.#lastWorkPassAt > this.#heartbeatTtlMs;
+      const covering =
+        this.#lastWorkPassAt !== undefined && now - this.#lastWorkPassAt > this.#heartbeatTtlMs;
       return yield* this.#applyHeartbeat(agent, now, covering, covering);
     });
   }
@@ -387,9 +393,10 @@ export class AgentCommsDriver {
         paneExists: agent.paneExists,
         sessionExists: agent.sessionExists,
         degenerated: this.#degenerated,
-        unresponsiveForMs: this.#lastResponsiveAt === undefined
-          ? Number.POSITIVE_INFINITY
-          : Math.max(0, now - this.#lastResponsiveAt),
+        unresponsiveForMs:
+          this.#lastResponsiveAt === undefined
+            ? Number.POSITIVE_INFINITY
+            : Math.max(0, now - this.#lastResponsiveAt),
         unresponsiveGraceMs: this.#unresponsiveGraceMs,
       });
       const changed = this.#lastHeartbeatReason !== verdict.reason;
@@ -405,7 +412,10 @@ export class AgentCommsDriver {
             key: this.#heartbeatKey,
             ttlMs: this.#heartbeatTtlMs,
             ...(coveringBlockedPass
-              ? { coveringBlockedPass: true, workPassStaleForMs: now - (this.#lastWorkPassAt ?? now) }
+              ? {
+                  coveringBlockedPass: true,
+                  workPassStaleForMs: now - (this.#lastWorkPassAt ?? now),
+                }
               : {}),
           });
         }

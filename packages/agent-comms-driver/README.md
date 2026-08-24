@@ -27,7 +27,7 @@ Optional settings:
 - `GATEWAY_HEARTBEAT_KEY` defaults to `gateway:agent:heartbeat`.
 - `GATEWAY_HEARTBEAT_REFRESH_MS` defaults to `15000`.
 - `GATEWAY_HEARTBEAT_TTL_MS` defaults to `60000`.
-- `GATEWAY_POKE_DEADLINE_MS` defaults to `300000`.
+- `GATEWAY_POKE_DEADLINE_MS` defaults to `240000`, matching the four-minute turn contract. A timed-out Herdr prompt is interrupted before the next pass.
 - `GATEWAY_SUCCESSOR_DEADLINE_MS` defaults to `120000`.
 - `GATEWAY_MAX_SESSION_AGE_MS` defaults to `14400000` (4h). Set `0` to disable age retire.
 - `GATEWAY_DRIVER_RECEIPT_PATH` defaults to `/tmp/joelclaw/agent-comms-driver.jsonl`.

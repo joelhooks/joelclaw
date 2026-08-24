@@ -5,6 +5,7 @@ import { createActor } from "xstate";
 import {
   AgentCommsDriver,
   type AggregateDeadline,
+  DEFAULT_POKE_DEADLINE_MS,
   type DriverPorts,
   type DriverReceipt,
   driverMachine,
@@ -52,9 +53,8 @@ function harness(): { fake: Fake; ports: DriverPorts } {
       now: () => fake.now,
       inspectAgent: async () => fake.agent,
       countUnhandled: async () => fake.unhandled,
-      firstUnhandledId: async () => fake.unhandled > 0
-        ? (fake.firstUnhandledId ?? "event-1")
-        : undefined,
+      firstUnhandledId: async () =>
+        fake.unhandled > 0 ? (fake.firstUnhandledId ?? "event-1") : undefined,
       readRecentOutput: async () => fake.recentOutput,
       promptAgent: async (text) => {
         fake.prompts.push(text);
@@ -95,20 +95,22 @@ const run = (driver: AgentCommsDriver) => Effect.runPromise(driver.runPass());
 const heartbeatExists = (fake: Fake) =>
   fake.heartbeat !== undefined && fake.heartbeat.expiresAt > fake.now;
 
-const observed = (overrides: Partial<{
-  paneExists: boolean;
-  sessionExists: boolean;
-  idle: boolean;
-  hasUnhandledWork: boolean;
-  degenerated: boolean;
-  sessionAgeMs: number;
-  openAggregates: number;
-  observedAt: number;
-  pokeDeadlineMs: number;
-  successorDeadlineMs: number;
-  maxSessionAgeMs: number;
-  aggregateGraceMs: number;
-}> = {}) => ({
+const observed = (
+  overrides: Partial<{
+    paneExists: boolean;
+    sessionExists: boolean;
+    idle: boolean;
+    hasUnhandledWork: boolean;
+    degenerated: boolean;
+    sessionAgeMs: number;
+    openAggregates: number;
+    observedAt: number;
+    pokeDeadlineMs: number;
+    successorDeadlineMs: number;
+    maxSessionAgeMs: number;
+    aggregateGraceMs: number;
+  }> = {},
+) => ({
   type: "OBSERVED" as const,
   paneExists: true,
   sessionExists: true,
@@ -126,6 +128,10 @@ const observed = (overrides: Partial<{
 });
 
 describe("AgentCommsDriver", () => {
+  test("enforces the four-minute default poke contract", () => {
+    expect(DEFAULT_POKE_DEADLINE_MS).toBe(240_000);
+  });
+
   test("pokes once for unhandled work and refreshes the test heartbeat only after the answer", async () => {
     const { fake, ports } = harness();
     fake.unhandled = 1;
@@ -136,7 +142,9 @@ describe("AgentCommsDriver", () => {
 
     expect(await run(driver)).toBe("ready");
     expect(fake.prompts).toHaveLength(1);
-    expect(fake.prompts[0]).toContain("at most 20 inputs or four minutes");
+    expect(fake.prompts[0]).toContain("stream_pending exactly once");
+    expect(fake.prompts[0]).toContain("at most 20 inputs");
+    expect(fake.prompts[0]).toContain("stop after four minutes");
     expect(fake.heartbeat?.key).toBe("test:gateway:heartbeat");
     expect(fake.receipts.map((receipt) => receipt.action)).toContain("poke.answered");
     expect(fake.receipts.findIndex((receipt) => receipt.action === "poke.answered")).toBeLessThan(
@@ -155,10 +163,12 @@ describe("AgentCommsDriver", () => {
     });
 
     expect(await run(driver)).toBe("unhealthy");
-    expect(fake.receipts).toContainEqual(expect.objectContaining({
-      action: "poke.stalled",
-      detail: { eventId: "stuck-event" },
-    }));
+    expect(fake.receipts).toContainEqual(
+      expect.objectContaining({
+        action: "poke.stalled",
+        detail: { eventId: "stuck-event" },
+      }),
+    );
     expect(fake.receipts.at(-1)).toMatchObject({
       action: "heartbeat.withheld",
       detail: { reason: "driver-unhealthy" },
@@ -333,24 +343,30 @@ describe("AgentCommsDriver", () => {
 
   test("fires every due aggregate deadline without deciding its meaning", async () => {
     const { fake, ports } = harness();
-    fake.due = [{
-      aggregateId: "aggregate-17",
-      memberEventIds: ["event-a", "event-b"],
-      holdUntil: fake.now,
-    }];
+    fake.due = [
+      {
+        aggregateId: "aggregate-17",
+        memberEventIds: ["event-a", "event-b"],
+        holdUntil: fake.now,
+      },
+    ];
     const driver = new AgentCommsDriver(ports, { heartbeatKey: "test:gateway:heartbeat" });
 
     await run(driver);
 
-    expect(fake.deadlines).toEqual([{
-      aggregateId: "aggregate-17",
-      memberEventIds: ["event-a", "event-b"],
-      holdUntil: 1_000,
-    }]);
-    expect(fake.receipts).toContainEqual(expect.objectContaining({
-      action: "aggregate.deadline.fired",
-      detail: { aggregateId: "aggregate-17", holdUntil: 1_000 },
-    }));
+    expect(fake.deadlines).toEqual([
+      {
+        aggregateId: "aggregate-17",
+        memberEventIds: ["event-a", "event-b"],
+        holdUntil: 1_000,
+      },
+    ]);
+    expect(fake.receipts).toContainEqual(
+      expect.objectContaining({
+        action: "aggregate.deadline.fired",
+        detail: { aggregateId: "aggregate-17", holdUntil: 1_000 },
+      }),
+    );
   });
 
   test("requests one wake-registry SPAWN when the pane or session disappears", async () => {
@@ -395,11 +411,13 @@ describe("AgentCommsDriver", () => {
         sessionAgeMs: maxSessionAgeMs,
       }),
     ]);
-    expect(fake.receipts.map((receipt) => receipt.action)).toEqual(expect.arrayContaining([
-      "session.retire.requested",
-      "session.retire.stopped",
-      "successor.spawn.requested",
-    ]));
+    expect(fake.receipts.map((receipt) => receipt.action)).toEqual(
+      expect.arrayContaining([
+        "session.retire.requested",
+        "session.retire.stopped",
+        "successor.spawn.requested",
+      ]),
+    );
     expect(fake.receipts.at(-1)).toMatchObject({
       action: "heartbeat.withheld",
       detail: { reason: "no-session" },
@@ -444,19 +462,23 @@ describe("AgentCommsDriver", () => {
     // Age retire is gated on idle empty ready — while poking, only OBSERVED
     // can force-spawn for missing pane or degeneration. Simulate via machine.
     const actor = createActor(driverMachine).start();
-    actor.send(observed({
-      hasUnhandledWork: true,
-      observedAt: 1_000,
-      maxSessionAgeMs,
-    }));
+    actor.send(
+      observed({
+        hasUnhandledWork: true,
+        observedAt: 1_000,
+        maxSessionAgeMs,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("poking");
-    actor.send(observed({
-      idle: false,
-      hasUnhandledWork: true,
-      sessionAgeMs: maxSessionAgeMs + 1,
-      observedAt: 1_500,
-      maxSessionAgeMs,
-    }));
+    actor.send(
+      observed({
+        idle: false,
+        hasUnhandledWork: true,
+        sessionAgeMs: maxSessionAgeMs + 1,
+        observedAt: 1_500,
+        maxSessionAgeMs,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("poking");
     expect(actor.getSnapshot().context.retireReason).toBeUndefined();
     void portsBlocking;
@@ -491,19 +513,23 @@ describe("AgentCommsDriver", () => {
 describe("driver lifecycle machine", () => {
   test("an outstanding poke past deadline becomes unhealthy", () => {
     const actor = createActor(driverMachine).start();
-    actor.send(observed({
-      hasUnhandledWork: true,
-      observedAt: 1_000,
-      pokeDeadlineMs: 5_000,
-    }));
+    actor.send(
+      observed({
+        hasUnhandledWork: true,
+        observedAt: 1_000,
+        pokeDeadlineMs: 5_000,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("poking");
 
-    actor.send(observed({
-      idle: false,
-      hasUnhandledWork: true,
-      observedAt: 6_000,
-      pokeDeadlineMs: 5_000,
-    }));
+    actor.send(
+      observed({
+        idle: false,
+        hasUnhandledWork: true,
+        observedAt: 6_000,
+        pokeDeadlineMs: 5_000,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("unhealthy");
   });
 
@@ -513,22 +539,26 @@ describe("driver lifecycle machine", () => {
     actor.send(observed({ sessionAgeMs: 0, observedAt: 1_000, maxSessionAgeMs }));
     expect(actor.getSnapshot().value).toBe("ready");
 
-    actor.send(observed({
-      hasUnhandledWork: true,
-      sessionAgeMs: maxSessionAgeMs + 1,
-      observedAt: 2_000,
-      maxSessionAgeMs,
-    }));
+    actor.send(
+      observed({
+        hasUnhandledWork: true,
+        sessionAgeMs: maxSessionAgeMs + 1,
+        observedAt: 2_000,
+        maxSessionAgeMs,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("poking");
 
     actor.send({ type: "POKE_ANSWERED", answeredAt: 2_100 });
     expect(actor.getSnapshot().value).toBe("ready");
 
-    actor.send(observed({
-      sessionAgeMs: maxSessionAgeMs + 1,
-      observedAt: 3_000,
-      maxSessionAgeMs,
-    }));
+    actor.send(
+      observed({
+        sessionAgeMs: maxSessionAgeMs + 1,
+        observedAt: 3_000,
+        maxSessionAgeMs,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("spawning");
     expect(actor.getSnapshot().context.retireReason).toBe("age");
   });
@@ -540,21 +570,25 @@ describe("driver lifecycle machine", () => {
     const maxSessionAgeMs = 60_000;
     const actor = createActor(driverMachine).start();
 
-    actor.send(observed({
-      sessionAgeMs: maxSessionAgeMs + 1,
-      openAggregates: 1,
-      observedAt: 2_000,
-      maxSessionAgeMs,
-    }));
+    actor.send(
+      observed({
+        sessionAgeMs: maxSessionAgeMs + 1,
+        openAggregates: 1,
+        observedAt: 2_000,
+        maxSessionAgeMs,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("ready");
 
     // Closing the batch releases the retire on the very next pass.
-    actor.send(observed({
-      sessionAgeMs: maxSessionAgeMs + 2,
-      openAggregates: 0,
-      observedAt: 3_000,
-      maxSessionAgeMs,
-    }));
+    actor.send(
+      observed({
+        sessionAgeMs: maxSessionAgeMs + 2,
+        openAggregates: 0,
+        observedAt: 3_000,
+        maxSessionAgeMs,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("spawning");
     expect(actor.getSnapshot().context.retireReason).toBe("age");
   });
@@ -565,22 +599,26 @@ describe("driver lifecycle machine", () => {
     const aggregateGraceMs = 30_000;
     const actor = createActor(driverMachine).start();
 
-    actor.send(observed({
-      sessionAgeMs: maxSessionAgeMs + aggregateGraceMs - 1,
-      openAggregates: 2,
-      observedAt: 2_000,
-      maxSessionAgeMs,
-      aggregateGraceMs,
-    }));
+    actor.send(
+      observed({
+        sessionAgeMs: maxSessionAgeMs + aggregateGraceMs - 1,
+        openAggregates: 2,
+        observedAt: 2_000,
+        maxSessionAgeMs,
+        aggregateGraceMs,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("ready");
 
-    actor.send(observed({
-      sessionAgeMs: maxSessionAgeMs + aggregateGraceMs,
-      openAggregates: 2,
-      observedAt: 3_000,
-      maxSessionAgeMs,
-      aggregateGraceMs,
-    }));
+    actor.send(
+      observed({
+        sessionAgeMs: maxSessionAgeMs + aggregateGraceMs,
+        openAggregates: 2,
+        observedAt: 3_000,
+        maxSessionAgeMs,
+        aggregateGraceMs,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("spawning");
     expect(actor.getSnapshot().context.retireReason).toBe("age");
   });
@@ -597,12 +635,14 @@ describe("driver lifecycle machine", () => {
     actor.send(observed({ hasUnhandledWork: true, observedAt: 1_000 }));
     expect(actor.getSnapshot().value).toBe("poking");
 
-    actor.send(observed({
-      idle: false,
-      hasUnhandledWork: true,
-      degenerated: true,
-      observedAt: 1_500,
-    }));
+    actor.send(
+      observed({
+        idle: false,
+        hasUnhandledWork: true,
+        degenerated: true,
+        observedAt: 1_500,
+      }),
+    );
     expect(actor.getSnapshot().value).toBe("spawning");
     expect(actor.getSnapshot().context.retireReason).toBe("degeneration");
   });

@@ -11,9 +11,7 @@ import {
 } from "../src";
 
 function withoutNamedHerdrSession(argv: string[]): string[] {
-  return argv[0] === "herdr" && argv[1] === "--session"
-    ? ["herdr", ...argv.slice(3)]
-    : argv;
+  return argv[0] === "herdr" && argv[1] === "--session" ? ["herdr", ...argv.slice(3)] : argv;
 }
 
 function event(
@@ -57,20 +55,38 @@ function streamFake(events: MessageEventDocument[] = []) {
     appended,
     reads,
     client: {
+      probe: async () => {},
+      gatewayReplayContext: async (limit = 100) => ({
+        pending: events.slice(0, limit),
+        latestHandoff: null,
+        coverages: [],
+      }),
       append: async (input: unknown) => {
         appended.push(input);
         return { eventId: "appended", semanticKey: "test", deduplicated: false, schemaVersion: 1 };
       },
       pending: async () => [],
       pendingForConsumer: async () => [],
-      advanceCursor: async () => ({ consumer: "test", lastEventId: "x", lastSequence: 1, updatedAt: 1 }),
+      advanceCursor: async () => ({
+        consumer: "test",
+        lastEventId: "x",
+        lastSequence: 1,
+        updatedAt: 1,
+      }),
       readSince: async (recordedAt: number, _limit = 100, cursor: string | null = null) => {
         reads.push({ recordedAt, cursor });
         return cursor === null
           ? { events, nextCursor: "page-2", source: "message-event-log" as const }
           : { events: [], nextCursor: null, source: "message-event-log" as const };
       },
-      materialize: async () => ({ eventId: "x", deduplicated: false, flowView: false, platformView: false, terminalView: false, actionView: false }),
+      materialize: async () => ({
+        eventId: "x",
+        deduplicated: false,
+        flowView: false,
+        platformView: false,
+        terminalView: false,
+        actionView: false,
+      }),
       trace: async () => ({ kind: "not_found" as const, lookup: "x" }),
     },
   };
@@ -79,55 +95,67 @@ function streamFake(events: MessageEventDocument[] = []) {
 describe("deadline replay", () => {
   test("keeps same-timestamp events visible and merges joins without holdUntil", () => {
     const index = makeDeadlineIndex();
-    index.ingest(event("open", 100, "gateway.decision.recorded", {
-      decision: {
-        verb: "aggregate",
-        action: "open",
-        aggregateId: "agg-1",
-        memberEventIds: ["event-a"],
-        holdUntil: 200,
-      },
-    }));
-    index.ingest(event("join", 100, "gateway.decision.recorded", {
-      decision: {
-        verb: "aggregate",
-        action: "join",
-        aggregateId: "agg-1",
-        memberEventIds: ["event-b"],
-      },
-    }));
-    index.ingest(event("open", 100, "gateway.decision.recorded", {
-      decision: {
-        verb: "aggregate",
-        action: "open",
-        aggregateId: "agg-1",
-        memberEventIds: ["event-a"],
-        holdUntil: 200,
-      },
-    }));
+    index.ingest(
+      event("open", 100, "gateway.decision.recorded", {
+        decision: {
+          verb: "aggregate",
+          action: "open",
+          aggregateId: "agg-1",
+          memberEventIds: ["event-a"],
+          holdUntil: 200,
+        },
+      }),
+    );
+    index.ingest(
+      event("join", 100, "gateway.decision.recorded", {
+        decision: {
+          verb: "aggregate",
+          action: "join",
+          aggregateId: "agg-1",
+          memberEventIds: ["event-b"],
+        },
+      }),
+    );
+    index.ingest(
+      event("open", 100, "gateway.decision.recorded", {
+        decision: {
+          verb: "aggregate",
+          action: "open",
+          aggregateId: "agg-1",
+          memberEventIds: ["event-a"],
+          holdUntil: 200,
+        },
+      }),
+    );
 
     expect(index.watermark).toBe(100);
-    expect(index.due(200)).toEqual([{
-      aggregateId: "agg-1",
-      memberEventIds: ["event-a", "event-b"],
-      holdUntil: 200,
-    }]);
-
-    index.ingest(event("fired", 100, "aggregate.deadline.reached", {
-      aggregateId: "agg-1",
-      memberEventIds: ["event-a", "event-b"],
-      holdUntil: 200,
-    }));
-    expect(index.due(200)).toEqual([]);
-
-    index.ingest(event("close", 101, "gateway.decision.recorded", {
-      decision: {
-        verb: "aggregate",
-        action: "close-deliver",
+    expect(index.due(200)).toEqual([
+      {
         aggregateId: "agg-1",
         memberEventIds: ["event-a", "event-b"],
+        holdUntil: 200,
       },
-    }));
+    ]);
+
+    index.ingest(
+      event("fired", 100, "aggregate.deadline.reached", {
+        aggregateId: "agg-1",
+        memberEventIds: ["event-a", "event-b"],
+        holdUntil: 200,
+      }),
+    );
+    expect(index.due(200)).toEqual([]);
+
+    index.ingest(
+      event("close", 101, "gateway.decision.recorded", {
+        decision: {
+          verb: "aggregate",
+          action: "close-deliver",
+          aggregateId: "agg-1",
+          memberEventIds: ["event-a", "event-b"],
+        },
+      }),
+    );
     expect(index.due(1_000)).toEqual([]);
   });
 
@@ -173,17 +201,19 @@ describe("live adapters", () => {
 
   test("requires the pinned Sonnet model and gateway plugin arguments", () => {
     const processInfo = (model: string) => ({
-      foreground_processes: [{
-        argv: [
-          "claude",
-          "--model",
-          model,
-          "--plugin-dir",
-          "prototypes/agent-comms-gateway/claude-plugin",
-          "--agent",
-          "joelclaw-gateway",
-        ],
-      }],
+      foreground_processes: [
+        {
+          argv: [
+            "claude",
+            "--model",
+            model,
+            "--plugin-dir",
+            "prototypes/agent-comms-gateway/claude-plugin",
+            "--agent",
+            "joelclaw-gateway",
+          ],
+        },
+      ],
     });
 
     expect(isCanonicalGatewayProcessInfo(processInfo("sonnet"))).toBe(false);
@@ -197,7 +227,9 @@ describe("live adapters", () => {
       const argv = withoutNamedHerdrSession(rawArgv);
       if (argv[1] === "agent") {
         return {
-          stdout: JSON.stringify({ result: { agents: [{ pane_id: "w1:p2", name: "gateway", agent_status: "blocked" }] } }),
+          stdout: JSON.stringify({
+            result: { agents: [{ pane_id: "w1:p2", name: "gateway", agent_status: "blocked" }] },
+          }),
           stderr: "",
         };
       }
@@ -206,17 +238,19 @@ describe("live adapters", () => {
           stdout: JSON.stringify({
             result: {
               process_info: {
-                foreground_processes: [{
-                  argv: [
-                    "claude",
-                    "--model",
-                    "claude-sonnet-4-6",
-                    "--plugin-dir",
-                    "prototypes/agent-comms-gateway/claude-plugin",
-                    "--agent",
-                    "joelclaw-gateway",
-                  ],
-                }],
+                foreground_processes: [
+                  {
+                    argv: [
+                      "claude",
+                      "--model",
+                      "claude-sonnet-4-6",
+                      "--plugin-dir",
+                      "prototypes/agent-comms-gateway/claude-plugin",
+                      "--agent",
+                      "joelclaw-gateway",
+                    ],
+                  },
+                ],
               },
             },
           }),
@@ -248,14 +282,20 @@ describe("live adapters", () => {
       const argv = withoutNamedHerdrSession(rawArgv);
       if (argv[1] === "agent") {
         return {
-          stdout: JSON.stringify({ result: { agents: [{ pane_id: "w1:p2", name: "gateway", agent_status: "idle" }] } }),
+          stdout: JSON.stringify({
+            result: { agents: [{ pane_id: "w1:p2", name: "gateway", agent_status: "idle" }] },
+          }),
           stderr: "",
         };
       }
       if (argv[1] === "pane" && argv[2] === "process-info") {
         return {
           stdout: JSON.stringify({
-            result: { process_info: { foreground_processes: [{ argv: ["claude", "--resume", "stale-session"] }] } },
+            result: {
+              process_info: {
+                foreground_processes: [{ argv: ["claude", "--resume", "stale-session"] }],
+              },
+            },
           }),
           stderr: "",
         };
@@ -275,6 +315,114 @@ describe("live adapters", () => {
       sessionExists: false,
       idle: false,
     });
+    await ports.close();
+  });
+
+  test("interrupts only a Herdr prompt that reaches its hard timeout", async () => {
+    const stream = streamFake();
+    const redis = redisFake();
+    const commands: string[][] = [];
+    const ports = makeLiveDriverPorts(
+      {
+        target: "gateway-agent",
+        successorBriefPath: "/tmp/gateway.svx",
+      },
+      {
+        stream: stream.client,
+        redis: redis.client,
+        runCommand: async (rawArgv) => {
+          const argv = withoutNamedHerdrSession(rawArgv);
+          commands.push(argv);
+          if (argv[1] === "pane" && argv[2] === "list") {
+            return { stdout: '{"result":{"panes":[]}}', stderr: "" };
+          }
+          if (argv[1] === "agent" && argv[2] === "prompt") {
+            throw new Error('herdr agent prompt exited 1: {"error":{"code":"timeout"}}');
+          }
+          return { stdout: '{"result":{"type":"ok"}}', stderr: "" };
+        },
+      },
+    );
+
+    await expect(ports.promptAgent("bounded work", 240_000)).rejects.toThrow('"code":"timeout"');
+    expect(commands.at(-1)).toEqual(["herdr", "agent", "send-keys", "gateway-agent", "ctrl+c"]);
+    await ports.close();
+  });
+
+  test("reports both the timeout and a failed interrupt", async () => {
+    const stream = streamFake();
+    const redis = redisFake();
+    const ports = makeLiveDriverPorts(
+      {
+        target: "gateway-agent",
+        successorBriefPath: "/tmp/gateway.svx",
+      },
+      {
+        stream: stream.client,
+        redis: redis.client,
+        runCommand: async (rawArgv) => {
+          const argv = withoutNamedHerdrSession(rawArgv);
+          if (argv[1] === "pane" && argv[2] === "list") {
+            return { stdout: '{"result":{"panes":[]}}', stderr: "" };
+          }
+          if (argv[1] === "agent" && argv[2] === "prompt") {
+            throw new Error('herdr agent prompt exited 1: {"error":{"code":"timeout"}}');
+          }
+          if (argv[1] === "agent" && argv[2] === "send-keys") {
+            throw new Error("interrupt unavailable");
+          }
+          return { stdout: '{"result":{"type":"ok"}}', stderr: "" };
+        },
+      },
+    );
+
+    let failure: unknown;
+    try {
+      await ports.promptAgent("bounded work", 240_000);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError)) {
+      throw new Error("expected an AggregateError");
+    }
+    expect(failure.errors).toHaveLength(2);
+    expect(failure.message).toBe("Gateway prompt timed out and its interrupt failed");
+    await ports.close();
+  });
+
+  test("does not interrupt a settled prompt with no observed state change", async () => {
+    const stream = streamFake();
+    const redis = redisFake();
+    const commands: string[][] = [];
+    const ports = makeLiveDriverPorts(
+      {
+        target: "gateway-agent",
+        successorBriefPath: "/tmp/gateway.svx",
+      },
+      {
+        stream: stream.client,
+        redis: redis.client,
+        runCommand: async (rawArgv) => {
+          const argv = withoutNamedHerdrSession(rawArgv);
+          commands.push(argv);
+          if (argv[1] === "pane" && argv[2] === "list") {
+            return { stdout: '{"result":{"panes":[]}}', stderr: "" };
+          }
+          if (argv[1] === "agent" && argv[2] === "prompt") {
+            throw new Error(
+              'herdr agent prompt exited 1: {"error":{"code":"agent_prompt_stalled","message":"prior detail: {\\"code\\":\\"timeout\\"}"}}',
+            );
+          }
+          return { stdout: '{"result":{"type":"ok"}}', stderr: "" };
+        },
+      },
+    );
+
+    await expect(ports.promptAgent("bounded work", 240_000)).rejects.toThrow(
+      "agent_prompt_stalled",
+    );
+    expect(commands.some((argv) => argv[1] === "agent" && argv[2] === "send-keys")).toBe(false);
     await ports.close();
   });
 
@@ -322,7 +470,8 @@ describe("live adapters", () => {
 
     // A labeled pane with a live agent is the pending successor — do not relaunch.
     paneListPayload = '{"result":{"panes":[{"pane_id":"wT:p9","label":"📨 gateway loop"}]}}';
-    agentListPayload = '{"result":{"agents":[{"pane_id":"wT:p9","name":"gateway","agent_status":"idle"}]}}';
+    agentListPayload =
+      '{"result":{"agents":[{"pane_id":"wT:p9","name":"gateway","agent_status":"idle"}]}}';
     const before = calls.length;
     await ports.requestSuccessor();
     expect(calls.slice(before).filter((argv) => argv[2] === "create")).toHaveLength(0);
@@ -366,8 +515,9 @@ describe("live adapters", () => {
     );
 
     await ports.requestSuccessor();
-    expect(calls.every((argv) => argv.slice(0, 3).join(" ") === "herdr --session system"))
-      .toBe(true);
+    expect(calls.every((argv) => argv.slice(0, 3).join(" ") === "herdr --session system")).toBe(
+      true,
+    );
     expect(calls).toContainEqual([
       "herdr",
       "--session",
@@ -386,27 +536,36 @@ describe("live adapters", () => {
       calls.push(argv);
       if (argv[1] === "pane" && argv[2] === "list") {
         return {
-          stdout: JSON.stringify({ result: { panes: [{ pane_id: "wT:p9", label: "📨 gateway loop" }] } }),
+          stdout: JSON.stringify({
+            result: { panes: [{ pane_id: "wT:p9", label: "📨 gateway loop" }] },
+          }),
           stderr: "",
         };
       }
       if (argv[1] === "agent" && argv[2] === "list") {
         return {
-          stdout: JSON.stringify({ result: { agents: [{ pane_id: "wT:p9", agent_status: "idle" }] } }),
+          stdout: JSON.stringify({
+            result: { agents: [{ pane_id: "wT:p9", agent_status: "idle" }] },
+          }),
           stderr: "",
         };
       }
       if (argv[1] === "pane" && argv[2] === "process-info") {
         return {
           stdout: JSON.stringify({
-            result: { process_info: { foreground_processes: [{ argv: ["claude", "--resume", "stale-session"] }] } },
+            result: {
+              process_info: {
+                foreground_processes: [{ argv: ["claude", "--resume", "stale-session"] }],
+              },
+            },
           }),
           stderr: "",
         };
       }
       return { stdout: '{"result":{}}', stderr: "" };
     };
-    const command = "claude --model claude-sonnet-4-6 --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway";
+    const command =
+      "claude --model claude-sonnet-4-6 --plugin-dir prototypes/agent-comms-gateway/claude-plugin --agent joelclaw-gateway";
 
     const result = await spawnGatewaySuccessorPane(
       runCommand,

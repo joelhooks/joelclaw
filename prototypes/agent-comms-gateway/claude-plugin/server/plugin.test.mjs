@@ -481,6 +481,21 @@ describe("stream receipts", () => {
     ).toBe(false);
   });
 
+  test("caps one driver-turn pending page at 20 inputs", async () => {
+    const backlog = Array.from({ length: 30 }, (_, index) => ({
+      ...inputEvent,
+      _id: `turn-input-${index + 1}`,
+      semanticKey: `turn-input:${index + 1}`,
+      recordedAt: index + 1,
+      sequence: index + 1,
+    }));
+    const stream = createStreamTools({ client: fakeClient(backlog), now: () => 40 });
+
+    expect((await stream.pending()).pending).toHaveLength(20);
+    expect((await stream.pending({ limit: 100 })).pending).toHaveLength(20);
+    expect((await stream.pending({ limit: 7 })).pending).toHaveLength(7);
+  });
+
   test("bounded replay handles bootstrap, pending, drop, and advances when readSince fails", async () => {
     const gatewayOutput = {
       _id: "gateway-output-1",

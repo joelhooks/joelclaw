@@ -55,9 +55,13 @@ export function isCanonicalGatewayProcessInfo(processInfo: unknown): boolean {
     const process = object(entry);
     if (!Array.isArray(process?.argv)) return false;
     const argv = process.argv.filter((value): value is string => typeof value === "string");
-    return hasArg(argv, "--model", (value) => value === GATEWAY_MODEL)
-      && hasArg(argv, "--agent", (value) => value === GATEWAY_AGENT_NAME)
-      && hasArg(argv, "--plugin-dir", (value) => value.replace(/\/$/u, "").endsWith(GATEWAY_PLUGIN_SUFFIX));
+    return (
+      hasArg(argv, "--model", (value) => value === GATEWAY_MODEL) &&
+      hasArg(argv, "--agent", (value) => value === GATEWAY_AGENT_NAME) &&
+      hasArg(argv, "--plugin-dir", (value) =>
+        value.replace(/\/$/u, "").endsWith(GATEWAY_PLUGIN_SUFFIX),
+      )
+    );
   });
 }
 
@@ -111,12 +115,13 @@ export async function spawnGatewaySuccessorPane(
     const agents = resultList(agentResult.stdout, "agents");
     const live = agents.some((entry) => entry.pane_id === existing.pane_id);
     if (live) {
-      const canonical = !commandRequiresGatewayPlugin(command)
-        || await paneHasCanonicalGatewayProcess(runCommand, existing.pane_id);
+      const canonical =
+        !commandRequiresGatewayPlugin(command) ||
+        (await paneHasCanonicalGatewayProcess(runCommand, existing.pane_id));
       if (canonical) return { spawned: false, paneId: existing.pane_id };
 
-      const stopInvalidAgent = deps.stopInvalidAgent
-        ?? ((paneId: string) => stopAgentInPane(runCommand, paneId));
+      const stopInvalidAgent =
+        deps.stopInvalidAgent ?? ((paneId: string) => stopAgentInPane(runCommand, paneId));
       const stopped = await stopInvalidAgent(existing.pane_id);
       if (!stopped.stopped) {
         throw new Error(`invalid gateway session in ${existing.pane_id} did not stop`);
@@ -159,13 +164,7 @@ export async function spawnGatewaySuccessorPane(
   const paneId = typeof rootPane?.pane_id === "string" ? rootPane.pane_id : null;
   if (!paneId) throw new Error(`herdr spawn returned no root pane: ${JSON.stringify(created)}`);
   await runCommand(["herdr", "pane", "rename", paneId, opts.target]);
-  await runCommand([
-    "herdr",
-    "pane",
-    "run",
-    paneId,
-    command,
-  ]);
+  await runCommand(["herdr", "pane", "run", paneId, command]);
   return { spawned: true, paneId };
 }
 
@@ -247,8 +246,23 @@ async function command(argv: string[]): Promise<CommandResult> {
   return { stdout, stderr };
 }
 
+function herdrErrorCode(error: unknown): string | undefined {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = / exited \d+: (\{[\s\S]*\})$/u.exec(message);
+  if (match?.[1] === undefined) return undefined;
+  try {
+    const envelope = object(JSON.parse(match[1]));
+    const errorRecord = object(envelope?.error);
+    return typeof errorRecord?.code === "string" ? errorRecord.code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function object(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined;
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function resultList(raw: string, key: string): Record<string, unknown>[] {
@@ -287,10 +301,10 @@ function aggregateDecision(event: MessageEventDocument): AggregateDecision | und
   const aggregateId = decision.aggregateId;
   const memberEventIds = decision.memberEventIds;
   if (
-    (action !== "open" && action !== "join" && action !== "extend" && action !== "close-deliver")
-    || typeof aggregateId !== "string"
-    || !Array.isArray(memberEventIds)
-    || !memberEventIds.every((id) => typeof id === "string")
+    (action !== "open" && action !== "join" && action !== "extend" && action !== "close-deliver") ||
+    typeof aggregateId !== "string" ||
+    !Array.isArray(memberEventIds) ||
+    !memberEventIds.every((id) => typeof id === "string")
   ) {
     return undefined;
   }
@@ -343,7 +357,7 @@ export function makeDeadlineIndex() {
           aggregateId: decision.aggregateId,
           memberEventIds: unique([...(prior?.memberEventIds ?? []), ...decision.memberEventIds]),
           holdUntil,
-          ...(decision.follows ?? prior?.follows
+          ...((decision.follows ?? prior?.follows)
             ? { follows: decision.follows ?? prior?.follows }
             : {}),
         });
@@ -363,8 +377,7 @@ export function makeDeadlineIndex() {
     due: (now: number): AggregateDeadline[] =>
       [...active.values()].filter(
         (deadline) =>
-          deadline.holdUntil <= now
-          && !fired.has(`${deadline.aggregateId}:${deadline.holdUntil}`),
+          deadline.holdUntil <= now && !fired.has(`${deadline.aggregateId}:${deadline.holdUntil}`),
       ),
     markFired: (deadline: AggregateDeadline) => {
       fired.add(`${deadline.aggregateId}:${deadline.holdUntil}`);
@@ -397,10 +410,12 @@ function makeDeadlineReader(client: StreamClient) {
 function scheduleMatches(raw: string, briefPath: string, marker: string): boolean {
   try {
     const entry = object(JSON.parse(raw));
-    return entry?.verb === "spawn"
-      && entry.briefPath === briefPath
-      && typeof entry.prompt === "string"
-      && entry.prompt.includes(marker);
+    return (
+      entry?.verb === "spawn" &&
+      entry.briefPath === briefPath &&
+      typeof entry.prompt === "string" &&
+      entry.prompt.includes(marker)
+    );
   } catch {
     return false;
   }
@@ -421,16 +436,16 @@ export function makeLiveDriverPorts(
   dependencies: LiveAdapterDependencies = {},
 ): DriverPorts & { close: () => Promise<void> } {
   const baseRunCommand = dependencies.runCommand ?? command;
-  const herdrSession =
-    options.herdrSession?.trim() || DEFAULT_GATEWAY_HERDR_SESSION;
-  const runCommand = (argv: string[]) =>
-    baseRunCommand(scopeHerdrCommand(argv, herdrSession));
+  const herdrSession = options.herdrSession?.trim() || DEFAULT_GATEWAY_HERDR_SESSION;
+  const runCommand = (argv: string[]) => baseRunCommand(scopeHerdrCommand(argv, herdrSession));
   const stream = dependencies.stream ?? createMessageEventLogClient();
   const deadlines = makeDeadlineReader(stream);
-  const redis = dependencies.redis ?? new Redis(
-    options.redisUrl ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379",
-    { lazyConnect: true, maxRetriesPerRequest: 1 },
-  );
+  const redis =
+    dependencies.redis ??
+    new Redis(options.redisUrl ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379", {
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+    });
   const recordReceipt = async (receipt: DriverReceipt) => {
     const line = `${JSON.stringify(receipt)}\n`;
     process.stdout.write(line);
@@ -446,8 +461,7 @@ export function makeLiveDriverPorts(
     return typeof pane?.pane_id === "string" ? pane.pane_id : undefined;
   };
 
-  const resolveCliTarget = async (): Promise<string> =>
-    (await resolvePaneId()) ?? options.target;
+  const resolveCliTarget = async (): Promise<string> => (await resolvePaneId()) ?? options.target;
 
   /**
    * True session start, from the Claude transcript the herdr agent session id
@@ -457,9 +471,10 @@ export function makeLiveDriverPorts(
    */
   const sessionStartedAtFrom = (agent: Record<string, unknown> | undefined): number | undefined => {
     const session = agent?.agent_session;
-    const sessionId = typeof session === "object" && session !== null
-      ? (session as Record<string, unknown>).value
-      : undefined;
+    const sessionId =
+      typeof session === "object" && session !== null
+        ? (session as Record<string, unknown>).value
+        : undefined;
     if (typeof sessionId !== "string" || sessionId.trim() === "") return undefined;
     const cwd = typeof agent?.cwd === "string" ? agent.cwd : process.cwd();
     const slug = cwd.replace(/\//gu, "-");
@@ -485,21 +500,24 @@ export function makeLiveDriverPorts(
       // The target may be a pane label agents don't carry: resolve the pane
       // first, then find its occupant by pane id.
       const labeledPane = panes.find((entry) => matchesTarget(entry, options.target));
-      const agent = agents.find((entry) => matchesTarget(entry, options.target))
-        ?? (labeledPane && typeof labeledPane.pane_id === "string"
+      const agent =
+        agents.find((entry) => matchesTarget(entry, options.target)) ??
+        (labeledPane && typeof labeledPane.pane_id === "string"
           ? agents.find((entry) => entry.pane_id === labeledPane.pane_id)
           : undefined);
-      const pane = labeledPane
-        ?? (agent && typeof agent.pane_id === "string"
+      const pane =
+        labeledPane ??
+        (agent && typeof agent.pane_id === "string"
           ? panes.find((entry) => entry.pane_id === agent.pane_id)
           : undefined);
       const status = agent?.agent_status;
       const paneId = typeof pane?.pane_id === "string" ? pane.pane_id : undefined;
       const expectedCommand = options.successorCommand ?? DEFAULT_SUCCESSOR_COMMAND;
-      const sessionExists = agent !== undefined
-        && paneId !== undefined
-        && (!commandRequiresGatewayPlugin(expectedCommand)
-          || await paneHasCanonicalGatewayProcess(runCommand, paneId));
+      const sessionExists =
+        agent !== undefined &&
+        paneId !== undefined &&
+        (!commandRequiresGatewayPlugin(expectedCommand) ||
+          (await paneHasCanonicalGatewayProcess(runCommand, paneId)));
       return {
         paneExists: pane !== undefined,
         sessionExists,
@@ -534,20 +552,35 @@ export function makeLiveDriverPorts(
       }
     },
     promptAgent: async (text, timeoutMs) => {
-      await runCommand([
-        "herdr",
-        "agent",
-        "prompt",
-        await resolveCliTarget(),
-        text,
-        "--wait",
-        "--until",
-        "idle",
-        "--until",
-        "done",
-        "--timeout",
-        String(timeoutMs),
-      ]);
+      const target = await resolveCliTarget();
+      try {
+        await runCommand([
+          "herdr",
+          "agent",
+          "prompt",
+          target,
+          text,
+          "--wait",
+          "--until",
+          "idle",
+          "--until",
+          "done",
+          "--timeout",
+          String(timeoutMs),
+        ]);
+      } catch (error) {
+        if (herdrErrorCode(error) === "timeout") {
+          try {
+            await runCommand(["herdr", "agent", "send-keys", target, "ctrl+c"]);
+          } catch (interruptError) {
+            throw new AggregateError(
+              [error, interruptError],
+              "Gateway prompt timed out and its interrupt failed",
+            );
+          }
+        }
+        throw error;
+      }
     },
     listDueDeadlines: deadlines.listDue,
     countOpenAggregates: async () => deadlines.countOpen(),
@@ -583,7 +616,9 @@ export function makeLiveDriverPorts(
       if (!paneId) return;
       const result = await stopAgentInPane(runCommand, paneId);
       if (!result.stopped && result.pids.length > 0) {
-        throw new Error(`gateway session on ${paneId} still live after SIGTERM (pids ${result.pids.join(",")})`);
+        throw new Error(
+          `gateway session on ${paneId} still live after SIGTERM (pids ${result.pids.join(",")})`,
+        );
       }
     },
     requestSuccessor: async () => {

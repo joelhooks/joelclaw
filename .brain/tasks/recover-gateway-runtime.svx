@@ -67,6 +67,25 @@ Rollback reverses that compatibility order: restore the plugin/driver first, the
 
 Aggregate and incident reconstruction still retains the explicit 20,000-event all-history cap. That path is not part of bootstrap, ordinary pending reads, decision readback, or cursor advancement.
 
+## Bounded-turn deadline fault - 2026-08-24
+
+The steady-state watch later found the judgment heartbeat missing while the driver and slim transport processes remained alive and both Redis queues stayed empty. The successor had ignored the prompt-only 20-input limit, continued into another batch for nearly fifteen minutes, and outlived the driver's 300-second Herdr wait. The wait returned `timeout`, but it did not cancel the active Claude turn. The driver correctly withheld its heartbeat, so raw fallback remained authoritative.
+
+One operator `Ctrl+C` interrupted only that inference turn. Already-read-back decisions remained durable, the cursor was not reset or fast-forwarded, and the existing driver restored its heartbeat on the next pass. The bounded pending head continued moving during the incident.
+
+The source repair makes the bound executable:
+
+- `stream_pending` returns at most 20 inputs even when a caller requests 100;
+- the driver prompt says to call it once and finish that page;
+- the default poke deadline is 240 seconds, matching the written four-minute contract;
+- only an exact top-level Herdr `error.code = timeout` triggers `Ctrl+C` against the same resolved agent target;
+- stalled or ambiguous prompt errors do not interrupt;
+- timeout plus failed interrupt preserves both failures in an `AggregateError`.
+
+The one-call rule is still prompt policy. The per-call cap and hard timeout provide the enforceable outer bounds. A future turn token would be required to prevent a model from making multiple 20-item calls inside one turn.
+
+Operational archaeology also found that the legacy `joelclaw gateway doctor` transport stage still expects adapter/poller readiness and reports the slim transport as failed even when its PID-matched readiness marker, process, Redis path, and queues are healthy. That doctor drift is a separate CLI follow-up; it did not authorize restarting the healthy transport during this incident.
+
 ## Constraints
 
 - Do not start a second Telegram, Slack, Discord, gateway, or Convex owner.

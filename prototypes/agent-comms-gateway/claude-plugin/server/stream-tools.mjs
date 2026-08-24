@@ -13,6 +13,7 @@ const MAX_AGGREGATE_SCAN_EVENTS = 20_000;
 const MAX_APPEND_READBACK_EVENTS = 20_000;
 const PAGE_SIZE = 500;
 const MAX_REPLAY_CONTEXT_EVENTS = 100;
+const MAX_DRIVER_TURN_INPUTS = 20;
 
 /** Joel's real operator actors. Machine producers never use these. */
 export const JOEL_ACTOR_IDS = new Set(["7718912466", "U030BJ3CK"]);
@@ -649,7 +650,9 @@ export function createStreamTools({
   return {
     readSince: (args) => client.readSince(args.recordedAt, args.limit ?? 100, args.cursor ?? null),
     pending: async (args = {}) => {
-      const context = await loadReplayContext(args.limit);
+      const context = await loadReplayContext(
+        Math.min(replayContextLimit(args.limit, MAX_DRIVER_TURN_INPUTS), MAX_DRIVER_TURN_INPUTS),
+      );
       const pending = context.pending;
       const needsAck = await unackedJoelInbound({ context });
       const compact = compactPendingList(pending, { now: now() });
