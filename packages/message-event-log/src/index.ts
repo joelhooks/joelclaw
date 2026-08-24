@@ -277,6 +277,20 @@ export type ReadSinceResult = {
   source: "message-event-log";
 };
 
+export type GatewayReplayCoverage = {
+  inputEventId: string;
+  decisionEventId: string;
+  terminal: boolean;
+  verb: GatewayDecision["verb"] | "observe";
+  action?: Extract<GatewayDecision, { verb: "aggregate" }>["action"];
+};
+
+export type GatewayReplayContext = {
+  pending: MessageEventDocument[];
+  latestHandoff: MessageEventDocument | null;
+  coverages: GatewayReplayCoverage[];
+};
+
 export type MessageFlowTerminalState =
   | "confirmed"
   | "failed"
@@ -322,6 +336,7 @@ export type MessageEventLogOperation =
   | "pending"
   | "probe"
   | "advanceCursor"
+  | "gatewayReplayContext"
   | "readSince"
   | "trace";
 
@@ -418,6 +433,8 @@ export const createMessageEventLogClient = (options: ClientOptions = {}) => {
   const pendingRef = (anyApi as any).messageEvents.pendingForConsumer as FunctionReference<"query">;
   const advanceCursorRef = (anyApi as any).messageEvents
     .advanceConsumerCursor as FunctionReference<"mutation">;
+  const gatewayReplayContextRef = (anyApi as any).messageEvents
+    .gatewayReplayContext as FunctionReference<"query">;
   const readSinceRef = (anyApi as any).messageEvents.readSince as FunctionReference<"query">;
   const traceRef = (anyApi as any).messageEvents.traceByFlow as FunctionReference<"query">;
 
@@ -474,6 +491,24 @@ export const createMessageEventLogClient = (options: ClientOptions = {}) => {
         throw new MessageEventLogError(
           "advanceCursor",
           "MESSAGE_EVENT_CURSOR_ADVANCE_FAILED",
+          error,
+        );
+      }
+    },
+    gatewayReplayContext: async (limit = 100): Promise<GatewayReplayContext> => {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        throw new MessageEventLogError(
+          "gatewayReplayContext",
+          "MESSAGE_EVENT_GATEWAY_REPLAY_CONTEXT_INVALID_LIMIT",
+          new Error("limit must be a safe integer from 1 through 100"),
+        );
+      }
+      try {
+        return (await client.query(gatewayReplayContextRef, { limit })) as GatewayReplayContext;
+      } catch (error) {
+        throw new MessageEventLogError(
+          "gatewayReplayContext",
+          "MESSAGE_EVENT_GATEWAY_REPLAY_CONTEXT_FAILED",
           error,
         );
       }

@@ -115,10 +115,12 @@ describe("gateway stream contracts", () => {
 
     await client.probe(50);
 
-    expect(calls).toEqual([{
-      consumer: GATEWAY_TRANSPORT_READINESS_CONSUMER,
-      limit: 1,
-    }]);
+    expect(calls).toEqual([
+      {
+        consumer: GATEWAY_TRANSPORT_READINESS_CONSUMER,
+        limit: 1,
+      },
+    ]);
   });
 
   test("fails a probe within its timeout instead of hanging startup", async () => {
@@ -140,8 +142,20 @@ describe("gateway stream contracts", () => {
     }
   });
 
-  test("uses independent named cursors and the paginated replay contract", async () => {
+  test("uses independent named cursors and the bounded gateway replay contract", async () => {
     const calls: Array<{ operation: string; args: unknown }> = [];
+    const replayContext = {
+      pending: [],
+      latestHandoff: null,
+      coverages: [
+        {
+          inputEventId: "event-17",
+          decisionEventId: "decision-17",
+          terminal: true,
+          verb: "drop" as const,
+        },
+      ],
+    };
     const fakeClient = {
       mutation: async (_ref: unknown, args: unknown) => {
         calls.push({ operation: "mutation", args });
@@ -157,6 +171,9 @@ describe("gateway stream contracts", () => {
         if (typeof args === "object" && args !== null && "recordedAt" in args) {
           return { events: [], nextCursor: null, source: "message-event-log" };
         }
+        if (typeof args === "object" && args !== null && !("consumer" in args)) {
+          return replayContext;
+        }
         return [];
       },
     } as unknown as ConvexHttpClient;
@@ -164,13 +181,33 @@ describe("gateway stream contracts", () => {
 
     await client.pendingForConsumer(GATEWAY_MESSAGE_EVENT_CONSUMER, 25);
     await client.advanceCursor(GATEWAY_MESSAGE_EVENT_CONSUMER, "event-18");
+    const context = await client.gatewayReplayContext(75);
     const replay = await client.readSince(1_721_600_000_000, 100, "cursor-1");
 
     expect(calls.map(({ args }) => args)).toEqual([
       { consumer: "gateway/agent", limit: 25 },
       { consumer: "gateway/agent", eventId: "event-18" },
+      { limit: 75 },
       { cursor: "cursor-1", limit: 100, recordedAt: 1_721_600_000_000 },
     ]);
+    expect(context).toEqual(replayContext);
     expect(replay).toEqual({ events: [], nextCursor: null, source: "message-event-log" });
+  });
+
+  test("rejects gateway replay limits outside the public API contract", async () => {
+    const fakeClient = {
+      mutation: async () => ({}),
+      query: async () => ({ pending: [], latestHandoff: null, coverages: [] }),
+    } as unknown as ConvexHttpClient;
+    const client = createMessageEventLogClient({ client: fakeClient });
+
+    await expect(client.gatewayReplayContext(0)).rejects.toMatchObject({
+      operation: "gatewayReplayContext",
+      code: "MESSAGE_EVENT_GATEWAY_REPLAY_CONTEXT_INVALID_LIMIT",
+    });
+    await expect(client.gatewayReplayContext(101)).rejects.toMatchObject({
+      operation: "gatewayReplayContext",
+      code: "MESSAGE_EVENT_GATEWAY_REPLAY_CONTEXT_INVALID_LIMIT",
+    });
   });
 });

@@ -29,23 +29,51 @@ function fakeClient(seed) {
   let cursorSequence = 0;
   return {
     events,
+    gatewayReplayContext: async (limit = 100) => {
+      const pending = events
+        .filter((event) => (event.sequence ?? 0) > cursorSequence)
+        .sort((left, right) => (left.sequence ?? 0) - (right.sequence ?? 0))
+        .slice(0, Math.min(limit, 100));
+      const pendingIds = new Set(pending.map((event) => event._id));
+      return {
+        pending,
+        latestHandoff: events.filter((event) => event.kind === "gateway.handoff").at(-1) ?? null,
+        coverages: events
+          .filter((event) => event.kind === "gateway.decision.recorded")
+          .flatMap((event) =>
+            (event.payload?.inputEventIds ?? [])
+              .filter((inputEventId) => pendingIds.has(inputEventId))
+              .map((inputEventId) => ({
+                inputEventId,
+                decisionEventId: event._id,
+                terminal:
+                  event.payload?.decision?.action === "close-deliver" ||
+                  new Set(["deliver", "observe", "fanout", "route", "drop"]).has(
+                    event.payload?.decision?.verb,
+                  ),
+                verb: event.payload?.decision?.verb,
+                ...(event.payload?.decision?.action
+                  ? { action: event.payload.decision.action }
+                  : {}),
+              })),
+          ),
+      };
+    },
     readSince: async (recordedAt, limit, cursor) => {
       const eligible = events.filter((event) => (event.recordedAt ?? 0) >= recordedAt);
       const offset = cursor ? Number(cursor) : 0;
       const page = eligible.slice(offset, offset + limit);
       return {
         events: page,
-        nextCursor: offset + page.length < eligible.length
-          ? String(offset + page.length)
-          : null,
+        nextCursor: offset + page.length < eligible.length ? String(offset + page.length) : null,
         source: "message-event-log",
       };
     },
-    pendingForConsumer: async () =>
-      events.filter((event) =>
-        event.kind !== "gateway.decision.recorded"
-        && event.kind !== "gateway.handoff"
-        && (event.sequence ?? 0) > cursorSequence),
+    pendingForConsumer: async (_consumer, limit = 100) =>
+      events
+        .filter((event) => (event.sequence ?? 0) > cursorSequence)
+        .sort((left, right) => (left.sequence ?? 0) - (right.sequence ?? 0))
+        .slice(0, Math.min(limit, 100)),
     append: async (input) => {
       const event = {
         ...input,
@@ -63,7 +91,7 @@ function fakeClient(seed) {
     },
     advanceCursor: async (_consumer, eventId) => {
       const event = events.find((item) => item._id === eventId);
-      cursorSequence = event?.sequence ?? cursorSequence;
+      cursorSequence = Math.max(cursorSequence, event?.sequence ?? cursorSequence);
       return { lastEventId: eventId, lastSequence: cursorSequence };
     },
   };
@@ -85,12 +113,10 @@ function proposed(inputEventId, rewrite) {
 
 describe("stream incident latch integration", () => {
   test("rewrites open and repeat decisions before canonical append", async () => {
-    const first = incidentInput(
-      "input-1",
-      "open",
-      "2026-07-27T16:00:00.000Z",
-      { failureMode: "backlog", stuck: 3 },
-    );
+    const first = incidentInput("input-1", "open", "2026-07-27T16:00:00.000Z", {
+      failureMode: "backlog",
+      stuck: 3,
+    });
     const client = fakeClient([first]);
     const stream = createStreamTools({ client, now: () => Date.parse("2026-07-27T16:00:01.000Z") });
 
@@ -111,12 +137,10 @@ describe("stream incident latch integration", () => {
       },
     });
 
-    const repeat = incidentInput(
-      "input-2",
-      "open",
-      "2026-07-27T17:00:00.000Z",
-      { failureMode: "backlog", stuck: 3 },
-    );
+    const repeat = incidentInput("input-2", "open", "2026-07-27T17:00:00.000Z", {
+      failureMode: "backlog",
+      stuck: 3,
+    });
     repeat.sequence = client.events.length + 1;
     client.events.push(repeat);
     const joined = await stream.recordDecision({

@@ -40,6 +40,20 @@ Live migration evidence:
 
 Runtime reads now use indexed coverage only. New decisions remain strictly validated. Historical backfill is deliberately lenient so older valid evidence can be indexed without pretending it satisfies today's append contract. Gateway decision writes and `gateway/agent` cursor advances fail closed until backfill completion.
 
+## Replay-context bootstrap fault
+
+The recovered cursor exposed a third failure after indexed coverage shipped. The host gateway plugin still rebuilt bootstrap and decision context by paging `readSince(0)` across the whole canonical event log. The log now has more than 35,000 events. The plugin aborts at its unchanged `MAX_SCAN_EVENTS=20000` guard before it can read pending sequence 13,531, so SessionStart never reaches the decision loop.
+
+The repair contract is a public bounded API query: `messageEvents.gatewayReplayContext({ limit })`, with `limit` restricted to 1 through 100. The server fixes the consumer to `gateway/agent` and returns pending inputs, the latest handoff, and indexed decision coverage. Bootstrap, pending reads, Joel-ack priority, drop decisions, and both cursor-advance paths must use this bounded context. Generic operation must not page all history. The only retained all-history path is isolated behind aggregate/incident reconstruction, and the existing 20,000-event cap remains unchanged.
+
+Deployment order is strict because the client and plugin depend on the new public query:
+
+1. Deploy and read back the `joelclaw-api` query.
+2. Only then deploy the typed host client and gateway plugin/driver release.
+3. Verify bootstrap and one non-outward append/readback canary before resuming the existing single agent-comms owner.
+
+Rollback reverses that compatibility order: restore the plugin/driver first, then remove or roll back the API query. This source task does not authorize either deployment.
+
 ## Constraints
 
 - Do not start a second Telegram, Slack, Discord, gateway, or Convex owner.

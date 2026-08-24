@@ -69,7 +69,11 @@ export async function loadConversationSection(stream, { now = Date.now(), limit 
     .slice(-30)
     .map((event) => conversationLine(event));
   if (lines.length > 0) {
-    return { lines, windowLabel: "full readable history (recent windows were empty)", empty: false };
+    return {
+      lines,
+      windowLabel: "full readable history (recent windows were empty)",
+      empty: false,
+    };
   }
   return { lines: [], windowLabel: "no exchanges on record", empty: true };
 }
@@ -100,19 +104,23 @@ export async function buildSessionStartContext({
 } = {}) {
   const promptNames = ["identity.md", "vocabulary.md", "judgment.md"];
   const promptFiles = await Promise.all(
-    promptNames.map(async (name) => ({ name, text: await readFile(join(root, "prompts", name), "utf8") })),
+    promptNames.map(async (name) => ({
+      name,
+      text: await readFile(join(root, "prompts", name), "utf8"),
+    })),
   );
   const [bootstrap, snapshot, conversation] = await Promise.all([
-    stream.bootstrap({ limit: 200 }),
-    herdr.snapshot().catch(() => ({ agents: [], panes: [], capturedAt: new Date(now).toISOString() })),
+    stream.bootstrap({ limit: 100 }),
+    herdr
+      .snapshot()
+      .catch(() => ({ agents: [], panes: [], capturedAt: new Date(now).toISOString() })),
     loadConversationSection(stream, { now }),
   ]);
   const advisoryHandoff = bootstrap.latestHandoff?.payload?.note ?? null;
   const pendingRaw = bootstrap.pending ?? [];
   const pendingCompact = bootstrap.pendingCompact ?? compactPendingList(pendingRaw, { now });
   const joelPending = pendingRaw.filter((event) => isJoelInbound(event));
-  const ackIds = bootstrap.ackRequiredJoel
-    ?? joelPending.map((event) => event._id).filter(Boolean);
+  const ackIds = bootstrap.ackRequiredJoel ?? joelPending.map((event) => event._id).filter(Boolean);
   const herdrSummary = summarizeHerdr(snapshot);
 
   const sections = [
@@ -125,8 +133,13 @@ export async function buildSessionStartContext({
   // Joel pending goes first on purpose. Boot used to bury him under 30k of
   // herdr JSON, then the model opened every turn with stream_pending.
   if (ackIds.length > 0 || joelPending.length > 0) {
-    const rows = (joelPending.length > 0 ? joelPending : pendingRaw.filter((event) => ackIds.includes(event._id)))
-      .map((event) => `- ${event._id}: ${eventText(event).replace(/\s+/gu, " ").trim().slice(0, 160)}`);
+    const rows = (
+      joelPending.length > 0
+        ? joelPending
+        : pendingRaw.filter((event) => ackIds.includes(event._id))
+    ).map(
+      (event) => `- ${event._id}: ${eventText(event).replace(/\s+/gu, " ").trim().slice(0, 160)}`,
+    );
     sections.push(
       "\n## JOEL NEEDS ACK FIRST",
       "Unacked Joel inbound is waiting. Your FIRST tool call this turn is `stream_record_decision`:",
@@ -153,13 +166,15 @@ export async function buildSessionStartContext({
 async function main() {
   const input = await readStdin();
   const additionalContext = await buildSessionStartContext({ input });
-  process.stdout.write(`${JSON.stringify({
-    suppressOutput: true,
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      additionalContext,
-    },
-  })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext,
+      },
+    })}\n`,
+  );
 }
 
 if (import.meta.main) {

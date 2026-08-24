@@ -97,23 +97,81 @@ const decisionPayload = {
   rewrite: "Done.",
 };
 
+function replayContext(events, cursorSequence, limit = 100) {
+  const pending = events
+    .filter((event) => (event.sequence ?? 0) > cursorSequence)
+    .sort((left, right) => (left.sequence ?? 0) - (right.sequence ?? 0))
+    .slice(0, Math.min(limit, 100));
+  const pendingIds = new Set(pending.map((event) => event._id));
+  const decisions = events.filter((event) => event.kind === "gateway.decision.recorded");
+  return {
+    pending,
+    latestHandoff: events.filter((event) => event.kind === "gateway.handoff").at(-1) ?? null,
+    coverages: decisions.flatMap((event) =>
+      (event.payload?.inputEventIds ?? [])
+        .filter((inputEventId) => pendingIds.has(inputEventId))
+        .map((inputEventId) => ({
+          inputEventId,
+          decisionEventId: event._id,
+          terminal:
+            new Set(["deliver", "observe", "fanout", "route", "drop"]).has(
+              event.payload?.decision?.verb,
+            ) ||
+            (event.payload?.decision?.verb === "aggregate" &&
+              event.payload?.decision?.action === "close-deliver"),
+          verb: event.payload?.decision?.verb,
+          ...(event.payload?.decision?.action ? { action: event.payload.decision.action } : {}),
+        })),
+    ),
+  };
+}
+
 function fakeClient(seed = [inputEvent]) {
   const events = [...seed];
+  const appendCalls = [];
+  let cursorSequence = 0;
   return {
     events,
+    appendCalls,
+    gatewayReplayContext: async (limit) => replayContext(events, cursorSequence, limit),
     readSince: async (recordedAt, limit, cursor) => {
       const eligible = events.filter((event) => (event.recordedAt ?? 0) >= recordedAt);
       const offset = cursor ? Number(cursor) : 0;
       const page = eligible.slice(offset, offset + limit);
-      return { events: page, nextCursor: offset + page.length < eligible.length ? String(offset + page.length) : null, source: "message-event-log" };
+      return {
+        events: page,
+        nextCursor: offset + page.length < eligible.length ? String(offset + page.length) : null,
+        source: "message-event-log",
+      };
     },
-    pendingForConsumer: async () => events.filter((event) => event.kind !== "gateway.decision.recorded" && event.kind !== "gateway.handoff"),
+    pendingForConsumer: async (_consumer, limit = 100) =>
+      replayContext(events, cursorSequence, limit).pending,
     append: async (input) => {
-      const event = { ...input, _id: `event-${events.length + 1}`, recordedAt: 20 + events.length, sequence: events.length + 1 };
+      appendCalls.push(input);
+      const event = {
+        ...input,
+        _id: `event-${events.length + 1}`,
+        recordedAt: 20 + events.length,
+        sequence: Math.max(0, ...events.map((item) => item.sequence ?? 0)) + 1,
+      };
       events.push(event);
-      return { eventId: event._id, semanticKey: input.semanticKey, deduplicated: false, schemaVersion: 1 };
+      return {
+        eventId: event._id,
+        semanticKey: input.semanticKey,
+        deduplicated: false,
+        schemaVersion: 1,
+      };
     },
-    advanceCursor: async (consumer, eventId) => ({ consumer, lastEventId: eventId, lastSequence: 1, updatedAt: 30 }),
+    advanceCursor: async (consumer, eventId) => {
+      const event = events.find((item) => item._id === eventId);
+      cursorSequence = Math.max(cursorSequence, event?.sequence ?? cursorSequence);
+      return {
+        consumer,
+        lastEventId: eventId,
+        lastSequence: cursorSequence,
+        updatedAt: 30,
+      };
+    },
   };
 }
 
@@ -146,13 +204,16 @@ describe("Luna ShitRat triage", () => {
 
   test("returns a concrete task only when Luna classifies real work", async () => {
     const triage = createShitratTriage({
-      infer: async () => "```json\n{\"disposition\":\"work\",\"reply\":\"I’ll trace the schema drift and bring back the guilty commit. 🐀\",\"task\":\"Trace production schema drift and identify the introducing commit.\",\"reason\":\"Explicit investigation request.\"}\n```",
+      infer: async () =>
+        '```json\n{"disposition":"work","reply":"I’ll trace the schema drift and bring back the guilty commit. 🐀","task":"Trace production schema drift and identify the introducing commit.","reason":"Explicit investigation request."}\n```',
     });
-    await expect(triage.triage({
-      channelName: "lc-fictional",
-      text: ":shitrat: find why production schema drifted",
-      bound: true,
-    })).resolves.toMatchObject({
+    await expect(
+      triage.triage({
+        channelName: "lc-fictional",
+        text: ":shitrat: find why production schema drifted",
+        bound: true,
+      }),
+    ).resolves.toMatchObject({
       disposition: "work",
       task: "Trace production schema drift and identify the introducing commit.",
     });
@@ -160,17 +221,20 @@ describe("Luna ShitRat triage", () => {
 
   test("rejects personality sludge that exceeds the Slack reply bound", async () => {
     const triage = createShitratTriage({
-      infer: async () => JSON.stringify({
-        disposition: "social",
-        reply: "x".repeat(321),
-        task: null,
-        reason: "too much",
-      }),
+      infer: async () =>
+        JSON.stringify({
+          disposition: "social",
+          reply: "x".repeat(321),
+          task: null,
+          reason: "too much",
+        }),
     });
-    await expect(triage.triage({
-      channelName: "cc-fictional",
-      text: "credit to :shitrat:",
-    })).rejects.toThrow("exceeds 320 characters");
+    await expect(
+      triage.triage({
+        channelName: "cc-fictional",
+        text: "credit to :shitrat:",
+      }),
+    ).rejects.toThrow("exceeds 320 characters");
   });
 });
 
@@ -182,18 +246,18 @@ describe("stream receipts", () => {
     expect(appended.receipt.semanticKey).toBe("gateway:input-1:1");
     expect(appended.event.kind).toBe("gateway.decision.recorded");
     expect(appended.event.flowId).toBe("notify:11111111-1111-4111-8111-111111111111");
-    expect(appended.event.correlationId).toBe(
-      "producer:11111111-1111-4111-8111-111111111111",
-    );
-    const cursor = await stream.advanceAfterDecision({ eventId: "input-1", decisionEventId: appended.receipt.eventId });
+    expect(appended.event.correlationId).toBe("producer:11111111-1111-4111-8111-111111111111");
+    const cursor = await stream.advanceAfterDecision({
+      eventId: "input-1",
+      decisionEventId: appended.receipt.eventId,
+    });
     expect(cursor.lastEventId).toBe("input-1");
   });
 
   test("normalizes stale duplicated Slack thread prefixes", async () => {
-    expect(normalizeSlackReplyThreadId(
-      "CEXAMPLE",
-      "slack:CEXAMPLE:slack:CEXAMPLE:1785950000.100",
-    )).toBe("slack:CEXAMPLE:1785950000.100");
+    expect(
+      normalizeSlackReplyThreadId("CEXAMPLE", "slack:CEXAMPLE:slack:CEXAMPLE:1785950000.100"),
+    ).toBe("slack:CEXAMPLE:1785950000.100");
 
     const staleWorkerResult = {
       ...shitratWorkerResult,
@@ -210,9 +274,7 @@ describe("stream receipts", () => {
     const client = fakeClient([staleWorkerResult]);
     const stream = createStreamTools({ client, now: () => 20 });
     const pending = await stream.pending();
-    expect(pending.pending[0].workerResult.replyThreadId).toBe(
-      "slack:CEXAMPLE:1785950000.100",
-    );
+    expect(pending.pending[0].workerResult.replyThreadId).toBe("slack:CEXAMPLE:1785950000.100");
     const appended = await stream.recordDecision({
       payload: {
         ...decisionPayload,
@@ -220,9 +282,7 @@ describe("stream receipts", () => {
         rewrite: "Review complete.",
       },
     });
-    expect(appended.event.payload.decision.target.threadId).toBe(
-      "slack:CEXAMPLE:1785950000.100",
-    );
+    expect(appended.event.payload.decision.target.threadId).toBe("slack:CEXAMPLE:1785950000.100");
     expect(appended.event.payload.slackDelivery).toEqual({
       identity: "joel",
       channelId: "CEXAMPLE",
@@ -247,13 +307,15 @@ describe("stream receipts", () => {
       replyThreadId: "slack:CEXAMPLE:1785950000.100",
       phase: "result",
     });
-    await expect(stream.recordDecision({
-      payload: {
-        ...decisionPayload,
-        inputEventIds: ["worker-result-1"],
-        rewrite: "x".repeat(1_201),
-      },
-    })).rejects.toThrow("result rewrite exceeds 1200 characters");
+    await expect(
+      stream.recordDecision({
+        payload: {
+          ...decisionPayload,
+          inputEventIds: ["worker-result-1"],
+          rewrite: "x".repeat(1_201),
+        },
+      }),
+    ).rejects.toThrow("result rewrite exceeds 1200 characters");
     const appended = await stream.recordDecision({
       payload: {
         ...decisionPayload,
@@ -303,21 +365,25 @@ describe("stream receipts", () => {
     const stream = createStreamTools({ client, now: () => 20 });
     const pending = await stream.pending();
     expect(pending.pending[0].workerResult.phase).toBe("progress");
-    await expect(stream.recordDecision({
-      payload: {
-        ...decisionPayload,
-        inputEventIds: ["worker-progress-1"],
-        decision: { verb: "drop" },
-        rewrite: undefined,
-      },
-    })).rejects.toThrow("must deliver to its bound source thread");
-    await expect(stream.recordDecision({
-      payload: {
-        ...decisionPayload,
-        inputEventIds: ["worker-progress-1"],
-        rewrite: "x".repeat(321),
-      },
-    })).rejects.toThrow("progress rewrite exceeds 320 characters");
+    await expect(
+      stream.recordDecision({
+        payload: {
+          ...decisionPayload,
+          inputEventIds: ["worker-progress-1"],
+          decision: { verb: "drop" },
+          rewrite: undefined,
+        },
+      }),
+    ).rejects.toThrow("must deliver to its bound source thread");
+    await expect(
+      stream.recordDecision({
+        payload: {
+          ...decisionPayload,
+          inputEventIds: ["worker-progress-1"],
+          rewrite: "x".repeat(321),
+        },
+      }),
+    ).rejects.toThrow("progress rewrite exceeds 320 characters");
 
     const appended = await stream.recordDecision({
       payload: {
@@ -374,116 +440,275 @@ describe("stream receipts", () => {
   });
 
   test("advanceAfter defaults true; acks pass false explicitly", () => {
-    expect(resolveAdvanceAfter({
-      ...decisionPayload,
-      decisionSeq: 1,
-      decision: { verb: "deliver" },
-    }, undefined)).toBe(true);
-    expect(resolveAdvanceAfter({
-      ...decisionPayload,
-      decisionSeq: 1,
-      decision: { verb: "deliver" },
-    }, false)).toBe(false);
-    expect(resolveAdvanceAfter({
-      ...decisionPayload,
-      decision: { verb: "drop" },
-    }, undefined)).toBe(true);
-    expect(resolveAdvanceAfter({
-      ...decisionPayload,
-      inputEventIds: ["a", "b"],
-      decision: { verb: "deliver" },
-    }, undefined)).toBe(false);
+    expect(
+      resolveAdvanceAfter(
+        {
+          ...decisionPayload,
+          decisionSeq: 1,
+          decision: { verb: "deliver" },
+        },
+        undefined,
+      ),
+    ).toBe(true);
+    expect(
+      resolveAdvanceAfter(
+        {
+          ...decisionPayload,
+          decisionSeq: 1,
+          decision: { verb: "deliver" },
+        },
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      resolveAdvanceAfter(
+        {
+          ...decisionPayload,
+          decision: { verb: "drop" },
+        },
+        undefined,
+      ),
+    ).toBe(true);
+    expect(
+      resolveAdvanceAfter(
+        {
+          ...decisionPayload,
+          inputEventIds: ["a", "b"],
+          decision: { verb: "deliver" },
+        },
+        undefined,
+      ),
+    ).toBe(false);
+  });
+
+  test("bounded replay handles bootstrap, pending, drop, and advances when readSince fails", async () => {
+    const gatewayOutput = {
+      _id: "gateway-output-1",
+      kind: "message.requested",
+      source: "joelclaw-gateway",
+      recordedAt: 12,
+      sequence: 3,
+      payload: { text: "internal receipt" },
+    };
+    const client = fakeClient([inputEvent, gatewayOutput]);
+    let readSinceCalls = 0;
+    client.readSince = async () => {
+      readSinceCalls += 1;
+      throw new Error("all-history replay unavailable");
+    };
+    const stream = createStreamTools({ client, now: () => 20 });
+
+    const boot = await stream.bootstrap();
+    expect(boot.pending.map((event) => event._id)).toContain("input-1");
+    expect((await stream.pending()).pending.map((event) => event.id)).toContain("input-1");
+
+    const dropped = await stream.recordDecision({
+      payload: {
+        ...decisionPayload,
+        rewrite: undefined,
+        decision: { verb: "drop" },
+      },
+      advanceAfter: false,
+    });
+    await expect(
+      stream.advanceAfterDecision({
+        eventId: "input-1",
+        decisionEventId: dropped.receipt.eventId,
+      }),
+    ).resolves.toMatchObject({ lastEventId: "input-1" });
+    await expect(stream.advanceOwnOutput({ eventId: "gateway-output-1" })).resolves.toMatchObject({
+      lastEventId: "gateway-output-1",
+    });
+    expect(readSinceCalls).toBe(0);
+  });
+
+  test("rejects an input beyond the 100-row pending window before append", async () => {
+    const backlog = Array.from({ length: 101 }, (_, index) => ({
+      ...inputEvent,
+      _id: `backlog-${index + 1}`,
+      semanticKey: `backlog:${index + 1}`,
+      recordedAt: index + 1,
+      sequence: index + 1,
+    }));
+    const client = fakeClient(backlog);
+    const stream = createStreamTools({ client, now: () => 200 });
+
+    await expect(
+      stream.recordDecision({
+        payload: {
+          ...decisionPayload,
+          inputEventIds: ["backlog-101"],
+          rewrite: undefined,
+          decision: { verb: "drop" },
+        },
+      }),
+    ).rejects.toThrow("Unknown, behind-cursor, or beyond-window IDs: backlog-101");
+    expect(client.appendCalls).toHaveLength(0);
+  });
+
+  test("rejects duplicate input IDs before the bounded-window guard or append", async () => {
+    const client = fakeClient();
+    const stream = createStreamTools({ client, now: () => 20 });
+
+    await expect(
+      stream.recordDecision({
+        payload: {
+          ...decisionPayload,
+          inputEventIds: ["input-1", "input-1"],
+          rewrite: undefined,
+          decision: { verb: "drop" },
+        },
+      }),
+    ).rejects.toThrow("inputEventIds must not contain duplicates");
+    expect(client.appendCalls).toHaveLength(0);
   });
 
   test("refuses duplicate decisions before cursor advance", async () => {
     const client = fakeClient();
     const stream = createStreamTools({ client, now: () => 20 });
     const first = await stream.recordDecision({ payload: decisionPayload, advanceAfter: false });
-    await stream.recordDecision({ payload: { ...decisionPayload, decisionSeq: 2 }, advanceAfter: false });
-    await expect(stream.advanceAfterDecision({ eventId: "input-1", decisionEventId: first.receipt.eventId })).rejects.toThrow("found 2");
+    await stream.recordDecision({
+      payload: { ...decisionPayload, decisionSeq: 2 },
+      advanceAfter: false,
+    });
+    await expect(
+      stream.advanceAfterDecision({ eventId: "input-1", decisionEventId: first.receipt.eventId }),
+    ).rejects.toThrow("found 2");
   });
 
   test("rejects a fanout with no taskId to match its worker result", () => {
-    expect(() => validateDecisionPayload({
-      ...decisionPayload,
-      rewrite: undefined,
-      decision: { verb: "fanout" },
-    })).toThrow("require decision.taskId");
-    expect(validateDecisionPayload({
-      ...decisionPayload,
-      rewrite: undefined,
-      decision: { verb: "fanout", taskId: "front-parser-restore" },
-    }).decision.taskId).toBe("front-parser-restore");
+    expect(() =>
+      validateDecisionPayload({
+        ...decisionPayload,
+        rewrite: undefined,
+        decision: { verb: "fanout" },
+      }),
+    ).toThrow("require decision.taskId");
+    expect(
+      validateDecisionPayload({
+        ...decisionPayload,
+        rewrite: undefined,
+        decision: { verb: "fanout", taskId: "front-parser-restore" },
+      }).decision.taskId,
+    ).toBe("front-parser-restore");
   });
 
   test("rejects duplicate aggregate members", () => {
-    expect(() => validateDecisionPayload({
-      ...decisionPayload,
-      decision: { verb: "aggregate", action: "open", aggregateId: "a1", memberEventIds: ["input-1", "input-1"] },
-    })).toThrow("must not contain duplicates");
+    expect(() =>
+      validateDecisionPayload({
+        ...decisionPayload,
+        decision: {
+          verb: "aggregate",
+          action: "open",
+          aggregateId: "a1",
+          memberEventIds: ["input-1", "input-1"],
+        },
+      }),
+    ).toThrow("must not contain duplicates");
   });
 
   test("aggregate open requires a future holdUntil", () => {
-    expect(() => validateDecisionPayload({
-      ...decisionPayload,
-      rewrite: undefined,
-      decision: { verb: "aggregate", action: "open", aggregateId: "a1", memberEventIds: ["input-1"] },
-    })).toThrow("holdUntil");
-    expect(validateDecisionPayload({
-      ...decisionPayload,
-      rewrite: undefined,
-      decision: {
-        verb: "aggregate",
-        action: "open",
-        aggregateId: "a1",
-        memberEventIds: ["input-1"],
-        holdUntil: Date.now() + 60_000,
-      },
-    }).decision.aggregateId).toBe("a1");
+    expect(() =>
+      validateDecisionPayload({
+        ...decisionPayload,
+        rewrite: undefined,
+        decision: {
+          verb: "aggregate",
+          action: "open",
+          aggregateId: "a1",
+          memberEventIds: ["input-1"],
+        },
+      }),
+    ).toThrow("holdUntil");
+    expect(
+      validateDecisionPayload({
+        ...decisionPayload,
+        rewrite: undefined,
+        decision: {
+          verb: "aggregate",
+          action: "open",
+          aggregateId: "a1",
+          memberEventIds: ["input-1"],
+          holdUntil: Date.now() + 60_000,
+        },
+      }).decision.aggregateId,
+    ).toBe("a1");
   });
 
   test("rejects join past the sane aggregate cap", () => {
-    expect(() => validateDecisionPayload({
-      ...decisionPayload,
-      rewrite: undefined,
-      decision: { verb: "aggregate", action: "join", aggregateId: "a1", memberEventIds: ["input-1"] },
-    }, { aggregateStats: { decisionCount: MAX_AGGREGATE_JOINS, duplicateTick: false } })).toThrow(`cap ${MAX_AGGREGATE_JOINS}`);
+    expect(() =>
+      validateDecisionPayload(
+        {
+          ...decisionPayload,
+          rewrite: undefined,
+          decision: {
+            verb: "aggregate",
+            action: "join",
+            aggregateId: "a1",
+            memberEventIds: ["input-1"],
+          },
+        },
+        { aggregateStats: { decisionCount: MAX_AGGREGATE_JOINS, duplicateTick: false } },
+      ),
+    ).toThrow(`cap ${MAX_AGGREGATE_JOINS}`);
   });
 
   test("rejects identical repeated ticks on a known aggregate", () => {
-    expect(() => validateDecisionPayload({
-      ...decisionPayload,
-      rewrite: undefined,
-      decision: { verb: "aggregate", action: "join", aggregateId: "a1", memberEventIds: ["input-1"] },
-    }, { aggregateStats: { decisionCount: 3, duplicateTick: true } })).toThrow("identical repeated tick");
+    expect(() =>
+      validateDecisionPayload(
+        {
+          ...decisionPayload,
+          rewrite: undefined,
+          decision: {
+            verb: "aggregate",
+            action: "join",
+            aggregateId: "a1",
+            memberEventIds: ["input-1"],
+          },
+        },
+        { aggregateStats: { decisionCount: 3, duplicateTick: true } },
+      ),
+    ).toThrow("identical repeated tick");
   });
 
   test("rewrite lints catch tool refusal and self-intro", () => {
-    expect(lintRewrite("I'm the comms gateway loop and I have no live weather feed here, so I can't give you real Vancouver WA conditions.")).toContain("tool-refusal");
-    expect(lintRewrite("I'm the gateway loop (`w2C:pH`); stream is clear.")).toContain("self-intro");
+    expect(
+      lintRewrite(
+        "I'm the comms gateway loop and I have no live weather feed here, so I can't give you real Vancouver WA conditions.",
+      ),
+    ).toContain("tool-refusal");
+    expect(lintRewrite("I'm the gateway loop (`w2C:pH`); stream is clear.")).toContain(
+      "self-intro",
+    );
     expect(lintRewrite("on it — checking Typesense now.")).toBeNull();
-    expect(() => validateDecisionPayload({
-      ...decisionPayload,
-      rewrite: "I'm the gateway loop; stream is clear.",
-    })).toThrow("self-intro");
+    expect(() =>
+      validateDecisionPayload({
+        ...decisionPayload,
+        rewrite: "I'm the gateway loop; stream is clear.",
+      }),
+    ).toThrow("self-intro");
   });
 
   test("forces Joel deliver before machine decisions and herdr work", async () => {
     const client = fakeClient([inputEvent, joelInbound]);
     const stream = createStreamTools({ client, now: () => 20 });
-    await expect(stream.recordDecision({
-      payload: { ...decisionPayload, reason: "machine noise" },
-    })).rejects.toThrow("Ack Joel first");
+    await expect(
+      stream.recordDecision({
+        payload: { ...decisionPayload, reason: "machine noise" },
+      }),
+    ).rejects.toThrow("Ack Joel first");
 
-    await expect(stream.recordDecision({
-      payload: {
-        inputEventIds: ["joel-1"],
-        reason: "drop without hearing Joel",
-        promptRevision: "abc123",
-        decisionSeq: 1,
-        decision: { verb: "drop" },
-      },
-    })).rejects.toThrow("must be deliver");
+    await expect(
+      stream.recordDecision({
+        payload: {
+          inputEventIds: ["joel-1"],
+          reason: "drop without hearing Joel",
+          promptRevision: "abc123",
+          decisionSeq: 1,
+          decision: { verb: "drop" },
+        },
+      }),
+    ).rejects.toThrow("must be deliver");
 
     const ack = await stream.recordDecision({
       payload: {
@@ -504,7 +729,9 @@ describe("stream receipts", () => {
       wake: {},
     });
     // After ack, machine decision is allowed.
-    const machine = await stream.recordDecision({ payload: { ...decisionPayload, decisionSeq: 1 } });
+    const machine = await stream.recordDecision({
+      payload: { ...decisionPayload, decisionSeq: 1 },
+    });
     expect(machine.advanceAfter).toBe(true);
     await expect(handlers.herdr_snapshot({})).resolves.toEqual({ ok: true });
   });
@@ -522,12 +749,8 @@ describe("stream receipts", () => {
     };
     const stream = createStreamTools({ client: fakeClient([stale]), now: () => 20 });
     const boot = await stream.bootstrap();
-    expect(boot.pending[0].payload.workRequest.replyThreadId).toBe(
-      "slack:CEXAMPLE:1785950000.100",
-    );
-    expect(boot.pendingCompact[0].workRequest.replyThreadId).toBe(
-      "slack:CEXAMPLE:1785950000.100",
-    );
+    expect(boot.pending[0].payload.workRequest.replyThreadId).toBe("slack:CEXAMPLE:1785950000.100");
+    expect(boot.pendingCompact[0].workRequest.replyThreadId).toBe("slack:CEXAMPLE:1785950000.100");
   });
 
   test("pre-patch workRequest without delivery readiness fails closed", async () => {
@@ -554,8 +777,9 @@ describe("stream receipts", () => {
       herdr: { dispatchWorker: async () => ({ unsafe: true }) },
       wake: {},
     });
-    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
-      .rejects.toThrow("Joel's Slack token must reach the channel");
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" })).rejects.toThrow(
+      "Joel's Slack token must reach the channel",
+    );
   });
 
   test("workRequest fails closed when Joel's Slack token cannot deliver", async () => {
@@ -579,17 +803,20 @@ describe("stream receipts", () => {
       wake: {},
     });
 
-    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
-      .rejects.toThrow("Joel's Slack token must reach the channel");
-    await expect(stream.recordDecision({
-      payload: {
-        inputEventIds: ["slack-work-no-bot"],
-        reason: "Joel's Slack token cannot reply in this private channel.",
-        promptRevision: "abc123",
-        decisionSeq: 1,
-        decision: { verb: "fanout", taskId: "unsafe-launch" },
-      },
-    })).rejects.toThrow("must fail closed with one drop");
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" })).rejects.toThrow(
+      "Joel's Slack token must reach the channel",
+    );
+    await expect(
+      stream.recordDecision({
+        payload: {
+          inputEventIds: ["slack-work-no-bot"],
+          reason: "Joel's Slack token cannot reply in this private channel.",
+          promptRevision: "abc123",
+          decisionSeq: 1,
+          decision: { verb: "fanout", taskId: "unsafe-launch" },
+        },
+      }),
+    ).rejects.toThrow("must fail closed with one drop");
 
     const dropped = await stream.recordDecision({
       payload: {
@@ -618,15 +845,17 @@ describe("stream receipts", () => {
       },
     });
 
-    await expect(stream.recordDecision({
-      payload: {
-        inputEventIds: ["slack-work-1"],
-        reason: "Skipped Luna triage.",
-        promptRevision: "abc123",
-        decisionSeq: 1,
-        decision: { verb: "fanout", taskId: "unsafe-launch" },
-      },
-    })).rejects.toThrow("must first deliver the Luna triage reply");
+    await expect(
+      stream.recordDecision({
+        payload: {
+          inputEventIds: ["slack-work-1"],
+          reason: "Skipped Luna triage.",
+          promptRevision: "abc123",
+          decisionSeq: 1,
+          decision: { verb: "fanout", taskId: "unsafe-launch" },
+        },
+      }),
+    ).rejects.toThrow("must first deliver the Luna triage reply");
 
     const triageReply = await stream.recordDecision({
       payload: {
@@ -657,24 +886,30 @@ describe("stream receipts", () => {
       },
       wake: {},
     });
-    await expect(handlers.herdr_prompt({ target: "wZ:p1", text: "reuse this pane" }))
-      .rejects.toThrow("Generic herdr prompting");
-    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
-      .rejects.toThrow("one-shot worker dispatch");
-    await expect(handlers.slack_thread_run({
-      sourceEventId: "slack-work-1",
-      channelId: "CWRONG",
-      channelName: "lc-example",
-      threadTs: "1785950000.100",
-      text: "review this",
-    })).rejects.toThrow("must match pending workRequest");
-    await expect(handlers.slack_thread_run({
-      sourceEventId: "slack-work-1",
-      channelId: "CEXAMPLE",
-      channelName: "lc-example",
-      threadTs: "1785950000.100",
-      text: "review this",
-    })).resolves.toEqual({ ok: true, sessionId: "thread-session-1" });
+    await expect(
+      handlers.herdr_prompt({ target: "wZ:p1", text: "reuse this pane" }),
+    ).rejects.toThrow("Generic herdr prompting");
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" })).rejects.toThrow(
+      "one-shot worker dispatch",
+    );
+    await expect(
+      handlers.slack_thread_run({
+        sourceEventId: "slack-work-1",
+        channelId: "CWRONG",
+        channelName: "lc-example",
+        threadTs: "1785950000.100",
+        text: "review this",
+      }),
+    ).rejects.toThrow("must match pending workRequest");
+    await expect(
+      handlers.slack_thread_run({
+        sourceEventId: "slack-work-1",
+        channelId: "CEXAMPLE",
+        channelName: "lc-example",
+        threadTs: "1785950000.100",
+        text: "review this",
+      }),
+    ).resolves.toEqual({ ok: true, sessionId: "thread-session-1" });
 
     const fanout = await stream.recordDecision({
       payload: {
@@ -692,15 +927,56 @@ describe("stream receipts", () => {
       taskId: "slack-work-review",
     });
 
-    await expect(stream.recordDecision({
-      payload: {
-        inputEventIds: ["slack-work-1"],
-        reason: "A second fanout is forbidden.",
-        promptRevision: "abc123",
-        decisionSeq: 3,
-        decision: { verb: "fanout", taskId: "slack-work-review" },
+    await expect(
+      stream.recordDecision({
+        payload: {
+          inputEventIds: ["slack-work-1"],
+          reason: "A second fanout is forbidden.",
+          promptRevision: "abc123",
+          decisionSeq: 3,
+          decision: { verb: "fanout", taskId: "slack-work-review" },
+        },
+      }),
+    ).rejects.toThrow("Unknown, behind-cursor, or beyond-window IDs: slack-work-1");
+
+    const duplicateClient = fakeClient([
+      slackWorkRequest,
+      {
+        _id: "slack-work-triage-decision",
+        kind: "gateway.decision.recorded",
+        source: "joelclaw-gateway",
+        sequence: 5,
+        recordedAt: 14,
+        payload: {
+          inputEventIds: ["slack-work-1"],
+          decision: { verb: "deliver" },
+        },
       },
-    })).rejects.toThrow("already has its thread-session fanout decision");
+      {
+        _id: "slack-work-fanout-decision",
+        kind: "gateway.decision.recorded",
+        source: "joelclaw-gateway",
+        sequence: 6,
+        recordedAt: 15,
+        payload: {
+          inputEventIds: ["slack-work-1"],
+          decision: { verb: "fanout", taskId: "slack-work-review" },
+        },
+      },
+    ]);
+    const duplicateStream = createStreamTools({ client: duplicateClient, now: () => 20 });
+    await expect(
+      duplicateStream.recordDecision({
+        payload: {
+          inputEventIds: ["slack-work-1"],
+          reason: "A second fanout is forbidden while the input is pending.",
+          promptRevision: "abc123",
+          decisionSeq: 3,
+          decision: { verb: "fanout", taskId: "slack-work-review" },
+        },
+      }),
+    ).rejects.toThrow("already has its thread-session fanout decision");
+    expect(duplicateClient.appendCalls).toHaveLength(0);
   });
 
   test("bound social triage replies once without manufacturing work", async () => {
@@ -747,25 +1023,30 @@ describe("stream receipts", () => {
       herdr: { dispatchWorker: async () => ({ unsafe: true }) },
       wake: {},
     });
-    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" }))
-      .rejects.toThrow("neutral session");
-    await expect(handlers.slack_thread_run({
-      sourceEventId: "slack-work-unbound",
-      channelId: "CEXAMPLE",
-      channelName: "lc-example",
-      threadTs: "1785950000.100",
-      text: "review this",
-    })).resolves.toEqual({ ok: true, bound: false });
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" })).rejects.toThrow(
+      "neutral session",
+    );
+    await expect(
+      handlers.slack_thread_run({
+        sourceEventId: "slack-work-unbound",
+        channelId: "CEXAMPLE",
+        channelName: "lc-example",
+        threadTs: "1785950000.100",
+        text: "review this",
+      }),
+    ).resolves.toEqual({ ok: true, bound: false });
 
-    await expect(stream.recordDecision({
-      payload: {
-        inputEventIds: ["slack-work-unbound"],
-        reason: "No channel context binding exists.",
-        promptRevision: "abc123",
-        decisionSeq: 1,
-        decision: { verb: "fanout", taskId: "unsafe-launch" },
-      },
-    })).rejects.toThrow("must first deliver the Luna triage reply");
+    await expect(
+      stream.recordDecision({
+        payload: {
+          inputEventIds: ["slack-work-unbound"],
+          reason: "No channel context binding exists.",
+          promptRevision: "abc123",
+          decisionSeq: 1,
+          decision: { verb: "fanout", taskId: "unsafe-launch" },
+        },
+      }),
+    ).rejects.toThrow("must first deliver the Luna triage reply");
 
     const delivered = await stream.recordDecision({
       payload: {
@@ -774,7 +1055,8 @@ describe("stream receipts", () => {
         promptRevision: "abc123",
         decisionSeq: 1,
         decision: { verb: "deliver" },
-        rewrite: "I know what you want, but `#lc-example` has no project map. Point me at the repo and I’ll get filthy. 🐀",
+        rewrite:
+          "I know what you want, but `#lc-example` has no project map. Point me at the repo and I’ll get filthy. 🐀",
       },
     });
     expect(delivered.advanceAfter).toBe(true);
@@ -798,16 +1080,18 @@ describe("stream receipts", () => {
     expect(pending.ackRequiredJoel).toEqual([]);
     expect(pending.pending[0]).toMatchObject({ addressing: "ambient" });
 
-    await expect(observeStream.recordDecision({
-      payload: {
-        inputEventIds: ["joel-ambient-1"],
-        reason: "No mention or direct conversation.",
-        promptRevision: "abc123",
-        decisionSeq: 1,
-        decision: { verb: "deliver" },
-        rewrite: "on it",
-      },
-    })).rejects.toThrow("First record an escalate decision");
+    await expect(
+      observeStream.recordDecision({
+        payload: {
+          inputEventIds: ["joel-ambient-1"],
+          reason: "No mention or direct conversation.",
+          promptRevision: "abc123",
+          decisionSeq: 1,
+          decision: { verb: "deliver" },
+          rewrite: "on it",
+        },
+      }),
+    ).rejects.toThrow("First record an escalate decision");
 
     const observed = await observeStream.recordDecision({
       payload: {
@@ -845,9 +1129,11 @@ describe("stream receipts", () => {
       },
     });
     expect(delivered.advanceAfter).toBe(true);
-    expect(escalationClient.events.filter((event) =>
-      event.kind === "gateway.decision.recorded").map((event) =>
-      event.payload.decision.verb)).toEqual(["escalate", "deliver"]);
+    expect(
+      escalationClient.events
+        .filter((event) => event.kind === "gateway.decision.recorded")
+        .map((event) => event.payload.decision.verb),
+    ).toEqual(["escalate", "deliver"]);
   });
 
   test("herdr tools refuse while Joel is unacked", async () => {
@@ -858,7 +1144,9 @@ describe("stream receipts", () => {
       herdr: { snapshot: async () => ({ ok: true }), dispatchWorker: async () => ({ ok: true }) },
       wake: {},
     });
-    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" })).rejects.toThrow("Ack Joel first");
+    await expect(handlers.herdr_dispatch_worker({ taskId: "x", task: "y" })).rejects.toThrow(
+      "Ack Joel first",
+    );
   });
 });
 
@@ -867,9 +1155,14 @@ test("MCP exposes all production tool families", async () => {
   expect(names.some((name) => name.startsWith("stream_"))).toBe(true);
   expect(names.some((name) => name.startsWith("herdr_"))).toBe(true);
   expect(names.some((name) => name.startsWith("wake_"))).toBe(true);
-  const listed = await handleMcpMessage({ id: 1, method: "tools/list" }, createToolHandlers({
-    stream: {}, herdr: {}, wake: {},
-  }));
+  const listed = await handleMcpMessage(
+    { id: 1, method: "tools/list" },
+    createToolHandlers({
+      stream: {},
+      herdr: {},
+      wake: {},
+    }),
+  );
   expect(listed.tools).toHaveLength(24);
 });
 
@@ -882,8 +1175,10 @@ describe("worker lanes", () => {
       calls.push(args);
       const [family, verb] = args;
       if (family === "pane" && verb === "list") return { result: { panes } };
-      if (family === "pane" && verb === "split") return { result: { pane: { pane_id: "wZ:pNEW" } } };
-      if (family === "tab" && verb === "create") return { result: { root_pane: { pane_id: "wZ:pNEW" } } };
+      if (family === "pane" && verb === "split")
+        return { result: { pane: { pane_id: "wZ:pNEW" } } };
+      if (family === "tab" && verb === "create")
+        return { result: { root_pane: { pane_id: "wZ:pNEW" } } };
       if (family === "worktree" && verb === "create") {
         return {
           result: {
@@ -896,7 +1191,15 @@ describe("worker lanes", () => {
       }
       return { result: { type: "ok" } };
     };
-    return { calls, tools: createHerdrTools({ run, now: () => 1000, taskDir: `${dir}/tasks`, workerDir: `${dir}/workers` }) };
+    return {
+      calls,
+      tools: createHerdrTools({
+        run,
+        now: () => 1000,
+        taskDir: `${dir}/tasks`,
+        workerDir: `${dir}/workers`,
+      }),
+    };
   }
 
   test("recurring taskIds collapse to one lane", () => {
@@ -909,17 +1212,30 @@ describe("worker lanes", () => {
   test("a second firing reuses the lane pane instead of creating a tab", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
     const first = fakeHerdr({ dir });
-    const opened = await first.tools.dispatchWorker({ taskId: "campaign-pulse-2026-07-25-1700", task: "run the pulse" });
+    const opened = await first.tools.dispatchWorker({
+      taskId: "campaign-pulse-2026-07-25-1700",
+      task: "run the pulse",
+    });
     expect(opened.reused).toBe(false);
     expect(opened.lane).toBe("campaign-pulse");
 
-    const lanePane = { pane_id: "wZ:pNEW", label: laneLabel("campaign-pulse"), workspace_id: "wZ", agent_status: "idle" };
+    const lanePane = {
+      pane_id: "wZ:pNEW",
+      label: laneLabel("campaign-pulse"),
+      workspace_id: "wZ",
+      agent_status: "idle",
+    };
     const second = fakeHerdr({ panes: [gatewayLoop, lanePane], dir });
-    const again = await second.tools.dispatchWorker({ taskId: "campaign-pulse-2026-07-25-1800", task: "run the pulse" });
+    const again = await second.tools.dispatchWorker({
+      taskId: "campaign-pulse-2026-07-25-1800",
+      task: "run the pulse",
+    });
     expect(again.reused).toBe(true);
     expect(again.paneId).toBe("wZ:pNEW");
     expect(again.mode).toBe("prompted");
-    expect(second.calls.some(([family, verb]) => family === "tab" && verb === "create")).toBe(false);
+    expect(second.calls.some(([family, verb]) => family === "tab" && verb === "create")).toBe(
+      false,
+    );
   });
 
   test("Slack work launches a fresh Herdr worktree without depending on the gateway pane", async () => {
@@ -950,11 +1266,16 @@ describe("worker lanes", () => {
       worktree: true,
     });
     expect(calls).toContainEqual([
-      "worktree", "create",
-      "--cwd", "/tmp/example-project",
-      "--branch", "shitrat/example-review",
-      "--label", "[mega] assessment review",
-      "--no-focus", "--json",
+      "worktree",
+      "create",
+      "--cwd",
+      "/tmp/example-project",
+      "--branch",
+      "shitrat/example-review",
+      "--label",
+      "[mega] assessment review",
+      "--no-focus",
+      "--json",
     ]);
     const task = await readFile(join(dir, "tasks", "example-review.md"), "utf8");
     expect(task).toContain("Launch contract cwd: `/tmp/example-shitrat-review`");
@@ -966,10 +1287,14 @@ describe("worker lanes", () => {
     expect(task).toContain("Never run `jc-slack reply`");
     expect(task).toContain("The gateway alone decides and sends the one outward result");
     expect(task).not.toContain("--data");
-    expect(calls.some((args) =>
-      args[0] === "pane"
-      && args[1] === "run"
-      && args[3].startsWith("JOELCLAW_GATEWAY_WORKER=1 pi --approve "))).toBe(true);
+    expect(
+      calls.some(
+        (args) =>
+          args[0] === "pane" &&
+          args[1] === "run" &&
+          args[3].startsWith("JOELCLAW_GATEWAY_WORKER=1 pi --approve "),
+      ),
+    ).toBe(true);
 
     const livePane = {
       pane_id: "wSR:p1",
@@ -997,62 +1322,81 @@ describe("worker lanes", () => {
       mode: "idempotent-existing",
       paneId: "wSR:p1",
     });
-    expect(retry.calls.some(([family, verb]) => family === "worktree" && verb === "create")).toBe(false);
+    expect(retry.calls.some(([family, verb]) => family === "worktree" && verb === "create")).toBe(
+      false,
+    );
 
-    await expect(retry.tools.dispatchWorker({
-      taskId: "example-review",
-      lane: "example-review",
-      task: "A later request must not reuse this worktree.",
-      cwd: "/tmp/example-project",
-      freshWorkspace: true,
-      worktree: true,
-      resultContext: {
-        sourceEventId: "slack-work-2",
-        platform: "slack",
-        channelId: "CEXAMPLE",
-        replyThreadId: "slack:CEXAMPLE:1785950002.300",
-      },
-    })).rejects.toThrow("already owns pane");
+    await expect(
+      retry.tools.dispatchWorker({
+        taskId: "example-review",
+        lane: "example-review",
+        task: "A later request must not reuse this worktree.",
+        cwd: "/tmp/example-project",
+        freshWorkspace: true,
+        worktree: true,
+        resultContext: {
+          sourceEventId: "slack-work-2",
+          platform: "slack",
+          channelId: "CEXAMPLE",
+          replyThreadId: "slack:CEXAMPLE:1785950002.300",
+        },
+      }),
+    ).rejects.toThrow("already owns pane");
   });
 
   test("Slack result context refuses warm-pane dispatch", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
     const { tools } = fakeHerdr({ dir });
-    await expect(tools.dispatchWorker({
-      taskId: "unsafe-slack-reuse",
-      task: "Review it.",
-      cwd: "/tmp/example-project",
-      resultContext: {
-        platform: "slack",
-        channelId: "CEXAMPLE",
-        replyThreadId: "slack:CEXAMPLE:1785950000.100",
-      },
-    })).rejects.toThrow("warm-pane reuse is forbidden");
+    await expect(
+      tools.dispatchWorker({
+        taskId: "unsafe-slack-reuse",
+        task: "Review it.",
+        cwd: "/tmp/example-project",
+        resultContext: {
+          platform: "slack",
+          channelId: "CEXAMPLE",
+          replyThreadId: "slack:CEXAMPLE:1785950000.100",
+        },
+      }),
+    ).rejects.toThrow("warm-pane reuse is forbidden");
   });
 
   test("fresh Slack work refuses without a return thread", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
     const { tools } = fakeHerdr({ dir });
-    await expect(tools.dispatchWorker({
-      taskId: "missing-return",
-      task: "Review it.",
-      cwd: "/tmp/example-project",
-      freshWorkspace: true,
-      worktree: true,
-    })).rejects.toThrow("fresh Slack work requires resultContext");
+    await expect(
+      tools.dispatchWorker({
+        taskId: "missing-return",
+        task: "Review it.",
+        cwd: "/tmp/example-project",
+        freshWorkspace: true,
+        worktree: true,
+      }),
+    ).rejects.toThrow("fresh Slack work requires resultContext");
   });
 
   test("a busy lane refuses rather than opening a second pane", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
-    const lanePane = { pane_id: "wZ:pB", label: laneLabel("campaign-pulse"), workspace_id: "wZ", agent_status: "working" };
+    const lanePane = {
+      pane_id: "wZ:pB",
+      label: laneLabel("campaign-pulse"),
+      workspace_id: "wZ",
+      agent_status: "working",
+    };
     const { tools } = fakeHerdr({ panes: [gatewayLoop, lanePane], dir });
-    await expect(tools.dispatchWorker({ taskId: "campaign-pulse-2026-07-25-1900", task: "run" }))
-      .rejects.toThrow("is busy");
+    await expect(
+      tools.dispatchWorker({ taskId: "campaign-pulse-2026-07-25-1900", task: "run" }),
+    ).rejects.toThrow("is busy");
   });
 
   test("a dead lane pane is relaunched in place, not replaced", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
-    const lanePane = { pane_id: "wZ:pD", label: laneLabel("front-chase"), workspace_id: "wZ", agent_status: "unknown" };
+    const lanePane = {
+      pane_id: "wZ:pD",
+      label: laneLabel("front-chase"),
+      workspace_id: "wZ",
+      agent_status: "unknown",
+    };
     const { calls, tools } = fakeHerdr({ panes: [gatewayLoop, lanePane], dir });
     const result = await tools.dispatchWorker({ taskId: "front-chase", task: "chase it" });
     expect(result.mode).toBe("relaunched");
@@ -1071,7 +1415,9 @@ describe("worker lanes", () => {
         next += 1;
         const paneId = `wZ:pL${next}`;
         panes.push({ pane_id: paneId, workspace_id: "wZ", agent_status: "working" });
-        return verb === "split" ? { result: { pane: { pane_id: paneId } } } : { result: { root_pane: { pane_id: paneId } } };
+        return verb === "split"
+          ? { result: { pane: { pane_id: paneId } } }
+          : { result: { root_pane: { pane_id: paneId } } };
       }
       if (family === "pane" && verb === "rename") {
         const pane = panes.find((entry) => entry.pane_id === args[2]);
@@ -1079,19 +1425,29 @@ describe("worker lanes", () => {
       }
       return { result: { type: "ok" } };
     };
-    const tools = createHerdrTools({ run, now: () => 1000, taskDir: `${dir}/tasks`, workerDir: `${dir}/workers` });
+    const tools = createHerdrTools({
+      run,
+      now: () => 1000,
+      taskDir: `${dir}/tasks`,
+      workerDir: `${dir}/workers`,
+    });
     const lanes = ["alpha-chase", "beta-chase", "gamma-chase", "delta-chase"];
     expect(lanes).toHaveLength(MAX_WORKER_LANES);
     for (const taskId of lanes) await tools.dispatchWorker({ taskId, task: "x" });
-    await expect(tools.dispatchWorker({ taskId: "one-too-many", task: "x" }))
-      .rejects.toThrow(/worker ceiling reached: 4 lanes already open \[alpha-chase/u);
+    await expect(tools.dispatchWorker({ taskId: "one-too-many", task: "x" })).rejects.toThrow(
+      /worker ceiling reached: 4 lanes already open \[alpha-chase/u,
+    );
   });
 
   test("release records a truthful harvest receipt and closes the pane", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
     const { calls, tools } = fakeHerdr({ dir });
     await tools.dispatchWorker({ taskId: "front-parser-restore", task: "fix it" });
-    const released = await tools.releaseWorker({ taskId: "front-parser-restore", outcome: "committed", note: "landed in aae0091" });
+    const released = await tools.releaseWorker({
+      taskId: "front-parser-restore",
+      outcome: "committed",
+      note: "landed in aae0091",
+    });
     expect(released.closed).toBe(true);
     expect(released.receipt).toContain("outcome: committed");
     expect(released.receipt).toContain("pane may close");
@@ -1104,13 +1460,20 @@ describe("worker lanes", () => {
   test("release rejects an outcome that is not a real outcome", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gw-lanes-"));
     const { tools } = fakeHerdr({ dir });
-    await expect(tools.releaseWorker({ taskId: "x-lane", outcome: "done" })).rejects.toThrow("outcome must be one of");
+    await expect(tools.releaseWorker({ taskId: "x-lane", outcome: "done" })).rejects.toThrow(
+      "outcome must be one of",
+    );
   });
 });
 
 test("aggregate deadline uses the durable wake registry", async () => {
   const calls = [];
-  const wake = createWakeTools({ run: async (...args) => { calls.push(args); return { ok: true }; } });
+  const wake = createWakeTools({
+    run: async (...args) => {
+      calls.push(args);
+      return { ok: true };
+    },
+  });
   await wake.scheduleAggregateDeadline({
     target: "gateway-agent",
     holdUntil: Date.now() + 60_000,
