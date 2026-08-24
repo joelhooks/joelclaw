@@ -1,0 +1,56 @@
+---
+title: Recent fleet memory review
+privacy: private
+status: implementation
+project: memory-system-review
+updated: 2026-08-24
+---
+
+# Recent fleet memory review
+
+`joelclaw memory review --since 48h` is the read-only operator surface for asking what the fleet actually did recently without blending sources or treating an offline machine's cache as current.
+
+## Contract
+
+The command returns `MemoryReviewResultV1`. Effect Schema owns the output boundary. The result keeps five lanes separate:
+
+- accepted session captures;
+- Git commits;
+- Brain pages;
+- OTEL events;
+- flowing reflections and observations.
+
+The summary cites only lane counts and source health. It does not infer intent, merge rank scales, include transcript bodies, include flowing summaries, expose private routing configuration, or return private filesystem paths. Brain pages use opaque root-scoped references. Unsupported Git remotes use opaque local repository references.
+
+Whole-fleet review is the default. `--project` and `--workstream` narrow sources with trusted scope fields. Session metadata does not yet carry a trusted project/workstream field, so a filtered review returns a typed `scope_filter_unavailable` warning and no session evidence rather than searching transcript text or presenting unrelated sessions as scoped.
+
+Flowing memory requires both project and workstream for record retrieval. A fleet-wide review reports aggregate flowing health and counts. An exact filtered review also returns separately ranked reflection and observation identifiers, titles, ranks, kinds, and health; it drops record summaries and evidence bodies.
+
+## Availability rules
+
+Host reachability and historical activity are separate facts. An unreachable host is `unavailable` and `current: false`. The command may report the last verified accepted-run timestamp, but never labels cached state current. Blaine follows this rule and never blocks Flagg or Panda.
+
+Each collector fails independently. Missing, stale, unavailable, and failed sources remain visible in their own lane. One failed collector does not erase healthy evidence from another. Backend error messages are translated to bounded operator codes and generic source messages before the public envelope.
+
+The current invocation is excluded from accepted-run evidence by active runtime session identifiers. OTEL collection finishes before any scoped flowing read can emit telemetry for the review itself. Git and Brain read only already-persisted artifacts, so the uncommitted invocation is not evidence. Project-filtered session review fails closed because current session metadata lacks trusted scope.
+
+## Initial live receipt
+
+A Flagg canary over 48 hours proved:
+
+- the current Pi conversation was excluded from accepted-run evidence;
+- Flagg and Panda were reachable while Blaine was typed unavailable with a last verified activity timestamp;
+- missing daily memory files appeared as a Brain warning;
+- the two known blocked semantic jobs appeared as a flowing warning;
+- Git, Brain, OTEL, session, and flowing evidence remained separate;
+- a filtered `joelhooks.joelclaw/main` run returned only that repository's Git evidence and did not substitute unscoped session evidence.
+
+The source seam uses one bounded sample per lane. Git evidence is deduplicated by host, repository, and commit SHA; project and workstream filters are exact, and unreadable repositories produce typed count-only warnings. Brain includes only explicit `public` or `private` pages modified in the window; sensitive or unclassified pages are counted as omitted but never returned.
+
+## Verification
+
+The final implementation passed 25 focused tests, CLI and root typechecks, targeted Biome, diff validation, Brain validation, whole-fleet and filtered live canaries, and a serialized-output privacy scan. Independent review returned `CLEAN`.
+
+## Open constraint
+
+Accepted-run metadata needs a trusted project/workstream field before filtered session evidence can become available without explicit raw-session drill-down.

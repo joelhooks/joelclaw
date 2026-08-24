@@ -18,6 +18,7 @@ import { Console, Effect } from "effect"
 import type { CapabilityError } from "../capabilities/contract"
 import { executeCapabilityCommand } from "../capabilities/runtime"
 import { Inngest } from "../inngest"
+import { memoryReviewCmd } from "../memory-review/command"
 import { respond, respondError } from "../response"
 import { resolveTypesenseApiKey as resolveApiKey } from "../typesense-auth"
 
@@ -598,6 +599,7 @@ export const memoryCmd = Command.make("memory", {}, () =>
           'joelclaw memory search "stripe patterns"',
           "joelclaw memory recent --hours 24",
           "joelclaw memory scorecard --hours 24",
+          "joelclaw memory review --since 48h",
         ],
       },
       [
@@ -617,10 +619,14 @@ export const memoryCmd = Command.make("memory", {}, () =>
           command: "joelclaw memory scorecard [--hours 24]",
           description: "Memory yield scorecard (ADR-0190)",
         },
+        {
+          command: "joelclaw memory review [--since 48h] [--project <project>] [--workstream <workstream>]",
+          description: "Recent whole-fleet evidence review",
+        },
       ]
     )
   )
 ).pipe(
   Command.withDescription("Agent memory — write, search, inspect, and measure observations"),
-  Command.withSubcommands([writeCmd, searchCmd, recentCmd, scorecardCmd])
+  Command.withSubcommands([writeCmd, searchCmd, recentCmd, scorecardCmd, memoryReviewCmd])
 )
