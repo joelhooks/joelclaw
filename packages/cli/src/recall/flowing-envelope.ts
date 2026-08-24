@@ -13,7 +13,7 @@
  * - the echoed `MemorySearchQueryV1` including all three limits and the
  *   access/query scope agreement filter;
  * - ordered ISO health times and the snapshot hash carried by `Healthy`/`Stale`;
- * - the canonical `failure:<sha256>` receipt ID on `Failed` health;
+ * - the source's bare sha-256 producer receipt or canonical `failure:<sha256>` ID on `Failed` health;
  * - the source's path and credential exclusions on every runtime capture
  *   identifier, which are cheap to mirror because they are pure predicates;
  * - non-empty, unique, bounded search-hit evidence;
@@ -92,8 +92,8 @@ const ClaimRelationIdSchema = pattern(
   "expected a canonical claim-relation ID",
 );
 const FailureReceiptIdSchema = pattern(
-  /^failure:[a-f0-9]{64}$/u,
-  "expected a canonical failure receipt ID",
+  /^(?:failure:)?[a-f0-9]{64}$/u,
+  "expected a sha-256 failure receipt ID with an optional canonical failure prefix",
 );
 
 /**

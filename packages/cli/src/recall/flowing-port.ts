@@ -377,7 +377,9 @@ function healthFrom(result: FlowingMemorySearchResultV1): RecallLaneHealthV1 {
       return {
         _tag: "Failed",
         detail: "flowing projection failed",
-        failureReceiptId: result.health.failureReceiptId,
+        failureReceiptId: result.health.failureReceiptId.startsWith("failure:")
+          ? result.health.failureReceiptId
+          : `failure:${result.health.failureReceiptId}`,
         ...(result.health.lastValidSnapshotHash
           ? { lastValidSnapshotHash: result.health.lastValidSnapshotHash }
           : {}),

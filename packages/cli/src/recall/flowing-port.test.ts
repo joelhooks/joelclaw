@@ -641,13 +641,16 @@ describe("the wire mirror enforces the pinned identity patterns", () => {
     ).toBe("malformed-response");
   });
 
-  test("accepts a canonical failure receipt and carries it into the lane health", async () => {
+  test.each([
+    ["canonical", `failure:${hex(0x51)}`],
+    ["bare source wake receipt", hex(0x51)],
+  ])("accepts a %s failure receipt and carries a canonical ID into lane health", async (_, receipt) => {
     const port = harness({
       stdout: successStdout(
         flowingSuccessEnvelope({
           health: {
             _tag: "Failed",
-            failureReceiptId: `failure:${hex(0x51)}`,
+            failureReceiptId: receipt,
             lastValidSnapshotHash: hex(0x52),
           },
         }),
