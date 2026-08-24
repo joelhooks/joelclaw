@@ -4,8 +4,10 @@ import type { ConvexHttpClient } from "convex/browser";
 import {
   createMessageEventLogClient,
   GATEWAY_MESSAGE_EVENT_CONSUMER,
+  GATEWAY_TRANSPORT_READINESS_CONSUMER,
   type GatewayDecisionRecordedPayload,
   gatewayDecisionSemanticKey,
+  MessageEventLogError,
   resolveMessageEventLogUrl,
 } from "../src/index";
 
@@ -98,6 +100,44 @@ describe("gateway stream contracts", () => {
       },
       payload: decisionPayload,
     });
+  });
+
+  test("probes the deployed messageEvents query with a bounded named consumer", async () => {
+    const calls: unknown[] = [];
+    const fakeClient = {
+      mutation: async () => ({}),
+      query: async (_ref: unknown, args: unknown) => {
+        calls.push(args);
+        return [];
+      },
+    } as unknown as ConvexHttpClient;
+    const client = createMessageEventLogClient({ client: fakeClient });
+
+    await client.probe(50);
+
+    expect(calls).toEqual([{
+      consumer: GATEWAY_TRANSPORT_READINESS_CONSUMER,
+      limit: 1,
+    }]);
+  });
+
+  test("fails a probe within its timeout instead of hanging startup", async () => {
+    const fakeClient = {
+      mutation: async () => ({}),
+      query: async () => new Promise(() => {}),
+    } as unknown as ConvexHttpClient;
+    const client = createMessageEventLogClient({ client: fakeClient });
+
+    try {
+      await client.probe(5);
+      throw new Error("expected probe failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(MessageEventLogError);
+      expect(error).toMatchObject({
+        operation: "probe",
+        code: "MESSAGE_EVENT_PROBE_FAILED",
+      });
+    }
   });
 
   test("uses independent named cursors and the paginated replay contract", async () => {

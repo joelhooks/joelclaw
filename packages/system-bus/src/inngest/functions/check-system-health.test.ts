@@ -184,11 +184,17 @@ describe("check/system-health slim gateway transport", () => {
     return value;
   };
 
-  test("passes when the PID is alive and the heartbeat is fresh", async () => {
+  test("passes when PID, heartbeat, and slim transport readiness agree", async () => {
     const result = await checkGateway({
       readTextFile: readFiles({
         "/tmp/joelclaw/gateway.pid": "4242\n",
         "/tmp/joelclaw/last-heartbeat.ts": `export const lastHeartbeatTs = ${now - 60_000};\n`,
+        "/tmp/joelclaw/gateway.ready.json": JSON.stringify({
+          schema: "gateway-transport-readiness.v1",
+          pid: 4242,
+          eventLogReady: true,
+          initialDrainCompleted: true,
+        }),
       }),
       isProcessAlive: (pid) => pid === 4242,
       now: () => now,
@@ -197,8 +203,39 @@ describe("check/system-health slim gateway transport", () => {
     expect(result).toEqual({
       name: "Gateway",
       ok: true,
-      detail: "PID 4242 alive; heartbeat fresh (60s old)",
+      detail: "PID 4242 alive; transport ready; heartbeat fresh (60s old)",
     });
+  });
+
+  test("fails when liveness exists without matching transport readiness", async () => {
+    const baseFiles = {
+      "/tmp/joelclaw/gateway.pid": "4242\n",
+      "/tmp/joelclaw/last-heartbeat.ts": `export const lastHeartbeatTs = ${now - 60_000};\n`,
+    };
+
+    expect(await checkGateway({
+      readTextFile: readFiles(baseFiles),
+      isProcessAlive: () => true,
+      now: () => now,
+    })).toMatchObject({
+      name: "Gateway",
+      ok: false,
+      detail: "PID 4242 alive; heartbeat fresh; transport not ready",
+    });
+
+    expect(await checkGateway({
+      readTextFile: readFiles({
+        ...baseFiles,
+        "/tmp/joelclaw/gateway.ready.json": JSON.stringify({
+          schema: "gateway-transport-readiness.v1",
+          pid: 9999,
+          eventLogReady: true,
+          initialDrainCompleted: true,
+        }),
+      }),
+      isProcessAlive: () => true,
+      now: () => now,
+    })).toMatchObject({ name: "Gateway", ok: false });
   });
 
   test("fails when the PID file is missing or the process is dead", async () => {

@@ -758,6 +758,7 @@ async function checkWorker(): Promise<ServiceStatus> {
 
 const GATEWAY_HEARTBEAT_STALE_AFTER_MS = 30 * 60_000;
 const GATEWAY_HEARTBEAT_FUTURE_SKEW_MS = 5 * 60_000;
+const GATEWAY_READY_FILE = "/tmp/joelclaw/gateway.ready.json";
 
 type GatewayHealthProbeOptions = {
   readTextFile?: (path: string) => Promise<string>;
@@ -812,10 +813,30 @@ async function checkGateway(options: GatewayHealthProbeOptions = {}): Promise<Se
       };
     }
 
+    const readinessRaw = await readTextFile(GATEWAY_READY_FILE).catch(() => "");
+    let readiness: Record<string, unknown> | undefined;
+    try {
+      readiness = JSON.parse(readinessRaw) as Record<string, unknown>;
+    } catch {
+      readiness = undefined;
+    }
+    if (
+      readiness?.schema !== "gateway-transport-readiness.v1"
+      || readiness.pid !== pid
+      || readiness.eventLogReady !== true
+      || readiness.initialDrainCompleted !== true
+    ) {
+      return {
+        name: "Gateway",
+        ok: false,
+        detail: `PID ${pid} alive; heartbeat fresh; transport not ready`,
+      };
+    }
+
     return {
       name: "Gateway",
       ok: true,
-      detail: `PID ${pid} alive; heartbeat fresh (${Math.max(0, Math.floor(heartbeatAgeMs / 1000))}s old)`,
+      detail: `PID ${pid} alive; transport ready; heartbeat fresh (${Math.max(0, Math.floor(heartbeatAgeMs / 1000))}s old)`,
     };
   } catch (err) {
     return { name: "Gateway", ok: false, detail: String(err) };

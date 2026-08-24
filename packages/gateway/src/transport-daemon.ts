@@ -23,7 +23,12 @@ import {
 } from "./chat-sdk/notify-stream";
 import { registerChatSdkActingInbound } from "./chat-sdk-inbound/acting";
 import { createStreamInboundPublisher } from "./chat-sdk-inbound/publish";
+import { waitForDependencyReadiness } from "./dependency-readiness";
 import { drainDeliverDecisions } from "./gateway-decision-executor";
+import {
+  createRetainedQueueDrainer,
+  type RetainedQueueDrainer,
+} from "./retained-queue-drainer";
 import { SlackThreadSessionRegistry } from "./slack-thread-session";
 import {
   createSlackUserWebClient,
@@ -31,6 +36,16 @@ import {
   resolveSlackChannelNameWithUserFallback,
 } from "./slack-user-token-fallback";
 import { resolveSlackWorkRequest } from "./slack-work-request";
+import {
+  assertNoLiveSlimTransportOwner,
+  claimSlimTransportOwnership,
+} from "./slim-transport-ownership";
+import {
+  clearSlimTransportReadiness,
+  publishSlimTransportReadiness,
+  SLIM_TRANSPORT_READY_FILE,
+  startChannelRuntimeWithLiveness,
+} from "./slim-transport-readiness";
 import {
   createHeartbeatGateState,
   makeRedisHeartbeatProbe,
@@ -110,12 +125,52 @@ export async function startSlimTransportDaemon(): Promise<void> {
   const subscriber = new Redis(redisOptions());
   await Promise.all([command.connect(), subscriber.connect()]);
 
+  const eventLog = getMessageEventLogClient();
+  await assertNoLiveSlimTransportOwner({ pidFile: PID_FILE });
+  const preflightStartedAt = Date.now();
+  const preflight = await waitForDependencyReadiness({
+    probe: () => eventLog.probe(5_000),
+    initialRetryDelayMs: 1_000,
+    maxRetryDelayMs: 30_000,
+    onFailure: ({ attempt, error, retryInMs }) => {
+      if (attempt === 1 || attempt % 10 === 0) {
+        console.error("[gateway:transport] message event log preflight waiting", {
+          attempt,
+          retryInMs,
+          error: error instanceof Error ? error.message : "message event log probe failed",
+        });
+      }
+      void emitGatewayOtel({
+        level: "warn",
+        component: "transport-daemon",
+        action: "transport.event_log.preflight_failed",
+        success: false,
+        error: error instanceof Error ? error.message : "message event log probe failed",
+        metadata: { attempt, retryInMs },
+      });
+    },
+  });
+  void emitGatewayOtel({
+    level: "info",
+    component: "transport-daemon",
+    action: "transport.event_log.preflight_ready",
+    success: true,
+    duration_ms: Date.now() - preflightStartedAt,
+    metadata: { recoveredAfterAttempts: preflight.attempts },
+  });
+
+  const ownershipLease = await claimSlimTransportOwnership({ pidFile: PID_FILE });
+  await ownershipLease.clearStaleEvidence([
+    PID_FILE,
+    HEARTBEAT_FILE,
+    SLIM_TRANSPORT_READY_FILE,
+  ]);
+
   const runtime = getChatSdkRuntime({
     telegramEnabled: Boolean(process.env.TELEGRAM_USER_ID?.trim()),
     slackEnabled: Boolean(process.env.SLACK_ALLOWED_USER_ID?.trim()),
     discordEnabled: Boolean(process.env.DISCORD_ALLOWED_USER_ID?.trim()),
   });
-  const eventLog = getMessageEventLogClient();
   const resolveInboundFlow = (
     platform: MessagePlatform,
     platformMessageId: string,
@@ -321,15 +376,49 @@ export async function startSlimTransportDaemon(): Promise<void> {
     },
   });
 
-  await startChatSdkRuntime();
-  await command.sadd(SESSIONS_SET, SESSION_ID);
-  await subscriber.subscribe(NOTIFY_CHANNEL, LEGACY_NOTIFY_CHANNEL);
-  await mkdir(PID_DIR, { recursive: true });
-  await writeFile(PID_FILE, `${process.pid}\n`, "utf8");
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  let executorTimer: ReturnType<typeof setInterval> | undefined;
+  let queueDrainer: RetainedQueueDrainer | undefined;
+  let shuttingDown = false;
+  let readinessState: "starting" | "ready" | "degraded" = "starting";
+
+  const shutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log("[gateway:transport] shutting down", { signal });
+    queueDrainer?.stop();
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (executorTimer) clearInterval(executorTimer);
+    clearInterval(slackThreadReapTimer);
+    await Promise.allSettled([
+      runtime.stop(),
+      command.srem(SESSIONS_SET, SESSION_ID),
+      subscriber.quit(),
+      command.quit(),
+      clearSlimTransportReadiness(),
+      rm(PID_FILE, { force: true }),
+      rm(HEARTBEAT_FILE, { force: true }),
+    ]);
+    await ownershipLease.release();
+    process.exit(0);
+  };
+  process.once("SIGTERM", () => void shutdown("SIGTERM"));
+  process.once("SIGINT", () => void shutdown("SIGINT"));
+
   const writeHeartbeat = () =>
     writeFile(HEARTBEAT_FILE, `export const lastHeartbeatTs = ${Date.now()};\n`, "utf8");
-  await writeHeartbeat();
-  const heartbeatTimer = setInterval(() => {
+  await startChannelRuntimeWithLiveness({
+    startChannelRuntime: async () => {
+      await startChatSdkRuntime();
+    },
+    publishPid: async () => {
+      await mkdir(PID_DIR, { recursive: true });
+      await writeFile(PID_FILE, `${process.pid}\n`, "utf8");
+    },
+    publishHeartbeat: writeHeartbeat,
+  });
+  await command.sadd(SESSIONS_SET, SESSION_ID);
+  heartbeatTimer = setInterval(() => {
     void writeHeartbeat().catch((error) => {
       console.error("[gateway:transport] heartbeat write failed", { error: String(error) });
     });
@@ -341,63 +430,105 @@ export async function startSlimTransportDaemon(): Promise<void> {
   // transport process, and trusting them would silence fallback during a dead loop.
   const heartbeatGateState = createHeartbeatGateState();
   const probeHeartbeat = makeRedisHeartbeatProbe(async (key) => command.get(key));
-
-  let draining = false;
-  let drainPending = false;
-  const drain = async (): Promise<void> => {
-    if (draining) {
-      drainPending = true;
-      return;
-    }
-    draining = true;
-    try {
-      do {
-        drainPending = false;
-        for (const list of [EVENT_LIST, LEGACY_EVENT_LIST]) {
-          const rawEvents = await command.lrange(list, 0, -1);
-          for (const raw of rawEvents.reverse()) {
-            const event = parseEvent(raw);
-            if (!event) {
-              console.error("[gateway:transport] removing malformed queue row", { list });
-              await command.lrem(list, 1, raw);
-              continue;
-            }
-            try {
-              const result = await routeNotifySendToSlimTransport(event, {
-                eventLog,
-                probeHeartbeat,
-                gateState: heartbeatGateState,
-              });
-              if (!result.handled) {
-                console.log("[gateway:transport] removing non-message queue row", {
-                  eventId: event.id,
-                  type: event.type,
-                });
-              }
-              await command.lrem(list, 1, raw);
-            } catch (error) {
-              if (error instanceof SlimNotifyIngressError && error.handled) {
-                // A fallback send may already have crossed Telegram. Remove the
-                // queue row and leave reconciliation to the stream consumer.
-                await command.lrem(list, 1, raw);
-                continue;
-              }
-              throw error;
-            }
-          }
-        }
-      } while (drainPending);
-    } finally {
-      draining = false;
-    }
+  const publishReadiness = async (): Promise<void> => {
+    const [gateway, legacy] = await Promise.all([
+      command.llen(EVENT_LIST),
+      command.llen(LEGACY_EVENT_LIST),
+    ]);
+    await publishSlimTransportReadiness({
+      pid: process.pid,
+      readyAt: Date.now(),
+      eventLogReady: true,
+      initialDrainCompleted: true,
+      queues: { gateway, legacy },
+    });
   };
 
-  subscriber.on("message", () => {
-    void drain().catch((error) => {
-      console.error("[gateway:transport] notify drain failed", { error: String(error) });
-    });
+  queueDrainer = createRetainedQueueDrainer({
+    client: command,
+    lists: [EVENT_LIST, LEGACY_EVENT_LIST],
+    processRow: async (list, raw) => {
+      const event = parseEvent(raw);
+      if (!event) {
+        console.error("[gateway:transport] removing malformed queue row", { list });
+        return;
+      }
+      try {
+        const result = await routeNotifySendToSlimTransport(event, {
+          eventLog,
+          probeHeartbeat,
+          gateState: heartbeatGateState,
+        });
+        if (!result.handled) {
+          console.log("[gateway:transport] removing non-message queue row", {
+            eventId: event.id,
+            type: event.type,
+          });
+        }
+      } catch (error) {
+        if (error instanceof SlimNotifyIngressError && error.handled) {
+          // A fallback send may already have crossed Telegram. Remove the
+          // queue row and leave reconciliation to the stream consumer.
+          return;
+        }
+        throw error;
+      }
+    },
+    initialRetryDelayMs: 1_000,
+    maxRetryDelayMs: 30_000,
+    onFailure: async ({ attempt, error, retryInMs, stage, mayHaveRetainedRow }) => {
+      const errorMessage = error instanceof Error ? error.message : "gateway drain failed";
+      if (stage === "row" && readinessState === "ready") {
+        await clearSlimTransportReadiness();
+        readinessState = "degraded";
+        void emitGatewayOtel({
+          level: "error",
+          component: "transport-daemon",
+          action: "transport.readiness.degraded",
+          success: false,
+          error: errorMessage,
+          metadata: { attempt, retryInMs, failureStage: stage },
+        });
+      }
+      if (attempt === 1 || attempt % 10 === 0) {
+        console.error(
+          stage === "row"
+            ? "[gateway:transport] notify drain failed; retry scheduled"
+            : "[gateway:transport] readiness publication failed; retry scheduled",
+          { attempt, retryInMs, failureStage: stage, mayHaveRetainedRow, error: errorMessage },
+        );
+      }
+      void emitGatewayOtel({
+        level: "warn",
+        component: "transport-daemon",
+        action: stage === "row"
+          ? "transport.notify_drain.retry_scheduled"
+          : "transport.readiness.publish_retry_scheduled",
+        success: false,
+        error: errorMessage,
+        metadata: { attempt, retryInMs, failureStage: stage, mayHaveRetainedRow },
+      });
+    },
+    onPass: async ({ recoveredAfterAttempts }) => {
+      if (readinessState === "ready") return;
+      const wasDegraded = readinessState === "degraded";
+      await publishReadiness();
+      readinessState = "ready";
+      void emitGatewayOtel({
+        level: "info",
+        component: "transport-daemon",
+        action: wasDegraded
+          ? "transport.readiness.recovered"
+          : "transport.readiness.ready",
+        success: true,
+        metadata: { recoveredAfterAttempts, preflightAttempts: preflight.attempts },
+      });
+    },
   });
-  await drain();
+
+  subscriber.on("message", () => queueDrainer?.request());
+  await subscriber.subscribe(NOTIFY_CHANNEL, LEGACY_NOTIFY_CHANNEL);
+  await queueDrainer.start();
 
   // Mechanical executor for recorded deliver decisions: the agent decides,
   // the transport executes the receipt. Decisions are appended by the MCP
@@ -448,28 +579,11 @@ export async function startSlimTransportDaemon(): Promise<void> {
       executorDraining = false;
     }
   };
-  const executorTimer = setInterval(() => {
+  executorTimer = setInterval(() => {
     void drainExecutor();
   }, 5_000);
   executorTimer.unref?.();
   await drainExecutor();
-
-  const shutdown = async (signal: string): Promise<void> => {
-    console.log("[gateway:transport] shutting down", { signal });
-    clearInterval(heartbeatTimer);
-    clearInterval(slackThreadReapTimer);
-    clearInterval(executorTimer);
-    await Promise.allSettled([
-      runtime.stop(),
-      command.srem(SESSIONS_SET, SESSION_ID),
-      subscriber.quit(),
-      command.quit(),
-    ]);
-    await rm(PID_FILE, { force: true });
-    process.exit(0);
-  };
-  process.once("SIGTERM", () => void shutdown("SIGTERM"));
-  process.once("SIGINT", () => void shutdown("SIGINT"));
 
   console.log("[gateway:transport] slim transport ready", {
     fallbackChannel: process.env.FALLBACK_CHANNEL?.trim() || "telegram",

@@ -1,0 +1,92 @@
+---
+title: "Recover Gateway Runtime"
+type: "task"
+status: "active"
+privacy: "private"
+created_at: "2026-08-24"
+---
+
+# Recover Gateway Runtime
+
+## Outcome
+
+Restore the existing single-owner slim gateway transport after its self-hosted Convex dependency failed to restart with Colima. Prevent the same outage from starting channel pollers in a crash loop. Keep the gateway agent/transport split and message-event-log durability contract intact.
+
+## Live evidence
+
+- `system/com.joel.gateway` had more than 42,000 launch attempts and no healthy transport readiness.
+- The transport failed on `MESSAGE_EVENT_APPEND_FAILED` to the local Convex backend.
+- The existing `joelclaw-local-convex-backend-1` container had exited six days earlier with restart policy `no`.
+- Reviving that existing container restored `/version`; no second Convex owner was created.
+- The container restart policy and historical Compose services now use `unless-stopped`.
+- The gateway process recovered and the Redis backlog later reached zero before the source-only hardening follow-up.
+- The slim transport does not own port 3018. PID and heartbeat prove liveness. The PID-matched ready marker proves Convex preflight and initial-drain readiness. Stream operations and structured telemetry prove ongoing work.
+
+## Decision coverage repair
+
+The recovered transport exposed a second failure in the gateway agent cursor. Historical decisions written before indexed coverage existed caused one 5,000-event fallback scan per input. A 20-input decision could exceed Convex transaction limits and leave every successor agent unable to record a decision.
+
+The repair is checkpointed on the deployed incident branch as `joelclaw-api@6bb56d0f1b1969f05a5f3ebb0748dbf8dcf0d2d4` by `shitratgit[bot]`.
+
+Live migration evidence:
+
+- A private `0600` Convex snapshot was exported before deployment; SHA-256 `e54afb7f957912e6c8e32cb5a99b75146ad4a9cf4b2ee9bc6c501fd9bc382b40`.
+- The additive schema and functions deployed without deleting an index.
+- The bounded backfill scanned 35,232 events, examined 6,575 coverage rows, and inserted 1,507 missing rows.
+- A post-completion invocation reported zero scanned, examined, or inserted rows.
+- The live consumer cursor was never reset or fast-forwarded.
+- Read-only preflight found 12 historical duplicate-terminal inputs at sequences no later than 2,925. Current pending replay began at sequence 13,531, so those immutable historical conflicts are already behind the live cursor.
+- The single agent-comms driver was resumed after backfill completion with one gateway agent and a fresh heartbeat.
+
+Runtime reads now use indexed coverage only. New decisions remain strictly validated. Historical backfill is deliberately lenient so older valid evidence can be indexed without pretending it satisfies today's append contract. Gateway decision writes and `gateway/agent` cursor advances fail closed until backfill completion.
+
+## Constraints
+
+- Do not start a second Telegram, Slack, Discord, gateway, or Convex owner.
+- Do not print or commit secrets, env values, message bodies, customer data, or raw event payloads.
+- Do not mutate the unrelated dirty primary checkout.
+- One writer owns this worktree.
+- Preserve durable message-event append and fail-closed delivery semantics.
+- Do not discard queued message events to make startup look healthy.
+- Non-message legacy rows may be removed only through logic that proves the row is not actionable and preserves concurrent LPUSH ordering.
+- Use canonical gateway OTEL events. Console output is not the health contract.
+
+## Deployment and paired rollback order
+
+Do not leave the gateway daemon and system-bus health contract on opposite sides of this change.
+
+Deploy in this order:
+
+1. Deploy the gateway source through the clean immutable release path. Restart only the existing supervised transport owner.
+2. Verify one transport PID, a fresh heartbeat, and `/tmp/joelclaw/gateway.ready.json` with the same PID after the initial drain succeeds.
+3. Publish the system-bus worker with the ready-marker health requirement only after step 2 passes.
+
+Roll back in the reverse compatibility order, in one change window:
+
+1. Roll back the system-bus health requirement first so it does not require a marker from old gateway code.
+2. Roll back the gateway daemon through its canonical supervised path.
+3. Verify one transport owner, delivery durability, and the health contract for the restored pair.
+
+Do not deploy or roll back only one half and leave the mixed state running.
+
+## Deferred legacy drain optimization
+
+The incident sample measured 15,282 rows in `joelclaw:events:gateway`; 14,345 were non-message `pane.schedule.due` rows. A later sample showed 14,677 rows, a reduction of 605 while the daemon processed the same list. The current `LRANGE 0 -1` plus per-row `LREM` recovery is therefore observably expensive and O(N²) for a large list.
+
+This optimization is explicitly deferred. The live backlog is now zero, and changing the claim/ack algorithm during recovery would risk row loss, duplicate delivery, or concurrent `LPUSH` reordering. The narrow fix keeps remove-after-success behavior, adds retained-row retries without a new Pub/Sub event, and tests oldest-first order plus concurrent `LPUSH` preservation. A separate task must benchmark and prove a replacement claim/ack algorithm before changing the Redis list mechanics.
+
+## Questions for the writer
+
+1. Should `gateway-daemon.sh` or `gateway-start.sh` preflight the message-event backend before channel initialization?
+2. Can the legacy Redis list drain avoid `LRANGE` plus per-row `LREM` quadratic recovery without weakening at-least-once behavior?
+3. Which readiness signal should replace the stale port-3018 assumption for the slim transport?
+4. What regression test proves dependency-down startup does not repeatedly initialize channel owners?
+
+## Finish line
+
+- Existing backend remains healthy and restartable after Docker/Colima restart.
+- Gateway reaches a stable ready state without a second comms owner.
+- Message-event append/read canary passes without sending an outward message.
+- Recovery from a large non-message backlog is bounded and tested, or explicitly deferred with measured evidence.
+- Source changes pass focused tests, typecheck, lint/format, and independent review.
+- Deployment uses a clean immutable worktree or release path; the dirty primary checkout remains untouched.

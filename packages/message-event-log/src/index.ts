@@ -4,6 +4,7 @@ import { anyApi, type FunctionReference } from "convex/server";
 export const MESSAGE_EVENT_CONSUME_REQUESTED = "message/event.consume.requested" as const;
 export const MESSAGE_EVENT_CONSUMER = "system-bus/message-event-consumer" as const;
 export const GATEWAY_MESSAGE_EVENT_CONSUMER = "gateway/agent" as const;
+export const GATEWAY_TRANSPORT_READINESS_CONSUMER = "gateway/transport-readiness" as const;
 
 export type MessageEventKind =
   | "message.requested"
@@ -319,6 +320,7 @@ export type MessageEventLogOperation =
   | "append"
   | "materialize"
   | "pending"
+  | "probe"
   | "advanceCursor"
   | "readSince"
   | "trace";
@@ -385,6 +387,25 @@ export const resolveMessageEventLogUrl = (): string =>
   resolveCentralConvexUrl() ??
   "http://127.0.0.1:3210";
 
+async function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  const boundedTimeoutMs = Number.isFinite(timeoutMs) ? Math.max(1, timeoutMs) : 5_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`message event log probe timed out after ${boundedTimeoutMs}ms`)),
+          boundedTimeoutMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export const createMessageEventLogClient = (options: ClientOptions = {}) => {
   const client = options.client ?? new ConvexHttpClient(options.url ?? resolveMessageEventLogUrl());
   const adminKey = cleanEnv(options.adminKey ?? process.env.CONVEX_DEPLOY_KEY);
@@ -401,6 +422,19 @@ export const createMessageEventLogClient = (options: ClientOptions = {}) => {
   const traceRef = (anyApi as any).messageEvents.traceByFlow as FunctionReference<"query">;
 
   return {
+    probe: async (timeoutMs = 5_000): Promise<void> => {
+      try {
+        await withTimeout(
+          client.query(pendingRef, {
+            consumer: GATEWAY_TRANSPORT_READINESS_CONSUMER,
+            limit: 1,
+          }),
+          timeoutMs,
+        );
+      } catch (error) {
+        throw new MessageEventLogError("probe", "MESSAGE_EVENT_PROBE_FAILED", error);
+      }
+    },
     append: async <K extends MessageEventKind>(
       input: AppendMessageEventInput<K>,
     ): Promise<AppendMessageEventReceipt> => {
