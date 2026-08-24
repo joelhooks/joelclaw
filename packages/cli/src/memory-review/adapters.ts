@@ -280,18 +280,19 @@ while IFS= read -r -d '' marker; do
     case "$canonical" in "$project"|"$projectSlash") ;; *) continue;; esac
   fi
   branch='all'
-  ref='--all'
+  ref_args='--all'
   if [ -n "$workstream" ]; then
+    ref_args=''
     if git -C "$repo" show-ref --verify --quiet "refs/heads/$workstream"; then
-      ref="refs/heads/$workstream"
-    elif git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$workstream"; then
-      ref="refs/remotes/origin/$workstream"
-    else
-      continue
+      ref_args="refs/heads/$workstream"
     fi
+    if git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$workstream"; then
+      ref_args="$ref_args refs/remotes/origin/$workstream"
+    fi
+    [ -n "$ref_args" ] || continue
     branch="$workstream"
   fi
-  if ! log=$(git -C "$repo" log "$ref" --since="@$cutoff" --format='%H%x1f%aI%x1f%s' -n 20 2>/dev/null); then
+  if ! log=$(git -C "$repo" log $ref_args --since="@$cutoff" --format='%H%x1f%aI%x1f%s' -n 20 2>/dev/null); then
     printf '__issue__\x1flog_unavailable\n'
     continue
   fi

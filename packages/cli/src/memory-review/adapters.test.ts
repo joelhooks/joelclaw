@@ -173,9 +173,18 @@ describe("memory review adapters", () => {
       expect(git("commit", "-m", "branch commit").status).toBe(0);
       const branchHash = git("rev-parse", "HEAD").stdout.trim();
       expect(git("switch", "main").status).toBe(0);
+      expect(git("switch", "-c", "origin-only").status).toBe(0);
+      writeFileSync(join(repo, "origin.txt"), "origin work\n");
+      expect(git("add", "origin.txt").status).toBe(0);
+      expect(git("commit", "-m", "origin commit").status).toBe(0);
+      const originHash = git("rev-parse", "HEAD").stdout.trim();
+      expect(git("switch", "main").status).toBe(0);
+      expect(git("update-ref", "refs/remotes/origin/memory-review", originHash).status).toBe(0);
       const branchEvidence = scan("-", "memory-review").stdout;
       expect(branchEvidence).toContain(`\x1fmemory-review\x1f${branchHash}\x1f`);
+      expect(branchEvidence).toContain(`\x1fmemory-review\x1f${originHash}\x1f`);
       expect(branchEvidence).toContain("branch commit");
+      expect(branchEvidence).toContain("origin commit");
 
       const broken = join(home, "Code", "broken", "repo", ".git");
       mkdirSync(broken, { recursive: true });
