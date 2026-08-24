@@ -86,6 +86,29 @@ The one-call rule is still prompt policy. The per-call cap and hard timeout prov
 
 Operational archaeology also found that the legacy `joelclaw gateway doctor` transport stage still expects adapter/poller readiness and reports the slim transport as failed even when its PID-matched readiness marker, process, Redis path, and queues are healthy. That doctor drift is a separate CLI follow-up; it did not authorize restarting the healthy transport during this incident.
 
+## Bounded-turn production activation - 2026-08-24
+
+The reviewed repair was published as `joelclaw@65ed90c9eaa075e7cee7ab7b29e27a5c7fc58bc7`. The immutable production tree is:
+
+`/Users/joel/Code/.worktrees/joelhooks/joelclaw/gateway-bounded-prod-65ed90c9`
+
+The previous plist was backed up to `/Users/joel/.joelclaw/launchd-releases/com.joelclaw.agent-comms-driver.pre-65ed90c9.plist`, SHA-256 `b5f0186808b435da390d2bdf486f005df39b067395fa2f18a2dd1d65c76c6942`.
+
+The old driver was booted out before its successor was stopped. Both the driver program and `GATEWAY_SUCCESSOR_COMMAND` were then pinned to the immutable tree before the same `user/501` LaunchAgent was bootstrapped. The slim transport was not restarted. Initial production identities were driver PID `5151`, transport PID `99419`, Herdr pane `w7:p1`, and successor session `3dfbcf69-d691-4556-ae5d-6dd99bdf0e08`.
+
+Live canaries proved:
+
+- a request for 100 pending inputs returned 20;
+- two completed bounded turns advanced the pending head by 40, from sequence `17,569` to `17,609`;
+- one `agent_prompt_stalled` startup race did not send `Ctrl+C`;
+- the heartbeat returned to `ready` with a fresh TTL;
+- both Redis transport queues remained empty;
+- there was one driver and one successor from the pinned release;
+- no full-history scan error appeared;
+- the cursor was neither reset nor fast-forwarded.
+
+The first-pass watch timed out because its `jq -s` predicate encountered non-JSON package-manager lines in the shared driver log. Runtime evidence showed the bounded pass had completed successfully before the watch ended. Monitor `7149090c` now watches the pinned driver, heartbeat, and one pinned successor for relapse.
+
 ## Constraints
 
 - Do not start a second Telegram, Slack, Discord, gateway, or Convex owner.
