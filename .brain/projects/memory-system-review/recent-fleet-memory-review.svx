@@ -51,6 +51,14 @@ The source seam uses one bounded sample per lane. Git evidence is deduplicated b
 
 The final implementation passed 25 focused tests, CLI and root typechecks, targeted Biome, diff validation, Brain validation, whole-fleet and filtered live canaries, and a serialized-output privacy scan. Independent review returned `CLEAN`.
 
+## Production activation
+
+The feature was published as `joelclaw@913456b7d36e67a4129c720c85440285f9d85344`. A post-install canary found that exact `main` filtering needed the union of local and origin refs; the reviewed patch was published as `joelclaw@31b2f1efa2c2953ad12165014fd0abe9f8b9a1f8`.
+
+The active immutable CLI artifact has SHA-256 `c9d2ed5d1b592175100e6a454de60581389dffcbb55f5ed118fc0f5a876bf0ed`. The previous installed artifact remains available by SHA-256 `a7c905069879ae92661f3e1cfe3212fece6161d71f787bf23e38f6afb6eae843` for rollback.
+
+Post-install whole-fleet and exact `joelhooks.joelclaw/main` canaries passed. The exact-scope canary returned both feature commits from `origin/main`, omitted unscoped session evidence, preserved five separate lanes, and exposed partial source health without breaking the command. The private activation receipt has SHA-256 `d2732cfacf51306a1f363de647e39d5e6d675ea882a646a54d260ecc5c287db9`.
+
 ## Open constraint
 
 Accepted-run metadata needs a trusted project/workstream field before filtered session evidence can become available without explicit raw-session drill-down.
