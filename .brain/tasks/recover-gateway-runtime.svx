@@ -52,7 +52,20 @@ Deployment order is strict because the client and plugin depend on the new publi
 2. Only then deploy the typed host client and gateway plugin/driver release.
 3. Verify bootstrap and one non-outward append/readback canary before resuming the existing single agent-comms owner.
 
-Rollback reverses that compatibility order: restore the plugin/driver first, then remove or roll back the API query. This source task does not authorize either deployment.
+Rollback reverses that compatibility order: restore the plugin/driver first, then remove or roll back the API query.
+
+### Replay-context production receipt — 2026-08-24
+
+- `joelclaw-api@fc60addf62723048a2d76daba3f2dc4901a34095` deployed the additive query and `messageEvents.by_kind_sequence`. The deploy deleted no indexes.
+- A live read-only query returned the pending head at sequence 13,531 and the newest handoff through bounded indexed reads.
+- `joelclaw@548f4f92699987bbaefbf608a3c0ef709c1bd0a2` shipped the typed client and plugin changes after 50 plugin tests, seven message-log tests, typechecks, and an independent CLEAN rereview.
+- The driver release passed SessionStart against the live 35,000-plus event log with no full-history scan failure.
+- The first immutable successor was misconfigured by the driver's hard-coded default command and started from the moving primary checkout. The rollout stopped that successor before retry, then pinned the successor command and plugin directory to the immutable release.
+- The pinned successor completed two bounded passes. The pending head moved from sequence 13,531 to 13,571 without a cursor reset or fast-forward.
+- During the sampled canary, every deliver decision covered a post-resume input. None covered an input with a matching fallback-delivery receipt. This found no duplicate fallback delivery in the cutover window.
+- The transport stayed ready with one owner and empty retained queues while the judgment driver changed releases.
+
+Aggregate and incident reconstruction still retains the explicit 20,000-event all-history cap. That path is not part of bootstrap, ordinary pending reads, decision readback, or cursor advancement.
 
 ## Constraints
 
