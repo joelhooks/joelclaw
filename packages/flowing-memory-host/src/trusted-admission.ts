@@ -3,10 +3,10 @@ import { mkdir, open, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
-  AdmissionCommandV1Schema,
   AcceptedRunDeltaV1Schema,
-  encodeDomain,
+  AdmissionCommandV1Schema,
   type AdmissionResultV1,
+  encodeDomain,
 } from "@joelclaw-memory/domain";
 
 import { buildTrustedAdmissionV1, type TrustedAdmissionConfigV1 } from "./admission-builder.js";
@@ -49,7 +49,15 @@ export const makeTrustedNativeAdmissionPort = (input: {
     const config =
       typeof input.config === "function" ? await input.config(nativeInput) : input.config;
     if (config === undefined) return { disposition: "deferred" };
-    const built = buildTrustedAdmissionV1(nativeInput, config);
+    let built: ReturnType<typeof buildTrustedAdmissionV1>;
+    try {
+      built = buildTrustedAdmissionV1(nativeInput, config);
+    } catch (error) {
+      if (error instanceof Error && error.message === "native-window-has-no-turns") {
+        return { disposition: "excluded" };
+      }
+      throw error;
+    }
     if (built.acceptedRun !== undefined) {
       const acceptance = built.command._tag === "accept" ? built.command.acceptance : undefined;
       if (acceptance === undefined) {

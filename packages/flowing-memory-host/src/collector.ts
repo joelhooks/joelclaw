@@ -1228,7 +1228,8 @@ export const drainNativeWakeSpool = async (
             });
             state.streams[key] = pendingEntry;
             await persist(input.statePath, state);
-            counts.replayed += 1;
+            if (pendingResult.disposition === "excluded") counts.excluded += 1;
+            else counts.replayed += 1;
             if (completeSize > receipt.vendorOffset && !receipt.closed) {
               deferredLines.push(
                 JSON.stringify(
@@ -1458,6 +1459,7 @@ export const drainNativeWakeSpool = async (
           result.disposition === "replay"
         ) {
           if (result.disposition === "replay") counts.replayed += 1;
+          else if (result.disposition === "excluded") counts.excluded += 1;
           else counts.admitted += 1;
           const nextTurn =
             result.acceptedToTurn === undefined
