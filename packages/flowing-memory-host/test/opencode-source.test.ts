@@ -14,15 +14,24 @@ import {
   OpenCodeReadError,
   OpenCodeSchemaError,
   OpenCodeUnsupportedVersionError,
+  openCodeCliErrorReceipt,
   openCodeDryRunReceipt,
   readOpenCodeSource,
   SUPPORTED_OPENCODE_SCHEMA_FINGERPRINT,
 } from "../src/opencode-source.js";
+import { withOpenCodeReadBarrierForTest } from "../src/opencode-source-barrier.js";
 
 const packageRoot = path.resolve(import.meta.dirname, "..");
 const textDecoder = new TextDecoder();
 
 const sha256 = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
+
+const checkpoint = (database: DatabaseSync) =>
+  database.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as {
+    readonly busy: number;
+    readonly checkpointed: number;
+    readonly log: number;
+  };
 
 const observedSchema = `
   CREATE TABLE project (id TEXT PRIMARY KEY);
@@ -484,6 +493,129 @@ describe("OpenCode read-only source", () => {
         fixture.writer.exec("ROLLBACK");
       } catch {
         // The assertion path already rolled the transaction back.
+      }
+      fixture.writer.close();
+    }
+  });
+
+  it("keeps counts, hashes, and bytes on one snapshot across a concurrent commit", async () => {
+    const fixture = await createFixture();
+    try {
+      checkpoint(fixture.writer);
+      const before = readOpenCodeSource(fixture.databasePath, {
+        adapterInstanceIdentityHash: "a".repeat(64),
+      });
+      let afterCommitCheckpoint:
+        | { readonly busy: number; readonly checkpointed: number; readonly log: number }
+        | undefined;
+
+      const during = withOpenCodeReadBarrierForTest(
+        {
+          afterSnapshotEstablished: () => {
+            fixture.writer.exec("BEGIN IMMEDIATE TRANSACTION");
+            insertMessage(fixture.writer, {
+              id: "msg-concurrent-private-marker",
+              role: "user",
+              sessionId: "ses-root-private-marker",
+              timeCreated: 902,
+            });
+            insertPart(fixture.writer, {
+              data: { text: "concurrent visible marker", type: "text" },
+              id: "prt-concurrent-private-marker",
+              messageId: "msg-concurrent-private-marker",
+              sessionId: "ses-root-private-marker",
+            });
+            fixture.writer.exec("COMMIT");
+          },
+          afterCommitBeforeClose: () => {
+            afterCommitCheckpoint = checkpoint(fixture.writer);
+          },
+        },
+        () =>
+          readOpenCodeSource(fixture.databasePath, {
+            adapterInstanceIdentityHash: "a".repeat(64),
+          }),
+      );
+
+      expect(openCodeDryRunReceipt(during)).toEqual(openCodeDryRunReceipt(before));
+      expect(during.streams.map((stream) => [...stream.canonicalBytes])).toEqual(
+        before.streams.map((stream) => [...stream.canonicalBytes]),
+      );
+      expect(afterCommitCheckpoint?.busy).toBe(0);
+
+      const after = readOpenCodeSource(fixture.databasePath, {
+        adapterInstanceIdentityHash: "a".repeat(64),
+      });
+      expect(after.inventory.messageCount).toBe(before.inventory.messageCount + 1);
+      expect(after.inventory.partCount).toBe(before.inventory.partCount + 1);
+      expect(after.inventory.eligibleMessageCount).toBe(before.inventory.eligibleMessageCount + 1);
+      expect(openCodeDryRunReceipt(after)).not.toEqual(openCodeDryRunReceipt(before));
+    } finally {
+      try {
+        fixture.writer.exec("ROLLBACK");
+      } catch {
+        // The concurrent writer transaction already committed.
+      }
+      fixture.writer.close();
+    }
+  });
+
+  it("rolls back and closes after a safe mapped failure inside the snapshot", async () => {
+    const fixture = await createFixture();
+    const privateMarker = "snapshot-failure-DO_NOT_LEAK-private-marker";
+    try {
+      checkpoint(fixture.writer);
+      let rollbackCheckpoint:
+        | { readonly busy: number; readonly checkpointed: number; readonly log: number }
+        | undefined;
+      let failure: unknown;
+
+      try {
+        withOpenCodeReadBarrierForTest(
+          {
+            afterSnapshotEstablished: () => {
+              fixture.writer.exec("BEGIN IMMEDIATE TRANSACTION");
+              insertMessage(fixture.writer, {
+                id: "msg-failure-private-marker",
+                role: "user",
+                sessionId: "ses-root-private-marker",
+                timeCreated: 903,
+              });
+              insertPart(fixture.writer, {
+                data: { text: "failure visible marker", type: "text" },
+                id: "prt-failure-private-marker",
+                messageId: "msg-failure-private-marker",
+                sessionId: "ses-root-private-marker",
+              });
+              fixture.writer.exec("COMMIT");
+              throw new Error(privateMarker);
+            },
+            afterRollbackBeforeClose: () => {
+              rollbackCheckpoint = checkpoint(fixture.writer);
+            },
+          },
+          () => readOpenCodeSource(fixture.databasePath),
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(OpenCodeReadError);
+      expect(failure).toMatchObject({ phase: "inventory" });
+      expect(String(failure)).not.toContain(privateMarker);
+      expect(JSON.stringify(openCodeCliErrorReceipt(failure))).not.toContain(privateMarker);
+      expect(rollbackCheckpoint?.busy).toBe(0);
+
+      const journalMode = fixture.writer.prepare("PRAGMA journal_mode = DELETE").get() as {
+        readonly journal_mode: string;
+      };
+      expect(journalMode.journal_mode.toLowerCase()).toBe("delete");
+      fixture.writer.exec("PRAGMA journal_mode = WAL");
+    } finally {
+      try {
+        fixture.writer.exec("ROLLBACK");
+      } catch {
+        // The failure path already released every transaction.
       }
       fixture.writer.close();
     }

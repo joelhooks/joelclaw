@@ -3,6 +3,8 @@ import { homedir, hostname, userInfo } from "node:os";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
+import { reachOpenCodeReadBarrier } from "./opencode-source-barrier.js";
+
 export const OPENCODE_SOURCE_SCHEMA_VERSION =
   "opencode-1.18.23-materialized-session-message-part:v1" as const;
 export const OPENCODE_ENCODER_VERSION = "opencode-visible-message-ndjson:v1" as const;
@@ -212,6 +214,13 @@ const scalarCount = (
   const count = safeInteger(singleRow(all(database, sql, ...parameters), "inventory").count);
   if (count === undefined) throw new OpenCodeReadError("inventory");
   return count;
+};
+
+const establishReadSnapshot = (database: DatabaseSync) => {
+  const count = safeInteger(
+    singleRow(all(database, "SELECT COUNT(*) AS count FROM sqlite_schema"), "transaction").count,
+  );
+  if (count === undefined) throw new OpenCodeReadError("transaction");
 };
 
 const schemaColumns = (database: DatabaseSync, table: "message" | "part" | "session") => {
@@ -600,6 +609,8 @@ export const readOpenCodeSource = (
 
     let snapshot: OpenCodeSourceSnapshotV1;
     try {
+      establishReadSnapshot(database);
+      reachOpenCodeReadBarrier("afterSnapshotEstablished");
       snapshot = readSnapshot(database, adapterInstanceIdentityHash);
     } catch (error) {
       throw mapFailure(
@@ -615,6 +626,7 @@ export const readOpenCodeSource = (
     try {
       database.exec("COMMIT");
       transactionOpen = false;
+      reachOpenCodeReadBarrier("afterCommitBeforeClose");
     } catch (error) {
       throw mapFailure("transaction", error, undefined, timeout);
     }
@@ -628,6 +640,8 @@ export const readOpenCodeSource = (
     if (transactionOpen) {
       try {
         database.exec("ROLLBACK");
+        transactionOpen = false;
+        reachOpenCodeReadBarrier("afterRollbackBeforeClose");
       } catch {
         // Preserve the bounded source failure. This connection is discarded below.
       }
