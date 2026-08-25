@@ -746,6 +746,45 @@ describe("OpenCode read-only source", () => {
     });
   });
 
+  it("refuses write-enabled backfill without both apply confirmation flags", async () => {
+    const fixture = await createFixture();
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(packageRoot, "src", "cli.ts"),
+          "opencode",
+          "backfill",
+          "--database",
+          fixture.databasePath,
+          "--max-sessions",
+          "2",
+          "--apply",
+          "--json",
+        ],
+        {
+          cwd: packageRoot,
+          encoding: "utf8",
+          env: Object.fromEntries(
+            Object.entries(process.env).filter(([name]) => !name.startsWith("JOELCLAW_MEMORY_")),
+          ),
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr)).toEqual({
+        code: "apply-confirmation-required",
+        receiptVersion: 1,
+      });
+      expect(result.stderr).not.toContain(fixture.databasePath);
+      expect(result.stderr).not.toContain("DO_NOT_LEAK_DIRECTORY");
+    } finally {
+      fixture.writer.close();
+    }
+  });
+
   it("resolves the default database path without reading it", () => {
     expect(defaultOpenCodeDatabasePath()).toMatch(/\.local\/share\/opencode\/opencode\.db$/u);
   });

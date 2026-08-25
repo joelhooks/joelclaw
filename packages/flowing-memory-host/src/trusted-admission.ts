@@ -6,11 +6,17 @@ import {
   AcceptedRunDeltaV1Schema,
   AdmissionCommandV1Schema,
   type AdmissionResultV1,
+  acceptedRunDeltaV1MatchesAcceptance,
   encodeDomain,
 } from "@joelclaw-memory/domain";
 
-import { buildTrustedAdmissionV1, type TrustedAdmissionConfigV1 } from "./admission-builder.js";
-import type { NativeAdmissionPort } from "./collector.js";
+import {
+  type BuiltAdmissionV1,
+  buildTrustedAdmissionV1,
+  type TrustedAdmissionConfigV1,
+  type TrustedAdmissionInputV1,
+} from "./admission-builder.js";
+import type { NativeAdmissionPort, NativeAdmissionResultV1 } from "./collector.js";
 
 export interface AdmissionLedgerClient {
   readonly admit: (command: unknown) => Promise<AdmissionResultV1>;
@@ -36,40 +42,25 @@ const writeImmutable = async (target: string, bytes: Uint8Array) => {
   }
 };
 
-export const makeTrustedNativeAdmissionPort = (input: {
-  readonly config:
-    | TrustedAdmissionConfigV1
-    | ((
-        nativeInput: Parameters<NativeAdmissionPort["admit"]>[0],
-      ) => Promise<TrustedAdmissionConfigV1 | undefined> | TrustedAdmissionConfigV1 | undefined);
+export interface TrustedAdmissionWriter {
+  readonly admitBuilt: (built: BuiltAdmissionV1) => Promise<NativeAdmissionResultV1>;
+}
+
+export const makeTrustedAdmissionWriter = (input: {
   readonly evidenceDirectory: string;
   readonly ledger: AdmissionLedgerClient;
-}): NativeAdmissionPort => ({
-  admit: async (nativeInput) => {
-    const config =
-      typeof input.config === "function" ? await input.config(nativeInput) : input.config;
-    if (config === undefined) return { disposition: "deferred" };
-    let built: ReturnType<typeof buildTrustedAdmissionV1>;
-    try {
-      built = buildTrustedAdmissionV1(nativeInput, config);
-    } catch (error) {
-      const schemaRejected =
-        typeof error === "object" &&
-        error !== null &&
-        "_tag" in error &&
-        error._tag === "SchemaError";
-      if (
-        schemaRejected ||
-        (error instanceof Error && error.message === "native-window-has-no-turns")
-      ) {
-        return { disposition: "excluded" };
-      }
-      throw error;
-    }
+}): TrustedAdmissionWriter => ({
+  admitBuilt: async (built) => {
     if (built.acceptedRun !== undefined) {
       const acceptance = built.command._tag === "accept" ? built.command.acceptance : undefined;
       if (acceptance === undefined) {
         throw new Error("accepted-run-without-acceptance");
+      }
+      if (
+        acceptance.projection.decision === "enabled" &&
+        !acceptedRunDeltaV1MatchesAcceptance(acceptance, built.acceptedRun)
+      ) {
+        throw new Error("accepted-run-acceptance-mismatch");
       }
       const encoded = encodeDomain(AcceptedRunDeltaV1Schema)(built.acceptedRun);
       await writeImmutable(
@@ -89,3 +80,47 @@ export const makeTrustedNativeAdmissionPort = (input: {
     };
   },
 });
+
+const buildNativeAdmission = (
+  nativeInput: TrustedAdmissionInputV1,
+  config: TrustedAdmissionConfigV1,
+): BuiltAdmissionV1 | undefined => {
+  try {
+    return buildTrustedAdmissionV1(nativeInput, config);
+  } catch (error) {
+    const schemaRejected =
+      typeof error === "object" &&
+      error !== null &&
+      "_tag" in error &&
+      error._tag === "SchemaError";
+    if (
+      schemaRejected ||
+      (error instanceof Error && error.message === "native-window-has-no-turns")
+    ) {
+      return undefined;
+    }
+    throw error;
+  }
+};
+
+export const makeTrustedNativeAdmissionPort = (input: {
+  readonly config:
+    | TrustedAdmissionConfigV1
+    | ((
+        nativeInput: Parameters<NativeAdmissionPort["admit"]>[0],
+      ) => Promise<TrustedAdmissionConfigV1 | undefined> | TrustedAdmissionConfigV1 | undefined);
+  readonly evidenceDirectory: string;
+  readonly ledger: AdmissionLedgerClient;
+}): NativeAdmissionPort => {
+  const writer = makeTrustedAdmissionWriter(input);
+  return {
+    admit: async (nativeInput) => {
+      const config =
+        typeof input.config === "function" ? await input.config(nativeInput) : input.config;
+      if (config === undefined) return { disposition: "deferred" };
+      const built = buildNativeAdmission(nativeInput, config);
+      if (built === undefined) return { disposition: "excluded" };
+      return writer.admitBuilt(built);
+    },
+  };
+};

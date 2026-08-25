@@ -253,6 +253,7 @@ const detectedSchemaFingerprint = (database: DatabaseSync) =>
   );
 
 interface SessionRowV1 {
+  readonly directory: string;
   readonly id: string;
   readonly parentId?: string;
   readonly timeCreated: number;
@@ -272,17 +273,19 @@ interface PartRowV1 {
 
 const parseSessionRow = (raw: unknown): SessionRowV1 => {
   const row = object(raw);
+  const directory = nonEmptyString(row?.directory);
   const id = nonEmptyString(row?.id);
   const parentId = row?.parent_id === null ? undefined : nonEmptyString(row?.parent_id);
   const timeCreated = safeInteger(row?.time_created);
   if (
+    directory === undefined ||
     id === undefined ||
     (parentId === undefined && row?.parent_id !== null) ||
     timeCreated === undefined
   ) {
     throw new OpenCodeReadError("decode");
   }
-  return { id, ...(parentId === undefined ? {} : { parentId }), timeCreated };
+  return { directory, id, ...(parentId === undefined ? {} : { parentId }), timeCreated };
 };
 
 const parseMessageRow = (raw: unknown, sessionIdentityHash: string): MessageRowV1 => {
@@ -403,6 +406,8 @@ export interface OpenCodeSourceStreamV1 {
   readonly prefixHash: string;
   readonly segmentHash: string;
   readonly sessionIdentityHash: string;
+  readonly sourceCreatedAt: number;
+  readonly sourceDirectory: string;
   readonly streamIdentityHash: string;
 }
 
@@ -451,7 +456,7 @@ const readSnapshot = (
 
   const sessionRows = all(
     database,
-    "SELECT id, parent_id, time_created FROM session ORDER BY time_created ASC, id ASC",
+    "SELECT directory, id, parent_id, time_created FROM session ORDER BY time_created ASC, id ASC",
   ).map(parseSessionRow);
   const messageStatement = database.prepare(
     "SELECT id, time_created, time_updated, data FROM message WHERE session_id = ? ORDER BY time_created ASC, id ASC",
@@ -499,6 +504,8 @@ const readSnapshot = (
       prefixHash: contentHash,
       segmentHash: contentHash,
       sessionIdentityHash,
+      sourceCreatedAt: session.timeCreated,
+      sourceDirectory: session.directory,
       streamIdentityHash: hashStreamIdentity(session.id, adapterInstanceIdentityHash),
     });
   }

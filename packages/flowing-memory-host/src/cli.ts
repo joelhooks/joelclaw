@@ -26,12 +26,16 @@ import {
   installHookFragments,
   uninstallHookFragments,
 } from "./installer.js";
+import { resolveTrustedAdmissionSourceConfig } from "./live-admission.js";
+import { makeLiveOpenCodeAuthority } from "./opencode-authority.js";
+import { OpenCodeGlobalStopError, reconcileOpenCodeSnapshot } from "./opencode-producer.js";
 import {
   defaultOpenCodeDatabasePath,
   openCodeCliErrorReceipt,
   openCodeDryRunReceipt,
   readOpenCodeSource,
 } from "./opencode-source.js";
+import { makeTrustedAdmissionWriter } from "./trusted-admission.js";
 
 const arguments_ = process.argv.slice(2);
 const valueAfter = (name: string) => {
@@ -321,13 +325,31 @@ const runCollector = async () => {
   });
 };
 
-const openCodeDatabaseArgument = () => {
+interface OpenCodeCommandOptions {
+  readonly apply: boolean;
+  readonly confirmed: boolean;
+  readonly databasePath: string;
+  readonly maxSessions?: number;
+}
+
+const openCodeCommandOptions = (): OpenCodeCommandOptions => {
+  let apply = false;
+  let confirmed = false;
   let databasePath: string | undefined;
   let jsonSeen = false;
+  let maxSessions: number | undefined;
   for (let index = 2; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
     if (argument === "--json" && !jsonSeen) {
       jsonSeen = true;
+      continue;
+    }
+    if (argument === "--apply" && !apply) {
+      apply = true;
+      continue;
+    }
+    if (argument === "--yes" && !confirmed) {
+      confirmed = true;
       continue;
     }
     if (argument === "--database" && databasePath === undefined) {
@@ -339,18 +361,101 @@ const openCodeDatabaseArgument = () => {
       index += 1;
       continue;
     }
+    if (argument === "--max-sessions" && maxSessions === undefined) {
+      const candidate = arguments_[index + 1];
+      if (candidate === undefined || candidate.startsWith("--")) {
+        throw new Error("invalid-command");
+      }
+      maxSessions = Number(candidate);
+      index += 1;
+      continue;
+    }
     throw new Error("invalid-command");
   }
-  return databasePath ?? defaultOpenCodeDatabasePath();
+  if (confirmed && !apply) throw new Error("invalid-command");
+  return {
+    apply,
+    confirmed,
+    databasePath: databasePath ?? defaultOpenCodeDatabasePath(),
+    ...(maxSessions === undefined ? {} : { maxSessions }),
+  };
 };
 
-const runOpenCodeDryRun = () => {
+const openCodeCommandErrorReceipt = (error: unknown) => {
+  if (error instanceof OpenCodeGlobalStopError) {
+    return { code: error.code, receiptVersion: 1 };
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    typeof error._tag === "string" &&
+    error._tag.startsWith("OpenCode") &&
+    "phase" in error
+  ) {
+    return openCodeCliErrorReceipt(error);
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    /^[a-z0-9-]{1,80}$/u.test(error.code)
+  ) {
+    return { code: error.code, receiptVersion: 1 };
+  }
+  return openCodeCliErrorReceipt(error);
+};
+
+const runOpenCodeCommand = async () => {
+  let live: ReturnType<typeof makeLiveOpenCodeAuthority> | undefined;
   try {
-    if (arguments_[1] !== "dry-run") throw new Error("invalid-command");
-    json(openCodeDryRunReceipt(readOpenCodeSource(openCodeDatabaseArgument())));
+    const command = arguments_[1];
+    if (command === "dry-run") {
+      const options = openCodeCommandOptions();
+      if (options.apply || options.confirmed || options.maxSessions !== undefined) {
+        throw new Error("invalid-command");
+      }
+      json(openCodeDryRunReceipt(readOpenCodeSource(options.databasePath)));
+      return;
+    }
+    if (command !== "reconcile" && command !== "backfill") {
+      throw new Error("invalid-command");
+    }
+    const options = openCodeCommandOptions();
+    if (options.maxSessions === undefined) throw new Error("invalid-command");
+    const snapshot = readOpenCodeSource(options.databasePath);
+    live = makeLiveOpenCodeAuthority();
+    const writer = makeTrustedAdmissionWriter({
+      evidenceDirectory:
+        process.env.JOELCLAW_MEMORY_EVIDENCE_DIRECTORY ??
+        path.join(home, ".joelclaw", "flowing-memory", "evidence"),
+      ledger: live.authority,
+    });
+    const receipt = await reconcileOpenCodeSnapshot(
+      snapshot,
+      {
+        apply: options.apply,
+        confirmed: options.confirmed,
+        maxSessions: options.maxSessions,
+      },
+      {
+        authority: live.authority,
+        resolveConfig: (stream, source) =>
+          resolveTrustedAdmissionSourceConfig({
+            adapterInstanceIdHash: source.adapterInstanceIdentityHash,
+            cwd: stream.sourceDirectory,
+            historicalWorkstream: "default",
+          }),
+        writer,
+      },
+    );
+    json(receipt);
   } catch (error) {
-    process.stderr.write(`${JSON.stringify(openCodeCliErrorReceipt(error))}\n`);
+    process.stderr.write(`${JSON.stringify(openCodeCommandErrorReceipt(error))}\n`);
     process.exitCode = 1;
+  } finally {
+    await live?.dispose();
   }
 };
 
@@ -381,7 +486,7 @@ const runWake = async () => {
 };
 
 if (arguments_[0] === "opencode") {
-  runOpenCodeDryRun();
+  await runOpenCodeCommand();
 } else if (arguments_[0] === "collector") {
   await runCollector();
 } else if (arguments_[0] === "wake") {
