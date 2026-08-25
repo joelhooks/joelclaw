@@ -801,6 +801,54 @@ describe("common collector", () => {
     expect(Object.values(state.streams)[0]?.acceptedEventIds).toHaveLength(2);
   });
 
+  it("checkpoints an oversized bootstrap and admits only later growth", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-collector-bootstrap-checkpoint-"));
+    const transcriptPath = path.join(root, "session.jsonl");
+    const spoolPath = path.join(root, "wake.jsonl");
+    const statePath = path.join(root, "state.json");
+    const initialLine = `${JSON.stringify({ role: "user", message: "x".repeat(2_000) })}\n`;
+    await writeFile(transcriptPath, initialLine);
+    const decoded = decodeNativeEvent("pi", wakeInput("pi", transcriptPath));
+    if (decoded._tag !== "Accepted") throw new Error("expected wake");
+    await appendNativeWake(spoolPath, decoded.wake);
+
+    const checkpoint = await drainNativeWakeSpool({
+      admission: {
+        admit: async () => {
+          throw new Error("oversized bootstrap must not call admission");
+        },
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxBootstrapBytes: 1_000,
+      spoolPath,
+      statePath,
+    });
+    expect(checkpoint).toMatchObject({ excluded: 1, processed: 1, quarantined: 0 });
+
+    const growthLine = '{"role":"assistant","message":"later growth"}\n';
+    await appendFile(transcriptPath, growthLine);
+    await appendNativeWake(spoolPath, {
+      ...decoded.wake,
+      eventId: "bootstrap-growth-event",
+      occurredAt: new Date(Date.now() + 1_000).toISOString(),
+    });
+    const admittedSegments: string[] = [];
+    const growth = await drainNativeWakeSpool({
+      admission: {
+        admit: async (input) => {
+          admittedSegments.push(new TextDecoder().decode(input.segmentBytes));
+          return { disposition: "admitted" };
+        },
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxBootstrapBytes: 1_000,
+      spoolPath,
+      statePath,
+    });
+    expect(growth).toMatchObject({ admitted: 1, deferred: 0, processed: 1 });
+    expect(admittedSegments).toEqual([growthLine]);
+  });
+
   it("bounds one drain, requeues untouched wakes, and emits metadata-only receipts", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "fm-collector-bounded-"));
     const spoolPath = path.join(root, "wake.jsonl");

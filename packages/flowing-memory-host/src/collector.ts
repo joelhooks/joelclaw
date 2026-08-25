@@ -127,6 +127,7 @@ export interface CollectorDrainOptions {
   readonly drainNow?: () => number;
   readonly drainReceiptPath?: string;
   readonly lockPath: string;
+  readonly maxBootstrapBytes?: number;
   readonly maxElapsedMs?: number;
   readonly maxLines?: number;
   readonly now?: () => number;
@@ -697,11 +698,10 @@ const incarnationForWake = (state: CollectorStateV1, wake: NativeWakeV1): Native
     });
   const latest = candidates[0];
   const suppliedIsExplicit = !wake.incarnationId.startsWith("legacy-");
-  let incarnationId = suppliedIsExplicit ? wake.incarnationId : latest?.incarnationId;
-  if (
-    incarnationId === undefined ||
-    (!suppliedIsExplicit && (isStartEvent(wake) || latest?.closed === true))
-  ) {
+  let incarnationId = suppliedIsExplicit
+    ? wake.incarnationId
+    : (latest?.incarnationId ?? wake.incarnationId);
+  if (!suppliedIsExplicit && (isStartEvent(wake) || latest?.closed === true)) {
     incarnationId = hash(
       JSON.stringify(["incarnation:v1", wake.runtime, wake.sessionId, wake.eventId]),
     );
@@ -1209,6 +1209,42 @@ export const drainNativeWakeSpool = async (
         );
         const streamOffset = exact?.offset ?? receipt?.offset ?? 0;
         const vendorSegment = sourceBytes.subarray(vendorOffset, completeSize);
+        const maxBootstrapBytes = Math.max(
+          1,
+          Math.floor(input.maxBootstrapBytes ?? 256_000),
+        );
+        if (
+          exact === undefined &&
+          receipt === undefined &&
+          vendorOffset === 0 &&
+          vendorSegment.byteLength > maxBootstrapBytes
+        ) {
+          if (existingStream.byteLength === 0) {
+            await writeFile(streamPath, new Uint8Array(), { flag: "wx", mode: 0o600 }).catch(
+              (error: NodeJS.ErrnoException) => {
+                if (error.code !== "EEXIST") throw error;
+              },
+            );
+          }
+          state.streams[key] = stateEntryFor({
+            acceptedEventIds: [effectiveWake.eventId],
+            closed: effectiveWake.close,
+            incarnationId: effectiveWake.incarnationId,
+            nextTurn: 0,
+            offset: 0,
+            prefixHash: hash(new Uint8Array()),
+            runtime: effectiveWake.runtime,
+            sessionId: effectiveWake.sessionId,
+            sourcePathHash: hash(effectiveWake.transcriptPath),
+            streamPath,
+            vendorOffset: completeSize,
+            vendorPrefixHash: hash(sourceBytes.subarray(0, completeSize)),
+          });
+          await persist(input.statePath, state);
+          counts.excluded += 1;
+          counts.processed += 1;
+          continue;
+        }
         if (
           (exact !== undefined || receipt !== undefined) &&
           existingStream.byteLength !== streamOffset
