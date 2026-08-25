@@ -1066,32 +1066,47 @@ export const drainNativeWakeSpool = async (
         if (receipt?.closed === true && completeSize > receipt.vendorOffset) {
           throw new Error("late-bytes-after-finality");
         }
+        const pendingStartByte = receipt?.fromByte ?? 0;
         if (
           receipt?.status === "pending" &&
-          (receipt.priorTurnCount ?? 0) === 0 &&
-          (receipt.fromByte ?? 0) === 0 &&
-          receipt.offset > maxBootstrapBytes
+          receipt.offset - pendingStartByte > maxBootstrapBytes
         ) {
+          const committedOffset = exact?.offset ?? pendingStartByte;
+          if (committedOffset > receipt.offset) {
+            throw new Error("immutable-stream-state-mismatch");
+          }
+          const pendingBytes = new Uint8Array(await readFile(receipt.streamPath));
+          if (pendingBytes.byteLength !== receipt.offset) {
+            throw new Error("immutable-stream-state-mismatch");
+          }
+          const checkpointBytes = pendingBytes.subarray(0, committedOffset);
           const checkpointStreamPath = `${receipt.streamPath}.checkpoint-${hash(receipt.acceptedEventId).slice(0, 16)}.jsonl`;
-          await writeFile(checkpointStreamPath, new Uint8Array(), {
+          await writeFile(checkpointStreamPath, checkpointBytes, {
             flag: "wx",
             mode: 0o600,
           }).catch((error: NodeJS.ErrnoException) => {
             if (error.code !== "EEXIST") throw error;
           });
           const acceptedEventIds = [
-            ...new Set([...(receipt.acceptedEventIds ?? []), receipt.acceptedEventId]),
+            ...new Set([
+              ...(exact?.acceptedEventIds ?? receipt.acceptedEventIds ?? []),
+              receipt.acceptedEventId,
+            ]),
           ];
+          const nextTurn = exact?.nextTurn ?? receipt.priorTurnCount ?? 0;
+          const transcriptHash = exact?.transcriptHash ?? receipt.previousTranscriptHash;
           await persistStreamReceipt(input, key, {
             acceptedEventId: receipt.acceptedEventId,
             acceptedEventIds,
             closed: receipt.closed,
-            fromByte: 0,
+            fromByte: committedOffset,
             incarnationId: receipt.incarnationId,
-            nextTurn: 0,
-            offset: 0,
-            prefixHash: hash(new Uint8Array()),
-            priorTurnCount: 0,
+            nextTurn,
+            offset: committedOffset,
+            prefixHash: hash(checkpointBytes),
+            ...(transcriptHash === undefined ? {} : { transcriptHash }),
+            ...(transcriptHash === undefined ? {} : { previousTranscriptHash: transcriptHash }),
+            priorTurnCount: nextTurn,
             runtime: receipt.runtime,
             sessionId: receipt.sessionId,
             sourcePathHash: receipt.sourcePathHash,
@@ -1106,13 +1121,14 @@ export const drainNativeWakeSpool = async (
             acceptedEventIds,
             closed: receipt.closed,
             incarnationId: receipt.incarnationId,
-            nextTurn: 0,
-            offset: 0,
-            prefixHash: hash(new Uint8Array()),
+            nextTurn,
+            offset: committedOffset,
+            prefixHash: hash(checkpointBytes),
             runtime: receipt.runtime,
             sessionId: receipt.sessionId,
             sourcePathHash: receipt.sourcePathHash,
             streamPath: checkpointStreamPath,
+            ...(transcriptHash === undefined ? {} : { transcriptHash }),
             vendorOffset: completeSize,
             vendorPrefixHash: hash(sourceBytes.subarray(0, completeSize)),
           });
@@ -1317,7 +1333,9 @@ export const drainNativeWakeSpool = async (
         ) {
           throw new Error("immutable-stream-prefix-diverged");
         }
-        if (receipt !== undefined && existingStream.byteLength > 0) {
+        if (receipt?.status === "checkpointed") {
+          if (vendorSegment.byteLength > 0) await appendFile(streamPath, vendorSegment);
+        } else if (receipt !== undefined && existingStream.byteLength > 0) {
           const receiptVendorStart = receipt.vendorOffset - receipt.offset;
           if (receiptVendorStart < 0) throw new Error("immutable-stream-state-mismatch");
           const existingPrefix = sourceBytes.subarray(

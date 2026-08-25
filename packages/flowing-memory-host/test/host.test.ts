@@ -861,6 +861,121 @@ describe("common collector", () => {
     expect(replay).toMatchObject({ deferred: 0, processed: 1, replayed: 1 });
   });
 
+  it("checkpoints an oversized pending delta while preserving committed prefix", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-collector-pending-delta-"));
+    const transcriptPath = path.join(root, "session.jsonl");
+    const spoolPath = path.join(root, "wake.jsonl");
+    const statePath = path.join(root, "state.json");
+    const initialLine = '{"role":"user","message":"accepted prefix"}\n';
+    await writeFile(transcriptPath, initialLine);
+    const decoded = decodeNativeEvent("pi", wakeInput("pi", transcriptPath));
+    if (decoded._tag !== "Accepted") throw new Error("expected wake");
+    await appendNativeWake(spoolPath, decoded.wake);
+    await drainNativeWakeSpool({
+      admission: {
+        admit: async () => ({
+          acceptedToTurn: 0,
+          acceptedTranscriptHash: "a".repeat(64),
+          disposition: "admitted",
+        }),
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxBootstrapBytes: 10_000,
+      spoolPath,
+      statePath,
+    });
+
+    const oversizedDelta = `${JSON.stringify({ role: "assistant", message: "d".repeat(1_500) })}\n`;
+    await appendFile(transcriptPath, oversizedDelta);
+    await appendNativeWake(spoolPath, {
+      ...decoded.wake,
+      eventId: "oversized-pending-delta",
+      occurredAt: new Date(Date.now() + 500).toISOString(),
+    });
+    const failed = await drainNativeWakeSpool({
+      admission: {
+        admit: async () => {
+          throw new Error("synthetic pending delta failure");
+        },
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxBootstrapBytes: 10_000,
+      spoolPath,
+      statePath,
+    });
+    expect(failed).toMatchObject({ deferred: 1, processed: 1 });
+
+    const checkpoint = await drainNativeWakeSpool({
+      admission: {
+        admit: async () => {
+          throw new Error("oversized pending delta checkpoint must not call admission");
+        },
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxBootstrapBytes: 1_000,
+      spoolPath,
+      statePath,
+    });
+    expect(checkpoint).toMatchObject({ excluded: 1, processed: 1, quarantined: 0 });
+    const checkpointState = JSON.parse(await readFile(statePath, "utf8")) as {
+      streams: Record<string, { offset: number; nextTurn: number; streamPath: string }>;
+    };
+    const checkpointEntry = Object.values(checkpointState.streams)[0];
+    expect(checkpointEntry).toMatchObject({
+      offset: new TextEncoder().encode(initialLine).byteLength,
+      nextTurn: 1,
+    });
+    expect(await readFile(checkpointEntry?.streamPath ?? "", "utf8")).toBe(initialLine);
+
+    const laterGrowth = '{"role":"user","message":"bounded later growth"}\n';
+    await appendFile(transcriptPath, laterGrowth);
+    await appendNativeWake(spoolPath, {
+      ...decoded.wake,
+      eventId: "bounded-growth-after-pending-checkpoint",
+      occurredAt: new Date(Date.now() + 1_000).toISOString(),
+    });
+    const admitted: Array<{
+      fromByte: number;
+      previousTranscriptHash?: string;
+      priorTurnCount?: number;
+      segment: string;
+    }> = [];
+    const growth = await drainNativeWakeSpool({
+      admission: {
+        admit: async (input) => {
+          admitted.push({
+            fromByte: input.fromByte,
+            ...(input.previousTranscriptHash === undefined
+              ? {}
+              : { previousTranscriptHash: input.previousTranscriptHash }),
+            ...(input.priorTurnCount === undefined
+              ? {}
+              : { priorTurnCount: input.priorTurnCount }),
+            segment: new TextDecoder().decode(input.segmentBytes),
+          });
+          return {
+            acceptedToTurn: 1,
+            acceptedTranscriptHash: "b".repeat(64),
+            disposition: "admitted",
+          };
+        },
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxBootstrapBytes: 1_000,
+      spoolPath,
+      statePath,
+    });
+    expect(growth).toMatchObject({ admitted: 1, deferred: 0, processed: 1 });
+    expect(admitted).toEqual([
+      {
+        fromByte: new TextEncoder().encode(initialLine).byteLength,
+        previousTranscriptHash: "a".repeat(64),
+        priorTurnCount: 1,
+        segment: laterGrowth,
+      },
+    ]);
+  });
+
   it("checkpoints an oversized bootstrap and admits only later growth", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "fm-collector-bootstrap-checkpoint-"));
     const transcriptPath = path.join(root, "session.jsonl");
