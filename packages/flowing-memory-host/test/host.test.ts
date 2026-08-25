@@ -824,6 +824,38 @@ describe("common collector", () => {
       statePath,
     });
     expect(checkpoint).toMatchObject({ excluded: 1, processed: 1, quarantined: 0 });
+    const firstState = JSON.parse(await readFile(statePath, "utf8")) as {
+      streams: Record<string, { streamPath: string }>;
+    };
+    const firstStreamPath = Object.values(firstState.streams)[0]?.streamPath;
+    if (firstStreamPath === undefined) throw new Error("missing checkpoint stream");
+    await appendFile(firstStreamPath, "orphaned-derived-bytes");
+
+    const oversizedGrowthLine = `${JSON.stringify({ role: "assistant", message: "y".repeat(1_500) })}\n`;
+    await appendFile(transcriptPath, oversizedGrowthLine);
+    await appendNativeWake(spoolPath, {
+      ...decoded.wake,
+      eventId: "oversized-bootstrap-growth-event",
+      occurredAt: new Date(Date.now() + 500).toISOString(),
+    });
+    const secondCheckpoint = await drainNativeWakeSpool({
+      admission: {
+        admit: async () => {
+          throw new Error("oversized bootstrap growth must not call admission");
+        },
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxBootstrapBytes: 1_000,
+      spoolPath,
+      statePath,
+    });
+    expect(secondCheckpoint).toMatchObject({ excluded: 1, processed: 1, quarantined: 0 });
+    const secondState = JSON.parse(await readFile(statePath, "utf8")) as {
+      streams: Record<string, { streamPath: string }>;
+    };
+    const secondStreamPath = Object.values(secondState.streams)[0]?.streamPath;
+    expect(secondStreamPath).not.toBe(firstStreamPath);
+    expect(await readFile(secondStreamPath ?? "", "utf8")).toBe("");
 
     const growthLine = '{"role":"assistant","message":"later growth"}\n';
     await appendFile(transcriptPath, growthLine);

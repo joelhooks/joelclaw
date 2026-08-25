@@ -1214,20 +1214,24 @@ export const drainNativeWakeSpool = async (
           Math.floor(input.maxBootstrapBytes ?? 256_000),
         );
         if (
-          exact === undefined &&
           receipt === undefined &&
-          vendorOffset === 0 &&
+          (exact === undefined || exact.offset === 0) &&
           vendorSegment.byteLength > maxBootstrapBytes
         ) {
-          if (existingStream.byteLength === 0) {
-            await writeFile(streamPath, new Uint8Array(), { flag: "wx", mode: 0o600 }).catch(
-              (error: NodeJS.ErrnoException) => {
-                if (error.code !== "EEXIST") throw error;
-              },
-            );
-          }
+          const checkpointStreamPath =
+            existingStream.byteLength === 0
+              ? streamPath
+              : `${streamPath}.checkpoint-${hash(effectiveWake.eventId).slice(0, 16)}.jsonl`;
+          await writeFile(checkpointStreamPath, new Uint8Array(), {
+            flag: "wx",
+            mode: 0o600,
+          }).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== "EEXIST") throw error;
+          });
           state.streams[key] = stateEntryFor({
-            acceptedEventIds: [effectiveWake.eventId],
+            acceptedEventIds: [
+              ...new Set([...(exact?.acceptedEventIds ?? []), effectiveWake.eventId]),
+            ],
             closed: effectiveWake.close,
             incarnationId: effectiveWake.incarnationId,
             nextTurn: 0,
@@ -1236,7 +1240,7 @@ export const drainNativeWakeSpool = async (
             runtime: effectiveWake.runtime,
             sessionId: effectiveWake.sessionId,
             sourcePathHash: hash(effectiveWake.transcriptPath),
-            streamPath,
+            streamPath: checkpointStreamPath,
             vendorOffset: completeSize,
             vendorPrefixHash: hash(sourceBytes.subarray(0, completeSize)),
           });
