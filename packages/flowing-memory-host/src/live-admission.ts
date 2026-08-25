@@ -23,8 +23,9 @@ const baseConfig = {
 
 const fallbackConfig = (
   reason: "no-repository" | "untrusted-repository",
+  identity: typeof baseConfig = baseConfig,
 ): TrustedAdmissionConfigV1 => ({
-  ...baseConfig,
+  ...identity,
   canonicalRepository: "github.com/joelclaw/fleet",
   privacy: reason === "no-repository" ? "private" : "sensitive",
   project: "joelclaw-fleet",
@@ -55,22 +56,34 @@ const repositoryPolicy = async (root: string) => {
   }
 };
 
-export const resolveTrustedAdmissionConfig = async (
-  input: NativeAdmissionInputV1,
+export interface TrustedAdmissionSourceScopeV1 {
+  readonly adapterInstanceIdHash?: string;
+  readonly cwd?: string;
+  readonly historicalWorkstream?: string;
+}
+
+export const resolveTrustedAdmissionSourceConfig = async (
+  input: TrustedAdmissionSourceScopeV1,
 ): Promise<TrustedAdmissionConfigV1 | undefined> => {
-  const cwd = input.wake.cwd;
-  if (cwd === undefined) return fallbackConfig("no-repository");
-  if (!path.isAbsolute(cwd)) return fallbackConfig("untrusted-repository");
+  const identity = {
+    ...baseConfig,
+    ...(input.adapterInstanceIdHash === undefined
+      ? {}
+      : { adapterInstanceIdHash: input.adapterInstanceIdHash }),
+  };
+  const cwd = input.cwd;
+  if (cwd === undefined) return fallbackConfig("no-repository", identity);
+  if (!path.isAbsolute(cwd)) return fallbackConfig("untrusted-repository", identity);
   const resolution = await resolveRepositoryScope({ cwd });
   if (resolution._tag === "TransientFailure") return undefined;
-  if (resolution._tag === "NoRepository") return fallbackConfig("no-repository");
+  if (resolution._tag === "NoRepository") return fallbackConfig("no-repository", identity);
   if (resolution._tag === "UntrustedRepository") {
-    return fallbackConfig("untrusted-repository");
+    return fallbackConfig("untrusted-repository", identity);
   }
 
   const policy = await repositoryPolicy(resolution.repositoryRoot);
   return {
-    ...baseConfig,
+    ...identity,
     canonicalRepository: resolution.canonicalRepository,
     project: resolution.project,
     repositoryHost: resolution.repositoryHost,
@@ -78,9 +91,14 @@ export const resolveTrustedAdmissionConfig = async (
     repositoryOwner: resolution.repositoryOwner,
     ...policy,
     scopeResolution: "repository",
-    workstream: resolution.scope.workstream,
+    workstream: input.historicalWorkstream ?? resolution.scope.workstream,
   };
 };
+
+export const resolveTrustedAdmissionConfig = async (
+  input: NativeAdmissionInputV1,
+): Promise<TrustedAdmissionConfigV1 | undefined> =>
+  resolveTrustedAdmissionSourceConfig(input.wake.cwd === undefined ? {} : { cwd: input.wake.cwd });
 
 const ledgerRuntime = ManagedRuntime.make(
   PostgresAdmissionLedgerLive.pipe(Layer.provide(PostgresRuntimeClientLive)),

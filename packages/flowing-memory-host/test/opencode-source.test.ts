@@ -122,14 +122,15 @@ const insertSession = (
     readonly id: string;
     readonly parentId?: string;
     readonly timeCreated: number;
+    readonly workspaceId?: string;
   },
 ) => {
   database
     .prepare(
       `INSERT INTO session (
         id, project_id, parent_id, slug, directory, title, version,
-        time_created, time_updated, time_archived
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        time_created, time_updated, time_archived, workspace_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.id,
@@ -142,6 +143,7 @@ const insertSession = (
       input.timeCreated,
       input.timeCreated + 1,
       input.id.includes("root") ? 9_999 : null,
+      input.workspaceId ?? null,
     );
 };
 
@@ -471,6 +473,48 @@ describe("OpenCode read-only source", () => {
     }
   });
 
+  it("maps source-owned workspace branches and defaults absent or invalid bindings", async () => {
+    const fixture = await createFixture();
+    try {
+      fixture.writer.exec(`
+        CREATE TABLE workspace (
+          id TEXT PRIMARY KEY,
+          branch TEXT,
+          directory TEXT,
+          project_id TEXT NOT NULL
+        );
+      `);
+      fixture.writer
+        .prepare("INSERT INTO workspace (id, branch, directory, project_id) VALUES (?, ?, ?, ?)")
+        .run(
+          "workspace-valid",
+          "Feature/Typed Branch",
+          "/source/worktree",
+          "project-private-marker",
+        );
+      fixture.writer
+        .prepare("INSERT INTO workspace (id, branch, directory, project_id) VALUES (?, ?, ?, ?)")
+        .run("workspace-invalid", "🔥", "/source/invalid", "project-private-marker");
+      fixture.writer
+        .prepare("UPDATE session SET workspace_id = ? WHERE id = ?")
+        .run("workspace-valid", "ses-root-private-marker");
+      fixture.writer
+        .prepare("UPDATE session SET workspace_id = ? WHERE id = ?")
+        .run("workspace-invalid", "ses-child-private-marker");
+
+      const snapshot = readOpenCodeSource(fixture.databasePath);
+      expect(snapshot.streams[0]?.sourceWorkstream).toBe("feature/typed-branch");
+      expect(snapshot.streams[1]?.sourceWorkstream).toBe("default");
+
+      fixture.writer
+        .prepare("UPDATE session SET workspace_id = NULL WHERE id = ?")
+        .run("ses-root-private-marker");
+      expect(readOpenCodeSource(fixture.databasePath).streams[0]?.sourceWorkstream).toBe("default");
+    } finally {
+      fixture.writer.close();
+    }
+  });
+
   it("reads while a WAL writer transaction is active", async () => {
     const fixture = await createFixture();
     try {
@@ -744,6 +788,45 @@ describe("OpenCode read-only source", () => {
       phase: "open",
       receiptVersion: 1,
     });
+  });
+
+  it("refuses write-enabled backfill without both apply confirmation flags", async () => {
+    const fixture = await createFixture();
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(packageRoot, "src", "cli.ts"),
+          "opencode",
+          "backfill",
+          "--database",
+          fixture.databasePath,
+          "--max-sessions",
+          "2",
+          "--apply",
+          "--json",
+        ],
+        {
+          cwd: packageRoot,
+          encoding: "utf8",
+          env: Object.fromEntries(
+            Object.entries(process.env).filter(([name]) => !name.startsWith("JOELCLAW_MEMORY_")),
+          ),
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr)).toEqual({
+        code: "apply-confirmation-required",
+        receiptVersion: 1,
+      });
+      expect(result.stderr).not.toContain(fixture.databasePath);
+      expect(result.stderr).not.toContain("DO_NOT_LEAK_DIRECTORY");
+    } finally {
+      fixture.writer.close();
+    }
   });
 
   it("resolves the default database path without reading it", () => {

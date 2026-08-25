@@ -16,6 +16,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/sql-pg": "4.0.0-rc.110",
     "@joelclaw-memory/domain": "link:../../../joelclaw-memory/packages/domain",
     "@joelclaw-memory/postgres": "link:../../../joelclaw-memory/packages/postgres",
     "@joelclaw/recall": "workspace:*",

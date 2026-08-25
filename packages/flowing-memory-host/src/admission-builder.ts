@@ -1,43 +1,71 @@
 import { createHash } from "node:crypto";
 
 import {
-  acceptedRunSourceRef,
-  AdmissionCommandV1Schema,
-  decodeDomain,
-  encodeDomain,
   AcceptedRunAcceptanceV1Schema,
+  type AcceptedRunDeltaV1,
   AcceptedRunDeltaV1Schema,
-  canonicalCaptureAcceptanceId,
-  canonicalRepositoryIdentityHash,
+  type AcceptedRunSourceProvenanceV1,
+  type AdmissionCommandV1,
+  AdmissionCommandV1Schema,
+  acceptedRunSourceRef,
   CanonicalRepositoryIdentityV1Schema,
   CaptureFinalityV1Schema,
   CapturePolicyIdentityV1Schema,
   CaptureSourceCoordinatesV1Schema,
+  canonicalCaptureAcceptanceId,
+  canonicalRepositoryIdentityHash,
   capturePolicySnapshotId,
+  decodeDomain,
+  encodeDomain,
   finalityAttestationHash,
   HashSchema,
-  privacyPolicyHash,
   PrivacyPolicyAttestationV1Schema,
   PrivacyPolicyLayerV1Schema,
-  projectionPolicyHash,
+  type PrivacyTier,
   ProjectionPolicyAttestationV1Schema,
   ProjectionPolicyLayerV1Schema,
+  privacyPolicyHash,
+  projectionPolicyHash,
+  RawCaptureSourceCoordinatesV1Schema,
   RedactionAttestationV2Schema,
-  runtimeIdentityProofHash,
+  RunTurnSchema,
   RuntimeAuthorityV1Schema,
   RuntimeIdentityV1Schema,
-  RunTurnSchema,
+  type RuntimeKind,
+  runtimeIdentityProofHash,
   ScopeResolutionAttestationV1Schema,
-  sourceFinalityEventId,
+  SemanticExclusionReceiptV1Schema,
   SourceFinalityEventV1Schema,
+  semanticExclusionId,
+  semanticExclusionPolicySnapshotId,
+  sourceFinalityEventId,
   sourceStreamId,
   transcriptPayloadHash,
-  type AdmissionCommandV1,
-  type AcceptedRunDeltaV1,
-  type PrivacyTier,
 } from "@joelclaw-memory/domain";
 
-import type { NativeAdmissionInputV1 } from "./collector.js";
+export interface TrustedAdmissionWakeV1 {
+  readonly close: boolean;
+  readonly cwd?: string;
+  readonly eventId: string;
+  readonly eventName: string;
+  readonly incarnationId: string;
+  readonly occurredAt: string;
+  readonly runtime: RuntimeKind;
+  readonly schemaVersion: 1;
+  readonly sessionId: string;
+  readonly transcriptPath?: string;
+}
+
+export interface TrustedAdmissionInputV1 {
+  readonly fromByte: number;
+  readonly prefixBytes: Uint8Array;
+  readonly priorTurnCount?: number;
+  readonly sourceProvenance?: AcceptedRunSourceProvenanceV1;
+  readonly previousTranscriptHash?: string;
+  readonly segmentBytes: Uint8Array;
+  readonly toByteExclusive: number;
+  readonly wake: TrustedAdmissionWakeV1;
+}
 
 export interface TrustedAdmissionConfigV1 {
   readonly adapterInstanceIdHash: string;
@@ -93,6 +121,52 @@ const occurredAtFor = (rawTime: unknown, fallbackTime: string) => {
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
   return fallbackTime;
+};
+
+const decodeOpenCodeCanonicalTurns = (
+  bytes: Uint8Array,
+  fallbackTime: string,
+): readonly NativeTurn[] => {
+  const turns: NativeTurn[] = [];
+  for (const line of new TextDecoder().decode(bytes).split("\n")) {
+    if (line.trim().length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      throw new Error("opencode-canonical-record-invalid");
+    }
+    const entry = jsonObject(parsed);
+    const role = entry?.role;
+    const parts = entry?.parts;
+    if (
+      entry?.schemaVersion !== 1 ||
+      typeof entry.sessionRef !== "string" ||
+      typeof entry.messageId !== "string" ||
+      (role !== "assistant" && role !== "user") ||
+      !Array.isArray(parts)
+    ) {
+      throw new Error("opencode-canonical-record-invalid");
+    }
+    const textParts = parts.map((part) => {
+      const value = jsonObject(part);
+      if (
+        typeof value?.partId !== "string" ||
+        typeof value.text !== "string" ||
+        value.text.trim().length === 0
+      ) {
+        throw new Error("opencode-canonical-record-invalid");
+      }
+      return value.text;
+    });
+    if (textParts.length === 0) throw new Error("opencode-canonical-record-invalid");
+    turns.push({
+      occurredAt: occurredAtFor(entry.occurredAt, fallbackTime),
+      role,
+      text: textParts.join("\n"),
+    });
+  }
+  return turns;
 };
 
 const decodeJsonlTurns = (bytes: Uint8Array, fallbackTime: string): readonly NativeTurn[] => {
@@ -190,7 +264,10 @@ const redact = (text: string) => {
   return { count, text: output };
 };
 
-const buildIdentity = (input: NativeAdmissionInputV1, config: TrustedAdmissionConfigV1) => {
+export const trustedAdmissionIdentityV1 = (
+  input: Pick<TrustedAdmissionInputV1, "wake">,
+  config: TrustedAdmissionConfigV1,
+) => {
   const authority = decodeDomain(RuntimeAuthorityV1Schema)({
     _tag: "hostAsserted",
     producerPrincipalIdHash: config.principalIdHash,
@@ -225,9 +302,9 @@ const buildIdentity = (input: NativeAdmissionInputV1, config: TrustedAdmissionCo
 };
 
 const buildPolicies = (
-  input: NativeAdmissionInputV1,
+  input: TrustedAdmissionInputV1,
   config: TrustedAdmissionConfigV1,
-  identity: ReturnType<typeof buildIdentity>,
+  identity: ReturnType<typeof trustedAdmissionIdentityV1>,
   resolvedAt: string,
 ) => {
   const repository = decodeDomain(CanonicalRepositoryIdentityV1Schema)({
@@ -319,15 +396,17 @@ const invocationId = (eventId: string, kind: string) =>
   hash(JSON.stringify(["host-admission:v1", kind, eventId]));
 
 export const buildTrustedAdmissionV1 = (
-  input: NativeAdmissionInputV1,
+  input: TrustedAdmissionInputV1,
   config: TrustedAdmissionConfigV1,
 ): BuiltAdmissionV1 => {
-  const identity = buildIdentity(input, config);
+  const identity = trustedAdmissionIdentityV1(input, config);
   const semanticAcceptedAt = new Date(input.wake.occurredAt).toISOString();
   const rawAcceptedAt = semanticAcceptedAt;
   const policies = buildPolicies(input, config, identity, semanticAcceptedAt);
-  const allTurns = decodeJsonlTurns(input.prefixBytes, input.wake.occurredAt);
-  const priorTurns = decodeJsonlTurns(
+  const decodeTurns =
+    input.wake.runtime === "opencode" ? decodeOpenCodeCanonicalTurns : decodeJsonlTurns;
+  const allTurns = decodeTurns(input.prefixBytes, input.wake.occurredAt);
+  const priorTurns = decodeTurns(
     input.prefixBytes.subarray(0, input.fromByte),
     input.wake.occurredAt,
   );
@@ -403,6 +482,60 @@ export const buildTrustedAdmissionV1 = (
     };
   }
 
+  const rawSourceInput = {
+    adapterStreamIdHash: identity.adapterStreamIdHash,
+    coverage: input.fromByte === 0 ? ("prefix" as const) : ("delta" as const),
+    fromByte: input.fromByte,
+    offsetUnit: "bytes" as const,
+    ...(previousPrefixHash === undefined ? {} : { previousPrefixHash }),
+    rawByteCount: input.segmentBytes.byteLength,
+    rawRunId: `raw-${hash(input.wake.eventId).slice(0, 32)}`,
+    rawSegmentHash: hash(input.segmentBytes),
+    schemaVersion: 1 as const,
+    sourcePrefixHash,
+    sourceStreamId: identity.sourceStreamId,
+    toByteExclusive: input.toByteExclusive,
+  };
+  if (policies.projection.decision === "disabled") {
+    const source = decodeDomain(RawCaptureSourceCoordinatesV1Schema)(rawSourceInput);
+    const policySnapshotId = semanticExclusionPolicySnapshotId({
+      privacy: policies.privacy,
+      projection: policies.projection,
+      scope: policies.scope,
+    });
+    const receipt = decodeDomain(SemanticExclusionReceiptV1Schema)({
+      _tag: "SemanticExclusionReceiptV1",
+      eventId: input.wake.eventId,
+      exclusionId: semanticExclusionId({
+        eventId: input.wake.eventId,
+        policySnapshotId,
+        rawAcceptedAt,
+        runtimeIdentityProofHash: identity.runtime.identityProofHash,
+        scope: policies.scope.scope,
+        source,
+      }),
+      policySnapshotId,
+      privacy: encodeDomain(PrivacyPolicyAttestationV1Schema)(policies.privacy),
+      projection: encodeDomain(ProjectionPolicyAttestationV1Schema)(policies.projection),
+      rawAcceptedAt,
+      runtime: encodeDomain(RuntimeIdentityV1Schema)(identity.runtime),
+      schemaVersion: 1,
+      scope: encodeDomain(ScopeResolutionAttestationV1Schema)(policies.scope),
+      source: encodeDomain(RawCaptureSourceCoordinatesV1Schema)(source),
+    });
+    return {
+      command: decodeDomain(AdmissionCommandV1Schema)({
+        _tag: "exclude",
+        invocationId: invocationId(input.wake.eventId, "exclude"),
+        occurredAt: semanticAcceptedAt,
+        prefixBytes: input.prefixBytes,
+        receipt: encodeDomain(SemanticExclusionReceiptV1Schema)(receipt),
+        schemaVersion: 1,
+        segmentBytes: input.segmentBytes,
+      }),
+    };
+  }
+
   const redacted = deltaTurns.map((turn) => ({ ...turn, ...redact(turn.text) }));
   const redactionCount = redacted.reduce((sum, turn) => sum + turn.count, 0);
   const fromTurn = priorTurnCount;
@@ -416,19 +549,8 @@ export const buildTrustedAdmissionV1 = (
     turns.map((turn) => decodeDomain(RunTurnSchema)(turn)),
   );
   const source = decodeDomain(CaptureSourceCoordinatesV1Schema)({
-    adapterStreamIdHash: identity.adapterStreamIdHash,
-    coverage: input.fromByte === 0 ? "prefix" : "delta",
-    fromByte: input.fromByte,
+    ...rawSourceInput,
     fromTurn,
-    offsetUnit: "bytes",
-    ...(previousPrefixHash === undefined ? {} : { previousPrefixHash }),
-    rawByteCount: input.segmentBytes.byteLength,
-    rawRunId: `raw-${hash(input.wake.eventId).slice(0, 32)}`,
-    rawSegmentHash: hash(input.segmentBytes),
-    schemaVersion: 1,
-    sourcePrefixHash,
-    sourceStreamId: identity.sourceStreamId,
-    toByteExclusive: input.toByteExclusive,
     toTurn: turns.at(-1)?.turn,
   });
   const redactionPolicyHash = hash("secret-scan:flowing-memory-host:v2");
@@ -505,6 +627,7 @@ export const buildTrustedAdmissionV1 = (
     scope: policies.scope,
     semanticAcceptedAt,
     source,
+    ...(input.sourceProvenance === undefined ? {} : { sourceProvenance: input.sourceProvenance }),
     textByteCount: turns.reduce(
       (sum, turn) => sum + new TextEncoder().encode(turn.text).byteLength,
       0,
@@ -535,6 +658,7 @@ export const buildTrustedAdmissionV1 = (
     scope: encodeDomain(ScopeResolutionAttestationV1Schema)(policies.scope),
     semanticAcceptedAt,
     source: encodeDomain(CaptureSourceCoordinatesV1Schema)(source),
+    ...(base.sourceProvenance === undefined ? {} : { sourceProvenance: base.sourceProvenance }),
     textByteCount: base.textByteCount,
     toTurn: base.toTurn,
     transcriptHash,
@@ -562,6 +686,7 @@ export const buildTrustedAdmissionV1 = (
     runtime: input.wake.runtime,
     schemaVersion: 1,
     scope: policies.scope.scope,
+    ...(base.sourceProvenance === undefined ? {} : { sourceProvenance: base.sourceProvenance }),
     sourceRef: acceptedRunSourceRef(acceptance.acceptanceId),
     toTurn: base.toTurn,
     transcriptHash,
