@@ -86,7 +86,7 @@ interface ImmutableStreamReceiptV1 {
   readonly runtime: NativeRuntime;
   readonly sessionId: string;
   readonly sourcePathHash: string;
-  readonly status?: "committed" | "pending";
+  readonly status?: "checkpointed" | "committed" | "pending";
   readonly streamPath: string;
   readonly transcriptHash?: string;
   readonly vendorFromByte?: number;
@@ -886,6 +886,7 @@ export const drainNativeWakeSpool = async (
   const drainId = randomUUID();
   const drainNow = input.drainNow ?? Date.now;
   const startedAt = drainNow();
+  const maxBootstrapBytes = Math.max(1, Math.floor(input.maxBootstrapBytes ?? 256_000));
   const maxLines = Math.max(1, Math.floor(input.maxLines ?? 250));
   const maxElapsedMs = Math.max(1, Math.floor(input.maxElapsedMs ?? 240_000));
   const drainReceiptPath = input.drainReceiptPath ?? `${input.statePath}.drain-receipts.jsonl`;
@@ -1062,6 +1063,61 @@ export const drainNativeWakeSpool = async (
         if (receipt?.closed === true && completeSize > receipt.vendorOffset) {
           throw new Error("late-bytes-after-finality");
         }
+        if (
+          receipt?.status === "pending" &&
+          (receipt.priorTurnCount ?? 0) === 0 &&
+          (receipt.fromByte ?? 0) === 0 &&
+          receipt.offset > maxBootstrapBytes
+        ) {
+          const checkpointStreamPath = `${receipt.streamPath}.checkpoint-${hash(receipt.acceptedEventId).slice(0, 16)}.jsonl`;
+          await writeFile(checkpointStreamPath, new Uint8Array(), {
+            flag: "wx",
+            mode: 0o600,
+          }).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== "EEXIST") throw error;
+          });
+          const acceptedEventIds = [
+            ...new Set([...(receipt.acceptedEventIds ?? []), receipt.acceptedEventId]),
+          ];
+          await persistStreamReceipt(input, key, {
+            acceptedEventId: receipt.acceptedEventId,
+            acceptedEventIds,
+            closed: receipt.closed,
+            fromByte: 0,
+            incarnationId: receipt.incarnationId,
+            nextTurn: 0,
+            offset: 0,
+            prefixHash: hash(new Uint8Array()),
+            priorTurnCount: 0,
+            runtime: receipt.runtime,
+            sessionId: receipt.sessionId,
+            sourcePathHash: receipt.sourcePathHash,
+            status: "checkpointed",
+            streamPath: checkpointStreamPath,
+            vendorFromByte: completeSize,
+            vendorOffset: completeSize,
+            vendorPrefixHash: hash(sourceBytes.subarray(0, completeSize)),
+            schemaVersion: 1,
+          });
+          state.streams[key] = stateEntryFor({
+            acceptedEventIds,
+            closed: receipt.closed,
+            incarnationId: receipt.incarnationId,
+            nextTurn: 0,
+            offset: 0,
+            prefixHash: hash(new Uint8Array()),
+            runtime: receipt.runtime,
+            sessionId: receipt.sessionId,
+            sourcePathHash: receipt.sourcePathHash,
+            streamPath: checkpointStreamPath,
+            vendorOffset: completeSize,
+            vendorPrefixHash: hash(sourceBytes.subarray(0, completeSize)),
+          });
+          await persist(input.statePath, state);
+          counts.excluded += 1;
+          counts.processed += 1;
+          continue;
+        }
         if (receipt?.status === "pending") {
           const pendingPrefix = new Uint8Array(
             await readFile(receipt.streamPath).catch((error: NodeJS.ErrnoException) => {
@@ -1209,10 +1265,6 @@ export const drainNativeWakeSpool = async (
         );
         const streamOffset = exact?.offset ?? receipt?.offset ?? 0;
         const vendorSegment = sourceBytes.subarray(vendorOffset, completeSize);
-        const maxBootstrapBytes = Math.max(
-          1,
-          Math.floor(input.maxBootstrapBytes ?? 256_000),
-        );
         if (
           receipt === undefined &&
           (exact === undefined || exact.offset === 0) &&

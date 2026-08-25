@@ -801,6 +801,52 @@ describe("common collector", () => {
     expect(Object.values(state.streams)[0]?.acceptedEventIds).toHaveLength(2);
   });
 
+  it("checkpoints an oversized pending bootstrap without retrying admission", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-collector-pending-bootstrap-"));
+    const transcriptPath = path.join(root, "session.jsonl");
+    const spoolPath = path.join(root, "wake.jsonl");
+    const statePath = path.join(root, "state.json");
+    await writeFile(
+      transcriptPath,
+      `${JSON.stringify({ role: "user", message: "p".repeat(2_000) })}\n`,
+    );
+    const decoded = decodeNativeEvent("pi", wakeInput("pi", transcriptPath));
+    if (decoded._tag !== "Accepted") throw new Error("expected wake");
+    await appendNativeWake(spoolPath, decoded.wake);
+    const failed = await drainNativeWakeSpool({
+      admission: {
+        admit: async () => {
+          throw new Error("synthetic admission failure");
+        },
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxBootstrapBytes: 10_000,
+      spoolPath,
+      statePath,
+    });
+    expect(failed).toMatchObject({ deferred: 1, processed: 1 });
+
+    const checkpoint = await drainNativeWakeSpool({
+      admission: {
+        admit: async () => {
+          throw new Error("pending bootstrap checkpoint must not call admission");
+        },
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxBootstrapBytes: 1_000,
+      spoolPath,
+      statePath,
+    });
+    expect(checkpoint).toMatchObject({ excluded: 1, processed: 1, quarantined: 0 });
+    const receipts = await readdir(`${statePath}.stream-receipts`);
+    expect(receipts).toHaveLength(1);
+    const receipt = JSON.parse(
+      await readFile(path.join(`${statePath}.stream-receipts`, receipts[0] ?? ""), "utf8"),
+    ) as { status: string; offset: number; streamPath: string };
+    expect(receipt).toMatchObject({ status: "checkpointed", offset: 0 });
+    expect(await readFile(receipt.streamPath, "utf8")).toBe("");
+  });
+
   it("checkpoints an oversized bootstrap and admits only later growth", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "fm-collector-bootstrap-checkpoint-"));
     const transcriptPath = path.join(root, "session.jsonl");
