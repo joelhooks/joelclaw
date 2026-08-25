@@ -86,13 +86,17 @@ _Avoid_: secrets dump, env sync, API key pass-through
 A Central-owned on-demand local reasoning capability for system setup, maintenance, and degraded-mode analysis. It is available after boot, but core services do not wait for it to start. It may run a post-boot system analyst pass once Redis/Typesense/Inngest are up.
 _Avoid_: local model, Ollama, llama.cpp, maintenance bot, startup dependency
 
-**Capture Hook**:
-The runtime-native mechanism that emits a Run. pi extension for pi, `Stop` hook in `~/.claude/settings.json` for claude-code, equivalent for codex. Every hook invokes `joelclaw capture-stdin` which enriches the jsonl with identity + lineage and POSTs to `/api/runs`. Server-side runtimes (loops, workload-rig, gateway) skip the hook and call `captureRun()` inline.
-_Avoid_: capture agent, capture daemon (we have neither)
+**Capture Adapter**:
+The runtime-native boundary that records immutable evidence and submits a bounded wake to the single flowing-memory collector. Pi, Claude Code, Codex, Cursor Agent, and Grok use runtime-specific adapters behind the same accepted-Run contract. Hooks stay local-only and fail open; they do not run inference or own semantic storage.
+_Avoid_: second capture platform, per-runtime semantic pipeline, hook-side inference
 
-**Outbox**:
-The per-Machine directory `~/.joelclaw/outbox/` holding Runs whose POST failed (offline, Central down, rate limit). Drained by any `joelclaw` CLI invocation plus a launchd/systemd timer every 5min. File-based, survives reboots, inspectable with `ls`.
-_Avoid_: queue, buffer, spool (those imply a running process)
+**Native Wake Spool**:
+The current collector recovery boundary for flowing-memory wakes. It is distinct from historical Central JSON capture outboxes. A bounded collector drain owns this spool and advances only through durable admission receipts.
+_Avoid_: treating `sessions.db` or a legacy Central POST as proof of native flowing admission
+
+**Legacy Capture Outbox**:
+Flat and namespaced JSON queues from the retired Central-posting capture path. They are preserved as migration evidence and replayed only through a reviewed, positively capped archival plan with accepted readback. They do not own current writes.
+_Avoid_: deleting, bulk replaying, or attributing a runtime-ambiguous flat queue to one runtime
 
 **Chunk**:
 An indexed fragment of a **Run**, scoped to one turn (user message + assistant response + any tool calls between them). 40K-token context of the embedding model means most turns are one Chunk; oversized turns split at paragraph boundaries with 100-token overlap. Each Chunk carries a 768-dim vector plus denormalized identity/access fields for single-query Typesense search.

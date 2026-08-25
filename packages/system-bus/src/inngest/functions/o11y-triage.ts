@@ -23,8 +23,6 @@ import { buildGatewaySignalMeta } from "../middleware/gateway-signal";
 import { pushGatewayEvent } from "./agent-loop/utils";
 
 const AGENT_WORK_PROJECT_ID = "6g3VPph7cFfm8GjJ";
-const TRIAGE_CATEGORY = "o11y-triage";
-const TRIAGE_PATTERN_PROPOSAL_CATEGORY = "o11y-pattern-proposal";
 const TRIAGE_LABELS = "o11y,escalation";
 const ESCALATION_CODEX_MODEL = "gpt-5.4";
 const ESCALATION_CODEX_CWD = "/Users/joel/Code/joelhooks/joelclaw";
@@ -51,12 +49,6 @@ type CommandResult = {
   ok: boolean;
   stdout: string;
   error?: string;
-};
-
-type ObservationNote = {
-  category: string;
-  summary: string;
-  metadata: Record<string, unknown>;
 };
 
 type CodexDispatchPlan = {
@@ -135,11 +127,6 @@ function compact(value: string, max = 140): string {
   const oneLine = value.replace(/\s+/gu, " ").trim();
   if (oneLine.length <= max) return oneLine;
   return `${oneLine.slice(0, Math.max(max - 3, 1))}...`;
-}
-
-function summarizeIssue(event: OtelEvent): string {
-  const error = compact(event.error ?? "operation_failed", 80);
-  return `${event.component}.${event.action} - ${error}`;
 }
 
 function inferImpact(event: OtelEvent): string {
@@ -590,35 +577,6 @@ export const o11yTriage = inngest.createFunction(
       };
     });
 
-    const patternProposalResult = await step.run("prepare-pattern-proposals", async () => {
-      const proposed = reclassifiedUnknowns.filter((item) => item.proposed_pattern != null);
-      const observations: ObservationNote[] = proposed.map((item) => ({
-        category: TRIAGE_PATTERN_PROPOSAL_CATEGORY,
-        summary: `Pattern proposal for ${item.event.component}.${item.event.action} -> tier ${item.proposed_pattern?.tier ?? item.tier}`,
-        metadata: {
-          eventId: item.event.id,
-          dedupKey: dedupKey(item.event),
-          reasoning: item.reasoning,
-          proposedPattern: item.proposed_pattern,
-          error: item.event.error ?? null,
-        },
-      }));
-
-      return {
-        count: observations.length,
-        observations,
-      };
-    });
-
-    if (patternProposalResult.observations.length > 0) {
-      await step.sendEvent("emit-pattern-observations", {
-        name: "session/observation.noted",
-        data: {
-          observations: patternProposalResult.observations,
-        },
-      });
-    }
-
     const tier1Result = await step.run("handle-tier1", async () => {
       const promoted: OtelEvent[] = [];
       const missingHandlerWarnings = new Set<string>();
@@ -699,53 +657,6 @@ export const o11yTriage = inngest.createFunction(
       if (!tier2Events.some((candidate) => candidate.id === event.id)) {
         tier2Events.push(event);
       }
-    }
-
-    const tier2Result = await step.run("prepare-tier2-observations", async () => {
-      const observations: ObservationNote[] = tier2Events.map((event) => {
-        const llm = reclassifiedByDedupKey.get(dedupKey(event));
-        const tier2Classification = classifyEvent(event);
-        const tier2HandlerName = resolveAutoFixHandlerName(tier2Classification.pattern?.handler);
-        const tier2HandlerDef = tier2HandlerName ? AUTO_FIX_HANDLERS[tier2HandlerName] : undefined;
-        const runbookPlan = resolveRunbookForEvent(
-          event,
-          "diagnose",
-          tier2HandlerDef?.runbookCode
-        );
-
-        return {
-          category: TRIAGE_CATEGORY,
-          summary: summarizeIssue(event),
-          metadata: {
-            eventId: event.id,
-            timestamp: event.timestamp,
-            source: event.source,
-            component: event.component,
-            action: event.action,
-            error: event.error ?? null,
-            dedupKey: dedupKey(event),
-            llmReasoning: llm?.reasoning ?? null,
-            runbookCode: runbookPlan?.code ?? null,
-            runbookPhase: runbookPlan?.phase ?? null,
-            recoverCommand: runbookRecoverCommand(runbookPlan),
-            runbookCommands: runbookPlan?.commands ?? [],
-          },
-        };
-      });
-
-      return {
-        handled: tier2Events.length,
-        observations,
-      };
-    });
-
-    if (tier2Result.observations.length > 0) {
-      await step.sendEvent("emit-tier2-observations", {
-        name: "session/observation.noted",
-        data: {
-          observations: tier2Result.observations,
-        },
-      });
     }
 
     const tier3Result = await step.run("handle-tier3", async () => {

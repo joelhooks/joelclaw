@@ -2,7 +2,6 @@
 
 import {
   BookOpen,
-  Brain,
   FileText,
   GitBranch,
   Mic,
@@ -37,10 +36,6 @@ function collectionToUrl(hit: {
       return hit.path ? `/${hit.path}` : "#";
     case "discoveries":
       return hit.path ? `/cool/${hit.path}` : "/cool";
-    case "memory_observations":
-      return `/memory`;
-    case "system_log":
-      return `/syslog`;
     case "otel_events":
       return `/system/events`;
     case "transcripts":
@@ -63,10 +58,6 @@ function TypeIcon({ collection }: { collection: string }) {
       return <FileText className={`${base} text-claw`} />;
     case "discoveries":
       return <Sparkles className={`${base} text-purple-400`} />;
-    case "memory_observations":
-      return <Brain className={`${base} text-amber-400`} />;
-    case "system_log":
-      return <Terminal className={`${base} text-blue-400`} />;
     case "otel_events":
       return <Terminal className={`${base} text-rose-400`} />;
     case "transcripts":
@@ -83,8 +74,6 @@ const COLLECTION_LABELS: Record<string, string> = {
   vault_notes: "vault",
   blog_posts: "article",
   discoveries: "cool",
-  memory_observations: "memory",
-  system_log: "syslog",
   otel_events: "otel",
   transcripts: "transcript",
   voice_transcripts: "voice",
@@ -95,8 +84,6 @@ const COLLECTION_COLORS: Record<string, string> = {
   vault_notes: "text-emerald-400 border-emerald-800",
   blog_posts: "text-claw border-pink-800",
   discoveries: "text-purple-400 border-purple-800",
-  memory_observations: "text-amber-400 border-amber-800",
-  system_log: "text-blue-400 border-blue-800",
   otel_events: "text-rose-300 border-rose-800",
   transcripts: "text-teal-300 border-teal-800",
   voice_transcripts: "text-cyan-400 border-cyan-800",

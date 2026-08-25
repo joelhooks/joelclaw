@@ -328,11 +328,9 @@ export const SYSTEM_KNOWLEDGE_COLLECTION_SCHEMA = {
 } satisfies Record<string, unknown>;
 
 /**
- * Fan-out query across system_knowledge + memory_observations + system_log + discoveries.
- * Returns formatted text suitable for injection into agent prompts.
- * Uses multi_search for single round-trip. Gracefully skips collections that don't exist.
- *
- * This is the mandatory brain query — called by buildPrompt(), memory-enforcer, pitch mise brief.
+ * Fan-out query across current curated system knowledge and discoveries.
+ * Operational memory belongs to composed flowing recall and must not silently
+ * fall back to retired observation or system-log collections.
  */
 export async function querySystemKnowledge(
   query: string,
@@ -344,12 +342,11 @@ export async function querySystemKnowledge(
   } = {},
 ): Promise<string> {
   const { types, limit = 5, project } = options;
-  const collections = options.collections ?? [
-    SYSTEM_KNOWLEDGE_COLLECTION,
-    "memory_observations",
-    "system_log",
-    "discoveries",
-  ];
+  const retiredCollections = new Set(["memory_observations", "system_log"]);
+  const collections = (options.collections ?? [SYSTEM_KNOWLEDGE_COLLECTION, "discoveries"]).filter(
+    (collection) => !retiredCollections.has(collection),
+  );
+  if (collections.length === 0) return "";
 
   // Build per-collection search params
   const searches = collections.map((col) => {
@@ -369,12 +366,6 @@ export async function querySystemKnowledge(
           const existing = params.filter_by ? `${params.filter_by} && ` : "";
           params.filter_by = `${existing}project:=${project}`;
         }
-        break;
-      case "memory_observations":
-        params.query_by = "observation";
-        break;
-      case "system_log":
-        params.query_by = "detail,tool,action";
         break;
       case "discoveries":
         params.query_by = "title,summary";
@@ -433,14 +424,10 @@ export async function querySystemKnowledge(
         switch (source) {
           case SYSTEM_KNOWLEDGE_COLLECTION:
             return `### [${doc.type}] ${doc.title}\n${String(doc.content ?? "").slice(0, 1000)}`;
-          case "memory_observations":
-            return `### [memory] ${String(doc.observation ?? "").slice(0, 1000)}`;
-          case "system_log":
-            return `### [slog] ${doc.action}: ${String(doc.detail ?? "").slice(0, 500)}`;
           case "discoveries":
             return `### [discovery] ${doc.title}\n${String(doc.summary ?? "").slice(0, 500)}`;
           default:
-            return `### [${source}] ${doc.title ?? doc.id}\n${String(doc.content ?? doc.observation ?? "").slice(0, 500)}`;
+            return `### [${source}] ${doc.title ?? doc.id}\n${String(doc.content ?? "").slice(0, 500)}`;
         }
       })
       .join("\n\n");

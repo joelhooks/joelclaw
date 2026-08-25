@@ -2,23 +2,18 @@ import { execFileSync } from "node:child_process";
 import {
   appendFile,
   lstat,
-  mkdtemp,
   mkdir,
-  readFile,
+  mkdtemp,
   readdir,
+  readFile,
   readlink,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-
-import { describe, expect, it } from "vitest";
-
 import type { AdmissionCommandV1 } from "@joelclaw-memory/domain";
-
-import { resolveTrustedAdmissionConfig } from "../src/live-admission.js";
-import flowingMemoryPiExtension from "../src/pi-extension.js";
+import { describe, expect, it } from "vitest";
 import { runtimeProcessIsIdle } from "../src/idle-probe.js";
 import {
   appendNativeWake,
@@ -29,10 +24,11 @@ import {
   doctorPiHook,
   drainNativeWakeSpool,
   FLOWING_MEMORY_INTERNAL_MARKER_V1,
+  inspectNativeCollector,
   installHookFragment,
   installHookFragments,
   installPiHook,
-  inspectNativeCollector,
+  makeTrustedNativeAdmissionPort,
   runtimeHookEvents,
   scanNativeSources,
   startNativeCollectorService,
@@ -41,8 +37,9 @@ import {
   uninstallHookFragments,
   uninstallPiHook,
   verifyNativeSource,
-  makeTrustedNativeAdmissionPort,
 } from "../src/index.js";
+import { resolveTrustedAdmissionConfig } from "../src/live-admission.js";
+import flowingMemoryPiExtension from "../src/pi-extension.js";
 
 const wakeInput = (runtime: "claude" | "codex" | "cursor" | "pi", transcriptPath: string) => {
   switch (runtime) {
@@ -748,6 +745,115 @@ describe("common collector", () => {
     expect(admitted).toEqual([19]);
     expect(await readFile(path.join(root, "state.json"), "utf8")).not.toContain("message");
   });
+
+  it("bounds one drain, requeues untouched wakes, and emits metadata-only receipts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-collector-bounded-"));
+    const spoolPath = path.join(root, "wake.jsonl");
+    const statePath = path.join(root, "state.json");
+    const receiptPath = path.join(root, "drain-receipts.jsonl");
+    const sources = [path.join(root, "first.jsonl"), path.join(root, "second.jsonl")];
+    const wakes = [];
+    for (const [index, source] of sources.entries()) {
+      await writeFile(source, `${JSON.stringify({ message: `private-${index}`, role: "user" })}\n`);
+      const decoded = decodeNativeEvent("pi", {
+        event_name: "turn_end",
+        session_id: `bounded-${index}`,
+        transcript_path: source,
+      });
+      if (decoded._tag !== "Accepted") throw new Error("expected wake");
+      wakes.push(decoded.wake);
+      await appendNativeWake(spoolPath, decoded.wake);
+    }
+
+    const receipt = await drainNativeWakeSpool({
+      admission: { admit: async () => ({ disposition: "admitted" }) },
+      drainReceiptPath: receiptPath,
+      lockPath: path.join(root, "collector.lock"),
+      maxLines: 1,
+      spoolPath,
+      statePath,
+    });
+
+    expect(receipt).toMatchObject({ admitted: 1, processed: 1 });
+    const queued = (await readFile(spoolPath, "utf8")).trim().split("\n");
+    expect(queued).toEqual([JSON.stringify(wakes[1])]);
+    await expect(lstat(`${spoolPath}.processing`)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(path.join(root, "collector.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+    const healthReceipts = (await readFile(receiptPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { phase: string; untouched: number });
+    expect(healthReceipts.map((item) => item.phase)).toEqual(["started", "batch", "finished"]);
+    expect(healthReceipts.at(-1)).toMatchObject({ untouched: 1 });
+    const rawReceipts = await readFile(receiptPath, "utf8");
+    expect(rawReceipts).not.toContain("private-");
+    expect(rawReceipts).not.toContain(root);
+  });
+
+  it("does not duplicate requeued wakes when the batch receipt fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-collector-receipt-failure-"));
+    const spoolPath = path.join(root, "wake.jsonl");
+    const wakes = [];
+    for (const index of [0, 1]) {
+      const source = path.join(root, `session-${index}.jsonl`);
+      await writeFile(source, `${JSON.stringify({ message: `receipt-${index}`, role: "user" })}\n`);
+      const decoded = decodeNativeEvent("pi", {
+        event_name: "turn_end",
+        session_id: `receipt-failure-${index}`,
+        transcript_path: source,
+      });
+      if (decoded._tag !== "Accepted") throw new Error("expected wake");
+      wakes.push(decoded.wake);
+      await appendNativeWake(spoolPath, decoded.wake);
+    }
+    const phases: string[] = [];
+    await expect(
+      drainNativeWakeSpool({
+        admission: { admit: async () => ({ disposition: "admitted" }) },
+        lockPath: path.join(root, "collector.lock"),
+        maxLines: 1,
+        persistDrainReceipt: async (receipt) => {
+          phases.push(receipt.phase);
+          if (receipt.phase === "batch") throw new Error("synthetic-receipt-failure");
+        },
+        spoolPath,
+        statePath: path.join(root, "state.json"),
+      }),
+    ).rejects.toThrow("synthetic-receipt-failure");
+
+    expect((await readFile(spoolPath, "utf8")).trim().split("\n")).toEqual([
+      JSON.stringify(wakes[1]),
+    ]);
+    expect(phases).toEqual(["started", "batch", "failed", "finished"]);
+    await expect(lstat(`${spoolPath}.processing`)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(path.join(root, "collector.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("exits before starting another wake after the elapsed drain bound", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-collector-elapsed-"));
+    const transcriptPath = path.join(root, "session.jsonl");
+    const spoolPath = path.join(root, "wake.jsonl");
+    await writeFile(transcriptPath, '{"role":"user","message":"elapsed"}\n');
+    const decoded = decodeNativeEvent("pi", wakeInput("pi", transcriptPath));
+    if (decoded._tag !== "Accepted") throw new Error("expected wake");
+    await appendNativeWake(spoolPath, decoded.wake);
+    let currentTime = 0;
+    const receipt = await drainNativeWakeSpool({
+      admission: { admit: async () => ({ disposition: "admitted" }) },
+      drainNow: () => {
+        const value = currentTime;
+        currentTime += 100;
+        return value;
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxElapsedMs: 150,
+      spoolPath,
+      statePath: path.join(root, "state.json"),
+    });
+    expect(receipt).toMatchObject({ admitted: 0, processed: 0 });
+    expect((await readFile(spoolPath, "utf8")).trim()).toBe(JSON.stringify(decoded.wake));
+  });
+
   it("scans a changed active source into a recoverable wake", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "fm-active-source-scan-"));
     const source = path.join(root, "pi-session.jsonl");

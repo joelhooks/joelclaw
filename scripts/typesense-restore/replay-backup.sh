@@ -3,7 +3,7 @@
 # Uses the same resumable chunked importer with emplace semantics so post-
 # rebuild data overwrites any old row that shares an id. Schema files from
 # the backup are used as the source-of-truth schema when a collection is
-# missing entirely (e.g. runs_dev + run_chunks_dev born post-rebuild).
+# missing entirely. Retired session projections require an explicit emergency flag.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,14 +29,15 @@ fi
 # post-rebuild live had before the restore started; emplace overlays them on
 # top of old data keyed by document id.
 ORDER=(
-  run_chunks_spike
-  run_chunks_dev
-  runs_dev
   channel_messages
   conversation_threads
   system_knowledge
   otel_events
 )
+
+if [[ "${ALLOW_RETIRED_PROJECTION:-0}" == "1" ]]; then
+  ORDER+=(run_chunks_spike run_chunks_dev runs_dev)
+fi
 
 for C in "${ORDER[@]}"; do
   SRC="$BACKUP_DIR/${C}.jsonl"

@@ -1,6 +1,5 @@
 import { emitOtelEvent } from "../../observability/emit";
 
-export { echoFizzle } from "../../memory/echo-fizzle";
 export { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 export { adrPitchExecute } from "./adr-pitch-execute";
 export { agentChainRun } from "./agent-chain-run";
@@ -16,7 +15,6 @@ export {
 } from "./agent-loop";
 export { agentTaskRun } from "./agent-task-run";
 export { approvalRequest, approvalResolve } from "./approval";
-export { backfillObserve } from "./backfill-observe";
 export { bookDownload } from "./book-download";
 export { channelMessageClassify } from "./channel-message-classify";
 export { channelMessageIngest } from "./channel-message-ingest";
@@ -74,7 +72,6 @@ export { docsReindexBatch } from "./docs-reindex-batch";
 export { docsReindexV2 } from "./docs-reindex-v2";
 export { emailNag } from "./email-nag";
 export { embedText } from "./embed";
-export { friction } from "./friction";
 export { frictionFix } from "./friction-fix";
 export {
   frontAssigneeChanged,
@@ -113,10 +110,8 @@ export { meetingTranscriptIndex } from "./meeting-transcript-index";
 export { megaJourneyWatch } from "./mega-journey-watch";
 export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 export { memoryEmbed } from "./memory/embed";
-export { nightlyMaintenance } from "./memory/nightly-maintenance";
 export { memoryRetroWriter } from "./memory/retro-writer";
 export { memoryRunCaptured } from "./memory/run-captured";
-export { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 export {
   createMessageEventConsumerFunction,
   messageEventConsumer,
@@ -146,8 +141,6 @@ export {
   TELEGRAM_SIGNAL_CONTENT_KINDS,
 } from "./noise-rate-guard";
 export { o11yTriage } from "./o11y-triage";
-export { observeSessionFunction } from "./observe";
-export { observeSessionNoted } from "./observe-session-noted";
 export { paneSchedule } from "./pane-schedule";
 export { paneScheduleReconcile, partitionPaneScheduleRegistry } from "./pane-schedule-reconcile";
 export { queueObserver, queueObserverRequested } from "./queue-observer";

@@ -534,14 +534,16 @@ Semantics:
 ## Memory command group
 
 ```bash
-joelclaw memory write "<observation text>" [--type observation|lesson|pattern|failed_target] [--source cli]
+joelclaw memory review --since 48h
 joelclaw memory search "<query>"
+joelclaw memory write "<legacy input>" # typed retirement response; no write occurs
 ```
 
 Semantics:
 
-- `memory write` sends `memory/observation.submitted` to Inngest with `{ text, type, source, ts }`.
-- `memory search` is an alias surface for recall so read/write memory workflows live in one command group.
+- `memory review` returns recent accepted-session, Git, Brain, OTEL, and flowing evidence in separate lanes.
+- `memory search` is an alias for composed recall.
+- `memory write` is a fail-closed compatibility pointer. Agent work enters through accepted Runs; durable curation belongs in Brain `.svx` pages.
 
 ## Knowledge turn-write command
 
@@ -721,7 +723,7 @@ Semantics:
 - `otel list` and `otel search` accept exact `--session` / `--system` filters, mapped to `sessionId` / `systemId` in Typesense.
 - `knowledge search` now auto-heals the common post-rebuild failure mode where `system_knowledge` is missing: on a `404 Collection not found` response it creates the collection, reindexes ADRs + skills once, retries the query, and reports the repair in-band.
 - `o11y session` / `o11y system` run a unified multi-search across `otel_events` and `system_log`, merge both timelines by `timestamp`, and tag each hit with its source collection.
-- `sessions search` is the operator bridge for agent session lookup. It searches Central `run_chunks_dev` by default and can scan raw Pi session JSONL either locally (`--source local`) or over SSH to a remote Machine such as `joel@dark-wizard` when the derived Typesense index is stale. Typesense search defaults to `--runtime pi`; use `--runtime codex`, `--runtime claude-code`, or `--runtime all` for other captured Run types. With `--source both`, the raw side resolves to `local` when the current hostname matches `--machine`, otherwise `ssh`; this avoids dumb SSH-to-self on dark-wizard. On thin Machines without a local Typesense credential, `both` skips Typesense and still returns local raw results with `typesenseSkipped`. If Typesense is unavailable in `both` mode, the command reports `typesenseUnavailable` and continues with raw results.
+- `sessions search` is explicit raw-history drill-down. It reads native transcript adapters and the current local SQLite projection when available; `--source local` never depends on retired Typesense Run collections. Use `--runtime pi|codex|claude-code|all` and verify the returned native path/runtime before claiming capture success. Remote index pointers are compatibility evidence, not a memory lane.
 - `sessions search --extract` runs bounded deterministic extraction for top raw hits so recovery prompts can include decisions, commands, files, receipts, verification, blockers, next actions, and exact transcript line pointers without dumping the full JSONL. Each emitted hit carries its own `extraction` when available; `.result.extractions` remains as a backward-compatible convenience list. Large session envelopes are written through direct stdout, not Effect Console, so `| jq` remains safe above 64KB.
 - `sessions extract` reads one raw local transcript by path or session-id substring, redacts likely secrets, and returns JSON extraction fields. `--format markdown` still uses the standard JSON envelope and places rendered markdown at `.result.markdown`; raw markdown stdout would violate the CLI JSON contract.
 - `sessions chunks` exposes matching Typesense chunks and/or raw local neighboring transcript context. Use top-level `.result.chunks`/`.result.hits`; source-specific mirrors remain under `.result.local.chunks` and `.result.typesense.chunks`.

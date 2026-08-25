@@ -3,8 +3,8 @@
  * ADR-0082: Typesense as unified search layer.
  *
  * Supports hybrid search (keyword + semantic), typo tolerance, faceting.
- * Searches vault_notes, memory_observations, blog_posts, system_log,
- * discoveries, transcripts, voice_transcripts, docs, docs_chunks_v2,
+ * Searches vault_notes, blog_posts, discoveries, transcripts,
+ * voice_transcripts, docs, docs_chunks_v2,
  * system_knowledge, and pi_mono_artifacts.
  */
 import { Args, Command, Options } from "@effect/cli";
@@ -37,20 +37,7 @@ type SearchCollection = {
 
 const COLLECTIONS: readonly SearchCollection[] = [
   { name: "vault_notes", queryBy: "title,content", titleField: "title", supportsSemantic: true },
-  {
-    name: "memory_observations",
-    queryBy: "observation",
-    titleField: "observation",
-    supportsSemantic: true,
-    semanticVectorField: "embedding",
-  },
   { name: "blog_posts", queryBy: "title,content", titleField: "title", supportsSemantic: true },
-  {
-    name: "system_log",
-    queryBy: "detail,tool,action",
-    titleField: "detail",
-    supportsSemantic: false,
-  },
   { name: "discoveries", queryBy: "title,summary", titleField: "title", supportsSemantic: true },
   {
     name: "transcripts",

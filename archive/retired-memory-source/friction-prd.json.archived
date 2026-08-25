@@ -1,0 +1,68 @@
+{
+  "title": "Friction Fixes: Daily Log Dedup + Backfill Guards + Session Rotation",
+  "goal": "Fix daily log explosion root causes: observe/reflect dedup, backfill cascade throttle, session rotation",
+  "stories": [
+    {
+      "id": "FRIC-1",
+      "title": "Add dedup guard to observe.ts daily log append",
+      "description": "Before appending an observation block to the daily log, check if that session ID already exists in the file. In the `append-daily-log` step: read the target daily log file, check if `### 🔭 Observations (session: {sessionId}` already exists, if so skip with { appended: false, reason: 'duplicate' }.",
+      "acceptance_criteria": [
+        "Running observe twice for the same session+trigger only produces one daily log entry",
+        "bun test passes in packages/system-bus",
+        "bunx tsc --noEmit passes"
+      ],
+      "files": ["packages/system-bus/src/inngest/functions/observe.ts"]
+    },
+    {
+      "id": "FRIC-2",
+      "title": "Add dedup guard to reflect.ts daily log append",
+      "description": "reflect.ts appends `### 🔭 Reflected` every time it runs. During backfill this produced 1,404 entries. In the `append-daily-log` step: read the target daily log file, check if `### 🔭 Reflected` already exists for this anchor date, if so skip with { appended: false, reason: 'already reflected today' }.",
+      "acceptance_criteria": [
+        "Running reflect multiple times on the same day produces at most one Reflected entry in the daily log",
+        "bun test passes in packages/system-bus",
+        "bunx tsc --noEmit passes"
+      ],
+      "files": ["packages/system-bus/src/inngest/functions/reflect.ts"]
+    },
+    {
+      "id": "FRIC-3",
+      "title": "Suppress reflect triggers during backfill observations",
+      "description": "During backfill, every batch of observations crossing the 40k token threshold triggers a reflect cascade. In observe.ts `check-threshold` step: if event.data.trigger === 'backfill', do NOT emit memory/observations.accumulated. Backfill observations accumulate in Redis silently; the daily 6AM cron picks them up. Also verify backfill-observe.ts sends trigger: 'backfill' in event data.",
+      "acceptance_criteria": [
+        "memory/observations.accumulated is NOT emitted when trigger is backfill",
+        "The 6AM reflect cron still processes accumulated backfill observations",
+        "bun test passes in packages/system-bus",
+        "bunx tsc --noEmit passes"
+      ],
+      "files": [
+        "packages/system-bus/src/inngest/functions/observe.ts",
+        "packages/system-bus/src/inngest/functions/backfill-observe.ts"
+      ]
+    },
+    {
+      "id": "FRIC-4",
+      "title": "Add session file pruning to system heartbeat",
+      "description": "~/.pi/agent/sessions/ is 45MB and growing. Add a prune-old-sessions step to the existing heartbeat function. Find all .jsonl files recursively in ~/.pi/agent/sessions/, delete any with mtime older than 30 days. Log the count. Also prune ~/.claude/debug/ files older than 30 days.",
+      "acceptance_criteria": [
+        "Heartbeat has a prune-old-sessions step",
+        "Files older than 30 days are deleted",
+        "Files newer than 30 days are NOT deleted",
+        "Count of pruned files is in step output",
+        "bunx tsc --noEmit passes"
+      ],
+      "files": ["packages/system-bus/src/inngest/functions/heartbeat.ts"]
+    },
+    {
+      "id": "FRIC-5",
+      "title": "Clean up stale acceptance test files from loop worktree",
+      "description": "The Phase 3 loop left acceptance test files in the repo root that got merged: session-lifecycle.mem5.acceptance.test.ts, system-bus.mem6.acceptance.test.ts, and any *.acceptance.test.ts at the repo root. Delete them. Also check for and remove any packages/cli/src/commands/review.acceptance.test.ts. Run bun test and bunx tsc --noEmit to verify nothing breaks.",
+      "acceptance_criteria": [
+        "No *.acceptance.test.ts files exist at repo root",
+        "No review.acceptance.test.ts exists in packages/cli/",
+        "bun test passes in packages/system-bus",
+        "bunx tsc --noEmit passes"
+      ],
+      "files": []
+    }
+  ]
+}

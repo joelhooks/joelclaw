@@ -370,12 +370,16 @@ joelclaw send agent/story.start -d '{
 | `docs/ingest` | → docs-ingest (PDF/markdown → vector store) |
 
 ### Memory
-| Event | Chain |
-|-------|-------|
-| `memory/session.compaction.pending` | → observe-session |
-| `memory/session.ended` | → observe-session |
-| `memory/observations.accumulated` | → reflect |
-| `memory/observations.reflected` | → promote (if proposals pending) |
+
+The event-driven observation/reflect/promote chain is retired and no longer registered. Current ownership is:
+
+| Layer | Current path |
+|-------|--------------|
+| Evidence | Runtime adapters produce immutable accepted Runs |
+| Operational memory | One collector and one semantic worker project flowing observations and reflections |
+| Curated memory | Brain `.svx` pages |
+| Recall | Flowing reflections, flowing observations, and curated pages as separate lanes |
+| Raw history | Explicit `joelclaw sessions search` drill-down |
 
 ### Agent Loops
 | Event | Flow |

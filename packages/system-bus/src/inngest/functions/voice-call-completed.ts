@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import * as typesense from "../../lib/typesense";
-import { emitMeasuredOtelEvent } from "../../observability/emit";
+import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
 type VoiceCallCompletedData = {
@@ -105,7 +105,6 @@ export const voiceCallCompleted = inngest.createFunction(
           : `voice:${room}:${rawTimestamp || new Date(capturedAt).getTime()}`;
       const messageCount = countMessages(transcript, data.turns);
       const userMessageCount = countUserMessages(transcript);
-      const duration = Math.max(0, Math.floor(asFiniteNumber(data.duration) ?? 0));
       const dedupeKey = buildDedupeKey([sessionId, room, transcript, rawTimestamp]);
 
       return {
@@ -115,23 +114,6 @@ export const voiceCallCompleted = inngest.createFunction(
         transcript,
         messageCount,
         userMessageCount,
-        eventPayload: {
-          name: "memory/session.ended" as const,
-          data: {
-            sessionId,
-            dedupeKey,
-            trigger: "shutdown" as const,
-            messages: transcript,
-            messageCount,
-            userMessageCount,
-            duration,
-            sessionName: room ? `Voice call (${room})` : "Voice call",
-            filesRead: [] as string[],
-            filesModified: [] as string[],
-            capturedAt,
-            schemaVersion: 1 as const,
-          },
-        },
       };
     });
 
@@ -153,25 +135,24 @@ export const voiceCallCompleted = inngest.createFunction(
       return { indexed: true, timestamp };
     });
 
-    await emitMeasuredOtelEvent(
-      {
+    await step.run("record-voice-transcript-indexed", async () =>
+      emitOtelEvent({
         level: "info",
         source: "worker",
         component: "voice-call-completed",
-        action: "memory.session_ended.forwarded",
+        action: "voice.transcript.indexed",
+        success: true,
         metadata: {
           room: normalized.room,
           messageCount: normalized.messageCount,
           userMessageCount: normalized.userMessageCount,
         },
-      },
-      async () => {
-        await step.sendEvent("emit-memory-session-ended", normalized.eventPayload);
-      }
+      })
     );
 
     return {
-      forwarded: true,
+      forwarded: false,
+      reason: "retired_memory_event",
       room: normalized.room,
       messageCount: normalized.messageCount,
       userMessageCount: normalized.userMessageCount,

@@ -103,7 +103,7 @@ These are joelclaw's foundational rules. They govern every decision.
 These are `joelclaw` CLI commands. Each defines an interface contract with ports and adapters — configurable in `.joelclaw/` with sensible defaults.
 
 - **`joelclaw otel`** — Emit and query structured telemetry. Every pipeline step must be observable. Search events, aggregate stats, check for silent failures.
-- **`joelclaw recall`** — Search disposable `observations` and `brain_graph_nodes` projections. Brain `.svx` remains canonical; verify important claims against source pages.
+- **`joelclaw recall`** — Compose scoped flowing reflections, flowing observations, and curated Brain pages as separate lanes. Raw session evidence requires explicit drill-down.
 - **`joelclaw vault`** — Read/search/list vault content and run ADR hygiene checks (`vault adr list|collisions|audit`) as the canonical decision inventory interface.
 - **`joelclaw mail`** — Send and receive messages between agents. Register identity, reserve files to prevent edit conflicts, release when done. Always include paths and task context. Protocol details live in `skills/clawmail/SKILL.md`.
 - **`joelclaw secrets`** — Lease credentials with TTL and audit trail. Never hardcode tokens or keys. Every lease is logged.
@@ -112,13 +112,14 @@ These are `joelclaw` CLI commands. Each defines an interface contract with ports
 - **`joelclaw heal`** — Detect and fix system issues autonomously. All fixes must be revertable (git commits) and the operator must be notified.
 - **Telemetry and receipts** — The legacy `joelclaw log write` / `slog` JSONL journal is retired. Runtime telemetry is canonical OTel in Typesense/ClickHouse. Durable decisions, behavior changes, and operator receipts belong in Brain `.svx`. Do not recreate an append-only system journal.
 
-## Memory substrate boundaries (2026-07-17)
+## Memory substrate boundaries
 
-- `memory_observations`, reflect/promote/proposal/batch-review functions, and MEM/FRIC suites are retired.
-- `joelclaw recall` keeps the familiar command but reads disposable Brain/observation projections.
-- Chorus/Rhizomatic is parked: no session briefing injection, no live claims, and service stop pending steering sudo.
-- Claude auto-memory is a pointer index only. `MEMORY.md` may point into `~/.brain`; durable content belongs in Brain `.svx`.
-- Retros use a hook-fired Inngest event plus condenser; that writer is still being built.
+- Accepted Runs and native transcripts are immutable evidence owned by capture adapters.
+- Flowing memory is scoped operational memory derived from accepted Runs.
+- Brain `.svx` pages are curated durable knowledge.
+- `joelclaw recall` exposes exactly flowing reflections, flowing observations, and curated pages. Raw sessions remain explicit.
+- `memory_observations`, direct observation writes, reflect/promote cascades, old memory maintenance, and raw-first Typesense session projections are retired and disconnected.
+- Claude auto-memory is a pointer index only. `MEMORY.md` may point into Brain; it does not own durable content.
 
 ## Non-Negotiable
 

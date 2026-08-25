@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "archiveId": "joelclaw-retired-memory-source-20260825",
+  "owner": "joelclaw",
+  "approval": "user-authorized archive migration",
+  "privacy": "metadata-only; no payload bodies inspected",
+  "rows": [
+    {
+      "original": "friction-prd.json",
+      "classification": "archive-now",
+      "destination": "archive/retired-memory-source/friction-prd.json.archived",
+      "bytes": 4165,
+      "sha256": "b993856c28b109f0b2672f42f847d206c5b7d303b57f5c91a7926d741907dadf",
+      "replacement": "accepted Runs, flowing memory, and Brain",
+      "moveStatus": "moved",
+      "rollbackGate": "caller scan and normal build"
+    },
+    {
+      "original": "pi/extensions/memory-rag/index.ts",
+      "classification": "archive-now",
+      "destination": "archive/retired-memory-source/pi-extensions/memory-rag/index.ts.archived",
+      "bytes": 5480,
+      "sha256": "df4636d0d136775b8c751a559dbb746334371c76cc8b1f6d251b63b83403c106",
+      "replacement": "accepted Runs, flowing memory, and Brain",
+      "moveStatus": "moved",
+      "rollbackGate": "caller scan and normal build"
+    },
+    {
+      "original": "scripts/memory-spike/smoke-e2e.ts",
+      "classification": "private-archive",
+      "destination": "private-operator-archive",
+      "bytes": 4576,
+      "sha256": "1394950c1ae17aadb3669bf4bef0cd84b50334028a5b0dc91d3d775366aa2a47",
+      "replacement": "explicit sessions/SQLite maintenance",
+      "moveStatus": "moved-private",
+      "rollbackGate": "none; historical source only"
+    },
+    {
+      "original": "docs/runbooks/typesense-session-indexing.md",
+      "classification": "private-archive",
+      "destination": "private-operator-archive",
+      "bytes": 10423,
+      "sha256": "abfa0d5c68b54ee3716d7977c1b8978e886e0b84f6e494b41d8fd09df728b075",
+      "replacement": "explicit sessions/SQLite maintenance",
+      "moveStatus": "moved-private",
+      "rollbackGate": "none; historical source only"
+    }
+  ]
+}

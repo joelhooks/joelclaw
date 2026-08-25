@@ -51,7 +51,8 @@ and `.brain/projects/memory-system-repair/` (fixes + open decisions).
 | Logs | `/tmp/observer-{tick,dream,neat-memory,self-maintenance,release-promotion}.log` |
 | LaunchAgents | `com.joelclaw.observer-tick` (every 30 min), `com.joelclaw.observer-dream` (06:10), `com.joelclaw.observer-neat-memory` (16:15 — dead-man revive only) |
 | Message journal fail-open spool | `~/.joelclaw/spool/message-journal/` |
-| Run-capture outbox (watch its size) | `~/.joelclaw/outbox/` |
+| Current flowing wake spool | `~/.joelclaw/flowing-memory/native-wakes.jsonl` (single collector ownership) |
+| Legacy Central capture outboxes | flat and namespaced JSON queues; preserve as migration evidence, not current writes |
 | Brain root registry | `~/Code/joelhooks/dark-wizard/brain-roots.json` |
 | Wiki repo + build | `~/Code/joelhooks/joelclaw-wiki`; `bun run build` (includes `graph:build`; retry once on transient exit 1); 200-check exact URLs before sharing |
 | Bus (Inngest) | `localhost:8288`, signing key in `~/.config/system-bus.env` |

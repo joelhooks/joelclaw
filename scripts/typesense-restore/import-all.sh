@@ -11,7 +11,7 @@
 #   BATCH        (default: 500; docs_chunks_v2 forced to 100 to survive HNSW pressure)
 #
 # Usage:
-#   import-all.sh                # all old collections in deterministic order
+#   import-all.sh                # current collections in deterministic order
 #   import-all.sh docs           # just one
 #   import-all.sh docs system_knowledge
 set -euo pipefail
@@ -46,11 +46,8 @@ DEFAULT_ORDER=(
   system_knowledge
   conversation_threads
   channel_messages
-  system_log
-  run_chunks_spike
   vault_notes
   pi_mono_artifacts
-  memory_observations
   otel_events
   docs_chunks
   docs_chunks_v2
@@ -63,6 +60,14 @@ else
 fi
 
 for C in "${ORDER[@]}"; do
+  case "$C" in
+    memory_observations|system_log|run_chunks_spike|run_chunks_dev|runs_dev)
+      if [[ "${ALLOW_RETIRED_PROJECTION:-0}" != "1" ]]; then
+        echo "refusing retired projection '$C'; set ALLOW_RETIRED_PROJECTION=1 only for an approved emergency restore" >&2
+        exit 2
+      fi
+      ;;
+  esac
   SRC="$CACHE/${C}.old.jsonl"
   if [[ ! -f "$SRC" ]]; then
     echo "[skip] $C: no source at $SRC"

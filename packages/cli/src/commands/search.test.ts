@@ -129,36 +129,39 @@ describe("search request building", () => {
     expect(request.vector_query).toBeUndefined();
   });
 
-  test("semantic search uses vector_query without adding embedding to query_by", () => {
-    const memoryCollection = COLLECTIONS.find(
-      (collection) => collection.name === "memory_observations",
-    );
-    expect(memoryCollection).toBeDefined();
+  test("generic search does not invent a vector field for curated collections", () => {
+    const vaultCollection = COLLECTIONS.find((collection) => collection.name === "vault_notes");
+    expect(vaultCollection).toBeDefined();
 
-    const request = buildSearchRequest(memoryCollection!, "redis dedupe", {
+    const request = buildSearchRequest(vaultCollection!, "redis dedupe", {
       perPage: 5,
       semantic: true,
       queryEmbedding: [0.1, -0.2, Number.NaN],
     });
 
-    expect(request.query_by).toBe(memoryCollection!.queryBy);
+    expect(request.query_by).toBe(vaultCollection!.queryBy);
     expect(request.query_by).not.toContain("embedding");
-    expect(request.vector_query).toBe("embedding:([0.1,-0.2,0], k:10, alpha:0.7)");
+    expect(request.vector_query).toBeUndefined();
   });
 
   test("semantic search falls back to keyword-only without a query vector", () => {
-    const memoryCollection = COLLECTIONS.find(
-      (collection) => collection.name === "memory_observations",
-    );
-    expect(memoryCollection).toBeDefined();
+    const vaultCollection = COLLECTIONS.find((collection) => collection.name === "vault_notes");
+    expect(vaultCollection).toBeDefined();
 
-    const request = buildSearchRequest(memoryCollection!, "redis dedupe", {
+    const request = buildSearchRequest(vaultCollection!, "redis dedupe", {
       perPage: 5,
       semantic: true,
     });
 
-    expect(request.query_by).toBe(memoryCollection!.queryBy);
+    expect(request.query_by).toBe(vaultCollection!.queryBy);
     expect(request.vector_query).toBeUndefined();
+  });
+
+  test("omits retired memory and system-log collections", () => {
+    expect(COLLECTIONS.map((collection) => collection.name)).not.toContain(
+      "memory_observations",
+    );
+    expect(COLLECTIONS.map((collection) => collection.name)).not.toContain("system_log");
   });
 
   test("formats finite search vectors and zeroes invalid values", () => {

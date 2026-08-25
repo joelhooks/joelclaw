@@ -3,7 +3,6 @@ import {
   githubPackagePublished,
   githubWorkflowRunCompleted,
 } from "./github-notify";
-import { observeSessionFunction } from "./observe";
 import { queueObserver, queueObserverRequested } from "./queue-observer";
 import { swarmAgentExec } from "./swarm-agent-exec";
 import { swarmOrchestrator } from "./swarm-orchestrator";
@@ -30,7 +29,6 @@ export const clusterFunctionDefinitions = [
   githubPackagePublished,
   webhookSubscriptionDispatchGithubWorkflowRunCompleted,
   webhookSubscriptionDispatchGeneric,
-  observeSessionFunction,
   queueObserver,
   queueObserverRequested,
   swarmOrchestrator,

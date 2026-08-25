@@ -1,23 +1,14 @@
 /**
- * `joelclaw memory` — human-friendly memory interface.
+ * `joelclaw memory` — composed recall and recent fleet review.
  *
- * Subcommands:
- *   write <text>  — submit an observation to the memory pipeline
- *   search <query> — semantic search across observations (alias for recall)
- *   recent         — list recently written observations
- *
- * The write subcommand fires `memory/observation.submitted` to Inngest,
- * which runs the write-gate pipeline (observe → proposal-triage → promote).
- *
- * Categories use short names that map to `jc:` prefixed SKOS concepts:
- *   ops, rules, arch, projects, prefs, people, memory
+ * Direct observation writes are retired. Agent work enters flowing memory
+ * through accepted Runs; durable curated knowledge belongs in Brain pages.
  */
 
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import type { CapabilityError } from "../capabilities/contract"
 import { executeCapabilityCommand } from "../capabilities/runtime"
-import { Inngest } from "../inngest"
 import { memoryReviewCmd } from "../memory-review/command"
 import { respond, respondError } from "../response"
 import { resolveTypesenseApiKey as resolveApiKey } from "../typesense-auth"
@@ -83,86 +74,23 @@ const writeCmd = Command.make(
       Options.withDescription("Source identifier (default: cli)")
     ),
   },
-  ({ observation, category, tags, source }) =>
+  () =>
     Effect.gen(function* () {
-      const trimmed = observation.trim()
-      if (trimmed.length === 0) {
-        yield* Console.log(
-          respondError(
-            "memory write",
-            "Observation text cannot be empty",
-            "EMPTY_TEXT",
-            'Provide observation text: joelclaw memory write "your observation"',
-            [{ command: 'joelclaw memory write "your observation" --category ops', description: "Write an observation" }]
-          )
-        )
-        return
-      }
-
-      const inngestClient = yield* Inngest
-      const resolvedCategory = resolveCategory(category)
-      const tagList = tags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean)
-
-      const payload = {
-        observation: trimmed,
-        category: resolvedCategory,
-        source,
-        tags: tagList,
-      }
-
-      const result = yield* inngestClient
-        .send("memory/observation.submitted", payload)
-        .pipe(Effect.either)
-
-      if (result._tag === "Left") {
-        yield* Console.log(
-          respondError(
-            "memory write",
-            `Failed to send: ${String(result.left)}`,
-            "SEND_FAILED",
-            "Check Inngest: joelclaw inngest status",
-            [
-              { command: "joelclaw inngest status", description: "Check Inngest health" },
-              { command: "joelclaw status", description: "Full system health" },
-            ]
-          )
-        )
-        return
-      }
-
-      const runIds = (result.right as any)?.ids ?? []
-
+      process.exitCode = 3
       yield* Console.log(
-        respond(
-          "memory write",
-          {
-            observation: trimmed,
-            category: resolvedCategory,
-            source,
-            tags: tagList,
-            run_id: runIds[0] ?? null,
-          },
-          [
-            {
-              command: `joelclaw run ${runIds[0] ?? "<run-id>"}`,
-              description: "Track the write-gate pipeline",
-            },
-            {
-              command: `joelclaw memory search "${trimmed.slice(0, 40)}"`,
-              description: "Verify it landed (after pipeline completes)",
-            },
-            {
-              command: "joelclaw memory recent",
-              description: "See recent observations",
-            },
+        respondError(
+        "memory write",
+        "Direct observation writes are retired",
+        "MEMORY_WRITE_RETIRED",
+        "Agent work enters flowing memory through accepted Runs. Curate durable knowledge as a Brain .svx page.",
+        [
+          { command: "joelclaw memory review --since 48h", description: "Review recent fleet memory" },
+          { command: "joelclaw recall <query>", description: "Search composed flowing and curated memory" },
           ]
         )
       )
     })
-).pipe(Command.withDescription("Write an observation to agent memory"))
+).pipe(Command.withDescription("Retired compatibility pointer for direct memory writes"))
 
 // ── Search subcommand ───────────────────────────────────────────
 const searchCmd = Command.make(

@@ -128,29 +128,18 @@ Runtime filter:
 - Claude Code: `--runtime claude-code`
 - everything: `--runtime all`
 
-Codex raw fallback is not scanned directly yet; Codex capture writes transcript deltas through Central `/api/runs`, then `memory/run.captured` indexes `runs_dev` / `run_chunks_dev`.
+Codex raw fallback is read directly from its native transcript adapter. Codex capture is current only when the single-owner flowing-memory host hook is installed and canaried; stale state files are not liveness proof.
 
 ## When results disagree
 
-If SSH finds fresh hits but Typesense does not, raw capture exists and the derived index is stale. Use the recovery runbook:
+Native transcripts are evidence, capture receipts prove admission, and `sessions.db` is a derived SQLite projection. Diagnose them separately:
 
-```bash
-read ~/Code/joelhooks/joelclaw/docs/runbooks/typesense-session-indexing.md
-```
+1. Verify the returned hit path belongs to the expected native runtime root.
+2. Run `session_capture_status` for adapter and legacy-artifact diagnostics.
+3. Run `flowing-memory-status` for collector/worker truth.
+4. Validate the SQLite projection with `scripts/validate-session-index.ts` when indexed retrieval is stale.
 
-Then verify:
-
-```bash
-KEY=$(secrets lease typesense_api_key)
-curl -fsS -G http://localhost:8108/collections/runs_dev/documents/search \
-  -H "X-TYPESENSE-API-KEY: $KEY" \
-  --data-urlencode 'q=*' \
-  --data-urlencode 'filter_by=agent_runtime:=pi && machine_id:=flagg' \
-  --data-urlencode 'per_page=3' \
-  --data-urlencode 'sort_by=started_at:desc' \
-  --data-urlencode 'include_fields=id,machine_id,started_at,tags' \
-  | jq '[.hits[].document | {id,machine_id,started_at:(.started_at/1000|todateiso8601)}]'
-```
+Do not recreate retired `runs_dev` or `run_chunks_dev` collections.
 
 ## Local and SSH requirements
 

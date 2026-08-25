@@ -40,6 +40,21 @@ test("every intentional dual-role id is actually registered in both roles", () =
   }
 });
 
+test("retired observation producers and maintenance are not registered", () => {
+  const registered = new Set([...hostFunctionIds, ...clusterFunctionIds]);
+  for (const retiredId of [
+    "memory/observe-session",
+    "observe-session-noted",
+    "memory/backfill-observe",
+    "memory/friction-analysis",
+    "system/memory-nightly-maintenance",
+    "system/memory-weekly-maintenance-summary",
+    "memory/echo-fizzle",
+  ]) {
+    expect(registered.has(retiredId)).toBe(false);
+  }
+});
+
 test("host role registers only the thin joelclaw-video client", () => {
   expect(hostFunctionIds).toContain("joelclaw-video-publish");
   expect(hostFunctionIds).not.toContain("joelclaw-video-hello");

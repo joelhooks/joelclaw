@@ -2,7 +2,7 @@
  * Agent-first search API — HATEOAS envelope, markdown snippets, Upstash rate limiting.
  *
  * Public: searches blog_posts, discoveries, pi_mono_artifacts, ADRs
- * Authenticated (Bearer token): adds vault_notes, memory, system_log, transcripts
+ * Authenticated (Bearer token): adds vault_notes and transcripts
  *
  * Follows cli-design HATEOAS contract (ADR-0082, cli-design skill).
  * Rate limited via Upstash Redis (same pattern as /api/docs).
@@ -141,8 +141,6 @@ const PUBLIC_COLLECTIONS: CollectionConfig[] = [
 
 const PRIVATE_COLLECTIONS: CollectionConfig[] = [
   { name: "vault_notes", queryBy: "title,content" },
-  { name: "memory_observations", queryBy: "observation" },
-  { name: "system_log", queryBy: "detail,tool,action" },
   { name: "transcripts", queryBy: "title,text,speaker,channel" },
 ];
 
@@ -181,8 +179,6 @@ function resolveUrl(collection: string, doc: Record<string, unknown>): string | 
       if (isAdr) return `/adrs/${slug || ""}`;
       return path ? `/vault/${encodeURI(path)}` : undefined;
     }
-    case "memory_observations": return "/memory";
-    case "system_log": return "/syslog";
     case "transcripts": return str(doc.source_url) || "/voice";
     default: return undefined;
   }

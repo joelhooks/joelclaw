@@ -4668,11 +4668,6 @@ export const inngestCmd = Command.make("inngest", {}, () =>
       "sync-worker": "joelclaw inngest sync-worker [--restart] [--wait-ms 1500] [--force] (single-source; no file copy)",
       "sweep-stale-runs": "joelclaw inngest sweep-stale-runs [--apply] [--older-than-minutes 30] [--functions 'check/o11y-triage,check/system-health']",
       reconcile: "joelclaw inngest reconcile [--deep]",
-      "memory-e2e": "joelclaw inngest memory-e2e [--wait-ms 90000] [--poll-ms 1500]",
-      "memory-weekly": "joelclaw inngest memory-weekly [--wait-ms 30000] [--poll-ms 1000]",
-      "memory-gate": "joelclaw inngest memory-gate [--e2e-wait-ms 120000] [--weekly-wait-ms 60000] [--health-hours 24]",
-      "memory-schema-reconcile": "joelclaw inngest memory-schema-reconcile [--dry-run]",
-      "memory-health": "joelclaw inngest memory-health [--hours 24] [--stall-minutes 30]",
       deep_reconcile_alias: "joelclaw refresh",
     },
   }, [
@@ -4686,11 +4681,6 @@ export const inngestCmd = Command.make("inngest", {}, () =>
     { command: "joelclaw inngest sync-worker --restart", description: "Compatibility alias: restart then register worker (no file sync)" },
     { command: "joelclaw inngest sweep-stale-runs", description: "Preview stale RUNNING ghost candidates (backup-first apply)" },
     { command: "joelclaw inngest reconcile", description: "Restart worker + register functions" },
-    { command: "joelclaw inngest memory-e2e", description: "Run memory observe→Typesense→recall E2E check" },
-    { command: "joelclaw inngest memory-weekly", description: "Manually run weekly memory maintenance summary and verify OTEL" },
-    { command: "joelclaw inngest memory-gate", description: "Run memory-e2e + memory-weekly + memory-health gate checks" },
-    { command: "joelclaw inngest memory-schema-reconcile", description: "Ensure memory_observations schema fields needed for health/ranking" },
-    { command: "joelclaw inngest memory-health", description: "Run OTEL-backed memory health checks" },
   ]))
 ).pipe(
   Command.withSubcommands([
@@ -4704,11 +4694,6 @@ export const inngestCmd = Command.make("inngest", {}, () =>
     inngestSyncWorkerCmd,
     inngestSweepStaleRunsCmd,
     inngestReconcileCmd,
-    inngestMemoryE2ECmd,
-    inngestMemoryWeeklyCmd,
-    inngestMemoryGateCmd,
-    inngestMemorySchemaReconcileCmd,
-    inngestMemoryHealthCmd,
   ])
 )
 

@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendFile,
+  type FileHandle,
   link,
   mkdir,
   open,
-  type FileHandle,
   readFile,
   rename,
   stat,
@@ -15,10 +15,10 @@ import { createConnection, createServer, type Server } from "node:net";
 import path from "node:path";
 
 import {
-  verifyNativeSource,
-  withIncarnation,
   type NativeRuntime,
   type NativeWakeV1,
+  verifyNativeSource,
+  withIncarnation,
 } from "./adapters.js";
 
 export interface NativeAdmissionInputV1 {
@@ -105,6 +105,17 @@ export interface CollectorReceiptV1 {
   readonly schemaVersion: 1;
 }
 
+export interface CollectorDrainHealthReceiptV1 extends CollectorReceiptV1 {
+  readonly drainId: string;
+  readonly elapsedMs: number;
+  readonly errorClass?: "collector" | "filesystem" | "unknown";
+  readonly phase: "batch" | "failed" | "finished" | "service-failure" | "started";
+  readonly processingLines: number;
+  readonly queuedLines: number;
+  readonly requeued: number;
+  readonly untouched: number;
+}
+
 export interface CollectorDrainOptions {
   readonly admission: NativeAdmissionPort;
   readonly afterAdmission?: (
@@ -113,8 +124,13 @@ export interface CollectorDrainOptions {
   ) => Promise<void>;
   readonly closeMaxMs?: number;
   readonly closeStableMs?: number;
+  readonly drainNow?: () => number;
+  readonly drainReceiptPath?: string;
   readonly lockPath: string;
+  readonly maxElapsedMs?: number;
+  readonly maxLines?: number;
   readonly now?: () => number;
+  readonly persistDrainReceipt?: (receipt: CollectorDrainHealthReceiptV1) => Promise<void>;
   readonly persistState?: (statePath: string, state: CollectorStateV1) => Promise<void>;
   readonly sleep?: (milliseconds: number) => Promise<void>;
   readonly sourceRoot?: string;
@@ -790,6 +806,15 @@ const completeSizeFor = (bytes: Uint8Array) => {
 const delay = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
+const countNonEmptyLines = (value: string) =>
+  value.split("\n").reduce((count, line) => count + (line.length === 0 ? 0 : 1), 0);
+
+const collectorErrorClass = (error: unknown): "collector" | "filesystem" | "unknown" => {
+  if (typeof error === "object" && error !== null && "code" in error) return "filesystem";
+  if (error instanceof Error) return "collector";
+  return "unknown";
+};
+
 const readSource = async (input: {
   readonly close: boolean;
   readonly maxMs: number;
@@ -858,6 +883,54 @@ const stateEntryFor = (input: {
 export const drainNativeWakeSpool = async (
   input: CollectorDrainOptions,
 ): Promise<CollectorReceiptV1> => {
+  const drainId = randomUUID();
+  const drainNow = input.drainNow ?? Date.now;
+  const startedAt = drainNow();
+  const maxLines = Math.max(1, Math.floor(input.maxLines ?? 250));
+  const maxElapsedMs = Math.max(1, Math.floor(input.maxElapsedMs ?? 240_000));
+  const drainReceiptPath = input.drainReceiptPath ?? `${input.statePath}.drain-receipts.jsonl`;
+  const counts = {
+    admitted: 0,
+    deferred: 0,
+    excluded: 0,
+    processed: 0,
+    quarantined: 0,
+    replayed: 0,
+  };
+  let processingLines = 0;
+  let requeued = 0;
+  let terminalError: unknown;
+  let untouched = 0;
+  const queuedLineCount = async () =>
+    readFile(input.spoolPath, "utf8")
+      .then(countNonEmptyLines)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return 0;
+        throw error;
+      });
+  const emitDrainReceipt = async (
+    phase: CollectorDrainHealthReceiptV1["phase"],
+    error?: unknown,
+  ) => {
+    const receipt: CollectorDrainHealthReceiptV1 = {
+      ...counts,
+      drainId,
+      elapsedMs: Math.max(0, drainNow() - startedAt),
+      ...(error === undefined ? {} : { errorClass: collectorErrorClass(error) }),
+      phase,
+      processingLines,
+      queuedLines: await queuedLineCount(),
+      requeued,
+      schemaVersion: 1,
+      untouched,
+    };
+    if (input.persistDrainReceipt === undefined) {
+      await appendDurableLine(drainReceiptPath, JSON.stringify(receipt));
+    } else {
+      await input.persistDrainReceipt(receipt);
+    }
+  };
+
   await mkdir(path.dirname(input.lockPath), { recursive: true, mode: 0o700 });
   const lock = await acquireProcessLock(input.lockPath);
   try {
@@ -877,25 +950,26 @@ export const drainNativeWakeSpool = async (
       if (error.code === "ENOENT") return "";
       throw error;
     });
+    processingLines = countNonEmptyLines(spool);
+    await emitDrainReceipt("started");
     const lines = spool.split("\n");
     const trailing = lines.at(-1) === "" ? "" : (lines.pop() ?? "");
     const state = await readState(input.statePath);
-    const counts = {
-      admitted: 0,
-      deferred: 0,
-      excluded: 0,
-      processed: 0,
-      quarantined: 0,
-      replayed: 0,
-    };
     const deferredLines: string[] = trailing.length === 0 ? [] : [trailing];
+    const untouchedLines: string[] = [];
     const settledClosedSources = new Set<string>();
     const seenEventIds = new Set<string>();
     const persist = input.persistState ?? persistStateDefault;
     const streamRoot = streamRootFor(input);
     const excludedSessions = new Set(state.excludedSessions ?? []);
-    for (const line of lines) {
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      const line = lines[lineIndex] ?? "";
       if (line.length === 0) continue;
+      if (counts.processed >= maxLines || drainNow() - startedAt >= maxElapsedMs) {
+        untouchedLines.push(...lines.slice(lineIndex).filter((candidate) => candidate.length > 0));
+        untouched = untouchedLines.length;
+        break;
+      }
       let decoded: NativeWakeV1;
       try {
         decoded = decodeWake(line);
@@ -1354,8 +1428,11 @@ export const drainNativeWakeSpool = async (
         return true;
       }
     });
-    if (retainedDeferredLines.length > 0) {
-      await appendFile(input.spoolPath, `${retainedDeferredLines.join("\n")}\n`, {
+    const linesToRequeue = [...retainedDeferredLines, ...untouchedLines];
+    requeued = linesToRequeue.length;
+    untouched = untouchedLines.length;
+    if (linesToRequeue.length > 0) {
+      await appendFile(input.spoolPath, `${linesToRequeue.join("\n")}\n`, {
         encoding: "utf8",
         mode: 0o600,
       });
@@ -1363,8 +1440,14 @@ export const drainNativeWakeSpool = async (
     await unlink(processingPath).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
     });
+    await emitDrainReceipt("batch");
     return { ...counts, schemaVersion: 1 };
+  } catch (error) {
+    terminalError = error;
+    await emitDrainReceipt("failed", error).catch(() => undefined);
+    throw error;
   } finally {
+    await emitDrainReceipt("finished", terminalError).catch(() => undefined);
     await unlinkOwnedProcessLock(input.lockPath, lock.token);
     await lock.handle.close();
   }
@@ -1428,13 +1511,44 @@ export const startNativeCollectorService = async (
       if (error.code !== "ENOENT") throw error;
     });
   }
+  const drainReceiptPath = input.drainReceiptPath ?? `${input.statePath}.drain-receipts.jsonl`;
+  const recordServiceFailure = async (error: unknown) => {
+    const queuedLines = await readFile(input.spoolPath, "utf8")
+      .then(countNonEmptyLines)
+      .catch(() => 0);
+    const processingLines = await readFile(`${input.spoolPath}.processing`, "utf8")
+      .then(countNonEmptyLines)
+      .catch(() => 0);
+    const receipt: CollectorDrainHealthReceiptV1 = {
+      admitted: 0,
+      deferred: 0,
+      drainId: randomUUID(),
+      elapsedMs: 0,
+      errorClass: collectorErrorClass(error),
+      excluded: 0,
+      phase: "service-failure",
+      processed: 0,
+      processingLines,
+      quarantined: 0,
+      queuedLines,
+      replayed: 0,
+      requeued: 0,
+      schemaVersion: 1,
+      untouched: processingLines,
+    };
+    await appendDurableLine(drainReceiptPath, JSON.stringify(receipt));
+  };
   let drainQueue: Promise<void> = Promise.resolve();
   const drain = () => {
     drainQueue = drainQueue.then(async () => {
-      await drainNativeWakeSpool({
-        ...input,
-        lockPath: `${input.socketPath}.drain.lock`,
-      }).catch(() => undefined);
+      try {
+        await drainNativeWakeSpool({
+          ...input,
+          lockPath: `${input.socketPath}.drain.lock`,
+        });
+      } catch (error) {
+        await recordServiceFailure(error).catch(() => undefined);
+      }
     });
     return drainQueue;
   };

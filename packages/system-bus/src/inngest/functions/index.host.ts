@@ -1,5 +1,4 @@
 import { createVideoFunctions } from "joelclaw-video";
-import { echoFizzle } from "../../memory/echo-fizzle";
 import { inngest } from "../client";
 import { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 import { adrPitchExecute } from "./adr-pitch-execute";
@@ -16,7 +15,6 @@ import {
 } from "./agent-loop";
 import { agentTaskRun } from "./agent-task-run";
 import { agentUsageScan } from "./agent-usage-scan";
-import { backfillObserve } from "./backfill-observe";
 import { bookDownload } from "./book-download";
 import { channelMessageClassify } from "./channel-message-classify";
 import { channelMessageIngest } from "./channel-message-ingest";
@@ -67,7 +65,6 @@ import { docsReindexBatch } from "./docs-reindex-batch";
 import { docsReindexV2 } from "./docs-reindex-v2";
 import { emailNag } from "./email-nag";
 import { embedText } from "./embed";
-import { friction } from "./friction";
 import { frictionFix } from "./friction-fix";
 import {
   frontAssigneeChanged,
@@ -93,10 +90,8 @@ import { meetingTranscriptIndex } from "./meeting-transcript-index";
 import { megaJourneyWatch } from "./mega-journey-watch";
 import { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 import { memoryEmbed } from "./memory/embed";
-import { nightlyMaintenance } from "./memory/nightly-maintenance";
 import { memoryRetroWriter } from "./memory/retro-writer";
 import { memoryRunCaptured } from "./memory/run-captured";
-import { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 import { messageEventConsumer } from "./message-event-consumer";
 import {
   messageReactionBridge,
@@ -115,7 +110,6 @@ import { nasSoakReview, nasSoakSample } from "./nas-soak";
 import { networkStatusUpdate } from "./network-status-update";
 import { noiseRateGuard } from "./noise-rate-guard";
 import { o11yTriage } from "./o11y-triage";
-import { observeSessionNoted } from "./observe-session-noted";
 import { paneSchedule } from "./pane-schedule";
 import { paneScheduleReconcile } from "./pane-schedule-reconcile";
 import { selfHealingGatewayBridge } from "./self-healing-gateway-bridge";
@@ -215,7 +209,6 @@ export const hostFunctionDefinitions = [
   xDiscoveryHook,
   xAccountActivityReceived,
   embedText,
-  backfillObserve,
   heartbeatCron,
   heartbeatWake,
   agentDispatch,
@@ -245,7 +238,6 @@ export const hostFunctionDefinitions = [
   voiceSyntheticCall,
   voiceTelnyxBalance,
   voiceWorkerCanary,
-  observeSessionNoted,
   vercelDeploySucceeded,
   vercelDeployError,
   vercelDeployCreated,
@@ -259,15 +251,12 @@ export const hostFunctionDefinitions = [
   learnerFlowAction,
   workStatePass,
   granolaBackfill,
-  friction,
   frictionFix,
   frontMessageReceived,
   frontMessageSent,
   frontAssigneeChanged,
   frontMessageReader,
   telnyxNotify,
-  nightlyMaintenance,
-  weeklyMaintenanceSummary,
   adrEvidenceCapture,
   memoryEmbed,
   memoryRetroWriter,
@@ -276,7 +265,6 @@ export const hostFunctionDefinitions = [
   typesenseStartupBudgetCheck,
   criticalDbScheduledRebuild,
   criticalDbStalenessCheck,
-  echoFizzle,
   taskTriage,
   checkSessions,
   checkTriggers,
