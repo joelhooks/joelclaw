@@ -106,6 +106,7 @@ export interface CollectorReceiptV1 {
 }
 
 export interface CollectorDrainHealthReceiptV1 extends CollectorReceiptV1 {
+  readonly compacted: number;
   readonly drainId: string;
   readonly elapsedMs: number;
   readonly errorClass?: "collector" | "filesystem" | "unknown";
@@ -124,6 +125,7 @@ export interface CollectorDrainOptions {
   ) => Promise<void>;
   readonly closeMaxMs?: number;
   readonly closeStableMs?: number;
+  readonly compactedWakePath?: string;
   readonly drainNow?: () => number;
   readonly drainReceiptPath?: string;
   readonly lockPath: string;
@@ -812,6 +814,60 @@ const delay = (milliseconds: number) =>
 const countNonEmptyLines = (value: string) =>
   value.split("\n").reduce((count, line) => count + (line.length === 0 ? 0 : 1), 0);
 
+const compactWakeLines = (
+  lines: readonly string[],
+): { readonly compacted: readonly string[]; readonly retained: readonly string[] } => {
+  const epochs = new Map<string, number>();
+  const groups = new Map<string, Array<{ readonly index: number; readonly wake: NativeWakeV1 }>>();
+  const retainedIndexes = new Set<number>();
+  const retainedEventIds = new Set<string>();
+
+  for (const [index, line] of lines.entries()) {
+    let wake: NativeWakeV1;
+    try {
+      wake = decodeWake(line);
+    } catch {
+      retainedIndexes.add(index);
+      continue;
+    }
+    const base = hash(
+      JSON.stringify([
+        wake.runtime,
+        wake.sessionId,
+        wake.transcriptPath,
+        wake.incarnationId ?? null,
+      ]),
+    );
+    let epoch = epochs.get(base) ?? 0;
+    const priorGroup = groups.get(`${base}:${epoch}`);
+    if (isStartEvent(wake) && priorGroup !== undefined && priorGroup.length > 0) epoch += 1;
+    const key = `${base}:${epoch}`;
+    const group = groups.get(key) ?? [];
+    group.push({ index, wake });
+    groups.set(key, group);
+    epochs.set(base, wake.close ? epoch + 1 : epoch);
+  }
+
+  const retain = (item: { readonly index: number; readonly wake: NativeWakeV1 } | undefined) => {
+    if (item === undefined || retainedEventIds.has(item.wake.eventId)) return;
+    retainedEventIds.add(item.wake.eventId);
+    retainedIndexes.add(item.index);
+  };
+  for (const group of groups.values()) {
+    retain(group.find((item) => isStartEvent(item.wake)));
+    retain(group.findLast((item) => item.wake.exclusion === "inference-session"));
+    retain(group.findLast((item) => item.wake.close) ?? group.at(-1));
+  }
+
+  const retained: string[] = [];
+  const compacted: string[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (retainedIndexes.has(index)) retained.push(line);
+    else compacted.push(line);
+  }
+  return { compacted, retained };
+};
+
 const collectorErrorClass = (error: unknown): "collector" | "filesystem" | "unknown" => {
   if (typeof error === "object" && error !== null && "code" in error) return "filesystem";
   if (error instanceof Error) return "collector";
@@ -901,6 +957,7 @@ export const drainNativeWakeSpool = async (
     quarantined: 0,
     replayed: 0,
   };
+  let compacted = 0;
   let processingLines = 0;
   let requeued = 0;
   let terminalError: unknown;
@@ -918,6 +975,7 @@ export const drainNativeWakeSpool = async (
   ) => {
     const receipt: CollectorDrainHealthReceiptV1 = {
       ...counts,
+      compacted,
       drainId,
       elapsedMs: Math.max(0, drainNow() - startedAt),
       ...(error === undefined ? {} : { errorClass: collectorErrorClass(error) }),
@@ -973,7 +1031,8 @@ export const drainNativeWakeSpool = async (
       readonly receipt: ImmutableStreamReceiptV1;
       readonly sourceBytes: Uint8Array;
     }) => {
-      const committedOffset = checkpointInput.exact?.offset ?? checkpointInput.receipt.fromByte ?? 0;
+      const committedOffset =
+        checkpointInput.exact?.offset ?? checkpointInput.receipt.fromByte ?? 0;
       const committedStreamPath =
         checkpointInput.exact?.streamPath ?? checkpointInput.receipt.streamPath;
       const committedSource = new Uint8Array(await readFile(committedStreamPath));
@@ -1589,14 +1648,18 @@ export const drainNativeWakeSpool = async (
         return true;
       }
     });
-    const linesToRequeue = [...retainedDeferredLines, ...untouchedLines];
-    requeued = linesToRequeue.length;
+    const requeueCompaction = compactWakeLines([...retainedDeferredLines, ...untouchedLines]);
     untouched = untouchedLines.length;
-    if (linesToRequeue.length > 0) {
-      await appendFile(input.spoolPath, `${linesToRequeue.join("\n")}\n`, {
-        encoding: "utf8",
-        mode: 0o600,
-      });
+    if (requeueCompaction.compacted.length > 0) {
+      await appendDurableLine(
+        input.compactedWakePath ?? `${input.spoolPath}.compacted.jsonl`,
+        requeueCompaction.compacted.join("\n"),
+      );
+      compacted = requeueCompaction.compacted.length;
+    }
+    if (requeueCompaction.retained.length > 0) {
+      await appendDurableLine(input.spoolPath, requeueCompaction.retained.join("\n"));
+      requeued = requeueCompaction.retained.length;
     }
     await unlink(processingPath).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
@@ -1682,6 +1745,7 @@ export const startNativeCollectorService = async (
       .catch(() => 0);
     const receipt: CollectorDrainHealthReceiptV1 = {
       admitted: 0,
+      compacted: 0,
       deferred: 0,
       drainId: randomUUID(),
       elapsedMs: 0,

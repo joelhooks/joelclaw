@@ -1052,9 +1052,7 @@ describe("common collector", () => {
             ...(input.previousTranscriptHash === undefined
               ? {}
               : { previousTranscriptHash: input.previousTranscriptHash }),
-            ...(input.priorTurnCount === undefined
-              ? {}
-              : { priorTurnCount: input.priorTurnCount }),
+            ...(input.priorTurnCount === undefined ? {} : { priorTurnCount: input.priorTurnCount }),
             segment: new TextDecoder().decode(input.segmentBytes),
           });
           return {
@@ -1192,7 +1190,9 @@ describe("common collector", () => {
     const queued = (await readFile(spoolPath, "utf8")).trim().split("\n");
     expect(queued).toEqual([JSON.stringify(wakes[1])]);
     await expect(lstat(`${spoolPath}.processing`)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(lstat(path.join(root, "collector.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(path.join(root, "collector.lock"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     const healthReceipts = (await readFile(receiptPath, "utf8"))
       .trim()
       .split("\n")
@@ -1202,6 +1202,43 @@ describe("common collector", () => {
     const rawReceipts = await readFile(receiptPath, "utf8");
     expect(rawReceipts).not.toContain("private-");
     expect(rawReceipts).not.toContain(root);
+  });
+
+  it("compacts superseded deferred wakes while preserving their exact metadata", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-collector-requeue-compaction-"));
+    const transcriptPath = path.join(root, "session.jsonl");
+    const spoolPath = path.join(root, "wake.jsonl");
+    const compactedWakePath = path.join(root, "compacted.jsonl");
+    const receiptPath = path.join(root, "drain-receipts.jsonl");
+    await writeFile(transcriptPath, "");
+    const decoded = decodeNativeEvent("pi", wakeInput("pi", transcriptPath));
+    if (decoded._tag !== "Accepted") throw new Error("expected wake");
+    const wakes = Array.from({ length: 4 }, (_, index) => ({
+      ...decoded.wake,
+      eventId: `deferred-${index}`,
+    }));
+    for (const wake of wakes) await appendNativeWake(spoolPath, wake);
+
+    const receipt = await drainNativeWakeSpool({
+      admission: { admit: async () => ({ disposition: "deferred" }) },
+      compactedWakePath,
+      drainReceiptPath: receiptPath,
+      lockPath: path.join(root, "collector.lock"),
+      maxLines: 10,
+      spoolPath,
+      statePath: path.join(root, "state.json"),
+    });
+
+    expect(receipt).toMatchObject({ deferred: 4, processed: 4 });
+    expect((await readFile(spoolPath, "utf8")).trim()).toBe(JSON.stringify(wakes[3]));
+    expect((await readFile(compactedWakePath, "utf8")).trim().split("\n")).toEqual(
+      wakes.slice(0, 3).map((wake) => JSON.stringify(wake)),
+    );
+    const healthReceipts = (await readFile(receiptPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { compacted: number; phase: string; requeued: number });
+    expect(healthReceipts.at(-1)).toMatchObject({ compacted: 3, requeued: 1 });
   });
 
   it("does not duplicate requeued wakes when the batch receipt fails", async () => {
@@ -1240,7 +1277,9 @@ describe("common collector", () => {
     ]);
     expect(phases).toEqual(["started", "batch", "failed", "finished"]);
     await expect(lstat(`${spoolPath}.processing`)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(lstat(path.join(root, "collector.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(path.join(root, "collector.lock"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("exits before starting another wake after the elapsed drain bound", async () => {
