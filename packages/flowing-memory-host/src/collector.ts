@@ -1265,7 +1265,17 @@ export const drainNativeWakeSpool = async (
           continue;
         }
         if (segmentBytes.byteLength === 0 && !effectiveWake.close) {
-          if (isStartEvent(effectiveWake) && exact === undefined && receipt === undefined) {
+          if (exact !== undefined) {
+            state.streams[key] = {
+              ...exact,
+              acceptedEventIds: [...new Set([...exact.acceptedEventIds, effectiveWake.eventId])],
+            };
+            await persist(input.statePath, state);
+            counts.replayed += 1;
+            counts.processed += 1;
+            continue;
+          }
+          if (isStartEvent(effectiveWake) && receipt === undefined) {
             state.streams[key] = stateEntryFor({
               acceptedEventIds: [effectiveWake.eventId],
               closed: false,

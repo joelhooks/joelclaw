@@ -760,6 +760,47 @@ describe("common collector", () => {
     expect(await readFile(path.join(root, "state.json"), "utf8")).not.toContain("message");
   });
 
+  it("acknowledges a distinct wake with no source growth as replayed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-collector-no-growth-"));
+    const transcriptPath = path.join(root, "session.jsonl");
+    const spoolPath = path.join(root, "wake.jsonl");
+    const statePath = path.join(root, "state.json");
+    await writeFile(transcriptPath, '{"role":"user","message":"stable"}\n');
+    const decoded = decodeNativeEvent("pi", wakeInput("pi", transcriptPath));
+    if (decoded._tag !== "Accepted") throw new Error("expected wake");
+    await appendNativeWake(spoolPath, decoded.wake);
+    await drainNativeWakeSpool({
+      admission: { admit: async () => ({ disposition: "admitted" }) },
+      lockPath: path.join(root, "collector.lock"),
+      spoolPath,
+      statePath,
+    });
+
+    const noGrowthWake = {
+      ...decoded.wake,
+      eventId: "no-growth-distinct-event",
+      occurredAt: new Date(Date.now() + 1_000).toISOString(),
+    };
+    await appendNativeWake(spoolPath, noGrowthWake);
+    const replay = await drainNativeWakeSpool({
+      admission: {
+        admit: async () => {
+          throw new Error("no-growth wake must not call admission");
+        },
+      },
+      lockPath: path.join(root, "collector.lock"),
+      spoolPath,
+      statePath,
+    });
+
+    expect(replay).toMatchObject({ deferred: 0, processed: 1, replayed: 1 });
+    expect(await readFile(spoolPath, "utf8").catch(() => "")).toBe("");
+    const state = JSON.parse(await readFile(statePath, "utf8")) as {
+      streams: Record<string, { acceptedEventIds: string[] }>;
+    };
+    expect(Object.values(state.streams)[0]?.acceptedEventIds).toHaveLength(2);
+  });
+
   it("bounds one drain, requeues untouched wakes, and emits metadata-only receipts", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "fm-collector-bounded-"));
     const spoolPath = path.join(root, "wake.jsonl");
