@@ -14,12 +14,13 @@ tags:
 
 # Memory System
 
-The joelclaw memory system in one breath: sessions on flagg stream into
-raw capture → the observer distills observation pages into the Brain →
-dreams condense aging pages into rollups → the neat-memory curator judges
-candidates and DMs Joel the best → Joel's emoji reaction grades the send →
-grades feed the judge's history. The wiki renders every registered Brain
-at `brain.joelclaw.com/<root>/<slug>/`.
+The joelclaw memory system in one breath: accepted Runs remain immutable
+evidence → flowing memory derives scoped observations and reflections →
+composed recall returns flowing reflections, flowing observations, and curated
+Brain pages as separate lanes. The raw-first Observer tick is retired. Dreams
+still condense aging Brain pages, and the neat-memory curator still grades
+existing eligible Brain candidates. The wiki renders every registered Brain at
+`brain.joelclaw.com/<root>/<slug>/`.
 
 **The living map with per-subsystem health verdicts:**
 https://brain.joelclaw.com/joelclaw/resources/memory-system/ — read it
@@ -49,7 +50,7 @@ and `.brain/projects/memory-system-repair/` (fixes + open decisions).
 | Observer cursor / session / family / pending | `~/.joelclaw/observer-*.json` |
 | Dispatch rules (what wakes the observer) | `<observer repo>/dispatch-rules.json` — dispatcher re-reads per classify; no restart needed |
 | Logs | `/tmp/observer-{tick,dream,neat-memory,self-maintenance,release-promotion}.log` |
-| LaunchAgents | `com.joelclaw.observer-tick` (every 30 min), `com.joelclaw.observer-dream` (06:10), `com.joelclaw.observer-neat-memory` (16:15 — dead-man revive only) |
+| LaunchAgents | Observer tick retired 2026-08-25; `com.joelclaw.observer-dream` (06:10) and `com.joelclaw.observer-neat-memory` (16:15 dead-man) remain active |
 | Message journal fail-open spool | `~/.joelclaw/spool/message-journal/` |
 | Current flowing wake spool | `~/.joelclaw/flowing-memory/native-wakes.jsonl` (single collector ownership) |
 | Legacy Central capture outboxes | flat and namespaced JSON queues; preserve as migration evidence, not current writes |
