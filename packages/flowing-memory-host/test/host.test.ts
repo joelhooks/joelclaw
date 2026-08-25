@@ -255,8 +255,22 @@ describe("live admission scope policy", () => {
     expect(second?.project).toBe("second.app");
   });
 
-  it("defers a wake without trusted cwd evidence", async () => {
-    await expect(resolveTrustedAdmissionConfig(inputFor())).resolves.toBeUndefined();
+  it("routes a wake without cwd into the private fleet fallback", async () => {
+    await expect(resolveTrustedAdmissionConfig(inputFor())).resolves.toMatchObject({
+      privacy: "private",
+      project: "joelclaw-fleet",
+      projection: "enabled",
+      scopeFallbackReason: "no-repository",
+      workstream: "default",
+    });
+  });
+
+  it("fails closed for an untrusted relative cwd", async () => {
+    await expect(resolveTrustedAdmissionConfig(inputFor("relative/path"))).resolves.toMatchObject({
+      privacy: "sensitive",
+      projection: "disabled",
+      scopeFallbackReason: "untrusted-repository",
+    });
   });
 
   it("fails closed when a repository privacy policy is malformed", async () => {

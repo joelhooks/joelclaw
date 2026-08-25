@@ -59,7 +59,8 @@ export const resolveTrustedAdmissionConfig = async (
   input: NativeAdmissionInputV1,
 ): Promise<TrustedAdmissionConfigV1 | undefined> => {
   const cwd = input.wake.cwd;
-  if (cwd === undefined || !path.isAbsolute(cwd)) return undefined;
+  if (cwd === undefined) return fallbackConfig("no-repository");
+  if (!path.isAbsolute(cwd)) return fallbackConfig("untrusted-repository");
   const resolution = await resolveRepositoryScope({ cwd });
   if (resolution._tag === "TransientFailure") return undefined;
   if (resolution._tag === "NoRepository") return fallbackConfig("no-repository");
