@@ -3,6 +3,8 @@ import { homedir, hostname, userInfo } from "node:os";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
+import { canonicalScopeKey } from "@joelclaw/recall";
+
 import { reachOpenCodeReadBarrier } from "./opencode-source-barrier.js";
 
 export const OPENCODE_SOURCE_SCHEMA_VERSION =
@@ -223,7 +225,10 @@ const establishReadSnapshot = (database: DatabaseSync) => {
   if (count === undefined) throw new OpenCodeReadError("transaction");
 };
 
-const schemaColumns = (database: DatabaseSync, table: "message" | "part" | "session") => {
+const schemaColumns = (
+  database: DatabaseSync,
+  table: "message" | "part" | "session" | "workspace",
+) => {
   const rows = all(database, `PRAGMA table_info("${table}")`);
   return rows.map((raw) => {
     const row = object(raw);
@@ -257,6 +262,7 @@ interface SessionRowV1 {
   readonly id: string;
   readonly parentId?: string;
   readonly timeCreated: number;
+  readonly workspaceId?: string;
 }
 
 interface MessageRowV1 {
@@ -277,15 +283,52 @@ const parseSessionRow = (raw: unknown): SessionRowV1 => {
   const id = nonEmptyString(row?.id);
   const parentId = row?.parent_id === null ? undefined : nonEmptyString(row?.parent_id);
   const timeCreated = safeInteger(row?.time_created);
+  const workspaceId = row?.workspace_id === null ? undefined : nonEmptyString(row?.workspace_id);
   if (
     directory === undefined ||
     id === undefined ||
     (parentId === undefined && row?.parent_id !== null) ||
-    timeCreated === undefined
+    timeCreated === undefined ||
+    (workspaceId === undefined && row?.workspace_id !== null)
   ) {
     throw new OpenCodeReadError("decode");
   }
-  return { directory, id, ...(parentId === undefined ? {} : { parentId }), timeCreated };
+  return {
+    directory,
+    id,
+    ...(parentId === undefined ? {} : { parentId }),
+    timeCreated,
+    ...(workspaceId === undefined ? {} : { workspaceId }),
+  };
+};
+
+const WORKSTREAM_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,239}$/u;
+
+const workspaceWorkstreams = (database: DatabaseSync): ReadonlyMap<string, string> => {
+  const tableCount = scalarCount(
+    database,
+    "SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = 'workspace'",
+  );
+  if (tableCount === 0) return new Map();
+  const columns = schemaColumns(database, "workspace");
+  const hasId = columns.some(
+    (column) => column.name === "id" && column.type === "TEXT" && column.primaryKey === 1,
+  );
+  const hasBranch = columns.some(
+    (column) => column.name === "branch" && column.type === "TEXT" && column.notNull === 0,
+  );
+  if (!hasId || !hasBranch) return new Map();
+
+  const workstreams = new Map<string, string>();
+  for (const raw of all(database, "SELECT id, branch FROM workspace")) {
+    const row = object(raw);
+    const id = nonEmptyString(row?.id);
+    const branch = row?.branch === null ? undefined : nonEmptyString(row?.branch);
+    if (id === undefined || branch === undefined) continue;
+    const workstream = canonicalScopeKey(branch, "");
+    if (WORKSTREAM_PATTERN.test(workstream)) workstreams.set(id, workstream);
+  }
+  return workstreams;
 };
 
 const parseMessageRow = (raw: unknown, sessionIdentityHash: string): MessageRowV1 => {
@@ -408,6 +451,7 @@ export interface OpenCodeSourceStreamV1 {
   readonly sessionIdentityHash: string;
   readonly sourceCreatedAt: number;
   readonly sourceDirectory: string;
+  readonly sourceWorkstream: string;
   readonly streamIdentityHash: string;
 }
 
@@ -456,8 +500,9 @@ const readSnapshot = (
 
   const sessionRows = all(
     database,
-    "SELECT directory, id, parent_id, time_created FROM session ORDER BY time_created ASC, id ASC",
+    "SELECT directory, id, parent_id, time_created, workspace_id FROM session ORDER BY time_created ASC, id ASC",
   ).map(parseSessionRow);
+  const workstreams = workspaceWorkstreams(database);
   const messageStatement = database.prepare(
     "SELECT id, time_created, time_updated, data FROM message WHERE session_id = ? ORDER BY time_created ASC, id ASC",
   );
@@ -506,6 +551,7 @@ const readSnapshot = (
       sessionIdentityHash,
       sourceCreatedAt: session.timeCreated,
       sourceDirectory: session.directory,
+      sourceWorkstream: workstreams.get(session.workspaceId ?? "") ?? "default",
       streamIdentityHash: hashStreamIdentity(session.id, adapterInstanceIdentityHash),
     });
   }

@@ -122,14 +122,15 @@ const insertSession = (
     readonly id: string;
     readonly parentId?: string;
     readonly timeCreated: number;
+    readonly workspaceId?: string;
   },
 ) => {
   database
     .prepare(
       `INSERT INTO session (
         id, project_id, parent_id, slug, directory, title, version,
-        time_created, time_updated, time_archived
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        time_created, time_updated, time_archived, workspace_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.id,
@@ -142,6 +143,7 @@ const insertSession = (
       input.timeCreated,
       input.timeCreated + 1,
       input.id.includes("root") ? 9_999 : null,
+      input.workspaceId ?? null,
     );
 };
 
@@ -466,6 +468,48 @@ describe("OpenCode read-only source", () => {
       expect(otherAdapter.streams[0]?.prefixHash).toBe(root?.prefixHash);
       expect(otherAdapter.streams[0]?.sessionIdentityHash).toBe(root?.sessionIdentityHash);
       expect(otherAdapter.streams[0]?.streamIdentityHash).not.toBe(root?.streamIdentityHash);
+    } finally {
+      fixture.writer.close();
+    }
+  });
+
+  it("maps source-owned workspace branches and defaults absent or invalid bindings", async () => {
+    const fixture = await createFixture();
+    try {
+      fixture.writer.exec(`
+        CREATE TABLE workspace (
+          id TEXT PRIMARY KEY,
+          branch TEXT,
+          directory TEXT,
+          project_id TEXT NOT NULL
+        );
+      `);
+      fixture.writer
+        .prepare("INSERT INTO workspace (id, branch, directory, project_id) VALUES (?, ?, ?, ?)")
+        .run(
+          "workspace-valid",
+          "Feature/Typed Branch",
+          "/source/worktree",
+          "project-private-marker",
+        );
+      fixture.writer
+        .prepare("INSERT INTO workspace (id, branch, directory, project_id) VALUES (?, ?, ?, ?)")
+        .run("workspace-invalid", "🔥", "/source/invalid", "project-private-marker");
+      fixture.writer
+        .prepare("UPDATE session SET workspace_id = ? WHERE id = ?")
+        .run("workspace-valid", "ses-root-private-marker");
+      fixture.writer
+        .prepare("UPDATE session SET workspace_id = ? WHERE id = ?")
+        .run("workspace-invalid", "ses-child-private-marker");
+
+      const snapshot = readOpenCodeSource(fixture.databasePath);
+      expect(snapshot.streams[0]?.sourceWorkstream).toBe("feature/typed-branch");
+      expect(snapshot.streams[1]?.sourceWorkstream).toBe("default");
+
+      fixture.writer
+        .prepare("UPDATE session SET workspace_id = NULL WHERE id = ?")
+        .run("ses-root-private-marker");
+      expect(readOpenCodeSource(fixture.databasePath).streams[0]?.sourceWorkstream).toBe("default");
     } finally {
       fixture.writer.close();
     }

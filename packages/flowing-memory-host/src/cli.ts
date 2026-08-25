@@ -445,7 +445,7 @@ const runOpenCodeCommand = async () => {
           resolveTrustedAdmissionSourceConfig({
             adapterInstanceIdHash: source.adapterInstanceIdentityHash,
             cwd: stream.sourceDirectory,
-            historicalWorkstream: "default",
+            historicalWorkstream: stream.sourceWorkstream,
           }),
         writer,
       },

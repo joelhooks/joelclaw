@@ -10,6 +10,7 @@ import {
   decodeDomain,
   RuntimeKindSchema,
 } from "@joelclaw-memory/domain";
+import { PostgresAdmissionLedgerError } from "@joelclaw-memory/postgres";
 import { describe, expect, it } from "vitest";
 
 import type { TrustedAdmissionConfigV1 } from "../src/admission-builder.js";
@@ -68,6 +69,7 @@ const stream = (input: {
     sessionIdentityHash: sha256(`session:${id}`),
     sourceCreatedAt: input.createdAt ?? 1_700_000_000_000,
     sourceDirectory: "/private/path/DO_NOT_LEAK_DIRECTORY",
+    sourceWorkstream: "default",
     streamIdentityHash: sha256(`stream:${id}`),
   };
 };
@@ -110,7 +112,12 @@ const config = (privacy: "private" | "sensitive" = "private"): TrustedAdmissionC
 class FakeAuthority implements OpenCodeAdmissionAuthority {
   readonly tails = new Map<string, OpenCodeAcceptedTailV1>();
   readonly commands: unknown[] = [];
-  preflightResult = { migrationCompatible: true, runtimeCompatible: true, writable: true };
+  preflightResult = {
+    migrationCompatible: true,
+    readable: true,
+    runtimeCompatible: true,
+    writable: true,
+  };
   throwAfterCommitOnce = false;
 
   readonly preflight = async () => this.preflightResult;
@@ -126,6 +133,7 @@ class FakeAuthority implements OpenCodeAdmissionAuthority {
       factId: acceptance.acceptanceId,
       privacy: acceptance.privacy.tier,
       project: acceptance.scope.scope.project,
+      projection: acceptance.projection.decision,
       sourcePrefixHash: acceptance.source.sourcePrefixHash,
       sourceStreamId: acceptance.source.sourceStreamId,
       toByteExclusive: acceptance.source.toByteExclusive,
@@ -246,6 +254,7 @@ describe("OpenCode accepted producer", () => {
       factId: "e".repeat(64),
       privacy: "private",
       project: "joelclaw-fleet",
+      projection: "enabled",
       sourcePrefixHash: "f".repeat(64),
       sourceStreamId: candidate.sourceStreamId,
       toByteExclusive: changed.byteCount,
@@ -311,8 +320,10 @@ describe("OpenCode accepted producer", () => {
     if (prior?.built.command._tag !== "exclude") throw new Error("expected prior exclusion");
     const tail: OpenCodeAcceptedTailV1 = {
       factId: prior.built.command.receipt.exclusionId,
+      disabledFromByte: 0,
       privacy: "sensitive",
       project: "joelclaw-fleet",
+      projection: "disabled",
       sourcePrefixHash: first.prefixHash,
       sourceStreamId: prior.sourceStreamId,
       toByteExclusive: first.byteCount,
@@ -342,6 +353,7 @@ describe("OpenCode accepted producer", () => {
 
     run.authority.preflightResult = {
       migrationCompatible: false,
+      readable: true,
       runtimeCompatible: true,
       writable: true,
     };
@@ -452,5 +464,136 @@ describe("OpenCode accepted producer", () => {
     expect(output).not.toMatch(
       /raw-session-private-marker|raw-message-private-marker|raw-part-private-marker|DO_NOT_LEAK_DIRECTORY|joelclaw-fleet|first visible turn|postgres(?:ql)?:\/\//u,
     );
+  });
+
+  it("bounds mutations instead of settled rows so twelve sessions progress at max two", async () => {
+    const streams = Array.from({ length: 12 }, (_, index) =>
+      stream({
+        createdAt: 100 + index,
+        id: `bounded-${index}`,
+        records: [index % 2 === 0 ? firstRecord : secondRecord],
+      }),
+    );
+    const run = await harness(streams);
+    for (let pass = 0; pass < 6; pass += 1) {
+      const receipt = await reconcileOpenCodeSnapshot(
+        run.snapshot,
+        { apply: true, confirmed: true, maxSessions: 2 },
+        run.dependencies,
+      );
+      expect(receipt.counts.settled).toBe(2);
+      expect(run.authority.commands).toHaveLength((pass + 1) * 2);
+    }
+    const settled = await reconcileOpenCodeSnapshot(
+      run.snapshot,
+      { apply: true, confirmed: true, maxSessions: 2 },
+      run.dependencies,
+    );
+    expect(settled.counts).toMatchObject({ noChange: 12, settled: 0 });
+    expect(run.authority.commands).toHaveLength(12);
+  });
+
+  it("uses the acceptance fact ID and binds parent provenance into immutable evidence", async () => {
+    const parentSessionIdentityHash = sha256("accepted-parent");
+    const source = stream({ parent: parentSessionIdentityHash, records: [firstRecord] });
+    const candidate = buildOpenCodeCandidate({ config: config(), stream: source });
+    if (candidate?.built.command._tag !== "accept" || candidate.built.acceptedRun === undefined) {
+      throw new Error("expected accepted candidate");
+    }
+    expect(candidate.factId).toBe(candidate.built.command.acceptance.acceptanceId);
+    expect(candidate.factId).not.toBe(candidate.built.acceptedRun.runId);
+    expect(candidate.built.command.acceptance.sourceProvenance).toEqual({
+      parentSessionIdentityHash,
+    });
+    expect(candidate.built.acceptedRun.sourceProvenance).toEqual({ parentSessionIdentityHash });
+
+    const run = await harness([source]);
+    await reconcileOpenCodeSnapshot(
+      run.snapshot,
+      { apply: true, confirmed: true, maxSessions: 1 },
+      run.dependencies,
+    );
+    const [name] = await readdir(run.evidenceDirectory);
+    const body = JSON.parse(
+      await readFile(path.join(run.evidenceDirectory, name ?? "missing"), "utf8"),
+    ) as { readonly sourceProvenance?: unknown };
+    expect(body.sourceProvenance).toEqual({ parentSessionIdentityHash });
+  });
+
+  it("keeps an equal-tier projection-disabled stream excluded after policy re-enable", () => {
+    const first = stream({ records: [firstRecord] });
+    const resumed = stream({ records: [firstRecord, secondRecord] });
+    const prior = buildOpenCodeCandidate({
+      config: { ...config(), projection: "disabled" },
+      stream: first,
+    });
+    if (prior?.built.command._tag !== "exclude") throw new Error("expected exclusion");
+    const candidate = buildOpenCodeCandidate({
+      config: config(),
+      stream: resumed,
+      tail: {
+        disabledFromByte: 0,
+        factId: prior.factId,
+        privacy: "private",
+        project: "joelclaw-fleet",
+        projection: "disabled",
+        sourcePrefixHash: first.prefixHash,
+        sourceStreamId: prior.sourceStreamId,
+        toByteExclusive: first.byteCount,
+        workstream: "default",
+      },
+    });
+    expect(candidate?.built.acceptedRun).toBeUndefined();
+    expect(candidate?.built.command._tag).toBe("exclude");
+  });
+
+  it.each([
+    ["database", "authority-admission-unavailable"],
+    ["transient", "authority-admission-unavailable"],
+    ["integrity-conflict", "authority-integrity-failed"],
+    ["timeout", "authority-timeout"],
+  ] as const)("globally stops on ledger %s failures", async (kind, code) => {
+    const source = stream({ records: [firstRecord] });
+    const run = await harness([source]);
+    await expect(
+      reconcileOpenCodeSnapshot(
+        run.snapshot,
+        { apply: true, confirmed: true, maxSessions: 1 },
+        {
+          ...run.dependencies,
+          writer: {
+            admitBuilt: async () => {
+              throw new PostgresAdmissionLedgerError({
+                kind,
+                message: "synthetic safe failure",
+                operation: "admit",
+              });
+            },
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code });
+  });
+
+  it("keeps invalid ledger input session-local with a bounded safe code", async () => {
+    const source = stream({ records: [firstRecord] });
+    const run = await harness([source]);
+    const receipt = await reconcileOpenCodeSnapshot(
+      run.snapshot,
+      { apply: true, confirmed: true, maxSessions: 1 },
+      {
+        ...run.dependencies,
+        writer: {
+          admitBuilt: async () => {
+            throw new PostgresAdmissionLedgerError({
+              kind: "invalid-input",
+              message: "do not expose this detail",
+              operation: "admit",
+            });
+          },
+        },
+      },
+    );
+    expect(receipt.streams[0]).toMatchObject({ _tag: "failed", code: "admission-invalid" });
   });
 });

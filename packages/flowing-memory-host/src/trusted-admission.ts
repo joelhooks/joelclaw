@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, open, readFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { link, mkdir, open, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -24,20 +24,72 @@ export interface AdmissionLedgerClient {
 
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-const writeImmutable = async (target: string, bytes: Uint8Array) => {
-  await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+export type ImmutableEvidenceStage = "postinstall" | "prefact" | "preinstall";
+
+export interface ImmutableEvidenceHooks {
+  readonly onStage?: (stage: ImmutableEvidenceStage) => Promise<void> | void;
+}
+
+const syncDirectory = async (directory: string) => {
+  const handle = await open(directory, "r");
   try {
-    const handle = await open(target, "wx", 0o600);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+};
+
+const requireExistingExact = async (target: string, bytes: Uint8Array) => {
+  const existing = await readFile(target);
+  if (sha(existing) !== sha(bytes)) {
+    throw new Error("immutable-evidence-identity-conflict");
+  }
+};
+
+/**
+ * Persist one immutable evidence body before its ledger fact is admitted.
+ * The hard-link install is atomic and refuses to replace an existing body.
+ */
+export const persistImmutableEvidence = async (
+  target: string,
+  bytes: Uint8Array,
+  hooks: ImmutableEvidenceHooks = {},
+) => {
+  const directory = path.dirname(target);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const temporary = path.join(
+    directory,
+    `.${path.basename(target)}.${process.pid}.${randomBytes(12).toString("hex")}.tmp`,
+  );
+  let temporaryExists = false;
+  try {
+    const handle = await open(temporary, "wx", 0o600);
+    temporaryExists = true;
     try {
+      await handle.chmod(0o600);
       await handle.writeFile(bytes);
+      await handle.sync();
     } finally {
       await handle.close();
     }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    const existing = await readFile(target);
-    if (sha(existing) !== sha(bytes)) {
-      throw new Error("immutable-evidence-identity-conflict");
+
+    await hooks.onStage?.("preinstall");
+    try {
+      await link(temporary, target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await requireExistingExact(target, bytes);
+    }
+    await hooks.onStage?.("postinstall");
+    await unlink(temporary);
+    temporaryExists = false;
+    await syncDirectory(directory);
+    await hooks.onStage?.("prefact");
+  } finally {
+    if (temporaryExists) {
+      await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
     }
   }
 };
@@ -48,6 +100,7 @@ export interface TrustedAdmissionWriter {
 
 export const makeTrustedAdmissionWriter = (input: {
   readonly evidenceDirectory: string;
+  readonly evidenceHooks?: ImmutableEvidenceHooks;
   readonly ledger: AdmissionLedgerClient;
 }): TrustedAdmissionWriter => ({
   admitBuilt: async (built) => {
@@ -63,9 +116,10 @@ export const makeTrustedAdmissionWriter = (input: {
         throw new Error("accepted-run-acceptance-mismatch");
       }
       const encoded = encodeDomain(AcceptedRunDeltaV1Schema)(built.acceptedRun);
-      await writeImmutable(
+      await persistImmutableEvidence(
         path.join(input.evidenceDirectory, `${built.acceptedRun.runId}.accepted-run-v1.json`),
         new TextEncoder().encode(`${JSON.stringify(encoded)}\n`),
+        input.evidenceHooks,
       );
     }
     const result = await input.ledger.admit(encodeDomain(AdmissionCommandV1Schema)(built.command));

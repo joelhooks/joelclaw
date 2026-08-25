@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
-import type { PrivacyTier } from "@joelclaw-memory/domain";
+import {
+  AcceptedRunSourceProvenanceV1Schema,
+  decodeDomain,
+  type PrivacyTier,
+} from "@joelclaw-memory/domain";
+import { PostgresAdmissionLedgerError } from "@joelclaw-memory/postgres";
 
 import {
   type BuiltAdmissionV1,
@@ -22,13 +27,24 @@ const decoder = new TextDecoder();
 
 const sha256 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 
-const safeCode = (error: unknown, fallback: string) => {
+const sessionSafeCodes = new Set<string>([
+  "admission-failed",
+  "admission-invalid",
+  "candidate-invalid",
+  "scope-mismatch",
+  "scope-unavailable",
+  "source-prefix-mismatch",
+  "source-shrank",
+  "tail-coordinate-mismatch",
+]);
+
+const safeCode = (error: unknown, fallback: OpenCodeSessionFailureCode) => {
   if (
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
     typeof error.code === "string" &&
-    /^[a-z0-9-]{1,80}$/u.test(error.code)
+    sessionSafeCodes.has(error.code)
   ) {
     return error.code;
   }
@@ -36,9 +52,11 @@ const safeCode = (error: unknown, fallback: string) => {
 };
 
 export interface OpenCodeAcceptedTailV1 {
+  readonly disabledFromByte?: number;
   readonly factId: string;
   readonly privacy: PrivacyTier;
   readonly project: string;
+  readonly projection: "disabled" | "enabled";
   readonly sourcePrefixHash: string;
   readonly sourceStreamId: string;
   readonly toByteExclusive: number;
@@ -49,6 +67,7 @@ export interface OpenCodeAcceptedTailV1 {
 
 export interface OpenCodeAuthorityPreflightV1 {
   readonly migrationCompatible: boolean;
+  readonly readable: boolean;
   readonly runtimeCompatible: boolean;
   readonly writable: boolean;
 }
@@ -62,6 +81,7 @@ export interface OpenCodeAdmissionAuthority extends AdmissionLedgerClient {
 
 export type OpenCodeSessionFailureCode =
   | "admission-failed"
+  | "admission-invalid"
   | "candidate-invalid"
   | "scope-mismatch"
   | "scope-unavailable"
@@ -82,8 +102,12 @@ export class OpenCodeSessionBlockedError extends Error {
 
 export type OpenCodeGlobalFailureCode =
   | "apply-confirmation-required"
+  | "authority-admission-unavailable"
+  | "authority-integrity-failed"
   | "authority-preflight-failed"
+  | "authority-read-unavailable"
   | "authority-tail-unavailable"
+  | "authority-timeout"
   | "invalid-max-sessions"
   | "migration-incompatible"
   | "runtime-incompatible"
@@ -191,14 +215,22 @@ const privacyRank: Readonly<Record<PrivacyTier, number>> = {
   sensitive: 2,
 };
 
-const preservePrivacy = (
+const preserveAcceptedPolicy = (
   config: TrustedAdmissionConfigV1,
   tail: OpenCodeAcceptedTailV1 | undefined,
 ): TrustedAdmissionConfigV1 => {
-  if (tail === undefined || privacyRank[config.privacy] >= privacyRank[tail.privacy]) {
-    return config;
-  }
-  return { ...config, privacy: tail.privacy, projection: "disabled" };
+  if (tail === undefined) return config;
+  const privacy =
+    privacyRank[config.privacy] >= privacyRank[tail.privacy] ? config.privacy : tail.privacy;
+  const projection =
+    tail.projection === "disabled" || tail.disabledFromByte !== undefined
+      ? "disabled"
+      : config.projection;
+  return {
+    ...config,
+    privacy,
+    ...(projection === undefined ? {} : { projection }),
+  };
 };
 
 const canonicalRecords = (bytes: Uint8Array): readonly Readonly<Record<string, unknown>>[] => {
@@ -295,7 +327,7 @@ export const buildOpenCodeCandidate = (input: {
   ) {
     throw new OpenCodeSessionBlockedError("candidate-invalid", input.stream.sessionIdentityHash);
   }
-  const config = preservePrivacy(input.config, input.tail);
+  const config = preserveAcceptedPolicy(input.config, input.tail);
   const identityWake = wakeFor(input.stream, {
     eventId: sha256(
       JSON.stringify([
@@ -349,6 +381,13 @@ export const buildOpenCodeCandidate = (input: {
             priorTurnCount: tail.toTurn + 1,
           }),
       segmentBytes,
+      ...(input.stream.parentSessionIdentityHash === undefined
+        ? {}
+        : {
+            sourceProvenance: decodeDomain(AcceptedRunSourceProvenanceV1Schema)({
+              parentSessionIdentityHash: input.stream.parentSessionIdentityHash,
+            }),
+          }),
       toByteExclusive: input.stream.byteCount,
       wake,
     },
@@ -357,7 +396,7 @@ export const buildOpenCodeCandidate = (input: {
   const acceptedRun = built.acceptedRun;
   const factId =
     built.command._tag === "accept"
-      ? acceptedRun?.runId
+      ? built.command.acceptance.acceptanceId
       : built.command._tag === "exclude"
         ? built.command.receipt.exclusionId
         : undefined;
@@ -437,6 +476,9 @@ export const reconcileOpenCodeSnapshot = async (
   if (!preflight.migrationCompatible) {
     throw new OpenCodeGlobalStopError("migration-incompatible");
   }
+  if (!preflight.readable) {
+    throw new OpenCodeGlobalStopError("authority-read-unavailable");
+  }
   if (!preflight.runtimeCompatible) {
     throw new OpenCodeGlobalStopError("runtime-incompatible");
   }
@@ -444,19 +486,19 @@ export const reconcileOpenCodeSnapshot = async (
     throw new OpenCodeGlobalStopError("runtime-write-unavailable");
   }
 
-  const selected = snapshot.streams
-    .toSorted(
-      (left, right) =>
-        left.sourceCreatedAt - right.sourceCreatedAt ||
-        left.sessionIdentityHash.localeCompare(right.sessionIdentityHash),
-    )
-    .slice(0, options.maxSessions);
+  const ordered = snapshot.streams.toSorted(
+    (left, right) =>
+      left.sourceCreatedAt - right.sourceCreatedAt ||
+      left.sessionIdentityHash.localeCompare(right.sessionIdentityHash),
+  );
   const planned: Array<
     | { readonly candidate: OpenCodeCandidateV1 }
     | { readonly receipt: OpenCodeReconcileStreamReceiptV1 }
   > = [];
 
-  for (const stream of selected) {
+  let unresolvedCount = 0;
+  for (const stream of ordered) {
+    if (unresolvedCount >= options.maxSessions) break;
     try {
       const unresolvedConfig = await dependencies.resolveConfig(stream, snapshot);
       if (unresolvedConfig === undefined) {
@@ -467,6 +509,7 @@ export const reconcileOpenCodeSnapshot = async (
             sessionIdentityHash: stream.sessionIdentityHash,
           },
         });
+        unresolvedCount += 1;
         continue;
       }
       const identityWake = wakeFor(stream, {
@@ -496,6 +539,7 @@ export const reconcileOpenCodeSnapshot = async (
         stream,
         ...(tail === undefined ? {} : { tail }),
       });
+      if (candidate !== undefined) unresolvedCount += 1;
       planned.push(
         candidate === undefined
           ? {
@@ -511,6 +555,7 @@ export const reconcileOpenCodeSnapshot = async (
       );
     } catch (error) {
       if (error instanceof OpenCodeGlobalStopError) throw error;
+      unresolvedCount += 1;
       planned.push({
         receipt:
           error instanceof OpenCodeSessionBlockedError
@@ -557,6 +602,24 @@ export const reconcileOpenCodeSnapshot = async (
         toByteExclusive: candidate.toByteExclusive,
       });
     } catch (error) {
+      if (error instanceof PostgresAdmissionLedgerError) {
+        switch (error.kind) {
+          case "integrity-conflict":
+            throw new OpenCodeGlobalStopError("authority-integrity-failed");
+          case "timeout":
+            throw new OpenCodeGlobalStopError("authority-timeout");
+          case "database":
+          case "transient":
+            throw new OpenCodeGlobalStopError("authority-admission-unavailable");
+          case "invalid-input":
+            receipts.push({
+              _tag: "failed",
+              code: "admission-invalid",
+              sessionIdentityHash: candidate.sessionIdentityHash,
+            });
+            continue;
+        }
+      }
       receipts.push({
         _tag: "failed",
         code: safeCode(error, "admission-failed"),

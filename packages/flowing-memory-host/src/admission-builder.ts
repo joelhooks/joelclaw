@@ -4,6 +4,7 @@ import {
   AcceptedRunAcceptanceV1Schema,
   type AcceptedRunDeltaV1,
   AcceptedRunDeltaV1Schema,
+  type AcceptedRunSourceProvenanceV1,
   type AdmissionCommandV1,
   AdmissionCommandV1Schema,
   acceptedRunSourceRef,
@@ -59,6 +60,7 @@ export interface TrustedAdmissionInputV1 {
   readonly fromByte: number;
   readonly prefixBytes: Uint8Array;
   readonly priorTurnCount?: number;
+  readonly sourceProvenance?: AcceptedRunSourceProvenanceV1;
   readonly previousTranscriptHash?: string;
   readonly segmentBytes: Uint8Array;
   readonly toByteExclusive: number;
@@ -625,6 +627,7 @@ export const buildTrustedAdmissionV1 = (
     scope: policies.scope,
     semanticAcceptedAt,
     source,
+    ...(input.sourceProvenance === undefined ? {} : { sourceProvenance: input.sourceProvenance }),
     textByteCount: turns.reduce(
       (sum, turn) => sum + new TextEncoder().encode(turn.text).byteLength,
       0,
@@ -655,6 +658,7 @@ export const buildTrustedAdmissionV1 = (
     scope: encodeDomain(ScopeResolutionAttestationV1Schema)(policies.scope),
     semanticAcceptedAt,
     source: encodeDomain(CaptureSourceCoordinatesV1Schema)(source),
+    ...(base.sourceProvenance === undefined ? {} : { sourceProvenance: base.sourceProvenance }),
     textByteCount: base.textByteCount,
     toTurn: base.toTurn,
     transcriptHash,
@@ -682,6 +686,7 @@ export const buildTrustedAdmissionV1 = (
     runtime: input.wake.runtime,
     schemaVersion: 1,
     scope: policies.scope.scope,
+    ...(base.sourceProvenance === undefined ? {} : { sourceProvenance: base.sourceProvenance }),
     sourceRef: acceptedRunSourceRef(acceptance.acceptanceId),
     toTurn: base.toTurn,
     transcriptHash,
