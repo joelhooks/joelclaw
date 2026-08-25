@@ -950,15 +950,23 @@ describe("common collector", () => {
       statePath,
     });
     expect(failed).toMatchObject({ deferred: 1, processed: 1 });
+    const pendingReceiptNames = await readdir(`${statePath}.stream-receipts`);
+    const pendingReceipt = JSON.parse(
+      await readFile(
+        path.join(`${statePath}.stream-receipts`, pendingReceiptNames[0] ?? ""),
+        "utf8",
+      ),
+    ) as { streamPath: string };
+    await appendFile(pendingReceipt.streamPath, "orphaned-pending-bytes");
 
     const checkpoint = await drainNativeWakeSpool({
       admission: {
         admit: async () => {
-          throw new Error("oversized pending delta checkpoint must not call admission");
+          throw new Error("invalid pending delta checkpoint must not call admission");
         },
       },
       lockPath: path.join(root, "collector.lock"),
-      maxBootstrapBytes: 1_000,
+      maxBootstrapBytes: 10_000,
       spoolPath,
       statePath,
     });

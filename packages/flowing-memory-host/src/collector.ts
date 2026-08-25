@@ -966,6 +966,88 @@ export const drainNativeWakeSpool = async (
     const persist = input.persistState ?? persistStateDefault;
     const streamRoot = streamRootFor(input);
     const excludedSessions = new Set(state.excludedSessions ?? []);
+    const checkpointPendingReceipt = async (checkpointInput: {
+      readonly completeSize: number;
+      readonly exact?: CollectorStateEntry;
+      readonly key: string;
+      readonly receipt: ImmutableStreamReceiptV1;
+      readonly sourceBytes: Uint8Array;
+    }) => {
+      const committedOffset = checkpointInput.exact?.offset ?? checkpointInput.receipt.fromByte ?? 0;
+      const committedStreamPath =
+        checkpointInput.exact?.streamPath ?? checkpointInput.receipt.streamPath;
+      const committedSource = new Uint8Array(await readFile(committedStreamPath));
+      if (committedOffset > committedSource.byteLength) {
+        throw new Error("immutable-stream-state-mismatch");
+      }
+      const checkpointBytes = committedSource.subarray(0, committedOffset);
+      if (
+        checkpointInput.exact?.prefixHash !== undefined &&
+        hash(checkpointBytes) !== checkpointInput.exact.prefixHash
+      ) {
+        throw new Error("immutable-stream-prefix-diverged");
+      }
+      const checkpointStreamPath = `${checkpointInput.receipt.streamPath}.checkpoint-${hash(checkpointInput.receipt.acceptedEventId).slice(0, 16)}.jsonl`;
+      await writeFile(checkpointStreamPath, checkpointBytes, {
+        flag: "wx",
+        mode: 0o600,
+      }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "EEXIST") throw error;
+      });
+      const acceptedEventIds = [
+        ...new Set([
+          ...(checkpointInput.exact?.acceptedEventIds ??
+            checkpointInput.receipt.acceptedEventIds ??
+            []),
+          checkpointInput.receipt.acceptedEventId,
+        ]),
+      ];
+      const nextTurn =
+        checkpointInput.exact?.nextTurn ?? checkpointInput.receipt.priorTurnCount ?? 0;
+      const transcriptHash =
+        checkpointInput.exact?.transcriptHash ?? checkpointInput.receipt.previousTranscriptHash;
+      const vendorPrefixHash = hash(
+        checkpointInput.sourceBytes.subarray(0, checkpointInput.completeSize),
+      );
+      await persistStreamReceipt(input, checkpointInput.key, {
+        acceptedEventId: checkpointInput.receipt.acceptedEventId,
+        acceptedEventIds,
+        closed: checkpointInput.receipt.closed,
+        fromByte: committedOffset,
+        incarnationId: checkpointInput.receipt.incarnationId,
+        nextTurn,
+        offset: committedOffset,
+        prefixHash: hash(checkpointBytes),
+        ...(transcriptHash === undefined ? {} : { transcriptHash }),
+        ...(transcriptHash === undefined ? {} : { previousTranscriptHash: transcriptHash }),
+        priorTurnCount: nextTurn,
+        runtime: checkpointInput.receipt.runtime,
+        sessionId: checkpointInput.receipt.sessionId,
+        sourcePathHash: checkpointInput.receipt.sourcePathHash,
+        status: "checkpointed",
+        streamPath: checkpointStreamPath,
+        vendorFromByte: checkpointInput.completeSize,
+        vendorOffset: checkpointInput.completeSize,
+        vendorPrefixHash,
+        schemaVersion: 1,
+      });
+      state.streams[checkpointInput.key] = stateEntryFor({
+        acceptedEventIds,
+        closed: checkpointInput.receipt.closed,
+        incarnationId: checkpointInput.receipt.incarnationId,
+        nextTurn,
+        offset: committedOffset,
+        prefixHash: hash(checkpointBytes),
+        runtime: checkpointInput.receipt.runtime,
+        sessionId: checkpointInput.receipt.sessionId,
+        sourcePathHash: checkpointInput.receipt.sourcePathHash,
+        streamPath: checkpointStreamPath,
+        ...(transcriptHash === undefined ? {} : { transcriptHash }),
+        vendorOffset: checkpointInput.completeSize,
+        vendorPrefixHash,
+      });
+      await persist(input.statePath, state);
+    };
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
       const line = lines[lineIndex] ?? "";
       if (line.length === 0) continue;
@@ -1071,68 +1153,13 @@ export const drainNativeWakeSpool = async (
           receipt?.status === "pending" &&
           receipt.offset - pendingStartByte > maxBootstrapBytes
         ) {
-          const committedOffset = exact?.offset ?? pendingStartByte;
-          if (committedOffset > receipt.offset) {
-            throw new Error("immutable-stream-state-mismatch");
-          }
-          const pendingBytes = new Uint8Array(await readFile(receipt.streamPath));
-          if (pendingBytes.byteLength !== receipt.offset) {
-            throw new Error("immutable-stream-state-mismatch");
-          }
-          const checkpointBytes = pendingBytes.subarray(0, committedOffset);
-          const checkpointStreamPath = `${receipt.streamPath}.checkpoint-${hash(receipt.acceptedEventId).slice(0, 16)}.jsonl`;
-          await writeFile(checkpointStreamPath, checkpointBytes, {
-            flag: "wx",
-            mode: 0o600,
-          }).catch((error: NodeJS.ErrnoException) => {
-            if (error.code !== "EEXIST") throw error;
+          await checkpointPendingReceipt({
+            completeSize,
+            ...(exact === undefined ? {} : { exact }),
+            key,
+            receipt,
+            sourceBytes,
           });
-          const acceptedEventIds = [
-            ...new Set([
-              ...(exact?.acceptedEventIds ?? receipt.acceptedEventIds ?? []),
-              receipt.acceptedEventId,
-            ]),
-          ];
-          const nextTurn = exact?.nextTurn ?? receipt.priorTurnCount ?? 0;
-          const transcriptHash = exact?.transcriptHash ?? receipt.previousTranscriptHash;
-          await persistStreamReceipt(input, key, {
-            acceptedEventId: receipt.acceptedEventId,
-            acceptedEventIds,
-            closed: receipt.closed,
-            fromByte: committedOffset,
-            incarnationId: receipt.incarnationId,
-            nextTurn,
-            offset: committedOffset,
-            prefixHash: hash(checkpointBytes),
-            ...(transcriptHash === undefined ? {} : { transcriptHash }),
-            ...(transcriptHash === undefined ? {} : { previousTranscriptHash: transcriptHash }),
-            priorTurnCount: nextTurn,
-            runtime: receipt.runtime,
-            sessionId: receipt.sessionId,
-            sourcePathHash: receipt.sourcePathHash,
-            status: "checkpointed",
-            streamPath: checkpointStreamPath,
-            vendorFromByte: completeSize,
-            vendorOffset: completeSize,
-            vendorPrefixHash: hash(sourceBytes.subarray(0, completeSize)),
-            schemaVersion: 1,
-          });
-          state.streams[key] = stateEntryFor({
-            acceptedEventIds,
-            closed: receipt.closed,
-            incarnationId: receipt.incarnationId,
-            nextTurn,
-            offset: committedOffset,
-            prefixHash: hash(checkpointBytes),
-            runtime: receipt.runtime,
-            sessionId: receipt.sessionId,
-            sourcePathHash: receipt.sourcePathHash,
-            streamPath: checkpointStreamPath,
-            ...(transcriptHash === undefined ? {} : { transcriptHash }),
-            vendorOffset: completeSize,
-            vendorPrefixHash: hash(sourceBytes.subarray(0, completeSize)),
-          });
-          await persist(input.statePath, state);
           counts.excluded += 1;
           counts.processed += 1;
           continue;
@@ -1147,9 +1174,19 @@ export const drainNativeWakeSpool = async (
           const pendingFromByte = receipt.fromByte ?? 0;
           if (
             pendingPrefix.byteLength !== receipt.offset ||
-            pendingFromByte > pendingPrefix.byteLength
+            pendingFromByte > pendingPrefix.byteLength ||
+            hash(pendingPrefix) !== receipt.prefixHash
           ) {
-            throw new Error("immutable-stream-state-mismatch");
+            await checkpointPendingReceipt({
+              completeSize,
+              ...(exact === undefined ? {} : { exact }),
+              key,
+              receipt,
+              sourceBytes,
+            });
+            counts.excluded += 1;
+            counts.processed += 1;
+            continue;
           }
           const pendingWake = {
             ...wake,
