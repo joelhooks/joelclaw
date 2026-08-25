@@ -2561,6 +2561,47 @@ describe("collector byte boundaries", () => {
     expect(Object.values(state.streams).some((entry) => entry.closed === true)).toBe(true);
   });
 
+  it("defers rebuildable derived-stream divergence instead of quarantining the wake", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-collector-derived-divergence-"));
+    const transcriptPath = path.join(root, "session.jsonl");
+    const spoolPath = path.join(root, "wake.jsonl");
+    const statePath = path.join(root, "state.json");
+    await writeFile(transcriptPath, "one\n");
+    const first = decodeNativeEvent("pi", wakeInput("pi", transcriptPath));
+    if (first._tag !== "Accepted") throw new Error("expected wake");
+    await appendNativeWake(spoolPath, first.wake);
+    await drainNativeWakeSpool({
+      admission: { admit: async () => ({ disposition: "admitted" }) },
+      lockPath: path.join(root, "collector.lock"),
+      spoolPath,
+      statePath,
+    });
+    const state = JSON.parse(await readFile(statePath, "utf8")) as {
+      streams: Record<string, { streamPath: string }>;
+    };
+    const streamPath = Object.values(state.streams)[0]?.streamPath;
+    if (streamPath === undefined) throw new Error("missing stream");
+    await appendFile(streamPath, "orphaned-derived-bytes");
+    await appendFile(transcriptPath, "two\n");
+    const second = decodeNativeEvent("pi", {
+      ...wakeInput("pi", transcriptPath),
+      occurred_at: new Date(Date.now() + 1).toISOString(),
+    });
+    if (second._tag !== "Accepted") throw new Error("expected wake");
+    await appendNativeWake(spoolPath, second.wake);
+    const receipt = await drainNativeWakeSpool({
+      admission: { admit: async () => ({ disposition: "admitted" }) },
+      lockPath: path.join(root, "collector.lock"),
+      spoolPath,
+      statePath,
+    });
+    expect(receipt).toMatchObject({ deferred: 1, quarantined: 0, processed: 1 });
+    expect(await readFile(spoolPath, "utf8")).toContain(second.wake.eventId);
+    await expect(readFile(`${spoolPath}.quarantine.jsonl`, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("quarantines a rewritten prefix instead of resetting the cursor", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "fm-collector-divergence-"));
     const transcriptPath = path.join(root, "session.jsonl");

@@ -1564,8 +1564,6 @@ export const drainNativeWakeSpool = async (
         if (
           reason === "source-prefix-diverged" ||
           reason === "source-shrank" ||
-          reason === "immutable-stream-state-mismatch" ||
-          reason === "immutable-stream-prefix-diverged" ||
           reason === "late-bytes-after-finality" ||
           reason === "previous-transcript-hash-mismatch" ||
           reason === "invalid-source-root" ||
