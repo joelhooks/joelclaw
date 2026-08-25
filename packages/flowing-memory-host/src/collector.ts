@@ -1216,7 +1216,8 @@ export const drainNativeWakeSpool = async (
         if (
           receipt === undefined &&
           (exact === undefined || exact.offset === 0) &&
-          vendorSegment.byteLength > maxBootstrapBytes
+          (vendorSegment.byteLength > maxBootstrapBytes ||
+            (exact !== undefined && existingStream.byteLength > 0))
         ) {
           const checkpointStreamPath =
             existingStream.byteLength === 0

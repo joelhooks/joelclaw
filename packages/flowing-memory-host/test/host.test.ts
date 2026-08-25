@@ -831,17 +831,17 @@ describe("common collector", () => {
     if (firstStreamPath === undefined) throw new Error("missing checkpoint stream");
     await appendFile(firstStreamPath, "orphaned-derived-bytes");
 
-    const oversizedGrowthLine = `${JSON.stringify({ role: "assistant", message: "y".repeat(1_500) })}\n`;
-    await appendFile(transcriptPath, oversizedGrowthLine);
+    const orphanRecoveryLine = `${JSON.stringify({ role: "assistant", message: "y".repeat(500) })}\n`;
+    await appendFile(transcriptPath, orphanRecoveryLine);
     await appendNativeWake(spoolPath, {
       ...decoded.wake,
-      eventId: "oversized-bootstrap-growth-event",
+      eventId: "orphaned-bootstrap-growth-event",
       occurredAt: new Date(Date.now() + 500).toISOString(),
     });
     const secondCheckpoint = await drainNativeWakeSpool({
       admission: {
         admit: async () => {
-          throw new Error("oversized bootstrap growth must not call admission");
+          throw new Error("orphaned bootstrap growth must not call admission");
         },
       },
       lockPath: path.join(root, "collector.lock"),
