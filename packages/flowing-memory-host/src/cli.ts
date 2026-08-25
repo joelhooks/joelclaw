@@ -1,31 +1,37 @@
 #!/usr/bin/env node
 
-import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { stdin } from "node:process";
 import path from "node:path";
+import { stdin } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   decodeGrokEvent,
   decodeNativeEvent,
-  scanNativeSources,
   type NativeRuntime,
+  scanNativeSources,
 } from "./adapters.js";
 import {
   appendNativeWake,
-  startNativeCollectorService,
   type NativeAdmissionPort,
+  startNativeCollectorService,
 } from "./collector.js";
 import { runtimeProcessIsIdle } from "./idle-probe.js";
 import {
   doctorHookFragment,
-  installHookFragments,
-  uninstallHookFragments,
   type HookInstallInput,
   type InstallableRuntime,
+  installHookFragments,
+  uninstallHookFragments,
 } from "./installer.js";
+import {
+  defaultOpenCodeDatabasePath,
+  openCodeCliErrorReceipt,
+  openCodeDryRunReceipt,
+  readOpenCodeSource,
+} from "./opencode-source.js";
 
 const arguments_ = process.argv.slice(2);
 const valueAfter = (name: string) => {
@@ -315,6 +321,39 @@ const runCollector = async () => {
   });
 };
 
+const openCodeDatabaseArgument = () => {
+  let databasePath: string | undefined;
+  let jsonSeen = false;
+  for (let index = 2; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (argument === "--json" && !jsonSeen) {
+      jsonSeen = true;
+      continue;
+    }
+    if (argument === "--database" && databasePath === undefined) {
+      const candidate = arguments_[index + 1];
+      if (candidate === undefined || candidate.startsWith("--")) {
+        throw new Error("invalid-command");
+      }
+      databasePath = candidate;
+      index += 1;
+      continue;
+    }
+    throw new Error("invalid-command");
+  }
+  return databasePath ?? defaultOpenCodeDatabasePath();
+};
+
+const runOpenCodeDryRun = () => {
+  try {
+    if (arguments_[1] !== "dry-run") throw new Error("invalid-command");
+    json(openCodeDryRunReceipt(readOpenCodeSource(openCodeDatabaseArgument())));
+  } catch (error) {
+    process.stderr.write(`${JSON.stringify(openCodeCliErrorReceipt(error))}\n`);
+    process.exitCode = 1;
+  }
+};
+
 const runWake = async () => {
   const runtime = valueAfter("--runtime");
   if (runtime === undefined || !runtimeNames.has(runtime)) return;
@@ -341,7 +380,9 @@ const runWake = async () => {
   await appendNativeWake(spoolPath, decoded.wake);
 };
 
-if (arguments_[0] === "collector") {
+if (arguments_[0] === "opencode") {
+  runOpenCodeDryRun();
+} else if (arguments_[0] === "collector") {
   await runCollector();
 } else if (arguments_[0] === "wake") {
   try {

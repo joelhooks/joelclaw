@@ -2,4 +2,5 @@ export * from "./adapters.js";
 export * from "./admission-builder.js";
 export * from "./collector.js";
 export * from "./installer.js";
+export * from "./opencode-source.js";
 export * from "./trusted-admission.js";
