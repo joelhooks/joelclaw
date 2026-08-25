@@ -845,6 +845,20 @@ describe("common collector", () => {
     ) as { status: string; offset: number; streamPath: string };
     expect(receipt).toMatchObject({ status: "checkpointed", offset: 0 });
     expect(await readFile(receipt.streamPath, "utf8")).toBe("");
+
+    await appendNativeWake(spoolPath, decoded.wake);
+    const replay = await drainNativeWakeSpool({
+      admission: {
+        admit: async () => {
+          throw new Error("checkpointed wake must not retry admission");
+        },
+      },
+      lockPath: path.join(root, "collector.lock"),
+      maxBootstrapBytes: 1_000,
+      spoolPath,
+      statePath,
+    });
+    expect(replay).toMatchObject({ deferred: 0, processed: 1, replayed: 1 });
   });
 
   it("checkpoints an oversized bootstrap and admits only later growth", async () => {

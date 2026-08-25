@@ -734,7 +734,10 @@ const readStreamReceipt = async (
       typeof value.acceptedEventId !== "string" ||
       !("offset" in value) ||
       typeof value.offset !== "number" ||
-      ("status" in value && value.status !== "pending" && value.status !== "committed")
+      ("status" in value &&
+        value.status !== "pending" &&
+        value.status !== "committed" &&
+        value.status !== "checkpointed")
     ) {
       throw new Error("invalid immutable stream receipt");
     }
