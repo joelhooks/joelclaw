@@ -432,6 +432,56 @@ describe("trusted native admission", () => {
     expect(ledgerCalls).toBe(0);
   });
 
+  it("excludes a schema-rejected semantic window without calling the ledger", async () => {
+    const occurredAt = new Date().toISOString();
+    const decoded = decodeNativeEvent("pi", {
+      event_name: "turn_end",
+      occurred_at: occurredAt,
+      session_id: "schema-rejected-window",
+      transcript_path: "/tmp/schema-rejected-window.jsonl",
+    });
+    if (decoded._tag !== "Accepted") throw new Error("expected wake");
+    const bytes = new TextEncoder().encode(
+      `${JSON.stringify({
+        message: { content: "x".repeat(300_000), role: "user" },
+        timestamp: occurredAt,
+        type: "message",
+      })}\n`,
+    );
+    let ledgerCalls = 0;
+    const port = makeTrustedNativeAdmissionPort({
+      config: {
+        adapterInstanceIdHash: "a".repeat(64),
+        canonicalRepository: "github.com/joelclaw/fleet",
+        principalIdHash: "b".repeat(64),
+        privacy: "private",
+        project: "joelclaw-fleet",
+        repositoryHost: "github.com",
+        repositoryName: "fleet",
+        repositoryOwner: "joelclaw",
+        scopeResolution: "fleetFallback",
+        workstream: "default",
+      },
+      evidenceDirectory: "/tmp/schema-rejected-evidence",
+      ledger: {
+        admit: async () => {
+          ledgerCalls += 1;
+          throw new Error("ledger must not receive schema-rejected windows");
+        },
+      },
+    });
+    await expect(
+      port.admit({
+        fromByte: 0,
+        prefixBytes: bytes,
+        segmentBytes: bytes,
+        toByteExclusive: bytes.byteLength,
+        wake: decoded.wake,
+      }),
+    ).resolves.toEqual({ disposition: "excluded" });
+    expect(ledgerCalls).toBe(0);
+  });
+
   it("decodes Grok ACP message chunks without admitting thought chunks", () => {
     const timestamp = Date.now() - 1_000;
     const lines = [

@@ -53,7 +53,15 @@ export const makeTrustedNativeAdmissionPort = (input: {
     try {
       built = buildTrustedAdmissionV1(nativeInput, config);
     } catch (error) {
-      if (error instanceof Error && error.message === "native-window-has-no-turns") {
+      const schemaRejected =
+        typeof error === "object" &&
+        error !== null &&
+        "_tag" in error &&
+        error._tag === "SchemaError";
+      if (
+        schemaRejected ||
+        (error instanceof Error && error.message === "native-window-has-no-turns")
+      ) {
         return { disposition: "excluded" };
       }
       throw error;
