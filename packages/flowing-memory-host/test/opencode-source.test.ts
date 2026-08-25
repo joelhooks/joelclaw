@@ -328,6 +328,7 @@ const createFixture = async (): Promise<Fixture> => {
   }
 
   insertMessage(writer, {
+    completed: 60,
     id: "msg-child-private-marker",
     role: "assistant",
     sessionId: childSessionId,
@@ -441,6 +442,51 @@ describe("OpenCode read-only source", () => {
         expect(canonical).not.toContain(marker);
       }
       expect(canonical).toContain("imported later visible marker");
+    } finally {
+      fixture.writer.close();
+    }
+  });
+
+  it("waits for assistant completion before making streamed text canonical", async () => {
+    const fixture = await createFixture();
+    try {
+      insertMessage(fixture.writer, {
+        id: "msg-streaming-assistant",
+        role: "assistant",
+        sessionId: "ses-root-private-marker",
+        timeCreated: 800,
+        timeUpdated: 810,
+      });
+      insertPart(fixture.writer, {
+        data: { text: "streaming assistant marker", type: "text" },
+        id: "prt-streaming-assistant",
+        messageId: "msg-streaming-assistant",
+        sessionId: "ses-root-private-marker",
+      });
+
+      const before = readOpenCodeSource(fixture.databasePath);
+      const beforeRoot = before.streams.find(
+        (stream) => stream.parentSessionIdentityHash === undefined,
+      );
+      expect(textDecoder.decode(beforeRoot?.canonicalBytes)).not.toContain(
+        "streaming assistant marker",
+      );
+
+      fixture.writer
+        .prepare("UPDATE message SET time_updated = ?, data = ? WHERE id = ?")
+        .run(
+          825,
+          JSON.stringify({ role: "assistant", time: { completed: 825, created: 800 } }),
+          "msg-streaming-assistant",
+        );
+      const after = readOpenCodeSource(fixture.databasePath);
+      const afterRoot = after.streams.find(
+        (stream) => stream.parentSessionIdentityHash === undefined,
+      );
+      const records = decodeStream(afterRoot?.canonicalBytes ?? new Uint8Array());
+      const completed = records.find((record) => record.messageId === "msg-streaming-assistant");
+      expect(completed?.occurredAt).toBe(825);
+      expect(JSON.stringify(completed)).toContain("streaming assistant marker");
     } finally {
       fixture.writer.close();
     }

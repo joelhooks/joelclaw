@@ -421,7 +421,8 @@ const canonicalMessage = (input: {
   if (role === "assistant") {
     const time = object(data.time);
     const completed = safeInteger(time?.completed);
-    occurredAt = completed ?? input.message.timeUpdated;
+    if (completed === undefined) return undefined;
+    occurredAt = completed;
   }
 
   return {
