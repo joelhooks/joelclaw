@@ -55,7 +55,7 @@ describe("a manifested pinned release", () => {
   });
 
   test("the pinned commit is the one the local wire mirror was written against", () => {
-    expect(PINNED_MEMORY_COMMIT).toBe("afcd3bb5a3ef6c1af7276adf55cc4443ea1e5ffc");
+    expect(PINNED_MEMORY_COMMIT).toBe("4890a6a2585e675f2d2929a989f1f0dc17c2650b");
   });
 });
 
@@ -265,7 +265,7 @@ describe("any writable bit is refused, owner included", () => {
 describe("the anchored artifact digest", () => {
   test("is the digest of the standalone read artifact built at the pinned commit", () => {
     expect(PINNED_READ_ARTIFACT_SHA256).toBe(
-      "ffdb52256f9181d4ab411a4d89edb6eea300d8f83c7e50593b7b2ea7a8c4aaf8",
+      "c16a41fbc45477e7e042acf4f964f285b83779b650ef38626a990eec2386d756",
     );
   });
 

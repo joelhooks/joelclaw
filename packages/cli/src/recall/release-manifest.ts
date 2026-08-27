@@ -39,7 +39,7 @@ export const FLOWING_RELEASE_MANIFEST_FILENAME = "flowing-memory-release.v2.json
  * `flowing-envelope.ts` mirrors exactly this commit, so an artifact built from
  * any other commit is a contract mismatch even when it runs.
  */
-export const PINNED_MEMORY_COMMIT = "afcd3bb5a3ef6c1af7276adf55cc4443ea1e5ffc";
+export const PINNED_MEMORY_COMMIT = "4890a6a2585e675f2d2929a989f1f0dc17c2650b";
 
 /**
  * The only artifact kind this boundary will execute. A wrapper script, a
@@ -55,7 +55,7 @@ export const REQUIRED_ARTIFACT_KIND = "standalone";
  * for a different build.
  */
 export const PINNED_READ_ARTIFACT_SHA256 =
-  "ffdb52256f9181d4ab411a4d89edb6eea300d8f83c7e50593b7b2ea7a8c4aaf8";
+  "c16a41fbc45477e7e042acf4f964f285b83779b650ef38626a990eec2386d756";
 
 const CommitSchema = Schema.String.pipe(
   Schema.filter((value) => /^[a-f0-9]{40}$/u.test(value), {
