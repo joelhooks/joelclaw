@@ -301,6 +301,58 @@ function errorText(error: unknown): string {
   }
 }
 
+export type CriticalDbLockRecoveryTelemetry = {
+  reason: "owner-process-dead" | "owner-pid-reused";
+  previousOwnerPid: number;
+  previousOwnerHost: string;
+  lockAgeMs: number;
+  quarantinedAt: string;
+  quarantineRetained: boolean;
+};
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+export function parseCriticalDbLockRecovery(stdout: string): CriticalDbLockRecoveryTelemetry | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const result = record(parsed);
+  const recovery = record(result?.lockRecovery);
+  const previousOwner = record(recovery?.previousOwner);
+  const reason = recovery?.reason;
+  const previousOwnerPid = previousOwner?.pid;
+  const previousOwnerHost = typeof previousOwner?.host === "string" ? previousOwner.host.trim() : "";
+  const lockAgeMs = recovery?.lockAgeMs;
+  const quarantinedAt = typeof recovery?.quarantinedAt === "string" ? recovery.quarantinedAt.trim() : "";
+  const quarantineRetained = recovery?.quarantineRetained;
+  if (
+    (reason !== "owner-process-dead" && reason !== "owner-pid-reused")
+    || !Number.isSafeInteger(previousOwnerPid)
+    || Number(previousOwnerPid) <= 0
+    || !previousOwnerHost
+    || !Number.isSafeInteger(lockAgeMs)
+    || Number(lockAgeMs) < 0
+    || !quarantinedAt
+    || !Number.isFinite(Date.parse(quarantinedAt))
+    || typeof quarantineRetained !== "boolean"
+  ) return null;
+  return {
+    reason,
+    previousOwnerPid: Number(previousOwnerPid),
+    previousOwnerHost,
+    lockAgeMs: Number(lockAgeMs),
+    quarantinedAt,
+    quarantineRetained,
+  };
+}
+
 const defaultScheduledDependencies: CriticalDbScheduledRebuildDependencies = {
   runBuilder: runCriticalDbBuilder,
   notifyFailure: notifyCriticalDbRebuildFailure,
@@ -316,14 +368,28 @@ const defaultScheduledDependencies: CriticalDbScheduledRebuildDependencies = {
     error: detail,
     metadata: { alerted },
   }),
-  emitCompleted: (stdout) => emitOtelEvent({
-    level: "info",
-    source: "system-bus",
-    component: "critical-db-maintenance",
-    action: "search.critical_db.rebuild.completed",
-    success: true,
-    metadata: { cadence: "17 */6 * * *", stdout },
-  }),
+  emitCompleted: async (stdout) => {
+    const lockRecovery = parseCriticalDbLockRecovery(stdout);
+    if (lockRecovery) {
+      await emitOtelEvent({
+        level: lockRecovery.quarantineRetained ? "warn" : "info",
+        source: "system-bus",
+        component: "critical-db-maintenance",
+        action: "search.critical_db.lock.recovered",
+        success: !lockRecovery.quarantineRetained,
+        ...(lockRecovery.quarantineRetained ? { error: "verified stale-lock quarantine retained" } : {}),
+        metadata: lockRecovery,
+      });
+    }
+    return emitOtelEvent({
+      level: "info",
+      source: "system-bus",
+      component: "critical-db-maintenance",
+      action: "search.critical_db.rebuild.completed",
+      success: true,
+      metadata: { cadence: "17 */6 * * *", stdout, ...(lockRecovery ? { lockRecovery } : {}) },
+    });
+  },
   now: Date.now,
 };
 

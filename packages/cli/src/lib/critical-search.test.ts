@@ -1,11 +1,21 @@
 import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs"
 import { createServer } from "node:net"
-import { tmpdir } from "node:os"
+import { hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 import { __sqliteRecallTestUtils } from "../capabilities/adapters/typesense-recall"
 import {
+  acquireCriticalDbBuildLock,
   buildCriticalDb,
   CriticalDbUnavailableError,
   readFreshness,
@@ -136,6 +146,119 @@ Use ordered fallback across flagg and both NAS boxes.
   })}\n`)
   return { root, observations, brain, vault, skills, archive, sessionsDb, db: join(root, "critical.db") }
 }
+
+function staleLockFixture(owner: unknown): { dbPath: string; lockPath: string } {
+  const root = join(tmpdir(), `critical-search-lock-${crypto.randomUUID()}`)
+  roots.push(root)
+  mkdirSync(root, { recursive: true })
+  const dbPath = join(root, "critical.db")
+  const lockPath = `${dbPath}.build-lock`
+  mkdirSync(lockPath)
+  writeFileSync(join(lockPath, "owner.json"), typeof owner === "string" ? owner : JSON.stringify(owner))
+  const staleAt = new Date(Date.now() - 2 * 60 * 60_000)
+  utimesSync(lockPath, staleAt, staleAt)
+  return { dbPath, lockPath }
+}
+
+function deadOwner(): { pid: number; host: string; startedAt: string } {
+  return {
+    pid: 2_147_483_647,
+    host: hostname().toLowerCase(),
+    startedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+  }
+}
+
+describe("critical.db builder lock recovery", () => {
+  test("keeps a live owner protected even when its lock is old", async () => {
+    const { dbPath, lockPath } = staleLockFixture({
+      pid: process.pid,
+      host: hostname().toLowerCase(),
+      startedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+    })
+    const ownerBefore = readFileSync(join(lockPath, "owner.json"), "utf8")
+
+    await expect(acquireCriticalDbBuildLock({ dbPath })).rejects.toThrow("owner process is still alive")
+
+    expect(readFileSync(join(lockPath, "owner.json"), "utf8")).toBe(ownerBefore)
+    expect(readdirSync(join(dbPath, "..")).filter((entry) => entry.includes("build-lock.quarantine"))).toEqual([])
+  })
+
+  test("reclaims a conclusively dead owner and records the recovery", async () => {
+    const previousOwner = deadOwner()
+    const { dbPath, lockPath } = staleLockFixture(previousOwner)
+
+    const lock = await acquireCriticalDbBuildLock({ dbPath })
+    try {
+      expect(lock.recovery).toMatchObject({ reason: "owner-process-dead", previousOwner })
+      const currentOwner = JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8")) as Record<string, unknown>
+      expect(currentOwner).toMatchObject({ schemaVersion: 2, pid: process.pid, host: hostname().toLowerCase() })
+      expect(typeof currentOwner.ownerToken).toBe("string")
+      expect(typeof currentOwner.processIdentity).toBe("string")
+    } finally {
+      await lock.release()
+    }
+    expect(existsSync(lockPath)).toBe(false)
+  })
+
+  test("propagates dead-owner recovery through the real builder result", async () => {
+    const paths = fixture()
+    const lockPath = `${paths.db}.build-lock`
+    mkdirSync(lockPath)
+    writeFileSync(join(lockPath, "owner.json"), JSON.stringify(deadOwner()))
+    const staleAt = new Date(Date.now() - 2 * 60 * 60_000)
+    utimesSync(lockPath, staleAt, staleAt)
+
+    const result = await buildCriticalDb({
+      dbPath: paths.db,
+      observationsDir: paths.observations,
+      brainRoots: [paths.brain],
+      vaultDir: paths.vault,
+      skillsDir: paths.skills,
+      memoryArchivePath: paths.archive,
+      allowNonFlagg: true,
+    })
+
+    expect(result.lockRecovery).toMatchObject({ reason: "owner-process-dead", quarantineRetained: false })
+    expect(existsSync(lockPath)).toBe(false)
+  })
+
+  test.each([
+    ["malformed receipt", "{not-json"],
+    ["foreign host", { ...deadOwner(), host: "not-this-host" }],
+    ["too young", { ...deadOwner(), startedAt: new Date().toISOString() }],
+  ])("fails closed for an unverifiable %s", async (_case, owner) => {
+    const { dbPath, lockPath } = staleLockFixture(owner)
+    if (_case === "too young") {
+      const current = new Date()
+      utimesSync(lockPath, current, current)
+    }
+    const ownerBefore = readFileSync(join(lockPath, "owner.json"), "utf8")
+
+    await expect(acquireCriticalDbBuildLock({ dbPath })).rejects.toThrow("cannot be reclaimed")
+
+    expect(readFileSync(join(lockPath, "owner.json"), "utf8")).toBe(ownerBefore)
+    expect(readdirSync(join(dbPath, "..")).filter((entry) => entry.includes("build-lock.quarantine"))).toEqual([])
+  })
+
+  test("allows only one of two stale-lock reclaimers to own the lock", async () => {
+    const { dbPath, lockPath } = staleLockFixture(deadOwner())
+
+    const outcomes = await Promise.allSettled([
+      acquireCriticalDbBuildLock({ dbPath }),
+      acquireCriticalDbBuildLock({ dbPath }),
+    ])
+    const winners = outcomes.filter((outcome) => outcome.status === "fulfilled")
+    expect(winners).toHaveLength(1)
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1)
+    expect(JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8"))).toMatchObject({
+      schemaVersion: 2,
+      pid: process.pid,
+    })
+
+    const winner = winners[0]
+    if (winner?.status === "fulfilled") await winner.value.release()
+  })
+})
 
 describe("critical search database", () => {
   test("build is repeatable and namespaces producer Runs", async () => {

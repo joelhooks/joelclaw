@@ -11,6 +11,7 @@ import {
   clearCriticalDbRebuildFailure,
   createCriticalDbScheduledRebuildFunction,
   inspectCriticalDbFreshness,
+  parseCriticalDbLockRecovery,
   processCriticalDbFreshness,
   processCriticalDbRebuildFailure,
   runCriticalDbBuilder,
@@ -207,6 +208,30 @@ describe("critical.db freshness contract", () => {
 });
 
 describe("critical.db scheduled rebuild failures", () => {
+  test("extracts stale-lock recovery as bounded structured telemetry", () => {
+    const stdout = JSON.stringify({
+      ok: true,
+      dbPath: "/private/path/critical.db",
+      lockRecovery: {
+        reason: "owner-process-dead",
+        previousOwner: { pid: 74030, host: "flagg", startedAt: "2026-08-03T12:20:53.295Z" },
+        lockAgeMs: 2_070_000_000,
+        quarantinedAt: "2026-08-27T05:30:00.000Z",
+        quarantineRetained: false,
+      },
+    });
+
+    expect(parseCriticalDbLockRecovery(stdout)).toEqual({
+      reason: "owner-process-dead",
+      previousOwnerPid: 74030,
+      previousOwnerHost: "flagg",
+      lockAgeMs: 2_070_000_000,
+      quarantinedAt: "2026-08-27T05:30:00.000Z",
+      quarantineRetained: false,
+    });
+    expect(parseCriticalDbLockRecovery("not-json")).toBeNull();
+  });
+
   test("held builder lock produces builder exit 1", async () => {
     const root = join("/tmp", `critical-db-lock-${crypto.randomUUID()}`);
     fixtureRoots.push(root);
