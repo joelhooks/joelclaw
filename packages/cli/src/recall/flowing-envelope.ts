@@ -2,7 +2,7 @@
  * Structural mirror of the flowing-memory read boundary.
  *
  * The semantic source of truth is `joelclaw-memory` at commit
- * `4890a6a2585e675f2d2929a989f1f0dc17c2650b` — `packages/domain/src/search.ts`,
+ * `05d92eadb5091113c5fc648e95ced36eb5fb8f39` — `packages/domain/src/search.ts`,
  * `packages/domain/src/flowing-memory-read.ts`, and `apps/cli/src/read-command.ts`.
  * That source runs Effect v4; this CLI runs Effect v3, so the boundary is a
  * process, not an import. This module mirrors the wire contract field for field.
