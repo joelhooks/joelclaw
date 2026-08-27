@@ -279,3 +279,26 @@ Registrations remain intact beside the message-event hunks:
 - Production `critical.db` was not opened or changed.
 - The step file was not edited.
 - No commit was created.
+
+## Stale-lock follow-up review and fix (2026-08-27)
+
+Independent review of commit `d508ff1e5e89a59253844ec92be0ed5187e30224` found two merge blockers. The review artifact SHA-256 was `f46bdd5bc63cb6e74239e77df1e7f8a01d57b0db7b6bbb854eec43f21be7ad88`.
+
+The first blocker was machine identity. Schema 2 no longer relies on exact hostnames. It stores an opaque SHA-256 identity from the macOS platform UUID or a standard Linux machine ID. Fresh acquisition fails closed if machine or process identity is unavailable. Legacy schema 1 still requires a dead PID. Its only hostname migration is one exact verified historical alias pair, stored as SHA-256 fingerprints. Unknown aliases and suffix matches remain rejected.
+
+The second blocker was quarantine cleanup authority. Once a quarantine rename is verified, stale and release cleanup cannot reject successful acquisition or publication. Cleanup retains unknown or inaccessible quarantine data and records a bounded warning with operation, reason, error code, and retention state. It never records a path, token, machine identity, process identity, or raw cleanup error. A vanished quarantine records `ENOENT` and does not fail acquisition. Any later authoritative abort releases the fresh lock before throwing.
+
+Scheduled recovery telemetry now parses only bounded recovery and cleanup fields. The completed rebuild event no longer emits raw builder stdout. Recovery metadata excludes hostnames, paths, tokens, and identity hashes.
+
+Validation receipts:
+
+- Lock-focused suite: 22 pass, 0 fail, repeated 20 times.
+- Focused maintenance telemetry and scheduled-rebuild suite: 3 pass, 0 fail.
+- Combined touched suites: 64 pass, 2 fail. Both failures are the unchanged archive freshness assertions recorded by the independent review.
+- Root TypeScript check and CLI TypeScript check: pass.
+- CLI compiled binary and system-bus function bundle: pass.
+- Host function import preflight: pass.
+- Biome on all touched code files and `git diff --check`: pass.
+- Repo-wide Biome: 35 pre-existing import-order findings outside this change.
+
+Containment held. Tests used temporary lock paths. The production lock was not read, renamed, or removed. No worker was restarted. No deployment ran.

@@ -286,7 +286,7 @@ export async function runCriticalDbBuilder(options: {
     throw new Error(`critical.db builder exited ${exitCode}: ${detail || "no output"}`);
   }
   return {
-    stdout: stdout.trim().slice(-MAX_SUBPROCESS_OUTPUT),
+    stdout: privacySafeCriticalDbBuilderStdout(stdout.trim()),
     stderr: stderr.trim().slice(-MAX_SUBPROCESS_OUTPUT),
   };
 }
@@ -299,6 +299,118 @@ function errorText(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+export type CriticalDbLockRecoveryTelemetry = {
+  reason: "owner-process-dead" | "owner-pid-reused";
+  previousOwnerPid: number;
+  lockAgeMs: number;
+  quarantinedAt: string;
+  quarantineRetained: boolean;
+};
+
+export type CriticalDbLockWarningTelemetry = {
+  operation: "stale-quarantine-cleanup" | "release-quarantine-cleanup";
+  reason: "cleanup-failed" | "unknown-entry" | "quarantine-missing" | "identity-mismatch";
+  errorCode: string;
+  quarantineRetained: boolean;
+};
+
+export type CriticalDbLockTelemetry = {
+  recovery: CriticalDbLockRecoveryTelemetry | null;
+  warnings: CriticalDbLockWarningTelemetry[];
+};
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function parseLockRecovery(value: unknown): CriticalDbLockRecoveryTelemetry | null {
+  const recovery = record(value);
+  const previousOwner = record(recovery?.previousOwner);
+  const reason = recovery?.reason;
+  const previousOwnerPid = previousOwner?.pid ?? recovery?.previousOwnerPid;
+  const lockAgeMs = recovery?.lockAgeMs;
+  const quarantinedAt = typeof recovery?.quarantinedAt === "string" ? recovery.quarantinedAt.trim() : "";
+  const quarantineRetained = recovery?.quarantineRetained;
+  if (
+    (reason !== "owner-process-dead" && reason !== "owner-pid-reused")
+    || !Number.isSafeInteger(previousOwnerPid)
+    || Number(previousOwnerPid) <= 0
+    || !Number.isSafeInteger(lockAgeMs)
+    || Number(lockAgeMs) < 0
+    || !quarantinedAt
+    || quarantinedAt.length > 64
+    || !Number.isFinite(Date.parse(quarantinedAt))
+    || typeof quarantineRetained !== "boolean"
+  ) return null;
+  return {
+    reason,
+    previousOwnerPid: Number(previousOwnerPid),
+    lockAgeMs: Number(lockAgeMs),
+    quarantinedAt,
+    quarantineRetained,
+  };
+}
+
+function parseLockWarning(value: unknown): CriticalDbLockWarningTelemetry | null {
+  const warning = record(value);
+  const operation = warning?.operation;
+  const reason = warning?.reason;
+  const errorCode = typeof warning?.errorCode === "string" ? warning.errorCode.trim() : "";
+  const quarantineRetained = warning?.quarantineRetained;
+  if (
+    (operation !== "stale-quarantine-cleanup" && operation !== "release-quarantine-cleanup")
+    || (
+      reason !== "cleanup-failed"
+      && reason !== "unknown-entry"
+      && reason !== "quarantine-missing"
+      && reason !== "identity-mismatch"
+    )
+    || !/^[A-Z][A-Z0-9_]{0,31}$/u.test(errorCode)
+    || typeof quarantineRetained !== "boolean"
+  ) return null;
+  return { operation, reason, errorCode, quarantineRetained };
+}
+
+export function parseCriticalDbLockTelemetry(stdout: string): CriticalDbLockTelemetry {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return { recovery: null, warnings: [] };
+  }
+  const result = record(parsed);
+  const nested = record(result?.lockTelemetry);
+  const recovery = parseLockRecovery(nested?.recovery ?? result?.lockRecovery);
+  const rawWarnings = Array.isArray(nested?.warnings)
+    ? nested.warnings
+    : Array.isArray(result?.lockWarnings)
+      ? result.lockWarnings
+      : [];
+  const warnings: CriticalDbLockWarningTelemetry[] = [];
+  for (const value of rawWarnings) {
+    const warning = parseLockWarning(value);
+    if (warning) warnings.push(warning);
+    if (warnings.length === 4) break;
+  }
+  return { recovery, warnings };
+}
+
+export function parseCriticalDbLockRecovery(stdout: string): CriticalDbLockRecoveryTelemetry | null {
+  return parseCriticalDbLockTelemetry(stdout).recovery;
+}
+
+function privacySafeCriticalDbBuilderStdout(stdout: string): string {
+  let ok = false;
+  try {
+    ok = record(JSON.parse(stdout))?.ok === true;
+  } catch {
+    // The caller handles nonzero builder exits before this success-only sanitizer.
+  }
+  return JSON.stringify({ ok, lockTelemetry: parseCriticalDbLockTelemetry(stdout) });
 }
 
 const defaultScheduledDependencies: CriticalDbScheduledRebuildDependencies = {
@@ -316,14 +428,42 @@ const defaultScheduledDependencies: CriticalDbScheduledRebuildDependencies = {
     error: detail,
     metadata: { alerted },
   }),
-  emitCompleted: (stdout) => emitOtelEvent({
-    level: "info",
-    source: "system-bus",
-    component: "critical-db-maintenance",
-    action: "search.critical_db.rebuild.completed",
-    success: true,
-    metadata: { cadence: "17 */6 * * *", stdout },
-  }),
+  emitCompleted: async (stdout) => {
+    const lockTelemetry = parseCriticalDbLockTelemetry(stdout);
+    if (lockTelemetry.recovery) {
+      await emitOtelEvent({
+        level: "info",
+        source: "system-bus",
+        component: "critical-db-maintenance",
+        action: "search.critical_db.lock.recovered",
+        success: true,
+        metadata: lockTelemetry.recovery,
+      });
+    }
+    for (const warning of lockTelemetry.warnings) {
+      await emitOtelEvent({
+        level: "warn",
+        source: "system-bus",
+        component: "critical-db-maintenance",
+        action: "search.critical_db.lock.cleanup.degraded",
+        success: false,
+        error: `${warning.operation}:${warning.reason}:${warning.errorCode}`,
+        metadata: warning,
+      });
+    }
+    return emitOtelEvent({
+      level: "info",
+      source: "system-bus",
+      component: "critical-db-maintenance",
+      action: "search.critical_db.rebuild.completed",
+      success: true,
+      metadata: {
+        cadence: "17 */6 * * *",
+        lockWarningCount: lockTelemetry.warnings.length,
+        ...(lockTelemetry.recovery ? { lockRecovery: lockTelemetry.recovery } : {}),
+      },
+    });
+  },
   now: Date.now,
 };
 
