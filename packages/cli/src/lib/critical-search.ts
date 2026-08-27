@@ -152,6 +152,7 @@ export type BuildOptions = {
   allowNonFlagg?: boolean
   allowDegradedSources?: boolean
   now?: Date
+  lockDependencies?: Partial<CriticalDbBuildLockDependencies>
 }
 
 export type BuildSourceReport = {
@@ -167,6 +168,7 @@ export type CriticalDbBuildLockOwner = {
   pid: number
   host: string
   startedAt: string
+  machineIdentity: string
   processIdentity: string
 }
 
@@ -182,9 +184,52 @@ export type CriticalDbBuildLockRecovery = {
   quarantineRetained: boolean
 }
 
+export type CriticalDbBuildLockWarning = {
+  operation: "stale-quarantine-cleanup" | "release-quarantine-cleanup"
+  reason: "cleanup-failed" | "unknown-entry" | "quarantine-missing" | "identity-mismatch"
+  errorCode: string
+  quarantineRetained: boolean
+}
+
+export type CriticalDbBuildLockCleanupInput = {
+  operation: "fresh-lock-rollback" | CriticalDbBuildLockWarning["operation"]
+  directoryPath: string
+  expected: { dev: number; ino: number }
+  allowedEntries: readonly string[]
+}
+
+export type CriticalDbBuildLockCleanupResult =
+  | { status: "removed"; quarantineRetained: false }
+  | {
+    status: "retained"
+    reason: "unknown-entry" | "identity-mismatch"
+    errorCode: "UNKNOWN_ENTRY" | "IDENTITY_MISMATCH"
+    quarantineRetained: true
+  }
+  | {
+    status: "missing"
+    reason: "quarantine-missing"
+    errorCode: "ENOENT"
+    quarantineRetained: false
+  }
+
+export type CriticalDbBuildLockDependencies = {
+  currentHostname: () => string
+  resolveMachineIdentity: () => Promise<string | null>
+  resolveProcessIdentity: (pid: number) => Promise<string | null>
+  processLiveness: (pid: number) => "alive" | "dead" | "unverifiable"
+  isVerifiedLegacyHostAlias: (ownerHost: string, currentHost: string) => boolean
+  cleanupVerifiedDirectory: (
+    input: CriticalDbBuildLockCleanupInput,
+  ) => Promise<CriticalDbBuildLockCleanupResult>
+  now: () => number
+  randomUUID: () => string
+}
+
 export type CriticalDbBuildLock = {
   owner: CriticalDbBuildLockOwner
   recovery: CriticalDbBuildLockRecovery | null
+  warnings: CriticalDbBuildLockWarning[]
   release: () => Promise<void>
 }
 
@@ -196,6 +241,7 @@ export type CriticalBuildResult = {
   bytes: number
   durationMs: number
   lockRecovery?: CriticalDbBuildLockRecovery
+  lockWarnings: CriticalDbBuildLockWarning[]
 }
 
 function asString(value: unknown): string | undefined {
@@ -723,6 +769,7 @@ type ParsedLockOwner = {
   host: string
   startedAt: string
   ownerToken?: string
+  machineIdentity?: string
   processIdentity?: string
 }
 
@@ -734,12 +781,76 @@ type LockSnapshot = {
   ownerText: string
 }
 
+type MachineIdentityResolverInput = {
+  platform: NodeJS.Platform
+  readTextFile: (path: string) => Promise<string>
+  runCommand: (command: readonly string[]) => Promise<{ exitCode: number; stdout: string }>
+}
+
+const MACHINE_ID_PATTERN = /^machine-sha256:[a-f0-9]{64}$/u
+const PROCESS_ID_PATTERN = /^ps-sha256:[a-f0-9]{64}$/u
+const HOSTNAME_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,253}[a-z0-9])?$/u
+const OWNER_TOKEN_PATTERN = /^[a-zA-Z0-9-]{16,128}$/u
+// One exact one-way legacy migration. Keep machine-local aliases out of public source and never use suffix matching.
+const VERIFIED_LEGACY_OWNER_HOST_FINGERPRINT = "4696ccdbbd5b8133bc24961fa788a4186196799fddbf92d28df7ff5aef6f0493"
+const VERIFIED_CURRENT_HOST_FINGERPRINT = "74fc3385e6e7693d765107486c6a1d2dd223d8e090936c75d55e4d63e41adef8"
+
 function nodeErrorCode(error: unknown): string {
-  return error && typeof error === "object" && "code" in error ? String(error.code) : "UNKNOWN"
+  const code = error && typeof error === "object" && "code" in error ? String(error.code) : "UNKNOWN"
+  return /^[A-Z][A-Z0-9_]{0,31}$/u.test(code) ? code : "UNKNOWN"
 }
 
 function lockHeldError(lockPath: string, detail: string): Error {
   return new Error(`critical.db builder lock is held; cannot be reclaimed: ${detail}: ${lockPath}`)
+}
+
+function normalizeHostname(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const normalized = value.trim().toLowerCase()
+  return HOSTNAME_PATTERN.test(normalized) ? normalized : null
+}
+
+function opaqueMachineIdentity(source: string, value: string): string {
+  return `machine-sha256:${createHash("sha256").update(`${source}:${value.toLowerCase()}`).digest("hex")}`
+}
+
+async function runIdentityCommand(command: readonly string[]): Promise<{ exitCode: number; stdout: string }> {
+  const proc = Bun.spawn([...command], { stdout: "pipe", stderr: "ignore" })
+  const [exitCode, stdout] = await Promise.all([proc.exited, new Response(proc.stdout).text()])
+  return { exitCode, stdout }
+}
+
+async function resolveStableMachineIdentity(
+  input: MachineIdentityResolverInput = {
+    platform: process.platform,
+    readTextFile: (path) => readFile(path, "utf8"),
+    runCommand: runIdentityCommand,
+  },
+): Promise<string | null> {
+  if (input.platform === "linux") {
+    for (const path of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
+      try {
+        const machineId = (await input.readTextFile(path)).trim().toLowerCase()
+        if (/^[a-f0-9]{32}$/u.test(machineId)) return opaqueMachineIdentity("linux-machine-id", machineId)
+      } catch {
+        // Try the next standard machine-id path.
+      }
+    }
+    return null
+  }
+  if (input.platform === "darwin") {
+    try {
+      const result = await input.runCommand(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"])
+      if (result.exitCode !== 0) return null
+      const platformUuid = result.stdout.match(/"IOPlatformUUID"\s*=\s*"([a-fA-F0-9-]{36})"/u)?.[1]
+      return platformUuid
+        ? opaqueMachineIdentity("darwin-platform-uuid", platformUuid)
+        : null
+    } catch {
+      return null
+    }
+  }
+  return null
 }
 
 function parseLockOwner(value: unknown): ParsedLockOwner {
@@ -748,21 +859,24 @@ function parseLockOwner(value: unknown): ParsedLockOwner {
   const schemaVersion = record.schemaVersion === undefined ? 1 : record.schemaVersion
   if (schemaVersion !== 1 && schemaVersion !== 2) throw new Error("owner receipt has an unsupported schemaVersion")
   if (!Number.isSafeInteger(record.pid) || Number(record.pid) <= 0) throw new Error("owner receipt has an invalid pid")
-  const host = typeof record.host === "string" ? record.host.trim().toLowerCase() : ""
-  if (!host) throw new Error("owner receipt has no host")
+  const host = normalizeHostname(record.host)
+  if (!host) throw new Error("owner receipt has an invalid host")
   const startedAt = typeof record.startedAt === "string" ? record.startedAt.trim() : ""
   if (!startedAt || !Number.isFinite(Date.parse(startedAt))) throw new Error("owner receipt has an invalid startedAt")
   if (schemaVersion === 1) return { schemaVersion, pid: Number(record.pid), host, startedAt }
   const ownerToken = typeof record.ownerToken === "string" ? record.ownerToken.trim() : ""
+  const machineIdentity = typeof record.machineIdentity === "string" ? record.machineIdentity.trim() : ""
   const processIdentity = typeof record.processIdentity === "string" ? record.processIdentity.trim() : ""
-  if (!ownerToken) throw new Error("owner receipt has no ownerToken")
-  if (!processIdentity) throw new Error("owner receipt has no processIdentity")
+  if (!OWNER_TOKEN_PATTERN.test(ownerToken)) throw new Error("owner receipt has an invalid ownerToken")
+  if (!MACHINE_ID_PATTERN.test(machineIdentity)) throw new Error("owner receipt has an invalid machineIdentity")
+  if (!PROCESS_ID_PATTERN.test(processIdentity)) throw new Error("owner receipt has an invalid processIdentity")
   return {
     schemaVersion,
     pid: Number(record.pid),
     host,
     startedAt,
     ownerToken,
+    machineIdentity,
     processIdentity,
   }
 }
@@ -794,7 +908,7 @@ function sameLock(left: Pick<LockSnapshot, "dev" | "ino">, right: Pick<LockSnaps
   return left.dev === right.dev && left.ino === right.ino
 }
 
-async function processIdentity(pid: number): Promise<string | null> {
+async function resolveProcessIdentity(pid: number): Promise<string | null> {
   try {
     const proc = Bun.spawn(["ps", "-p", String(pid), "-o", "lstart=", "-o", "comm="], {
       stdout: "pipe",
@@ -821,6 +935,29 @@ function processLiveness(pid: number): "alive" | "dead" | "unverifiable" {
   }
 }
 
+function isVerifiedLegacyHostAlias(ownerHost: string, currentHost: string): boolean {
+  const ownerFingerprint = createHash("sha256").update(ownerHost).digest("hex")
+  const currentFingerprint = createHash("sha256").update(currentHost).digest("hex")
+  return ownerFingerprint === VERIFIED_LEGACY_OWNER_HOST_FINGERPRINT
+    && currentFingerprint === VERIFIED_CURRENT_HOST_FINGERPRINT
+}
+
+function lockDependencies(
+  overrides: Partial<CriticalDbBuildLockDependencies> | undefined,
+): CriticalDbBuildLockDependencies {
+  return {
+    currentHostname: hostname,
+    resolveMachineIdentity: resolveStableMachineIdentity,
+    resolveProcessIdentity,
+    processLiveness,
+    isVerifiedLegacyHostAlias,
+    cleanupVerifiedDirectory: cleanVerifiedLockDirectory,
+    now: Date.now,
+    randomUUID: () => crypto.randomUUID(),
+    ...overrides,
+  }
+}
+
 async function removeOwnedReclaimMarker(markerPath: string, token: string): Promise<void> {
   try {
     const marker = JSON.parse(await readFile(markerPath, "utf8")) as { token?: unknown }
@@ -831,33 +968,105 @@ async function removeOwnedReclaimMarker(markerPath: string, token: string): Prom
 }
 
 async function cleanVerifiedLockDirectory(
-  directoryPath: string,
-  expected: Pick<LockSnapshot, "dev" | "ino">,
-  allowedEntries: readonly string[],
-): Promise<boolean> {
-  const current = await lstat(directoryPath)
-  if (!current.isDirectory() || current.dev !== expected.dev || current.ino !== expected.ino) {
-    throw new Error(`refusing to clean unverified lock quarantine: ${directoryPath}`)
+  input: CriticalDbBuildLockCleanupInput,
+): Promise<CriticalDbBuildLockCleanupResult> {
+  let current
+  try {
+    current = await lstat(input.directoryPath)
+  } catch (error) {
+    if (nodeErrorCode(error) === "ENOENT") {
+      return {
+        status: "missing",
+        reason: "quarantine-missing",
+        errorCode: "ENOENT",
+        quarantineRetained: false,
+      }
+    }
+    throw error
   }
-  const entries = await readdir(directoryPath)
-  if (entries.some((entry) => !allowedEntries.includes(entry))) return false
-  for (const entry of entries) await unlink(join(directoryPath, entry))
-  await rmdir(directoryPath)
-  return true
+  if (
+    !current.isDirectory()
+    || current.isSymbolicLink()
+    || current.dev !== input.expected.dev
+    || current.ino !== input.expected.ino
+  ) {
+    return {
+      status: "retained",
+      reason: "identity-mismatch",
+      errorCode: "IDENTITY_MISMATCH",
+      quarantineRetained: true,
+    }
+  }
+  const entries = await readdir(input.directoryPath)
+  if (entries.some((entry) => !input.allowedEntries.includes(entry))) {
+    return {
+      status: "retained",
+      reason: "unknown-entry",
+      errorCode: "UNKNOWN_ENTRY",
+      quarantineRetained: true,
+    }
+  }
+  for (const entry of entries) await unlink(join(input.directoryPath, entry))
+  await rmdir(input.directoryPath)
+  return { status: "removed", quarantineRetained: false }
+}
+
+async function cleanQuarantineNonAuthoritatively(
+  input: CriticalDbBuildLockCleanupInput & { operation: CriticalDbBuildLockWarning["operation"] },
+  dependencies: CriticalDbBuildLockDependencies,
+): Promise<{ quarantineRetained: boolean; warning: CriticalDbBuildLockWarning | null }> {
+  try {
+    const result = await dependencies.cleanupVerifiedDirectory(input)
+    if (result.status === "removed") return { quarantineRetained: false, warning: null }
+    return {
+      quarantineRetained: result.quarantineRetained,
+      warning: {
+        operation: input.operation,
+        reason: result.reason,
+        errorCode: result.errorCode,
+        quarantineRetained: result.quarantineRetained,
+      },
+    }
+  } catch (error) {
+    const errorCode = nodeErrorCode(error)
+    const quarantineRetained = errorCode !== "ENOENT"
+    return {
+      quarantineRetained,
+      warning: {
+        operation: input.operation,
+        reason: errorCode === "ENOENT" ? "quarantine-missing" : "cleanup-failed",
+        errorCode,
+        quarantineRetained,
+      },
+    }
+  }
 }
 
 async function createFreshBuildLock(
   lockPath: string,
   recovery: CriticalDbBuildLockRecovery | null,
+  dependencies: CriticalDbBuildLockDependencies,
 ): Promise<CriticalDbBuildLock> {
-  const ownerToken = crypto.randomUUID()
+  const currentHost = normalizeHostname(dependencies.currentHostname())
+  if (!currentHost) throw new Error("critical.db lock current hostname is unavailable")
+  const machineIdentity = await dependencies.resolveMachineIdentity()
+  if (!machineIdentity || !MACHINE_ID_PATTERN.test(machineIdentity)) {
+    throw new Error("critical.db lock stable machine identity is unavailable")
+  }
+  const currentProcessIdentity = await dependencies.resolveProcessIdentity(process.pid)
+  if (!currentProcessIdentity || !PROCESS_ID_PATTERN.test(currentProcessIdentity)) {
+    throw new Error("critical.db lock current process identity is unavailable")
+  }
+
+  const ownerToken = dependencies.randomUUID()
   const owner: CriticalDbBuildLockOwner = {
     schemaVersion: 2,
     ownerToken,
     pid: process.pid,
-    host: hostname().toLowerCase(),
-    startedAt: new Date().toISOString(),
-    processIdentity: (await processIdentity(process.pid)) ?? "unavailable",
+    host: currentHost,
+    startedAt: new Date(dependencies.now()).toISOString(),
+    machineIdentity,
+    processIdentity: currentProcessIdentity,
   }
   const temporaryOwnerName = `owner.json.tmp-${ownerToken}`
   const temporaryOwnerPath = join(lockPath, temporaryOwnerName)
@@ -870,26 +1079,39 @@ async function createFreshBuildLock(
     await rename(temporaryOwnerPath, join(lockPath, "owner.json"))
   } catch (error) {
     if (created) {
-      await cleanVerifiedLockDirectory(lockPath, created, [temporaryOwnerName, "owner.json"]).catch(() => false)
+      await dependencies.cleanupVerifiedDirectory({
+        operation: "fresh-lock-rollback",
+        directoryPath: lockPath,
+        expected: created,
+        allowedEntries: [temporaryOwnerName, "owner.json"],
+      }).catch(() => undefined)
     }
     throw error
   }
 
+  const createdIdentity = created
+  const warnings: CriticalDbBuildLockWarning[] = []
   let released = false
   return {
     owner,
     recovery,
+    warnings,
     release: async () => {
       if (released) return
       const snapshot = await readLockSnapshot(lockPath)
-      if (!sameLock(snapshot, created) || snapshot.owner.ownerToken !== ownerToken) {
+      if (!sameLock(snapshot, createdIdentity) || snapshot.owner.ownerToken !== ownerToken) {
         throw new Error(`refusing to release a critical.db lock not owned by this builder: ${lockPath}`)
       }
       const releasePath = `${lockPath}.release-${ownerToken}`
       await rename(lockPath, releasePath)
       released = true
-      const cleaned = await cleanVerifiedLockDirectory(releasePath, created, ["owner.json"])
-      if (!cleaned) throw new Error(`critical.db lock release quarantine contains unknown files: ${releasePath}`)
+      const cleanup = await cleanQuarantineNonAuthoritatively({
+        operation: "release-quarantine-cleanup",
+        directoryPath: releasePath,
+        expected: createdIdentity,
+        allowedEntries: ["owner.json"],
+      }, dependencies)
+      if (cleanup.warning) warnings.push(cleanup.warning)
     },
   }
 }
@@ -899,19 +1121,23 @@ async function createFreshBuildLock(
 async function reclaimStaleBuildLock(
   lockPath: string,
   staleAfterMs: number,
+  dependencies: CriticalDbBuildLockDependencies,
 ): Promise<CriticalDbBuildLock> {
   let snapshot: LockSnapshot
   try {
     snapshot = await readLockSnapshot(lockPath)
   } catch (error) {
-    throw lockHeldError(lockPath, error instanceof Error ? error.message : String(error))
+    throw lockHeldError(lockPath, error instanceof Error ? error.message : "invalid owner receipt")
   }
 
-  const currentHost = hostname().toLowerCase()
-  if (snapshot.owner.host !== currentHost) {
-    throw lockHeldError(lockPath, `owner host ${snapshot.owner.host} does not match ${currentHost}`)
+  const currentHost = normalizeHostname(dependencies.currentHostname())
+  if (!currentHost) throw lockHeldError(lockPath, "current hostname is unavailable")
+  const currentMachineIdentity = await dependencies.resolveMachineIdentity()
+  if (!currentMachineIdentity || !MACHINE_ID_PATTERN.test(currentMachineIdentity)) {
+    throw lockHeldError(lockPath, "stable machine identity is unavailable")
   }
-  const observedAt = Date.now()
+
+  const observedAt = dependencies.now()
   const ownerAgeMs = observedAt - Date.parse(snapshot.owner.startedAt)
   const directoryAgeMs = observedAt - snapshot.mtimeMs
   const lockAgeMs = Math.min(ownerAgeMs, directoryAgeMs)
@@ -919,24 +1145,43 @@ async function reclaimStaleBuildLock(
     throw lockHeldError(lockPath, `lock age ${Math.max(0, Math.round(lockAgeMs))}ms is below ${staleAfterMs}ms`)
   }
 
-  const liveness = processLiveness(snapshot.owner.pid)
+  const liveness = dependencies.processLiveness(snapshot.owner.pid)
   let reason: CriticalDbBuildLockRecovery["reason"]
-  if (liveness === "dead") {
-    reason = "owner-process-dead"
-  } else if (liveness === "unverifiable") {
-    throw lockHeldError(lockPath, `owner process ${snapshot.owner.pid} liveness is unverifiable`)
-  } else {
-    const recordedIdentity = snapshot.owner.processIdentity
-    const currentIdentity = recordedIdentity && recordedIdentity !== "unavailable"
-      ? await processIdentity(snapshot.owner.pid)
-      : null
-    if (!recordedIdentity || recordedIdentity === "unavailable" || !currentIdentity || currentIdentity === recordedIdentity) {
-      throw lockHeldError(lockPath, `owner process is still alive (pid ${snapshot.owner.pid})`)
+  if (snapshot.owner.schemaVersion === 1) {
+    if (liveness === "alive") {
+      throw lockHeldError(lockPath, `legacy owner process is still alive (pid ${snapshot.owner.pid})`)
     }
-    reason = "owner-pid-reused"
+    if (liveness !== "dead") {
+      throw lockHeldError(lockPath, `legacy owner process ${snapshot.owner.pid} liveness is unverifiable`)
+    }
+    if (
+      snapshot.owner.host !== currentHost
+      && !dependencies.isVerifiedLegacyHostAlias(snapshot.owner.host, currentHost)
+    ) {
+      throw lockHeldError(lockPath, `legacy owner host ${snapshot.owner.host} does not match ${currentHost}`)
+    }
+    reason = "owner-process-dead"
+  } else {
+    if (snapshot.owner.machineIdentity !== currentMachineIdentity) {
+      throw lockHeldError(lockPath, "owner machine identity does not match this machine")
+    }
+    if (liveness === "dead") {
+      reason = "owner-process-dead"
+    } else if (liveness === "unverifiable") {
+      throw lockHeldError(lockPath, `owner process ${snapshot.owner.pid} liveness is unverifiable`)
+    } else {
+      const currentProcessIdentity = await dependencies.resolveProcessIdentity(snapshot.owner.pid)
+      if (!currentProcessIdentity || !PROCESS_ID_PATTERN.test(currentProcessIdentity)) {
+        throw lockHeldError(lockPath, `owner process ${snapshot.owner.pid} process identity is unavailable`)
+      }
+      if (currentProcessIdentity === snapshot.owner.processIdentity) {
+        throw lockHeldError(lockPath, `owner process is still alive (pid ${snapshot.owner.pid})`)
+      }
+      reason = "owner-pid-reused"
+    }
   }
 
-  const reclaimToken = crypto.randomUUID()
+  const reclaimToken = dependencies.randomUUID()
   const markerPath = join(lockPath, "reclaim.json")
   try {
     await writeFile(markerPath, JSON.stringify({ token: reclaimToken, pid: process.pid, host: currentHost }), {
@@ -944,7 +1189,9 @@ async function reclaimStaleBuildLock(
       mode: 0o600,
     })
   } catch (error) {
-    const detail = nodeErrorCode(error) === "EEXIST" ? "another stale-lock reclamation is in progress" : String(error)
+    const detail = nodeErrorCode(error) === "EEXIST"
+      ? "another stale-lock reclamation is in progress"
+      : `reclaim marker write failed (${nodeErrorCode(error)})`
     throw lockHeldError(lockPath, detail)
   }
 
@@ -959,8 +1206,8 @@ async function reclaimStaleBuildLock(
     throw error
   }
 
-  const quarantinedAt = new Date().toISOString()
-  const quarantinePath = `${lockPath}.quarantine-${Date.now()}-${reclaimToken}`
+  const quarantinedAt = new Date(dependencies.now()).toISOString()
+  const quarantinePath = `${lockPath}.quarantine-${dependencies.now()}-${reclaimToken}`
   try {
     await rename(lockPath, quarantinePath)
   } catch (error) {
@@ -985,32 +1232,61 @@ async function reclaimStaleBuildLock(
   }
   let lock: CriticalDbBuildLock
   try {
-    lock = await createFreshBuildLock(lockPath, recovery)
+    lock = await createFreshBuildLock(lockPath, recovery, dependencies)
   } catch (error) {
-    await cleanVerifiedLockDirectory(quarantinePath, snapshot, ["owner.json", "reclaim.json"])
-    throw lockHeldError(lockPath, `another builder acquired the lock after quarantine (${nodeErrorCode(error)})`)
+    await dependencies.cleanupVerifiedDirectory({
+      operation: "stale-quarantine-cleanup",
+      directoryPath: quarantinePath,
+      expected: snapshot,
+      allowedEntries: ["owner.json", "reclaim.json"],
+    }).catch(() => undefined)
+    throw lockHeldError(lockPath, `replacement lock acquisition failed (${nodeErrorCode(error)})`)
   }
-  recovery.quarantineRetained = !(await cleanVerifiedLockDirectory(
-    quarantinePath,
-    snapshot,
-    ["owner.json", "reclaim.json"],
-  ))
-  return lock
+
+  try {
+    const cleanup = await cleanQuarantineNonAuthoritatively({
+      operation: "stale-quarantine-cleanup",
+      directoryPath: quarantinePath,
+      expected: snapshot,
+      allowedEntries: ["owner.json", "reclaim.json"],
+    }, dependencies)
+    recovery.quarantineRetained = cleanup.quarantineRetained
+    if (cleanup.warning) lock.warnings.push(cleanup.warning)
+    return lock
+  } catch (error) {
+    try {
+      await lock.release()
+    } catch (releaseError) {
+      throw lockHeldError(lockPath, `replacement lock release failed (${nodeErrorCode(releaseError)})`)
+    }
+    throw error
+  }
 }
 
 export async function acquireCriticalDbBuildLock(input: {
   dbPath: string
   staleAfterMs?: number
+  dependencies?: Partial<CriticalDbBuildLockDependencies>
 }): Promise<CriticalDbBuildLock> {
   const dbPath = resolve(input.dbPath)
   const lockPath = `${dbPath}.build-lock`
+  const dependencies = lockDependencies(input.dependencies)
   await mkdir(dirname(dbPath), { recursive: true, mode: 0o700 })
   try {
-    return await createFreshBuildLock(lockPath, null)
+    return await createFreshBuildLock(lockPath, null, dependencies)
   } catch (error) {
     if (nodeErrorCode(error) !== "EEXIST") throw error
   }
-  return reclaimStaleBuildLock(lockPath, input.staleAfterMs ?? CRITICAL_DB_LOCK_STALE_AFTER_MS)
+  return reclaimStaleBuildLock(
+    lockPath,
+    input.staleAfterMs ?? CRITICAL_DB_LOCK_STALE_AFTER_MS,
+    dependencies,
+  )
+}
+
+export const __criticalDbBuildLockTestUtils = {
+  cleanVerifiedLockDirectory,
+  resolveStableMachineIdentity,
 }
 
 export async function buildCriticalDb(options: BuildOptions = {}): Promise<CriticalBuildResult> {
@@ -1023,7 +1299,10 @@ export async function buildCriticalDb(options: BuildOptions = {}): Promise<Criti
   const now = options.now ?? new Date()
   const dbPath = resolve(options.dbPath ?? process.env.JOELCLAW_CRITICAL_DB ?? DEFAULT_CRITICAL_DB_PATH)
   const temporaryPath = `${dbPath}.building-${process.pid}`
-  const buildLock = await acquireCriticalDbBuildLock({ dbPath })
+  const buildLock = await acquireCriticalDbBuildLock({
+    dbPath,
+    dependencies: options.lockDependencies,
+  })
 
   try {
     await rm(temporaryPath, { force: true })
@@ -1157,6 +1436,7 @@ export async function buildCriticalDb(options: BuildOptions = {}): Promise<Criti
       bytes: statSync(dbPath).size,
       durationMs: Math.round((performance.now() - started) * 100) / 100,
       ...(buildLock.recovery ? { lockRecovery: buildLock.recovery } : {}),
+      lockWarnings: buildLock.warnings,
     }
   } finally {
     await rm(temporaryPath, { force: true })

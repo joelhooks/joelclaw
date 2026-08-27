@@ -14,7 +14,9 @@ import { createServer } from "node:net"
 import { hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 import { __sqliteRecallTestUtils } from "../capabilities/adapters/typesense-recall"
+import type { CriticalDbBuildLockDependencies } from "./critical-search"
 import {
+  __criticalDbBuildLockTestUtils,
   acquireCriticalDbBuildLock,
   buildCriticalDb,
   CriticalDbUnavailableError,
@@ -160,16 +162,91 @@ function staleLockFixture(owner: unknown): { dbPath: string; lockPath: string } 
   return { dbPath, lockPath }
 }
 
-function deadOwner(): { pid: number; host: string; startedAt: string } {
+const MACHINE_A = `machine-sha256:${"a".repeat(64)}`
+const MACHINE_B = `machine-sha256:${"b".repeat(64)}`
+const PROCESS_A = `ps-sha256:${"a".repeat(64)}`
+const PROCESS_B = `ps-sha256:${"b".repeat(64)}`
+
+function deadOwner(host = hostname().toLowerCase()): { pid: number; host: string; startedAt: string } {
   return {
     pid: 2_147_483_647,
-    host: hostname().toLowerCase(),
+    host,
     startedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
   }
 }
 
+function v2Owner(input: {
+  pid?: number
+  host?: string
+  machineIdentity?: string
+  processIdentity?: string
+} = {}): Record<string, unknown> {
+  return {
+    schemaVersion: 2,
+    ownerToken: crypto.randomUUID(),
+    pid: input.pid ?? process.pid,
+    host: input.host ?? "retired-host.example",
+    startedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+    machineIdentity: input.machineIdentity ?? MACHINE_A,
+    processIdentity: input.processIdentity ?? PROCESS_A,
+  }
+}
+
+function lockDependencies(
+  overrides: Partial<CriticalDbBuildLockDependencies> = {},
+): Partial<CriticalDbBuildLockDependencies> {
+  return {
+    currentHostname: () => "current-host.example",
+    resolveMachineIdentity: async () => MACHINE_A,
+    resolveProcessIdentity: async () => PROCESS_A,
+    processLiveness: () => "dead",
+    ...overrides,
+  }
+}
+
+describe("critical.db builder lock identity", () => {
+  test("derives stable opaque identities from supported macOS and Linux machine sources", async () => {
+    const linux = await __criticalDbBuildLockTestUtils.resolveStableMachineIdentity({
+      platform: "linux",
+      readTextFile: async (path) => {
+        if (path === "/etc/machine-id") return "0123456789abcdef0123456789abcdef\n"
+        throw Object.assign(new Error("missing"), { code: "ENOENT" })
+      },
+      runCommand: async () => ({ exitCode: 1, stdout: "" }),
+    })
+    const darwin = await __criticalDbBuildLockTestUtils.resolveStableMachineIdentity({
+      platform: "darwin",
+      readTextFile: async () => "",
+      runCommand: async () => ({
+        exitCode: 0,
+        stdout: `    "IOPlatformUUID" = "01234567-89AB-CDEF-0123-456789ABCDEF"`,
+      }),
+    })
+
+    expect(linux).toMatch(/^machine-sha256:[a-f0-9]{64}$/u)
+    expect(darwin).toMatch(/^machine-sha256:[a-f0-9]{64}$/u)
+    expect(linux).not.toBe(darwin)
+  })
+
+  test.each([
+    ["stable machine", { resolveMachineIdentity: async () => null }, "stable machine identity is unavailable"],
+    ["current process", { resolveProcessIdentity: async () => null }, "current process identity is unavailable"],
+  ] as const)("fails closed when a fresh lock has no %s identity", async (_case, overrides, expected) => {
+    const root = join(tmpdir(), `critical-search-lock-${crypto.randomUUID()}`)
+    roots.push(root)
+    const dbPath = join(root, "critical.db")
+
+    await expect(acquireCriticalDbBuildLock({
+      dbPath,
+      dependencies: lockDependencies(overrides),
+    })).rejects.toThrow(expected)
+
+    expect(existsSync(`${dbPath}.build-lock`)).toBe(false)
+  })
+})
+
 describe("critical.db builder lock recovery", () => {
-  test("keeps a live owner protected even when its lock is old", async () => {
+  test("keeps a live legacy owner protected even when its lock is old", async () => {
     const { dbPath, lockPath } = staleLockFixture({
       pid: process.pid,
       host: hostname().toLowerCase(),
@@ -177,10 +254,101 @@ describe("critical.db builder lock recovery", () => {
     })
     const ownerBefore = readFileSync(join(lockPath, "owner.json"), "utf8")
 
-    await expect(acquireCriticalDbBuildLock({ dbPath })).rejects.toThrow("owner process is still alive")
+    await expect(acquireCriticalDbBuildLock({ dbPath })).rejects.toThrow("legacy owner process is still alive")
 
     expect(readFileSync(join(lockPath, "owner.json"), "utf8")).toBe(ownerBefore)
     expect(readdirSync(join(dbPath, "..")).filter((entry) => entry.includes("build-lock.quarantine"))).toEqual([])
+  })
+
+  test("reclaims only an explicit verified dead legacy hostname migration", async () => {
+    const previousOwner = deadOwner("legacy-host.example")
+    const { dbPath, lockPath } = staleLockFixture(previousOwner)
+
+    const lock = await acquireCriticalDbBuildLock({
+      dbPath,
+      dependencies: lockDependencies({
+        isVerifiedLegacyHostAlias: (ownerHost, currentHost) =>
+          ownerHost === "legacy-host.example" && currentHost === "current-host.example",
+      }),
+    })
+    try {
+      expect(lock.recovery).toMatchObject({ reason: "owner-process-dead", previousOwner })
+      expect(lock.owner).toMatchObject({ host: "current-host.example", machineIdentity: MACHINE_A })
+    } finally {
+      await lock.release()
+    }
+    expect(existsSync(lockPath)).toBe(false)
+  })
+
+  test.each([
+    "current-host.example.evil",
+    "unverified-host.example",
+    "foreign-host.example",
+  ])("rejects an unknown or foreign dead legacy hostname: %s", async (ownerHost) => {
+    const { dbPath, lockPath } = staleLockFixture(deadOwner(ownerHost))
+    const ownerBefore = readFileSync(join(lockPath, "owner.json"), "utf8")
+
+    await expect(acquireCriticalDbBuildLock({
+      dbPath,
+      dependencies: lockDependencies(),
+    })).rejects.toThrow("legacy owner host")
+
+    expect(readFileSync(join(lockPath, "owner.json"), "utf8")).toBe(ownerBefore)
+  })
+
+  test("protects a live schema-v2 owner with matching process identity", async () => {
+    const { dbPath } = staleLockFixture(v2Owner())
+
+    await expect(acquireCriticalDbBuildLock({
+      dbPath,
+      dependencies: lockDependencies({ processLiveness: () => "alive" }),
+    })).rejects.toThrow("owner process is still alive")
+  })
+
+  test("reclaims a live schema-v2 PID only when its process identity mismatches", async () => {
+    const { dbPath } = staleLockFixture(v2Owner())
+    const lock = await acquireCriticalDbBuildLock({
+      dbPath,
+      dependencies: lockDependencies({
+        processLiveness: () => "alive",
+        resolveProcessIdentity: async () => PROCESS_B,
+      }),
+    })
+    try {
+      expect(lock.recovery).toMatchObject({ reason: "owner-pid-reused" })
+    } finally {
+      await lock.release()
+    }
+  })
+
+  test("fails closed when a live schema-v2 process identity is unavailable", async () => {
+    const { dbPath, lockPath } = staleLockFixture(v2Owner())
+    const ownerBefore = readFileSync(join(lockPath, "owner.json"), "utf8")
+
+    await expect(acquireCriticalDbBuildLock({
+      dbPath,
+      dependencies: lockDependencies({
+        processLiveness: () => "alive",
+        resolveProcessIdentity: async () => null,
+      }),
+    })).rejects.toThrow("process identity is unavailable")
+
+    expect(readFileSync(join(lockPath, "owner.json"), "utf8")).toBe(ownerBefore)
+  })
+
+  test.each([
+    ["mismatched", async () => MACHINE_B],
+    ["unavailable", async () => null],
+  ] as const)("fails closed when schema-v2 machine identity is %s", async (_case, resolveMachineIdentity) => {
+    const { dbPath, lockPath } = staleLockFixture(v2Owner())
+    const ownerBefore = readFileSync(join(lockPath, "owner.json"), "utf8")
+
+    await expect(acquireCriticalDbBuildLock({
+      dbPath,
+      dependencies: lockDependencies({ resolveMachineIdentity }),
+    })).rejects.toThrow(/machine identity/u)
+
+    expect(readFileSync(join(lockPath, "owner.json"), "utf8")).toBe(ownerBefore)
   })
 
   test("reclaims a conclusively dead owner and records the recovery", async () => {
@@ -192,8 +360,9 @@ describe("critical.db builder lock recovery", () => {
       expect(lock.recovery).toMatchObject({ reason: "owner-process-dead", previousOwner })
       const currentOwner = JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8")) as Record<string, unknown>
       expect(currentOwner).toMatchObject({ schemaVersion: 2, pid: process.pid, host: hostname().toLowerCase() })
-      expect(typeof currentOwner.ownerToken).toBe("string")
-      expect(typeof currentOwner.processIdentity).toBe("string")
+      expect(currentOwner.machineIdentity).toMatch(/^machine-sha256:[a-f0-9]{64}$/u)
+      expect(currentOwner.ownerToken).toMatch(/^[0-9a-f-]+$/u)
+      expect(currentOwner.processIdentity).toMatch(/^ps-sha256:[a-f0-9]{64}$/u)
     } finally {
       await lock.release()
     }
@@ -219,6 +388,7 @@ describe("critical.db builder lock recovery", () => {
     })
 
     expect(result.lockRecovery).toMatchObject({ reason: "owner-process-dead", quarantineRetained: false })
+    expect(result.lockWarnings).toEqual([])
     expect(existsSync(lockPath)).toBe(false)
   })
 
@@ -238,6 +408,92 @@ describe("critical.db builder lock recovery", () => {
 
     expect(readFileSync(join(lockPath, "owner.json"), "utf8")).toBe(ownerBefore)
     expect(readdirSync(join(dbPath, "..")).filter((entry) => entry.includes("build-lock.quarantine"))).toEqual([])
+  })
+
+  test("retains stale quarantine on injected EPERM without leaking the fresh lock", async () => {
+    const { dbPath, lockPath } = staleLockFixture(deadOwner("current-host.example"))
+    const lock = await acquireCriticalDbBuildLock({
+      dbPath,
+      dependencies: lockDependencies({
+        cleanupVerifiedDirectory: async (input) => {
+          if (input.operation === "stale-quarantine-cleanup") {
+            throw Object.assign(new Error("denied /private/secret"), { code: "EPERM" })
+          }
+          return __criticalDbBuildLockTestUtils.cleanVerifiedLockDirectory(input)
+        },
+      }),
+    })
+
+    expect(existsSync(lockPath)).toBe(true)
+    expect(lock.recovery?.quarantineRetained).toBe(true)
+    expect(lock.warnings).toEqual([{
+      operation: "stale-quarantine-cleanup",
+      reason: "cleanup-failed",
+      errorCode: "EPERM",
+      quarantineRetained: true,
+    }])
+    expect(readdirSync(join(dbPath, "..")).filter((entry) => entry.includes("build-lock.quarantine"))).toHaveLength(1)
+
+    await lock.release()
+    expect(existsSync(lockPath)).toBe(false)
+  })
+
+  test("publishes successfully and retains a release quarantine with an injected unknown entry", async () => {
+    const paths = fixture()
+    const result = await buildCriticalDb({
+      dbPath: paths.db,
+      observationsDir: paths.observations,
+      brainRoots: [paths.brain],
+      vaultDir: paths.vault,
+      skillsDir: paths.skills,
+      memoryArchivePath: paths.archive,
+      allowNonFlagg: true,
+      lockDependencies: lockDependencies({
+        cleanupVerifiedDirectory: async (input) => {
+          if (input.operation === "release-quarantine-cleanup") {
+            writeFileSync(join(input.directoryPath, "unknown-entry"), "retain")
+          }
+          return __criticalDbBuildLockTestUtils.cleanVerifiedLockDirectory(input)
+        },
+      }),
+    })
+
+    expect(existsSync(paths.db)).toBe(true)
+    expect(existsSync(`${paths.db}.build-lock`)).toBe(false)
+    expect(result.lockWarnings).toEqual([{
+      operation: "release-quarantine-cleanup",
+      reason: "unknown-entry",
+      errorCode: "UNKNOWN_ENTRY",
+      quarantineRetained: true,
+    }])
+    expect(readdirSync(join(paths.db, "..")).filter((entry) => entry.includes("build-lock.release"))).toHaveLength(1)
+  })
+
+  test("continues acquisition when an injected stale quarantine disappears before cleanup", async () => {
+    const { dbPath, lockPath } = staleLockFixture(deadOwner("current-host.example"))
+    const lock = await acquireCriticalDbBuildLock({
+      dbPath,
+      dependencies: lockDependencies({
+        cleanupVerifiedDirectory: async (input) => {
+          if (input.operation === "stale-quarantine-cleanup") {
+            rmSync(input.directoryPath, { recursive: true, force: true })
+          }
+          return __criticalDbBuildLockTestUtils.cleanVerifiedLockDirectory(input)
+        },
+      }),
+    })
+
+    expect(existsSync(lockPath)).toBe(true)
+    expect(lock.recovery?.quarantineRetained).toBe(false)
+    expect(lock.warnings).toEqual([{
+      operation: "stale-quarantine-cleanup",
+      reason: "quarantine-missing",
+      errorCode: "ENOENT",
+      quarantineRetained: false,
+    }])
+
+    await lock.release()
+    expect(existsSync(lockPath)).toBe(false)
   })
 
   test("allows only one of two stale-lock reclaimers to own the lock", async () => {

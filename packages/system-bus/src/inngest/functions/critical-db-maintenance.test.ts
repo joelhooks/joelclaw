@@ -12,6 +12,7 @@ import {
   createCriticalDbScheduledRebuildFunction,
   inspectCriticalDbFreshness,
   parseCriticalDbLockRecovery,
+  parseCriticalDbLockTelemetry,
   processCriticalDbFreshness,
   processCriticalDbRebuildFailure,
   runCriticalDbBuilder,
@@ -208,28 +209,77 @@ describe("critical.db freshness contract", () => {
 });
 
 describe("critical.db scheduled rebuild failures", () => {
-  test("extracts stale-lock recovery as bounded structured telemetry", () => {
+  test("extracts privacy-safe stale-lock recovery and bounded cleanup warnings", () => {
     const stdout = JSON.stringify({
       ok: true,
       dbPath: "/private/path/critical.db",
       lockRecovery: {
         reason: "owner-process-dead",
-        previousOwner: { pid: 74030, host: "flagg", startedAt: "2026-08-03T12:20:53.295Z" },
+        previousOwner: {
+          pid: 74030,
+          host: "private-host.local",
+          startedAt: "2026-08-03T12:20:53.295Z",
+          ownerToken: "do-not-emit",
+          machineIdentity: "do-not-emit",
+          processIdentity: "do-not-emit",
+        },
         lockAgeMs: 2_070_000_000,
         quarantinedAt: "2026-08-27T05:30:00.000Z",
-        quarantineRetained: false,
+        quarantineRetained: true,
       },
+      lockWarnings: [
+        {
+          operation: "stale-quarantine-cleanup",
+          reason: "cleanup-failed",
+          errorCode: "EPERM",
+          quarantineRetained: true,
+          path: "/private/path/critical.db.build-lock.quarantine-secret",
+        },
+        {
+          operation: "release-quarantine-cleanup",
+          reason: "unknown-entry",
+          errorCode: "UNKNOWN_ENTRY",
+          quarantineRetained: true,
+        },
+        {
+          operation: "release-quarantine-cleanup",
+          reason: "cleanup-failed",
+          errorCode: "not bounded or parseable",
+          quarantineRetained: true,
+        },
+      ],
     });
 
-    expect(parseCriticalDbLockRecovery(stdout)).toEqual({
-      reason: "owner-process-dead",
-      previousOwnerPid: 74030,
-      previousOwnerHost: "flagg",
-      lockAgeMs: 2_070_000_000,
-      quarantinedAt: "2026-08-27T05:30:00.000Z",
-      quarantineRetained: false,
+    const telemetry = parseCriticalDbLockTelemetry(stdout);
+    expect(telemetry).toEqual({
+      recovery: {
+        reason: "owner-process-dead",
+        previousOwnerPid: 74030,
+        lockAgeMs: 2_070_000_000,
+        quarantinedAt: "2026-08-27T05:30:00.000Z",
+        quarantineRetained: true,
+      },
+      warnings: [
+        {
+          operation: "stale-quarantine-cleanup",
+          reason: "cleanup-failed",
+          errorCode: "EPERM",
+          quarantineRetained: true,
+        },
+        {
+          operation: "release-quarantine-cleanup",
+          reason: "unknown-entry",
+          errorCode: "UNKNOWN_ENTRY",
+          quarantineRetained: true,
+        },
+      ],
     });
-    expect(parseCriticalDbLockRecovery("not-json")).toBeNull();
+    expect(parseCriticalDbLockRecovery(stdout)).toEqual(telemetry.recovery);
+    expect(JSON.stringify(telemetry)).not.toContain("private-host");
+    expect(JSON.stringify(telemetry)).not.toContain("/private/path");
+    expect(JSON.stringify(telemetry)).not.toContain("do-not-emit");
+    expect(parseCriticalDbLockTelemetry(JSON.stringify({ ok: true, lockTelemetry: telemetry }))).toEqual(telemetry);
+    expect(parseCriticalDbLockTelemetry("not-json")).toEqual({ recovery: null, warnings: [] });
   });
 
   test("held builder lock produces builder exit 1", async () => {
