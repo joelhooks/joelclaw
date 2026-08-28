@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { open, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { type FileHandle, open, readFile, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   CardReviewAuthorityV1Schema,
@@ -59,10 +60,133 @@ const readPrivateJsonFile = async (file: string, expectedDigest: string): Promis
   return JSON.parse(bytes.toString("utf8")) as unknown;
 };
 
-const writeReceipt = async (target: string, encoded: unknown) => {
+interface ApprovedCardOperation {
+  readonly activationId: string;
+  readonly artifactSha256: string;
+  readonly authoritySha256: string;
+  readonly withdrawalId: string;
+  readonly withdrawalSha256: string;
+}
+
+const approvalFile = fileURLToPath(new URL("./approved-card-activations.json", import.meta.url));
+
+const approvedOperations = async (): Promise<readonly ApprovedCardOperation[]> => {
+  const [file, directory] = await Promise.all([
+    stat(approvalFile),
+    stat(path.dirname(approvalFile)),
+  ]);
+  if (
+    !file.isFile() ||
+    (file.mode & 0o222) !== 0 ||
+    !directory.isDirectory() ||
+    (directory.mode & 0o222) !== 0
+  ) {
+    throw new Error("approved card operations are not in a sealed release");
+  }
+  const value: unknown = JSON.parse(await readFile(approvalFile, "utf8"));
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("schemaVersion" in value) ||
+    value.schemaVersion !== 1 ||
+    !("operations" in value) ||
+    !Array.isArray(value.operations)
+  ) {
+    throw new Error("approved card operations file is invalid");
+  }
+  return value.operations.map((entry) => {
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      !("activationId" in entry) ||
+      typeof entry.activationId !== "string" ||
+      !("artifactSha256" in entry) ||
+      typeof entry.artifactSha256 !== "string" ||
+      !("authoritySha256" in entry) ||
+      typeof entry.authoritySha256 !== "string" ||
+      !("withdrawalId" in entry) ||
+      typeof entry.withdrawalId !== "string" ||
+      !("withdrawalSha256" in entry) ||
+      typeof entry.withdrawalSha256 !== "string"
+    ) {
+      throw new Error("approved card operation entry is invalid");
+    }
+    return {
+      activationId: entry.activationId,
+      artifactSha256: entry.artifactSha256,
+      authoritySha256: entry.authoritySha256,
+      withdrawalId: entry.withdrawalId,
+      withdrawalSha256: entry.withdrawalSha256,
+    };
+  });
+};
+
+interface PreparedReceipt {
+  readonly handle: FileHandle;
+  readonly identity: string;
+  readonly operation: string;
+  readonly path: string;
+}
+
+const prepareReceipt = async (
+  target: string,
+  operation: string,
+  identity: string,
+): Promise<PreparedReceipt> => {
+  const prepared = `${JSON.stringify({
+    _tag: "ReviewedCardReceiptPreparedV1",
+    identity,
+    operation,
+    schemaVersion: 1,
+  })}\n`;
+  try {
+    const handle = await open(target, "wx+", 0o600);
+    await handle.write(prepared, 0, "utf8");
+    await handle.sync();
+    return { handle, identity, operation, path: target };
+  } catch (error) {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("code" in error) ||
+      error.code !== "EEXIST"
+    ) {
+      throw error;
+    }
+    await requirePrivateRegularFile(target);
+    const existing: unknown = JSON.parse(await readFile(target, "utf8"));
+    if (
+      typeof existing !== "object" ||
+      existing === null ||
+      !("_tag" in existing) ||
+      existing._tag !== "ReviewedCardReceiptPreparedV1" ||
+      !("identity" in existing) ||
+      existing.identity !== identity ||
+      !("operation" in existing) ||
+      existing.operation !== operation
+    ) {
+      throw new Error("reviewed-card receipt target already contains other evidence");
+    }
+    return {
+      handle: await open(target, "r+"),
+      identity,
+      operation,
+      path: target,
+    };
+  }
+};
+
+const finalizeReceipt = async (prepared: PreparedReceipt, encoded: unknown) => {
   const body = `${JSON.stringify(encoded, null, 2)}\n`;
-  await writeFile(target, body, { flag: "wx", mode: 0o600 });
-  return { bytes: Buffer.byteLength(body), path: target, sha256: sha256(body) };
+  await prepared.handle.truncate(0);
+  await prepared.handle.write(body, 0, "utf8");
+  await prepared.handle.sync();
+  await prepared.handle.close();
+  return {
+    bytes: Buffer.byteLength(body),
+    path: prepared.path,
+    sha256: sha256(body),
+  };
 };
 
 const processAlive = (pid: number) => {
@@ -215,30 +339,50 @@ const runPreviewOrActivation = async (arguments_: readonly string[], activate: b
   const authority = Schema.decodeUnknownSync(CardReviewAuthorityV1Schema)(
     await readPrivateJsonFile(authorityPath, authoritySha),
   );
+  const approval = (await approvedOperations()).find(
+    (entry) => entry.activationId === activation.activationId,
+  );
+  if (
+    approval === undefined ||
+    approval.artifactSha256 !== artifactSha ||
+    approval.authoritySha256 !== authoritySha
+  ) {
+    throw new Error("card activation is not pinned by the sealed worker release");
+  }
   if (activate) {
     const confirmation = requireValue(arguments_, "--confirm-activation");
     if (confirmation !== activation.activationId) {
       throw new Error("activation confirmation does not match artifact identity");
     }
   }
-  if (activate) {
+  const operation = activate ? "activate" : "preview";
+  const prepared = await prepareReceipt(receiptPath, operation, activation.activationId);
+  try {
+    if (activate) {
+      const output = await withCardRuntime(
+        Effect.gen(function* activateCard() {
+          const runtime = yield* ReviewedCardRuntime;
+          return yield* runtime.activate(activation, authority);
+        }),
+      );
+      const { CardActivationReceiptV1Schema } = await import("@joelclaw-memory/domain");
+      return await finalizeReceipt(
+        prepared,
+        Schema.encodeSync(CardActivationReceiptV1Schema)(output),
+      );
+    }
     const output = await withCardRuntime(
-      Effect.gen(function* activateCard() {
+      Effect.gen(function* previewCard() {
         const runtime = yield* ReviewedCardRuntime;
-        return yield* runtime.activate(activation, authority);
+        return yield* runtime.preview(activation, authority);
       }),
     );
-    const { CardActivationReceiptV1Schema } = await import("@joelclaw-memory/domain");
-    return writeReceipt(receiptPath, Schema.encodeSync(CardActivationReceiptV1Schema)(output));
+    const { ReflectionV2Schema } = await import("@joelclaw-memory/domain");
+    return await finalizeReceipt(prepared, Schema.encodeSync(ReflectionV2Schema)(output));
+  } catch (error) {
+    await prepared.handle.close();
+    throw error;
   }
-  const output = await withCardRuntime(
-    Effect.gen(function* previewCard() {
-      const runtime = yield* ReviewedCardRuntime;
-      return yield* runtime.preview(activation, authority);
-    }),
-  );
-  const { ReflectionV2Schema } = await import("@joelclaw-memory/domain");
-  return writeReceipt(receiptPath, Schema.encodeSync(ReflectionV2Schema)(output));
 };
 
 const runWithdrawal = async (arguments_: readonly string[]) => {
@@ -249,17 +393,36 @@ const runWithdrawal = async (arguments_: readonly string[]) => {
   const withdrawal = Schema.decodeUnknownSync(CardWithdrawalV1Schema)(
     await readPrivateJsonFile(withdrawalPath, withdrawalSha),
   );
+  const approval = (await approvedOperations()).find(
+    (entry) => entry.withdrawalId === withdrawal.withdrawalId,
+  );
+  if (
+    approval === undefined ||
+    approval.withdrawalSha256 !== withdrawalSha ||
+    approval.activationId !== withdrawal.activationId
+  ) {
+    throw new Error("card withdrawal is not pinned by the sealed worker release");
+  }
   if (requireValue(arguments_, "--confirm-withdrawal") !== withdrawal.withdrawalId) {
     throw new Error("withdrawal confirmation does not match artifact identity");
   }
-  const receipt = await withCardRuntime(
-    Effect.gen(function* withdrawCard() {
-      const runtime = yield* ReviewedCardRuntime;
-      return yield* runtime.withdraw(withdrawal);
-    }),
-  );
-  const { CardWithdrawalReceiptV1Schema } = await import("@joelclaw-memory/domain");
-  return writeReceipt(receiptPath, Schema.encodeSync(CardWithdrawalReceiptV1Schema)(receipt));
+  const prepared = await prepareReceipt(receiptPath, "withdraw", withdrawal.withdrawalId);
+  try {
+    const receipt = await withCardRuntime(
+      Effect.gen(function* withdrawCard() {
+        const runtime = yield* ReviewedCardRuntime;
+        return yield* runtime.withdraw(withdrawal);
+      }),
+    );
+    const { CardWithdrawalReceiptV1Schema } = await import("@joelclaw-memory/domain");
+    return await finalizeReceipt(
+      prepared,
+      Schema.encodeSync(CardWithdrawalReceiptV1Schema)(receipt),
+    );
+  } catch (error) {
+    await prepared.handle.close();
+    throw error;
+  }
 };
 
 const runCardMigration = async (arguments_: readonly string[]) => {
@@ -267,9 +430,24 @@ const runCardMigration = async (arguments_: readonly string[]) => {
   if (requireValue(arguments_, "--confirm-card-schema") !== "reviewed-memory-cards-v1") {
     throw new Error("card schema confirmation is invalid");
   }
-  return Effect.runPromise(
-    Effect.scoped(installReviewedCardSchema.pipe(Effect.provide(PostgresMigrationClientLive))),
+  const prepared = await prepareReceipt(
+    requireValue(arguments_, "--receipt"),
+    "migrate-cards",
+    "reviewed-memory-cards-v1",
   );
+  try {
+    const result = await Effect.runPromise(
+      Effect.scoped(installReviewedCardSchema.pipe(Effect.provide(PostgresMigrationClientLive))),
+    );
+    return await finalizeReceipt(prepared, {
+      _tag: "ReviewedCardSchemaMigrationReceiptV1",
+      ...result,
+      schemaVersion: 1,
+    });
+  } catch (error) {
+    await prepared.handle.close();
+    throw error;
+  }
 };
 
 export const runWorkerCommand = async (arguments_: readonly string[]) => {
