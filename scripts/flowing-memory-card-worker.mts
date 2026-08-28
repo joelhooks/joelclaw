@@ -134,6 +134,7 @@ const makeCardRuntimeLayer = () => {
 };
 
 const runDaemon = async () => {
+  await requireDaemonStopped();
   const pidPath = workerPidPath();
   const pidFile = await open(pidPath, "wx", 0o600);
   await pidFile.writeFile(`${process.pid}\n`);
@@ -262,6 +263,7 @@ const runWithdrawal = async (arguments_: readonly string[]) => {
 };
 
 const runCardMigration = async (arguments_: readonly string[]) => {
+  await requireDaemonStopped();
   if (requireValue(arguments_, "--confirm-card-schema") !== "reviewed-memory-cards-v1") {
     throw new Error("card schema confirmation is invalid");
   }
