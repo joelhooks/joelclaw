@@ -2,7 +2,7 @@
  * Canonical fixtures for the composed recall tests.
  *
  * These are built to satisfy the full v1 contract at
- * `joelclaw-memory@05d92eadb5091113c5fc648e95ced36eb5fb8f39`, not the subset the
+ * `joelclaw-memory@da4010dcdf9f1682ba7bb61554d91b5ca34402f7`, not the subset the
  * adapter happens to read. Every record carries its identity fields, its
  * derivation, its evidence, and its ordered timestamps. A test that wants a
  * defect produces it by mutating a canonical fixture, so "the mirror rejects X"
@@ -182,9 +182,7 @@ export interface ReflectionHitFixtureOptions {
 }
 
 /** A complete canonical `ReflectionSearchHitV1`, supporting observations included. */
-export function reflectionHitWire(
-  options: ReflectionHitFixtureOptions,
-): Record<string, unknown> {
+export function reflectionHitWire(options: ReflectionHitFixtureOptions): Record<string, unknown> {
   const privacy = options.privacy ?? "private";
   const scope = scopeWire(options.scope);
   const seed = options.seed;
@@ -225,6 +223,51 @@ export function reflectionHitWire(
   };
 }
 
+export function cardReflectionHitWire(seed: number, rank: number): Record<string, unknown> {
+  const scope = scopeWire();
+  const supportSeed = seed + 0x100;
+  const support = observationWire({ seed: supportSeed, privacy: "private" });
+  const trigger = "When a Herdr pane ID is used as dispatch authority.";
+  const memory = "Kernel peer identity is bound at JSON API accept.";
+  const consequence = "Fail closed when Windows named-pipe PID proof is unavailable.";
+  const counterfactual =
+    "Without this card, an agent may dispatch through an unverified pane identity.";
+  const texts = [trigger, memory, consequence, counterfactual];
+  const claims = texts.map((text, index) => claim(seed + index, text));
+  return {
+    evidence: [transcriptEvidence(seed, "private", scope)],
+    matchedClaims: [{ _tag: "Active", claimId: claims[0]?.claimId }],
+    rank,
+    reflection: {
+      cardId: hex(seed + 0x5000),
+      cardSchemaVersion: 1,
+      claims,
+      consequence,
+      counterfactual,
+      derivation: DERIVATION,
+      evidence: [transcriptEvidence(seed, "private", scope)],
+      kind: "Constraint",
+      memory,
+      observedAt: "2026-08-21T10:00:00.000Z",
+      privacy: "private",
+      reflectionId: `reflection:v2:${hex(seed)}`,
+      relations: [],
+      reviewAttestationId: hex(seed + 0x6000),
+      rubricDigest: hex(seed + 0x7000),
+      schemaVersion: 2,
+      scope,
+      sourceObservationIds: [`observation:v2:${hex(supportSeed)}`],
+      status: "active",
+      trigger,
+      type: "reflection",
+      validFrom: "2026-08-21T09:10:00.000Z",
+      validThrough: "2026-08-21T09:20:00.000Z",
+    },
+    score: 0.9,
+    supportingObservations: [support],
+  };
+}
+
 export interface ObservationHitFixtureOptions {
   readonly seed: number;
   readonly rank: number;
@@ -233,14 +276,10 @@ export interface ObservationHitFixtureOptions {
   readonly scope?: { project: string; workstream: string };
 }
 
-export function observationHitWire(
-  options: ObservationHitFixtureOptions,
-): Record<string, unknown> {
+export function observationHitWire(options: ObservationHitFixtureOptions): Record<string, unknown> {
   const privacy = options.privacy ?? "private";
   return {
-    evidence: [
-      transcriptEvidence(options.seed, privacy, scopeWire(options.scope)),
-    ],
+    evidence: [transcriptEvidence(options.seed, privacy, scopeWire(options.scope))],
     observation: observationWire({
       seed: options.seed,
       privacy,
@@ -279,6 +318,7 @@ export function legacyHitWire(seed: number, rank: number): Record<string, unknow
 
 export interface FlowingSuccessOptions {
   readonly request?: ComposedRecallRequestV1;
+  readonly cardCount?: number;
   readonly reflectionCount?: number;
   readonly observationCount?: number;
   readonly legacyCount?: number;
@@ -297,7 +337,7 @@ export const HEALTHY_WIRE = {
   sourceSnapshotHash: hex(0xabc),
 };
 
-/** One encoded `FlowingMemoryReadSuccessV1` exactly as the read boundary emits it. */
+/** One encoded `FlowingMemoryReadSuccessV2` exactly as the read boundary emits it. */
 export function flowingSuccessEnvelope(
   options: FlowingSuccessOptions = {},
 ): Record<string, unknown> {
@@ -307,23 +347,25 @@ export function flowingSuccessEnvelope(
     ...(options.scope ? { scope: options.scope } : {}),
   };
 
-  const reflectionHits = Array.from(
-    { length: options.reflectionCount ?? 2 },
-    (_unused, index) =>
+  const cards = Array.from({ length: options.cardCount ?? 0 }, (_unused, index) =>
+    cardReflectionHitWire(index + 0x80, index + 1),
+  );
+  const reflectionHits = [
+    ...cards,
+    ...Array.from({ length: options.reflectionCount ?? 2 }, (_unused, index) =>
       reflectionHitWire({
         seed: index + 1,
-        rank: index + 1,
+        rank: cards.length + index + 1,
         score: 0.9 - index * 0.1,
         ...shared,
         ...(options.evidencePrivacy ? { evidencePrivacy: options.evidencePrivacy } : {}),
         ...(options.evidenceScope ? { evidenceScope: options.evidenceScope } : {}),
       }),
-  );
+    ),
+  ];
 
-  const observationHits = Array.from(
-    { length: options.observationCount ?? 1 },
-    (_unused, index) =>
-      observationHitWire({ seed: index + 0x20, rank: index + 1, ...shared }),
+  const observationHits = Array.from({ length: options.observationCount ?? 1 }, (_unused, index) =>
+    observationHitWire({ seed: index + 0x20, rank: index + 1, ...shared }),
   );
 
   const legacyHits = Array.from({ length: options.legacyCount ?? 0 }, (_unused, index) =>
@@ -331,17 +373,17 @@ export function flowingSuccessEnvelope(
   );
 
   return {
-    _tag: "FlowingMemoryReadSuccessV1",
+    _tag: "FlowingMemoryReadSuccessV2",
     result: {
-      _tag: "MemorySearchResultV1",
+      _tag: "MemorySearchResultV2",
       health: options.health ?? HEALTHY_WIRE,
       legacyHits,
       observationHits,
       query: options.query ?? flowingQueryWire(request),
       reflectionHits,
-      schemaVersion: 1,
+      schemaVersion: 2,
     },
-    schemaVersion: 1,
+    schemaVersion: 2,
   };
 }
 
@@ -349,7 +391,7 @@ export function flowingUnavailableEnvelope(
   code: "invalid-input" | "store-unavailable" | "contract-violation",
   message: string,
 ): Record<string, unknown> {
-  return { _tag: "FlowingMemoryReadUnavailableV1", code, message, schemaVersion: 1 };
+  return { _tag: "FlowingMemoryReadUnavailableV2", code, message, schemaVersion: 2 };
 }
 
 function curatedHit(overrides: Partial<CriticalSearchHit> = {}): CriticalSearchHit {

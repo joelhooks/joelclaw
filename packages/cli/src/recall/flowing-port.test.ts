@@ -85,8 +85,7 @@ function harness(options: HarnessOptions = {}) {
 
 const successStdout = (envelope: Record<string, unknown>) => JSON.stringify(envelope);
 
-const sha256Of = (path: string) =>
-  createHash("sha256").update(readFileSync(path)).digest("hex");
+const sha256Of = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 describe("resolveFlowingRecallPortConfig", () => {
   test("status inspection checks structure without hashing an artifact", () => {
@@ -96,8 +95,8 @@ describe("resolveFlowingRecallPortConfig", () => {
         credential_secret_name: "flowing-runtime-url",
         credential_format: "raw",
       }),
-    ).toEqual({ ok: true })
-  })
+    ).toEqual({ ok: true });
+  });
 
   test("is safe when nothing is configured", () => {
     const outcome = resolveFlowingRecallPortConfig({ settings: undefined });
@@ -188,7 +187,7 @@ describe("the stdin payload", () => {
     const request = port.seen[0];
     expect(request?.command).toEqual([
       TEST_FLOWING_CONFIG.readExecutable,
-      "flowing-recall-read",
+      "flowing-recall-read-v2",
       "--query-file",
       "-",
     ]);
@@ -236,9 +235,100 @@ describe("successful reads", () => {
     expect(laneJson).not.toContain("legacy");
   });
 
+  test("decodes the producer-generated ReflectionV2 fixture", async () => {
+    const fixture = readFileSync(
+      new URL("./fixtures/reviewed-card-v2-envelope.json", import.meta.url),
+      "utf8",
+    );
+    expect(createHash("sha256").update(fixture).digest("hex")).toBe(
+      "31f2a05a3df5f3985fce48485c6f2625bfdcd89ed79a46e7de95b1f4594bc8c2",
+    );
+    const port = harness({ stdout: fixture });
+    const outcome = await port.run(
+      testRequest({
+        access: {
+          _tag: "RecallAccessV1",
+          allowedPrivacy: ["private"],
+          decidedAt: "2026-08-28T03:10:00.000Z",
+          principalRef: "producer-fixture",
+          purpose: "consumer contract parity",
+          schemaVersion: 1,
+        },
+        scope: {
+          _tag: "ProjectWorkstream",
+          project: "joelclaw-fleet",
+          workstream: "default",
+        },
+        text: "pane identity",
+      }),
+    );
+    const lane = outcome.lanes["flowing-reflections"];
+    if (lane._tag !== "RecallLaneAvailableV1") {
+      throw new Error(`expected an available lane: ${JSON.stringify(lane)}`);
+    }
+    expect(lane.items[0]).toMatchObject({
+      id: "reflection:v2:fd4aa57046adbbb8760f37da7866c19087cea967f97214bfced26ddf5241439b",
+      title: "A pane ID is only a locator claim.",
+    });
+    expect(lane.items[0]?.summary).toContain("Kernel peer identity");
+    expect(lane.items[0]?.summary).toContain("Windows named-pipe PID");
+  });
+
+  test("renders a ReflectionV2 card as trigger plus behavior consequence", async () => {
+    const port = harness({
+      stdout: successStdout(flowingSuccessEnvelope({ cardCount: 1, reflectionCount: 0 })),
+    });
+    const outcome = await port.run();
+    const lane = outcome.lanes["flowing-reflections"];
+    if (lane._tag !== "RecallLaneAvailableV1") {
+      throw new Error("expected an available lane");
+    }
+    expect(lane.items[0]).toMatchObject({
+      id: `reflection:v2:${hex(0x80)}`,
+      title: "When a Herdr pane ID is used as dispatch authority.",
+    });
+    expect(lane.items[0]?.summary).toContain(
+      "Fail closed when Windows named-pipe PID proof is unavailable.",
+    );
+    expect(lane.items[0]?.summary).toStartWith("Consequence:");
+  });
+
+  test("keeps the full maximum-size consequence in the bounded card summary", async () => {
+    const envelope = flowingSuccessEnvelope({ cardCount: 1, reflectionCount: 0 });
+    const result = envelope.result as {
+      reflectionHits: Array<{
+        reflection: {
+          claims: Array<{ text: string }>;
+          consequence: string;
+          memory: string;
+        };
+      }>;
+    };
+    const reflection = result.reflectionHits[0]?.reflection;
+    if (reflection === undefined) {
+      throw new Error("missing card fixture");
+    }
+    const consequence = `Fail ${"x".repeat(494)}.`;
+    const memory = `M${"y".repeat(698)}.`;
+    reflection.consequence = consequence;
+    reflection.memory = memory;
+    if (reflection.claims[1] !== undefined) reflection.claims[1].text = memory;
+    if (reflection.claims[2] !== undefined) {
+      reflection.claims[2].text = consequence;
+    }
+    const port = harness({ stdout: successStdout(envelope) });
+    const outcome = await port.run();
+    const lane = outcome.lanes["flowing-reflections"];
+    if (lane._tag !== "RecallLaneAvailableV1") {
+      throw new Error("expected available card lane");
+    }
+    expect(lane.items[0]?.summary).toContain(consequence);
+    expect(lane.items[0]?.summary.length).toBeLessThanOrEqual(1_000);
+  });
+
   test("uses the producer rank rather than array position", async () => {
     const envelope = flowingSuccessEnvelope({ reflectionCount: 0, observationCount: 0 });
-    const result = (envelope.result as Record<string, unknown>);
+    const result = envelope.result as Record<string, unknown>;
     result.reflectionHits = [
       reflectionHitWire({ seed: 1, rank: 1, score: 0.9 }),
       reflectionHitWire({ seed: 2, rank: 2, score: 0.8 }),
@@ -359,9 +449,7 @@ describe("envelope defects", () => {
   test("rejects supporting observations that do not cover the reflection's sources", async () => {
     expect(
       await rejects((result) => {
-        result.reflectionHits[0].reflection.sourceObservationIds = [
-          `observation:v2:${hex(0x999)}`,
-        ];
+        result.reflectionHits[0].reflection.sourceObservationIds = [`observation:v2:${hex(0x999)}`];
       }),
     ).toBe("malformed-response");
   });
@@ -377,7 +465,11 @@ describe("envelope defects", () => {
   test("rejects health with no snapshot hash and rejects reversed health times", async () => {
     expect(
       await rejects((result) => {
-        result.health = { _tag: "Healthy", builtAt: "2026-08-22T00:00:00.000Z", freshAt: "2026-08-22T00:05:00.000Z" };
+        result.health = {
+          _tag: "Healthy",
+          builtAt: "2026-08-22T00:00:00.000Z",
+          freshAt: "2026-08-22T00:05:00.000Z",
+        };
       }),
     ).toBe("malformed-response");
     expect(
@@ -421,7 +513,7 @@ describe("envelope defects", () => {
 
   test("reports a foreign schema version as a contract mismatch", async () => {
     const envelope = flowingSuccessEnvelope();
-    envelope.schemaVersion = 2;
+    envelope.schemaVersion = 3;
     const port = harness({ stdout: successStdout(envelope) });
     const outcome = await port.run();
     const lane = outcome.lanes["flowing-reflections"];
@@ -644,26 +736,29 @@ describe("the wire mirror enforces the pinned identity patterns", () => {
   test.each([
     ["canonical", `failure:${hex(0x51)}`],
     ["bare source wake receipt", hex(0x51)],
-  ])("accepts a %s failure receipt and carries a canonical ID into lane health", async (_, receipt) => {
-    const port = harness({
-      stdout: successStdout(
-        flowingSuccessEnvelope({
-          health: {
-            _tag: "Failed",
-            failureReceiptId: receipt,
-            lastValidSnapshotHash: hex(0x52),
-          },
-        }),
-      ),
-    });
-    const outcome = await port.run();
-    const lane = outcome.lanes["flowing-reflections"];
-    if (lane._tag !== "RecallLaneAvailableV1" || lane.health._tag !== "Failed") {
-      throw new Error("expected a failed available flowing lane");
-    }
-    expect(lane.health.failureReceiptId).toBe(`failure:${hex(0x51)}`);
-    expect(lane.health.lastValidSnapshotHash).toBe(hex(0x52));
-  });
+  ])(
+    "accepts a %s failure receipt and carries a canonical ID into lane health",
+    async (_, receipt) => {
+      const port = harness({
+        stdout: successStdout(
+          flowingSuccessEnvelope({
+            health: {
+              _tag: "Failed",
+              failureReceiptId: receipt,
+              lastValidSnapshotHash: hex(0x52),
+            },
+          }),
+        ),
+      });
+      const outcome = await port.run();
+      const lane = outcome.lanes["flowing-reflections"];
+      if (lane._tag !== "RecallLaneAvailableV1" || lane.health._tag !== "Failed") {
+        throw new Error("expected a failed available flowing lane");
+      }
+      expect(lane.health.failureReceiptId).toBe(`failure:${hex(0x51)}`);
+      expect(lane.health.lastValidSnapshotHash).toBe(hex(0x52));
+    },
+  );
 
   test("preserves build and freshness times on a stale projection", async () => {
     const port = harness({
@@ -712,7 +807,10 @@ describe("the release is re-proved immediately before the credential is leased",
   test("an artifact swapped after resolution neither runs nor leases", async () => {
     const release = testRelease();
     const resolved = resolveFlowingRecallPortConfig({
-      settings: { read_executable: release.executable, credential_secret_name: "flowing-runtime-url" },
+      settings: {
+        read_executable: release.executable,
+        credential_secret_name: "flowing-runtime-url",
+      },
       ...testReleaseSeams(release),
     });
     expect(resolved.ok).toBe(true);
@@ -752,7 +850,10 @@ describe("the release is re-proved immediately before the credential is leased",
   test("a release made writable after resolution neither runs nor leases", async () => {
     const release = testRelease();
     const resolved = resolveFlowingRecallPortConfig({
-      settings: { read_executable: release.executable, credential_secret_name: "flowing-runtime-url" },
+      settings: {
+        read_executable: release.executable,
+        credential_secret_name: "flowing-runtime-url",
+      },
       ...testReleaseSeams(release),
     });
     expect(resolved.ok).toBe(true);

@@ -1,0 +1,279 @@
+{
+  "_tag": "FlowingMemoryReadSuccessV2",
+  "result": {
+    "_tag": "MemorySearchResultV2",
+    "health": {
+      "_tag": "Healthy",
+      "builtAt": "2026-08-28T03:06:00.000Z",
+      "freshAt": "2026-08-28T03:10:00.000Z",
+      "sourceSnapshotHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "legacyHits": [],
+    "observationHits": [],
+    "query": {
+      "_tag": "MemorySearchQueryV1",
+      "access": {
+        "_tag": "MemorySearchAccessV1",
+        "allowedPrivacy": ["private"],
+        "decidedAt": "2026-08-28T03:10:00.000Z",
+        "principalRef": "producer-fixture",
+        "purpose": "consumer contract parity",
+        "schemaVersion": 1,
+        "scope": {
+          "_tag": "ProjectWorkstream",
+          "project": "joelclaw-fleet",
+          "workstream": "default"
+        }
+      },
+      "includeSuperseded": false,
+      "legacyLimit": 1,
+      "observationLimit": 5,
+      "reflectionLimit": 5,
+      "schemaVersion": 1,
+      "scope": {
+        "_tag": "ProjectWorkstream",
+        "project": "joelclaw-fleet",
+        "workstream": "default"
+      },
+      "text": "pane identity"
+    },
+    "reflectionHits": [
+      {
+        "evidence": [
+          {
+            "_tag": "TranscriptWindow",
+            "evidenceId": "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd",
+            "privacy": "private",
+            "scope": {
+              "_tag": "ProjectWorkstream",
+              "project": "joelclaw-fleet",
+              "workstream": "default"
+            },
+            "conversationId": "reviewed-card-read-test",
+            "fromTurn": 0,
+            "redaction": {
+              "_tag": "clean",
+              "policyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "scannedAt": "2026-08-28T03:00:00.000Z",
+              "schemaVersion": 1
+            },
+            "runId": "run-reviewed-card-read-test",
+            "toTurn": 1,
+            "transcriptHash": "d0428e97b8458b8d2bdb375429f17e1633d610ab31815abbec9a56d43d7e92aa"
+          },
+          {
+            "_tag": "Observation",
+            "evidenceId": "evidence:76c6bb41f3b1da03ef7bc26629326259e0e9535e882132f47994488f79cc400c",
+            "privacy": "private",
+            "scope": {
+              "_tag": "ProjectWorkstream",
+              "project": "joelclaw-fleet",
+              "workstream": "default"
+            },
+            "observationId": "observation:v2:f39e6e1ec5bfbb27968100b1c0342a0b49c0000535cc3f22b329dbd646dbe985",
+            "parentEvidenceIds": [
+              "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd"
+            ],
+            "sourceSchemaVersion": 2
+          }
+        ],
+        "matchedClaims": [
+          {
+            "_tag": "Active",
+            "claimId": "claim:11f98644cd94ce9bfb00cdde5c8fd281850d3481e5363efdd6f45a5700f3d81f"
+          }
+        ],
+        "rank": 1,
+        "reflection": {
+          "cardId": "bd5d8afd06eaf355fdf7a212cab2af2166e3cb4e07d4ab432cb6e855368efee8",
+          "cardSchemaVersion": 1,
+          "consequence": "Fail closed when Windows named-pipe PID proof is unavailable.",
+          "counterfactual": "Without this card, an agent may skip this action: Fail closed when Windows named-pipe PID proof is unavailable.",
+          "derivation": {
+            "_tag": "Deterministic",
+            "producer": "reviewed-card-read-test-activation:v1",
+            "contractHash": "a0d5bc6122929d905a05b17231514183f5fe5af8ad07e7e1c90c919524af5ec5"
+          },
+          "evidence": [
+            {
+              "_tag": "TranscriptWindow",
+              "evidenceId": "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd",
+              "privacy": "private",
+              "scope": {
+                "_tag": "ProjectWorkstream",
+                "project": "joelclaw-fleet",
+                "workstream": "default"
+              },
+              "conversationId": "reviewed-card-read-test",
+              "fromTurn": 0,
+              "redaction": {
+                "_tag": "clean",
+                "policyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "scannedAt": "2026-08-28T03:00:00.000Z",
+                "schemaVersion": 1
+              },
+              "runId": "run-reviewed-card-read-test",
+              "toTurn": 1,
+              "transcriptHash": "d0428e97b8458b8d2bdb375429f17e1633d610ab31815abbec9a56d43d7e92aa"
+            },
+            {
+              "_tag": "Observation",
+              "evidenceId": "evidence:76c6bb41f3b1da03ef7bc26629326259e0e9535e882132f47994488f79cc400c",
+              "privacy": "private",
+              "scope": {
+                "_tag": "ProjectWorkstream",
+                "project": "joelclaw-fleet",
+                "workstream": "default"
+              },
+              "observationId": "observation:v2:f39e6e1ec5bfbb27968100b1c0342a0b49c0000535cc3f22b329dbd646dbe985",
+              "parentEvidenceIds": [
+                "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd"
+              ],
+              "sourceSchemaVersion": 2
+            }
+          ],
+          "kind": "Constraint",
+          "memory": "Kernel peer identity must be captured at JSON API accept.",
+          "privacy": "private",
+          "reviewAttestationId": "6ba4c7294581ccadc55466a81cdf861f0eebb8a0e34c20516363df49f4e59570",
+          "rubricDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "scope": {
+            "_tag": "ProjectWorkstream",
+            "project": "joelclaw-fleet",
+            "workstream": "default"
+          },
+          "status": "active",
+          "trigger": "A pane ID is only a locator claim.",
+          "claims": [
+            {
+              "claimId": "claim:11f98644cd94ce9bfb00cdde5c8fd281850d3481e5363efdd6f45a5700f3d81f",
+              "evidenceIds": [
+                "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd"
+              ],
+              "text": "A pane ID is only a locator claim."
+            },
+            {
+              "claimId": "claim:296c871db6bebce5add9b246150c7bc2dbde7dd10b53f12691ea0f20843f1a6d",
+              "evidenceIds": [
+                "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd"
+              ],
+              "text": "Kernel peer identity must be captured at JSON API accept."
+            },
+            {
+              "claimId": "claim:1619d441ebbd11eac7a5844120ecc9dc4dfc4d9f60517e5c094b344d99759034",
+              "evidenceIds": [
+                "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd"
+              ],
+              "text": "Fail closed when Windows named-pipe PID proof is unavailable."
+            },
+            {
+              "claimId": "claim:b526e76400b794201db9730841bd5e70840dda5aa519a71b45b476ffe2ae5ac1",
+              "evidenceIds": [
+                "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd"
+              ],
+              "text": "Without this card, an agent may skip this action: Fail closed when Windows named-pipe PID proof is unavailable."
+            }
+          ],
+          "observedAt": "2026-08-28T03:05:00.000Z",
+          "reflectionId": "reflection:v2:fd4aa57046adbbb8760f37da7866c19087cea967f97214bfced26ddf5241439b",
+          "relations": [],
+          "schemaVersion": 2,
+          "sourceObservationIds": [
+            "observation:v2:f39e6e1ec5bfbb27968100b1c0342a0b49c0000535cc3f22b329dbd646dbe985"
+          ],
+          "type": "reflection",
+          "validFrom": "2026-08-28T03:00:00.000Z",
+          "validThrough": "2026-08-28T03:00:00.000Z"
+        },
+        "score": 0.9,
+        "supportingObservations": [
+          {
+            "createdAt": "2026-08-28T03:00:00.000Z",
+            "decisions": [
+              {
+                "claimId": "claim:e97504a5075b993b507904d9ef808cd31d9564bf2726a608318a6bd00c327d6d",
+                "evidenceIds": [
+                  "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd"
+                ],
+                "text": "Fail closed when Windows named-pipe PID proof is unavailable."
+              }
+            ],
+            "derivation": {
+              "_tag": "Deterministic",
+              "producer": "reviewed-card-read-test-observer:v1",
+              "contractHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "evidence": [
+              {
+                "_tag": "TranscriptWindow",
+                "evidenceId": "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd",
+                "privacy": "private",
+                "scope": {
+                  "_tag": "ProjectWorkstream",
+                  "project": "joelclaw-fleet",
+                  "workstream": "default"
+                },
+                "conversationId": "reviewed-card-read-test",
+                "fromTurn": 0,
+                "redaction": {
+                  "_tag": "clean",
+                  "policyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "scannedAt": "2026-08-28T03:00:00.000Z",
+                  "schemaVersion": 1
+                },
+                "runId": "run-reviewed-card-read-test",
+                "toTurn": 1,
+                "transcriptHash": "d0428e97b8458b8d2bdb375429f17e1633d610ab31815abbec9a56d43d7e92aa"
+              }
+            ],
+            "gist": {
+              "claimId": "claim:d53a006f94eb713eb0fae10d261e7192f41228a63e64916ed8d84d48f1a378ac",
+              "evidenceIds": [
+                "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd"
+              ],
+              "text": "A pane ID is only a locator claim."
+            },
+            "observationId": "observation:v2:f39e6e1ec5bfbb27968100b1c0342a0b49c0000535cc3f22b329dbd646dbe985",
+            "observations": [
+              {
+                "claimId": "claim:f35319294d676d057e77dc5bd1ec2785c72d049b09bb5f15adb8e9f6d50bed83",
+                "evidenceIds": [
+                  "evidence:8bc0c937164c46c1c8e143efc9b33fd651c3d39961930c6dfa59fa2083edfbdd"
+                ],
+                "text": "Kernel peer identity must be captured at JSON API accept."
+              }
+            ],
+            "openQuestions": [],
+            "privacy": "private",
+            "schemaVersion": 2,
+            "scope": {
+              "_tag": "ProjectWorkstream",
+              "project": "joelclaw-fleet",
+              "workstream": "default"
+            },
+            "source": {
+              "acceptedAt": "2026-08-28T03:00:00.000Z",
+              "conversationId": "reviewed-card-read-test",
+              "fromTurn": 0,
+              "isFinal": true,
+              "observedFrom": "2026-08-28T03:00:00.000Z",
+              "observedThrough": "2026-08-28T03:00:00.000Z",
+              "redaction": {
+                "_tag": "clean",
+                "policyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "scannedAt": "2026-08-28T03:00:00.000Z",
+                "schemaVersion": 1
+              },
+              "runId": "run-reviewed-card-read-test",
+              "toTurn": 1,
+              "transcriptHash": "d0428e97b8458b8d2bdb375429f17e1633d610ab31815abbec9a56d43d7e92aa"
+            },
+            "type": "observation"
+          }
+        ]
+      }
+    ],
+    "schemaVersion": 2
+  },
+  "schemaVersion": 2
+}
