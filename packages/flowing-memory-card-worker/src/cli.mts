@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { type FileHandle, open, readFile, stat, unlink } from "node:fs/promises";
+import { type FileHandle, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -131,10 +131,12 @@ const approvedOperations = async (): Promise<readonly ApprovedCardOperation[]> =
 };
 
 interface PreparedReceipt {
-  readonly handle: FileHandle;
   readonly identity: string;
   readonly operation: string;
   readonly path: string;
+  readonly targetHandle: FileHandle;
+  readonly temporaryHandle: FileHandle;
+  readonly temporaryPath: string;
 }
 
 const prepareReceipt = async (
@@ -148,11 +150,11 @@ const prepareReceipt = async (
     operation,
     schemaVersion: 1,
   })}\n`;
+  let targetHandle: FileHandle;
   try {
-    const handle = await open(target, "wx+", 0o600);
-    await handle.write(prepared, 0, "utf8");
-    await handle.sync();
-    return { handle, identity, operation, path: target };
+    targetHandle = await open(target, "wx+", 0o600);
+    await targetHandle.write(prepared, 0, "utf8");
+    await targetHandle.sync();
   } catch (error) {
     if (
       typeof error !== "object" ||
@@ -176,21 +178,48 @@ const prepareReceipt = async (
     ) {
       throw new Error("reviewed-card receipt target already contains other evidence");
     }
-    return {
-      handle: await open(target, "r+"),
-      identity,
-      operation,
-      path: target,
-    };
+    targetHandle = await open(target, "r+");
   }
+  const temporaryPath = `${target}.final-${identity}.tmp`;
+  let temporaryHandle: FileHandle;
+  try {
+    temporaryHandle = await open(temporaryPath, "wx+", 0o600);
+  } catch (error) {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("code" in error) ||
+      error.code !== "EEXIST"
+    ) {
+      await targetHandle.close();
+      throw error;
+    }
+    await requirePrivateRegularFile(temporaryPath);
+    temporaryHandle = await open(temporaryPath, "r+");
+    await temporaryHandle.truncate(0);
+  }
+  return {
+    identity,
+    operation,
+    path: target,
+    targetHandle,
+    temporaryHandle,
+    temporaryPath,
+  };
+};
+
+const closePreparedReceipt = async (prepared: PreparedReceipt) => {
+  await Promise.allSettled([prepared.targetHandle.close(), prepared.temporaryHandle.close()]);
 };
 
 const finalizeReceipt = async (prepared: PreparedReceipt, encoded: unknown) => {
   const body = `${JSON.stringify(encoded, null, 2)}\n`;
-  await prepared.handle.truncate(0);
-  await prepared.handle.write(body, 0, "utf8");
-  await prepared.handle.sync();
-  await prepared.handle.close();
+  await prepared.temporaryHandle.truncate(0);
+  await prepared.temporaryHandle.write(body, 0, "utf8");
+  await prepared.temporaryHandle.sync();
+  await prepared.temporaryHandle.close();
+  await prepared.targetHandle.close();
+  await rename(prepared.temporaryPath, prepared.path);
   return {
     bytes: Buffer.byteLength(body),
     path: prepared.path,
@@ -248,6 +277,22 @@ const requireDaemonStopped = async () => {
       return;
     }
     throw error;
+  }
+};
+
+const semanticWorkerLaunchAgentIsLoaded = async () =>
+  new Promise<boolean>((resolve) => {
+    execFile(
+      "/bin/launchctl",
+      ["print", `gui/${process.getuid?.() ?? 0}/com.joelclaw.flowing-memory-worker`],
+      (error) => resolve(error === null),
+    );
+  });
+
+const requireActivationWindow = async () => {
+  await requireDaemonStopped();
+  if (await semanticWorkerLaunchAgentIsLoaded()) {
+    throw new Error("flowing-memory worker LaunchAgent is still loaded");
   }
 };
 
@@ -336,7 +381,7 @@ const withCardRuntime = <A, E>(effect: Effect.Effect<A, E, ReviewedCardRuntime>)
   Effect.runPromise(Effect.scoped(effect.pipe(Effect.provide(makeCardRuntimeLayer()))));
 
 const runPreviewOrActivation = async (arguments_: readonly string[], activate: boolean) => {
-  await requireDaemonStopped();
+  await requireActivationWindow();
   const artifactPath = requireValue(arguments_, "--artifact");
   const artifactSha = requireValue(arguments_, "--artifact-sha256");
   const authorityPath = requireValue(arguments_, "--authority");
@@ -389,13 +434,13 @@ const runPreviewOrActivation = async (arguments_: readonly string[], activate: b
     const { ReflectionV2Schema } = await import("@joelclaw-memory/domain");
     return await finalizeReceipt(prepared, Schema.encodeSync(ReflectionV2Schema)(output));
   } catch (error) {
-    await prepared.handle.close();
+    await closePreparedReceipt(prepared);
     throw error;
   }
 };
 
 const runWithdrawal = async (arguments_: readonly string[]) => {
-  await requireDaemonStopped();
+  await requireActivationWindow();
   const withdrawalPath = requireValue(arguments_, "--withdrawal");
   const withdrawalSha = requireValue(arguments_, "--withdrawal-sha256");
   const receiptPath = requireValue(arguments_, "--receipt");
@@ -429,13 +474,13 @@ const runWithdrawal = async (arguments_: readonly string[]) => {
       Schema.encodeSync(CardWithdrawalReceiptV1Schema)(receipt),
     );
   } catch (error) {
-    await prepared.handle.close();
+    await closePreparedReceipt(prepared);
     throw error;
   }
 };
 
 const runRestoration = async (arguments_: readonly string[]) => {
-  await requireDaemonStopped();
+  await requireActivationWindow();
   const restorationPath = requireValue(arguments_, "--restoration");
   const restorationSha = requireValue(arguments_, "--restoration-sha256");
   const receiptPath = requireValue(arguments_, "--receipt");
@@ -469,13 +514,13 @@ const runRestoration = async (arguments_: readonly string[]) => {
       Schema.encodeSync(CardRestorationReceiptV1Schema)(receipt),
     );
   } catch (error) {
-    await prepared.handle.close();
+    await closePreparedReceipt(prepared);
     throw error;
   }
 };
 
 const runCardMigration = async (arguments_: readonly string[]) => {
-  await requireDaemonStopped();
+  await requireActivationWindow();
   if (requireValue(arguments_, "--confirm-card-schema") !== "reviewed-memory-cards-v1") {
     throw new Error("card schema confirmation is invalid");
   }
@@ -494,7 +539,7 @@ const runCardMigration = async (arguments_: readonly string[]) => {
       schemaVersion: 1,
     });
   } catch (error) {
-    await prepared.handle.close();
+    await closePreparedReceipt(prepared);
     throw error;
   }
 };
