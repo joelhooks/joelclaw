@@ -2,7 +2,7 @@
  * Canonical fixtures for the composed recall tests.
  *
  * These are built to satisfy the full v1 contract at
- * `joelclaw-memory@601d8c518d3078859b7cdf287a6db52fa8ee9082`, not the subset the
+ * `joelclaw-memory@da4010dcdf9f1682ba7bb61554d91b5ca34402f7`, not the subset the
  * adapter happens to read. Every record carries its identity fields, its
  * derivation, its evidence, and its ordered timestamps. A test that wants a
  * defect produces it by mutating a canonical fixture, so "the mirror rejects X"

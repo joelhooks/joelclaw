@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { type FileHandle, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -237,6 +237,43 @@ const processAlive = (pid: number) => {
 };
 
 const workerPidPath = () => process.env.JOELCLAW_MEMORY_WORKER_PID_PATH ?? defaultPidPath;
+
+const workerOperationLockPath = () =>
+  process.env.JOELCLAW_MEMORY_WORKER_OPERATION_LOCK_PATH ??
+  path.join(homedir(), ".joelclaw", "flowing-memory", "worker-operation.lock");
+
+const withWorkerOperationLease = async <A,>(
+  operation: string,
+  run: () => Promise<A>,
+): Promise<A> => {
+  const lockPath = workerOperationLockPath();
+  const token = randomUUID();
+  let handle: FileHandle;
+  try {
+    handle = await open(lockPath, "wx", 0o600);
+  } catch (error) {
+    throw new Error("another flowing-memory worker operation owns the host lease", {
+      cause: error,
+    });
+  }
+  const body = `${JSON.stringify({
+    operation,
+    pid: process.pid,
+    schemaVersion: 1,
+    token,
+  })}\n`;
+  await handle.write(body, 0, "utf8");
+  await handle.sync();
+  try {
+    return await run();
+  } finally {
+    await handle.close();
+    const current = await readFile(lockPath, "utf8").catch(() => "");
+    if (current === body) {
+      await unlink(lockPath);
+    }
+  }
+};
 
 const semanticWorkerProcesses = async () =>
   new Promise<readonly string[]>((resolve, reject) => {
@@ -549,22 +586,26 @@ export const runWorkerCommand = async (arguments_: readonly string[]) => {
   let receipt: unknown;
   switch (action) {
     case "run":
-      await runDaemon();
+      await withWorkerOperationLease("run", runDaemon);
       return;
     case "preview":
-      receipt = await runPreviewOrActivation(arguments_, false);
+      receipt = await withWorkerOperationLease("preview", () =>
+        runPreviewOrActivation(arguments_, false),
+      );
       break;
     case "activate":
-      receipt = await runPreviewOrActivation(arguments_, true);
+      receipt = await withWorkerOperationLease("activate", () =>
+        runPreviewOrActivation(arguments_, true),
+      );
       break;
     case "restore":
-      receipt = await runRestoration(arguments_);
+      receipt = await withWorkerOperationLease("restore", () => runRestoration(arguments_));
       break;
     case "withdraw":
-      receipt = await runWithdrawal(arguments_);
+      receipt = await withWorkerOperationLease("withdraw", () => runWithdrawal(arguments_));
       break;
     case "migrate-cards":
-      receipt = await runCardMigration(arguments_);
+      receipt = await withWorkerOperationLease("migrate-cards", () => runCardMigration(arguments_));
       break;
     default:
       throw new Error(

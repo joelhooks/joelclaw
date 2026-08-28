@@ -77,7 +77,7 @@ export const DEFAULT_TRUSTED_RELEASE_ROOT = join(
 
 /**
  * Adapter-owned argv for the semantic read boundary at
- * `joelhooks/joelclaw-memory@601d8c518d3078859b7cdf287a6db52fa8ee9082`.
+ * `joelhooks/joelclaw-memory@da4010dcdf9f1682ba7bb61554d91b5ca34402f7`.
  * Config supplies the executable; it never supplies arguments.
  */
 export const FLOWING_READ_ARGS: readonly string[] = ["flowing-recall-read-v2", "--query-file", "-"];
