@@ -39,24 +39,37 @@ and `.brain/projects/memory-system-repair/` (fixes + open decisions).
 
 ## Where everything lives
 
-| Surface | Location |
-|---|---|
-| Observer dev repo | `~/Code/joelhooks/joelclaw-observer` (branchless, detached HEAD by design) |
-| Observer release (what actually runs) | `~/.joelclaw/observer-release` |
-| Promotion (the ONLY way to deploy observer) | `bin/promote-release.sh` — clean-tree gate, smoke checks, receipts to `/tmp/observer-release-promotion.log`; `--dry-run` first if unsure |
-| Observation pages | `~/Code/joelhooks/dark-wizard/.brain/observations/` (condensed originals under `archive/YYYY-MM/`) |
-| Retros (curator input; hook-fired Inngest event + condenser is being built) | `~/Code/joelhooks/dark-wizard/.brain/resources/retros/` |
-| Curator state (0600, atomic writes only) | `~/.joelclaw/observer-neat-memories.json` |
-| Observer cursor / session / family / pending | `~/.joelclaw/observer-*.json` |
-| Dispatch rules (what wakes the observer) | `<observer repo>/dispatch-rules.json` — dispatcher re-reads per classify; no restart needed |
-| Logs | `/tmp/observer-{tick,dream,neat-memory,self-maintenance,release-promotion}.log` |
-| LaunchAgents | Observer tick retired 2026-08-25; `com.joelclaw.observer-dream` (06:10) and `com.joelclaw.observer-neat-memory` (16:15 dead-man) remain active |
-| Message journal fail-open spool | `~/.joelclaw/spool/message-journal/` |
-| Current flowing wake spool | `~/.joelclaw/flowing-memory/native-wakes.jsonl` (single collector ownership) |
-| Legacy Central capture outboxes | flat and namespaced JSON queues; preserve as migration evidence, not current writes |
-| Brain root registry | `~/Code/joelhooks/dark-wizard/brain-roots.json` |
-| Wiki repo + build | `~/Code/joelhooks/joelclaw-wiki`; `bun run build` (includes `graph:build`; retry once on transient exit 1); 200-check exact URLs before sharing |
-| Bus (Inngest) | `localhost:8288`, signing key in `~/.config/system-bus.env` |
+| Surface                                                                     | Location                                                                                                                                        |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Observer dev repo                                                           | `~/Code/joelhooks/joelclaw-observer` (branchless, detached HEAD by design)                                                                      |
+| Observer release (what actually runs)                                       | `~/.joelclaw/observer-release`                                                                                                                  |
+| Promotion (the ONLY way to deploy observer)                                 | `bin/promote-release.sh` — clean-tree gate, smoke checks, receipts to `/tmp/observer-release-promotion.log`; `--dry-run` first if unsure        |
+| Observation pages                                                           | `~/Code/joelhooks/dark-wizard/.brain/observations/` (condensed originals under `archive/YYYY-MM/`)                                              |
+| Retros (curator input; hook-fired Inngest event + condenser is being built) | `~/Code/joelhooks/dark-wizard/.brain/resources/retros/`                                                                                         |
+| Curator state (0600, atomic writes only)                                    | `~/.joelclaw/observer-neat-memories.json`                                                                                                       |
+| Observer cursor / session / family / pending                                | `~/.joelclaw/observer-*.json`                                                                                                                   |
+| Dispatch rules (what wakes the observer)                                    | `<observer repo>/dispatch-rules.json` — dispatcher re-reads per classify; no restart needed                                                     |
+| Logs                                                                        | `/tmp/observer-{tick,dream,neat-memory,self-maintenance,release-promotion}.log`                                                                 |
+| LaunchAgents                                                                | Observer tick retired 2026-08-25; `com.joelclaw.observer-dream` (06:10) and `com.joelclaw.observer-neat-memory` (16:15 dead-man) remain active  |
+| Message journal fail-open spool                                             | `~/.joelclaw/spool/message-journal/`                                                                                                            |
+| Current flowing wake spool                                                  | `~/.joelclaw/flowing-memory/native-wakes.jsonl` (single collector ownership)                                                                    |
+| Legacy Central capture outboxes                                             | flat and namespaced JSON queues; preserve as migration evidence, not current writes                                                             |
+| Brain root registry                                                         | `~/Code/joelhooks/dark-wizard/brain-roots.json`                                                                                                 |
+| Wiki repo + build                                                           | `~/Code/joelhooks/joelclaw-wiki`; `bun run build` (includes `graph:build`; retry once on transient exit 1); 200-check exact URLs before sharing |
+| Bus (Inngest)                                                               | `localhost:8288`, signing key in `~/.config/system-bus.env`                                                                                     |
+
+## Reviewed behavior cards
+
+`ReflectionV2` cards can rank before V1 reflections inside the existing
+`flowing-reflections` lane. They do not add a record kind or recall lane.
+Production admits only source-grounded, digest-pinned review artifacts through
+the sole semantic worker while daemon mode is stopped. Withdrawal and
+restoration append receipts and update the scope head; the card row remains
+immutable. Automatic formation, embeddings, and session-start briefing remain
+off.
+
+Production receipt:
+`joelclaw-memory/.brain/projects/joelclaw-memory/reviewed-memory-card-production-receipt-2026-08-28.svx`.
 
 ## Debug recipes (symptom → first moves)
 
