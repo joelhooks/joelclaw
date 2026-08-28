@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "typeRoots": ["../../../joelclaw-memory/types", "./node_modules/@types"],
+    "types": ["node", "unicode-confusables"]
+  },
+  "include": ["src/**/*.mts"]
+}

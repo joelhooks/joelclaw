@@ -1,0 +1,23 @@
+{
+  "name": "@joelclaw/flowing-memory-card-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/cli.mts --target=node --packages=external --outfile dist/flowing-memory-card-worker.mjs",
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@joelclaw-memory/domain": "link:../../../joelclaw-memory/packages/domain",
+    "@joelclaw-memory/machines": "link:../../../joelclaw-memory/packages/machines",
+    "@joelclaw-memory/ports": "link:../../../joelclaw-memory/packages/ports",
+    "@joelclaw-memory/postgres": "link:../../../joelclaw-memory/packages/postgres",
+    "@joelclaw-memory/runtime": "link:../../../joelclaw-memory/packages/runtime",
+    "effect": "4.0.0-rc.110",
+    "xstate": "5.32.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "5.9.2"
+  }
+}

@@ -94,13 +94,13 @@ importers:
         version: 19.2.2(@types/react@19.2.2)
       '@vitejs/plugin-react':
         specifier: ^5.0.4
-        version: 5.2.0(vite@7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2))
+        version: 5.2.0(vite@7.3.1(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2))
       typescript:
         specifier: 5.9.2
         version: 5.9.2
       vite:
         specifier: ^7.1.7
-        version: 7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2)
+        version: 7.3.1(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2)
 
   apps/web:
     dependencies:
@@ -309,7 +309,7 @@ importers:
         version: 5.9.2
       vitest:
         specifier: ^4.0.0
-        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
 
   packages/cli:
     dependencies:
@@ -430,6 +430,37 @@ importers:
         version: 5.9.2
 
   packages/endpoint-resolver: {}
+
+  packages/flowing-memory-card-worker:
+    dependencies:
+      '@joelclaw-memory/domain':
+        specifier: link:../../../joelclaw-memory/packages/domain
+        version: link:../../../joelclaw-memory/packages/domain
+      '@joelclaw-memory/machines':
+        specifier: link:../../../joelclaw-memory/packages/machines
+        version: link:../../../joelclaw-memory/packages/machines
+      '@joelclaw-memory/ports':
+        specifier: link:../../../joelclaw-memory/packages/ports
+        version: link:../../../joelclaw-memory/packages/ports
+      '@joelclaw-memory/postgres':
+        specifier: link:../../../joelclaw-memory/packages/postgres
+        version: link:../../../joelclaw-memory/packages/postgres
+      '@joelclaw-memory/runtime':
+        specifier: link:../../../joelclaw-memory/packages/runtime
+        version: link:../../../joelclaw-memory/packages/runtime
+      effect:
+        specifier: 4.0.0-rc.110
+        version: 4.0.0-rc.110
+      xstate:
+        specifier: 5.32.5
+        version: 5.32.5
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
 
   packages/flowing-memory-host:
     dependencies:
@@ -590,7 +621,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.0.0
-        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
 
   packages/lexicons: {}
 
@@ -611,7 +642,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.0.0
-        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
 
   packages/mdx-pipeline:
     dependencies:
@@ -672,7 +703,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.0.0
-        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
 
   packages/message-contract:
     dependencies:
@@ -730,7 +761,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.0.0
-        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
 
   packages/model-fallback:
     dependencies:
@@ -743,7 +774,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.0.0
-        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
 
   packages/pi-extensions:
     dependencies:
@@ -772,7 +803,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.0.0
-        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
 
   packages/recall:
     devDependencies:
@@ -1016,7 +1047,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.0.0
-        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
 
   packages/things-cloud:
     dependencies:
@@ -1065,7 +1096,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.0.0
-        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
 
   packages/world-restate:
     dependencies:
@@ -8982,6 +9013,9 @@ packages:
   xstate@5.31.1:
     resolution: {integrity: sha512-3P7t7GQ61BvLu+8Cj6Zq7rcS34vecL9pvfN2ucUWmIFIUG+rAREviOs4Xy4OO3BuJHSz6RLU8eqDXxSbVotjDQ==}
 
+  xstate@5.32.5:
+    resolution: {integrity: sha512-ULazi1oe6wGrXl0Frb6otSlkm5HLifbbVTkMk5kkSKqz4TkxJaVpnl6jOJwKeid3ORPxYyZQgNLUSYX9q65SIA==}
+
   xtend@4.0.2:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
     engines: {node: '>=0.4'}
@@ -10994,12 +11028,12 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.15.3
 
-  '@inquirer/confirm@5.1.21(@types/node@25.3.0)':
+  '@inquirer/confirm@5.1.21(@types/node@24.13.3)':
     dependencies:
-      '@inquirer/core': 10.3.2(@types/node@25.3.0)
-      '@inquirer/type': 3.0.10(@types/node@25.3.0)
+      '@inquirer/core': 10.3.2(@types/node@24.13.3)
+      '@inquirer/type': 3.0.10(@types/node@24.13.3)
     optionalDependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
     optional: true
 
   '@inquirer/core@10.3.2(@types/node@22.15.3)':
@@ -11015,18 +11049,18 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.15.3
 
-  '@inquirer/core@10.3.2(@types/node@25.3.0)':
+  '@inquirer/core@10.3.2(@types/node@24.13.3)':
     dependencies:
       '@inquirer/ansi': 1.0.2
       '@inquirer/figures': 1.0.15
-      '@inquirer/type': 3.0.10(@types/node@25.3.0)
+      '@inquirer/type': 3.0.10(@types/node@24.13.3)
       cli-width: 4.1.0
       mute-stream: 2.0.0
       signal-exit: 4.1.0
       wrap-ansi: 6.2.0
       yoctocolors-cjs: 2.1.3
     optionalDependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
     optional: true
 
   '@inquirer/figures@1.0.15': {}
@@ -11035,9 +11069,9 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.15.3
 
-  '@inquirer/type@3.0.10(@types/node@25.3.0)':
+  '@inquirer/type@3.0.10(@types/node@24.13.3)':
     optionalDependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
     optional: true
 
   '@ioredis/commands@1.5.0': {}
@@ -13525,17 +13559,17 @@ snapshots:
 
   '@slack/logger@4.0.0':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   '@slack/logger@4.0.1':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   '@slack/socket-mode@2.0.5':
     dependencies:
       '@slack/logger': 4.0.0
       '@slack/web-api': 7.14.1
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
       '@types/ws': 8.18.1
       eventemitter3: 5.0.4
       ws: 8.19.0
@@ -13552,7 +13586,7 @@ snapshots:
     dependencies:
       '@slack/logger': 4.0.0
       '@slack/types': 2.20.0
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
       '@types/retry': 0.12.0
       axios: 1.13.5
       eventemitter3: 5.0.4
@@ -13569,7 +13603,7 @@ snapshots:
     dependencies:
       '@slack/logger': 4.0.1
       '@slack/types': 2.22.0
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
       '@types/retry': 0.12.0
       axios: 1.18.1
       eventemitter3: 5.0.4
@@ -14321,7 +14355,7 @@ snapshots:
 
   '@types/bunyan@1.8.11':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   '@types/chai@5.2.3':
     dependencies:
@@ -14330,7 +14364,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   '@types/debug@4.1.12':
     dependencies:
@@ -14356,7 +14390,7 @@ snapshots:
 
   '@types/memcached@2.2.10':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   '@types/mime-types@2.1.4': {}
 
@@ -14364,7 +14398,7 @@ snapshots:
 
   '@types/mysql@2.15.27':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   '@types/nlcst@2.0.3':
     dependencies:
@@ -14388,7 +14422,7 @@ snapshots:
 
   '@types/oracledb@6.5.2':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   '@types/pg-pool@2.0.7':
     dependencies:
@@ -14396,7 +14430,7 @@ snapshots:
 
   '@types/pg@8.15.6':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
       pg-protocol: 1.11.0
       pg-types: 2.2.0
 
@@ -14414,7 +14448,7 @@ snapshots:
 
   '@types/tedious@4.0.14':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   '@types/unist@2.0.11': {}
 
@@ -14424,11 +14458,11 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   '@types/yauzl@2.10.3':
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
     optional: true
 
   '@ucast/core@1.10.2': {}
@@ -14462,7 +14496,7 @@ snapshots:
     dependencies:
       uncrypto: 0.1.3
 
-  '@vitejs/plugin-react@5.2.0(vite@7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2))':
+  '@vitejs/plugin-react@5.2.0(vite@7.3.1(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2))':
     dependencies:
       '@babel/core': 7.29.0
       '@babel/plugin-transform-react-jsx-self': 7.29.7(@babel/core@7.29.0)
@@ -14470,7 +14504,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.0-rc.3
       '@types/babel__core': 7.20.5
       react-refresh: 0.18.0
-      vite: 7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2)
+      vite: 7.3.1(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2)
     transitivePeerDependencies:
       - supports-color
 
@@ -14492,14 +14526,14 @@ snapshots:
       msw: 2.12.10(@types/node@22.15.3)(typescript@5.9.2)
       vite: 7.3.1(@types/node@22.15.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2)
 
-  '@vitest/mocker@4.0.18(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(vite@7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2))':
+  '@vitest/mocker@4.0.18(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@7.3.1(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2))':
     dependencies:
       '@vitest/spy': 4.0.18
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      msw: 2.12.10(@types/node@25.3.0)(typescript@5.9.2)
-      vite: 7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2)
+      msw: 2.12.10(@types/node@24.13.3)(typescript@5.9.2)
+      vite: 7.3.1(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2)
 
   '@vitest/pretty-format@4.0.18':
     dependencies:
@@ -14773,15 +14807,15 @@ snapshots:
 
   bun-types@1.3.10:
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   bun-types@1.3.14:
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   bun-types@1.3.9:
     dependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
 
   bundle-name@4.1.0:
     dependencies:
@@ -16780,9 +16814,9 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
 
-  msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2):
+  msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2):
     dependencies:
-      '@inquirer/confirm': 5.1.21(@types/node@25.3.0)
+      '@inquirer/confirm': 5.1.21(@types/node@24.13.3)
       '@mswjs/interceptors': 0.41.3
       '@open-draft/deferred-promise': 2.2.0
       '@types/statuses': 2.0.6
@@ -17388,7 +17422,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.0
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
       long: 5.3.2
 
   protobufjs@8.0.0:
@@ -17403,7 +17437,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.0
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
       long: 5.3.2
 
   proxy-addr@2.0.7:
@@ -18535,7 +18569,7 @@ snapshots:
       tsx: 4.20.6
       yaml: 2.8.2
 
-  vite@7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2):
+  vite@7.3.1(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2):
     dependencies:
       esbuild: 0.27.0
       fdir: 6.5.0(picomatch@4.0.3)
@@ -18544,7 +18578,7 @@ snapshots:
       rollup: 4.59.0
       tinyglobby: 0.2.15
     optionalDependencies:
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
       fsevents: 2.3.3
       jiti: 2.6.1
       lightningcss: 1.30.2
@@ -18589,10 +18623,10 @@ snapshots:
       - tsx
       - yaml
 
-  vitest@4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2):
+  vitest@4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2):
     dependencies:
       '@vitest/expect': 4.0.18
-      '@vitest/mocker': 4.0.18(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(vite@7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2))
+      '@vitest/mocker': 4.0.18(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@7.3.1(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2))
       '@vitest/pretty-format': 4.0.18
       '@vitest/runner': 4.0.18
       '@vitest/snapshot': 4.0.18
@@ -18609,11 +18643,11 @@ snapshots:
       tinyexec: 1.0.2
       tinyglobby: 0.2.15
       tinyrainbow: 3.0.3
-      vite: 7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2)
+      vite: 7.3.1(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6)(yaml@2.8.2)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
-      '@types/node': 25.3.0
+      '@types/node': 24.13.3
     transitivePeerDependencies:
       - jiti
       - less
@@ -18685,6 +18719,8 @@ snapshots:
       powershell-utils: 0.1.0
 
   xstate@5.31.1: {}
+
+  xstate@5.32.5: {}
 
   xtend@4.0.2: {}
 
