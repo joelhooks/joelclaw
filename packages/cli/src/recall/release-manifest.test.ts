@@ -55,7 +55,7 @@ describe("a manifested pinned release", () => {
   });
 
   test("the pinned commit is the one the local wire mirror was written against", () => {
-    expect(PINNED_MEMORY_COMMIT).toBe("05d92eadb5091113c5fc648e95ced36eb5fb8f39");
+    expect(PINNED_MEMORY_COMMIT).toBe("034f082bf8bcdc5aad0d88f1d8cb5e2e05304ff0");
   });
 });
 
@@ -214,7 +214,13 @@ describe("the manifest must name the pinned build", () => {
       otherManifest,
       JSON.stringify({
         _tag: "FlowingMemoryReleaseManifestV2",
-        artifacts: [{ kind: "standalone", path: "../2026-08-22 build/joelclaw-memory", sha256: release.sha256 }],
+        artifacts: [
+          {
+            kind: "standalone",
+            path: "../2026-08-22 build/joelclaw-memory",
+            sha256: release.sha256,
+          },
+        ],
         memoryCommit: PINNED_MEMORY_COMMIT,
         schemaVersion: 2,
       }),
@@ -265,7 +271,7 @@ describe("any writable bit is refused, owner included", () => {
 describe("the anchored artifact digest", () => {
   test("is the digest of the standalone read artifact built at the pinned commit", () => {
     expect(PINNED_READ_ARTIFACT_SHA256).toBe(
-      "62922264b9f27df3ad9c18c095dabf3dd55477859522739ee396b7de78b3b6cf",
+      "20757b24554a938a9adaeb75ed8a4a08271a7dca9d68e02ddee80392d66397e4",
     );
   });
 

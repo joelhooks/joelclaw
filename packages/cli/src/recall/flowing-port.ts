@@ -30,9 +30,9 @@ import {
   unavailableLane,
 } from "./contract";
 import {
-  decodeFlowingEnvelope,
+  decodeFlowingEnvelopeV2,
   type FlowingEvidenceReferenceV1,
-  type FlowingMemorySearchResultV1,
+  type FlowingMemorySearchResultV2,
 } from "./flowing-envelope";
 import {
   agentSecretsCredentialLease,
@@ -77,10 +77,10 @@ export const DEFAULT_TRUSTED_RELEASE_ROOT = join(
 
 /**
  * Adapter-owned argv for the semantic read boundary at
- * `joelhooks/joelclaw-memory@05d92eadb5091113c5fc648e95ced36eb5fb8f39`.
+ * `joelhooks/joelclaw-memory@034f082bf8bcdc5aad0d88f1d8cb5e2e05304ff0`.
  * Config supplies the executable; it never supplies arguments.
  */
-export const FLOWING_READ_ARGS: readonly string[] = ["flowing-recall-read", "--query-file", "-"];
+export const FLOWING_READ_ARGS: readonly string[] = ["flowing-recall-read-v2", "--query-file", "-"];
 
 /**
  * The source `MemorySearchQueryV1` requires a positive `legacyLimit`, but
@@ -200,17 +200,17 @@ export interface ResolveFlowingRecallPortConfigInput {
 export function inspectFlowingRecallPortSettings(
   settings: Record<string, unknown> | undefined,
 ): { readonly ok: true } | { readonly ok: false; readonly code: "not-configured" } {
-  const readExecutable = asString(settings?.read_executable)
-  const credentialSecretName = asString(settings?.credential_secret_name)
-  const credentialFormat = asString(settings?.credential_format).toLowerCase()
+  const readExecutable = asString(settings?.read_executable);
+  const credentialSecretName = asString(settings?.credential_secret_name);
+  const credentialFormat = asString(settings?.credential_format).toLowerCase();
   if (
     !readExecutable ||
     !credentialSecretName ||
     (credentialFormat && credentialFormat !== "raw" && credentialFormat !== "json")
   ) {
-    return { ok: false, code: "not-configured" }
+    return { ok: false, code: "not-configured" };
   }
-  return { ok: true }
+  return { ok: true };
 }
 
 /**
@@ -256,7 +256,7 @@ export function resolveFlowingRecallPortConfig(
     return {
       ok: false,
       code: "not-configured",
-      message: "flowing recall credential_format must be \"raw\" or \"json\"",
+      message: 'flowing recall credential_format must be "raw" or "json"',
     };
   }
 
@@ -352,7 +352,7 @@ function allFlowingLanesUnavailable(
   };
 }
 
-function healthFrom(result: FlowingMemorySearchResultV1): RecallLaneHealthV1 {
+function healthFrom(result: FlowingMemorySearchResultV2): RecallLaneHealthV1 {
   switch (result.health._tag) {
     case "Healthy":
       return {
@@ -389,7 +389,7 @@ function healthFrom(result: FlowingMemorySearchResultV1): RecallLaneHealthV1 {
   }
 }
 
-function reflectionItems(result: FlowingMemorySearchResultV1): RecallLaneItemV1[] {
+function reflectionItems(result: FlowingMemorySearchResultV2): RecallLaneItemV1[] {
   return result.reflectionHits.map((hit) => {
     const superseded = hit.matchedClaims
       .filter((claim) => claim._tag === "Superseded")
@@ -398,6 +398,12 @@ function reflectionItems(result: FlowingMemorySearchResultV1): RecallLaneItemV1[
       .filter((claim) => hit.matchedClaims.some((matched) => matched.claimId === claim.claimId))
       .map((claim) => claim.text)
       .join(" · ");
+    const card = hit.reflection.schemaVersion === 2 ? hit.reflection : undefined;
+    const summary =
+      card === undefined
+        ? matchedText
+        : `${card.memory} Consequence: ${card.consequence} Counterfactual: ${card.counterfactual}`;
+    const title = card?.trigger ?? matchedText;
     return {
       evidenceIds: hit.evidence.map((reference) => reference.evidenceId),
       id: hit.reflection.reflectionId,
@@ -413,14 +419,14 @@ function reflectionItems(result: FlowingMemorySearchResultV1): RecallLaneItemV1[
       },
       scopeBinding: "record-scope" as const,
       score: hit.score,
-      ...(matchedText ? { summary: matchedText.slice(0, 1_000) } : {}),
+      ...(summary ? { summary: summary.slice(0, 1_000) } : {}),
       ...(superseded.length > 0 ? { supersededClaimIds: superseded } : {}),
-      title: matchedText.slice(0, 200) || hit.reflection.reflectionId,
+      title: title.slice(0, 200) || hit.reflection.reflectionId,
     };
   });
 }
 
-function observationItems(result: FlowingMemorySearchResultV1): RecallLaneItemV1[] {
+function observationItems(result: FlowingMemorySearchResultV2): RecallLaneItemV1[] {
   return result.observationHits.map((hit) => ({
     evidenceIds: hit.evidence.map((reference) => reference.evidenceId),
     id: hit.observation.observationId,
@@ -441,7 +447,7 @@ function observationItems(result: FlowingMemorySearchResultV1): RecallLaneItemV1
 }
 
 function lanesFromResult(
-  result: FlowingMemorySearchResultV1,
+  result: FlowingMemorySearchResultV2,
 ): Record<RecallLaneName, RecallLaneV1> {
   const health = healthFrom(result);
   const build = (lane: RecallLaneName, items: RecallLaneItemV1[]): RecallLaneV1 => ({
@@ -468,7 +474,8 @@ function lanesFromResult(
 const sameInstant = (left: string, right: string) => Date.parse(left) === Date.parse(right);
 
 const samePrivacySet = (left: readonly string[], right: readonly string[]) =>
-  left.length === right.length && new Set(left).size === left.length &&
+  left.length === right.length &&
+  new Set(left).size === left.length &&
   left.every((tier) => right.includes(tier));
 
 /**
@@ -479,7 +486,7 @@ const samePrivacySet = (left: readonly string[], right: readonly string[]) =>
  * question. That is a contract violation, not a result.
  */
 export function echoedQueryMatchesRequest(
-  result: FlowingMemorySearchResultV1,
+  result: FlowingMemorySearchResultV2,
   request: ComposedRecallRequestV1,
 ): boolean {
   const query = result.query;
@@ -509,7 +516,7 @@ export function echoedQueryMatchesRequest(
  * Legacy hits are checked too, even though they are discarded.
  */
 export function recordsWithinScopeAndGrant(
-  result: FlowingMemorySearchResultV1,
+  result: FlowingMemorySearchResultV2,
   request: ComposedRecallRequestV1,
 ): boolean {
   const inScope = (scope: { readonly project: string; readonly workstream: string }) =>
@@ -583,10 +590,12 @@ export async function readFlowingRecall(
     timeoutMs: Math.min(input.config.timeoutMs, 15_000),
   });
   if (!lease.ok) {
-    return finish(allFlowingLanesUnavailable(
-      "credential-unavailable",
-      "flowing recall credential lease failed",
-    ));
+    return finish(
+      allFlowingLanesUnavailable(
+        "credential-unavailable",
+        "flowing recall credential lease failed",
+      ),
+    );
   }
 
   const secret = lease.value;
@@ -597,10 +606,12 @@ export async function readFlowingRecall(
   // this point may run if the release moved during the lease.
   const afterLease = reverifyReleaseBinding(input.config.release);
   if (!afterLease.ok) {
-    return finish(allFlowingLanesUnavailable(
-      "untrusted-executable",
-      "flowing recall release changed after verification",
-    ));
+    return finish(
+      allFlowingLanesUnavailable(
+        "untrusted-executable",
+        "flowing recall release changed after verification",
+      ),
+    );
   }
 
   const env = minimalChildEnv(input.parentEnv ?? process.env, {
@@ -616,10 +627,9 @@ export async function readFlowingRecall(
       timeoutMs: input.config.timeoutMs,
     });
   } catch {
-    return finish(allFlowingLanesUnavailable(
-      "process-failed",
-      "flowing recall read process failed",
-    ));
+    return finish(
+      allFlowingLanesUnavailable("process-failed", "flowing recall read process failed"),
+    );
   }
 
   const stdout = redactSecret(proc.stdout, secret);
@@ -644,24 +654,20 @@ export async function readFlowingRecall(
 
   if (proc.exitCode !== 0 && proc.exitCode !== 3) {
     return finish(
-      allFlowingLanesUnavailable(
-        "process-failed",
-        `flowing recall read exited ${proc.exitCode}`,
-      ),
+      allFlowingLanesUnavailable("process-failed", `flowing recall read exited ${proc.exitCode}`),
     );
   }
 
-  const decoded = decodeFlowingEnvelope(stdout);
+  const decoded = decodeFlowingEnvelopeV2(stdout);
   if (!decoded.ok) {
-    return finish(allFlowingLanesUnavailable(
-      decoded.code,
-      `flowing recall response failed ${decoded.code}`,
-    ));
+    return finish(
+      allFlowingLanesUnavailable(decoded.code, `flowing recall response failed ${decoded.code}`),
+    );
   }
 
   // The source assigns exit 3 to every unavailable envelope and exit 0 to every
   // success envelope. Both mismatches are contract violations.
-  if (decoded.envelope._tag === "FlowingMemoryReadUnavailableV1") {
+  if (decoded.envelope._tag === "FlowingMemoryReadUnavailableV2") {
     if (proc.exitCode !== 3) {
       return finish(
         allFlowingLanesUnavailable(

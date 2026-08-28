@@ -2,7 +2,7 @@
  * Structural mirror of the flowing-memory read boundary.
  *
  * The semantic source of truth is `joelclaw-memory` at commit
- * `05d92eadb5091113c5fc648e95ced36eb5fb8f39` — `packages/domain/src/search.ts`,
+ * `034f082bf8bcdc5aad0d88f1d8cb5e2e05304ff0` — `packages/domain/src/search.ts`,
  * `packages/domain/src/flowing-memory-read.ts`, and `apps/cli/src/read-command.ts`.
  * That source runs Effect v4; this CLI runs Effect v3, so the boundary is a
  * process, not an import. This module mirrors the wire contract field for field.
@@ -41,9 +41,12 @@
 import { Schema } from "effect";
 
 export const FLOWING_MEMORY_READ_SCHEMA_VERSION = 1 as const;
+export const FLOWING_MEMORY_READ_V2_SCHEMA_VERSION = 2 as const;
 export const MEMORY_SEARCH_SCHEMA_VERSION = 1 as const;
+export const MEMORY_SEARCH_V2_SCHEMA_VERSION = 2 as const;
 export const OBSERVATION_SCHEMA_VERSION = 2 as const;
 export const REFLECTION_SCHEMA_VERSION = 1 as const;
+export const REFLECTION_V2_SCHEMA_VERSION = 2 as const;
 
 /** Mirrors `limits.ts` at the pinned source revision. */
 export const MAX_SEARCH_HITS_PER_KIND = 50;
@@ -82,7 +85,7 @@ const ObservationIdSchema = pattern(
   "expected a canonical observation ID",
 );
 const ReflectionIdSchema = pattern(
-  /^reflection:v1:[a-f0-9]{64}$/u,
+  /^reflection:v(?:1|2):[a-f0-9]{64}$/u,
   "expected a canonical reflection ID",
 );
 const EvidenceIdSchema = pattern(/^evidence:[a-f0-9]{64}$/u, "expected a canonical evidence ID");
@@ -258,10 +261,9 @@ const RedactionSchema = Schema.Union(
 );
 
 const ParentEvidenceIdsSchema = Schema.Array(EvidenceIdSchema).pipe(
-  Schema.filter(
-    (ids) => ids.length > 0 && ids.length <= 64 && new Set(ids).size === ids.length,
-    { message: () => "expected unique non-empty parent evidence IDs" },
-  ),
+  Schema.filter((ids) => ids.length > 0 && ids.length <= 64 && new Set(ids).size === ids.length, {
+    message: () => "expected unique non-empty parent evidence IDs",
+  }),
 );
 
 const evidenceCommon = {
@@ -311,9 +313,12 @@ const EvidenceReferenceSchema = Schema.Union(
 export type FlowingEvidenceReferenceV1 = Schema.Schema.Type<typeof EvidenceReferenceSchema>;
 
 const RecordEvidenceSchema = Schema.Array(EvidenceReferenceSchema).pipe(
-  Schema.filter((evidence) => evidence.length > 0 && evidence.length <= MAX_EVIDENCE_REFERENCES_PER_RECORD, {
-    message: () => "expected non-empty bounded record evidence",
-  }),
+  Schema.filter(
+    (evidence) => evidence.length > 0 && evidence.length <= MAX_EVIDENCE_REFERENCES_PER_RECORD,
+    {
+      message: () => "expected non-empty bounded record evidence",
+    },
+  ),
 );
 
 /** The source requires non-empty, bounded, uniquely identified search-hit evidence. */
@@ -418,7 +423,7 @@ const ObservationSchema = Schema.Struct({
 );
 export type FlowingObservationV2 = Schema.Schema.Type<typeof ObservationSchema>;
 
-const ReflectionSchema = Schema.Struct({
+const ReflectionV1Schema = Schema.Struct({
   claims: Schema.Array(ClaimSchema).pipe(
     Schema.filter((claims) => claims.length > 0 && claims.length <= MAX_CLAIMS_PER_REFLECTION, {
       message: () => "expected non-empty bounded reflection claims",
@@ -437,10 +442,9 @@ const ReflectionSchema = Schema.Struct({
   schemaVersion: Schema.Literal(REFLECTION_SCHEMA_VERSION),
   scope: ScopeSchema,
   sourceObservationIds: Schema.Array(ObservationIdSchema).pipe(
-    Schema.filter(
-      (ids) => ids.length > 0 && ids.length <= MAX_SOURCE_OBSERVATIONS_PER_REFLECTION,
-      { message: () => "expected non-empty bounded source observation IDs" },
-    ),
+    Schema.filter((ids) => ids.length > 0 && ids.length <= MAX_SOURCE_OBSERVATIONS_PER_REFLECTION, {
+      message: () => "expected non-empty bounded source observation IDs",
+    }),
   ),
   type: Schema.Literal("reflection"),
   validFrom: IsoInstantSchema,
@@ -453,7 +457,74 @@ const ReflectionSchema = Schema.Struct({
     { message: () => "expected an ordered validity range ending no later than observedAt" },
   ),
 );
-export type FlowingReflectionV1 = Schema.Schema.Type<typeof ReflectionSchema>;
+export type FlowingReflectionV1 = Schema.Schema.Type<typeof ReflectionV1Schema>;
+
+const ReflectionV2Schema = Schema.Struct({
+  cardId: HashSchema,
+  cardSchemaVersion: Schema.Literal(1),
+  claims: Schema.Array(ClaimSchema).pipe(
+    Schema.filter((claims) => claims.length === 4, {
+      message: () => "expected four canonical card claims",
+    }),
+  ),
+  consequence: bounded(500),
+  counterfactual: bounded(500),
+  derivation: DerivationSchema,
+  evidence: RecordEvidenceSchema,
+  kind: Schema.Literal(
+    "Decision",
+    "Constraint",
+    "FailurePattern",
+    "OpenLoop",
+    "Preference",
+    "Capability",
+  ),
+  memory: bounded(700),
+  observedAt: IsoInstantSchema,
+  privacy: PrivacySchema,
+  reflectionId: ReflectionIdSchema,
+  relations: Schema.Array(ClaimRelationSchema).pipe(
+    Schema.filter((relations) => relations.length <= MAX_RELATIONS_PER_REFLECTION, {
+      message: () => "expected bounded reflection relations",
+    }),
+  ),
+  reviewAttestationId: HashSchema,
+  rubricDigest: HashSchema,
+  schemaVersion: Schema.Literal(REFLECTION_V2_SCHEMA_VERSION),
+  scope: ScopeSchema,
+  sourceObservationIds: Schema.Array(ObservationIdSchema).pipe(
+    Schema.filter((ids) => ids.length > 0 && ids.length <= MAX_SOURCE_OBSERVATIONS_PER_REFLECTION, {
+      message: () => "expected non-empty bounded source observation IDs",
+    }),
+  ),
+  status: Schema.Literal("active", "blocked"),
+  trigger: bounded(280),
+  type: Schema.Literal("reflection"),
+  usefulUntil: Schema.optional(IsoInstantSchema),
+  validFrom: IsoInstantSchema,
+  validThrough: IsoInstantSchema,
+}).pipe(
+  Schema.filter(
+    (reflection) =>
+      at(reflection.validFrom) <= at(reflection.validThrough) &&
+      at(reflection.validThrough) <= at(reflection.observedAt) &&
+      (reflection.usefulUntil === undefined ||
+        at(reflection.observedAt) < at(reflection.usefulUntil)),
+    { message: () => "expected an ordered active ReflectionV2 validity range" },
+  ),
+  Schema.filter(
+    (reflection) =>
+      reflection.claims[0]?.text === reflection.trigger &&
+      reflection.claims[1]?.text === reflection.memory &&
+      reflection.claims[2]?.text === reflection.consequence &&
+      reflection.claims[3]?.text === reflection.counterfactual,
+    { message: () => "expected card fields to match their canonical claims" },
+  ),
+);
+export type FlowingReflectionV2 = Schema.Schema.Type<typeof ReflectionV2Schema>;
+
+const AnyReflectionSchema = Schema.Union(ReflectionV1Schema, ReflectionV2Schema);
+export type FlowingReflection = Schema.Schema.Type<typeof AnyReflectionSchema>;
 
 // ── hits ───────────────────────────────────────────────────────────────────
 
@@ -477,7 +548,7 @@ const ReflectionHitSchema = Schema.Struct({
     }),
   ),
   rank: PositiveIntSchema,
-  reflection: ReflectionSchema,
+  reflection: ReflectionV1Schema,
   score: UnitIntervalSchema,
   supportingObservations: Schema.Array(ObservationSchema).pipe(
     Schema.filter(
@@ -488,6 +559,26 @@ const ReflectionHitSchema = Schema.Struct({
   ),
 });
 export type FlowingReflectionSearchHitV1 = Schema.Schema.Type<typeof ReflectionHitSchema>;
+
+const ReflectionHitV2Schema = Schema.Struct({
+  evidence: SearchHitEvidenceSchema,
+  matchedClaims: Schema.Array(MatchedClaimSchema).pipe(
+    Schema.filter((claims) => claims.length > 0 && claims.length <= MAX_CLAIMS_PER_REFLECTION, {
+      message: () => "expected non-empty bounded matched claims",
+    }),
+  ),
+  rank: PositiveIntSchema,
+  reflection: AnyReflectionSchema,
+  score: UnitIntervalSchema,
+  supportingObservations: Schema.Array(ObservationSchema).pipe(
+    Schema.filter(
+      (observations) =>
+        observations.length > 0 && observations.length <= MAX_SUPPORTING_OBSERVATIONS_PER_HIT,
+      { message: () => "expected non-empty bounded supporting observations" },
+    ),
+  ),
+});
+export type FlowingReflectionSearchHitV2 = Schema.Schema.Type<typeof ReflectionHitV2Schema>;
 
 const ObservationHitSchema = Schema.Struct({
   evidence: SearchHitEvidenceSchema,
@@ -628,8 +719,65 @@ const ResultSchema = Schema.Struct({
     { message: () => "expected only active matched claims when supersession was not requested" },
   ),
   Schema.filter(
+    (result) => result.legacyHits.every((hit) => hit.descriptor._tag !== "OperationalReceipt"),
+    { message: () => "expected no operational receipt in legacy search hits" },
+  ),
+);
+
+const ResultV2Schema = Schema.Struct({
+  _tag: Schema.Literal("MemorySearchResultV2"),
+  explanation: Schema.optional(bounded(500)),
+  health: HealthSchema,
+  legacyHits: Schema.Array(LegacyHitSchema),
+  observationHits: Schema.Array(ObservationHitSchema),
+  query: QuerySchema,
+  reflectionHits: Schema.Array(ReflectionHitV2Schema),
+  schemaVersion: Schema.Literal(MEMORY_SEARCH_V2_SCHEMA_VERSION),
+}).pipe(
+  Schema.filter(
     (result) =>
-      result.legacyHits.every((hit) => hit.descriptor._tag !== "OperationalReceipt"),
+      result.reflectionHits.length <= result.query.reflectionLimit &&
+      result.observationHits.length <= result.query.observationLimit &&
+      result.legacyHits.length <= result.query.legacyLimit,
+    { message: () => "expected per-kind hit counts inside the echoed query limits" },
+  ),
+  Schema.filter(
+    (result) =>
+      sequentialRanks(result.reflectionHits) &&
+      sequentialRanks(result.observationHits) &&
+      sequentialRanks(result.legacyHits),
+    { message: () => "expected sequential 1-based producer ranks in every hit kind" },
+  ),
+  Schema.filter(
+    (result) =>
+      result.reflectionHits.every((hit) => {
+        const matchedIds = hit.matchedClaims.map((matched) => matched.claimId);
+        const supportIds = hit.supportingObservations.map(
+          (observation) => observation.observationId,
+        );
+        return (
+          new Set(matchedIds).size === matchedIds.length &&
+          matchedIds.every((claimId) =>
+            hit.reflection.claims.some((claim) => claim.claimId === claimId),
+          ) &&
+          sameIdSet(supportIds, hit.reflection.sourceObservationIds)
+        );
+      }),
+    {
+      message: () =>
+        "expected unique matched claims present on the reflection, with exact source observations",
+    },
+  ),
+  Schema.filter(
+    (result) =>
+      result.query.includeSuperseded ||
+      result.reflectionHits.every((hit) =>
+        hit.matchedClaims.every((matched) => matched._tag === "Active"),
+      ),
+    { message: () => "expected only active matched claims by default" },
+  ),
+  Schema.filter(
+    (result) => result.legacyHits.every((hit) => hit.descriptor._tag !== "OperationalReceipt"),
     { message: () => "expected no operational receipt in legacy search hits" },
   ),
 );
@@ -653,6 +801,24 @@ export type FlowingMemoryReadEnvelopeV1 = Schema.Schema.Type<
 >;
 export type FlowingMemorySearchResultV1 = Schema.Schema.Type<typeof ResultSchema>;
 
+export const FlowingMemoryReadEnvelopeV2Schema = Schema.Union(
+  Schema.Struct({
+    _tag: Schema.Literal("FlowingMemoryReadSuccessV2"),
+    result: ResultV2Schema,
+    schemaVersion: Schema.Literal(FLOWING_MEMORY_READ_V2_SCHEMA_VERSION),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal("FlowingMemoryReadUnavailableV2"),
+    code: Schema.Literal("invalid-input", "store-unavailable", "contract-violation"),
+    message: bounded(500),
+    schemaVersion: Schema.Literal(FLOWING_MEMORY_READ_V2_SCHEMA_VERSION),
+  }),
+);
+export type FlowingMemoryReadEnvelopeV2 = Schema.Schema.Type<
+  typeof FlowingMemoryReadEnvelopeV2Schema
+>;
+export type FlowingMemorySearchResultV2 = Schema.Schema.Type<typeof ResultV2Schema>;
+
 export type FlowingEnvelopeDecodeOutcome =
   | { readonly ok: true; readonly envelope: FlowingMemoryReadEnvelopeV1 }
   | {
@@ -662,6 +828,7 @@ export type FlowingEnvelopeDecodeOutcome =
     };
 
 const decodeEnvelope = Schema.decodeUnknownEither(FlowingMemoryReadEnvelopeV1Schema);
+const decodeEnvelopeV2 = Schema.decodeUnknownEither(FlowingMemoryReadEnvelopeV2Schema);
 
 function declaredSchemaVersion(value: unknown): number | undefined {
   if (typeof value !== "object" || value === null) return undefined;
@@ -711,5 +878,47 @@ export function decodeFlowingEnvelope(text: string): FlowingEnvelopeDecodeOutcom
     };
   }
 
+  return { ok: true, envelope: decoded.right };
+}
+
+export type FlowingEnvelopeV2DecodeOutcome =
+  | { readonly ok: true; readonly envelope: FlowingMemoryReadEnvelopeV2 }
+  | {
+      readonly ok: false;
+      readonly code: "malformed-response" | "contract-mismatch";
+      readonly message: string;
+    };
+
+export function decodeFlowingEnvelopeV2(text: string): FlowingEnvelopeV2DecodeOutcome {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return { ok: false, code: "malformed-response", message: "read command produced no output" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return {
+      ok: false,
+      code: "malformed-response",
+      message: "read command output was not one JSON document",
+    };
+  }
+  const version = declaredSchemaVersion(parsed);
+  if (version !== undefined && version !== FLOWING_MEMORY_READ_V2_SCHEMA_VERSION) {
+    return {
+      ok: false,
+      code: "contract-mismatch",
+      message: `read boundary reported schemaVersion ${version}; this build implements ${FLOWING_MEMORY_READ_V2_SCHEMA_VERSION}`,
+    };
+  }
+  const decoded = decodeEnvelopeV2(parsed);
+  if (decoded._tag === "Left") {
+    return {
+      ok: false,
+      code: "malformed-response",
+      message: "read command output did not match the flowing-memory V2 read envelope",
+    };
+  }
   return { ok: true, envelope: decoded.right };
 }
