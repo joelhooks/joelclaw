@@ -77,7 +77,7 @@ export const DEFAULT_TRUSTED_RELEASE_ROOT = join(
 
 /**
  * Adapter-owned argv for the semantic read boundary at
- * `joelhooks/joelclaw-memory@034f082bf8bcdc5aad0d88f1d8cb5e2e05304ff0`.
+ * `joelhooks/joelclaw-memory@601d8c518d3078859b7cdf287a6db52fa8ee9082`.
  * Config supplies the executable; it never supplies arguments.
  */
 export const FLOWING_READ_ARGS: readonly string[] = ["flowing-recall-read-v2", "--query-file", "-"];
@@ -400,9 +400,7 @@ function reflectionItems(result: FlowingMemorySearchResultV2): RecallLaneItemV1[
       .join(" · ");
     const card = hit.reflection.schemaVersion === 2 ? hit.reflection : undefined;
     const summary =
-      card === undefined
-        ? matchedText
-        : `${card.memory} Consequence: ${card.consequence} Counterfactual: ${card.counterfactual}`;
+      card === undefined ? matchedText : `Consequence: ${card.consequence} Memory: ${card.memory}`;
     const title = card?.trigger ?? matchedText;
     return {
       evidenceIds: hit.evidence.map((reference) => reference.evidenceId),

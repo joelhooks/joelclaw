@@ -290,7 +290,40 @@ describe("successful reads", () => {
     expect(lane.items[0]?.summary).toContain(
       "Fail closed when Windows named-pipe PID proof is unavailable.",
     );
-    expect(lane.items[0]?.summary).toContain("Counterfactual:");
+    expect(lane.items[0]?.summary).toStartWith("Consequence:");
+  });
+
+  test("keeps the full maximum-size consequence in the bounded card summary", async () => {
+    const envelope = flowingSuccessEnvelope({ cardCount: 1, reflectionCount: 0 });
+    const result = envelope.result as {
+      reflectionHits: Array<{
+        reflection: {
+          claims: Array<{ text: string }>;
+          consequence: string;
+          memory: string;
+        };
+      }>;
+    };
+    const reflection = result.reflectionHits[0]?.reflection;
+    if (reflection === undefined) {
+      throw new Error("missing card fixture");
+    }
+    const consequence = `Fail ${"x".repeat(494)}.`;
+    const memory = `M${"y".repeat(698)}.`;
+    reflection.consequence = consequence;
+    reflection.memory = memory;
+    if (reflection.claims[1] !== undefined) reflection.claims[1].text = memory;
+    if (reflection.claims[2] !== undefined) {
+      reflection.claims[2].text = consequence;
+    }
+    const port = harness({ stdout: successStdout(envelope) });
+    const outcome = await port.run();
+    const lane = outcome.lanes["flowing-reflections"];
+    if (lane._tag !== "RecallLaneAvailableV1") {
+      throw new Error("expected available card lane");
+    }
+    expect(lane.items[0]?.summary).toContain(consequence);
+    expect(lane.items[0]?.summary.length).toBeLessThanOrEqual(1_000);
   });
 
   test("uses the producer rank rather than array position", async () => {
