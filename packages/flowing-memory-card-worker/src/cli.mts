@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  CardRestorationV1Schema,
   CardReviewAuthorityV1Schema,
   CardWithdrawalV1Schema,
   ReviewedCardActivationV1Schema,
@@ -64,6 +65,8 @@ interface ApprovedCardOperation {
   readonly activationId: string;
   readonly artifactSha256: string;
   readonly authoritySha256: string;
+  readonly restorationId: string;
+  readonly restorationSha256: string;
   readonly withdrawalId: string;
   readonly withdrawalSha256: string;
 }
@@ -104,6 +107,10 @@ const approvedOperations = async (): Promise<readonly ApprovedCardOperation[]> =
       typeof entry.artifactSha256 !== "string" ||
       !("authoritySha256" in entry) ||
       typeof entry.authoritySha256 !== "string" ||
+      !("restorationId" in entry) ||
+      typeof entry.restorationId !== "string" ||
+      !("restorationSha256" in entry) ||
+      typeof entry.restorationSha256 !== "string" ||
       !("withdrawalId" in entry) ||
       typeof entry.withdrawalId !== "string" ||
       !("withdrawalSha256" in entry) ||
@@ -115,6 +122,8 @@ const approvedOperations = async (): Promise<readonly ApprovedCardOperation[]> =
       activationId: entry.activationId,
       artifactSha256: entry.artifactSha256,
       authoritySha256: entry.authoritySha256,
+      restorationId: entry.restorationId,
+      restorationSha256: entry.restorationSha256,
       withdrawalId: entry.withdrawalId,
       withdrawalSha256: entry.withdrawalSha256,
     };
@@ -425,6 +434,46 @@ const runWithdrawal = async (arguments_: readonly string[]) => {
   }
 };
 
+const runRestoration = async (arguments_: readonly string[]) => {
+  await requireDaemonStopped();
+  const restorationPath = requireValue(arguments_, "--restoration");
+  const restorationSha = requireValue(arguments_, "--restoration-sha256");
+  const receiptPath = requireValue(arguments_, "--receipt");
+  const restoration = Schema.decodeUnknownSync(CardRestorationV1Schema)(
+    await readPrivateJsonFile(restorationPath, restorationSha),
+  );
+  const approval = (await approvedOperations()).find(
+    (entry) => entry.restorationId === restoration.restorationId,
+  );
+  if (
+    approval === undefined ||
+    approval.restorationSha256 !== restorationSha ||
+    approval.activationId !== restoration.activationId
+  ) {
+    throw new Error("card restoration is not pinned by the sealed worker release");
+  }
+  if (requireValue(arguments_, "--confirm-restoration") !== restoration.restorationId) {
+    throw new Error("restoration confirmation does not match artifact identity");
+  }
+  const prepared = await prepareReceipt(receiptPath, "restore", restoration.restorationId);
+  try {
+    const receipt = await withCardRuntime(
+      Effect.gen(function* restoreCard() {
+        const runtime = yield* ReviewedCardRuntime;
+        return yield* runtime.restore(restoration);
+      }),
+    );
+    const { CardRestorationReceiptV1Schema } = await import("@joelclaw-memory/domain");
+    return await finalizeReceipt(
+      prepared,
+      Schema.encodeSync(CardRestorationReceiptV1Schema)(receipt),
+    );
+  } catch (error) {
+    await prepared.handle.close();
+    throw error;
+  }
+};
+
 const runCardMigration = async (arguments_: readonly string[]) => {
   await requireDaemonStopped();
   if (requireValue(arguments_, "--confirm-card-schema") !== "reviewed-memory-cards-v1") {
@@ -463,6 +512,9 @@ export const runWorkerCommand = async (arguments_: readonly string[]) => {
     case "activate":
       receipt = await runPreviewOrActivation(arguments_, true);
       break;
+    case "restore":
+      receipt = await runRestoration(arguments_);
+      break;
     case "withdraw":
       receipt = await runWithdrawal(arguments_);
       break;
@@ -471,7 +523,7 @@ export const runWorkerCommand = async (arguments_: readonly string[]) => {
       break;
     default:
       throw new Error(
-        "usage: flowing-memory-host worker <run|preview|activate|withdraw|migrate-cards>",
+        "usage: flowing-memory-card-worker <run|preview|activate|withdraw|restore|migrate-cards>",
       );
   }
   process.stdout.write(`${JSON.stringify({ ok: true, receipt })}\n`);
