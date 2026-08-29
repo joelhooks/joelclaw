@@ -225,6 +225,7 @@ export function buildFlowingRelease(
     const compile = dependencies.compile ?? defaultCompiler;
     compile({ artifactPath, checkoutPath });
     assertStandaloneArtifact(artifactPath);
+    inspectCheckout(checkoutPath, input.expectedCommit);
 
     const artifactSha256 = sha256File(artifactPath);
     const manifest: FlowingReleaseManifestV2 = {

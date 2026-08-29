@@ -315,6 +315,32 @@ describe("flowing release output", () => {
     ).toThrow("compiler did not create the standalone artifact");
   });
 
+  test("refuses and cleans output when the compiler mutates tracked source", () => {
+    const fixture = gitFixture();
+    const sourcePath = join(fixture.checkoutPath, "source.txt");
+    const mutatedSource = "mutated during compilation\n";
+
+    expect(() =>
+      buildFlowingRelease(
+        {
+          checkoutPath: fixture.checkoutPath,
+          expectedCommit: fixture.headCommit,
+          outputDirectory: fixture.outputDirectory,
+        },
+        {
+          compile: ({ artifactPath }) => {
+            writeFileSync(sourcePath, mutatedSource);
+            writeFileSync(artifactPath, ARTIFACT_BYTES, { flag: "wx", mode: 0o755 });
+          },
+        },
+      ),
+    ).toThrow("checkout is dirty");
+
+    expect(existsSync(fixture.outputDirectory)).toBe(false);
+    expect(readFileSync(sourcePath, "utf8")).toBe(mutatedSource);
+    expect(command(["git", "status", "--porcelain=v1"], fixture.checkoutPath)).toBe("M source.txt");
+  });
+
   test("locks executable bytes rather than trusting a compiler-reported digest", () => {
     const fixture = gitFixture();
     const mutatingCompiler: FlowingReleaseCompiler = ({ artifactPath }) => {
