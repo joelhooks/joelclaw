@@ -7,28 +7,8 @@
 
 import { Args, Command, Options } from "@effect/cli";
 import { Console, Effect } from "effect";
-import type { CapabilityError } from "../capabilities/contract";
-import { executeCapabilityCommand } from "../capabilities/runtime";
 import { memoryReviewCmd } from "../memory-review/command";
 import { respond, respondError } from "../response";
-
-// ── Category mapping ────────────────────────────────────────────
-const CATEGORY_MAP: Record<string, string> = {
-  operations: "jc:operations",
-  ops: "jc:operations",
-  rules: "jc:rules-conventions",
-  conventions: "jc:rules-conventions",
-  architecture: "jc:system-architecture",
-  arch: "jc:system-architecture",
-  projects: "jc:projects",
-  preferences: "jc:preferences",
-  prefs: "jc:preferences",
-  people: "jc:people-relationships",
-  relationships: "jc:people-relationships",
-  memory: "jc:memory-system",
-};
-
-const VALID_CATEGORIES = ["ops", "rules", "arch", "projects", "prefs", "people", "memory"];
 
 const MEMORY_REVIEW_ACTION = {
   command: "joelclaw memory review --since 48h",
@@ -41,27 +21,17 @@ const RECALL_OTEL_ACTION = {
   description: "Inspect recent recall telemetry",
 } as const;
 
+const INTERACTIVE_RECALL_ACTION = {
+  command: 'joelclaw recall "<query>"',
+  description: "Search composed flowing and curated memory interactively",
+} as const;
+
+const PRIVATE_RECALL_ACTION = {
+  command: "joelclaw recall --request-file -",
+  description: "Pass an exact composed recall request on stdin",
+} as const;
+
 const MEMORY_HEALTH_NEXT_ACTIONS = [MEMORY_REVIEW_ACTION, RECALL_OTEL_ACTION] as const;
-
-function resolveCategory(input: string): string {
-  const lower = input.toLowerCase().trim();
-  if (lower.startsWith("jc:")) return lower;
-  return CATEGORY_MAP[lower] ?? `jc:${lower}`;
-}
-
-type RecallCapabilityResult = {
-  raw: boolean;
-  text?: string;
-  payload?: Record<string, unknown>;
-};
-
-function codeOrFallback(error: CapabilityError, fallback: string): string {
-  return error.code || fallback;
-}
-
-function fixOrFallback(error: CapabilityError, fallback: string): string {
-  return error.fix ?? fallback;
-}
 
 // ── Write subcommand ────────────────────────────────────────────
 const writeCmd = Command.make(
@@ -73,7 +43,7 @@ const writeCmd = Command.make(
     category: Options.text("category").pipe(
       Options.withAlias("c"),
       Options.withDefault("ops"),
-      Options.withDescription(`Category: ${VALID_CATEGORIES.join(", ")}`),
+      Options.withDescription("Legacy category compatibility flag (ignored)"),
     ),
     tags: Options.text("tags").pipe(
       Options.withAlias("t"),
@@ -123,61 +93,20 @@ const searchCmd = Command.make(
     ),
     raw: Options.boolean("raw").pipe(Options.withDefault(false)),
   },
-  ({ query, limit, category, raw }) =>
+  () =>
     Effect.gen(function* () {
-      const resolvedCategory = category ? resolveCategory(category) : "";
-
-      const result = yield* executeCapabilityCommand<RecallCapabilityResult>({
-        capability: "recall",
-        subcommand: "query",
-        args: {
-          query,
-          limit,
-          minScore: 0,
-          raw,
-          includeHold: false,
-          includeDiscard: false,
-          budget: "auto",
-          category: resolvedCategory,
-        },
-      }).pipe(Effect.either);
-
-      if (result._tag === "Left") {
-        const error = result.left;
-        const code = codeOrFallback(error, "UNKNOWN");
-
-        yield* Console.log(
-          respondError(
-            "memory search",
-            error.message,
-            code,
-            fixOrFallback(error, "Check Typesense: joelclaw status"),
-            [{ command: "joelclaw status", description: "Check system health" }],
-          ),
-        );
-        return;
-      }
-
-      if (result.right.raw) {
-        yield* Console.log(result.right.text ?? "");
-        return;
-      }
-
+      process.exitCode = 3;
       yield* Console.log(
-        respond("memory search", result.right.payload ?? {}, [
-          {
-            command: `joelclaw memory search "${query}" --limit 10`,
-            description: "More results",
-          },
-          MEMORY_REVIEW_ACTION,
-          {
-            command: `joelclaw recall "${query}"`,
-            description: "Search composed flowing and curated memory directly",
-          },
-        ]),
+        respondError(
+          "memory search",
+          "Memory search is retired",
+          "MEMORY_SEARCH_RETIRED",
+          'Use joelclaw recall "<query>" interactively or joelclaw recall --request-file - for an exact composed request.',
+          [INTERACTIVE_RECALL_ACTION, PRIVATE_RECALL_ACTION, MEMORY_REVIEW_ACTION],
+        ),
       );
     }),
-).pipe(Command.withDescription("Search agent memory (semantic recall)"));
+).pipe(Command.withDescription("Retired compatibility pointer for memory search"));
 
 // ── Recent subcommand ───────────────────────────────────────────
 const recentCmd = Command.make(
@@ -229,17 +158,17 @@ export const memoryCmd = Command.make("memory", {}, () =>
       "memory",
       {
         description: "Composed recall and recent whole-fleet memory review",
-        categories: VALID_CATEGORIES,
-        usage: [
-          'joelclaw memory search "<query>"',
-          "joelclaw memory review --since 48h",
-          'joelclaw recall "<query>"',
-        ],
+        usage: ["joelclaw memory review --since 48h", 'joelclaw recall "<query>"'],
         retired: [
           {
             command: "joelclaw memory write",
             status: "retired",
             replacement: "Curate durable knowledge as a Brain .svx page",
+          },
+          {
+            command: "joelclaw memory search",
+            status: "retired",
+            replacement: INTERACTIVE_RECALL_ACTION.command,
           },
           {
             command: "joelclaw memory recent",
@@ -253,20 +182,10 @@ export const memoryCmd = Command.make("memory", {}, () =>
           },
         ],
       },
-      [
-        {
-          command: 'joelclaw memory search "<query>" [--limit 5]',
-          description: "Search composed memory",
-        },
-        MEMORY_REVIEW_ACTION,
-        {
-          command: 'joelclaw recall "<query>"',
-          description: "Search composed flowing and curated memory directly",
-        },
-      ],
+      [INTERACTIVE_RECALL_ACTION, PRIVATE_RECALL_ACTION, MEMORY_REVIEW_ACTION],
     ),
   ),
 ).pipe(
-  Command.withDescription("Search composed memory and review recent fleet evidence"),
+  Command.withDescription("Recall through canonical surfaces and review recent fleet evidence"),
   Command.withSubcommands([writeCmd, searchCmd, recentCmd, scorecardCmd, memoryReviewCmd]),
 );
