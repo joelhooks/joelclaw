@@ -6,9 +6,45 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   __memoryReviewAdapterTestUtils,
+  collectFlowing,
   collectOtel,
   collectSessionsFromDatabase,
 } from "./adapters";
+
+async function collectWithFlowingStatusCommand(command: string) {
+  const previousCommand = process.env.FLOWING_MEMORY_STATUS_COMMAND;
+  try {
+    process.env.FLOWING_MEMORY_STATUS_COMMAND = command;
+    return await collectFlowing({ limit: 20 });
+  } finally {
+    if (previousCommand === undefined) delete process.env.FLOWING_MEMORY_STATUS_COMMAND;
+    else process.env.FLOWING_MEMORY_STATUS_COMMAND = previousCommand;
+  }
+}
+
+async function collectWithFakeFlowingStatus(input: {
+  stdout?: string;
+  stderr?: string;
+  exitCode: number;
+}) {
+  const directory = mkdtempSync(join(tmpdir(), "memory-review-flowing-"));
+  const command = join(directory, "flowing-memory-status");
+  const script = ["#!/bin/sh"];
+  if (input.stdout) {
+    script.push("cat <<'FLOWING_STDOUT'", input.stdout, "FLOWING_STDOUT");
+  }
+  if (input.stderr) {
+    script.push("cat >&2 <<'FLOWING_STDERR'", input.stderr, "FLOWING_STDERR");
+  }
+  script.push(`exit ${input.exitCode}`);
+  writeFileSync(command, script.join("\n"), { mode: 0o700 });
+
+  try {
+    return await collectWithFlowingStatusCommand(command);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 
 describe("memory review adapters", () => {
   test("excludes the current request and returns one latest receipt per conversation", () => {
@@ -99,6 +135,125 @@ describe("memory review adapters", () => {
     expect(result.total).toBe(0);
     expect(result.events).toEqual([]);
     expect(result.issues[0]?.code).toBe("scope_filter_unavailable");
+  });
+
+  test("preserves complete flowing counts when status exits nonzero", async () => {
+    const result = await collectWithFakeFlowingStatus({
+      stdout: [
+        "postgres: running",
+        "collector: running",
+        "worker: down",
+        "records: 214",
+        "active jobs: 0",
+        "blocked jobs: 1",
+      ].join("\n"),
+      exitCode: 1,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.records).toBe(214);
+    expect(result.activeJobs).toBe(0);
+    expect(result.blockedJobs).toBe(1);
+    expect(result.issues.map((entry) => entry.code)).toEqual([
+      "flowing_status_degraded",
+      "flowing_jobs_blocked",
+    ]);
+  });
+
+  test("returns fixed unavailable counts when the status command is missing", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "memory-review-flowing-missing-"));
+    try {
+      const result = await collectWithFlowingStatusCommand(join(directory, "missing-command"));
+      expect(result).toEqual({
+        status: "unavailable",
+        issues: [
+          {
+            source: "flowing",
+            code: "flowing_status_unavailable",
+            message: "Flowing memory status is unavailable",
+            host: null,
+          },
+        ],
+        items: [],
+        records: 0,
+        activeJobs: 0,
+        blockedJobs: 0,
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects incomplete status output on a nonzero exit", async () => {
+    const result = await collectWithFakeFlowingStatus({
+      stdout: ["postgres: running", "collector: running", "worker: down"].join("\n"),
+      exitCode: 1,
+    });
+
+    expect(result.status).toBe("unavailable");
+    expect(result.records).toBe(0);
+    expect(result.activeJobs).toBe(0);
+    expect(result.blockedJobs).toBe(0);
+    expect(result.issues.map((entry) => entry.code)).toEqual(["flowing_status_unavailable"]);
+  });
+
+  test("reports malformed complete-looking counts on a zero exit", async () => {
+    const result = await collectWithFakeFlowingStatus({
+      stdout: ["records: NaN", "active jobs: 0", "blocked jobs: 0"].join("\n"),
+      exitCode: 0,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.records).toBe(0);
+    expect(result.activeJobs).toBe(0);
+    expect(result.blockedJobs).toBe(0);
+    expect(result.issues.map((entry) => entry.code)).toEqual(["flowing_status_malformed"]);
+  });
+
+  test("does not expose service stdout or stderr in flowing issues", async () => {
+    const result = await collectWithFakeFlowingStatus({
+      stdout: [
+        "worker: down SENTINEL-DO-NOT-ECHO",
+        "records: 214",
+        "active jobs: 0",
+        "blocked jobs: 0",
+      ].join("\n"),
+      stderr: "PRIVATE-SERVICE-DIAGNOSTIC SENTINEL-DO-NOT-ECHO",
+      exitCode: 1,
+    });
+    const serializedIssues = JSON.stringify(result.issues);
+
+    expect(result.status).toBe("partial");
+    expect(serializedIssues).not.toContain("SENTINEL-DO-NOT-ECHO");
+    expect(serializedIssues).not.toContain("PRIVATE-SERVICE-DIAGNOSTIC");
+    expect(serializedIssues).not.toContain("worker");
+  });
+
+  test("does not trust complete flowing counts from stderr", async () => {
+    const result = await collectWithFakeFlowingStatus({
+      stdout: "worker: down",
+      stderr: ["records: 214", "active jobs: 0", "blocked jobs: 1"].join("\n"),
+      exitCode: 1,
+    });
+
+    expect(result.status).toBe("unavailable");
+    expect(result.records).toBe(0);
+    expect(result.activeJobs).toBe(0);
+    expect(result.blockedJobs).toBe(0);
+    expect(result.issues.map((entry) => entry.code)).toEqual(["flowing_status_unavailable"]);
+  });
+
+  test("keeps complete successful flowing status available", async () => {
+    const result = await collectWithFakeFlowingStatus({
+      stdout: ["records: 214", "active jobs: 2", "blocked jobs: 0"].join("\n"),
+      exitCode: 0,
+    });
+
+    expect(result.status).toBe("available");
+    expect(result.records).toBe(214);
+    expect(result.activeJobs).toBe(2);
+    expect(result.blockedJobs).toBe(0);
+    expect(result.issues.map((entry) => entry.code)).not.toContain("flowing_status_degraded");
   });
 
   test("requires all flowing status counts", () => {
