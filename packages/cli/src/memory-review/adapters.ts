@@ -31,9 +31,7 @@ const SESSION_INDEX_PATH =
 const BRAIN_REGISTRY_PATH =
   process.env.JOELCLAW_BRAIN_ROOTS ||
   join(homedir(), "Code", "joelhooks", "dark-wizard", "brain-roots.json");
-const FLOWING_STATUS_COMMAND =
-  process.env.FLOWING_MEMORY_STATUS_COMMAND ||
-  join(homedir(), ".local", "bin", "flowing-memory-status");
+const FLOWING_STATUS_COMMAND_FALLBACK = join(homedir(), ".local", "bin", "flowing-memory-status");
 const GIT_SCAN_TIMEOUT_MS = 30_000;
 
 function issue(
@@ -778,12 +776,14 @@ function flowingItems(payload: unknown): {
 export async function collectFlowing(
   input: Parameters<MemoryReviewDependencies["collectFlowing"]>[0],
 ): Promise<FlowingLaneData> {
-  const statusResult = spawnSync(FLOWING_STATUS_COMMAND, [], {
+  const statusCommand =
+    process.env.FLOWING_MEMORY_STATUS_COMMAND || FLOWING_STATUS_COMMAND_FALLBACK;
+  const statusResult = spawnSync(statusCommand, [], {
     encoding: "utf8",
     timeout: 10_000,
     maxBuffer: 64 * 1024,
   });
-  if (statusResult.status !== 0 || statusResult.error) {
+  if (statusResult.error) {
     return {
       status: "unavailable",
       issues: [
@@ -797,6 +797,18 @@ export async function collectFlowing(
   }
   const statusOutput = statusResult.stdout ?? "";
   if (!hasCompleteStatus(statusOutput)) {
+    if (statusResult.status !== 0) {
+      return {
+        status: "unavailable",
+        issues: [
+          issue("flowing", "flowing_status_unavailable", "Flowing memory status is unavailable"),
+        ],
+        items: [],
+        records: 0,
+        activeJobs: 0,
+        blockedJobs: 0,
+      };
+    }
     return {
       status: "failed",
       issues: [
@@ -813,16 +825,25 @@ export async function collectFlowing(
     };
   }
   const status = parseStatus(statusOutput);
-  const issues: MemoryReviewIssue[] =
-    status.blockedJobs > 0
-      ? [
-          issue(
-            "flowing",
-            "flowing_jobs_blocked",
-            `${status.blockedJobs} flowing memory jobs are blocked`,
-          ),
-        ]
-      : [];
+  const issues: MemoryReviewIssue[] = [];
+  if (statusResult.status !== 0) {
+    issues.push(
+      issue(
+        "flowing",
+        "flowing_status_degraded",
+        "Flowing memory status exited nonzero; counts were readable",
+      ),
+    );
+  }
+  if (status.blockedJobs > 0) {
+    issues.push(
+      issue(
+        "flowing",
+        "flowing_jobs_blocked",
+        `${status.blockedJobs} flowing memory jobs are blocked`,
+      ),
+    );
+  }
   let items: MemoryReviewFlowingEvidence[] = [];
 
   if (input.project && input.workstream) {
