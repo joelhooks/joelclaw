@@ -1,7 +1,6 @@
-import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -11,6 +10,7 @@ const RECALL_OTEL_COMMAND =
   'joelclaw otel search "memory.recall.completed" --hours 24 --component recall-cli --limit 20';
 const RETIRED_COMMAND_PREFIXES = [
   "joelclaw memory write",
+  "joelclaw memory search",
   "joelclaw memory recent",
   "joelclaw memory scorecard",
 ];
@@ -23,59 +23,7 @@ type MemoryEnvelope = {
   next_actions: Array<{ command: string; description: string }>;
 };
 
-function createCriticalDb(path: string): void {
-  const db = new Database(path);
-  try {
-    db.exec(`
-      CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
-      CREATE TABLE documents (
-        rowid INTEGER PRIMARY KEY,
-        stable_id TEXT NOT NULL UNIQUE,
-        collection TEXT NOT NULL,
-        document_id TEXT NOT NULL,
-        type TEXT NOT NULL,
-        title TEXT NOT NULL,
-        content TEXT NOT NULL,
-        source TEXT NOT NULL,
-        source_key TEXT NOT NULL,
-        path TEXT,
-        run_id TEXT,
-        session_id TEXT,
-        privacy TEXT NOT NULL,
-        created_at INTEGER,
-        source_updated_at INTEGER,
-        payload_json TEXT NOT NULL
-      );
-      CREATE VIRTUAL TABLE documents_fts USING fts5(
-        title, content, source, path,
-        content='documents', content_rowid='rowid',
-        tokenize='unicode61 remove_diacritics 2'
-      );
-      INSERT INTO metadata (key, value) VALUES
-        ('schema_version', '2'),
-        ('built_at', '2026-08-29T00:00:00.000Z'),
-        ('document_count', '1'),
-        ('sources_json', '{}'),
-        ('coverage_gaps_json', '[]');
-      INSERT INTO documents (
-        stable_id, collection, document_id, type, title, content, source, source_key,
-        path, run_id, session_id, privacy, created_at, source_updated_at, payload_json
-      ) VALUES (
-        'brain_pages:fixture', 'brain_pages', 'fixture', 'brain_page',
-        'Retirement fixture', 'retirement fixture memory result', 'test', 'test',
-        NULL, NULL, NULL, 'private', 1787961600, 1787961600, '{}'
-      );
-      INSERT INTO documents_fts(documents_fts) VALUES('rebuild');
-    `);
-  } finally {
-    db.close();
-  }
-}
-
-function runMemory(
-  args: string[],
-  options: { withRecallFixture?: boolean } = {},
-): {
+function runMemory(args: string[]): {
   envelope: MemoryEnvelope;
   status: number | null;
   stderr: string;
@@ -90,14 +38,6 @@ function runMemory(
     );
 
     const criticalDb = join(sandbox, "critical.db");
-    if (options.withRecallFixture) {
-      mkdirSync(join(sandbox, ".joelclaw"), { recursive: true });
-      writeFileSync(
-        join(sandbox, ".joelclaw", "config.toml"),
-        '[capabilities.recall]\nadapter = "typesense-recall"\n',
-      );
-      createCriticalDb(criticalDb);
-    }
 
     const result = spawnSync(
       "bun",
@@ -185,31 +125,52 @@ describe("retired memory commands", () => {
     };
 
     expect(result.status).toBe(0);
-    expect(root.usage).toEqual([
-      'joelclaw memory search "<query>"',
-      "joelclaw memory review --since 48h",
-      'joelclaw recall "<query>"',
-    ]);
-    expect(root.retired.map(({ command, status }) => ({ command, status }))).toEqual([
-      { command: "joelclaw memory write", status: "retired" },
-      { command: "joelclaw memory recent", status: "retired" },
-      { command: "joelclaw memory scorecard", status: "retired" },
+    expect(root.usage).toEqual(["joelclaw memory review --since 48h", 'joelclaw recall "<query>"']);
+    expect(root.retired).toEqual([
+      {
+        command: "joelclaw memory write",
+        status: "retired",
+        replacement: "Curate durable knowledge as a Brain .svx page",
+      },
+      {
+        command: "joelclaw memory search",
+        status: "retired",
+        replacement: 'joelclaw recall "<query>"',
+      },
+      {
+        command: "joelclaw memory recent",
+        status: "retired",
+        replacement: MEMORY_REVIEW_COMMAND,
+      },
+      {
+        command: "joelclaw memory scorecard",
+        status: "retired",
+        replacement: RECALL_OTEL_COMMAND,
+      },
     ]);
     expectNoRetiredNextActions(result.envelope);
   });
 
-  test("memory search recommends only live follow-up commands", () => {
-    const result = runMemory(["search", "retirement fixture"], { withRecallFixture: true });
+  test.each([
+    { name: "without compatibility flags", args: ["search", "sensitive-query-cycle-07"] },
+    {
+      name: "with compatibility flags",
+      args: ["search", "sensitive-query-cycle-07", "--limit", "10", "--category", "ops", "--raw"],
+    },
+  ])("memory search retires safely $name", ({ args }) => {
+    const result = runMemory(args);
 
-    expect(result.status).toBe(0);
-    expect(result.envelope.ok).toBe(true);
-    expect(result.envelope.next_actions.map((action) => action.command)).toContain(
+    expect(result.status).toBe(3);
+    expect(result.stderr).toBe("");
+    expect(result.envelope.ok).toBe(false);
+    expect(result.envelope.error?.code).toBe("MEMORY_SEARCH_RETIRED");
+    expect(result.envelope.next_actions.map((action) => action.command)).toEqual([
+      'joelclaw recall "<query>"',
+      "joelclaw recall --request-file -",
       MEMORY_REVIEW_COMMAND,
-    );
-    expect(
-      result.envelope.next_actions.some((action) => action.command.startsWith("joelclaw recall")),
-    ).toBe(true);
-    expectNoRetiredNextActions(result.envelope);
+    ]);
+    expect(result.stdout).not.toContain("sensitive-query-cycle-07");
     expect(result.stdout).not.toContain("NETWORK_CALL_ATTEMPTED");
+    expectNoRetiredNextActions(result.envelope);
   });
 });

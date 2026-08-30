@@ -534,15 +534,19 @@ Semantics:
 ## Memory command group
 
 ```bash
+joelclaw recall "<query>"
+joelclaw recall --request-file -
 joelclaw memory review --since 48h
-joelclaw memory search "<query>"
-joelclaw memory write "<legacy input>" # typed retirement response; no write occurs
+joelclaw memory search "<legacy query>" # typed retirement response; no search occurs
+joelclaw memory write "<legacy input>"  # typed retirement response; no write occurs
 ```
 
 Semantics:
 
+- `recall "<query>"` is the canonical interactive composed-recall surface.
+- `recall --request-file -` accepts an exact composed-recall request on stdin.
 - `memory review` returns recent accepted-session, Git, Brain, OTEL, and flowing evidence in separate lanes.
-- `memory search` is an alias for composed recall.
+- `memory search` is a fail-closed compatibility pointer to `recall`; it returns `MEMORY_SEARCH_RETIRED` with exit `3`.
 - `memory write` is a fail-closed compatibility pointer. Agent work enters through accepted Runs; durable curation belongs in Brain `.svx` pages.
 
 ## Knowledge turn-write command
