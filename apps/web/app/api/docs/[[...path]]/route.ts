@@ -1,35 +1,9 @@
 import { type Duration, Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { NextRequest, NextResponse } from "next/server";
-
-type NextAction = {
-  command: string;
-  description: string;
-};
-
-type AgentEnvelope<T = unknown> = {
-  ok: boolean;
-  command: string;
-  protocolVersion: 1;
-  result?: T;
-  error?: {
-    code: string;
-    message: string;
-    details?: unknown;
-  };
-  nextActions?: NextAction[];
-  meta?: Record<string, unknown>;
-};
-
-const PROTOCOL_VERSION = 1 as const;
-const SERVICE = "web-docs-proxy";
-const VERSION = "0.1.0";
-
-const UPSTREAM_BASE =
-  process.env.DOCS_API_UPSTREAM_URL ||
-  "https://joels-mac-studio.tail7af24.ts.net:10000/api/docs";
-const API_TOKEN =
-  process.env.PDF_BRAIN_API_TOKEN || process.env.pdf_brain_api_token || "";
+import { buildDocsOpenApi } from "./contract";
+import { DOCS_PROXY_VERSION, fail, ok } from "./protocol";
+import { proxyToUpstream } from "./proxy";
 
 const RATE_LIMIT = Number.parseInt(
   process.env.DOCS_API_RL_LIMIT || process.env.DOCS_API_UNAUTH_RL_LIMIT || "1200",
@@ -42,108 +16,9 @@ const RATE_WINDOW =
 
 let ratelimit: Ratelimit | null | undefined;
 
-function ok<T>(command: string, result: T, nextActions?: NextAction[]): AgentEnvelope<T> {
-  return {
-    ok: true,
-    command,
-    protocolVersion: PROTOCOL_VERSION,
-    result,
-    nextActions,
-    meta: {
-      via: "next-route",
-      service: SERVICE,
-      version: VERSION,
-    },
-  };
-}
-
-function fail(
-  command: string,
-  code: string,
-  message: string,
-  details?: unknown,
-  nextActions?: NextAction[],
-): AgentEnvelope {
-  return {
-    ok: false,
-    command,
-    protocolVersion: PROTOCOL_VERSION,
-    error: {
-      code,
-      message,
-      ...(details === undefined ? {} : { details }),
-    },
-    nextActions,
-    meta: {
-      via: "next-route",
-      service: SERVICE,
-      version: VERSION,
-    },
-  };
-}
-
 function normalizedPath(path: string[] | undefined): string {
   if (!path || path.length === 0) return "/";
   return `/${path.join("/")}`;
-}
-
-function buildOpenApi(origin: string) {
-  return {
-    openapi: "3.1.0",
-    info: {
-      title: "Joelclaw Docs API",
-      version: VERSION,
-      description:
-        "Public proxy surface for docs-api with generous Upstash rate limiting at /api/docs.",
-    },
-    servers: [{ url: `${origin}/api/docs` }],
-    paths: {
-      "/": { get: { summary: "HATEOAS discovery" } },
-      "/openapi.json": { get: { summary: "OpenAPI schema" } },
-      "/ui": { get: { summary: "Swagger UI" } },
-      "/health": { get: { summary: "Health" } },
-      "/search": {
-        get: {
-          summary: "Search chunks",
-          parameters: [
-            { name: "q", in: "query", required: true, schema: { type: "string" } },
-            { name: "page", in: "query", schema: { type: "integer", minimum: 1 } },
-            { name: "perPage", in: "query", schema: { type: "integer", minimum: 1 } },
-            {
-              name: "semantic",
-              in: "query",
-              schema: { type: "string", description: "Boolean-like" },
-            },
-          ],
-        },
-      },
-      "/docs": {
-        get: {
-          summary: "List docs",
-          parameters: [
-            { name: "page", in: "query", schema: { type: "integer", minimum: 1 } },
-            { name: "perPage", in: "query", schema: { type: "integer", minimum: 1 } },
-          ],
-        },
-      },
-      "/docs/{id}": {
-        get: {
-          summary: "Get doc by id",
-          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        },
-      },
-      "/chunks/{id}": {
-        get: {
-          summary: "Get chunk by id",
-          parameters: [
-            { name: "id", in: "path", required: true, schema: { type: "string" } },
-            { name: "lite", in: "query", schema: { type: "string" } },
-            { name: "includeEmbedding", in: "query", schema: { type: "string" } },
-          ],
-        },
-      },
-    },
-  };
 }
 
 function buildUiHtml(origin: string): string {
@@ -220,10 +95,6 @@ function deriveIdentifier(request: NextRequest): string {
   return `${ip}:${ua.slice(0, 80)}`;
 }
 
-function authHeader(request: NextRequest): string {
-  return request.headers.get("authorization") || "";
-}
-
 function discoveryResponse(request: NextRequest) {
   const origin = request.nextUrl.origin;
   const command = "GET /";
@@ -269,15 +140,15 @@ function discoveryResponse(request: NextRequest) {
         },
         {
           name: "search",
-          curl: `curl -sS \"${origin}/api/docs/search?q=typesense&perPage=2&page=1&semantic=false\"`,
+          curl: `curl -sS "${origin}/api/docs/search?q=typesense&perPage=2&page=1&semantic=false"`,
         },
         {
           name: "list docs",
-          curl: `curl -sS \"${origin}/api/docs/docs?page=1&perPage=3\"`,
+          curl: `curl -sS "${origin}/api/docs/docs?page=1&perPage=3"`,
         },
         {
           name: "chunk lite",
-          curl: `curl -sS \"${origin}/api/docs/chunks/<chunkId>?lite=true&includeEmbedding=false\"`,
+          curl: `curl -sS "${origin}/api/docs/chunks/<chunkId>?lite=true&includeEmbedding=false"`,
         },
       ],
     }),
@@ -305,49 +176,6 @@ function limitExceededResponse(pathname: string, limit: number, remaining: numbe
   );
 }
 
-async function proxyToUpstream(request: NextRequest, path: string[]) {
-  const upstream = UPSTREAM_BASE.replace(/\/$/, "");
-  const suffix = path.length ? `/${path.map((segment) => encodeURIComponent(segment)).join("/")}` : "";
-  const targetUrl = `${upstream}${suffix}${request.nextUrl.search}`;
-
-  const inboundAuth = authHeader(request);
-  const upstreamAuth = inboundAuth || (API_TOKEN ? `Bearer ${API_TOKEN}` : "");
-
-  const upstreamResponse = await fetch(targetUrl, {
-    method: "GET",
-    headers: {
-      ...(upstreamAuth
-        ? {
-            authorization: upstreamAuth,
-          }
-        : {}),
-    },
-    cache: "no-store",
-  });
-
-  const body = await upstreamResponse.arrayBuffer();
-  const headers = new Headers();
-
-  const passThroughHeaders = [
-    "content-type",
-    "cache-control",
-    "x-ratelimit-limit",
-    "x-ratelimit-remaining",
-    "x-ratelimit-reset",
-    "retry-after",
-  ];
-
-  for (const header of passThroughHeaders) {
-    const value = upstreamResponse.headers.get(header);
-    if (value) headers.set(header, value);
-  }
-
-  return new NextResponse(body, {
-    status: upstreamResponse.status,
-    headers,
-  });
-}
-
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path?: string[] }> },
@@ -368,7 +196,7 @@ export async function GET(
   }
 
   if (pathname === "/openapi.json") {
-    return NextResponse.json(buildOpenApi(request.nextUrl.origin));
+    return NextResponse.json(buildDocsOpenApi(request.nextUrl.origin, DOCS_PROXY_VERSION));
   }
 
   if (pathname === "/ui" || pathname === "/ui/") {

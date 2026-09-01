@@ -97,6 +97,7 @@ const CRITICAL_COMPONENT_KEYS = new Set([
   "worker",
   "gateway",
   "typesense",
+  "docs-api",
   "kubernetes",
   "agent-secrets",
   "agent-dispatch-canary",

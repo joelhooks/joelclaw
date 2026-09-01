@@ -12,6 +12,7 @@ import {
 const originalFetch = globalThis.fetch;
 const {
   checkWebhooks,
+  checkDocsApi,
   checkGateway,
   checkFrontProjectionFreshness,
   checkKubernetes,
@@ -173,6 +174,68 @@ describe("check/system-health endpoint fallback", () => {
       "http://localhost:3111/webhooks",
       "http://10.10.10.10:3111/webhooks",
     ]);
+  });
+});
+
+describe("check/system-health public docs API", () => {
+  const url = "https://docs.example.test/api/docs/health";
+
+  test("passes only when the public proxy and docs payload are healthy", async () => {
+    const result = await checkDocsApi({
+      url,
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+
+    expect(result).toEqual({
+      name: "Docs API",
+      ok: true,
+      detail: "status=200; payload=ok",
+      endpoint: url,
+    });
+  });
+
+  test("fails on an unhealthy public response", async () => {
+    const result = await checkDocsApi({
+      url,
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ ok: false }), {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+
+    expect(result).toMatchObject({
+      name: "Docs API",
+      ok: false,
+      detail: "status=502; payload=not-ok",
+      endpoint: url,
+    });
+  });
+
+  test("fails when the proxy cannot be reached", async () => {
+    const result = await checkDocsApi({
+      url,
+      fetchImpl: async () => {
+        throw new Error("connect ECONNREFUSED");
+      },
+    });
+
+    expect(result).toMatchObject({ name: "Docs API", ok: false, endpoint: url });
+    expect(result.detail).toContain("ECONNREFUSED");
+  });
+
+  test("classifies docs API failures as critical", () => {
+    const summary = classifyHealthSummary({
+      services: [{ name: "Docs API", ok: false, detail: "status=502" }],
+      agentDispatchCanary: null,
+    });
+
+    expect(summary.hasCriticalDegradation).toBe(true);
+    expect(summary.criticalDegradedServices).toEqual(["Docs API"]);
   });
 });
 

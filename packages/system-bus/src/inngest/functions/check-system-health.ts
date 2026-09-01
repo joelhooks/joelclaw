@@ -95,6 +95,7 @@ const CRITICAL_COMPONENTS = new Set([
   "worker",
   "gateway",
   "typesense",
+  "docs api",
   "kubernetes",
   "agent secrets",
   // Front Projection stays in core checks as informational only.
@@ -183,6 +184,13 @@ const GATEWAY_HEALING_RETRY_POLICY = {
 const ENDPOINT_RESOLVE_TIMEOUT_MS = Math.max(
   600,
   Number.parseInt(process.env.JOELCLAW_HEALTH_PROBE_TIMEOUT_MS ?? "1200", 10),
+);
+const DOCS_API_PUBLIC_HEALTH_URL =
+  process.env.JOELCLAW_DOCS_PUBLIC_HEALTH_URL?.trim() ||
+  "https://joelclaw.com/api/docs/health";
+const DOCS_API_HEALTH_TIMEOUT_MS = Math.max(
+  1_000,
+  getNumericEnv("JOELCLAW_DOCS_HEALTH_TIMEOUT_MS", 5_000),
 );
 
 type RecordedHealthResult = "healthy" | "degraded";
@@ -953,6 +961,47 @@ async function checkTypesense(): Promise<ServiceStatus> {
   }
 }
 
+type DocsApiFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+type DocsApiHealthProbeOptions = {
+  fetchImpl?: DocsApiFetch;
+  timeoutMs?: number;
+  url?: string;
+};
+
+async function checkDocsApi(options: DocsApiHealthProbeOptions = {}): Promise<ServiceStatus> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? DOCS_API_HEALTH_TIMEOUT_MS;
+  const url = options.url ?? DOCS_API_PUBLIC_HEALTH_URL;
+
+  try {
+    const response = await fetchImpl(url, {
+      cache: "no-store",
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const body = await response.text();
+    const payload = body.length > 0 ? JSON.parse(body) as { ok?: unknown } : {};
+    const ok = response.ok && payload.ok === true;
+
+    return {
+      name: "Docs API",
+      ok,
+      detail: ok
+        ? `status=${response.status}; payload=ok`
+        : `status=${response.status}; payload=${payload.ok === true ? "ok" : "not-ok"}`,
+      endpoint: url,
+    };
+  } catch (error) {
+    return {
+      name: "Docs API",
+      ok: false,
+      detail: `probe failed: ${String(error).slice(0, 180)}`,
+      endpoint: url,
+    };
+  }
+}
+
 type SecretsStatusResult = {
   status: number | null;
   stdout?: string | null;
@@ -1297,6 +1346,7 @@ export const checkSystemHealth = inngest.createFunction(
             timedServiceCheck("Gateway", checkGateway),
             timedServiceCheck("Webhooks", checkWebhooks),
             timedServiceCheck("Typesense", checkTypesense),
+            timedServiceCheck("Docs API", checkDocsApi),
             timedServiceCheck("Kubernetes", checkKubernetes),
             timedServiceCheck("Front Projection", checkFrontProjectionFreshness),
             timedServiceCheck("Agent Secrets", checkAgentSecrets),
@@ -1938,6 +1988,7 @@ export const __checkSystemHealthTestUtils = {
   checkInngest,
   checkWorker,
   checkTypesense,
+  checkDocsApi,
   checkWebhooks,
   checkGateway,
   checkKubernetes,

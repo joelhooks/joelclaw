@@ -25,6 +25,11 @@ describe("system health anomaly identities", () => {
         anomalyId: "webhooks-providers-empty",
         evidenceShape: "providers-empty",
       });
+    expect(toHealthAnomaly(red("Docs API", "status=502; payload=not-ok")))
+      .toMatchObject({
+        componentKey: "docs-api",
+        severity: "critical",
+      });
   });
 });
 
