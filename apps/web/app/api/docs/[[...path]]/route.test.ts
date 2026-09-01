@@ -65,6 +65,49 @@ describe("docs API proxy failures", () => {
     assert.equal(JSON.stringify(body).includes("docs.example.test"), false);
   });
 
+  test("removes private topology from the public health response", async () => {
+    process.env.DOCS_API_UPSTREAM_URL = "https://docs.example.test/api/docs";
+
+    const response = await proxyToUpstream(
+      new NextRequest("https://joelclaw.com/api/docs/health"),
+      ["health"],
+      async () =>
+        Response.json({
+          ok: true,
+          command: "GET /health",
+          protocolVersion: 1,
+          result: {
+            service: "docs-api",
+            status: "ok",
+            host: "private-host",
+            port: 3838,
+            authRequired: true,
+            typesenseUrl: "http://private-search:8110",
+            typesense: { status: 200, ok: true },
+          },
+          nextActions: [{ command: "GET /status", description: "Inspect internals" }],
+        }),
+    );
+    const body = (await response.json()) as {
+      ok: boolean;
+      result?: Record<string, unknown>;
+    };
+    const serialized = JSON.stringify(body);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(body.ok, true);
+    assert.deepEqual(body.result, {
+      service: "docs-api",
+      status: "ok",
+      typesense: { status: 200, ok: true },
+    });
+    assert.equal(serialized.includes("private-host"), false);
+    assert.equal(serialized.includes("private-search"), false);
+    assert.equal(serialized.includes("authRequired"), false);
+    assert.equal(serialized.includes("nextActions"), false);
+  });
+
   test("forwards the query to the configured upstream", async () => {
     process.env.DOCS_API_UPSTREAM_URL = "https://docs.example.test/api/docs/";
     let target = "";

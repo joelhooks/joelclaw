@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveDocsApiUpstream } from "./contract";
-import { fail } from "./protocol";
+import { DOCS_PROXY_VERSION, fail } from "./protocol";
 
 const API_TOKEN = process.env.PDF_BRAIN_API_TOKEN || process.env.pdf_brain_api_token || "";
 
@@ -9,6 +9,57 @@ type DocsProxyFetch = (input: string | URL, init?: RequestInit) => Promise<Respo
 function normalizedPath(path: string[] | undefined): string {
   if (!path || path.length === 0) return "/";
   return `/${path.join("/")}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function publicHealthPayload(payload: unknown) {
+  const envelope = isRecord(payload) ? payload : {};
+  const upstreamResult = isRecord(envelope.result) ? envelope.result : {};
+  const upstreamTypesense = isRecord(upstreamResult.typesense) ? upstreamResult.typesense : {};
+  const typesense: Record<string, unknown> = {
+    ok: upstreamTypesense.ok === true,
+  };
+
+  if (typeof upstreamTypesense.status === "number") {
+    typesense.status = upstreamTypesense.status;
+  }
+
+  return {
+    ok: envelope.ok === true,
+    command: "GET /health",
+    protocolVersion: 1,
+    result: {
+      service: "docs-api",
+      status: envelope.ok === true ? "ok" : "degraded",
+      typesense,
+    },
+    meta: {
+      via: "next-route",
+      service: "web-docs-proxy",
+      version: DOCS_PROXY_VERSION,
+    },
+  };
+}
+
+function responseHeaders(response: Response): Headers {
+  const headers = new Headers({ "cache-control": "no-store" });
+  const passThroughHeaders = [
+    "content-type",
+    "x-ratelimit-limit",
+    "x-ratelimit-remaining",
+    "x-ratelimit-reset",
+    "retry-after",
+  ];
+
+  for (const header of passThroughHeaders) {
+    const value = response.headers.get(header);
+    if (value) headers.set(header, value);
+  }
+
+  return headers;
 }
 
 export async function proxyToUpstream(
@@ -47,21 +98,16 @@ export async function proxyToUpstream(
       cache: "no-store",
     });
 
-    const body = await upstreamResponse.arrayBuffer();
-    const headers = new Headers({ "cache-control": "no-store" });
-    const passThroughHeaders = [
-      "content-type",
-      "x-ratelimit-limit",
-      "x-ratelimit-remaining",
-      "x-ratelimit-reset",
-      "retry-after",
-    ];
-
-    for (const header of passThroughHeaders) {
-      const value = upstreamResponse.headers.get(header);
-      if (value) headers.set(header, value);
+    const headers = responseHeaders(upstreamResponse);
+    if (normalizedPath(path) === "/health") {
+      const payload: unknown = await upstreamResponse.json();
+      return NextResponse.json(publicHealthPayload(payload), {
+        status: upstreamResponse.status,
+        headers,
+      });
     }
 
+    const body = await upstreamResponse.arrayBuffer();
     return new NextResponse(body, {
       status: upstreamResponse.status,
       headers,
