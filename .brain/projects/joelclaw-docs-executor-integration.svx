@@ -1,0 +1,72 @@
+---
+title: Joelclaw Docs Executor Integration
+summary: Register the existing docs OpenAPI surface in Executor and monitor the full public request path.
+status: implementing
+updated: 2026-08-26
+---
+
+## Decision
+
+Use Executor's OpenAPI adapter for Joelclaw docs. Do not build a second MCP server.
+
+Executor connects to an authenticated private docs endpoint. Its credential provider owns the bearer token. The public `joelclaw.com/api/docs` proxy remains the external surface and OpenAPI source.
+
+This keeps one docs protocol and two adapters:
+
+- Executor calls the private service with managed auth.
+- Public clients call the rate-limited Vercel proxy without auth.
+
+## Why
+
+The docs API already exposes the required operations:
+
+- discovery
+- health
+- search
+- document listing
+- document reads
+- chunk reads
+- OpenAPI
+- Swagger UI
+
+A new MCP service would duplicate routing, auth, schemas, and health behavior. Executor already converts OpenAPI operations into tools.
+
+## Failure that drove this
+
+The public proxy used a retired hostname when `DOCS_API_UPSTREAM_URL` was absent or stale. Vercel returned HTTP 500 after DNS resolution failed even though the local docs service was healthy.
+
+The runtime environment was repaired on 2026-08-26. The code hardening removes the retired fallback, returns explicit 502/503 envelopes, gives every OpenAPI operation a stable ID, and adds the public docs route to core system health.
+
+## Contracts
+
+### Public proxy
+
+- URL: `https://joelclaw.com/api/docs`
+- Read-only and rate-limited.
+- `DOCS_API_UPSTREAM_URL` is required in Vercel.
+- Missing or invalid configuration returns 503.
+- A failed upstream request returns 502.
+- The public response does not disclose the configured upstream hostname.
+
+### Executor
+
+- Integration slug: `joelclaw_docs`
+- Base URL: authenticated private docs API
+- Auth template: bearer token from Executor's credential provider
+- Source spec: public OpenAPI document
+- Health operation: `check_docs_health`
+
+### Health
+
+`check/system-health` treats `Docs API` as critical and probes the public health URL. This single probe covers public DNS, Vercel, the configured upstream route, and the docs service response.
+
+## Verification
+
+The change is complete when:
+
+1. The route contract tests pass.
+2. The system health tests pass.
+3. The web and system-bus type checks pass.
+4. Executor lists `joelclaw_docs` with a healthy connection.
+5. Executor's generated `search_docs` and `get_chunk` tools return real source data.
+6. The deployed public OpenAPI schema contains eight unique operation IDs.
