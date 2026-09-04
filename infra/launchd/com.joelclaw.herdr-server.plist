@@ -5,11 +5,10 @@
     <key>Label</key>
     <string>com.joelclaw.herdr-server</string>
 
-    <key>UserName</key>
-    <string>joel</string>
-
-    <key>GroupName</key>
-    <string>staff</string>
+    <!-- This is the operator-facing server. Install it in gui/<uid> as a
+         LaunchAgent so panes inherit the Aqua bootstrap namespace and can reach
+         the user's securityd/Keychain session. Headless automation uses the
+         separate com.joelclaw.herdr-system-server LaunchDaemon. -->
 
     <key>ProgramArguments</key>
     <array>

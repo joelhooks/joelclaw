@@ -1,0 +1,35 @@
+---
+title: "Herdr launch-domain contract"
+type: "resource"
+created_at: "2026-09-04"
+privacy: "public"
+---
+
+# Herdr launch-domain contract
+
+The default Herdr server is an interactive operator surface. Install it as `com.joelclaw.herdr-server` in the logged-in user's `gui/<uid>` launchd domain.
+
+The separate `com.joelclaw.herdr-system-server` session is the boot-safe automation surface. Keep it as a system LaunchDaemon with `HERDR_SESSION=system`.
+
+Do not move the default server into the system domain. Panes inherit their server's bootstrap namespace. Native macOS clients launched from a system-domain pane cannot reach the user's `secd` service through `com.apple.securityd.xpc`. Authentication can then fall back to a plaintext credential file while an older Keychain item remains readable, which creates two credential generations.
+
+## Installer contract
+
+- `infra/launchd/com.joelclaw.herdr-server.plist` contains no `UserName` or `GroupName`; it is a LaunchAgent.
+- `infra/launchd/com.joelclaw.herdr-system-server.plist` remains a LaunchDaemon and sets `HERDR_SESSION=system`.
+- `infra/install-herdr-default-launchagent.sh` installs the plist even before GUI login and stages the GUI job before an approved cutover.
+- `--cutover` must run from an external terminal or the named `system` Herdr session. The script refuses to kill the server that owns its own process tree.
+- After the old system job stops, any failure arms a verified rollback. The old system job loads before the failed GUI job stops, then must own the socket and answer.
+- `infra/install-critical-launchdaemons.sh` must never install the default server under `/Library/LaunchDaemons`.
+
+## Verification
+
+```sh
+launchctl print gui/$(id -u)/com.joelclaw.herdr-server
+launchctl print system/com.joelclaw.herdr-system-server
+launchctl print system/com.joelclaw.herdr-server # must fail
+launchctl managername                           # from a default Herdr pane: Aqua
+infra/test-herdr-launch-domain.sh
+```
+
+A service entry is not enough. The GUI job PID must own `~/.config/herdr/herdr.sock`, and a command launched in a default pane must report `Aqua`.

@@ -216,6 +216,13 @@ Flagg Gate 4 is complete: shadow Central recovered after hard reboot with no GUI
 
 ## 2) Process Inventory (Long-Running)
 
+### Herdr launch-domain split
+
+- `com.joelclaw.herdr-server` is the default interactive server. It runs as a per-user LaunchAgent in `gui/<uid>` so pane descendants inherit the Aqua bootstrap namespace and can reach user Keychain services.
+- `com.joelclaw.herdr-system-server` is the boot-safe automation server. It remains a system LaunchDaemon and owns only the named `system` Herdr session.
+- Never install the default server as a system LaunchDaemon. A `UserName` on a LaunchDaemon changes the Unix identity, not the launchd bootstrap namespace. Native macOS clients in those panes cannot resolve the user's `com.apple.securityd.xpc` service.
+- The installer and cutover contract lives in `infra/install-herdr-default-launchagent.sh`. The durable rationale is `.brain/resources/herdr-launch-domain-contract.svx`.
+
 ## Host launchd inventory (Panda live Central snapshot)
 
 > Snapshot source: `launchctl print gui/$(id -u)/<label>` and plist inspection.
