@@ -26,10 +26,12 @@ HEADLESS_RUNTIME_LABELS=(
   com.joel.system-bus-worker
   com.joel.gateway
   com.joelclaw.agent-mail
-  com.joelclaw.herdr-server
   com.joelclaw.herdr-system-server
   com.joelclaw.wiki-serve
   com.joelclaw.wiki-serve-check
+)
+INTERACTIVE_LAUNCH_AGENT_LABELS=(
+  com.joelclaw.herdr-server
 )
 K8S_LABELS=(
   com.joel.colima
@@ -139,6 +141,15 @@ preflight_selected_assets() {
   done
 
   if [ "$HOSTNAME_SHORT" = "$HEADLESS_RUNTIME_HOST" ]; then
+    for label in "${INTERACTIVE_LAUNCH_AGENT_LABELS[@]}"; do
+      plist="${REPO_ROOT}/infra/launchd/${label}.plist"
+      [ -f "$plist" ] || {
+        echo "Missing launchd source: $plist"
+        exit 1
+      }
+      /usr/bin/plutil -lint "$plist" >/dev/null
+    done
+
     require_executable "${TARGET_HOME}/.local/bin/secrets"
     "${TARGET_HOME}/.local/bin/secrets" daemon restart --help >/dev/null 2>&1 || {
       echo "Installed secrets binary lacks service-account restart support"
@@ -172,6 +183,7 @@ preflight_selected_assets() {
     require_executable "${REPO_ROOT}/infra/agent-mail-daemon.sh"
     require_executable "${REPO_ROOT}/infra/gateway-daemon.sh"
     require_executable "${REPO_ROOT}/infra/herdr-server-daemon.sh"
+    require_executable "${REPO_ROOT}/infra/install-herdr-default-launchagent.sh"
     require_executable "${TARGET_HOME}/Code/joelhooks/joelclaw-wiki/scripts/wiki-serve.sh"
     require_executable "${TARGET_HOME}/Code/joelhooks/joelclaw-wiki/scripts/wiki-serve-check.sh"
     require_executable "/usr/bin/python3"
@@ -354,8 +366,7 @@ bootstrap_system_daemon() {
 }
 
 is_herdr_server_label() {
-  [ "$1" = "com.joelclaw.herdr-server" ] \
-    || [ "$1" = "com.joelclaw.herdr-system-server" ]
+  [ "$1" = "com.joelclaw.herdr-system-server" ]
 }
 
 herdr_socket_for_label() {
@@ -387,6 +398,10 @@ remove_system_service "com.joel.typesense-portforward"
 
 if [ "$HOSTNAME_SHORT" != "$HEADLESS_RUNTIME_HOST" ]; then
   for label in "${HEADLESS_RUNTIME_LABELS[@]}"; do
+    remove_user_agent "$label"
+    remove_system_service "$label"
+  done
+  for label in "${INTERACTIVE_LAUNCH_AGENT_LABELS[@]}"; do
     remove_user_agent "$label"
     remove_system_service "$label"
   done
@@ -425,6 +440,17 @@ for label in "${CRITICAL_LABELS[@]}"; do
   bootstrap_system_daemon "$label"
 done
 
+INTERACTIVE_SUMMARY="  (none)"
+if [ "$HOSTNAME_SHORT" = "$HEADLESS_RUNTIME_HOST" ]; then
+  env \
+    REPO_ROOT="$REPO_ROOT" \
+    TARGET_USER="$TARGET_USER" \
+    TARGET_GROUP="$TARGET_GROUP" \
+    TARGET_HOME="$TARGET_HOME" \
+    "${REPO_ROOT}/infra/install-herdr-default-launchagent.sh"
+  INTERACTIVE_SUMMARY="$(printf '  - %s\n' "${INTERACTIVE_LAUNCH_AGENT_LABELS[@]}")"
+fi
+
 INSTALLED_SUMMARY="  (none)"
 QUICK_CHECKS="  (none)"
 if [ "${#CRITICAL_LABELS[@]}" -gt 0 ]; then
@@ -458,6 +484,8 @@ Host placement:
 
 Installed system daemons:
 ${INSTALLED_SUMMARY}
+Installed interactive GUI LaunchAgents:
+${INTERACTIVE_SUMMARY}
 ${SKIPPED_HEADLESS_SUMMARY}
 ${SKIPPED_K8S_SUMMARY}
 Old bridge removed:
@@ -468,6 +496,7 @@ Deprecated daemons removed:
 
 Quick checks:
 ${QUICK_CHECKS}
+  launchctl print gui/${TARGET_UID}/com.joelclaw.herdr-server | rg 'state =|pid =|last exit code'
   joelclaw status
   joelclaw gateway status
   joelclaw knowledge search "launchd runtime"
