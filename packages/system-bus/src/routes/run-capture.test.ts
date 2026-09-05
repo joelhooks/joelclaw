@@ -1,7 +1,15 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -106,6 +114,12 @@ describe("POST /api/runs redelivery", () => {
     expect(second.status).toBe(202);
     expect(await second.json()).toMatchObject({ status: "accepted", to_offset: body.to_offset });
     expect(events).toHaveLength(2);
+
+    const claimDirectory = join(fixtureRoot as string, "user", ".source-cursors");
+    const claimFiles = readdirSync(claimDirectory).filter((name) => name.endsWith(".json"));
+    expect(claimFiles).toHaveLength(1);
+    expect(statSync(claimDirectory).mode & 0o777).toBe(0o700);
+    expect(statSync(join(claimDirectory, claimFiles[0]!)).mode & 0o777).toBe(0o600);
   });
 
   test("returns accepted_prefix without overwriting a stored prefix", async () => {

@@ -1,11 +1,29 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+# Launchd uses no arguments and the environment defaults below. Interactive use
+# must choose exactly one positional mode; runtime selection remains the
+# JOELCLAW_CAPTURE_RUNTIMES environment variable.
+cli_mode=""
+if (( $# > 1 )); then
+  printf '%s\n' '{"action":"memory.native_capture.sweep","success":false,"error":"arguments-invalid","usage":"capture-native-sessions.sh [dry-run|apply]"}' >&2
+  exit 2
+fi
+if (( $# == 1 )); then
+  case "$1" in
+    dry-run|apply) cli_mode="$1" ;;
+    *)
+      printf '%s\n' '{"action":"memory.native_capture.sweep","success":false,"error":"arguments-invalid","usage":"capture-native-sessions.sh [dry-run|apply]"}' >&2
+      exit 2
+      ;;
+  esac
+fi
+
 repo_root="${JOELCLAW_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 bun_bin="${BUN_BIN:-$(command -v bun || true)}"
 central_url="${JOELCLAW_SESSION_CAPTURE_URL:-${JOELCLAW_CENTRAL_URL:-http://127.0.0.1:3111}}"
 runtimes="${JOELCLAW_CAPTURE_RUNTIMES:-hook-outbox cursor grok}"
-mode="${JOELCLAW_CAPTURE_MODE:-apply}"
+mode="${cli_mode:-${JOELCLAW_CAPTURE_MODE:-apply}}"
 backfill="$repo_root/scripts/backfill-native-sessions.ts"
 replay="$repo_root/scripts/replay-native-run-capture.ts"
 

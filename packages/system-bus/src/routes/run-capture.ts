@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  chmodSync,
   linkSync,
   mkdirSync,
   readFileSync,
@@ -146,7 +147,9 @@ function claimSourceCursor(
   recovered?: { readonly run_id: string; readonly started_at: number },
 ): SourceCursorClaim {
   const path = sourceCursorClaimPath(userId, sourceIdentity, fromOffset);
-  mkdirSync(dirname(path), { recursive: true });
+  const claimDirectory = dirname(path);
+  mkdirSync(claimDirectory, { recursive: true, mode: 0o700 });
+  chmodSync(claimDirectory, 0o700);
   const requested = recovered
     ? { ...recovered, created: false }
     : { run_id: runId, started_at: startedAt, created: true };
@@ -154,6 +157,7 @@ function claimSourceCursor(
   writeFileSync(
     temporaryPath,
     JSON.stringify({ run_id: requested.run_id, started_at: requested.started_at }),
+    { mode: 0o600 },
   );
   try {
     linkSync(temporaryPath, path);
