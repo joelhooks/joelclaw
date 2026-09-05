@@ -23,7 +23,7 @@ Prevent silent failure by default. Observability is not optional polish: it is p
 5. Never treat `console.log` as primary observability. Keep structured events as source of truth.
 6. High-cardinality values go in `metadata`, not in facet fields (`source`, `component`, `level`, `success`).
 7. Failures must set `success: false` with a meaningful `error`.
-8. For warn/error/fatal, verify Convex mirror behavior (rolling window) in addition to Typesense write.
+8. Verify delivery to the sinks required by current telemetry configuration. Inspect mirror enablement first; a retired or optional mirror does not block unrelated work.
 9. In Inngest durable functions, any "emit once" telemetry must live inside `step.run(...)` to avoid replay duplication after resume.
 
 ## Event Conventions

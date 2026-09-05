@@ -85,13 +85,7 @@ joelclaw sessions signals --kind any --source local --machine blaine-the-mono --
 
 Use targeted searches to triangulate themes:
 
-```bash
-joelclaw sessions search workflow --source local --machine <machine> --limit 10
-joelclaw sessions search skill --source local --machine <machine> --limit 10
-joelclaw sessions search automate --source local --machine <machine> --limit 10
-joelclaw sessions search "approved" --source local --machine <machine> --limit 10
-joelclaw sessions search "not what i asked" --source local --machine <machine> --limit 10
-```
+Use `recall` and the current `session-search` contract. Keep private queries in structured MCP arguments. Raw evidence requires a scope-bound `evidenceDrilldownReceipt`; missing projections do not grant raw access.
 
 Inspect existing skill coverage:
 
@@ -103,18 +97,7 @@ find ~/Code/joelhooks/joelclaw/skills -maxdepth 2 -name SKILL.md -print \
 
 Use bounded extracts only for candidates that may become concrete work:
 
-```bash
-joelclaw sessions search "<candidate query>" \
-  --source local \
-  --machine <machine> \
-  --limit 5 \
-  --extract
-
-joelclaw session inspect <session-id-or-path> \
-  --around "<regex>" \
-  --before 20 \
-  --after 80
-```
+Use `recall` and the current `session-search` contract. Keep private queries in structured MCP arguments. Raw evidence requires a scope-bound `evidenceDrilldownReceipt`; missing projections do not grant raw access.
 
 ## How to Read Signals
 

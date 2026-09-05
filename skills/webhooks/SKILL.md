@@ -36,8 +36,8 @@ The ingress is intentionally narrow: it preserves raw bodies/signature headers a
 |----------|--------|-----------|------------|
 | todoist | comment.added, task.completed, task.created | HMAC-SHA256 (`x-todoist-hmac-sha256`) | `https://panda.tail7af24.ts.net/webhooks/todoist` |
 | front | message.received, message.sent, assignee.changed | HMAC-SHA1 (`x-front-signature`) | `https://panda.tail7af24.ts.net/webhooks/front` |
-| vercel | deploy.succeeded, deploy.error, deploy.created, deploy.canceled | HMAC-SHA1 (`x-vercel-signature`) | `https://panda.tail7af24.ts.net/webhooks/vercel` |
-| github | workflow_run.completed, package.published | HMAC-SHA256 (`x-hub-signature-256`) | `https://panda.tail7af24.ts.net/webhooks/github` |
+| vercel | deploy.succeeded, deploy.error, deploy.created, deploy.canceled | HMAC-SHA1 (`x-vercel-signature`) | `https://hooks.joelclaw.com/webhooks/vercel` |
+| github | workflow_run.completed, package.published | HMAC-SHA256 (`x-hub-signature-256`) | `https://hooks.joelclaw.com/webhooks/github` |
 
 **Current ADR-0217 pilot note:** when `QUEUE_PILOTS=github`, the webhook gateway enqueues normalized `github/workflow_run.completed` events into the shared Redis queue instead of posting them directly to Inngest. The Restate drainer then forwards the concrete event name `github/workflow_run.completed`. `github/package.published` still goes direct.
 
@@ -127,7 +127,7 @@ curl -X POST "https://api.vercel.com/v1/webhooks" \
   -H "Authorization: Bearer $VERCEL_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://panda.tail7af24.ts.net/webhooks/vercel",
+    "url": "https://hooks.joelclaw.com/webhooks/vercel",
     "events": ["deployment.created", "deployment.succeeded", "deployment.error", "deployment.canceled"]
   }'
 ```
@@ -137,7 +137,7 @@ The response includes a `secret` — store it: `secrets add vercel_webhook_secre
 ### GitHub
 
 Set up via repo Settings → Webhooks:
-- **URL**: `https://panda.tail7af24.ts.net/webhooks/github`
+- **URL**: `https://hooks.joelclaw.com/webhooks/github`
 - **Content type**: `application/json`
 - **Secret**: generate one, store as `github_webhook_secret`
 - **Events**: push, pull_request, deployment_status, or "Send me everything"

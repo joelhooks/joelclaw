@@ -33,7 +33,7 @@ Poll every 2–3 minutes. A story typically takes 3–8 minutes (test-write → 
 
 ## Skip Triage
 
-Stories skip when the judge fails them after max retries. But **the implementation often landed anyway** — later stories may have included the work, or the first attempt was correct but tests were over-specified.
+A skipped story is unresolved until source and behavioral evidence establish what landed. Inspect the actual failure; do not assume the generated test is wrong.
 
 ### Check if skipped work actually landed
 
@@ -53,7 +53,7 @@ cd <project> && git log --oneline --grep="<STORY_ID>" -5
 | Pattern | Cause | Prevention |
 |---------|-------|------------|
 | "Already exists" | Story duplicates work from prior story | Write more atomic stories; planner didn't know current state |
-| Test assertion failure | Agent-generated tests over-specify implementation | Acceptance criteria should test behavior, not implementation |
+| Test assertion failure | Inspect the test and production behavior; a real regression may be the cause | Acceptance criteria should test behavior, not implementation |
 | TypeScript compile error | Story depends on types from a skipped story | Order stories so type-providing stories run first |
 | Timeout | Implementor took too long | Smaller story scope |
 
@@ -68,31 +68,15 @@ cd <project> && git log --oneline -5
 # Should show: "Merge branch 'agent-loop/<LOOP_ID>'"
 ```
 
-### 2. Run full test suite
+### 2. Run affected and repository-required checks
 
 ```bash
-cd <project> && bun test 2>&1 | tail -5
+# Use the target project's configured test command and preserve its exit status.
 ```
 
-### 3. Delete stale acceptance tests
+### 3. Inspect failing acceptance tests
 
-Agent loops generate `__tests__/<story-id>-*.test.ts` files. These test implementation details and break on every refactor. Delete them after verifying the real tests pass.
-
-```bash
-# Find agent-generated test files
-ls <project>/__tests__/*-*.test.ts 2>/dev/null
-
-# Check which fail
-bun test __tests__/ 2>&1 | grep "(fail)"
-
-# Delete ALL agent-generated acceptance tests (they served their purpose)
-rm <project>/__tests__/<prefix>-*.test.ts
-
-# Verify clean
-bun test 2>&1 | tail -3
-```
-
-Per AGENTS.md: *"over-specified tests that mock internal step names are worse than no tests — they break on every refactor and give false negatives."*
+Read each failing test and its production behavior. Agent authorship does not make coverage disposable. If a valid test exposes a production regression, repair production code. Repair the test only when its expectations are wrong. Remove an exact obsolete test only after inspecting it and establishing that removal is within the task's scope. Never delete a test family to make a suite pass.
 
 ### 4. TypeScript check
 
@@ -112,9 +96,9 @@ joelclaw status
 ### 6. Commit cleanup
 
 ```bash
-cd <project> && git add -A && git commit -m "chore: post-loop cleanup for <LOOP_ID>
+cd <project> && git add -- <task-owned-paths> && git commit -m "chore: post-loop cleanup for <LOOP_ID>
 
-Delete stale acceptance tests, verify N pass / 0 fail / tsc clean"
+Record actual cleanup and validation results"
 ```
 
 ## When to Intervene
@@ -138,9 +122,9 @@ joelclaw loop cancel <LOOP_ID>
 
 # Clean up worktree manually (cancel doesn't auto-merge)
 cd <project>
-git worktree remove /tmp/agent-loop/<LOOP_ID> --force 2>/dev/null
-git branch -D agent-loop/<LOOP_ID> 2>/dev/null
-git worktree prune
+# Inspect the cancelled worktree and unmerged commits first.
+# Preserve unharvested changes. Remove only an owned, harvested worktree
+# with git worktree remove; retain branches containing unmerged work.
 ```
 
 ## Reading Attempt Output
@@ -166,7 +150,7 @@ Use this sequence when babysitting a loop:
 1. joelclaw loop status <LOOP_ID>          — where are we?
 2. (if story running) wait 3 min, re-check
 3. (if story skipped) check attempt output — did the work land anyway?
-4. (if loop completed) verify merge, run tests, delete stale tests, restart worker
+4. (if loop completed) verify merge and affected behavior; repair valid tests; restart only when the requested repair requires it
 5. (if stuck) joelclaw runs --count 5 + joelclaw logs errors — diagnose
 ```
 
@@ -193,7 +177,7 @@ The nanny is the primary consumer of `joelclaw` output. When you hit a gap — m
 joelclaw <command> 2>&1 | python3 -m json.tool
 
 # Commit
-git add -A && git commit -m "feat: joelclaw <command> — <what you added>"
+git add -- <task-owned-paths> && git commit -m "feat: joelclaw <command> — <what you added>"
 ```
 
 Follow the [cli-design skill](../cli-design/SKILL.md): JSON always, HATEOAS next_actions, context-safe output, errors with fixes. After improving joelclaw, update this skill doc if the monitoring workflow changed.
@@ -223,8 +207,8 @@ See [loop-diagnosis skill](../loop-diagnosis/SKILL.md) for full reference.
 
 ## Gotchas
 
-- **Don't edit the monorepo while a loop runs** — `git add -A` in the worktree scoops unrelated changes
+- **Shared loops:** Use an isolated worktree or non-overlapping owned paths. Stage exact task changes; another loop does not block unrelated work.
 - **CLI-focused edits are safest during active loops** — avoid changing `packages/system-bus` mid-run unless you're intentionally redeploying the worker
 - **prd.json and progress.txt get dirty** — this is normal; complete.ts stashes before merge
 - **Worktree branch not auto-deleted on cancel** — clean manually (see Cancel section)
-- **Cross-file test pollution** — agent-generated `__tests__/` files can cause failures in real tests when run together; delete them
+- **Cross-file test pollution** — investigate test isolation failures; preserve valid coverage and fix the shared-state defect

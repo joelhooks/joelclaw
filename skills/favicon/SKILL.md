@@ -1,7 +1,7 @@
 ---
 name: favicon
 displayName: Favicon Generator
-description: Generate emoji-based favicons, Apple touch icons, and OG images using emojico. Use when adding or updating favicons for any project. Never use a default emoji — always ask Joel which emoji to use.
+description: Generate emoji-based favicons, Apple touch icons, and OG images using emojico. Use when adding or updating favicons for any project. Use the supplied or established project emoji; ask only when that choice is missing.
 version: 0.1.0
 author: joel
 tags:
@@ -14,7 +14,7 @@ disable-model-invocation: true
 
 # Favicon Generation with emojico
 
-Generate complete favicon sets from emoji. **Never pick a default emoji** — always ask Joel which emoji to use for the project.
+Generate complete favicon sets from emoji. Use the supplied or established project emoji. Ask only when the project has no clear choice.
 
 ## When to Use
 
@@ -71,7 +71,7 @@ links: [
 
 ## Rules
 
-1. **NEVER use a default emoji.** Always ask Joel to pick the emoji for the project.
+1. **NEVER use a default emoji.** Use the supplied or established emoji; ask only when the choice is missing and material for the project.
 2. **Always use `--all`** to generate the complete set (ico + png + apple + og).
 3. **Output to `public/`** in the target app directory.
 4. **Wire head tags** after generating — emojico generates files but doesn't modify source.

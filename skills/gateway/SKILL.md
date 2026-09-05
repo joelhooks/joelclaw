@@ -50,28 +50,13 @@ The CLI blanks/restores the channel env assignments in `~/.joelclaw/scripts/gate
 
 Expected disabled Discord state: component `disabled`; channel `configured:false`, `started:false`, `ready:false`, `botUserId:null`; health entry `status:"disabled"`.
 
-## Quick Triage
+## Quick triage
 
-Substrate precheck first (avoid chasing secondary gateway symptoms):
+Start with `joelclaw gateway doctor`, `status`, and supported diagnostics. Resolve the configured owner before probing dependencies. Missing local Colima or Kubernetes does not prove the gateway dependency is down.
 
-```bash
-colima status --json
-kubectl get nodes -o wide
-kubectl get pods -n joelclaw redis-0 inngest-0
-```
+Follow the first relevant failure to its cause. Continue independent diagnosis and requested repairs. Queue age alone is not a hang: check active progress, configured timeouts, and process evidence before a scoped restart.
 
-If Colima is down or node/core pods are not healthy, recover substrate before gateway operations.
-
-Run in order, stop at first failure:
-
-```bash
-joelclaw gateway doctor          # 1. Process, source, Redis, adapter, poller
-joelclaw gateway doctor --live   # 2. Real Telegram delivery with platformMessageId
-joelclaw gateway diagnose        # 3. Deep evidence when doctor fails
-joelclaw gateway restart         # 4. Restart and print doctor summary
-```
-
-If `joelclaw gateway status` shows pending > 0 on sessions, the agent is mid-stream or stuck. If it persists after a minute, restart.
+`doctor --live` and `gateway test` send real traffic. Use them only within authorization for the destination and content. Diagnosis alone does not authorize an outbound canary. A queue acknowledgement is not delivery proof.
 
 ## Redis-degraded mode (ADR-0214)
 
@@ -101,7 +86,7 @@ Why:
 - a bad hidden `context-refresh` injection poisons the live gateway session even when `joelclaw gateway status` still reports healthy
 - this showed up as unrelated voice/livekit notes bleeding into the gateway transcript
 
-If Joel says the gateway session feels "fucked" while health checks look green, inspect the gateway session transcript for hidden `context-refresh` / `gateway-recovery` / `memory-recall` messages before trusting the CLI summary.
+If Joel says the gateway session feels "fucked" while health checks look green, use the scope-bound session evidence contract before inspecting the gateway transcript for hidden `context-refresh` / `gateway-recovery` / `memory-recall` messages before trusting the CLI summary.
 
 ## Session pressure visibility (ADR-0218 rank 3 slice)
 
@@ -276,7 +261,7 @@ await pushGatewayEvent({
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | Status shows healthy but messages don't arrive | Session stuck mid-stream on hung tool call | `joelclaw gateway restart` |
-| Pending events growing on a session | Agent processing or blocked | Wait 1min, then `joelclaw gateway restart` |
+| Pending events growing on a session | Agent processing or blocked | Check active progress and configured timeouts; restart only on evidence within repair scope |
 | Telegram messages not delivered | HTML parsing error in response | Check `joelclaw gateway status`, restart |
 | Telegram is spammed with raw inbound email | `front.message.received` relay gate too permissive or classifier drift | Check `packages/gateway/src/operator-relay.ts`; raw Front email should page only for production/security/money failures or human/project direct asks |
 | Telegram is spammed with meta system alerts (`gateway.*`, session pressure, Knowledge Watchdog, Slack `channel_not_found`) | Maintenance/check events escaped suppression | Keep direct watchdog/channel/system alerts out of Telegram; operator relay should classify meta system chatter as `suppressed.meta-system-chatter` |
@@ -302,7 +287,7 @@ launchd (com.joel.gateway)
             └─ Heartbeat runner (periodic autonomous checks)
 ```
 
-Gateway model standard: startup env sets `PI_MODEL_PROVIDER=openai-codex` and `PI_MODEL=gpt-5.6-sol`; Redis config key `joelclaw:gateway:config` should store `model: "gpt-5.6-sol"`. Fallback remains `openai-codex/gpt-5.4` so the fallback controller has a distinct lower-cost/known-good target. Cheap helper paths use `openai-codex/gpt-5.4-mini`; historical `haiku` command aliases remain but map to Codex mini. pi 0.73.0 exposes no Codex nano model.
+Model selection belongs to the current startup/configuration source and explicit task requirements. Inspect that configuration and available provider models; do not restore historical model pins from this document or silently substitute the requested model.
 
 The gateway reads `~/.pi/agent/` at boot for identity/prompt context (SOUL.md, AGENTS.md, MEMORY.md, daily log), but the **gateway extension itself is context-local**:
 

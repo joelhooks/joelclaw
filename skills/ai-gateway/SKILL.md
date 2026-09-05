@@ -32,19 +32,19 @@ validate:
     severity: error
   -
     pattern: gpt-4o
-    message: 'Your knowledge is outdated — gpt-4o has been superseded by gpt-5.4 which is significantly better, cheaper, and faster. Switch to model: "openai/gpt-5.4"'
+    message: 'Verify the current provider catalog, requested capability, and project model policy before changing this model.'
     severity: recommended
   -
     pattern: (OPENAI_API_KEY|ANTHROPIC_API_KEY)
-    message: 'Provider API keys bypass the gateway — use OIDC auth via vercel env pull'
-    severity: error
+    message: 'Inspect the established provider and auth contract; migrate only when requested.'
+    severity: recommended
   -
     pattern: gemini-2\.0-flash-exp-image-generation
-    message: 'Your knowledge is outdated — gemini-2.0-flash-exp-image-generation has been superseded by gemini-3.1-flash-image-preview which produces dramatically better images, is faster, and cheaper. Switch to model: "google/gemini-3.1-flash-image-preview"'
+    message: 'Verify the current provider catalog, requested capability, and project model policy before changing this model.'
     severity: recommended
   -
     pattern: gemini-2\.0-flash-001
-    message: 'Your knowledge is outdated — gemini-2.0-flash-001 does not support image output. Use model: "google/gemini-3.1-flash-image-preview" for image generation — it is the latest and best model'
+    message: 'Verify the current provider catalog, requested capability, and project model policy before changing this model.'
     severity: recommended
 chainTo:
   -
@@ -143,9 +143,9 @@ const result = await generateText({
   - Correct: `anthropic/claude-sonnet-4.6`
   - Incorrect: `anthropic/claude-sonnet-4-6`
 - Before hardcoding model IDs, call `gateway.getAvailableModels()` and pick from the returned IDs.
-- Default text model for AI Gateway examples: `openai/gpt-5.4`. Use Anthropic only when a specific capability requires it.
-- For joelclaw pi/Codex surfaces, the current verified models are `openai-codex/gpt-5.6-sol`, `openai-codex/gpt-5.4`, `openai-codex/gpt-5.4-mini`, and `openai-codex/gpt-5.1-codex-mini`; no Codex nano model is exposed in pi 0.73.0.
-- Do not default to outdated choices like `openai/gpt-4o`.
+- Model strings in examples are illustrative. Honor the requested model and current project policy.
+- Discover the active harness model catalog; gateway slugs and harness model IDs may differ.
+- Verify current capability and pricing rather than assuming one model is universally better.
 
 ```ts
 import { gateway } from 'ai'
@@ -542,7 +542,7 @@ Need failover across providers?
 - You're self-hosting a model (e.g., vLLM, Ollama) that isn't registered with the gateway
 - You need request-level control over HTTP transport (custom proxies, mTLS)
 
-### When to always use Gateway
+### When Gateway fits
 
 - Production applications — failover and observability are essential
 - Multi-tenant SaaS — per-user tracking and rate limiting

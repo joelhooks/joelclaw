@@ -57,7 +57,7 @@ with request.urlopen(req2) as r:
     print(r.read().decode())
 PY
 
-secrets revoke --all
+# Revoke only the exact lease ids acquired by this task; never all sessions’ leases.
 ```
 
 Use this for:
@@ -163,7 +163,7 @@ PYEOF
 ### Revoke leases after use
 
 ```bash
-secrets revoke --all
+# Revoke only the exact lease ids acquired by this task; never all sessions’ leases.
 ```
 
 ## Account Info

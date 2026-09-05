@@ -83,7 +83,7 @@ After changing `packages/system-bus/src/inngest/functions/*` that run on the hos
 1. commit + push the monorepo change to `origin`
 2. confirm the live worker cwd: `pid=$(lsof -tiTCP:3111 -sTCP:LISTEN); lsof -p "$pid" | awk '$4=="cwd"{print}'`
 3. if cwd is `~/Code/joelhooks/joelclaw/packages/system-bus`, kill the Bun worker PID and let `worker-supervisor` respawn it
-4. if cwd is the legacy `~/Code/system-bus-worker`, sync that clone first (`git fetch origin && git reset --hard origin/main`) and then restart the process
+4. if cwd is the legacy `~/Code/system-bus-worker`, inspect its status and divergence, preserve both sides, and use the current deployment source; never reset the legacy clone to discard work
 5. verify `curl http://127.0.0.1:3111/` shows functions and `joelclaw functions` returns >0
 
 The stale failure mode: a host worker can keep running old source for days. In that state, OTEL may show behavior that current monorepo code has already fixed. Always verify the live port-3111 process cwd and start time before debugging source that "should" already be deployed.
@@ -197,7 +197,7 @@ await gateway?.progress("Step 3/5 complete");
 - **NEVER set `retries: 0`** — Inngest defaults handle retries. This has caused multiple production failures.
 - **Events silently dropped if functions not registered.** Verify `joelclaw functions` returns >0 before sending events. `joelclaw refresh` forces re-registration.
 - **Inngest server function registry goes stale** on worker restart. Always `curl -X PUT http://127.0.0.1:3111/api/inngest` after restart. If PUT returns `Empty reply from server`, check `~/.local/log/system-bus-worker.err` for Bun request timeouts — the host worker must keep `idleTimeout` high enough for slow self-hosted Inngest registration under backlog pressure.
-- **Don't edit monorepo while a loop is running.** `git add -A` scoops up unrelated changes.
+- **Shared loops:** Use an isolated worktree or non-overlapping owned paths. Stage exact task changes; another loop does not block unrelated work.
 - **Step names must be unique within a function** — Inngest uses them for memoization.
 - **`step.invoke` over fan-out events for rate-limited APIs** — fan-out starts all near-simultaneously even with throttle.
 - **Silent failure anti-pattern**: Functions that shell to CLIs must detect and propagate subprocess failures.

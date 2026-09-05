@@ -69,7 +69,7 @@ All commands return agent-first JSON with HATEOAS `next_actions`:
 ## Important Notes
 
 - **Timestamps are UTC.** Granola returns all dates in UTC. A meeting showing "5:01 PM" on Feb 26 is actually 9:01 AM PST. Always convert when displaying to Joel or writing to Vault files.
-- **Codex cannot run Granola.** The MCP transport (mcporter) requires a local socket that Codex sandboxes can't open (`EPERM`). Always pull transcripts from pi/gateway sessions, not codex tasks.
+- **Discover actual access:** Use Executor’s saved Granola connection and current integration contract. Historical sandbox EPERM is not a universal capability limit. Start with summaries; raw evidence needs the required scoped drilldown receipt.
 
 ## Known Limitations
 

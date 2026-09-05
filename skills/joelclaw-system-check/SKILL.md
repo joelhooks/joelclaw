@@ -90,17 +90,9 @@ The daily automation should review recent Codex infra sessions after the health 
 
 Preferred indexed search:
 
-```bash
-joelclaw sessions search \
-  "NAS three-body MTU MinIO Convex Postgres Typesense Inngest Panda Flagg Central postboot" \
-  --source typesense \
-  --machine all \
-  --runtime codex \
-  --limit 10 \
-  --extract
-```
+Use `recall` and the current `session-search` contract. Keep private queries in structured MCP arguments. Raw evidence requires a scope-bound `evidenceDrilldownReceipt`; missing projections do not grant raw access.
 
-If indexed Codex results are stale, irrelevant, or missing today's work, use a bounded local raw fallback:
+If indexed results are stale or missing, inspect metadata without reading transcript bodies. Raw content still requires the scoped receipt:
 
 ```bash
 tail -n 80 ~/.codex/session_index.jsonl
@@ -192,11 +184,11 @@ Treat stale or empty `/Volumes/three-body/sessions` as a critical backup failure
 
 **Worker down**: `joelclaw inngest restart-worker --register`
 
-**Stale tests**: `rm -rf ~/Code/joelhooks/joelclaw/packages/system-bus/__tests__/ && find ~/Code/joelhooks/joelclaw/packages/system-bus/src -name "*.acceptance.test.ts" -delete`
+**Failing tests**: Inspect the affected behavior and repair valid coverage. Test provenance alone never authorizes removal.
 
 **System-bus test false reds**: the health script runs each `src/**/*.test.ts` file in its own Bun process because several legacy tests monkey-patch globals or use `mock.module`. If the aggregate health check is green but raw `bun test` is red, suspect inter-file mock leakage before treating runtime code as broken.
 
-**Loop tmp bloat**: `rm -rf /tmp/agent-loop/loop-*/` (only when no loops are running)
+**Loop artifacts**: Inspect task ownership and unharvested work. Remove only verified disposable artifacts within the authorized scope.
 
 ## Inngest Hung-Run Quick Triage
 

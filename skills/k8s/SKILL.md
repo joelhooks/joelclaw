@@ -188,7 +188,7 @@ joelclaw restate cron status                           # Dkron scheduler → hea
 - When `nestedVirtualization` is OFF: `/dev/kvm` absent, `microvm` DAG handler fails, but `shell`/`infer`/`noop` handlers work normally.
 - When `nestedVirtualization` is ON: Firecracker one-shot exec works (create workspace ext4 → write command → boot VM → guest executes → poweroff → read results).
 - **Restate retry caps**: dagWorker maxAttempts=5, dagOrchestrator maxAttempts=3. Prevents journal poisoning.
-- **Restate journal purge** (if stuck invocations block work): scale down Restate, mount PVC with temp pod, `rm -rf /restate-data/*`, scale back up, re-register worker.
+- **Stuck Restate invocations**: Inspect and target the affected invocation through supported APIs. Journal or PVC destruction requires separate explicit data-loss authorization and a verified backup; never use it as a routine stuck-job fix.
 - Re-register worker: `curl -X POST http://localhost:9070/deployments -H 'content-type: application/json' -d '{"uri":"http://restate-worker:9080"}'`
 
 **⚠️ PDS port trap**: Docker maps `9627→3000` (host→container). NodePort must be **3000** to match the container-side port. If set to 9627, traffic won't route.
@@ -476,7 +476,7 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 
 ## Danger Zones
 
-1. **Stale SSH mux socket after Colima restart** — When Colima restarts (disk resize, crash recovery, `colima stop && start`), the SSH port changes but the mux socket (`~/.colima/_lima/colima/ssh.sock`) caches the old connection. Symptoms: `kubectl port-forward` fails with "tls: internal error", `kubectl get nodes` may intermittently work then fail. **Fix**: `rm -f ~/.colima/_lima/colima/ssh.sock && pkill -f "ssh.*colima"`, then re-establish tunnels with `ssh -o ControlPath=none`. Always verify SSH port with `colima ssh-config | grep Port` after restart.
+1. **Stale SSH mux socket after Colima restart** — When Colima restarts (disk resize, crash recovery, `colima stop && start`), the SSH port changes but the mux socket (`~/.colima/_lima/colima/ssh.sock`) caches the old connection. Symptoms: `kubectl port-forward` fails with "tls: internal error", `kubectl get nodes` may intermittently work then fail. **Fix**: the owning service’s scoped recovery command after identifying the exact affected process; never kill SSH processes by name, then re-establish tunnels with `ssh -o ControlPath=none`. Always verify SSH port with `colima ssh-config | grep Port` after restart.
 2. **Adding Docker port mappings** — can be hot-added without cluster recreation via `hostconfig.json` edit. See [references/operations.md](references/operations.md) for the procedure.
 3. **Inngest legacy host alias in manifests** — old container-host alias may still appear in legacy configs. Worker uses connect mode, so it usually still works, but prefer explicit Talos/Colima hostnames.
 4. **Colima zombie state** — `colima status` reports "Running" but docker socket / SSH tunnels are dead. All k8s ports unresponsive. `colima start` is a no-op. Only `colima restart` recovers. Detect with: `ssh -F ~/.colima/_lima/colima/ssh.config lima-colima "docker info"` — if that fails while `colima status` passes, it's a zombie. The heal script handles this automatically.

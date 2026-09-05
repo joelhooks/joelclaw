@@ -23,14 +23,7 @@ Deployed to Vercel on push to `main`. Dark theme, minimal, system-y aesthetic.
 - **Brands/models of network gear**: Generalize (e.g. "NAS" not "Synology DS1821+")
 - **Tailscale**: OK to mention as the mesh VPN product, but no tailnet name or node IPs
 
-Current King universe mapping (network page):
-| Role | Alias | Source |
-|------|-------|--------|
-| Mac Mini (control plane) | Overlook | The Shining |
-| NAS (archive) | Derry | IT |
-| Laptop (dev machine) | Flagg | The Dark Tower |
-| Linux server | Blaine | The Dark Tower |
-| Router (exit node) | Todash | The Dark Tower |
+Public diagrams use generic role names such as control plane, archive, development client, relay, and router. Do not publish real hostnames disguised as fictional aliases; the private topology boundary still applies.
 
 ## Content Model (Convex-first)
 

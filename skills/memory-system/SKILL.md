@@ -14,6 +14,8 @@ tags:
 
 # Memory System
 
+Use the current `recall` and `session-search` contracts through the saved memory integration. Private queries belong in structured MCP arguments. All raw session searches, extracts, and local transcript summaries require a scope-bound `evidenceDrilldownReceipt`; stale or empty projections do not grant access. The command history below does not waive this boundary.
+
 The joelclaw memory system in one breath: accepted Runs remain immutable
 evidence → flowing memory derives scoped observations and reflections →
 composed recall returns flowing reflections, flowing observations, and curated

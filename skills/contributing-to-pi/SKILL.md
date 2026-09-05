@@ -199,9 +199,9 @@ Add the right `pkg:*` labels.
 
 If you comment on an issue or PR, write the comment to a temp file first and preview it before posting.
 
-### Step 5: only then propose a fix
+### Step 5: prepare the scoped fix
 
-Once the maintainer agrees the bug is real and upstream-owned:
+Prepare local repro, patch, and regression checks when requested. Maintainer approval gates opening an upstream PR under CONTRIBUTING.md; it does not block local preparation:
 
 1. keep the patch minimal
 2. add a failing regression test or fixture that proves the bug
