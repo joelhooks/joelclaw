@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import { type FileHandle, open, readFile, rename, stat, unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { type FileHandle, open, readFile, rename, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,14 @@ import {
 } from "@joelclaw-memory/runtime";
 import { Config, Effect, Layer, Schema } from "effect";
 import { createActor, toPromise } from "xstate";
+
+import { runWorkerMain } from "./worker-main.mjs";
+import {
+  acquireWorkerPidReceipt,
+  assertWorkerPidAvailable,
+  releaseOwnedReceipt,
+  withWorkerOperationLease,
+} from "./worker-ownership.mjs";
 
 const sha256 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const defaultPidPath = path.join(homedir(), ".joelclaw", "flowing-memory", "worker.pid");
@@ -227,53 +236,11 @@ const finalizeReceipt = async (prepared: PreparedReceipt, encoded: unknown) => {
   };
 };
 
-const processAlive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 const workerPidPath = () => process.env.JOELCLAW_MEMORY_WORKER_PID_PATH ?? defaultPidPath;
 
 const workerOperationLockPath = () =>
   process.env.JOELCLAW_MEMORY_WORKER_OPERATION_LOCK_PATH ??
   path.join(homedir(), ".joelclaw", "flowing-memory", "worker-operation.lock");
-
-const withWorkerOperationLease = async <A,>(
-  operation: string,
-  run: () => Promise<A>,
-): Promise<A> => {
-  const lockPath = workerOperationLockPath();
-  const token = randomUUID();
-  let handle: FileHandle;
-  try {
-    handle = await open(lockPath, "wx", 0o600);
-  } catch (error) {
-    throw new Error("another flowing-memory worker operation owns the host lease", {
-      cause: error,
-    });
-  }
-  const body = `${JSON.stringify({
-    operation,
-    pid: process.pid,
-    schemaVersion: 1,
-    token,
-  })}\n`;
-  await handle.write(body, 0, "utf8");
-  await handle.sync();
-  try {
-    return await run();
-  } finally {
-    await handle.close();
-    const current = await readFile(lockPath, "utf8").catch(() => "");
-    if (current === body) {
-      await unlink(lockPath);
-    }
-  }
-};
 
 const semanticWorkerProcesses = async () =>
   new Promise<readonly string[]>((resolve, reject) => {
@@ -303,18 +270,7 @@ const requireDaemonStopped = async () => {
   if (processes.length > 0) {
     throw new Error("a flowing-memory semantic worker process is still running");
   }
-  try {
-    const pid = Number.parseInt((await readFile(workerPidPath(), "utf8")).trim(), 10);
-    if (Number.isSafeInteger(pid) && pid > 0 && processAlive(pid)) {
-      throw new Error("flowing-memory worker daemon is still running");
-    }
-    throw new Error("flowing-memory worker pid receipt is stale");
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
+  await assertWorkerPidAvailable({ pidPath: workerPidPath() });
 };
 
 const semanticWorkerLaunchAgentIsLoaded = async () =>
@@ -348,13 +304,11 @@ const makeCardRuntimeLayer = () => {
   return makeReviewedCardRuntimeLayer().pipe(Layer.provide(storeLayer));
 };
 
+// Lifecycle: host lease -> daemon identity receipt -> XState worker actor ->
+// Effect-scoped runtime release -> identity-checked receipt cleanup.
 const runDaemon = async () => {
   await requireDaemonStopped();
-  const pidPath = workerPidPath();
-  const pidFile = await open(pidPath, "wx", 0o600);
-  await pidFile.writeFile(`${process.pid}\n`);
-  await pidFile.sync();
-  await pidFile.close();
+  const pidReceipt = await acquireWorkerPidReceipt({ pidPath: workerPidPath() });
   try {
     await Effect.runPromise(
       Effect.scoped(
@@ -410,7 +364,7 @@ const runDaemon = async () => {
       ),
     );
   } finally {
-    await unlink(pidPath).catch(() => undefined);
+    await releaseOwnedReceipt(pidReceipt);
   }
 };
 
@@ -586,26 +540,40 @@ export const runWorkerCommand = async (arguments_: readonly string[]) => {
   let receipt: unknown;
   switch (action) {
     case "run":
-      await withWorkerOperationLease("run", runDaemon);
+      await withWorkerOperationLease(
+        { lockPath: workerOperationLockPath(), operation: "run" },
+        runDaemon,
+      );
       return;
     case "preview":
-      receipt = await withWorkerOperationLease("preview", () =>
-        runPreviewOrActivation(arguments_, false),
+      receipt = await withWorkerOperationLease(
+        { lockPath: workerOperationLockPath(), operation: "preview" },
+        () => runPreviewOrActivation(arguments_, false),
       );
       break;
     case "activate":
-      receipt = await withWorkerOperationLease("activate", () =>
-        runPreviewOrActivation(arguments_, true),
+      receipt = await withWorkerOperationLease(
+        { lockPath: workerOperationLockPath(), operation: "activate" },
+        () => runPreviewOrActivation(arguments_, true),
       );
       break;
     case "restore":
-      receipt = await withWorkerOperationLease("restore", () => runRestoration(arguments_));
+      receipt = await withWorkerOperationLease(
+        { lockPath: workerOperationLockPath(), operation: "restore" },
+        () => runRestoration(arguments_),
+      );
       break;
     case "withdraw":
-      receipt = await withWorkerOperationLease("withdraw", () => runWithdrawal(arguments_));
+      receipt = await withWorkerOperationLease(
+        { lockPath: workerOperationLockPath(), operation: "withdraw" },
+        () => runWithdrawal(arguments_),
+      );
       break;
     case "migrate-cards":
-      receipt = await withWorkerOperationLease("migrate-cards", () => runCardMigration(arguments_));
+      receipt = await withWorkerOperationLease(
+        { lockPath: workerOperationLockPath(), operation: "migrate-cards" },
+        () => runCardMigration(arguments_),
+      );
       break;
     default:
       throw new Error(
@@ -615,4 +583,10 @@ export const runWorkerCommand = async (arguments_: readonly string[]) => {
   process.stdout.write(`${JSON.stringify({ ok: true, receipt })}\n`);
 };
 
-await runWorkerCommand(process.argv.slice(2));
+const invokedAsMain =
+  process.argv[1] !== undefined &&
+  realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+
+if (invokedAsMain) {
+  await runWorkerMain(() => runWorkerCommand(process.argv.slice(2)));
+}

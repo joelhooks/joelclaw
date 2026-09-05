@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "bun build src/cli.mts --target=node --packages=external --outfile dist/flowing-memory-card-worker.mjs",
-    "check-types": "tsc --noEmit -p tsconfig.json"
+    "check-types": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test test"
   },
   "dependencies": {
     "@joelclaw-memory/domain": "link:../../../joelclaw-memory/packages/domain",
