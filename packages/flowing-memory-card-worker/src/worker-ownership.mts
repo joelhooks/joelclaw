@@ -840,7 +840,12 @@ const readProcessStart = async (pid: number) =>
       execFile(
         "/bin/ps",
         ["-p", String(pid), "-o", "lstart="],
-        { maxBuffer: 4_096, timeout: 2_000 },
+        {
+          maxBuffer: 4_096,
+          timeout: 2_000,
+          // Identity must not change with the probing caller's display environment.
+          env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" },
+        },
         (error, stdout) => {
           if (error !== null) {
             resolve({ _tag: "Failed" });

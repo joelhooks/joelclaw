@@ -412,6 +412,76 @@ describe("worker pid receipts", () => {
   });
 });
 
+describe("process identity environment", () => {
+  it("keeps a live process identity stable across locale and timezone", async () => {
+    const ownershipUrl = new URL("../src/worker-ownership.mts", import.meta.url).href;
+    const script = `import { probeProcessIdentity } from ${JSON.stringify(ownershipUrl)}; console.log(JSON.stringify(await probeProcessIdentity(${process.pid})));`;
+    const identities = [
+      { LC_ALL: "C", TZ: "UTC" },
+      { LC_ALL: "de_DE.UTF-8", TZ: "America/Los_Angeles" },
+      { LC_ALL: "fr_FR.UTF-8", TZ: "Asia/Tokyo" },
+    ].map((environment) => {
+      const child = Bun.spawnSync([process.execPath, "-e", script], {
+        env: { ...process.env, ...environment },
+      });
+      expect(child.exitCode).toBe(0);
+      return JSON.parse(child.stdout.toString());
+    });
+    expect(identities[0]).toMatchObject({ _tag: "Alive" });
+    expect(identities[1]).toEqual(identities[0]);
+    expect(identities[2]).toEqual(identities[0]);
+  });
+
+  it("rejects a cross-locale contender after a stopped live owner loses its helper", async () => {
+    const root = await makeRoot();
+    const lockPath = path.join(root, "operation.lock");
+    const ownershipUrl = new URL("../src/worker-ownership.mts", import.meta.url).href;
+    const firstScript = `import { withWorkerOperationLease } from ${JSON.stringify(ownershipUrl)}; await withWorkerOperationLease({ lockPath: ${JSON.stringify(lockPath)}, operation: "run" }, async () => await new Promise(() => undefined));`;
+    const first = Bun.spawn([process.execPath, "-e", firstScript], {
+      env: { ...process.env, LC_ALL: "de_DE.UTF-8", TZ: "America/Los_Angeles" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    try {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (await Bun.file(lockPath).exists()) break;
+        await Bun.sleep(20);
+      }
+      const original = await readFile(lockPath, "utf8");
+      const processes = Bun.spawnSync(["/bin/ps", "-Ao", "pid=,ppid=,command="]);
+      expect(processes.exitCode).toBe(0);
+      const helper = processes.stdout.toString().split("\n").find((row) => {
+        const fields = row.trim().split(/\s+/u);
+        return Number(fields[1]) === first.pid && row.includes("FLOWING_MEMORY_MUTEX_READY");
+      });
+      if (helper === undefined) throw new Error("owned mutex helper was not found");
+      const helperPid = Number(helper.trim().split(/\s+/u)[0]);
+      if (!Number.isSafeInteger(helperPid) || helperPid <= 0) throw new Error("invalid helper PID");
+      process.kill(first.pid, "SIGSTOP");
+      process.kill(helperPid, "SIGKILL");
+      // Wait on the kernel mutex, not a sleep or PID probe: a stopped parent
+      // may retain a zombie child after the child's kernel lock is released.
+      const guard = Bun.spawnSync([
+        "/usr/bin/lockf", "-k", "-t", "2", `${lockPath}.guard`, "/usr/bin/true",
+      ]);
+      expect(guard.exitCode).toBe(0);
+      const contenderScript = `import { withWorkerOperationLease } from ${JSON.stringify(ownershipUrl)}; await withWorkerOperationLease({ lockPath: ${JSON.stringify(lockPath)}, operation: "preview" }, async () => console.log("CONTENDER_ENTERED"));`;
+      const contender = Bun.spawnSync([process.execPath, "-e", contenderScript], {
+        env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+      });
+      expect(() => process.kill(first.pid, 0)).not.toThrow();
+      expect(contender.exitCode).not.toBe(0);
+      expect(contender.stdout.toString()).not.toContain("CONTENDER_ENTERED");
+      expect(contender.stderr.toString()).toContain("owner-live");
+      expect(await readFile(lockPath, "utf8")).toBe(original);
+      expect((await readdir(root)).filter((name) => name.endsWith(".preimage"))).toHaveLength(0);
+    } finally {
+      first.kill("SIGKILL");
+      await first.exited;
+    }
+  }, 10_000);
+});
+
 describe("fatal startup", () => {
   it("forces a nonzero process exit when startup ownership fails despite a live handle", async () => {
     const root = await makeRoot();
