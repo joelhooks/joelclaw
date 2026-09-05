@@ -13,6 +13,10 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import {
+  classifyHistoricalSourceCursorFields,
+  parseHistoricalSourceCursorClaim,
+} from "../packages/memory/src/source-cursor";
 
 interface Candidate {
   readonly run_id: string;
@@ -103,41 +107,24 @@ export function migrateRunSourceCursors(input: {
         if (!name.endsWith(".metadata.json")) continue;
         scannedMetadata += 1;
         const metadataPath = join(monthPath, name);
-        let metadata: {
-          from_offset?: unknown;
-          run_id?: unknown;
-          source_identity?: unknown;
-          started_at?: unknown;
-        };
+        let metadata: unknown;
         try {
           if (!lstatSync(metadataPath).isFile()) throw new Error("not-regular");
-          metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as typeof metadata;
+          metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
         } catch {
           invalid += 1;
           userInvalid += 1;
           continue;
         }
-        const hasCursorField =
-          metadata.source_identity !== undefined || metadata.from_offset !== undefined;
-        if (!hasCursorField) continue;
-        if (
-          typeof metadata.source_identity !== "string" ||
-          !/^sha256:[0-9a-f]{64}$/u.test(metadata.source_identity) ||
-          !Number.isSafeInteger(metadata.from_offset) ||
-          Number(metadata.from_offset) < 0 ||
-          typeof metadata.run_id !== "string" ||
-          metadata.run_id.length === 0 ||
-          !Number.isSafeInteger(metadata.started_at)
-        ) {
+        const cursor = classifyHistoricalSourceCursorFields(metadata);
+        if (cursor._tag === "Absent") continue;
+        const candidate = parseHistoricalSourceCursorClaim(metadata);
+        if (cursor._tag === "Invalid" || candidate === null) {
           invalid += 1;
           userInvalid += 1;
           continue;
         }
-        const key = cursorKey(metadata.source_identity, Number(metadata.from_offset));
-        const candidate = {
-          run_id: metadata.run_id,
-          started_at: Number(metadata.started_at),
-        };
+        const key = cursorKey(cursor.sourceIdentity, cursor.fromOffset);
         const existing = candidates.get(key);
         if (existing) duplicateMetadata += 1;
         if (
@@ -156,11 +143,13 @@ export function migrateRunSourceCursors(input: {
     for (const [key, candidate] of candidates) {
       const sidecarPath = join(userRoot, ".source-cursors", `${key}.json`);
       try {
-        const existing = JSON.parse(readFileSync(sidecarPath, "utf8")) as {
-          run_id?: unknown;
-          started_at?: unknown;
-        };
-        if (
+        const existing = parseHistoricalSourceCursorClaim(
+          JSON.parse(readFileSync(sidecarPath, "utf8")),
+        );
+        if (existing === null) {
+          invalid += 1;
+          userInvalid += 1;
+        } else if (
           existing.run_id !== candidate.run_id ||
           existing.started_at !== candidate.started_at
         ) {
@@ -183,8 +172,16 @@ export function migrateRunSourceCursors(input: {
       if (status === "created") {
         sidecarsCreated += 1;
       } else {
-        const raced = JSON.parse(readFileSync(sidecarPath, "utf8")) as Candidate;
-        if (raced.run_id === candidate.run_id && raced.started_at === candidate.started_at) {
+        const raced = parseHistoricalSourceCursorClaim(
+          JSON.parse(readFileSync(sidecarPath, "utf8")),
+        );
+        if (raced === null) {
+          invalid += 1;
+          userInvalid += 1;
+        } else if (
+          raced.run_id === candidate.run_id &&
+          raced.started_at === candidate.started_at
+        ) {
           sidecarsExisting += 1;
         } else {
           conflicts += 1;

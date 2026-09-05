@@ -10,6 +10,7 @@ import {
 import { dirname, join } from "node:path";
 import {
   type AgentRuntime,
+  parseHistoricalSourceCursorClaim,
   RunBlobConflictError,
   type RunBlobWriteResult,
   runStoreBase,
@@ -120,18 +121,11 @@ function readSourceCursorClaim(
 ): SourceCursorClaim | null {
   const path = sourceCursorClaimPath(userId, sourceIdentity, fromOffset);
   try {
-    const value = JSON.parse(readFileSync(path, "utf8")) as {
-      run_id?: unknown;
-      started_at?: unknown;
-    };
-    if (typeof value.run_id !== "string" || !Number.isSafeInteger(value.started_at)) {
-      throw new Error("run-capture source claim invalid");
-    }
-    return {
-      run_id: value.run_id,
-      started_at: Number(value.started_at),
-      created: false,
-    };
+    const value = parseHistoricalSourceCursorClaim(
+      JSON.parse(readFileSync(path, "utf8")),
+    );
+    if (value === null) throw new Error("run-capture source claim invalid");
+    return { ...value, created: false };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
@@ -172,12 +166,11 @@ function claimSourceCursor(
     }
   }
 
-  let existing: { run_id?: unknown; started_at?: unknown };
+  let existing: ReturnType<typeof parseHistoricalSourceCursorClaim>;
   try {
-    existing = JSON.parse(readFileSync(path, "utf8")) as {
-      run_id?: unknown;
-      started_at?: unknown;
-    };
+    existing = parseHistoricalSourceCursorClaim(
+      JSON.parse(readFileSync(path, "utf8")),
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return claimSourceCursor(
@@ -199,7 +192,7 @@ function claimSourceCursor(
       recovered,
     );
   }
-  if (typeof existing.run_id !== "string" || !Number.isSafeInteger(existing.started_at)) {
+  if (existing === null) {
     unlinkSync(path);
     return claimSourceCursor(
       userId,
@@ -210,11 +203,7 @@ function claimSourceCursor(
       recovered,
     );
   }
-  return {
-    run_id: existing.run_id,
-    started_at: existing.started_at as number,
-    created: false,
-  };
+  return { ...existing, created: false };
 }
 
 function releaseSourceCursorClaim(

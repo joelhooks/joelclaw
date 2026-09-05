@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { chunkTurns, detectFormat, extractTurns, parseJsonl } from "./chunking";
+import { parseHistoricalSourceCursorClaim } from "./source-cursor";
 
 export interface SessionCaptureAppendInput {
   databasePath: string;
@@ -45,15 +46,11 @@ export function findSessionSourceCursor(
       .query(`SELECT run_id, started_at FROM runs
         WHERE user_id = ? AND source_identity = ? AND from_offset = ?
         ORDER BY captured_at ASC, run_id ASC LIMIT 1`)
-      .get(userId, sourceIdentity, fromOffset) as {
-        run_id?: unknown;
-        started_at?: unknown;
-      } | null;
+      .get(userId, sourceIdentity, fromOffset) as unknown;
     if (row === null) return null;
-    if (typeof row.run_id !== "string" || !Number.isSafeInteger(row.started_at)) {
-      throw new Error("session source cursor lookup failed: invalid-row");
-    }
-    return { run_id: row.run_id, started_at: Number(row.started_at) };
+    const claim = parseHistoricalSourceCursorClaim(row);
+    if (claim === null) throw new Error("session source cursor lookup failed: invalid-row");
+    return claim;
   } finally {
     db.close(false);
   }

@@ -7,4 +7,5 @@ export * from "./schemas/machines";
 export * from "./schemas/run-chunks";
 export * from "./schemas/runs";
 export * from "./session-index";
+export * from "./source-cursor";
 export * from "./types";

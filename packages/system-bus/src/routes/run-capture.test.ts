@@ -324,6 +324,28 @@ describe("POST /api/runs redelivery", () => {
     expect(events).toEqual([]);
   });
 
+  test("reads an exact fractional timestamp from a recovered historical sidecar", async () => {
+    const { app, events } = fixtureApp(() => {
+      throw new Error("historical sidecar should win before index lookup");
+    });
+    const body = captureBody("9".repeat(26), "historical\n");
+    const cursorKey = createHash("sha256")
+      .update(JSON.stringify([body.source_identity, body.from_offset]))
+      .digest("hex");
+    const markerRoot = join(fixtureRoot as string, "user", ".source-cursors");
+    mkdirSync(markerRoot, { recursive: true });
+    writeFileSync(
+      join(markerRoot, `${cursorKey}.json`),
+      JSON.stringify({ run_id: "historical-run", started_at: 10.25 }),
+    );
+
+    const response = await post(app, body);
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ run_id: "historical-run" });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ data: { started_at: 10.25 } });
+  });
+
   test("uses the durable sidecar before consulting the migration index", async () => {
     let lookups = 0;
     const { app } = fixtureApp(() => {
@@ -428,6 +450,7 @@ describe("POST /api/runs receiver contract", () => {
     { name: "wrong byte range", patch: { to_offset: 1 } },
     { name: "wrong digest", patch: { jsonl_sha256: "0".repeat(64) } },
     { name: "unhashed source", patch: { source_identity: "fixture-session" } },
+    { name: "fractional new timestamp", patch: { started_at: 10.25 } },
   ])("rejects $name without storing or publishing", async ({ patch }) => {
     const { app, events, failures } = fixtureApp();
     const response = await post(app, {
