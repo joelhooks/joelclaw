@@ -107,7 +107,7 @@ The legacy `joelclaw log write` / `slog` JSONL journal is retired. Emit/query st
 joelclaw secrets status
 joelclaw secrets lease <name> --ttl 15m
 joelclaw secrets revoke <lease-id>
-joelclaw secrets revoke --all
+# Revoke only the exact leases acquired by this task.
 joelclaw secrets audit --tail 50
 joelclaw secrets env --dry-run
 ```

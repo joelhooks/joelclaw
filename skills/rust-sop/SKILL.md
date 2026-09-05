@@ -333,7 +333,7 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
 
 ## Validation Checklist
 
-Every Rust change must pass:
+Run the repository-required checks and the affected crate’s behavioral tests. The commands below are available checks; use full-workspace and all-feature runs when the change or CI contract requires them. Documentation-only edits need document validation, not an unrelated release build:
 
 ```bash
 cargo fmt --check                          # formatting

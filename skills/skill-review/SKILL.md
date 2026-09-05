@@ -8,167 +8,28 @@ tags: [joelclaw, skills, maintenance, gardening, automation]
 disable-model-invocation: true
 ---
 
-# Skill Review & Gardening
+# Skill review
 
-Automated and manual processes for keeping the 51+ joelclaw skills accurate and healthy. ADR-0179.
+Audit the installed inventory against canonical sources and live evidence. Resolve symlinks before editing; installed roots may expose several repositories and namespaced packs. Inspect repository status and preserve existing edits.
 
-## Canonical Contract
+## Inventory
 
-- **Source of truth**: `~/Code/joelhooks/joelclaw/skills/` (repo, fully git-tracked)
-- **Home dir consumers** (symlink IN to repo):
-  - `~/.agents/skills/<name>` → `~/Code/joelhooks/joelclaw/skills/<name>`
-  - `~/.pi/agent/skills/<name>` → `~/Code/joelhooks/joelclaw/skills/<name>`
-- **Never** put skill content in dot directories (`.agents/`, `.pi/`, `.claude/`). Those are symlink consumers.
-- Third-party skill packs (axiom-\*, marketing, etc.) live in `~/.agents/skills/` as external installs — NOT in the repo.
+List skill roots and canonical targets. Record duplicate names, broken links, missing frontmatter, trigger overlap, and large entry files. Distinguish managed sources from vendor or plugin caches. Do not treat a directory as an orphan merely because one consumer root lacks a direct link.
 
-## Automated Garden (Inngest)
+Read the candidate before changing it. Check commands against live help or source, runtime facts against current configuration, and behavioral rules against the user request and harness hierarchy. An old AGENTS.md is evidence to review, not proof of live topology.
 
-The `skill-garden` function runs daily at 6am PT and checks:
+## Prune and repair
 
-### Daily (structural + patterns)
+Keep name, provenance, invocation metadata, operational constraints, and domain-specific gotchas. Remove repeated trigger lists, stale model pins, copied command manuals, duplicated global policy, and approval gates that disregard authorization already given.
 
-1. **Broken symlinks** — dead links in `~/.agents/skills/`, `~/.pi/agent/skills/`
-2. **Non-canonical REAL DIRs** — directories in home skill dirs that should be symlinks
-3. **Missing frontmatter** — skills without SKILL.md or required frontmatter (name, description)
-4. **Stale patterns** — skills referencing known-dead infrastructure:
-   - legacy lightweight-k8s distro terms → replaced by Talos on Colima
-   - retired vector DB terms → replaced by Typesense vector search
-   - launchctl commands targeting worker labels → worker runs in k8s
-   - old standalone worker clone paths → monorepo `packages/system-bus/`
-   - old standalone CLI repo paths/aliases → CLI is `packages/cli/` + `joelclaw`
-5. **Orphans** — skills in repo with no symlink from any home dir
+Disclose branch-specific reference material behind an explicit trigger. Preserve its links. Do not replace useful runbooks with empty pointers or update vendor caches as if they were canonical.
 
-### Monthly (1st of month, LLM deep review)
+Use `joelclaw skills ensure --help` for supported install repairs. Inspect real-directory conflicts before replacing anything. Add or change install manifests in their owning repository.
 
-- Reads current `AGENTS.md` as ground truth
-- Compares each skill's content against system reality via `pi` inference
-- Flags outdated workflows, wrong versions, missing capabilities
-- Produces structured report
+## Verify
 
-### Triggers
+Check metadata, link targets, affected commands, and prompt installation where relevant. Use realistic before/after model cases for substantial behavior changes. Include an already-authorized action, missing input, a near-miss trigger, and a boundary that must hold. Separate static findings from observed execution.
 
-```bash
-# On-demand via event
-joelclaw send "skill-garden/check"
-joelclaw send "skill-garden/check" --data '{"deep": true}'  # force LLM review
+Report every scanned source's disposition: changed, reviewed without change, or needs deeper review. Save unresolved findings with paths and reasons. A broad pattern scan is not a full semantic review.
 
-# Daily cron: 0 6 * * * (automatic)
-```
-
-### Output
-
-- OTEL event: `skill-garden.findings`
-- Gateway notification when issues found (zero noise on clean days)
-- Structured JSON report with findings by type
-
-## Manual Review Process
-
-When the automated garden flags issues, or for periodic deep review:
-
-### 1. Run the audit
-
-```bash
-joelclaw send "skill-garden/check" --data '{"deep": true}'
-```
-
-### 2. Check for structural issues
-
-```bash
-# Broken symlinks
-find ~/.agents/skills/ ~/.pi/agent/skills/ -maxdepth 1 -type l ! -exec test -e {} \; -print
-
-# REAL DIRs that should be symlinks
-for dir in ~/.agents/skills ~/.pi/agent/skills; do
-  find "$dir" -maxdepth 1 -type d ! -type l | while read d; do
-    name=$(basename "$d")
-    [ -d ~/Code/joelhooks/joelclaw/skills/"$name" ] && echo "NON-CANONICAL: $d"
-  done
-done
-
-# Orphan skills (in repo, no home dir symlink)
-for skill in ~/Code/joelhooks/joelclaw/skills/*/; do
-  name=$(basename "$skill")
-  [ ! -L ~/.agents/skills/"$name" ] && [ ! -L ~/.pi/agent/skills/"$name" ] && echo "ORPHAN: $name"
-done
-```
-
-### 3. Fix structural issues
-
-```bash
-# Canonical repair path for repo-local skills
-joelclaw skills ensure <name>
-
-# Or explicitly from another repo root
-joelclaw skills ensure <name> --source-root /abs/repo
-```
-
-If `joelclaw skills ensure` fails because a consumer target is a real file/dir instead of a symlink, fix that conflict manually, then rerun the command.
-
-### 4. Fix stale content
-
-When a skill references outdated architecture:
-
-1. Read the skill: `read skills/<name>/SKILL.md`
-2. Cross-reference with `AGENTS.md` and current system state
-3. Update the skill with current facts
-4. Commit: `git add skills/<name> && git commit -m "skill(<name>): update for current architecture"`
-
-### 5. Adding a new skill
-
-```bash
-mkdir -p skills/<name>
-# Write SKILL.md with frontmatter: name, description, version, author, tags
-# Symlink from home dirs:
-ln -s ~/Code/joelhooks/joelclaw/skills/<name> ~/.agents/skills/<name>
-ln -s ~/Code/joelhooks/joelclaw/skills/<name> ~/.pi/agent/skills/<name>
-git add skills/<name>
-git commit -m "skill(<name>): add new skill"
-```
-
-See the [add-skill skill](../add-skill/SKILL.md) for the full idiomatic process.
-
-## Stale Pattern Registry
-
-Keep this list updated as infrastructure changes. The Inngest function reads these patterns.
-
-| Pattern                            | What it means                  | Current reality                    |
-| ---------------------------------- | ------------------------------ | ---------------------------------- |
-| legacy k8s distro token            | Old k8s distribution reference | Talos v1.12.4 on Colima            |
-| legacy vector DB token             | Old vector store reference     | Typesense with vector search       |
-| launchctl worker command token     | Old worker deploy mode         | k8s Deployment                     |
-| standalone worker clone path token | Old worker path                | `packages/system-bus/` in monorepo |
-| standalone CLI path token          | Old CLI path                   | `packages/cli/` in monorepo        |
-| short CLI alias token              | Old CLI name                   | `joelclaw` CLI                     |
-
-**When infrastructure changes, update this table AND the exact regex list in `STALE_PATTERNS` inside `skill-garden.ts`.**
-
-## Required Frontmatter
-
-Every skill MUST have:
-
-```yaml
----
-name: skill-name
-description: "What this skill does and when to use it"
----
-```
-
-Recommended additional fields:
-
-```yaml
-version: 1.0.0
-author: Joel Hooks
-tags: [relevant, tags]
-displayName: Human Readable Name
-```
-
-## Key Paths
-
-| What                    | Path                                                        |
-| ----------------------- | ----------------------------------------------------------- |
-| Repo skills (canonical) | `~/Code/joelhooks/joelclaw/skills/`                         |
-| Inngest function        | `packages/system-bus/src/inngest/functions/skill-garden.ts` |
-| ADR                     | `~/Vault/docs/decisions/0179-automated-skill-gardening.md`  |
-| Home dir: agents        | `~/.agents/skills/`                                         |
-| Home dir: pi            | `~/.pi/agent/skills/`                                       |
-| Stale patterns          | `STALE_PATTERNS` in `skill-garden.ts`                       |
+The optional garden implementation is `packages/system-bus/src/inngest/functions/skill-garden.ts`. Inspect its current events, patterns, and schedule before invoking it; a manual audit does not require starting a background workflow.

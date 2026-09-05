@@ -253,7 +253,7 @@ When you encounter a Slack user ID (`<@U0XXXXXXX>`):
 SLACK_USER=$(secrets lease slack_user_token --ttl 5m)
 curl -s "https://slack.com/api/users.info?user=U0XXXXXXX" \
   -H "Authorization: Bearer $SLACK_USER" | jq '.user.real_name, .user.profile.email'
-secrets revoke --all
+# Revoke only the exact lease ids acquired by this task; never all sessions’ leases.
 ```
 
 Then fire enrichment with the resolved name and hints.

@@ -24,7 +24,7 @@ The output should be easy to find later and useful to another agent or operator 
 Capture means converting transient conversation into one or more of:
 
 - project truth in a working doc (`launch-plan.md`, README, runbook, spec)
-- repo truth in `lat.md/`, `AGENTS.md`, or a project ADR
+- repo truth in `.brain/`, `AGENTS.md`, or a project ADR
 - system truth in joelclaw memory when the learning is cross-project and durable
 - actionable follow-up in a task system when the result is "someone needs to do X later"
 - operator-facing summary when the important thing is a decision, not the whole thread
@@ -51,6 +51,8 @@ Use proactively when:
 - a discussion produces wording good enough for the real artifact
 - a repeated explanation should stop living only in chat
 
+New Brain prose uses `.svx` and the existing project structure. Treat older `lat.md` artifacts as historical sources unless the project explicitly still owns them. Keep operating instructions short; project state belongs in Brain notes.
+
 ## The decision tree
 
 Before writing anything, decide what kind of truth this is.
@@ -61,7 +63,7 @@ Write it into the project artifact.
 Examples:
 - launch messaging → `launch-plan.md`
 - repo operating model → `AGENTS.md`
-- project state/intent → `lat.md/*`
+- project state/intent → `.brain/*`
 - implementation plan → spec/PRD/runbook in the repo
 
 ### 2. Does this change how agents should reason about the repo?
@@ -69,7 +71,7 @@ Capture it in repo truth.
 
 Typical targets:
 - `AGENTS.md`
-- `lat.md/`
+- `.brain/`
 - ADR if the decision is durable, structural, or should act as a tie-breaker later
 
 ### 3. Is this cross-project and durable beyond the current repo?
@@ -117,7 +119,7 @@ Do not dump spoken-language filler into the canonical doc. Compress it into clea
    - if the change is repo-structural, add/update an ADR
 
 5. **Update nearby truth surfaces when required**
-   - if the launch doc changes the repo framing, mirror that in `lat.md`
+   - if the launch doc changes the repo framing, mirror that in the project Brain
    - if the repo operating model changes, update `AGENTS.md`
    - if the system learns a durable pattern, write memory
 
@@ -149,13 +151,13 @@ A bad capture is:
 ### Product / launch framing
 Prefer:
 - current plan doc
-- `lat.md/launch.md`
+- `.brain/launch.md`
 - `AGENTS.md` if it changes the repo's operating model
 
 ### Repo operating model
 Prefer:
 - `AGENTS.md`
-- `lat.md/project.md`
+- `.brain/project.md`
 - ADR if the change is durable and architectural
 
 ### System/process learning
@@ -186,7 +188,7 @@ User: "On YouTube, you watch Antonio code. In the workshop, you learn how to cod
 
 Capture:
 - add the phrasing to `launch-plan.md`
-- mirror the durable positioning into `lat.md/launch.md`
+- mirror the durable positioning into `.brain/launch.md`
 - commit
 
 ### Example: repo priority change
@@ -194,7 +196,7 @@ User: "The point of this repo is to get the launch doc shipped."
 
 Capture:
 - update `AGENTS.md`
-- update `lat.md/project.md`
+- update `.brain/project.md`
 - add ADR if this is a durable repo-level tie-breaker
 - commit
 

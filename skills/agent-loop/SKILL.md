@@ -109,7 +109,7 @@ Create a `progress.txt` in the project root with a `## Codebase Patterns` sectio
 - **Canonical source**: `~/Code/joelhooks/joelclaw/packages/system-bus/` (monorepo)
 - **Inngest functions**: `agent-loop-plan`, `agent-loop-implement`, `agent-loop-review`, `agent-loop-judge`, `agent-loop-complete`, `agent-loop-retro`
 - **Inngest server**: k8s StatefulSet at localhost:8288
-- **Loop --project target**: Always use `~/Code/joelhooks/joelclaw/packages/system-bus` (the monorepo).
+- **Loop --project target**: Use the absolute target project named by the request. The system-bus package owns loop runtime code; it is not every workload’s target.
 - **Apply worker changes**: `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh`
 - **Verify functions**: `joelclaw functions`
 - **View runs**: `joelclaw runs -c`
@@ -156,7 +156,7 @@ Default: codex for implementation, claude for review. Override per-story via `to
 
 - Concurrency keys use CEL expressions (`event.data.project`), not `{{ }}` templates
 - `loop` is reserved in CEL — don't use in concurrency key strings
-- Use explicit Codex permissions: `codex exec --ask-for-approval never --sandbox danger-full-access PROMPT` (no `-q` flag)
+- Read `codex exec --help` for current invocation flags. Use the configured sandbox and approval policy; do not weaken them as part of task dispatch.
 - Worker changes require a k8s deploy (`k8s/publish-system-bus-worker.sh`)
 - Docker must be running for Inngest server (`open -a OrbStack`)
 - Large tool output uses claim-check pattern (written to `/tmp/agent-loop/{loopId}/`)

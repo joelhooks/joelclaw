@@ -112,7 +112,7 @@ For copy/email reviews, apply this framework:
 - "Sound familiar?"
 - Direct questions, numbered lists, casual profanity when appropriate
 - P.S. with additional value or call-to-action
-- Signature: "-Amy" or "-Amy & Alex"
+Attribute this as an agent review applying the Stacking the Bricks framework. Never sign as Amy or Alex; use the standing agent attribution for outward messages.
 
 ## When Reviewing Anything
 

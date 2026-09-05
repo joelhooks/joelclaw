@@ -5,6 +5,8 @@ description: Interact with the GitHub API as the joelclawgithub[bot] app. Use wh
 
 # GitHub Bot
 
+For ShitRat-authored work, use the installed `shitrat` tooling and `shitratgit[bot]` identity. The legacy app described below is for integrations that explicitly own it, not a default actor for Joel’s agent-authored commits, PRs, or comments. Discover actual app access; old repository counts are not authority.
+
 Interact with GitHub API via the `joelclawgithub[bot]` GitHub App. Acts as a bot identity with access to all 280+ repos across @joelhooks personal and org accounts.
 
 ## Authentication

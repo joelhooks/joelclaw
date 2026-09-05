@@ -53,6 +53,7 @@ Type-safe RPC that replaces REST/tRPC/GraphQL for internal data access. Build pr
 
 ```ts
 import { createServerFn } from '@tanstack/react-start'
+import { z } from 'zod'
 
 // GET (default)
 export const getPosts = createServerFn().handler(async () => {
@@ -61,11 +62,13 @@ export const getPosts = createServerFn().handler(async () => {
 
 // POST with input validation
 export const createPost = createServerFn({ method: 'POST' })
-  .inputValidator((data: { title: string; body: string }) => data)
+  .inputValidator(z.object({ title: z.string().min(1), body: z.string() }))
   .handler(async ({ data }) => {
     return db.posts.create(data)
   })
 ```
+
+The schema validates runtime input; a TypeScript annotation with an identity function does not. Match the validator API to the project’s pinned TanStack version.
 
 **Where to call server functions:**
 - Route loaders — data fetching

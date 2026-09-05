@@ -108,7 +108,7 @@ Stops the background poller and sends a final follow-up summary.
 ## Rules
 
 - `joelclaw jobs status` is the aggregated truth surface; do **not** rebuild the same picture by hand unless the command is wrong.
-- If `jobs status` is noisy or misleading, fix it first. Don’t teach agents to ignore a lying operator surface.
+- If `jobs status` is noisy or misleading, report the defect and use bounded underlying evidence. Change the CLI only when implementation is in scope.
 - For TUI work, prefer compact status blocks with explicit severity and short summaries. No decorative sludge.
 - Any runtime monitor widget line must be clamped to the active terminal width with pi-tui truncation (`truncateToWidth` / `visibleWidth`). Pi will crash narrow terminals if a custom widget emits over-wide lines.
 - During transition, Inngest stays visible but must not dominate the runtime story when Restate + queue + Dkron are the real workload path.

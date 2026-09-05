@@ -49,11 +49,11 @@ duration: "HH:MM:SS"
 2. Extract YouTube video ID from the `source` URL
 3. Write the note in Joel's voice (read `joel-writing-style` skill — it's in the same `.agents/skills/` directory). Key rules:
    - Open with a hook, not a summary
-   - Add a personal "why this matters to me" frame connecting the video to JoelClaw
+   - Use Joel’s supplied framing where relevant; never invent his experience, beliefs, or personal reaction
    - Use short paragraphs, strategic profanity, bold for emphasis
    - End abruptly — no forced wrap-up
 4. Embed the video with `<YouTube id="VIDEO_ID" />` after the intro
-5. Include everything from the vault note **except the full transcript**:
+5. Select source-supported material appropriate for the publication audience. Exclude the full transcript, private context, customer information, and paid corpus material. Then adapt relevant sections:
    - Executive summary → rewrite as the intro (Joel's voice)
    - Key points → keep substance, tighten prose
    - Speaker context → "Who is [Speaker]" section
@@ -66,7 +66,7 @@ duration: "HH:MM:SS"
 
 For Joel's writing style details, read [joel-writing-style SKILL.md](../joel-writing-style/SKILL.md) and its [voice examples](../joel-writing-style/references/voice-examples.md). Key points:
 
-- Conversational first person, address reader as "you"
+- Use first person only for Joel’s documented words or supplied experience. Address the reader directly when useful.
 - Contractions always
 - Bold for inline emphasis on key phrases
 - Emoji sparingly (1-2 per note max)
