@@ -434,20 +434,20 @@ importers:
   packages/flowing-memory-card-worker:
     dependencies:
       '@joelclaw-memory/domain':
-        specifier: link:../../../joelclaw-memory/packages/domain
-        version: link:../../../joelclaw-memory/packages/domain
+        specifier: file:../../../joelclaw-memory/packages/domain
+        version: file:../../../joelclaw-memory/packages/domain
       '@joelclaw-memory/machines':
-        specifier: link:../../../joelclaw-memory/packages/machines
-        version: link:../../../joelclaw-memory/packages/machines
+        specifier: file:../../../joelclaw-memory/packages/machines
+        version: file:../../../joelclaw-memory/packages/machines
       '@joelclaw-memory/ports':
-        specifier: link:../../../joelclaw-memory/packages/ports
-        version: link:../../../joelclaw-memory/packages/ports
+        specifier: file:../../../joelclaw-memory/packages/ports
+        version: file:../../../joelclaw-memory/packages/ports
       '@joelclaw-memory/postgres':
-        specifier: link:../../../joelclaw-memory/packages/postgres
-        version: link:../../../joelclaw-memory/packages/postgres
+        specifier: file:../../../joelclaw-memory/packages/postgres
+        version: file:../../../joelclaw-memory/packages/postgres
       '@joelclaw-memory/runtime':
-        specifier: link:../../../joelclaw-memory/packages/runtime
-        version: link:../../../joelclaw-memory/packages/runtime
+        specifier: file:../../../joelclaw-memory/packages/runtime
+        version: file:../../../joelclaw-memory/packages/runtime
       effect:
         specifier: 4.0.0-rc.110
         version: 4.0.0-rc.110
@@ -468,11 +468,11 @@ importers:
         specifier: 4.0.0-rc.110
         version: 4.0.0-rc.110(effect@4.0.0-rc.110)
       '@joelclaw-memory/domain':
-        specifier: link:../../../joelclaw-memory/packages/domain
-        version: link:../../../joelclaw-memory/packages/domain
+        specifier: file:../../../joelclaw-memory/packages/domain
+        version: file:../../../joelclaw-memory/packages/domain
       '@joelclaw-memory/postgres':
-        specifier: link:../../../joelclaw-memory/packages/postgres
-        version: link:../../../joelclaw-memory/packages/postgres
+        specifier: file:../../../joelclaw-memory/packages/postgres
+        version: file:../../../joelclaw-memory/packages/postgres
       '@joelclaw/recall':
         specifier: workspace:*
         version: link:../recall
@@ -976,7 +976,7 @@ importers:
         specifier: ^3.19.17
         version: 3.19.17
       fast-xml-parser:
-        specifier: ^5.3.7
+        specifier: 5.3.7
         version: 5.3.7
       gray-matter:
         specifier: ^4.0.3
@@ -991,8 +991,8 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
       joelclaw-video:
-        specifier: link:../../../joelclaw-video
-        version: link:../../../joelclaw-video
+        specifier: file:../../../joelclaw-video
+        version: file:../../../joelclaw-video
       oauth-1.0a:
         specifier: ^2.2.6
         version: 2.2.6

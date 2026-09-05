@@ -8,11 +8,11 @@
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@joelclaw-memory/domain": "link:../../../joelclaw-memory/packages/domain",
-    "@joelclaw-memory/machines": "link:../../../joelclaw-memory/packages/machines",
-    "@joelclaw-memory/ports": "link:../../../joelclaw-memory/packages/ports",
-    "@joelclaw-memory/postgres": "link:../../../joelclaw-memory/packages/postgres",
-    "@joelclaw-memory/runtime": "link:../../../joelclaw-memory/packages/runtime",
+    "@joelclaw-memory/domain": "file:../../../joelclaw-memory/packages/domain",
+    "@joelclaw-memory/machines": "file:../../../joelclaw-memory/packages/machines",
+    "@joelclaw-memory/ports": "file:../../../joelclaw-memory/packages/ports",
+    "@joelclaw-memory/postgres": "file:../../../joelclaw-memory/packages/postgres",
+    "@joelclaw-memory/runtime": "file:../../../joelclaw-memory/packages/runtime",
     "effect": "4.0.0-rc.110",
     "xstate": "5.32.5"
   },

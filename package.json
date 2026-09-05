@@ -37,7 +37,9 @@
   },
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "../joelclaw-memory/packages/*",
+    "../joelclaw-video"
   ],
   "dependencies": {
     "ioredis": "^5.9.3"
