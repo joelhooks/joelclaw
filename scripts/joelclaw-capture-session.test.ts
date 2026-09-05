@@ -81,6 +81,55 @@ describe("Claude capture hook", () => {
     expect(coalesced.source_identity).toMatch(/^sha256:[0-9a-f]{64}$/u);
   });
 
+  test("retains state and outbox when Central returns a numeric string offset", async () => {
+    fixtureRoot = mkdtempSync(join(tmpdir(), "capture-hook-fixture-"));
+    const configDir = join(fixtureRoot, ".joelclaw");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, "auth.json"),
+      JSON.stringify({ user_id: "user", machine_id: "machine", token: "fixture-token" }),
+    );
+    const transcriptPath = join(fixtureRoot, "session.jsonl");
+    const firstLine = `${JSON.stringify({ type: "assistant", message: { role: "assistant", content: "one" } })}\n`;
+    const secondLine = `${JSON.stringify({ type: "assistant", message: { role: "assistant", content: "two" } })}\n`;
+    writeFileSync(transcriptPath, firstLine);
+    const contextPath = join(fixtureRoot, "hook.json");
+    writeFileSync(
+      contextPath,
+      JSON.stringify({ session_id: "session", transcript_path: transcriptPath }),
+    );
+    let requests = 0;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requests += 1;
+        const body = (await request.json()) as CaptureBody;
+        return Response.json(
+          {
+            run_id: body.run_id,
+            status: "accepted",
+            to_offset: requests === 1 ? body.to_offset : String(body.to_offset),
+          },
+          { status: 202 },
+        );
+      },
+    });
+
+    try {
+      const centralUrl = `http://127.0.0.1:${server.port}`;
+      await runHook(fixtureRoot, contextPath, centralUrl);
+      const statePath = join(configDir, "session-state.json");
+      const priorState = readFileSync(statePath, "utf8");
+      appendFileSync(transcriptPath, secondLine);
+      await runHook(fixtureRoot, contextPath, centralUrl);
+
+      expect(readFileSync(statePath, "utf8")).toBe(priorState);
+      expect(readdirSync(join(configDir, "outbox"))).toHaveLength(1);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("reconciles an accepted prefix after an ambiguous response", async () => {
     fixtureRoot = mkdtempSync(join(tmpdir(), "capture-hook-fixture-"));
     const configDir = join(fixtureRoot, ".joelclaw");

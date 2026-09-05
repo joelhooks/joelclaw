@@ -66,6 +66,9 @@ interface CaptureResponse {
   readonly to_offset?: unknown;
 }
 
+const strictAcceptedOffset = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
+
 interface PendingCaptureEnvelope {
   readonly schema_version: 1;
   readonly state_key: string;
@@ -394,13 +397,13 @@ export async function captureNativeRun(
   } catch {
     return degraded("response-invalid", failureContext);
   }
-  const acceptedOffset = Number(accepted.to_offset);
+  const acceptedOffset = strictAcceptedOffset(accepted.to_offset);
   const acceptedRunId = accepted.run_id;
   if (
     (accepted.status !== "accepted" && accepted.status !== "accepted_prefix") ||
     typeof acceptedRunId !== "string" ||
     acceptedRunId.length === 0 ||
-    !Number.isSafeInteger(acceptedOffset) ||
+    acceptedOffset === undefined ||
     acceptedOffset <= fromOffset ||
     acceptedOffset > currentSize ||
     (accepted.status === "accepted" && acceptedOffset !== currentSize)
@@ -659,13 +662,13 @@ export async function replayNativeRunCaptureOutboxes(
           settled = true;
           break;
         }
-        const acceptedOffset = Number(accepted.to_offset);
+        const acceptedOffset = strictAcceptedOffset(accepted.to_offset);
         const acceptedRunId = accepted.run_id;
         if (
           (accepted.status !== "accepted" && accepted.status !== "accepted_prefix") ||
           typeof acceptedRunId !== "string" ||
           acceptedRunId.length === 0 ||
-          !Number.isSafeInteger(acceptedOffset) ||
+          acceptedOffset === undefined ||
           acceptedOffset <= body.from_offset ||
           acceptedOffset > body.to_offset ||
           (accepted.status === "accepted" && acceptedOffset !== body.to_offset)

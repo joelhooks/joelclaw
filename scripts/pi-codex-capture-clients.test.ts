@@ -220,6 +220,51 @@ describe("capture client fixtures", () => {
     }
   });
 
+  test("Codex retains state and outbox when Central returns a numeric string offset", async () => {
+    const fixture = createFixture();
+    const transcriptPath = join(fixture.root, "codex-session.jsonl");
+    writeFileSync(transcriptPath, lines[0]);
+    let requests = 0;
+    const central = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requests += 1;
+        const body = (await request.json()) as CaptureBody;
+        return Response.json(
+          {
+            run_id: body.run_id,
+            status: "accepted",
+            to_offset: requests === 1 ? body.to_offset : String(body.to_offset),
+          },
+          { status: 202 },
+        );
+      },
+    });
+    try {
+      const centralUrl = `http://127.0.0.1:${central.port}`;
+      await invokeCodexCapture({
+        ...fixture,
+        centralUrl,
+        sessionId: "codex-session",
+        transcriptPath,
+      });
+      const statePath = join(fixture.configDir, "codex-session-state.json");
+      const priorState = readFileSync(statePath, "utf8");
+      appendFileSync(transcriptPath, lines[1]);
+      await invokeCodexCapture({
+        ...fixture,
+        centralUrl,
+        sessionId: "codex-session",
+        transcriptPath,
+      });
+
+      expect(readFileSync(statePath, "utf8")).toBe(priorState);
+      expect(readdirSync(join(fixture.configDir, "outbox"))).toHaveLength(1);
+    } finally {
+      central.stop(true);
+    }
+  });
+
   test("Codex coalesces repeated failures under one byte-accurate pending Run", async () => {
     const fixture = createFixture();
     const transcriptPath = join(fixture.root, "codex-session.jsonl");

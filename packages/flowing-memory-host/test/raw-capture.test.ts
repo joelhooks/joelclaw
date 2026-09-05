@@ -403,6 +403,160 @@ describe("raw Run capture", () => {
     expect(requests).toBe(0);
   });
 
+  it("keeps live state and outbox durable when a receipt uses a numeric string offset", async () => {
+    const { authPath, home, wake } = await fixture("codex", "Stop");
+    const env = {
+      HOME: home,
+      JOELCLAW_AUTH_PATH: authPath,
+      JOELCLAW_SESSION_CAPTURE_URL: "https://capture.invalid",
+    };
+    const common = {
+      env,
+      home,
+      verifySource: async () => undefined,
+    };
+    const first = await captureNativeRun(wake, {
+      ...common,
+      fetch: async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json(
+          { run_id: "first-run", status: "accepted", to_offset: body.to_offset },
+          { status: 202 },
+        );
+      },
+      runId: () => "first-run",
+    });
+    expect(first.status).toBe("accepted");
+    const stateDir = path.join(home, ".joelclaw", "capture", "fixture-machine", "codex", "state");
+    const [stateName] = await readdir(stateDir);
+    const statePath = path.join(stateDir, stateName!);
+    const priorState = await readFile(statePath, "utf8");
+    await writeFile(wake.transcriptPath, `${await readFile(wake.transcriptPath, "utf8")}tail\n`);
+
+    const result = await captureNativeRun(wake, {
+      ...common,
+      fetch: async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json(
+          { run_id: "second-run", status: "accepted", to_offset: String(body.to_offset) },
+          { status: 202 },
+        );
+      },
+      runId: () => "second-run",
+    });
+
+    expect(result).toEqual({ status: "degraded", code: "response-invalid" });
+    expect(await readFile(statePath, "utf8")).toBe(priorState);
+    expect(
+      await readdir(path.join(home, ".joelclaw", "capture", "fixture-machine", "codex", "outbox")),
+    ).toHaveLength(1);
+  });
+
+  it("keeps replay state and outbox durable when a receipt uses a numeric string offset", async () => {
+    const { authPath, home, wake } = await fixture("codex", "Stop");
+    const env = {
+      HOME: home,
+      JOELCLAW_AUTH_PATH: authPath,
+      JOELCLAW_SESSION_CAPTURE_URL: "https://capture.invalid",
+    };
+    const common = {
+      env,
+      home,
+      verifySource: async () => undefined,
+    };
+    await captureNativeRun(wake, {
+      ...common,
+      fetch: async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json(
+          { run_id: "first-run", status: "accepted", to_offset: body.to_offset },
+          { status: 202 },
+        );
+      },
+      runId: () => "first-run",
+    });
+    const stateDir = path.join(home, ".joelclaw", "capture", "fixture-machine", "codex", "state");
+    const [stateName] = await readdir(stateDir);
+    const statePath = path.join(stateDir, stateName!);
+    const priorState = await readFile(statePath, "utf8");
+    await writeFile(wake.transcriptPath, `${await readFile(wake.transcriptPath, "utf8")}tail\n`);
+    await captureNativeRun(wake, {
+      ...common,
+      fetch: async () => {
+        throw new Error("offline");
+      },
+      runId: () => "second-run",
+    });
+    const outboxDir = path.join(
+      home,
+      ".joelclaw",
+      "capture",
+      "fixture-machine",
+      "codex",
+      "outbox",
+    );
+    expect(await readdir(outboxDir)).toHaveLength(1);
+
+    const receipt = await replayNativeRunCaptureOutboxes({
+      env,
+      home,
+      fetch: async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json(
+          { run_id: "second-run", status: "accepted", to_offset: String(body.to_offset) },
+          { status: 202 },
+        );
+      },
+    });
+
+    expect(receipt).toMatchObject({ accepted: 0, failed: 1 });
+    expect(await readFile(statePath, "utf8")).toBe(priorState);
+    expect(await readdir(outboxDir)).toHaveLength(1);
+  });
+
+  it.each([
+    { name: "boolean", offset: (_from: number, _to: number): unknown => true },
+    { name: "array", offset: (_from: number, to: number): unknown => [to] },
+    { name: "null", offset: (_from: number, _to: number): unknown => null },
+    { name: "fractional", offset: (_from: number, to: number): unknown => to - 0.5 },
+    { name: "no progress", offset: (from: number, _to: number): unknown => from },
+    { name: "past end", offset: (_from: number, to: number): unknown => to + 1 },
+    {
+      name: "unsafe integer",
+      offset: (_from: number, _to: number): unknown => Number.MAX_SAFE_INTEGER + 1,
+    },
+  ])("rejects a $name accepted offset without removing the live outbox", async ({ offset }) => {
+    const { authPath, home, wake } = await fixture("codex", "Stop");
+    const result = await captureNativeRun(wake, {
+      env: {
+        HOME: home,
+        JOELCLAW_AUTH_PATH: authPath,
+        JOELCLAW_SESSION_CAPTURE_URL: "https://capture.invalid",
+      },
+      fetch: async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as {
+          from_offset: number;
+          to_offset: number;
+        };
+        return Response.json(
+          {
+            run_id: "fixture-run",
+            status: "accepted",
+            to_offset: offset(body.from_offset, body.to_offset),
+          },
+          { status: 202 },
+        );
+      },
+      home,
+      runId: () => "fixture-run",
+      verifySource: async () => undefined,
+    });
+    expect(result).toEqual({ status: "degraded", code: "response-invalid" });
+    expect(
+      await readdir(path.join(home, ".joelclaw", "capture", "fixture-machine", "codex", "outbox")),
+    ).toHaveLength(1);
+  });
+
   it("rejects a success response without a bounded accepted offset", async () => {
     const { authPath, home, wake } = await fixture("codex", "Stop");
     const result = await captureNativeRun(wake, {

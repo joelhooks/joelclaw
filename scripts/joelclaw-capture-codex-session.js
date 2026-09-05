@@ -256,12 +256,15 @@ async function main() {
 
     const payload = await res.json().catch(() => ({}));
     const acceptedRunId = payload.run_id;
-    const acceptedOffset = Number(payload.to_offset);
+    const acceptedOffset =
+      typeof payload.to_offset === "number" && Number.isSafeInteger(payload.to_offset)
+        ? payload.to_offset
+        : undefined;
     const validReceipt =
       (payload.status === "accepted" || payload.status === "accepted_prefix") &&
       typeof acceptedRunId === "string" &&
       acceptedRunId.length > 0 &&
-      Number.isSafeInteger(acceptedOffset) &&
+      acceptedOffset !== undefined &&
       acceptedOffset > lastOffset &&
       acceptedOffset <= currentSize &&
       (payload.status !== "accepted" || acceptedOffset === currentSize);

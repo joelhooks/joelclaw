@@ -291,12 +291,15 @@ async function main() {
       to_offset?: unknown;
     };
     const validStatus = resp.status === "accepted" || resp.status === "accepted_prefix";
-    const acceptedOffset = Number(resp.to_offset);
+    const acceptedOffset =
+      typeof resp.to_offset === "number" && Number.isSafeInteger(resp.to_offset)
+        ? resp.to_offset
+        : undefined;
     const validReceipt =
       validStatus &&
       typeof resp.run_id === "string" &&
       resp.run_id.length > 0 &&
-      Number.isSafeInteger(acceptedOffset) &&
+      acceptedOffset !== undefined &&
       acceptedOffset > lastOffset &&
       acceptedOffset <= currentSize &&
       (resp.status !== "accepted" || acceptedOffset === currentSize);
