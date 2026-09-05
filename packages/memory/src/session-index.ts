@@ -33,6 +33,32 @@ export interface SessionCaptureAppendResult {
   duration_ms: number;
 }
 
+export function findSessionSourceCursor(
+  databasePath: string,
+  userId: string,
+  sourceIdentity: string,
+  fromOffset: number,
+): { readonly run_id: string; readonly started_at: number } | null {
+  const db = new Database(databasePath, { readonly: true, strict: true });
+  try {
+    const row = db
+      .query(`SELECT run_id, started_at FROM runs
+        WHERE user_id = ? AND source_identity = ? AND from_offset = ?
+        ORDER BY captured_at ASC, run_id ASC LIMIT 1`)
+      .get(userId, sourceIdentity, fromOffset) as {
+        run_id?: unknown;
+        started_at?: unknown;
+      } | null;
+    if (row === null) return null;
+    if (typeof row.run_id !== "string" || !Number.isSafeInteger(row.started_at)) {
+      throw new Error("session source cursor lookup failed: invalid-row");
+    }
+    return { run_id: row.run_id, started_at: Number(row.started_at) };
+  } finally {
+    db.close(false);
+  }
+}
+
 export class SessionIndexConflictError extends Error {
   readonly code = "SESSION_INDEX_RUN_CONFLICT";
 

@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type AgentRuntime,
@@ -8,16 +14,36 @@ import {
   runStoreBase,
 } from "@joelclaw/memory";
 import type { Context, Hono } from "hono";
+import { z } from "zod";
 
-const VALID_RUN_RUNTIMES: AgentRuntime[] = [
+const VALID_RUN_RUNTIMES = [
   "pi",
   "claude-code",
   "codex",
+  "cursor",
+  "grok",
   "loop",
   "workload-stage",
   "gateway",
   "other",
-];
+] as const satisfies readonly AgentRuntime[];
+
+const safeOffset = z.number().int().nonnegative().refine(Number.isSafeInteger);
+const RunIngestRequestSchema = z.object({
+  run_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u).optional(),
+  agent_runtime: z.enum(VALID_RUN_RUNTIMES),
+  started_at: safeOffset.optional(),
+  parent_run_id: z.string().min(1).max(128).nullable().optional(),
+  conversation_id: z.string().min(1).max(512).nullable().optional(),
+  source_session_id: z.string().min(1).max(512).optional(),
+  event_id: z.string().min(1).max(512).optional(),
+  tags: z.array(z.string().max(512)).max(128).optional(),
+  jsonl: z.string().min(1),
+  from_offset: safeOffset.optional(),
+  to_offset: safeOffset.optional(),
+  jsonl_sha256: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
+  source_identity: z.string().regex(/^sha256:[0-9a-f]{64}$/u).optional(),
+});
 
 export type MemoryIdentity = {
   user_id: string;
@@ -25,24 +51,11 @@ export type MemoryIdentity = {
   did: string | null;
 };
 
-type RunIngestRequest = {
-  run_id?: string;
-  agent_runtime?: AgentRuntime;
-  started_at?: number;
-  parent_run_id?: string | null;
-  conversation_id?: string | null;
-  tags?: string[];
-  jsonl?: string;
-  from_offset?: number;
-  to_offset?: number;
-  jsonl_sha256?: string;
-  source_identity?: string;
-};
+type ParsedRunIngestRequest = z.infer<typeof RunIngestRequestSchema>;
 
-type ParsedRunIngestRequest = RunIngestRequest & {
-  agent_runtime: AgentRuntime;
-  jsonl: string;
-};
+type RunBodyParseResult =
+  | { readonly ok: true; readonly body: ParsedRunIngestRequest }
+  | { readonly ok: false; readonly code: "invalid-envelope" | "invalid-segment" };
 
 type CapturedRunEvent = {
   name: "memory/run.captured";
@@ -57,6 +70,8 @@ type CapturedRunEvent = {
     started_at: number;
     parent_run_id?: string;
     conversation_id?: string;
+    source_session_id?: string;
+    event_id?: string;
     tags: string[];
     from_offset?: number;
     to_offset?: number;
@@ -79,20 +94,70 @@ function sourceCursorClaimPath(userId: string, sourceIdentity: string, fromOffse
   return join(runStoreBase(), userId, ".source-cursors", `${key}.json`);
 }
 
+function sourceCursorMigrationReady(userId: string): boolean {
+  const markerPath = join(
+    runStoreBase(),
+    userId,
+    ".source-cursors",
+    "migration-v1.json",
+  );
+  try {
+    const marker = JSON.parse(readFileSync(markerPath, "utf8")) as {
+      complete?: unknown;
+      schema_version?: unknown;
+    };
+    return marker.schema_version === 1 && marker.complete === true;
+  } catch {
+    return false;
+  }
+}
+
+function readSourceCursorClaim(
+  userId: string,
+  sourceIdentity: string,
+  fromOffset: number,
+): SourceCursorClaim | null {
+  const path = sourceCursorClaimPath(userId, sourceIdentity, fromOffset);
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8")) as {
+      run_id?: unknown;
+      started_at?: unknown;
+    };
+    if (typeof value.run_id !== "string" || !Number.isSafeInteger(value.started_at)) {
+      throw new Error("run-capture source claim invalid");
+    }
+    return {
+      run_id: value.run_id,
+      started_at: Number(value.started_at),
+      created: false,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 function claimSourceCursor(
   userId: string,
   sourceIdentity: string,
   fromOffset: number,
   runId: string,
   startedAt: number,
+  recovered?: { readonly run_id: string; readonly started_at: number },
 ): SourceCursorClaim {
   const path = sourceCursorClaimPath(userId, sourceIdentity, fromOffset);
   mkdirSync(dirname(path), { recursive: true });
+  const requested = recovered
+    ? { ...recovered, created: false }
+    : { run_id: runId, started_at: startedAt, created: true };
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(temporaryPath, JSON.stringify({ run_id: runId, started_at: startedAt }));
+  writeFileSync(
+    temporaryPath,
+    JSON.stringify({ run_id: requested.run_id, started_at: requested.started_at }),
+  );
   try {
     linkSync(temporaryPath, path);
-    return { run_id: runId, started_at: startedAt, created: true };
+    return requested;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   } finally {
@@ -111,14 +176,35 @@ function claimSourceCursor(
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return claimSourceCursor(userId, sourceIdentity, fromOffset, runId, startedAt);
+      return claimSourceCursor(
+        userId,
+        sourceIdentity,
+        fromOffset,
+        runId,
+        startedAt,
+        recovered,
+      );
     }
     unlinkSync(path);
-    return claimSourceCursor(userId, sourceIdentity, fromOffset, runId, startedAt);
+    return claimSourceCursor(
+      userId,
+      sourceIdentity,
+      fromOffset,
+      runId,
+      startedAt,
+      recovered,
+    );
   }
   if (typeof existing.run_id !== "string" || !Number.isSafeInteger(existing.started_at)) {
     unlinkSync(path);
-    return claimSourceCursor(userId, sourceIdentity, fromOffset, runId, startedAt);
+    return claimSourceCursor(
+      userId,
+      sourceIdentity,
+      fromOffset,
+      runId,
+      startedAt,
+      recovered,
+    );
   }
   return {
     run_id: existing.run_id,
@@ -164,6 +250,29 @@ async function withSourceCursorLock<T>(key: string, operation: () => Promise<T>)
   }
 }
 
+export type RunCaptureFailure = {
+  readonly agentRuntime?: AgentRuntime;
+  readonly code: "internal_error" | "invalid_run_capture" | "run_blob_conflict" | "unauthorized";
+  readonly stage: "authenticate" | "parse" | "persist" | "publish";
+};
+
+export function runCaptureFailureTelemetry(failure: RunCaptureFailure) {
+  return {
+    action: "memory.run.capture.failed",
+    component: "run-capture-route",
+    error: failure.code,
+    level: failure.code === "internal_error" ? "error" : "warn",
+    metadata: {
+      stage: failure.stage,
+      ...(failure.agentRuntime === undefined
+        ? {}
+        : { agent_runtime: failure.agentRuntime }),
+    },
+    source: "memory",
+    success: false,
+  } as const;
+}
+
 export type RunCaptureRouteDependencies = {
   authenticate: (context: Context) => Promise<MemoryIdentity | null>;
   writeRunBlob: (
@@ -174,32 +283,36 @@ export type RunCaptureRouteDependencies = {
     metadata: Record<string, unknown>,
   ) => RunBlobWriteResult;
   sendCaptured: (event: CapturedRunEvent) => Promise<unknown>;
+  emitFailure?: (failure: RunCaptureFailure) => Promise<unknown>;
+  findSourceCursor?: (
+    userId: string,
+    sourceIdentity: string,
+    fromOffset: number,
+  ) =>
+    | Promise<{ readonly run_id: string; readonly started_at: number } | null>
+    | { readonly run_id: string; readonly started_at: number }
+    | null;
   now?: () => number;
   newRunId?: () => string;
 };
 
-function parseRunBody(value: unknown): ParsedRunIngestRequest | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const body = value as RunIngestRequest;
-  if (!body.jsonl || typeof body.jsonl !== "string") return null;
-  if (!body.agent_runtime || !VALID_RUN_RUNTIMES.includes(body.agent_runtime)) return null;
+function parseRunBody(value: unknown): RunBodyParseResult {
+  const parsed = RunIngestRequestSchema.safeParse(value);
+  if (!parsed.success) return { ok: false, code: "invalid-envelope" };
+  const body = parsed.data;
   const { from_offset: fromOffset, to_offset: toOffset } = body;
   const segmentFields = [fromOffset, toOffset, body.jsonl_sha256, body.source_identity];
   if (segmentFields.some((field) => field !== undefined)) {
     if (
-      !Number.isSafeInteger(fromOffset) ||
-      !Number.isSafeInteger(toOffset) ||
-      (fromOffset as number) < 0 ||
+      segmentFields.some((field) => field === undefined) ||
       (toOffset as number) < (fromOffset as number) ||
       (toOffset as number) - (fromOffset as number) !== Buffer.byteLength(body.jsonl, "utf8") ||
-      body.jsonl_sha256 !== createHash("sha256").update(body.jsonl).digest("hex") ||
-      typeof body.source_identity !== "string" ||
-      !/^sha256:[0-9a-f]{64}$/u.test(body.source_identity)
+      body.jsonl_sha256 !== createHash("sha256").update(body.jsonl).digest("hex")
     ) {
-      return null;
+      return { ok: false, code: "invalid-segment" };
     }
   }
-  return body as ParsedRunIngestRequest;
+  return { ok: true, body };
 }
 
 function defaultRunId(): string {
@@ -212,26 +325,51 @@ export function registerRunCaptureRoute(
 ): void {
   const now = dependencies.now ?? Date.now;
   const newRunId = dependencies.newRunId ?? defaultRunId;
+  const emitFailure = async (failure: RunCaptureFailure) => {
+    if (dependencies.emitFailure === undefined) return;
+    await dependencies.emitFailure(failure).catch(() => undefined);
+  };
+  const publishCaptured = async (event: CapturedRunEvent) => {
+    try {
+      return await dependencies.sendCaptured(event);
+    } catch {
+      await emitFailure({
+        agentRuntime: event.data.agent_runtime,
+        code: "internal_error",
+        stage: "publish",
+      });
+      throw new Error("run-capture publish failed");
+    }
+  };
 
   app.post("/api/runs", async (context) => {
-    const auth = await dependencies.authenticate(context);
+    let auth: MemoryIdentity | null;
+    try {
+      auth = await dependencies.authenticate(context);
+    } catch {
+      await emitFailure({ code: "internal_error", stage: "authenticate" });
+      throw new Error("run-capture authentication failed");
+    }
     if (!auth) {
+      await emitFailure({ code: "unauthorized", stage: "authenticate" });
       return context.json({ ok: false, error: { code: "unauthorized" } }, 401);
     }
 
-    const body = parseRunBody(await context.req.json().catch(() => null));
-    if (!body) {
+    const parsed = parseRunBody(await context.req.json().catch(() => null));
+    if (!parsed.ok) {
+      await emitFailure({ code: "invalid_run_capture", stage: "parse" });
       return context.json(
         {
           ok: false,
           error: {
             code: "invalid_run_capture",
-            message: "Body must include jsonl string and valid agent_runtime",
+            message: "Body does not match the Run capture contract",
           },
         },
         400,
       );
     }
+    const body = parsed.body;
 
     const requestedRunId = body.run_id ?? newRunId();
     const requestedStartedAt = body.started_at ?? now();
@@ -244,16 +382,51 @@ export function registerRunCaptureRoute(
         : `legacy:${auth.user_id}:${requestedRunId}`;
 
     return withSourceCursorLock(cursorKey, async () => {
-      const claim =
-        body.source_identity !== undefined && body.from_offset !== undefined
-          ? claimSourceCursor(
+      let claim: SourceCursorClaim;
+      try {
+        if (body.source_identity !== undefined && body.from_offset !== undefined) {
+          const existing = readSourceCursorClaim(
+            auth.user_id,
+            body.source_identity,
+            body.from_offset,
+          );
+          const recovered =
+            existing === null && dependencies.findSourceCursor !== undefined
+              ? await dependencies.findSourceCursor(
+                  auth.user_id,
+                  body.source_identity,
+                  body.from_offset,
+                )
+              : null;
+          if (
+            existing === null &&
+            dependencies.findSourceCursor !== undefined &&
+            recovered === null &&
+            !sourceCursorMigrationReady(auth.user_id)
+          ) {
+            throw new Error("run-capture source cursor migration required");
+          }
+          claim =
+            existing ??
+            claimSourceCursor(
               auth.user_id,
               body.source_identity,
               body.from_offset,
               requestedRunId,
               requestedStartedAt,
-            )
-          : { run_id: requestedRunId, started_at: requestedStartedAt, created: true };
+              recovered ?? undefined,
+            );
+        } else {
+          claim = { run_id: requestedRunId, started_at: requestedStartedAt, created: true };
+        }
+      } catch {
+        await emitFailure({
+          agentRuntime: body.agent_runtime,
+          code: "internal_error",
+          stage: "persist",
+        });
+        throw new Error("run-capture source claim failed");
+      }
       const runId = claim.run_id;
       const startedAt = claim.started_at;
       let blob: RunBlobWriteResult;
@@ -265,6 +438,8 @@ export function registerRunCaptureRoute(
           agent_runtime: body.agent_runtime,
           parent_run_id: body.parent_run_id ?? null,
           conversation_id: body.conversation_id ?? null,
+          source_session_id: body.source_session_id ?? null,
+          event_id: body.event_id ?? null,
           tags,
           started_at: startedAt,
           captured_at: now(),
@@ -293,7 +468,7 @@ export function registerRunCaptureRoute(
             sameCursor &&
             typeof existingToOffset === "number"
           ) {
-            await dependencies.sendCaptured({
+            await publishCaptured({
               name: "memory/run.captured",
               data: {
                 run_id: runId,
@@ -306,6 +481,8 @@ export function registerRunCaptureRoute(
                 started_at: startedAt,
                 parent_run_id: body.parent_run_id ?? undefined,
                 conversation_id: body.conversation_id ?? undefined,
+                source_session_id: body.source_session_id,
+                event_id: body.event_id,
                 tags,
                 from_offset: body.from_offset,
                 to_offset: existingToOffset,
@@ -326,6 +503,7 @@ export function registerRunCaptureRoute(
             );
           }
           if (
+            claim.created &&
             body.source_identity !== undefined &&
             body.from_offset !== undefined &&
             (!sameSource || !sameCursor)
@@ -337,6 +515,11 @@ export function registerRunCaptureRoute(
               claim,
             );
           }
+          await emitFailure({
+            agentRuntime: body.agent_runtime,
+            code: "run_blob_conflict",
+            stage: "persist",
+          });
           return context.json(
             {
               ok: false,
@@ -348,7 +531,12 @@ export function registerRunCaptureRoute(
             409,
           );
         }
-        throw error;
+        await emitFailure({
+          agentRuntime: body.agent_runtime,
+          code: "internal_error",
+          stage: "persist",
+        });
+        throw new Error("run-capture persistence failed");
       }
 
       if (
@@ -358,7 +546,14 @@ export function registerRunCaptureRoute(
           blob.metadata.from_offset !== body.from_offset ||
           blob.metadata.to_offset !== body.from_offset + blob.jsonl_bytes)
       ) {
-        releaseSourceCursorClaim(auth.user_id, body.source_identity, body.from_offset, claim);
+        if (claim.created) {
+          releaseSourceCursorClaim(auth.user_id, body.source_identity, body.from_offset, claim);
+        }
+        await emitFailure({
+          agentRuntime: body.agent_runtime,
+          code: "run_blob_conflict",
+          stage: "persist",
+        });
         return context.json(
           {
             ok: false,
@@ -376,7 +571,7 @@ export function registerRunCaptureRoute(
           typeof blob.metadata.to_offset === "number"
             ? blob.metadata.to_offset
             : (body.from_offset as number) + blob.jsonl_bytes;
-        await dependencies.sendCaptured({
+        await publishCaptured({
           name: "memory/run.captured",
           data: {
             run_id: runId,
@@ -389,6 +584,8 @@ export function registerRunCaptureRoute(
             started_at: startedAt,
             parent_run_id: body.parent_run_id ?? undefined,
             conversation_id: body.conversation_id ?? undefined,
+            source_session_id: body.source_session_id,
+            event_id: body.event_id,
             tags,
             from_offset: body.from_offset,
             to_offset: existingToOffset,
@@ -409,7 +606,7 @@ export function registerRunCaptureRoute(
         );
       }
 
-      await dependencies.sendCaptured({
+      await publishCaptured({
         name: "memory/run.captured",
         data: {
           run_id: runId,
@@ -422,6 +619,8 @@ export function registerRunCaptureRoute(
           started_at: startedAt,
           parent_run_id: body.parent_run_id ?? undefined,
           conversation_id: body.conversation_id ?? undefined,
+          source_session_id: body.source_session_id,
+          event_id: body.event_id,
           tags,
           from_offset: body.from_offset,
           to_offset: body.to_offset,

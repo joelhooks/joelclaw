@@ -31,12 +31,21 @@ const {
 const { homedir, hostname } = require("node:os");
 const { basename, dirname, join } = require("node:path");
 
-const CENTRAL_URL = process.env.JOELCLAW_CENTRAL_URL || "http://127.0.0.1:3111";
+const CENTRAL_URL =
+  process.env.JOELCLAW_SESSION_CAPTURE_URL ||
+  process.env.JOELCLAW_CENTRAL_URL ||
+  "http://127.0.0.1:3111";
 const AUTH_PATH = process.env.JOELCLAW_AUTH_PATH || join(homedir(), ".joelclaw", "auth.json");
 const STATE_PATH = join(homedir(), ".joelclaw", "codex-session-state.json");
 const OUTBOX_DIR = join(homedir(), ".joelclaw", "outbox");
 const LOG_PATH = join(homedir(), ".joelclaw", "codex-capture.log");
 const RUNTIME = "codex";
+const HTTP_TIMEOUT_MS = positiveInteger(process.env.JOELCLAW_CAPTURE_HTTP_TIMEOUT_MS, 750);
+
+function positiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function respond(extra = {}) {
   process.stdout.write(JSON.stringify({ continue: true, suppressOutput: true, ...extra }));
@@ -195,6 +204,8 @@ async function main() {
   const outboxPath = pendingOutboxPath(identity, lastOffset);
   const pending = readPending(outboxPath);
   const runId = typeof pending?.run_id === "string" ? pending.run_id : newRunId();
+  const digest = sha256(deltaBytes);
+  const eventId = `capture:${sha256(JSON.stringify([RUNTIME, identity, lastOffset, digest])).slice(0, 40)}`;
   const body = {
     run_id: runId,
     agent_runtime: RUNTIME,
@@ -208,10 +219,12 @@ async function main() {
     ],
     started_at: typeof pending?.started_at === "number" ? pending.started_at : Date.now(),
     conversation_id: sessionId,
+    source_session_id: sessionId,
+    event_id: eventId,
     source_identity: identity,
     from_offset: lastOffset,
     to_offset: currentSize,
-    jsonl_sha256: sha256(deltaBytes),
+    jsonl_sha256: digest,
     jsonl: delta,
   };
   if (ctx.cwd) body.cwd = String(ctx.cwd);
@@ -226,28 +239,38 @@ async function main() {
       headers: {
         Authorization: `Bearer ${auth.token}`,
         "Content-Type": "application/json",
+        "Idempotency-Key": `sha256:${sha256(
+          JSON.stringify([auth.machine_id, RUNTIME, identity, lastOffset, digest]),
+        )}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
 
     if (!res.ok) {
-      const text = await res.text();
-      const outbox = writeToOutbox(outboxPath, body);
-      log(
-        `POST failed status=${res.status} session=${sessionId}; outboxed=${outbox}; ${text.slice(0, 200)}`,
-      );
+      writeToOutbox(outboxPath, body);
+      log(`POST failed status=${res.status} code=http-error`);
       respond();
       return;
     }
 
     const payload = await res.json().catch(() => ({}));
-    const acceptedRunId = payload.run_id || runId;
-    const acceptedOffset =
-      Number.isSafeInteger(payload.to_offset) &&
-      payload.to_offset >= lastOffset &&
-      payload.to_offset <= currentSize
-        ? payload.to_offset
-        : currentSize;
+    const acceptedRunId = payload.run_id;
+    const acceptedOffset = Number(payload.to_offset);
+    const validReceipt =
+      (payload.status === "accepted" || payload.status === "accepted_prefix") &&
+      typeof acceptedRunId === "string" &&
+      acceptedRunId.length > 0 &&
+      Number.isSafeInteger(acceptedOffset) &&
+      acceptedOffset > lastOffset &&
+      acceptedOffset <= currentSize &&
+      (payload.status !== "accepted" || acceptedOffset === currentSize);
+    if (!validReceipt) {
+      writeToOutbox(outboxPath, body);
+      log("POST failed code=invalid-receipt");
+      respond();
+      return;
+    }
     const acceptedLineCount = countSubstantiveLines(
       deltaBytes.subarray(0, acceptedOffset - lastOffset).toString("utf8"),
     );

@@ -5,4 +5,5 @@ export * from "./installer.js";
 export * from "./opencode-authority.js";
 export * from "./opencode-producer.js";
 export * from "./opencode-source.js";
+export * from "./raw-capture.js";
 export * from "./trusted-admission.js";

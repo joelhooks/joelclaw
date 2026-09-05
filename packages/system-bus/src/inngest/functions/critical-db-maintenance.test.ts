@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { InngestTestEngine } from "@inngest/test";
 import { readFreshness } from "../../../../cli/src/lib/critical-search";
@@ -13,6 +13,7 @@ import {
   inspectCriticalDbFreshness,
   parseCriticalDbLockRecovery,
   parseCriticalDbLockTelemetry,
+  parseCriticalMemoryArchiveTelemetry,
   processCriticalDbFreshness,
   processCriticalDbRebuildFailure,
   runCriticalDbBuilder,
@@ -111,8 +112,8 @@ describe("critical.db freshness contract", () => {
     expect(inspect(path).stale).toBe(stale);
   });
 
-  test.each(__criticalDbMaintenanceTestUtils.REQUIRED_SOURCES)(
-    "matches the port when %s passes the seven-day threshold",
+  test.each([...__criticalDbMaintenanceTestUtils.LIVE_SOURCES])(
+    "matches the port when live source %s passes the seven-day threshold",
     async (source) => {
       const current = new Date(NOW).toISOString();
       const path = await fixtureDb({
@@ -128,7 +129,20 @@ describe("critical.db freshness contract", () => {
     },
   );
 
-  test.each(__criticalDbMaintenanceTestUtils.REQUIRED_SOURCES)(
+  test("does not treat the deliberately frozen archive as a live freshness clock", async () => {
+    const current = new Date(NOW).toISOString();
+    const path = await fixtureDb({
+      builtAt: new Date(NOW - HOUR).toISOString(),
+      sources: sourceReports(current, {
+        "archive:memory_observations": {
+          highWaterAt: new Date(NOW - 30 * DAY).toISOString(),
+        },
+      }),
+    });
+    expect(inspect(path)).toMatchObject({ portStatus: "ok", stale: false, reasons: [] });
+  });
+
+  test.each([...__criticalDbMaintenanceTestUtils.REQUIRED_SOURCES])(
     "matches the port when %s is degraded",
     async (source) => {
       const current = new Date(NOW).toISOString();
@@ -227,6 +241,14 @@ describe("critical.db scheduled rebuild failures", () => {
         quarantinedAt: "2026-08-27T05:30:00.000Z",
         quarantineRetained: true,
       },
+      memoryArchive: {
+        filename: "memory_observations-fixture.jsonl",
+        bytes: 1234,
+        sha256: "a".repeat(64),
+        verification: "pinned",
+        source: "frozen-default",
+        path: "/private/path/memory_observations-fixture.jsonl",
+      },
       lockWarnings: [
         {
           operation: "stale-quarantine-cleanup",
@@ -275,6 +297,13 @@ describe("critical.db scheduled rebuild failures", () => {
       ],
     });
     expect(parseCriticalDbLockRecovery(stdout)).toEqual(telemetry.recovery);
+    expect(parseCriticalMemoryArchiveTelemetry(stdout)).toEqual({
+      filename: "memory_observations-fixture.jsonl",
+      bytes: 1234,
+      sha256: "a".repeat(64),
+      verification: "pinned",
+      source: "frozen-default",
+    });
     expect(JSON.stringify(telemetry)).not.toContain("private-host");
     expect(JSON.stringify(telemetry)).not.toContain("/private/path");
     expect(JSON.stringify(telemetry)).not.toContain("do-not-emit");
@@ -287,11 +316,36 @@ describe("critical.db scheduled rebuild failures", () => {
     fixtureRoots.push(root);
     await mkdir(root, { recursive: true });
     const dbPath = join(root, "critical.db");
+    const archivePath = join(root, "fixture-memory.jsonl");
+    await writeFile(archivePath, `${JSON.stringify({ id: "synthetic" })}\n`);
     await mkdir(`${dbPath}.build-lock`);
     await expect(runCriticalDbBuilder({
-      env: { ...process.env, JOELCLAW_CRITICAL_DB: dbPath },
+      env: {
+        ...process.env,
+        JOELCLAW_CRITICAL_DB: dbPath,
+        JOELCLAW_CRITICAL_DB_SKIP_TYPESENSE: "1",
+        MEMORY_OBSERVATIONS_ARCHIVE: archivePath,
+      },
       timeoutMs: 30_000,
-    })).rejects.toThrow(/builder exited 1:.*builder lock is held/u);
+    })).rejects.toThrow("critical.db builder failed: lock-held");
+  });
+
+  test("classifies archive preflight failures without exposing the configured path", async () => {
+    const missingPath = join("/tmp", `missing-archive-${crypto.randomUUID()}.jsonl`);
+    let detail = "";
+    try {
+      await runCriticalDbBuilder({
+        env: {
+          ...process.env,
+          MEMORY_OBSERVATIONS_ARCHIVE: missingPath,
+        },
+        timeoutMs: 30_000,
+      });
+    } catch (error) {
+      detail = error instanceof Error ? error.message : String(error);
+    }
+    expect(detail).toBe("critical.db builder failed: archive-not-found");
+    expect(detail).not.toContain(missingPath);
   });
 
   test("delegates rebuild failures and recovery to the latch adapter", async () => {
@@ -380,10 +434,13 @@ describe("critical.db scheduled rebuild failures", () => {
       step: { run: async (_name: string, callback: () => Promise<unknown>) => callback() },
     });
     expect(alerts).toEqual([
-      expect.objectContaining({ detail: expect.stringContaining("builder exited 1") }),
+      expect.objectContaining({ detail: "critical.db builder failed: process-failed" }),
     ]);
     expect(failures).toEqual([
-      expect.objectContaining({ alerted: true, detail: expect.stringContaining("builder exited 1") }),
+      expect.objectContaining({
+        alerted: true,
+        detail: "critical.db builder failed: process-failed",
+      }),
     ]);
   });
 });

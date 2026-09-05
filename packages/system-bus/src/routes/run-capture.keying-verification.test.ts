@@ -248,7 +248,7 @@ function assertIndexedOnce(root: string, events: CapturedEvent[], expected: stri
   expect(reconstructed).toBe(expected);
   expect(rows.reduce((sum, row) => sum + row.jsonl_bytes, 0)).toBe(Buffer.byteLength(expected));
   for (let index = 1; index < rows.length; index += 1) {
-    expect(rows[index].from_offset).toBe(rows[index - 1].to_offset);
+    expect(rows[index]!.from_offset).toBe(rows[index - 1]!.to_offset);
   }
   db.close(false);
 }
@@ -270,8 +270,8 @@ describe("Typesense reboot recovery source-cursor verification", () => {
         0,
         Buffer.byteLength(first),
       ]);
-      expect(chain.requests[1].run_id).toBe(chain.requests[0].run_id);
-      expect(chain.requests[2].jsonl).toBe(second);
+      expect(chain.requests[1]!.run_id).toBe(chain.requests[0]!.run_id);
+      expect(chain.requests[2]!.jsonl).toBe(second);
       assertIndexedOnce(chain.fixture.root, chain.route.events, first + second);
     } finally {
       chain.proxy.stop(true);
@@ -295,9 +295,9 @@ describe("Typesense reboot recovery source-cursor verification", () => {
       expect(chain.requests).toHaveLength(4);
       expect(new Set(chain.requests.slice(0, 3).map((request) => request.run_id)).size).toBe(1);
       expect(chain.requests.slice(0, 3).map((request) => request.from_offset)).toEqual([0, 0, 0]);
-      expect(chain.requests[3].from_offset).toBe(Buffer.byteLength(first));
-      expect(chain.requests[3].jsonl).toBe(second + third);
-      expect(chain.requests[3].parent_run_id).toBe(chain.requests[0].run_id);
+      expect(chain.requests[3]!.from_offset).toBe(Buffer.byteLength(first));
+      expect(chain.requests[3]!.jsonl).toBe(second + third);
+      expect(chain.requests[3]!.parent_run_id).toBe(chain.requests[0]!.run_id);
       assertIndexedOnce(chain.fixture.root, chain.route.events, first + second + third);
     } finally {
       chain.proxy.stop(true);
@@ -352,7 +352,7 @@ describe("Typesense reboot recovery source-cursor verification", () => {
       },
     });
     expect(events).toHaveLength(1);
-    expect(readFileSync(events[0].data.jsonl_path, "utf8")).toMatch(/left|right/u);
+    expect(readFileSync(events[0]!.data.jsonl_path, "utf8")).toMatch(/left|right/u);
   });
 
   test("consumer dedupes same-start prefix overlap under distinct Run IDs", () => {
@@ -408,7 +408,7 @@ describe("Typesense reboot recovery source-cursor verification", () => {
     const originalFetch = globalThis.fetch;
     const originalIndexPath = process.env.SESSION_INDEX_PATH;
     const originalOtel = process.env.OTEL_EVENTS_ENABLED;
-    globalThis.fetch = (async () => new Response("{}", { status: 200 })) as typeof fetch;
+    globalThis.fetch = (async () => new Response("{}", { status: 200 })) as unknown as typeof fetch;
     process.env.SESSION_INDEX_PATH = databasePath;
     process.env.OTEL_EVENTS_ENABLED = "0";
 

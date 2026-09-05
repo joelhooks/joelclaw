@@ -10,6 +10,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AdmissionCommandV1 } from "@joelclaw-memory/domain";
@@ -2600,6 +2601,36 @@ describe("collector byte boundaries", () => {
     expect(Object.values(state.streams).some((entry) => entry.closed === true)).toBe(true);
   });
 
+  it("falls back to the durable spool when the collector socket hangs", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "fm-hung-collector-"));
+    const socketPath = path.join(root, "collector.sock");
+    const spoolPath = path.join(root, "wake.jsonl");
+    const transcriptPath = path.join(root, "session.jsonl");
+    await writeFile(transcriptPath, "one\n");
+    const decoded = decodeNativeEvent("pi", wakeInput("pi", transcriptPath));
+    if (decoded._tag !== "Accepted") throw new Error("expected wake");
+    let peer: Socket | undefined;
+    const server = createServer((socket) => {
+      peer = socket;
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    try {
+      await submitNativeWake({
+        socketPath,
+        socketTimeoutMs: 10,
+        spoolPath,
+        wake: decoded.wake,
+      });
+      expect(await readFile(spoolPath, "utf8")).toContain(decoded.wake.eventId);
+    } finally {
+      peer?.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("defers rebuildable derived-stream divergence instead of quarantining the wake", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "fm-collector-derived-divergence-"));
     const transcriptPath = path.join(root, "session.jsonl");
@@ -2778,6 +2809,7 @@ describe("reversible Pi installer", () => {
                 (group.hooks ?? []).filter((handler) => handler.command === fragmentRef),
               );
         expect(matches).toHaveLength(1);
+        expect(matches[0]).toMatchObject({ timeout: 8 });
       }
       expect(await doctorHookFragment(manifestPath, runtime)).toMatchObject({
         expectedEvents: expected[runtime],

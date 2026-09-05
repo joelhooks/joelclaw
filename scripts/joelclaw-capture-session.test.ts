@@ -114,12 +114,17 @@ describe("Claude capture hook", () => {
         if (requests.length === 1) return Response.json({ error: "response lost" }, { status: 500 });
         if (requests.length === 2) {
           return Response.json(
-            { ok: true, run_id: requests[0].run_id, to_offset: requests[0].to_offset },
+            {
+              ok: true,
+              run_id: requests[0].run_id,
+              status: "accepted_prefix",
+              to_offset: requests[0].to_offset,
+            },
             { status: 202 },
           );
         }
         return Response.json(
-          { ok: true, run_id: body.run_id, to_offset: body.to_offset },
+          { ok: true, run_id: body.run_id, status: "accepted", to_offset: body.to_offset },
           { status: 202 },
         );
       },

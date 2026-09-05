@@ -1,12 +1,21 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendSessionCapture, writeRunBlob } from "@joelclaw/memory";
+import {
+  appendSessionCapture,
+  findSessionSourceCursor,
+  writeRunBlob,
+} from "@joelclaw/memory";
 import { Hono } from "hono";
-import { registerRunCaptureRoute } from "./run-capture";
+import {
+  type RunCaptureFailure,
+  type RunCaptureRouteDependencies,
+  registerRunCaptureRoute,
+  runCaptureFailureTelemetry,
+} from "./run-capture";
 
 let fixtureRoot: string | undefined;
 
@@ -30,10 +39,11 @@ function captureBody(runId: string, jsonl: string, fromOffset = 0) {
   };
 }
 
-function fixtureApp() {
+function fixtureApp(findSourceCursor?: RunCaptureRouteDependencies["findSourceCursor"]) {
   fixtureRoot = mkdtempSync(join(tmpdir(), "run-capture-route-"));
   process.env.MEMORY_RUN_STORE = fixtureRoot;
   const events: unknown[] = [];
+  const failures: RunCaptureFailure[] = [];
   const app = new Hono();
   registerRunCaptureRoute(app, {
     authenticate: async () => ({ user_id: "user", machine_id: "machine", did: null }),
@@ -41,9 +51,13 @@ function fixtureApp() {
     sendCaptured: async (event) => {
       events.push(event);
     },
+    emitFailure: async (failure) => {
+      failures.push(failure);
+    },
+    ...(findSourceCursor ? { findSourceCursor } : {}),
     now: () => Date.UTC(2026, 0, 2),
   });
-  return { app, events };
+  return { app, events, failures };
 }
 
 function createSessionIndex(path: string): void {
@@ -72,7 +86,7 @@ function createSessionIndex(path: string): void {
   db.close(false);
 }
 
-async function post(app: Hono, body: ReturnType<typeof captureBody>) {
+async function post(app: Hono, body: unknown) {
   return app.request("/api/runs", {
     method: "POST",
     headers: { Authorization: "Bearer fixture", "Content-Type": "application/json" },
@@ -209,6 +223,112 @@ describe("POST /api/runs redelivery", () => {
     db.close(false);
   });
 
+  test("recovers a source-cursor claim from the indexed pre-sidecar Run", async () => {
+    let databasePath = "";
+    const { app, events } = fixtureApp((userId, sourceIdentity, fromOffset) =>
+      findSessionSourceCursor(databasePath, userId, sourceIdentity, fromOffset),
+    );
+    databasePath = join(fixtureRoot as string, "sessions.db");
+    createSessionIndex(databasePath);
+    const source = `sha256:${"c".repeat(64)}`;
+    const prefix = "stored-prefix\n";
+    const suffix = "new-suffix\n";
+    const originalRunId = "b".repeat(26);
+    const startedAt = Date.UTC(2025, 11, 1);
+    const blob = writeRunBlob("user", originalRunId, startedAt, prefix, {
+      run_id: originalRunId,
+      user_id: "user",
+      machine_id: "machine",
+      agent_runtime: "cursor",
+      started_at: startedAt,
+      source_identity: source,
+      from_offset: 0,
+      to_offset: Buffer.byteLength(prefix),
+    });
+    appendSessionCapture({
+      databasePath,
+      capturePath: blob.jsonl_path,
+      runId: originalRunId,
+      userId: "user",
+      machineId: "machine",
+      agentRuntime: "cursor",
+      sourceIdentity: source,
+      fromOffset: 0,
+      toOffset: Buffer.byteLength(prefix),
+      startedAt,
+      capturedAt: startedAt + 1,
+      jsonlPath: blob.jsonl_path,
+      jsonlBytes: blob.jsonl_bytes,
+      jsonlSha256: blob.jsonl_sha256,
+    });
+    const markerRoot = join(fixtureRoot as string, "user", ".source-cursors");
+    mkdirSync(markerRoot, { recursive: true });
+    writeFileSync(
+      join(markerRoot, "migration-v1.json"),
+      JSON.stringify({ schema_version: 1, complete: true }),
+    );
+
+    const replay = await post(app, {
+      ...captureBody("c".repeat(26), prefix + suffix),
+      agent_runtime: "cursor",
+      source_identity: source,
+    });
+    expect(replay.status).toBe(202);
+    expect(await replay.json()).toMatchObject({
+      run_id: originalRunId,
+      status: "accepted_prefix",
+      to_offset: Buffer.byteLength(prefix),
+    });
+    expect(
+      (
+        await post(app, {
+          ...captureBody("d".repeat(26), suffix, Buffer.byteLength(prefix)),
+          agent_runtime: "cursor",
+          source_identity: source,
+        })
+      ).status,
+    ).toBe(202);
+    expect(events).toHaveLength(2);
+  });
+
+  test("fails closed when the migration index lookup is unavailable", async () => {
+    const { app, events, failures } = fixtureApp(() => {
+      throw new Error("private database failure");
+    });
+    const response = await post(app, captureBody("e".repeat(26), "safe\n"));
+    expect(response.status).toBe(500);
+    expect(events).toEqual([]);
+    expect(failures).toEqual([
+      { agentRuntime: "pi", code: "internal_error", stage: "persist" },
+    ]);
+  });
+
+  test("requires the offline authoritative migration before trusting an index miss", async () => {
+    const { app, events } = fixtureApp(() => null);
+    const response = await post(app, captureBody("9".repeat(26), "safe\n"));
+    expect(response.status).toBe(500);
+    expect(events).toEqual([]);
+  });
+
+  test("uses the durable sidecar before consulting the migration index", async () => {
+    let lookups = 0;
+    const { app } = fixtureApp(() => {
+      lookups += 1;
+      if (lookups > 1) throw new Error("migration index should not be required");
+      return null;
+    });
+    const markerRoot = join(fixtureRoot as string, "user", ".source-cursors");
+    mkdirSync(markerRoot, { recursive: true });
+    writeFileSync(
+      join(markerRoot, "migration-v1.json"),
+      JSON.stringify({ schema_version: 1, complete: true }),
+    );
+    const body = captureBody("f".repeat(26), "safe\n");
+    expect((await post(app, body)).status).toBe(202);
+    expect((await post(app, body)).status).toBe(202);
+    expect(lookups).toBe(1);
+  });
+
   test("accepts exact fresh-ID replay and rejects shorter or divergent cursor reuse", async () => {
     const { app, events } = fixtureApp();
     const original = captureBody("2".repeat(26), "one\ntwo\n", 512);
@@ -240,7 +360,7 @@ describe("POST /api/runs redelivery", () => {
   });
 
   test("returns 409 for divergent bytes under one Run ID", async () => {
-    const { app, events } = fixtureApp();
+    const { app, events, failures } = fixtureApp();
     const runId = "d".repeat(26);
     const first = captureBody(runId, "one\n");
     const divergent = captureBody(runId, "nope\n");
@@ -254,5 +374,131 @@ describe("POST /api/runs redelivery", () => {
       error: { code: "run_blob_conflict" },
     });
     expect(events).toHaveLength(1);
+    expect(failures).toContainEqual({
+      agentRuntime: "pi",
+      code: "run_blob_conflict",
+      stage: "persist",
+    });
+  });
+});
+
+describe("POST /api/runs receiver contract", () => {
+  test.each(["cursor", "grok"] as const)(
+    "accepts validated %s Runs and preserves receiver identities",
+    async (agentRuntime) => {
+      const { app, events } = fixtureApp();
+      const body = {
+        ...captureBody(`${agentRuntime[0]}`.repeat(26), "synthetic\n"),
+        agent_runtime: agentRuntime,
+        event_id: `fixture:${agentRuntime}:event`,
+        source_session_id: `fixture-${agentRuntime}-session`,
+      };
+
+      expect((await post(app, body)).status).toBe(202);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        name: "memory/run.captured",
+        data: {
+          agent_runtime: agentRuntime,
+          event_id: body.event_id,
+          source_session_id: body.source_session_id,
+        },
+      });
+    },
+  );
+
+  test.each([
+    { name: "unknown runtime", patch: { agent_runtime: "unknown-runtime" } },
+    { name: "invalid run id", patch: { run_id: "../escape" } },
+    { name: "partial segment", patch: { to_offset: undefined } },
+    { name: "wrong byte range", patch: { to_offset: 1 } },
+    { name: "wrong digest", patch: { jsonl_sha256: "0".repeat(64) } },
+    { name: "unhashed source", patch: { source_identity: "fixture-session" } },
+  ])("rejects $name without storing or publishing", async ({ patch }) => {
+    const { app, events, failures } = fixtureApp();
+    const response = await post(app, {
+      ...captureBody("8".repeat(26), "synthetic\n"),
+      ...patch,
+    });
+
+    expect(response.status).toBe(400);
+    expect(events).toHaveLength(0);
+    expect(failures).toEqual([{ code: "invalid_run_capture", stage: "parse" }]);
+    expect(JSON.stringify(failures)).not.toContain("synthetic");
+  });
+
+  test("emits a bounded unauthorized failure without request details", async () => {
+    const failures: RunCaptureFailure[] = [];
+    const app = new Hono();
+    registerRunCaptureRoute(app, {
+      authenticate: async () => null,
+      writeRunBlob,
+      sendCaptured: async () => undefined,
+      emitFailure: async (failure) => {
+        failures.push(failure);
+      },
+    });
+
+    const response = await post(app, {
+      ...captureBody("9".repeat(26), "secret-looking-fixture\n"),
+      credential: "must-not-leak",
+    });
+    expect(response.status).toBe(401);
+    expect(failures).toEqual([{ code: "unauthorized", stage: "authenticate" }]);
+    expect(JSON.stringify(failures)).not.toContain("must-not-leak");
+  });
+
+  test("maps failures to the canonical queryable OTEL shape", () => {
+    const events = [
+      runCaptureFailureTelemetry({
+        agentRuntime: "cursor",
+        code: "run_blob_conflict",
+        stage: "persist",
+      }),
+      runCaptureFailureTelemetry({ code: "unauthorized", stage: "authenticate" }),
+    ];
+    expect(events.filter((event) => event.action === "memory.run.capture.failed")).toEqual([
+      {
+        action: "memory.run.capture.failed",
+        component: "run-capture-route",
+        error: "run_blob_conflict",
+        level: "warn",
+        metadata: { agent_runtime: "cursor", stage: "persist" },
+        source: "memory",
+        success: false,
+      },
+      {
+        action: "memory.run.capture.failed",
+        component: "run-capture-route",
+        error: "unauthorized",
+        level: "warn",
+        metadata: { stage: "authenticate" },
+        source: "memory",
+        success: false,
+      },
+    ]);
+  });
+
+  test("emits a bounded publish failure without exception details", async () => {
+    fixtureRoot = mkdtempSync(join(tmpdir(), "run-capture-route-"));
+    process.env.MEMORY_RUN_STORE = fixtureRoot;
+    const failures: RunCaptureFailure[] = [];
+    const app = new Hono();
+    registerRunCaptureRoute(app, {
+      authenticate: async () => ({ user_id: "user", machine_id: "machine", did: null }),
+      writeRunBlob,
+      sendCaptured: async () => {
+        throw new Error("private publish detail");
+      },
+      emitFailure: async (failure) => {
+        failures.push(failure);
+      },
+    });
+
+    expect((await post(app, captureBody("a".repeat(26), "synthetic\n"))).status).toBe(500);
+    expect(failures).toEqual([
+      { agentRuntime: "pi", code: "internal_error", stage: "publish" },
+    ]);
+    expect(JSON.stringify(failures)).not.toContain("private publish detail");
   });
 });

@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { resolve } from "node:path";
 import {
+  CRITICAL_DB_LIVE_SOURCES,
   CRITICAL_DB_REQUIRED_SOURCES,
   CRITICAL_DB_SOURCE_STALE_AFTER_MS,
   evaluateCriticalDbFreshness,
@@ -27,6 +28,7 @@ const INCIDENT_QUIET_WINDOW_MS = 24 * 60 * 60_000;
 const HARD_ALERT_ATTEMPT_CAP = 3;
 const MAX_SUBPROCESS_OUTPUT = 8_000;
 const BUILDER_TIMEOUT_MS = 30 * 60_000;
+const LIVE_SOURCE_NAMES = new Set<string>(CRITICAL_DB_LIVE_SOURCES);
 
 export type CriticalDbSourceFreshness = {
   status: string;
@@ -153,7 +155,7 @@ export function inspectCriticalDbFreshness(input: {
         const source = sources[sourceName];
         if (!source) reasons.push(`${sourceName} is missing`);
         else if (source.status !== "ok") reasons.push(`${sourceName} status is ${source.status}`);
-        else if (source.freshness === "stale") {
+        else if (LIVE_SOURCE_NAMES.has(sourceName) && source.freshness === "stale") {
           reasons.push(`${sourceName} high-water age ${source.ageMs}ms exceeds ${sourceStaleAfterMs}ms`);
         }
       }
@@ -256,39 +258,86 @@ async function notifyCriticalDbRebuildFailure(detail: string, eventId: string): 
   return receipt.sent;
 }
 
+export type CriticalDbBuilderFailureCode =
+  | "archive-checksum-mismatch"
+  | "archive-not-found"
+  | "lock-held"
+  | "process-failed"
+  | "required-source-degraded"
+  | "timeout";
+
+function classifyCriticalDbBuilderFailure(
+  detail: string,
+  timedOut: boolean,
+): CriticalDbBuilderFailureCode {
+  if (timedOut) return "timeout";
+  if (/memory archive checksum mismatch/iu.test(detail)) {
+    return "archive-checksum-mismatch";
+  }
+  if (/memory archive (?:not found|is not a non-empty file)/iu.test(detail)) {
+    return "archive-not-found";
+  }
+  if (/builder lock is held/iu.test(detail)) return "lock-held";
+  if (/refusing to replace critical\.db with degraded sources/iu.test(detail)) {
+    return "required-source-degraded";
+  }
+  return "process-failed";
+}
+
 export async function runCriticalDbBuilder(options: {
   env?: Record<string, string | undefined>;
   timeoutMs?: number;
 } = {}): Promise<{ stdout: string; stderr: string }> {
-  const command = ["bun", resolve(REPO_ROOT, "scripts/build-critical-search-db.ts")];
-  const proc = Bun.spawn(command, {
-    cwd: REPO_ROOT,
-    env: options.env ?? process.env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const timeoutMs = options.timeoutMs ?? BUILDER_TIMEOUT_MS;
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    proc.kill();
-  }, timeoutMs);
-  const [exitCode, stdout, stderr] = await Promise.all([
-    proc.exited,
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]).finally(() => clearTimeout(timer));
-  const detail = stderr.trim().slice(-MAX_SUBPROCESS_OUTPUT) || stdout.trim().slice(-MAX_SUBPROCESS_OUTPUT);
-  if (timedOut) {
-    throw new Error(`critical.db builder timed out after ${timeoutMs}ms: ${detail || "no output"}`);
+  try {
+    const command = ["bun", resolve(REPO_ROOT, "scripts/build-critical-search-db.ts")];
+    const proc = Bun.spawn(command, {
+      cwd: REPO_ROOT,
+      env: options.env ?? process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const timeoutMs = options.timeoutMs ?? BUILDER_TIMEOUT_MS;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill();
+    }, timeoutMs);
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]).finally(() => clearTimeout(timer));
+    const detail =
+      stderr.trim().slice(-MAX_SUBPROCESS_OUTPUT) ||
+      stdout.trim().slice(-MAX_SUBPROCESS_OUTPUT);
+    if (timedOut || exitCode !== 0) {
+      const failureCode = classifyCriticalDbBuilderFailure(detail, timedOut);
+      throw new Error(`critical.db builder failed: ${failureCode}`);
+    }
+    return {
+      stdout: privacySafeCriticalDbBuilderStdout(stdout.trim()),
+      stderr: "",
+    };
+  } catch (error) {
+    const detail = errorText(error);
+    if (
+      /^critical\.db builder failed: (?:archive-checksum-mismatch|archive-not-found|lock-held|process-failed|required-source-degraded|timeout)$/u.test(
+        detail,
+      )
+    ) {
+      throw error;
+    }
+    throw new Error("critical.db builder failed: process-failed");
   }
-  if (exitCode !== 0) {
-    throw new Error(`critical.db builder exited ${exitCode}: ${detail || "no output"}`);
-  }
-  return {
-    stdout: privacySafeCriticalDbBuilderStdout(stdout.trim()),
-    stderr: stderr.trim().slice(-MAX_SUBPROCESS_OUTPUT),
-  };
+}
+
+function classifiedBuilderFailure(error: unknown): string {
+  const detail = errorText(error);
+  return /^critical\.db builder failed: (?:archive-checksum-mismatch|archive-not-found|lock-held|process-failed|required-source-degraded|timeout)$/u.test(
+    detail,
+  )
+    ? detail
+    : "critical.db builder failed: process-failed";
 }
 
 function errorText(error: unknown): string {
@@ -319,6 +368,14 @@ export type CriticalDbLockWarningTelemetry = {
 export type CriticalDbLockTelemetry = {
   recovery: CriticalDbLockRecoveryTelemetry | null;
   warnings: CriticalDbLockWarningTelemetry[];
+};
+
+export type CriticalMemoryArchiveTelemetry = {
+  filename: string;
+  bytes: number;
+  sha256: string;
+  verification: "pinned" | "explicit-unpinned";
+  source: "cli" | "environment" | "frozen-default";
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -375,6 +432,40 @@ function parseLockWarning(value: unknown): CriticalDbLockWarningTelemetry | null
   return { operation, reason, errorCode, quarantineRetained };
 }
 
+export function parseCriticalMemoryArchiveTelemetry(
+  stdout: string,
+): CriticalMemoryArchiveTelemetry | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const archive = record(record(parsed)?.memoryArchive);
+  const filename = archive?.filename;
+  const bytes = archive?.bytes;
+  const sha256 = archive?.sha256;
+  const verification = archive?.verification;
+  const source = archive?.source;
+  if (
+    typeof filename !== "string"
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u.test(filename)
+    || !Number.isSafeInteger(bytes)
+    || Number(bytes) <= 0
+    || typeof sha256 !== "string"
+    || !/^[0-9a-f]{64}$/u.test(sha256)
+    || (verification !== "pinned" && verification !== "explicit-unpinned")
+    || (source !== "cli" && source !== "environment" && source !== "frozen-default")
+  ) return null;
+  return {
+    filename,
+    bytes: Number(bytes),
+    sha256,
+    verification,
+    source,
+  };
+}
+
 export function parseCriticalDbLockTelemetry(stdout: string): CriticalDbLockTelemetry {
   let parsed: unknown;
   try {
@@ -410,7 +501,11 @@ function privacySafeCriticalDbBuilderStdout(stdout: string): string {
   } catch {
     // The caller handles nonzero builder exits before this success-only sanitizer.
   }
-  return JSON.stringify({ ok, lockTelemetry: parseCriticalDbLockTelemetry(stdout) });
+  return JSON.stringify({
+    ok,
+    memoryArchive: parseCriticalMemoryArchiveTelemetry(stdout),
+    lockTelemetry: parseCriticalDbLockTelemetry(stdout),
+  });
 }
 
 const defaultScheduledDependencies: CriticalDbScheduledRebuildDependencies = {
@@ -430,6 +525,7 @@ const defaultScheduledDependencies: CriticalDbScheduledRebuildDependencies = {
   }),
   emitCompleted: async (stdout) => {
     const lockTelemetry = parseCriticalDbLockTelemetry(stdout);
+    const memoryArchive = parseCriticalMemoryArchiveTelemetry(stdout);
     if (lockTelemetry.recovery) {
       await emitOtelEvent({
         level: "info",
@@ -460,6 +556,7 @@ const defaultScheduledDependencies: CriticalDbScheduledRebuildDependencies = {
       metadata: {
         cadence: "17 */6 * * *",
         lockWarningCount: lockTelemetry.warnings.length,
+        ...(memoryArchive ? { memoryArchive } : {}),
         ...(lockTelemetry.recovery ? { lockRecovery: lockTelemetry.recovery } : {}),
       },
     });
@@ -475,7 +572,7 @@ export function createCriticalDbScheduledRebuildFunction(
       id: "search/critical-db-rebuild",
       concurrency: { limit: 1 },
       onFailure: async ({ error, step }) => {
-        const detail = errorText(error).slice(0, MAX_SUBPROCESS_OUTPUT);
+        const detail = classifiedBuilderFailure(error);
         await step.run("alert-critical-db-rebuild-failed", async () => {
           const result = await processCriticalDbRebuildFailure(detail, {
             notify: dependencies.notifyFailure,
@@ -536,6 +633,7 @@ export const criticalDbStalenessCheck = inngest.createFunction(
 );
 
 export const __criticalDbMaintenanceTestUtils = {
+  LIVE_SOURCES: CRITICAL_DB_LIVE_SOURCES,
   REQUIRED_SOURCES: CRITICAL_DB_REQUIRED_SOURCES,
   SOURCE_STALE_AFTER_MS: CRITICAL_DB_SOURCE_STALE_AFTER_MS,
 };

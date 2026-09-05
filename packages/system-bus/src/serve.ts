@@ -1,9 +1,14 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { type InboxResult, isSandboxExecutionResult } from "@joelclaw/agent-execution";
-import { MACHINES_COLLECTION, writeRunBlob } from "@joelclaw/memory";
+import {
+  findSessionSourceCursor,
+  MACHINES_COLLECTION,
+  writeRunBlob,
+} from "@joelclaw/memory";
 import { Hono } from "hono";
 import { connect as inngestConnect } from "inngest/connect";
 import { serve as inngestServe } from "inngest/hono";
@@ -70,7 +75,11 @@ import {
 } from "./inngest/functions/index.host";
 import { enqueueRegisteredQueueEvent } from "./lib/queue";
 import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
-import { type MemoryIdentity, registerRunCaptureRoute } from "./routes/run-capture";
+import {
+  type MemoryIdentity,
+  registerRunCaptureRoute,
+  runCaptureFailureTelemetry,
+} from "./routes/run-capture";
 import { createCaptureIdentityResolver } from "./routes/run-capture-auth";
 import { registerRunHealthRoute } from "./routes/run-health";
 
@@ -293,10 +302,16 @@ async function authenticateRunCapture(c: any): Promise<MemoryIdentity | null> {
   return lookupMemoryIdentity(token);
 }
 
+const sessionIndexPath =
+  process.env.SESSION_INDEX_PATH ?? join(homedir(), ".joelclaw", "search", "sessions.db");
+
 registerRunCaptureRoute(app, {
   authenticate: authenticateRunCapture,
   writeRunBlob,
   sendCaptured: (event) => inngest.send(event),
+  emitFailure: (failure) => emitOtelEvent(runCaptureFailureTelemetry(failure)),
+  findSourceCursor: (userId, sourceIdentity, fromOffset) =>
+    findSessionSourceCursor(sessionIndexPath, userId, sourceIdentity, fromOffset),
 });
 
 registerRunHealthRoute(app);

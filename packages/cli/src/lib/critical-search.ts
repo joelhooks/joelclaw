@@ -149,6 +149,7 @@ export type BuildOptions = {
   vaultDir?: string
   skillsDir?: string
   memoryArchivePath?: string
+  memoryArchiveSha256?: string
   allowNonFlagg?: boolean
   allowDegradedSources?: boolean
   now?: Date
@@ -644,10 +645,17 @@ function latestMemoryArchive(): string | undefined {
     ?.replace(/^/u, `${root}/`)
 }
 
-function loadMemoryArchive(path: string): DocumentLoad {
+function loadMemoryArchive(path: string, expectedSha256?: string): DocumentLoad {
+  const bytes = readFileSync(path)
+  if (
+    expectedSha256 !== undefined &&
+    createHash("sha256").update(bytes).digest("hex") !== expectedSha256
+  ) {
+    throw new Error("memory archive checksum mismatch")
+  }
   const documents: CriticalDocument[] = []
   let malformed = 0
-  for (const line of readFileSync(path, "utf8").split("\n").filter(Boolean)) {
+  for (const line of bytes.toString("utf8").split("\n").filter(Boolean)) {
     try {
       const document = documentFromTypesense("memory_observations", JSON.parse(line) as Record<string, unknown>)
       if (document) documents.push({ ...document, sourceUpdatedAt: document.createdAt })
@@ -1377,7 +1385,7 @@ export async function buildCriticalDb(options: BuildOptions = {}): Promise<Criti
       add("archive:memory_observations", [], "unavailable", "no archive found")
     } else {
       try {
-        const loaded = loadMemoryArchive(archivePath)
+        const loaded = loadMemoryArchive(archivePath, options.memoryArchiveSha256)
         const status = loaded.malformed > 0 ? "error" : loaded.documents.length > 0 ? "ok" : "empty"
         add(
           "archive:memory_observations",

@@ -239,7 +239,12 @@ const handlersInGroup = (
   return groupHandlers(value);
 };
 
-const legacyPattern = (runtime: InstallableRuntime): RegExp | undefined => {
+// The installed fragment now fans out to raw Run capture and the flowing wake.
+// Remove only the superseded standalone raw hook so one runtime event cannot
+// produce two competing capture writes. The manifest retains it for rollback.
+const supersededStandaloneCapturePattern = (
+  runtime: InstallableRuntime,
+): RegExp | undefined => {
   switch (runtime) {
     case "claude":
       return /(?:joelclaw-capture-session|capture-session)\.ts/u;
@@ -282,13 +287,21 @@ const stripLegacyGroups = (
 const configuredEvents = (runtime: Exclude<InstallableRuntime, "pi">) =>
   RUNTIME_HOOK_EVENTS[runtime];
 
+const NATIVE_HOOK_TIMEOUT_SECONDS = 8;
+
 const handlerGroup = (
   runtime: Exclude<InstallableRuntime, "pi">,
   eventName: string,
   fragmentRef: string,
 ): JsonObject => {
-  if (runtime === "cursor") return { command: fragmentRef, timeout: 1 };
-  const handler = { command: fragmentRef, timeout: 1, type: "command" };
+  if (runtime === "cursor") {
+    return { command: fragmentRef, timeout: NATIVE_HOOK_TIMEOUT_SECONDS };
+  }
+  const handler = {
+    command: fragmentRef,
+    timeout: NATIVE_HOOK_TIMEOUT_SECONDS,
+    type: "command",
+  };
   return eventName === "Notification"
     ? { hooks: [handler], matcher: "idle_prompt" }
     : { hooks: [handler] };
@@ -324,7 +337,7 @@ const patchJsonHooks = (
   const displacedHandlers: DisplacedHandlerV1[] = [];
   const ownedFragments: OwnedFragmentV1[] = [];
   const nextHooks: JsonObject = { ...hooks };
-  const pattern = legacyPattern(runtime);
+  const pattern = supersededStandaloneCapturePattern(runtime);
   for (const [eventName, value] of Object.entries(nextHooks)) {
     if (!Array.isArray(value)) throw new Error(`${runtime}-${eventName}-hooks-invalid`);
     if (runtime === "cursor") continue;
@@ -520,7 +533,7 @@ const allExpectedExactlyOnce = (counts: Readonly<Record<string, number>>) =>
   Object.values(counts).every((count) => count === 1);
 
 const hasLegacyHandler = (runtime: InstallableRuntime, snapshot: TargetSnapshot) => {
-  const pattern = legacyPattern(runtime);
+  const pattern = supersededStandaloneCapturePattern(runtime);
   if (!snapshot.existed || pattern === undefined || snapshot.kind !== "file" || runtime === "pi")
     return false;
   const root = parseJsonObject(snapshot.bytes, true, `${runtime}-settings-invalid`);

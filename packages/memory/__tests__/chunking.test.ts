@@ -30,6 +30,28 @@ describe("detectFormat", () => {
     ];
     expect(detectFormat(entries)).toBe("pi");
   });
+
+  it("detects Codex response items", () => {
+    const entries: RawJsonlEntry[] = [
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "hi" }],
+        },
+      },
+    ];
+    expect(detectFormat(entries)).toBe("codex");
+  });
+
+  it("detects Grok top-level content events", () => {
+    const entries: RawJsonlEntry[] = [
+      { type: "system", content: "system" },
+      { type: "user", content: "hi" },
+    ];
+    expect(detectFormat(entries)).toBe("grok");
+  });
 });
 
 describe("extractTurns — claude-code", () => {
@@ -103,6 +125,81 @@ describe("extractTurns — claude-code", () => {
     const turns = extractTurns(entries, "claude-code");
     expect(turns).toHaveLength(1);
     expect(turns[0]!.text).toBe("real message");
+  });
+});
+
+describe("extractTurns — codex", () => {
+  it("extracts user, assistant, and tool response items", () => {
+    const entries: RawJsonlEntry[] = [
+      {
+        type: "response_item",
+        timestamp: "2026-04-19T12:00:00.000Z",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "do the thing" }],
+        },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-04-19T12:00:01.000Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "ok doing it" }],
+        },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-04-19T12:00:02.000Z",
+        payload: {
+          type: "function_call_output",
+          output: "stdout",
+        },
+      },
+    ];
+    const turns = extractTurns(entries, "codex");
+    expect(turns.map((turn) => turn.role)).toEqual(["user", "assistant", "tool"]);
+    expect(turns[2]!.text).toContain("stdout");
+  });
+
+  it("suppresses nearby dual representations but preserves a later repeated message", () => {
+    const canonical: RawJsonlEntry = {
+      type: "response_item",
+      payload: { type: "message", role: "user", content: "same text" },
+    };
+    const nearby: RawJsonlEntry = {
+      type: "event_msg",
+      payload: { type: "user_message", message: "same text" },
+    };
+    const spacer = (index: number): RawJsonlEntry => ({
+      type: "response_item",
+      payload: { type: "function_call_output", output: `tool-${index}` },
+    });
+    const later: RawJsonlEntry = {
+      type: "event_msg",
+      payload: { type: "user_message", message: "same text" },
+    };
+    const turns = extractTurns(
+      [canonical, nearby, spacer(1), spacer(2), spacer(3), spacer(4), later],
+      "codex",
+    );
+    expect(turns.filter((turn) => turn.role === "user").map((turn) => turn.text)).toEqual([
+      "same text",
+      "same text",
+    ]);
+  });
+});
+
+describe("extractTurns — grok", () => {
+  it("maps top-level chat events to user/assistant/tool", () => {
+    const entries: RawJsonlEntry[] = [
+      { type: "user", content: "do the thing" },
+      { type: "assistant", content: "ok doing it" },
+      { type: "tool_result", content: "stdout" },
+    ];
+    const turns = extractTurns(entries, "grok");
+    expect(turns.map((turn) => turn.role)).toEqual(["user", "assistant", "tool"]);
   });
 });
 
@@ -183,9 +280,28 @@ describe("chunkTurns", () => {
       },
     ]);
     expect(chunks.length).toBeGreaterThan(1);
-    // Sub-chunk indices are idx*1000+sub to stay sortable alongside other turns.
+    // Chunk indices are globally sequential, including after a split turn.
     expect(chunks[0]!.chunk_idx).toBe(0);
     expect(chunks[1]!.chunk_idx).toBe(1);
+  });
+
+  it("keeps indices unique when a split turn is followed by another turn", () => {
+    const chunks = chunkTurns([
+      {
+        role: "assistant",
+        text: "x".repeat(40_000),
+        started_at: 1,
+        token_estimate: 10_000,
+      },
+      {
+        role: "user",
+        text: "follow-up",
+        started_at: 2,
+        token_estimate: 3,
+      },
+    ]);
+    expect(new Set(chunks.map((chunk) => chunk.chunk_idx)).size).toBe(chunks.length);
+    expect(chunks.at(-1)!.chunk_idx).toBe(chunks.length - 1);
   });
 });
 

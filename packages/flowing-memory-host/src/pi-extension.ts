@@ -3,6 +3,10 @@ import path from "node:path";
 
 import { decodeNativeEvent, FLOWING_MEMORY_INTERNAL_MARKER_V1 } from "./adapters.js";
 import { submitNativeWake } from "./collector.js";
+import {
+  flushNativeRunCaptureQueue,
+  scheduleNativeRunCapture,
+} from "./raw-capture.js";
 
 interface PiSessionManager {
   readonly getCwd: () => string;
@@ -46,20 +50,26 @@ const enqueue = async (
     },
     { captureInferenceSession: true },
   );
-  if (decoded._tag === "Accepted") {
-    await submitNativeWake({
-      socketPath:
-        process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET ??
-        path.join(homedir(), ".joelclaw", "flowing-memory", "collector.sock"),
-      spoolPath: spoolPath(),
-      wake: decoded.wake,
-    });
-  }
+  if (decoded._tag !== "Accepted") return;
+
+  // One installed extension owns both outputs. The local wake remains the only
+  // semantic admission path; raw capture only posts immutable Runs for indexing.
+  void scheduleNativeRunCapture(decoded.wake);
+  await submitNativeWake({
+    socketPath:
+      process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET ??
+      path.join(homedir(), ".joelclaw", "flowing-memory", "collector.sock"),
+    spoolPath: spoolPath(),
+    wake: decoded.wake,
+  });
 };
 
-/** Tiny local wake shim. It performs no network, database, transcript, or model work. */
+/** One hook owner fans out to flowing admission and immutable raw Run capture. */
 export default function flowingMemoryPiExtension(pi: PiExtensionApi) {
   pi.on("session_start", (_event, context) => enqueue("session_start", context));
   pi.on("turn_end", (_event, context) => enqueue("turn_end", context));
-  pi.on("session_shutdown", (_event, context) => enqueue("session_shutdown", context));
+  pi.on("session_shutdown", async (_event, context) => {
+    await enqueue("session_shutdown", context).catch(() => undefined);
+    await flushNativeRunCaptureQueue();
+  });
 }

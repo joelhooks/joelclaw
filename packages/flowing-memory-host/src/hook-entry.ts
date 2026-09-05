@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 
 import { homedir } from "node:os";
-import { stdin } from "node:process";
 import path from "node:path";
+import { stdin } from "node:process";
 
-import { decodeGrokEvent, decodeNativeEvent, type NativeRuntime } from "./adapters.js";
+import {
+  decodeGrokEvent,
+  decodeNativeEvent,
+  type NativeRuntime,
+  type NativeWakeV1,
+} from "./adapters.js";
 import { submitNativeWake } from "./collector.js";
+import { captureNativeRun } from "./raw-capture.js";
 
 const runtimes = new Set<NativeRuntime>(["claude", "codex", "cursor", "grok", "pi"]);
 
@@ -36,6 +42,32 @@ const runtimeArg = () => {
     : undefined;
 };
 
+export interface NativeHookDispatchDependencies {
+  readonly captureRun: (wake: NativeWakeV1) => Promise<unknown>;
+  readonly submitWake: (wake: NativeWakeV1) => Promise<unknown>;
+}
+
+export interface NativeHookDispatchResult {
+  readonly capture: "fulfilled" | "rejected";
+  readonly wake: "fulfilled" | "rejected";
+}
+
+export async function dispatchNativeHook(
+  wake: NativeWakeV1,
+  dependencies: NativeHookDispatchDependencies,
+): Promise<NativeHookDispatchResult> {
+  // The outputs are deliberately independent. Central raw-capture failure must
+  // not suppress the local flowing wake, and collector failure must not lose a Run.
+  const [wakeResult, captureResult] = await Promise.allSettled([
+    dependencies.submitWake(wake),
+    dependencies.captureRun(wake),
+  ]);
+  return {
+    capture: captureResult.status,
+    wake: wakeResult.status,
+  };
+}
+
 const main = async () => {
   const runtime = runtimeArg();
   if (runtime === undefined) return;
@@ -49,12 +81,16 @@ const main = async () => {
   const spoolPath =
     process.env.JOELCLAW_FLOWING_MEMORY_WAKE_SPOOL ??
     path.join(homedir(), ".joelclaw", "flowing-memory", "native-wakes.jsonl");
-  await submitNativeWake({
-    socketPath:
-      process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET ??
-      path.join(homedir(), ".joelclaw", "flowing-memory", "collector.sock"),
-    spoolPath,
-    wake: decoded.wake,
+  await dispatchNativeHook(decoded.wake, {
+    captureRun: captureNativeRun,
+    submitWake: (wake) =>
+      submitNativeWake({
+        socketPath:
+          process.env.JOELCLAW_FLOWING_MEMORY_COLLECTOR_SOCKET ??
+          path.join(homedir(), ".joelclaw", "flowing-memory", "collector.sock"),
+        spoolPath,
+        wake,
+      }),
   });
 };
 

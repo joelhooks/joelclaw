@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import {
   existsSync,
   mkdirSync,
@@ -675,7 +676,7 @@ describe("critical search database", () => {
     }
   })
 
-  test("reports archive freshness on memory hits instead of unrelated Brain freshness", async () => {
+  test("reports archive age on memory hits without treating the frozen archive as a live clock", async () => {
     const paths = fixture()
     await buildCriticalDb({
       dbPath: paths.db,
@@ -696,7 +697,7 @@ describe("critical search database", () => {
     expect(memory?.sourceFreshness.sourceKey).toBe("archive:memory_observations")
     expect(memory?.sourceFreshness.highWaterAt).toBe("2026-05-31T03:30:53.000Z")
     expect(memory?.sourceFreshness.ageSeconds).toBeGreaterThan(4_000_000)
-    expect(result.freshness.status).toBe("stale")
+    expect(result.freshness.status).toBe("ok")
   })
 
   test("refuses missing sources and preserves the healthy database", async () => {
@@ -911,6 +912,26 @@ describe("critical search database", () => {
     const overridden = await buildCriticalDb({ ...options, allowDegradedSources: true })
     expect(overridden.sources["archive:memory_observations"]?.status).toBe("error")
     expect(readFreshness(paths.db).status).toBe("degraded")
+  })
+
+  test("binds archive parsing to the expected checksum", async () => {
+    const paths = fixture()
+    const originalSha256 = createHash("sha256")
+      .update(readFileSync(paths.archive))
+      .digest("hex")
+    writeFileSync(paths.archive, `${readFileSync(paths.archive, "utf8")}{}\n`)
+    await expect(
+      buildCriticalDb({
+        dbPath: paths.db,
+        observationsDir: paths.observations,
+        brainRoots: [paths.brain],
+        vaultDir: paths.vault,
+        skillsDir: paths.skills,
+        memoryArchivePath: paths.archive,
+        memoryArchiveSha256: originalSha256,
+        allowNonFlagg: true,
+      }),
+    ).rejects.toThrow("archive:memory_observations is error")
   })
 
   test("serializes concurrent builders with an exclusive lock", async () => {

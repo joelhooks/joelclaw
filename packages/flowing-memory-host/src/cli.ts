@@ -72,7 +72,7 @@ const releaseRoot =
 const installRoot =
   process.env.JOELCLAW_FLOWING_MEMORY_INSTALL_ROOT ??
   path.join(home, ".joelclaw", "memory-hooks", "installations");
-const releaseVersion = process.env.JOELCLAW_FLOWING_MEMORY_HOOK_VERSION ?? "v1";
+const releaseVersion = process.env.JOELCLAW_FLOWING_MEMORY_HOOK_VERSION ?? "v2";
 const packageDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 const targetPathFor = (runtime: InstallableRuntime) => {
@@ -140,6 +140,10 @@ const ensureRelease = async (runtime: InstallableRuntime) => {
     path.join(packageDirectory, "collector.js"),
     path.join(releaseDirectory, "collector.js"),
   );
+  await copyIfAbsentOrExact(
+    path.join(packageDirectory, "raw-capture.js"),
+    path.join(releaseDirectory, "raw-capture.js"),
+  );
   if (runtime === "pi") {
     const extensionDirectory = path.join(releaseDirectory, "memory-capture");
     await mkdir(extensionDirectory, { recursive: true, mode: 0o700 });
@@ -154,6 +158,10 @@ const ensureRelease = async (runtime: InstallableRuntime) => {
     await copyIfAbsentOrExact(
       path.join(packageDirectory, "collector.js"),
       path.join(extensionDirectory, "collector.js"),
+    );
+    await copyIfAbsentOrExact(
+      path.join(packageDirectory, "raw-capture.js"),
+      path.join(extensionDirectory, "raw-capture.js"),
     );
     return extensionDirectory;
   }

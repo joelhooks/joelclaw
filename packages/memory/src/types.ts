@@ -4,6 +4,8 @@ export type AgentRuntime =
   | "pi"
   | "claude-code"
   | "codex"
+  | "cursor"
+  | "grok"
   | "loop"
   | "workload-stage"
   | "gateway"

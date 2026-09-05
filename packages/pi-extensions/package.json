@@ -5,8 +5,7 @@
   "private": true,
   "pi": {
     "extensions": [
-      "./inngest-monitor/index.ts",
-      "./memory-capture/index.ts"
+      "./inngest-monitor/index.ts"
     ]
   },
   "dependencies": {

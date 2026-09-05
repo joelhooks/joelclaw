@@ -117,6 +117,8 @@ function createSchema(db: Database): void {
       tags_json TEXT NOT NULL DEFAULT '[]'
     ) STRICT;
 
+    CREATE INDEX runs_source_cursor ON runs(source_identity, from_offset);
+
     CREATE TABLE skipped_runs (
       run_id TEXT PRIMARY KEY,
       covering_run_id TEXT NOT NULL,

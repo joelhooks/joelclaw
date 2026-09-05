@@ -874,6 +874,8 @@ export type Events = {
         | "pi"
         | "claude-code"
         | "codex"
+        | "cursor"
+        | "grok"
         | "loop"
         | "workload-stage"
         | "gateway"
@@ -885,6 +887,8 @@ export type Events = {
       started_at: number;
       parent_run_id?: string;
       conversation_id?: string;
+      source_session_id?: string;
+      event_id?: string;
       tags?: string[];
       from_offset?: number;
       to_offset?: number;

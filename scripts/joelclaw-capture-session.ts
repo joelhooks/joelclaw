@@ -54,12 +54,21 @@ interface SessionState {
   turn_count: number;
 }
 
-const CENTRAL_URL = process.env.JOELCLAW_CENTRAL_URL ?? "http://127.0.0.1:3111";
+const CENTRAL_URL =
+  process.env.JOELCLAW_SESSION_CAPTURE_URL ??
+  process.env.JOELCLAW_CENTRAL_URL ??
+  "http://127.0.0.1:3111";
 const AUTH_PATH = process.env.JOELCLAW_AUTH_PATH ?? join(homedir(), ".joelclaw", "auth.json");
 const STATE_PATH = join(homedir(), ".joelclaw", "session-state.json");
 const OUTBOX_DIR = join(homedir(), ".joelclaw", "outbox");
 const LOG_PATH = join(homedir(), ".joelclaw", "capture.log");
-const RUNTIME = process.env.JOELCLAW_RUNTIME ?? "claude-code";
+const RUNTIME = "claude-code";
+const HTTP_TIMEOUT_MS = positiveInteger(process.env.JOELCLAW_CAPTURE_HTTP_TIMEOUT_MS, 750);
+
+function positiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function log(message: string) {
   const line = `[${new Date().toISOString()}] ${message}\n`;
@@ -237,16 +246,20 @@ async function main() {
   const outboxPath = pendingOutboxPath(identity, lastOffset);
   const pending = readPending(outboxPath);
   const runId = typeof pending?.run_id === "string" ? pending.run_id : newRunId();
+  const digest = sha256(deltaBytes);
+  const eventId = `capture:${sha256(JSON.stringify([RUNTIME, identity, lastOffset, digest])).slice(0, 40)}`;
   const body: Record<string, unknown> = {
     run_id: runId,
     agent_runtime: RUNTIME,
     tags: ["captured", `basename:${basename(transcriptPath)}`, `session:${sessionId}`],
     started_at: typeof pending?.started_at === "number" ? pending.started_at : Date.now(),
     conversation_id: sessionId,
+    source_session_id: sessionId,
+    event_id: eventId,
     source_identity: identity,
     from_offset: lastOffset,
     to_offset: currentSize,
-    jsonl_sha256: sha256(deltaBytes),
+    jsonl_sha256: digest,
     jsonl: delta,
   };
   if (prior?.last_run_id) {
@@ -260,30 +273,44 @@ async function main() {
       headers: {
         Authorization: `Bearer ${auth.token}`,
         "Content-Type": "application/json",
+        "Idempotency-Key": `sha256:${sha256(
+          JSON.stringify([auth.machine_id, RUNTIME, identity, lastOffset, digest]),
+        )}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (!res.ok) {
-      const errText = await res.text();
-      const outbox = writeToOutbox(outboxPath, body);
-      log(
-        `POST failed ${res.status} for session=${sessionId}; outboxed to ${outbox}: ${errText.slice(0, 200)}`,
-      );
+      writeToOutbox(outboxPath, body);
+      log(`POST failed status=${res.status} code=http-error`);
       process.exit(0); // outbox drained later; don't block
     }
-    const resp = (await res.json()) as { run_id?: string; to_offset?: number };
-    const acceptedOffset =
-      Number.isSafeInteger(resp.to_offset) &&
-      (resp.to_offset as number) >= lastOffset &&
-      (resp.to_offset as number) <= currentSize
-        ? (resp.to_offset as number)
-        : currentSize;
+    const resp = (await res.json().catch(() => ({}))) as {
+      run_id?: unknown;
+      status?: unknown;
+      to_offset?: unknown;
+    };
+    const validStatus = resp.status === "accepted" || resp.status === "accepted_prefix";
+    const acceptedOffset = Number(resp.to_offset);
+    const validReceipt =
+      validStatus &&
+      typeof resp.run_id === "string" &&
+      resp.run_id.length > 0 &&
+      Number.isSafeInteger(acceptedOffset) &&
+      acceptedOffset > lastOffset &&
+      acceptedOffset <= currentSize &&
+      (resp.status !== "accepted" || acceptedOffset === currentSize);
+    if (!validReceipt) {
+      writeToOutbox(outboxPath, body);
+      log("POST failed code=invalid-receipt");
+      process.exit(0);
+    }
     const acceptedTurns = countTurns(
       deltaBytes.subarray(0, acceptedOffset - lastOffset).toString("utf8"),
     );
     allState[sessionId] = {
       last_byte_offset: acceptedOffset,
-      last_run_id: resp.run_id ?? runId,
+      last_run_id: String(resp.run_id),
       last_captured_at: new Date().toISOString(),
       turn_count: (prior?.turn_count ?? 0) + acceptedTurns,
     };

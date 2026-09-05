@@ -601,6 +601,7 @@ const socketAcknowledgement = (value: unknown): value is { readonly ok: boolean 
 
 export const submitNativeWake = async (input: {
   readonly socketPath?: string;
+  readonly socketTimeoutMs?: number;
   readonly spoolPath: string;
   readonly wake: NativeWakeV1;
 }): Promise<void> => {
@@ -618,7 +619,10 @@ export const submitNativeWake = async (input: {
           if (error === undefined) resolve();
           else reject(error);
         };
-        const timer = setTimeout(() => finish(new Error("collector-socket-timeout")), 5_000);
+        const timer = setTimeout(
+          () => finish(new Error("collector-socket-timeout")),
+          input.socketTimeoutMs ?? 5_000,
+        );
         socket.setEncoding("utf8");
         socket.on("data", (chunk: string) => {
           response += chunk;
