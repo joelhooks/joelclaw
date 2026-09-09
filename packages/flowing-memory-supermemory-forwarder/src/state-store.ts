@@ -248,6 +248,10 @@ export class ForwarderStateStore {
     return this.delivery(deliveryId)?.status ?? null;
   }
 
+  hasPendingDeliveryWork(maxReconcileAttempts: number): boolean {
+    return this.pendingDeliveries(maxReconcileAttempts, 1).length > 0;
+  }
+
   pendingDeliveries(maxReconcileAttempts: number, limit = 50): readonly Delivery[] {
     const rows = this.#database
       .prepare(`

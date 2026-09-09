@@ -14,5 +14,7 @@
   "canaryRecordId": "selected-current-record-id",
   "maxPayloadBytes": 4000,
   "maxReconcileAttempts": 20,
-  "pollIntervalMs": 30000
+  "pollIntervalMs": 30000,
+  "reconnectIntervalMs": 5000,
+  "recoveryScanIntervalMs": 900000
 }

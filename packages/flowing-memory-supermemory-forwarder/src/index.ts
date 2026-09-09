@@ -1,3 +1,4 @@
+export * from "./daemon.js";
 export * from "./domain.js";
 export * from "./executor-client.js";
 export * from "./forwarder.js";

@@ -101,6 +101,12 @@ export const ForwarderPolicySchema = Schema.Struct({
   maxPayloadBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(256), Schema.isLessThanOrEqualTo(8_000)),
   maxReconcileAttempts: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100)),
   pollIntervalMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1_000)),
+  reconnectIntervalMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1_000), Schema.isLessThanOrEqualTo(60_000)),
+  ),
+  recoveryScanIntervalMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(60_000)),
+  ),
   supermemoryConnection: Schema.String.check(
     Schema.isPattern(/^supermemory_mcp\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u),
   ),

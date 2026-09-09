@@ -57,9 +57,30 @@ JOELCLAW_SUPERMEMORY_FORWARDER_CANARY_REVIEW_PATH=<private mode-0600 review JSON
 JOELCLAW_OTEL_INGEST_URL=<local OTEL ingest URL>
 ```
 
-Lease the source credential inside the private wrapper or environment setup. Never place it in the policy, command arguments, manifest, logs, or repository. The database role needs `SELECT` only on `fm_projection_commits`, `fm_memory_records`, and `fm_scope_heads`.
+Lease the source credential inside the private wrapper or environment setup. Never place it in the policy, command arguments, manifest, logs, or repository. The runtime database role needs `SELECT` only on `fm_projection_commits`, `fm_memory_records`, and `fm_scope_heads`. It also opens one PostgreSQL `LISTEN` connection on the fixed `flowing_memory_committed` channel.
 
-## 3. Record the forward-only baseline and review one exact canary
+## 3. Install the commit wake explicitly
+
+The daemon does not create or alter source schema. A migration role must apply the additive trigger separately:
+
+```sh
+# Connection fields come from a private PG* environment or service file, not argv.
+psql -v ON_ERROR_STOP=1 -f deploy/install-commit-notifications.sql
+```
+
+The installer is idempotent. It verifies the expected function and trigger ownership markers, refuses unexpected same-name objects, and fails with an explicit migration-privilege error when it cannot create the objects. It emits a payload-free notification after projection-commit inserts and current scope-head changes. PostgreSQL exposes the notification only after the source transaction commits, so rollback emits nothing.
+
+The trigger skips notification when PostgreSQL reports at least 50% notification-queue usage and catches ordinary `pg_notify` errors so wake delivery remains advisory. A queue-capacity failure discovered by PostgreSQL during transaction commit cannot be caught inside a trigger. The 15-minute durable reconciliation scan remains the lossless authority, so inspect queue usage before installing on a database where listeners routinely hold transactions open.
+
+Rollback the additive objects with the equally guarded script:
+
+```sh
+psql -v ON_ERROR_STOP=1 -f deploy/rollback-commit-notifications.sql
+```
+
+Neither script belongs in daemon startup. Never pass source credentials in process arguments on a shared machine; the examples assume a private environment or `.pgpass`-style wrapper.
+
+## 4. Record the forward-only baseline and review one exact canary
 
 ```sh
 export JOELCLAW_SUPERMEMORY_FORWARDER_ENV="$config_root/runtime.env"
@@ -88,7 +109,7 @@ After the owner approves that exact private review file:
 
 `queue-canary` reads and queues only the selected record ID, even if its source commit contains siblings. `run-canary` operates only that delivery: it performs no normal discovery and verifies private destination visibility again before sending. Run `run-canary` again after indexing to reconcile the exact marker; it never resubmits an accepted save. A save first becomes `accepted`; it becomes `delivered` only when exact source-marker search finds it. Verify one save, one document ID, one later memory ID, and no sibling deliveries.
 
-## 4. Install but do not load the service
+## 5. Install but do not load the service
 
 Render the LaunchAgent template by replacing `__RELEASE_ROOT__`, `__ENV_FILE__`, and `__LOG_ROOT__`, then validate it:
 
@@ -96,7 +117,7 @@ Render the LaunchAgent template by replacing `__RELEASE_ROOT__`, `__ENV_FILE__`,
 plutil -lint "/private/launch-agents/com.example.flowing-memory-supermemory-forwarder.plist"
 ```
 
-Load it only after the exact canary succeeds and the owner authorizes activation:
+Load it only after the exact canary succeeds, the commit-wake SQL is installed and verified, and the owner authorizes activation:
 
 ```sh
 launchctl bootstrap "gui/$(id -u)" "/private/launch-agents/com.example.flowing-memory-supermemory-forwarder.plist"
@@ -104,7 +125,9 @@ launchctl print "gui/$(id -u)/com.example.flowing-memory-supermemory-forwarder"
 "$release/deploy/run-forwarder" status
 ```
 
-Run only this transport daemon. Do not start another semantic collector, projection worker, or acceptance worker.
+Run only this transport daemon. It establishes `LISTEN` before startup and reconnect catch-up scans, coalesces notification bursts, and serializes every pass. While idle it performs one recovery scan every `recoveryScanIntervalMs` (15 minutes by default), not every 30 seconds. `pollIntervalMs` is now the short reconciliation cadence used only while accepted or indeterminate delivery work remains. Do not start another semantic collector, projection worker, acceptance worker, or listener daemon.
+
+`SIGINT` and `SIGTERM` cancel timers and close the listener immediately. An already-running pass is allowed to settle before the query pool and local state close, preventing an overlapping or half-closed pass.
 
 ## Rollback
 
@@ -112,4 +135,4 @@ Run only this transport daemon. Do not start another semantic collector, project
 launchctl bootout "gui/$(id -u)/com.example.flowing-memory-supermemory-forwarder"
 ```
 
-Keep the SQLite state and sealed release for reconciliation. The daemon never blindly resubmits `accepted` or `indeterminate` saves. Provider-side forgetting remains a separate explicitly authorized operation.
+Keep the SQLite state and sealed release for reconciliation. The daemon never blindly resubmits `accepted` or `indeterminate` saves. If rolling back the source wake too, run `rollback-commit-notifications.sql` only after the daemon is stopped. Provider-side forgetting remains a separate explicitly authorized operation.

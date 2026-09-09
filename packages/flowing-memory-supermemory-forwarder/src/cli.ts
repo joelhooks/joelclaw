@@ -3,6 +3,7 @@ import { chmod, readFile, writeFile } from "node:fs/promises";
 
 import { Config, Effect, Redacted, Schema } from "effect";
 
+import { ForwarderDaemon } from "./daemon.js";
 import { assessRecord, ForwarderPolicySchema } from "./domain.js";
 import { ExecutorSupermemoryAdapter, McpExecutorTransport } from "./executor-client.js";
 import { SupermemoryForwarder } from "./forwarder.js";
@@ -166,20 +167,28 @@ const main = async (): Promise<void> => {
       return;
     }
 
-    let stopping = false;
-    const stop = () => {
-      stopping = true;
-    };
+    const daemon = new ForwarderDaemon({
+      connectNotificationListener: source.connectNotificationListener.bind(source),
+      fallbackIntervalMs: policy.recoveryScanIntervalMs ?? 15 * 60_000,
+      hasPendingWork: () => state.hasPendingDeliveryWork(policy.maxReconcileAttempts),
+      onPassError: () => {
+        console.error(JSON.stringify({ ok: false, error: "forwarder-pass-failed" }));
+      },
+      onPassReceipt: (receipt) => {
+        console.log(JSON.stringify({ ok: true, receipt }));
+      },
+      reconnectIntervalMs: policy.reconnectIntervalMs ?? 5_000,
+      reconciliationIntervalMs: policy.pollIntervalMs,
+      runPass: () => forwarder.runPass(),
+    });
+    const stop = () => void daemon.stop();
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
-    while (!stopping) {
-      try {
-        const receipt = await forwarder.runPass();
-        console.log(JSON.stringify({ ok: true, receipt }));
-      } catch {
-        console.error(JSON.stringify({ ok: false, error: "forwarder-pass-failed" }));
-      }
-      if (!stopping) await new Promise((resolve) => setTimeout(resolve, policy.pollIntervalMs));
+    try {
+      await daemon.run();
+    } finally {
+      process.removeListener("SIGINT", stop);
+      process.removeListener("SIGTERM", stop);
     }
   } finally {
     await source.close();

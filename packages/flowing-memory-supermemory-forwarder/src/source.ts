@@ -1,5 +1,7 @@
 import { Schema } from "effect";
-import { Pool, type PoolClient } from "pg";
+import { Client, Pool, type PoolClient } from "pg";
+
+import type { CommitNotificationListener, CommitNotificationSource } from "./daemon.js";
 
 import {
   assessRecord,
@@ -41,6 +43,8 @@ export interface FlowingMemorySource {
   eligibilityCounts(policy: ForwarderPolicy): Promise<EligibilityCounts>;
   close(): Promise<void>;
 }
+
+export const FLOWING_MEMORY_COMMIT_CHANNEL = "flowing_memory_committed";
 
 const BoundaryRowSchema = Schema.Struct({
   commit_created_at: Schema.String,
@@ -178,15 +182,81 @@ const committedRowsQuery = async (
   });
 };
 
-export class PostgresFlowingMemorySource implements FlowingMemorySource {
+export class PostgresFlowingMemorySource implements FlowingMemorySource, CommitNotificationSource {
+  readonly #databaseUrl: string;
   readonly #pool: Pool;
 
   constructor(databaseUrl: string) {
+    this.#databaseUrl = databaseUrl;
     this.#pool = new Pool({
       application_name: "flowing-memory-supermemory-forwarder",
       connectionString: databaseUrl,
       max: 2,
     });
+  }
+
+  async connectNotificationListener(
+    onNotification: () => void,
+    signal: AbortSignal,
+  ): Promise<CommitNotificationListener> {
+    const client = new Client({
+      application_name: "flowing-memory-supermemory-forwarder-listener",
+      connectionString: this.#databaseUrl,
+      connectionTimeoutMillis: 10_000,
+    });
+    let ending: Promise<void> | null = null;
+    let listening = false;
+    let settled = false;
+    let settleClosed: () => void = () => undefined;
+    const closedPromise = new Promise<void>((resolve) => {
+      settleClosed = resolve;
+    });
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      settleClosed();
+    };
+    client.on("notification", (message) => {
+      if (message.channel === FLOWING_MEMORY_COMMIT_CHANNEL && message.payload === "") {
+        onNotification();
+      }
+    });
+    client.on("end", settle);
+    client.on("error", settle);
+
+    const close = async () => {
+      if (ending !== null) return ending;
+      ending = (async () => {
+        if (listening && !settled) {
+          try {
+            await client.query(`UNLISTEN ${FLOWING_MEMORY_COMMIT_CHANNEL}`);
+          } catch {
+            // A disconnected listener is already closed from PostgreSQL's perspective.
+          }
+        }
+        await client.end().catch(() => undefined);
+        settle();
+      })();
+      return ending;
+    };
+    const abort = () => void close();
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      if (signal.aborted) throw new Error("notification listener aborted");
+      await client.connect();
+      if (signal.aborted) throw new Error("notification listener aborted");
+      await client.query(`LISTEN ${FLOWING_MEMORY_COMMIT_CHANNEL}`);
+      listening = true;
+      return {
+        closed: closedPromise.finally(() => signal.removeEventListener("abort", abort)),
+        close,
+      };
+    } catch (error) {
+      signal.removeEventListener("abort", abort);
+      await client.end().catch(() => undefined);
+      settle();
+      throw error;
+    }
   }
 
   async initialBaseline(): Promise<SourceBaseline> {
