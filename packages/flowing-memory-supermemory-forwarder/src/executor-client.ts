@@ -108,7 +108,9 @@ return { ok: true, result };`;
 };
 
 const hasOwnSourceMarker = (text: string, marker: string): boolean =>
-  text.split(/\r?\n/u).some((line) => line.trim() === `Source reference: ${marker}`);
+  Array.from(text.matchAll(/(?:^|\s)Source\s+reference:\s+(\S+)/gu)).some(
+    (match) => match[1] === marker,
+  );
 
 export class ExecutorSupermemoryAdapter implements SupermemoryPort {
   constructor(

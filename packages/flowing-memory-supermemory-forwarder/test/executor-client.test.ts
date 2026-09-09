@@ -37,6 +37,14 @@ describe("Executor Supermemory adapter", () => {
     expect(await adapter.find("flowing-record:abc")).toEqual({ memoryId: "memory-1" });
   });
 
+  it("reconciles whitespace-normalized source fields without matching corrections or prefixes", () => {
+    const matches = __executorClientTestUtils.hasOwnSourceMarker;
+    expect(matches("Topic: memory Claim: a fact Source reference: flowing-record:abc", "flowing-record:abc")).toBe(true);
+    expect(matches("Source\nreference:\tflowing-record:abc", "flowing-record:abc")).toBe(true);
+    expect(matches("Corrects: flowing-record:abc Source reference: flowing-correction:def", "flowing-record:abc")).toBe(false);
+    expect(matches("Source reference: flowing-record:abcdef", "flowing-record:abc")).toBe(false);
+  });
+
   it("JSON-encodes payloads and pins one discovered connection identity", () => {
     const dangerous = 'hello"; throw new Error("owned") //';
     const code = __executorClientTestUtils.executorCode({
