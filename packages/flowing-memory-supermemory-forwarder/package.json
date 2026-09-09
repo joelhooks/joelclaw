@@ -1,0 +1,27 @@
+{
+  "name": "@joelclaw/flowing-memory-supermemory-forwarder",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "flowing-memory-supermemory-forwarder": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check-types": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.26.0",
+    "effect": "4.0.0-rc.110",
+    "pg": "8.23.0",
+    "xstate": "5.32.5",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "@types/pg": "8.15.6",
+    "typescript": "5.9.2",
+    "vitest": "4.0.18"
+  }
+}

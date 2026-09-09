@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "containerTag": "private-space-key",
+  "destinationVisibility": "private",
+  "executorUrl": "http://127.0.0.1:4789/mcp",
+  "supermemoryConnection": "supermemory_mcp.org.privateConnection",
+  "allowedPrivacy": ["public", "private"],
+  "allowedScopes": [
+    {
+      "project": "project-id",
+      "workstream": "workstream-id"
+    }
+  ],
+  "canaryRecordId": "selected-current-record-id",
+  "maxPayloadBytes": 4000,
+  "maxReconcileAttempts": 20,
+  "pollIntervalMs": 30000
+}

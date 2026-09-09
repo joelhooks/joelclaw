@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.flowing-memory-supermemory-forwarder</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__RELEASE_ROOT__/deploy/run-forwarder</string>
+    <string>daemon</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FLOWING_MEMORY_FORWARDER_RELEASE_ROOT</key>
+    <string>__RELEASE_ROOT__</string>
+    <key>JOELCLAW_SUPERMEMORY_FORWARDER_ENV</key>
+    <string>__ENV_FILE__</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__LOG_ROOT__/forwarder.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_ROOT__/forwarder.err.log</string>
+</dict>
+</plist>

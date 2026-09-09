@@ -493,6 +493,37 @@ importers:
         specifier: ^4.0.0
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@22.15.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@22.15.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
 
+  packages/flowing-memory-supermemory-forwarder:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.26.0
+        version: 1.26.0(zod@4.3.6)
+      effect:
+        specifier: 4.0.0-rc.110
+        version: 4.0.0-rc.110
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
+      xstate:
+        specifier: 5.32.5
+        version: 5.32.5
+      zod:
+        specifier: 4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      '@types/pg':
+        specifier: 8.15.6
+        version: 8.15.6
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+      vitest:
+        specifier: 4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(tsx@4.20.6)(yaml@2.8.2)
+
   packages/gateway:
     dependencies:
       '@chat-adapter/discord':
@@ -11448,7 +11479,6 @@ snapshots:
       zod-to-json-schema: 3.25.1(zod@4.3.6)
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   '@mrleebo/prisma-ast@0.13.1':
     dependencies:

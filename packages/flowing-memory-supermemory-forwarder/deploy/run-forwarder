@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+: "${FLOWING_MEMORY_FORWARDER_RELEASE_ROOT:?missing release root}"
+: "${JOELCLAW_SUPERMEMORY_FORWARDER_ENV:?missing private environment file}"
+
+set -a
+# The environment file is operator-owned, mode 0600, and is never printed.
+. "$JOELCLAW_SUPERMEMORY_FORWARDER_ENV"
+set +a
+
+exec "${NODE_BINARY:?missing NODE_BINARY}" \
+  "$FLOWING_MEMORY_FORWARDER_RELEASE_ROOT/dist/cli.js" "$@"
