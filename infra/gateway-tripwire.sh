@@ -1,5 +1,6 @@
 #!/bin/bash
-# Gateway tripwire — checks every five minutes and notifies on unhealthy state changes.
+# Gateway tripwire — checks every five minutes and dispatches unhealthy states
+# to one deduplicated DGX GLM investigator in the default Herdr session.
 # The gateway transport writes its PID and heartbeat after dependency preflight succeeds.
 set -u
 
@@ -8,6 +9,7 @@ THRESHOLD="${GATEWAY_TRIPWIRE_THRESHOLD_SECONDS:-1800}"
 PID_FILE="${GATEWAY_PID_FILE:-/tmp/joelclaw/gateway.pid}"
 STATE_FILE="${GATEWAY_TRIPWIRE_STATE_FILE:-/tmp/joelclaw/gateway-tripwire.state}"
 OSASCRIPT_BIN="${GATEWAY_TRIPWIRE_OSASCRIPT_BIN:-/usr/bin/osascript}"
+INVESTIGATOR_BIN="${GATEWAY_ALERT_INVESTIGATOR_BIN:-$HOME/Code/joelhooks/joelclaw/infra/gateway-alert-investigator.sh}"
 
 etime_to_seconds() {
   local etime="$1"
@@ -42,15 +44,38 @@ write_state() {
   printf '%s\n' "$1" > "$STATE_FILE"
 }
 
-notify_on_transition() {
+fallback_notification_on_transition() {
   local next_state="$1"
   local message="$2"
   local previous_state
   previous_state="$(current_state)"
   if [ "$previous_state" != "$next_state" ]; then
-    "$OSASCRIPT_BIN" -e "display notification \"$message\" with title \"🚨 joelclaw\""
+    if ! "$OSASCRIPT_BIN" -e "display notification \"$message\" with title \"🚨 joelclaw\""; then
+      return 1
+    fi
   fi
   write_state "$next_state"
+}
+
+dispatch_alert() {
+  local alert_state="$1"
+  local age_seconds="${2:-}"
+  if [ -x "$INVESTIGATOR_BIN" ]; then
+    if [ -n "$age_seconds" ]; then
+      "$INVESTIGATOR_BIN" alert "$alert_state" "$age_seconds"
+    else
+      "$INVESTIGATOR_BIN" alert "$alert_state"
+    fi
+    return
+  fi
+  return 127
+}
+
+dispatch_recovery() {
+  if [ ! -x "$INVESTIGATOR_BIN" ]; then
+    return 1
+  fi
+  "$INVESTIGATOR_BIN" recover
 }
 
 if [ ! -f "$HEARTBEAT_FILE" ]; then
@@ -70,7 +95,11 @@ if [ ! -f "$HEARTBEAT_FILE" ]; then
     fi
   fi
 
-  notify_on_transition missing "Gateway heartbeat file missing!"
+  if dispatch_alert missing; then
+    write_state missing
+  else
+    fallback_notification_on_transition missing "Gateway heartbeat missing; Herdr investigator failed to start"
+  fi
   exit 0
 fi
 
@@ -79,8 +108,13 @@ NOW="$(date +%s)"
 AGE=$((NOW - LAST))
 
 if [ "$AGE" -gt "$THRESHOLD" ]; then
-  notify_on_transition stale "Gateway heartbeat stale (${AGE}s ago)"
+  if dispatch_alert stale "$AGE"; then
+    write_state stale
+  else
+    fallback_notification_on_transition stale "Gateway heartbeat stale; Herdr investigator failed to start"
+  fi
   exit 0
 fi
 
+dispatch_recovery || true
 write_state healthy
