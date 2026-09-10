@@ -108,6 +108,19 @@ Idle maintenance is autonomous for time-based pressure:
 - age-triggered rotation can also happen from the watchdog path; because Pi removed `AgentSession.newSession()`, gateway writes `/tmp/joelclaw/gateway.force-new-session.json` and exits cleanly so launchd restarts into a fresh `SessionManager`, then injects the compression summary as hidden context before the next inbound turn
 - those watchdog-triggered runs emit the same `daemon.maintenance.started|completed|failed` telemetry as turn-bound maintenance
 
+## Tripwire investigator
+
+The five-minute gateway heartbeat tripwire opens one visible investigator instead of repeating a native alert.
+
+- `infra/gateway-tripwire.sh` detects `missing` and `stale` heartbeat states.
+- `infra/gateway-alert-investigator.sh` starts or resumes one incident in the default Aqua Herdr session.
+- The incident verifies the configured DGX endpoint, then launches Pi with `dgx-glm/glm-5.3-flash:high` and normal tools.
+- Repeated unhealthy checks reuse the same workspace. A dead agent restarts in place. A failed model or Herdr launch retries after five minutes.
+- Recovery stays pending until the workspace is `review ready` and the same agent accepts the root-cause receipt prompt.
+- A native notification is only the fallback when Herdr or the investigator cannot start.
+
+The investigator follows this skill. It must use `joelclaw gateway` for lifecycle changes and must not start another communications transport. Durable design details live in `.brain/resources/gateway-herdr-alert-investigator.svx`.
+
 ## Interruptibility and supersession (ADR-0196 / ADR-0218 rank 4 slice)
 
 For direct human turns across Telegram, Discord, iMessage, and Slack invoke paths, the latest message now wins.
@@ -308,6 +321,8 @@ This keeps gateway automation hooks out of normal interactive pi sessions.
 | `packages/gateway/src/channels/telegram.ts` | Telegram bot channel |
 | `packages/gateway/src/command-queue.ts` | Serial FIFO queue → `session.prompt()` |
 | `packages/gateway/src/heartbeat.ts` | Periodic autonomous task runner |
+| `packages/gateway/src/gateway-alert-investigator.ts` | XState incident lifecycle and default-Herdr DGX GLM launcher |
+| `infra/gateway-tripwire.sh` | Five-minute heartbeat sensor and investigator dispatch |
 | `packages/system-bus/src/inngest/middleware/gateway.ts` | Middleware injecting `gateway` context |
 | `packages/cli/src/commands/gateway.ts` | CLI subcommands |
 | `~/.joelclaw/scripts/gateway-start.sh` | launchd start script |
