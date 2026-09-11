@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
+import { NAS_HDD_ROOT, NAS_INGEST_STAGING_ROOT } from "@joelclaw/endpoint-resolver";
 import { NonRetriableError } from "inngest";
 import {
   type BookChunkingResult,
@@ -33,7 +34,7 @@ export const DOCS_CHUNKS_COLLECTION = "docs_chunks";
 export const DOCS_CHUNKS_V2_COLLECTION = "docs_chunks_v2";
 const DOCS_TYPESENSE_URL = process.env.DOCS_TYPESENSE_URL || typesense.TYPESENSE_URL;
 const DOCS_TMP_DIR = "/tmp/docs-ingest";
-const THREE_BODY_ROOT = "/Volumes/three-body";
+const THREE_BODY_ROOT = NAS_HDD_ROOT; // historical name; now the maturin joelclaw tree
 const MANIFEST_FILE_NAME = "manifest.clean.jsonl";
 const DOCS_INGEST_CONCURRENCY = Math.max(
   1,
@@ -52,7 +53,7 @@ function getManifestCandidatePaths(): string[] {
   return [
     process.env.MANIFEST_ARCHIVE_MANIFEST_PATH?.trim(),
     `/tmp/${MANIFEST_FILE_NAME}`,
-    `/Volumes/three-body/.ingest-staging/${MANIFEST_FILE_NAME}`,
+    `${NAS_INGEST_STAGING_ROOT}/${MANIFEST_FILE_NAME}`,
     process.env.HOME ? `${process.env.HOME}/Documents/${MANIFEST_FILE_NAME}` : undefined,
     `${homedir()}/Documents/${MANIFEST_FILE_NAME}`,
     "/Users/joel/Documents/manifest.clean.jsonl",
@@ -838,7 +839,7 @@ async function resolveAccessiblePath(requestedPath: string): Promise<string> {
     return requestedPath;
   } catch {
     // If the file isn't at the requested path, try common NAS locations.
-    // aa-book copies to /Volumes/three-body/books/YYYY/ then removes local.
+    // aa-book copies to <NAS_HDD_ROOT>/books/aa-book/YYYY/ then removes local.
     const fileName = basename(requestedPath);
     const year = new Date().getFullYear().toString();
     const candidates = [

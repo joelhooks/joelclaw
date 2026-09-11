@@ -1,6 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 /** Atomic write: write to .tmp then rename — no partial artifacts on crash */
 async function atomicWrite(path: string, content: string): Promise<void> {
@@ -8,6 +8,7 @@ async function atomicWrite(path: string, content: string): Promise<void> {
   await writeFile(tmp, content, "utf8");
   await rename(tmp, path);
 }
+
 import type { DocsChunkRecord } from "../inngest/functions/docs-ingest";
 
 export type DocsMetadata = {
@@ -29,10 +30,9 @@ export type DocsMetadata = {
   nas_paths: string[];
 };
 
-export const DOCS_ARTIFACTS_DIR =
-  process.env.JOELCLAW_DOCS_ARTIFACTS_DIR?.trim()
-  || process.env.DOCS_ARTIFACTS_DIR?.trim()
-  || "/Volumes/three-body/docs-artifacts";
+export { DOCS_ARTIFACTS_DIR } from "@joelclaw/endpoint-resolver";
+
+import { DOCS_ARTIFACTS_DIR } from "@joelclaw/endpoint-resolver";
 
 type ArtifactStage = "md" | "meta" | "chunks";
 

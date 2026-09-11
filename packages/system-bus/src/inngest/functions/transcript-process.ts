@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { NAS_SSH_HOST } from "@joelclaw/endpoint-resolver";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
 import { pushContentResource } from "../../lib/convex";
@@ -239,8 +240,8 @@ export const transcriptProcess = inngest.createFunction(
       // Transfer to NAS alongside video
       if (nasPath) {
         try {
-          await $`ssh joel@three-body "mkdir -p ${nasPath}/screenshots"`.quiet();
-          await $`scp -r ${screenshotDir}/. joel@three-body:${nasPath}/screenshots/`.quiet();
+          await $`ssh ${NAS_SSH_HOST} "mkdir -p ${nasPath}/screenshots"`.quiet();
+          await $`scp -r ${screenshotDir}/. ${NAS_SSH_HOST}:${nasPath}/screenshots/`.quiet();
         } catch {}
       }
 
@@ -413,7 +414,7 @@ export const transcriptProcess = inngest.createFunction(
           // Rename on NAS
           if (nasPath) {
             try {
-              await $`ssh joel@three-body "mv '${nasPath}/screenshots/${shot.name}' '${nasPath}/screenshots/${finalName}'"`.quiet();
+              await $`ssh ${NAS_SSH_HOST} "mv '${nasPath}/screenshots/${shot.name}' '${nasPath}/screenshots/${finalName}'"`.quiet();
             } catch {}
           }
 
@@ -436,7 +437,7 @@ export const transcriptProcess = inngest.createFunction(
             } catch {}
             if (nasPath) {
               try {
-                await $`ssh joel@three-body "rm -f '${nasPath}/screenshots/${shot.name}'"`.quiet();
+                await $`ssh ${NAS_SSH_HOST} "rm -f '${nasPath}/screenshots/${shot.name}'"`.quiet();
               } catch {}
             }
           }

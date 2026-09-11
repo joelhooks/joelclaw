@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
-import { DEFAULT_SERVICE_PLACEMENT } from "@joelclaw/endpoint-resolver";
+import { DEFAULT_SERVICE_PLACEMENT, NAS_BACKUPS_HDD_ROOT, NAS_BACKUPS_REMOTE_ROOT } from "@joelclaw/endpoint-resolver";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
 import { buildAgentSessionBackupCommand } from "../../lib/agent-session-backup-command";
@@ -42,9 +42,9 @@ const TYPESENSE_SNAPSHOT_RETENTION_COUNT = parsePositiveIntEnv(
   2,
   1
 );
-const TYPESENSE_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/typesense`;
+const TYPESENSE_BACKUP_ROOT = `${NAS_BACKUPS_HDD_ROOT}/typesense`;
 const TYPESENSE_STAGE_ROOT = "/tmp/joelclaw/typesense-snapshots";
-const TYPESENSE_BACKUP_REMOTE_ROOT = "/volume1/joelclaw/backups/typesense";
+const TYPESENSE_BACKUP_REMOTE_ROOT = `${NAS_BACKUPS_REMOTE_ROOT}/typesense`;
 
 const REDIS_POD = "redis-0";
 const REDIS_NAMESPACE = "joelclaw";
@@ -57,8 +57,8 @@ const K8S_OPERATOR_SSH_FLAGS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
 const REDIS_BACKUP_ALERT_LATCH_KEY = "backup:redis";
 const REDIS_BACKUP_ALERT_QUIET_MS = 6 * 60 * 60 * 1000;
 const REDIS_BACKUP_ALERT_ATTEMPT_CAP = 3;
-const REDIS_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/redis`;
-const REDIS_BACKUP_REMOTE_ROOT = "/volume1/joelclaw/backups/redis";
+const REDIS_BACKUP_ROOT = `${NAS_BACKUPS_HDD_ROOT}/redis`;
+const REDIS_BACKUP_REMOTE_ROOT = `${NAS_BACKUPS_REMOTE_ROOT}/redis`;
 const REDIS_BACKUP_STAGING_ROOT = `${TYPESENSE_STAGE_ROOT}/redis`;
 
 const BACKUP_RECOVERY_WINDOW_HOURS = BACKUP_ROUTER_CONFIG.transport.recoveryWindowHours;
@@ -675,7 +675,7 @@ function createBackupOnFailureHandler(
       playbook: {
         actions: ["route to backup retry event after structured decision"],
         restart: [
-          "Verify NAS mount via `stat /Volumes/three-body`",
+          "Verify NAS mount via `stat /Volumes/services/joelclaw`",
           "Validate SSH access to configured NAS host",
         ],
         notify: ["joelclaw OTEL"],

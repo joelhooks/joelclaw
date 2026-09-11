@@ -15,7 +15,7 @@ The docs pipeline uses a staged artifact chain:
 - **Extraction**: opendataloader-pdf → structured markdown with headings, tables, reading order
 - **Chunking**: markdown-native heading detection, no overlap, hierarchical section + snippet chunks
 - **Embeddings**: nomic-embed-text via ollama GPU (768-dim, retrieval-tuned, pre-computed at ingest) in `docs_chunks_v2` collection
-- **Artifacts**: durable on NAS at `/Volumes/three-body/docs-artifacts/{docId}/` — `.md`, `.meta.json`, `.chunks.jsonl`
+- **Artifacts**: durable on NAS at `${DOCS_ARTIFACTS_DIR}/{docId}/` — `.md`, `.meta.json`, `.chunks.jsonl`; resolve the machine-local value from `~/.config/system-bus.env`
 - **Summaries**: LLM-generated per-document summaries in `.meta.json`
 
 ## When to Use

@@ -23,7 +23,7 @@ if [ -z "${PDF_BRAIN_API_TOKEN:-}" ] && command -v secrets >/dev/null 2>&1; then
 fi
 
 export PORT="${PORT:-3838}"
-export DOCS_ARTIFACTS_DIR="${DOCS_ARTIFACTS_DIR:-/Volumes/three-body/docs-artifacts}"
+export DOCS_ARTIFACTS_DIR="${DOCS_ARTIFACTS_DIR:-/Volumes/services/joelclaw/docs-artifacts}"
 
 cd "$REPO"
 exec "$HOME/.bun/bin/bun" run apps/docs-api/src/index.ts

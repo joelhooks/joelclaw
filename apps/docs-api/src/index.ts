@@ -139,10 +139,11 @@ const API_TOKEN = process.env.PDF_BRAIN_API_TOKEN || process.env.pdf_brain_api_t
 const DOCS_CHUNKS_COLLECTION = (process.env.DOCS_CHUNKS_COLLECTION || "docs_chunks_v2") as
   | "docs_chunks"
   | "docs_chunks_v2";
-const DOCS_ARTIFACTS_DIR = process.env.DOCS_ARTIFACTS_DIR || "/Volumes/three-body/docs-artifacts";
+const DOCS_ARTIFACTS_DIR =
+  process.env.DOCS_ARTIFACTS_DIR || "/Volumes/services/joelclaw/docs-artifacts";
 const DOCS_ARTIFACTS_SSH_HOST = process.env.DOCS_ARTIFACTS_SSH_HOST || "";
 const DOCS_ARTIFACTS_SSH_ROOT =
-  process.env.DOCS_ARTIFACTS_SSH_ROOT || "/volume1/joelclaw/docs-artifacts";
+  process.env.DOCS_ARTIFACTS_SSH_ROOT || "/volume1/services/joelclaw/docs-artifacts";
 const DOCS_ARTIFACTS_PREFER_SSH = ["1", "true", "yes", "on"].includes(
   (process.env.DOCS_ARTIFACTS_PREFER_SSH || "").toLowerCase(),
 );
