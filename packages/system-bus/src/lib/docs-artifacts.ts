@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /** Atomic write: write to .tmp then rename — no partial artifacts on crash */
 async function atomicWrite(path: string, content: string): Promise<void> {
@@ -32,9 +32,114 @@ export type DocsMetadata = {
 
 export { DOCS_ARTIFACTS_DIR } from "@joelclaw/endpoint-resolver";
 
-import { DOCS_ARTIFACTS_DIR } from "@joelclaw/endpoint-resolver";
+import {
+  DOCS_ARTIFACTS_DIR,
+  DOCS_ARTIFACTS_REMOTE_DIR,
+  NAS_SSH_HOST,
+} from "@joelclaw/endpoint-resolver";
+
+const DOCS_ARTIFACTS_SSH_HOST = process.env.DOCS_ARTIFACTS_SSH_HOST || NAS_SSH_HOST;
+const DOCS_ARTIFACTS_SSH_ROOT =
+  process.env.DOCS_ARTIFACTS_SSH_ROOT || DOCS_ARTIFACTS_REMOTE_DIR;
+const DOCS_ARTIFACTS_PREFER_SSH = ["1", "true", "yes", "on"].includes(
+  (process.env.DOCS_ARTIFACTS_PREFER_SSH || "").toLowerCase()
+);
+const DOCS_ARTIFACT_SSH_TIMEOUT_MS = Number.parseInt(
+  process.env.DOCS_ARTIFACT_SSH_TIMEOUT_MS || "20000",
+  10
+);
 
 type ArtifactStage = "md" | "meta" | "chunks";
+
+type SshResult = {
+  code: number;
+  stdout: string;
+  stderr: string;
+};
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+async function sshArtifactCommand(command: string, stdin?: string): Promise<SshResult> {
+  if (!DOCS_ARTIFACTS_SSH_HOST) {
+    throw new Error("DOCS_ARTIFACTS_PREFER_SSH requires DOCS_ARTIFACTS_SSH_HOST");
+  }
+
+  const child = Bun.spawn(
+    [
+      "ssh",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=8",
+      DOCS_ARTIFACTS_SSH_HOST,
+      command,
+    ],
+    {
+      stdin: stdin === undefined ? "ignore" : "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    }
+  );
+  if (stdin !== undefined) {
+    child.stdin!.write(stdin);
+    child.stdin!.end();
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const code = await Promise.race([
+      child.exited,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("docs_artifact_ssh_timeout")), DOCS_ARTIFACT_SSH_TIMEOUT_MS);
+      }),
+    ]);
+    const [stdout, stderr] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return { code, stdout, stderr };
+  } catch (error) {
+    child.kill();
+    await child.exited.catch(() => undefined);
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function remoteArtifactPath(path: string): string {
+  const relativePath = path.slice(DOCS_ARTIFACTS_DIR.length).replace(/^[/\\]+/u, "");
+  if (!path.startsWith(`${DOCS_ARTIFACTS_DIR}/`) || relativePath.includes("..")) {
+    throw new Error(`Artifact path escapes configured root: ${path}`);
+  }
+  return `${DOCS_ARTIFACTS_SSH_ROOT.replace(/\/+$/u, "")}/${relativePath.replace(/\\/gu, "/")}`;
+}
+
+async function atomicWriteSsh(path: string, content: string): Promise<void> {
+  const remotePath = remoteArtifactPath(path);
+  const remoteTmp = `${remotePath}.${randomUUID().slice(0, 8)}.tmp`;
+  const command = `set -e; mkdir -p -- ${shellQuote(dirname(remotePath))}; cat > ${shellQuote(remoteTmp)}; mv -- ${shellQuote(remoteTmp)} ${shellQuote(remotePath)}`;
+  const result = await sshArtifactCommand(command, content);
+  if (result.code !== 0) {
+    throw new Error(`ssh artifact write failed (${result.code}): ${result.stderr.slice(0, 500)}`);
+  }
+}
+
+async function readSsh(path: string): Promise<string | null> {
+  const result = await sshArtifactCommand(`cat -- ${shellQuote(remoteArtifactPath(path))}`);
+  if (result.code === 0) return result.stdout;
+  if (result.code === 1) return null;
+  throw new Error(`ssh artifact read failed (${result.code}): ${result.stderr.slice(0, 500)}`);
+}
+
+async function hasSsh(path: string): Promise<boolean> {
+  const result = await sshArtifactCommand(`test -f ${shellQuote(remoteArtifactPath(path))}`);
+  if (result.code === 0) return true;
+  if (result.code === 1) return false;
+  throw new Error(`ssh artifact check failed (${result.code}): ${result.stderr.slice(0, 500)}`);
+}
 
 function docArtifactDir(docId: string): string {
   return join(DOCS_ARTIFACTS_DIR, docId);
@@ -59,16 +164,25 @@ async function ensureDocArtifactDir(docId: string): Promise<string> {
 }
 
 export async function saveMarkdownArtifact(docId: string, markdown: string): Promise<string> {
-  await ensureDocArtifactDir(docId);
   const path = artifactPath(docId, "md");
-  await atomicWrite(path, markdown);
+  if (DOCS_ARTIFACTS_PREFER_SSH) {
+    await atomicWriteSsh(path, markdown);
+  } else {
+    await ensureDocArtifactDir(docId);
+    await atomicWrite(path, markdown);
+  }
   return path;
 }
 
 export async function saveMetadataArtifact(docId: string, meta: DocsMetadata): Promise<string> {
-  await ensureDocArtifactDir(docId);
   const path = artifactPath(docId, "meta");
-  await atomicWrite(path, `${JSON.stringify(meta, null, 2)}\n`);
+  const content = `${JSON.stringify(meta, null, 2)}\n`;
+  if (DOCS_ARTIFACTS_PREFER_SSH) {
+    await atomicWriteSsh(path, content);
+  } else {
+    await ensureDocArtifactDir(docId);
+    await atomicWrite(path, content);
+  }
   return path;
 }
 
@@ -76,16 +190,23 @@ export async function saveChunksArtifact(
   docId: string,
   chunks: DocsChunkRecord[]
 ): Promise<string> {
-  await ensureDocArtifactDir(docId);
   const path = artifactPath(docId, "chunks");
   const body = chunks.map((chunk) => JSON.stringify(chunk)).join("\n");
-  await atomicWrite(path, body.length > 0 ? `${body}\n` : "");
+  const content = body.length > 0 ? `${body}\n` : "";
+  if (DOCS_ARTIFACTS_PREFER_SSH) {
+    await atomicWriteSsh(path, content);
+  } else {
+    await ensureDocArtifactDir(docId);
+    await atomicWrite(path, content);
+  }
   return path;
 }
 
 export async function loadMarkdownArtifact(docId: string): Promise<string | null> {
+  const path = artifactPath(docId, "md");
+  if (DOCS_ARTIFACTS_PREFER_SSH) return readSsh(path);
   try {
-    return await readFile(artifactPath(docId, "md"), "utf8");
+    return await readFile(path, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
     throw error;
@@ -93,9 +214,10 @@ export async function loadMarkdownArtifact(docId: string): Promise<string | null
 }
 
 export async function loadMetadataArtifact(docId: string): Promise<DocsMetadata | null> {
+  const path = artifactPath(docId, "meta");
   try {
-    const raw = await readFile(artifactPath(docId, "meta"), "utf8");
-    return JSON.parse(raw) as DocsMetadata;
+    const raw = DOCS_ARTIFACTS_PREFER_SSH ? await readSsh(path) : await readFile(path, "utf8");
+    return raw === null ? null : (JSON.parse(raw) as DocsMetadata);
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
     throw error;
@@ -103,8 +225,10 @@ export async function loadMetadataArtifact(docId: string): Promise<DocsMetadata 
 }
 
 export async function loadChunksArtifact(docId: string): Promise<DocsChunkRecord[] | null> {
+  const path = artifactPath(docId, "chunks");
   try {
-    const raw = await readFile(artifactPath(docId, "chunks"), "utf8");
+    const raw = DOCS_ARTIFACTS_PREFER_SSH ? await readSsh(path) : await readFile(path, "utf8");
+    if (raw === null) return null;
     const chunks = raw
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -118,8 +242,10 @@ export async function loadChunksArtifact(docId: string): Promise<DocsChunkRecord
 }
 
 export async function hasArtifact(docId: string, stage: ArtifactStage): Promise<boolean> {
+  const path = artifactPath(docId, stage);
+  if (DOCS_ARTIFACTS_PREFER_SSH) return hasSsh(path);
   try {
-    await access(artifactPath(docId, stage));
+    await access(path);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
