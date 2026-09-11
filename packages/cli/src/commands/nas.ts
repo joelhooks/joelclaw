@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { Command, Options } from "@effect/cli"
+import { NAS_HDD_ROOT, NAS_NVME_ROOT, NAS_SSH_HOST } from "@joelclaw/endpoint-resolver";
 import { Console, Effect } from "effect"
 import { loadConfig } from "../config"
 import { Inngest } from "../inngest"
@@ -67,10 +68,10 @@ const DEFAULT_SELF_HEALING_CONFIG = {
       nasMaxAttempts: 12,
       nasRetryBaseMs: 10_000,
       nasRetryMaxMs: 120_000,
-      nasSshHost: "joel@three-body",
+      nasSshHost: NAS_SSH_HOST,
       nasSshFlags: "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
-      nasHddRoot: "/Volumes/three-body",
-      nasNvmeRoot: "/Volumes/nas-nvme",
+      nasHddRoot: NAS_HDD_ROOT,
+      nasNvmeRoot: NAS_NVME_ROOT,
     },
   },
   backupFailureRouter: {
@@ -86,10 +87,10 @@ const DEFAULT_SELF_HEALING_CONFIG = {
     nasMaxAttempts: 12,
     nasRetryBaseMs: 10_000,
     nasRetryMaxMs: 120_000,
-    nasSshHost: "joel@three-body",
+    nasSshHost: NAS_SSH_HOST,
     nasSshFlags: "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
-    nasHddRoot: "/Volumes/three-body",
-    nasNvmeRoot: "/Volumes/nas-nvme",
+    nasHddRoot: NAS_HDD_ROOT,
+    nasNvmeRoot: NAS_NVME_ROOT,
   },
 }
 const DEFAULT_BACKUP_CONFIG = {
@@ -106,10 +107,10 @@ const DEFAULT_BACKUP_CONFIG = {
     nasMaxAttempts: 12,
     nasRetryBaseMs: 10_000,
     nasRetryMaxMs: 120_000,
-    nasSshHost: "joel@three-body",
+    nasSshHost: NAS_SSH_HOST,
     nasSshFlags: "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
-    nasHddRoot: "/Volumes/three-body",
-    nasNvmeRoot: "/Volumes/nas-nvme",
+    nasHddRoot: NAS_HDD_ROOT,
+    nasNvmeRoot: NAS_NVME_ROOT,
   },
 }
 

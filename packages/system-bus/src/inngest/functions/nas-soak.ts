@@ -1,4 +1,5 @@
 import { getRedisPort } from "../../lib/redis";
+
 /**
  * NAS soak monitoring for ADR-0088 revisit gate.
  *
@@ -7,6 +8,7 @@ import { getRedisPort } from "../../lib/redis";
  * notifies gateway, and escalates to TaskPort when action is needed.
  */
 
+import { NAS_NVME_ROOT, NAS_SSH_HOST } from "@joelclaw/endpoint-resolver";
 import Redis from "ioredis";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import { inngest } from "../client";
@@ -17,10 +19,13 @@ const SAMPLE_KEEP_COUNT = 10_000;
 const REVIEW_TASK_LABEL = "nas-soak";
 const REVIEW_TASK_PROJECT = "Agent Work";
 
-const NAS_NVME_MOUNT = "/Volumes/nas-nvme";
-const NAS_NVME_SRC = "192.168.1.163:/volume2/data";
-const THREE_BODY_MOUNT = "/Volumes/three-body";
-const THREE_BODY_SRC = "192.168.1.163:/volume1/joelclaw";
+// Expected SMB sources derive from machine-local placement config. Public code
+// must not bake in a private NAS address.
+const NAS_SMB_AUTHORITY = NAS_SSH_HOST || "nas-not-configured";
+const NAS_NVME_MOUNT = NAS_NVME_ROOT;
+const NAS_NVME_SRC = `//${NAS_SMB_AUTHORITY}/fast`;
+const NAS_HDD_MOUNT = "/Volumes/services";
+const NAS_HDD_SRC = `//${NAS_SMB_AUTHORITY}/services`;
 
 // ADR-0088 revisit thresholds.
 const GATE_MIN_SAMPLE_HOURS = 48;
@@ -200,7 +205,7 @@ function parseMd2Status(mdstat: string): Md2Status {
 
 async function fetchMd2Status(): Promise<Md2Status> {
   const result = await runCmd(
-    ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "joel@three-body", "cat /proc/mdstat"],
+    ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", NAS_SSH_HOST, "cat /proc/mdstat"],
     7_000
   );
   if (result.exitCode !== 0) return { resyncActive: false };
@@ -298,7 +303,7 @@ export const nasSoakSample = inngest.createFunction(
     const mountsRaw = await step.run("sample-mounts", async () =>
       Promise.all([
         sampleMount(NAS_NVME_MOUNT, NAS_NVME_SRC),
-        sampleMount(THREE_BODY_MOUNT, THREE_BODY_SRC),
+        sampleMount(NAS_HDD_MOUNT, NAS_HDD_SRC),
       ])
     );
     const mounts = mountsRaw
@@ -393,8 +398,8 @@ export const nasSoakReview = inngest.createFunction(
         `- Samples (48h window): ${inWindow.length}`,
         `- Failures: ${failures.length}`,
         `- md2 resync active: ${latest?.md2ResyncActive ? "yes" : "no"}${typeof latest?.md2ProgressPct === "number" ? ` (${latest.md2ProgressPct.toFixed(1)}%)` : ""}`,
-        `- Median /Volumes/nas-nvme write: ${formatNum(medianWrite)} MiB/s`,
-        `- Median /Volumes/nas-nvme read: ${formatNum(medianRead)} MiB/s`,
+        `- Median ${NAS_NVME_MOUNT} write: ${formatNum(medianWrite)} MiB/s`,
+        `- Median ${NAS_NVME_MOUNT} read: ${formatNum(medianRead)} MiB/s`,
         "",
         `- Gate: zero-failures-48h = ${gateZeroFailures ? "PASS" : "FAIL"}`,
         `- Gate: md2-resync-complete = ${gateResyncDone ? "PASS" : "FAIL"}`,
@@ -433,8 +438,8 @@ export const nasSoakReview = inngest.createFunction(
             `Samples(48h): ${inWindow.length}`,
             `Failures: ${failures.length}`,
             `md2 resync active: ${latest?.md2ResyncActive ? "yes" : "no"}`,
-            `Median /Volumes/nas-nvme write MiB/s: ${formatNum(medianWrite)}`,
-            `Median /Volumes/nas-nvme read MiB/s: ${formatNum(medianRead)}`,
+            `Median ${NAS_NVME_MOUNT} write MiB/s: ${formatNum(medianWrite)}`,
+            `Median ${NAS_NVME_MOUNT} read MiB/s: ${formatNum(medianRead)}`,
             "",
             "ADR-0088 revisit gates failing. Keep local Typesense primary and investigate mounts/perf.",
           ].join("\n"),

@@ -444,7 +444,7 @@ describe("check/system-health summary classification", () => {
   test("treats non-critical degradation as warn-but-successful", () => {
     const result = classifyHealthSummary({
       services: [
-        { name: "NFS Mounts", ok: false, detail: "nas-nvme: missing, three-body: ok" },
+        { name: "NFS Mounts", ok: false, detail: "fast: missing, services: ok" },
         { name: "Redis", ok: true },
       ],
       agentDispatchCanary: null,
@@ -462,7 +462,7 @@ describe("check/system-health summary classification", () => {
       services: [
         { name: "Worker", ok: false, detail: "unreachable" },
         { name: "Front Projection", ok: false, detail: "age=61m" },
-        { name: "NFS Mounts", ok: false, detail: "nas-nvme: missing" },
+        { name: "NFS Mounts", ok: false, detail: "fast: missing" },
       ],
       agentDispatchCanary: {
         enabled: true,

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NAS_ROOT="${SELF_HEALING_NAS_HDD_ROOT:-/Volumes/three-body}"
-ARCHIVE_ROOT="${SYSTEM_LOG_ARCHIVE_ROOT:-${NAS_ROOT}/backups/slog/archive}"
+NAS_BACKUPS_ROOT="${JOELCLAW_NAS_BACKUPS_HDD_ROOT:-/Volumes/backups/services/joelclaw}"
+ARCHIVE_ROOT="${SYSTEM_LOG_ARCHIVE_ROOT:-${NAS_BACKUPS_ROOT}/slog/archive}"
 SOURCE="panda:~/Vault/system/system-log.jsonl"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 SNAPSHOT="${ARCHIVE_ROOT}/system-log-panda-${STAMP}.jsonl"

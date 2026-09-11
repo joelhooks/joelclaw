@@ -1,6 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname } from "node:path";
+import { NAS_HDD_ROOT, NAS_INGEST_STAGING_ROOT } from "@joelclaw/endpoint-resolver";
 import { NonRetriableError } from "inngest";
 import * as typesense from "../../lib/typesense";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
@@ -8,7 +9,7 @@ import { inngest } from "../client";
 
 const DOCS_COLLECTION = "docs";
 const DOCS_TYPESENSE_URL = process.env.DOCS_TYPESENSE_URL || typesense.TYPESENSE_URL;
-const THREE_BODY_ROOT = "/Volumes/three-body";
+const THREE_BODY_ROOT = NAS_HDD_ROOT; // historical name; now the maturin joelclaw tree
 const MANIFEST_FILE_NAME = "manifest.clean.jsonl";
 const PAGE_SIZE = 250;
 const MAX_PAGES = 40;
@@ -745,7 +746,7 @@ async function resolveManifestPath(requestedPath: unknown): Promise<string> {
     requested.length > 0 ? requested : null,
     process.env.MANIFEST_ARCHIVE_MANIFEST_PATH?.trim() || null,
     `/tmp/${MANIFEST_FILE_NAME}`,
-    `/Volumes/three-body/.ingest-staging/${MANIFEST_FILE_NAME}`,
+    `${NAS_INGEST_STAGING_ROOT}/${MANIFEST_FILE_NAME}`,
     process.env.HOME ? `${process.env.HOME}/Documents/${MANIFEST_FILE_NAME}` : null,
     `${homedir()}/Documents/${MANIFEST_FILE_NAME}`,
   ].filter((value): value is string => Boolean(value && value.length > 0));

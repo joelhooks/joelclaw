@@ -14,6 +14,7 @@ import {
   type EndpointCandidateFailure,
   type EndpointClass,
   type K8sHealthProbeOptions,
+  NAS_EXPECTED_MOUNTS,
   probeK8sHealth,
   resolveEndpoint,
   summarizeSkippedCandidates,
@@ -1069,10 +1070,7 @@ async function checkAgentSecrets(): Promise<ServiceStatus> {
 }
 
 async function checkNfsMounts(): Promise<ServiceStatus> {
-  const mounts = [
-    { name: "nas-nvme", path: "/Volumes/nas-nvme" },
-    { name: "three-body", path: "/Volumes/three-body" },
-  ];
+  const mounts = NAS_EXPECTED_MOUNTS;
   const results: string[] = [];
   let allOk = true;
 

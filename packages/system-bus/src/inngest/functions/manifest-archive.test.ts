@@ -20,7 +20,7 @@ describe("manifest-archive docs queueing", () => {
     expect(event).toBeTruthy();
     expect(event?.name).toBe("docs/ingest.requested");
     expect(event?.data.nasPath).toBe(
-      "/Volumes/three-body/books/programming/Distributed-Systems.pdf",
+      "/Volumes/services/joelclaw/books/programming/Distributed-Systems.pdf",
     );
     expect(event?.data.storageCategory).toBe("programming");
     expect(event?.data.idempotencyKey).toBe("manifest:entry-001:copied");

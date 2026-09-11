@@ -19,10 +19,10 @@ Environment variables always override file values at runtime.
       "nasMaxAttempts": 12,
       "nasRetryBaseMs": 10000,
       "nasRetryMaxMs": 120000,
-      "nasSshHost": "joel@three-body",
+      "nasSshHost": "joel@nas.example",
       "nasSshFlags": "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
-      "nasHddRoot": "/Volumes/three-body",
-      "nasNvmeRoot": "/Volumes/nas-nvme"
+      "nasHddRoot": "/Volumes/services/joelclaw",
+      "nasNvmeRoot": "/Volumes/fast"
     }
   },
   "backupFailureRouter": {
@@ -38,10 +38,10 @@ Environment variables always override file values at runtime.
     "nasMaxAttempts": 12,
     "nasRetryBaseMs": 10000,
     "nasRetryMaxMs": 120000,
-    "nasSshHost": "joel@three-body",
+    "nasSshHost": "joel@nas.example",
     "nasSshFlags": "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
-    "nasHddRoot": "/Volumes/three-body",
-    "nasNvmeRoot": "/Volumes/nas-nvme"
+    "nasHddRoot": "/Volumes/services/joelclaw",
+    "nasNvmeRoot": "/Volumes/fast"
   }
 }
 ```

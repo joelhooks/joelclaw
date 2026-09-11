@@ -175,18 +175,18 @@ test("docs-ingest temp text artifacts use run-unique paths", () => {
 
 test("docs-ingest path alias merge preserves canonical path and dedupes variants", () => {
   const merged = mergeDocumentPathAliases({
-    currentNasPath: "/Volumes/three-body/books/business/The-Learning-Game.pdf",
-    existingNasPath: "/Volumes/three-body/books/programming/The-Learning-Game.pdf",
+    currentNasPath: "/Volumes/services/joelclaw/books/business/The-Learning-Game.pdf",
+    existingNasPath: "/Volumes/services/joelclaw/books/programming/The-Learning-Game.pdf",
     existingNasPaths: [
-      "/Volumes/three-body/books/programming/The-Learning-Game.pdf",
-      "/Volumes/three-body/books/business/The-Learning-Game.pdf",
+      "/Volumes/services/joelclaw/books/programming/The-Learning-Game.pdf",
+      "/Volumes/services/joelclaw/books/business/The-Learning-Game.pdf",
     ],
   });
 
-  expect(merged.canonicalNasPath).toBe("/Volumes/three-body/books/programming/The-Learning-Game.pdf");
+  expect(merged.canonicalNasPath).toBe("/Volumes/services/joelclaw/books/programming/The-Learning-Game.pdf");
   expect(merged.nasPaths).toEqual([
-    "/Volumes/three-body/books/programming/The-Learning-Game.pdf",
-    "/Volumes/three-body/books/business/The-Learning-Game.pdf",
+    "/Volumes/services/joelclaw/books/programming/The-Learning-Game.pdf",
+    "/Volumes/services/joelclaw/books/business/The-Learning-Game.pdf",
   ]);
 });
 
@@ -241,7 +241,7 @@ test("docs-ingest manifest-backed classification yields backfill strategy", asyn
     process.env.MANIFEST_ARCHIVE_MANIFEST_PATH = manifestPath;
     resetManifestInferenceCache();
 
-    const nasPath = "/Volumes/three-body/books/programming/1706.03762.pdf";
+    const nasPath = "/Volumes/services/joelclaw/books/programming/1706.03762.pdf";
     const manifestInference = await resolveManifestInference(nasPath);
     expect(manifestInference).toBeTruthy();
     expect(manifestInference?.id).toBe("fixture-1706");
