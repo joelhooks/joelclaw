@@ -89,17 +89,16 @@ async function sshArtifactCommand(command: string, stdin?: string): Promise<SshR
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const code = await Promise.race([
+    const stdout = new Response(child.stdout).text();
+    const stderr = new Response(child.stderr).text();
+    const exit = Promise.race([
       child.exited,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error("docs_artifact_ssh_timeout")), DOCS_ARTIFACT_SSH_TIMEOUT_MS);
       }),
     ]);
-    const [stdout, stderr] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    return { code, stdout, stderr };
+    const [code, stdoutText, stderrText] = await Promise.all([exit, stdout, stderr]);
+    return { code, stdout: stdoutText, stderr: stderrText };
   } catch (error) {
     child.kill();
     await child.exited.catch(() => undefined);
