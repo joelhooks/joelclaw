@@ -9,6 +9,7 @@ import { chunkBySegments, chunkBySpeakerTurns } from "../../lib/transcript-chunk
 import * as typesense from "../../lib/typesense";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { NAS_SSH_HOST } from "@joelclaw/endpoint-resolver";
 
 const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
 const INVALID_ANTHROPIC_KEY_ERROR =
@@ -239,8 +240,8 @@ export const transcriptProcess = inngest.createFunction(
       // Transfer to NAS alongside video
       if (nasPath) {
         try {
-          await $`ssh joel@three-body "mkdir -p ${nasPath}/screenshots"`.quiet();
-          await $`scp -r ${screenshotDir}/. joel@three-body:${nasPath}/screenshots/`.quiet();
+          await $`ssh ${NAS_SSH_HOST} "mkdir -p ${nasPath}/screenshots"`.quiet();
+          await $`scp -r ${screenshotDir}/. ${NAS_SSH_HOST}:${nasPath}/screenshots/`.quiet();
         } catch {}
       }
 
@@ -413,7 +414,7 @@ export const transcriptProcess = inngest.createFunction(
           // Rename on NAS
           if (nasPath) {
             try {
-              await $`ssh joel@three-body "mv '${nasPath}/screenshots/${shot.name}' '${nasPath}/screenshots/${finalName}'"`.quiet();
+              await $`ssh ${NAS_SSH_HOST} "mv '${nasPath}/screenshots/${shot.name}' '${nasPath}/screenshots/${finalName}'"`.quiet();
             } catch {}
           }
 
@@ -436,7 +437,7 @@ export const transcriptProcess = inngest.createFunction(
             } catch {}
             if (nasPath) {
               try {
-                await $`ssh joel@three-body "rm -f '${nasPath}/screenshots/${shot.name}'"`.quiet();
+                await $`ssh ${NAS_SSH_HOST} "rm -f '${nasPath}/screenshots/${shot.name}'"`.quiet();
               } catch {}
             }
           }

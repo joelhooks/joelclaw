@@ -2,6 +2,7 @@ import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/pr
 import * as os from "node:os";
 import * as path from "node:path";
 import { getRedisClient } from "./redis";
+import { NAS_NVME_ROOT } from "@joelclaw/endpoint-resolver";
 
 type CacheTier = "hot" | "warm" | "cold";
 
@@ -28,8 +29,8 @@ const DEFAULT_HOT_TTL_SECONDS = 300;
 const DEFAULT_WARM_TTL_SECONDS = 3600;
 const DEFAULT_NAMESPACE = "default";
 const WARM_CACHE_ROOT = path.join(os.homedir(), ".cache", "joelclaw");
-const COLD_CACHE_ROOT = "/Volumes/nas-nvme/cache/joelclaw";
-const NAS_MOUNT_PATH = "/Volumes/nas-nvme";
+const NAS_MOUNT_PATH = NAS_NVME_ROOT;
+const COLD_CACHE_ROOT = `${NAS_MOUNT_PATH}/cache/joelclaw`;
 const NAS_MOUNT_CHECK_TTL_MS = 30_000;
 
 let nasMountedMemo: { mounted: boolean; checkedAtMs: number } | null = null;

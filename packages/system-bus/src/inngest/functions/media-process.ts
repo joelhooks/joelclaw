@@ -19,10 +19,11 @@ import Redis from "ioredis";
 import { infer } from "../../lib/inference";
 import { MODEL } from "../../lib/models";
 import { inngest } from "../client";
+import { NAS_MEDIA_REMOTE_ROOT, NAS_SSH_HOST } from "@joelclaw/endpoint-resolver";
 
 const MEDIA_TMP = "/tmp/joelclaw-media";
-const NAS_HOST = "joel@three-body";
-const NAS_MEDIA_BASE = "/volume1/home/joel/media";
+const NAS_HOST = NAS_SSH_HOST;
+const NAS_MEDIA_BASE = NAS_MEDIA_REMOTE_ROOT;
 const MEDIA_PROCESSED_KEY_PREFIX = "media:processed";
 const MEDIA_PROCESSED_TTL_SECONDS = 24 * 60 * 60;
 const INVALID_ANTHROPIC_KEY_ERROR =

@@ -8,6 +8,12 @@ import { Console, Effect } from "effect";
 import { Inngest } from "../inngest";
 import { respond, respondError } from "../response";
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth";
+import {
+  DOCS_ARTIFACTS_DIR as NAS_DOCS_ARTIFACTS_DIR,
+  NAS_BOOKS_ROOT,
+  NAS_HDD_ROOT,
+  NAS_INGEST_STAGING_ROOT,
+} from "@joelclaw/endpoint-resolver";
 
 const TYPESENSE_URL =
   process.env.DOCS_TYPESENSE_URL || process.env.TYPESENSE_URL || "http://localhost:8108";
@@ -15,7 +21,7 @@ const DOCS_COLLECTION = "docs";
 const DOCS_CHUNKS_V1_COLLECTION = "docs_chunks";
 const DOCS_CHUNKS_V2_COLLECTION = "docs_chunks_v2";
 const DOCS_CHUNKS_COLLECTION = process.env.DOCS_CHUNKS_COLLECTION || DOCS_CHUNKS_V2_COLLECTION;
-const DOCS_ARTIFACTS_DIR = process.env.DOCS_ARTIFACTS_DIR || "/Volumes/three-body/docs-artifacts";
+const DOCS_ARTIFACTS_DIR = NAS_DOCS_ARTIFACTS_DIR;
 const DOCS_ARTIFACT_READ_TIMEOUT_MS = Number.parseInt(
   process.env.DOCS_ARTIFACT_READ_TIMEOUT_MS || "5000",
   10,
@@ -37,8 +43,8 @@ const DEFAULT_LIST_LIMIT = 20;
 const DEFAULT_RECONCILE_SAMPLE = 20;
 const DOCS_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
 const DOCS_EMBED_DIMENSIONS = 768;
-const THREE_BODY_ROOT = "/Volumes/three-body";
-const BOOKS_ROOT = `${THREE_BODY_ROOT}/books`;
+const THREE_BODY_ROOT = NAS_HDD_ROOT; // historical name; now the maturin joelclaw tree
+const BOOKS_ROOT = NAS_BOOKS_ROOT;
 const MANIFEST_FILE_NAME = "manifest.clean.jsonl";
 
 type TypesenseHit = {
@@ -209,7 +215,7 @@ function getManifestCandidatePaths(): string[] {
   return [
     process.env.MANIFEST_ARCHIVE_MANIFEST_PATH?.trim(),
     `/tmp/${MANIFEST_FILE_NAME}`,
-    "/Volumes/three-body/.ingest-staging/manifest.clean.jsonl",
+    `${NAS_INGEST_STAGING_ROOT}/${MANIFEST_FILE_NAME}`,
     process.env.HOME ? `${process.env.HOME}/Documents/${MANIFEST_FILE_NAME}` : undefined,
     `${homedir()}/Documents/${MANIFEST_FILE_NAME}`,
     "/Users/joel/Documents/manifest.clean.jsonl",

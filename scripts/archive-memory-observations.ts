@@ -10,8 +10,9 @@ import { resolveTypesenseApiKey } from "../packages/cli/src/typesense-auth"
 
 const COLLECTION = "memory_observations"
 const TYPESENSE_URL = (process.env.TYPESENSE_URL || "http://localhost:8108").replace(/\/$/u, "")
-const NAS_HDD_ROOT = process.env.SELF_HEALING_NAS_HDD_ROOT?.trim() || "/Volumes/three-body"
-const DEFAULT_ARCHIVE_ROOT = join(NAS_HDD_ROOT, "backups", "typesense", "retired-memory-observations")
+const NAS_BACKUPS_ROOT =
+  process.env.JOELCLAW_NAS_BACKUPS_HDD_ROOT?.trim() || "/Volumes/backups/services/joelclaw"
+const DEFAULT_ARCHIVE_ROOT = join(NAS_BACKUPS_ROOT, "typesense", "retired-memory-observations")
 
 function hasFlag(flag: string): boolean {
   return process.argv.slice(2).includes(flag)

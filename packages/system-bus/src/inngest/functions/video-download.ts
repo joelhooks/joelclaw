@@ -4,9 +4,10 @@ import { $ } from "bun";
 import { NonRetriableError } from "inngest";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { NAS_SSH_HOST, NAS_VIDEO_REMOTE_ROOT } from "@joelclaw/endpoint-resolver";
 
-const NAS_HOST = "joel@three-body";
-const NAS_VIDEO_BASE = "/volume1/home/joel/video";
+const NAS_HOST = NAS_SSH_HOST;
+const NAS_VIDEO_BASE = NAS_VIDEO_REMOTE_ROOT;
 const TMP_BASE = "/tmp/video-ingest";
 
 function slugify(title: string): string {

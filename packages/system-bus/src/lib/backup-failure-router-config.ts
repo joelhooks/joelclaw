@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { NAS_HDD_ROOT, NAS_NVME_ROOT, NAS_SSH_HOST } from "@joelclaw/endpoint-resolver";
 
 const HOME_DIR = process.env.HOME ?? "/Users/joel";
 
@@ -93,10 +94,10 @@ const DEFAULT_SELF_HEALING_TRANSPORT = {
   maxAttempts: 12,
   retryBaseMs: 10_000,
   retryMaxMs: 120_000,
-  nasSshHost: "joel@three-body",
+  nasSshHost: NAS_SSH_HOST,
   nasSshFlags: "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
-  nasHddRoot: "/Volumes/three-body",
-  nasNvmeRoot: "/Volumes/nas-nvme",
+  nasHddRoot: NAS_HDD_ROOT,
+  nasNvmeRoot: NAS_NVME_ROOT,
 };
 
 function loadConfigFile(): BackupFailureRouterConfigFile {

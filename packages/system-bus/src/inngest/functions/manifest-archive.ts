@@ -7,10 +7,11 @@ import { getRedisPort } from "../../lib/redis";
 import { emitMeasuredOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { NAS_HDD_ROOT } from "@joelclaw/endpoint-resolver";
 
 const DARK_WIZARD = "joel@100.86.171.79";
 const CLANKER = "joel@100.95.167.75";
-const THREE_BODY = "/Volumes/three-body";
+const THREE_BODY = NAS_HDD_ROOT; // historical name; now the maturin joelclaw tree
 const TMP_MANIFEST_PATH = "/tmp/manifest.clean.jsonl";
 const DEFAULT_MANIFEST_PATH = `${process.env.HOME}/Documents/manifest.clean.jsonl`;
 const REDIS_KEY = "manifest:archive:state";

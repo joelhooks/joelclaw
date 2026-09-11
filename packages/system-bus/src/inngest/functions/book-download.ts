@@ -8,6 +8,7 @@ import { assertAllowedModel, MODEL } from "../../lib/models";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { NAS_BOOKS_REMOTE_ROOT, NAS_SSH_HOST } from "@joelclaw/endpoint-resolver";
 
 const HOME_DIR = process.env.HOME || "/Users/joel";
 const DEFAULT_OUTPUT_DIR = `${HOME_DIR}/clawd/data/pdf-brain/incoming`;
@@ -25,8 +26,8 @@ const BOOK_DOWNLOAD_TIMEOUT_MS = Math.max(
   60_000,
   Number.parseInt(process.env.JOELCLAW_BOOK_DOWNLOAD_TIMEOUT_MS ?? "900000", 10)
 );
-const NAS_HOST = process.env.JOELCLAW_NAS_HOST?.trim() || "joel@three-body";
-const NAS_BOOKS_DIR = process.env.JOELCLAW_NAS_BOOKS_DIR?.trim() || "/volume1/home/joel/books";
+const NAS_HOST = NAS_SSH_HOST;
+const NAS_BOOKS_DIR = NAS_BOOKS_REMOTE_ROOT;
 const NAS_BACKUP_TIMEOUT_MS = 30_000;
 
 // aa-book's own Calibre auto-convert (bin/aa-book download_book) only handles

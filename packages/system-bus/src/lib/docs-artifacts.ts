@@ -29,10 +29,8 @@ export type DocsMetadata = {
   nas_paths: string[];
 };
 
-export const DOCS_ARTIFACTS_DIR =
-  process.env.JOELCLAW_DOCS_ARTIFACTS_DIR?.trim()
-  || process.env.DOCS_ARTIFACTS_DIR?.trim()
-  || "/Volumes/three-body/docs-artifacts";
+export { DOCS_ARTIFACTS_DIR } from "@joelclaw/endpoint-resolver";
+import { DOCS_ARTIFACTS_DIR } from "@joelclaw/endpoint-resolver";
 
 type ArtifactStage = "md" | "meta" | "chunks";
 

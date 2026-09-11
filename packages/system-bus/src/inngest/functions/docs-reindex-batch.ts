@@ -4,9 +4,10 @@ import * as typesense from "../../lib/typesense";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { DOCS_COLLECTION } from "./docs-ingest";
+import { NAS_BOOKS_ROOT } from "@joelclaw/endpoint-resolver";
 
 const DOCS_TYPESENSE_URL = process.env.DOCS_TYPESENSE_URL || typesense.TYPESENSE_URL;
-const BOOKS_ROOT = "/Volumes/three-body/books";
+const BOOKS_ROOT = NAS_BOOKS_ROOT;
 const TYPESENSE_PAGE_SIZE = 250;
 const REINDEX_BATCH_SIZE = 10;
 

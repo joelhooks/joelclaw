@@ -17,6 +17,7 @@ import {
   probeK8sHealth,
   resolveEndpoint,
   summarizeSkippedCandidates,
+  NAS_EXPECTED_MOUNTS,
 } from "@joelclaw/endpoint-resolver";
 import Redis from "ioredis";
 import { pushNotification, pushSystemStatus } from "../../lib/convex";
@@ -999,10 +1000,7 @@ async function checkAgentSecrets(): Promise<ServiceStatus> {
 }
 
 async function checkNfsMounts(): Promise<ServiceStatus> {
-  const mounts = [
-    { name: "nas-nvme", path: "/Volumes/nas-nvme" },
-    { name: "three-body", path: "/Volumes/three-body" },
-  ];
+  const mounts = NAS_EXPECTED_MOUNTS;
   const results: string[] = [];
   let allOk = true;
 
