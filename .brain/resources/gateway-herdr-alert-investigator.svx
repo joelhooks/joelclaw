@@ -1,0 +1,54 @@
+---
+title: "Gateway alerts open a Herdr investigator"
+type: "resource"
+created_at: "2026-09-10"
+privacy: "private"
+---
+
+# Gateway alerts open a Herdr investigator
+
+A gateway heartbeat outage should create useful work, not repeat the same macOS notification every five minutes.
+
+`infra/gateway-tripwire.sh` remains the sensor. On each `missing` or `stale` check, it invokes `infra/gateway-alert-investigator.sh`. The investigator owns deduplication, retries, and the Herdr lifecycle.
+
+## State machine
+
+```text
+idle
+  -> ensuringHerdr
+  -> openingWorkspace
+  -> startingAgent
+  -> promptingAgent
+  -> investigating
+  -> recovering
+  -> recovered
+
+Any setup failure -> blocked -> retry
+A failed recovery receipt -> recoveryBlocked -> recovering
+A lost workspace -> ensuringHerdr
+A lost agent -> startingAgent in the same workspace
+A new alert after recovery -> a new incident
+```
+
+The state record lives at `~/.local/state/joelclaw/gateway-alert-investigator.json`. One active incident owns one workspace and one agent. Repeated tripwire checks reuse it.
+
+## Runtime contract
+
+- Use the default Aqua Herdr session. Clear `HERDR_SESSION` and `HERDR_SOCKET` before Herdr commands.
+- If the default server is unavailable, kickstart `gui/<uid>/com.joelclaw.herdr-server`.
+- Create a no-focus workspace in the canonical joelclaw checkout. Use the incident ID in its first label so a crash retry can discover it instead of creating a duplicate.
+- Verify that the configured DGX endpoint advertises `glm-5.3-flash`, then start Pi with `dgx-glm/glm-5.3-flash:high` and normal tools.
+- If the model endpoint is unavailable, keep the workspace, enter `blocked`, and retry on a later tripwire check.
+- The investigator may diagnose and make safe, reversible repairs under the normal fleet and project instructions.
+- Never start a second gateway or outward communications transport.
+- Never send an outward canary without explicit approval.
+- On recovery, rename the workspace to `review ready` and ask the same agent for a final health and root-cause receipt. Keep recovery pending until both actions succeed. Healthy sensor checks retry this receipt without falsifying the tripwire health state.
+- If Herdr or the investigator cannot start, retain one edge-triggered native notification as the failure path.
+
+## Verification
+
+```sh
+bun test packages/gateway/src/gateway-alert-investigator.test.ts
+infra/gateway-tripwire.test.sh
+shellcheck infra/gateway-alert-investigator.sh infra/gateway-tripwire.sh infra/gateway-tripwire.test.sh
+```

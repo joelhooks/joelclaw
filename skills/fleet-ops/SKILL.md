@@ -17,7 +17,7 @@ disable-model-invocation: true
 
 Use this to inspect the JoelClaw Mac fleet without flattening intentional role differences into fake drift.
 
-Panda is Central. Satellites stay thin. A role difference is policy only when the local private fleet manifest says why.
+Resolve current Central ownership from the private manifest and live evidence. Satellites stay thin. A role difference is policy only when the local private fleet manifest says why.
 
 ## Current commands: read-only
 
@@ -45,7 +45,7 @@ A failed or unavailable satellite health probe is actionable. Thin satellite ski
 2. **Classify** — run `joelclaw fleet diff`; read the exemption reason before calling a difference wrong.
 3. **Inspect** — verify unexpected drift with the relevant host/runbook. Do not infer host identity from an SSH alias alone.
 4. **Plan** — write a host-scoped, reviewable change plan. Fleet `plan` does **not** exist yet.
-5. **Approve** — get explicit approval for any mutation.
+5. **Authorize** — use authorization already given for the named host change. Ask only for a mutation outside that scope; an audit alone authorizes no repairs.
 6. **Apply** — use the approved, host-specific mechanism. Fleet `apply` does **not** exist yet. Never pretend it does.
 7. **Verify** — rerun `status` and `diff`, then capture a redacted receipt.
 
@@ -53,7 +53,7 @@ If a probe cannot reach a host, record `unavailable` and keep gathering the othe
 
 ## Role boundaries
 
-- **Central:** Panda owns the heavy runtime. Verify Central health through the established system runbooks before changing it.
+- **Central:** Use the verified owner in current service placement. Verify Central health through the established system runbooks before changing it.
 - **Satellite:** keep the Machine local, small, and recoverable. Load [Satellite Rig](../satellite-rig/SKILL.md) for setup or repair.
 - **Network and host routing:** load the locally installed `panda-host`, `tailnet-topology`, and operator-network guidance. Those private/operator resources are not canonical content of this public repo; do not copy them here or expose their topology.
 

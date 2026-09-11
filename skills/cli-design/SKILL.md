@@ -229,7 +229,7 @@ Use these as the current envelope source-of-truth. The former `slog` system-log 
 
 ### Framework: Effect CLI (@effect/cli)
 
-All CLIs use `@effect/cli` with Bun. This is non-negotiable — consistency across the system matters more than framework preference.
+Existing joelclaw CLI packages use `@effect/cli` with their configured runtime. Follow the target repository package manager and pinned dependencies. For a new project, use the operator’s current stack defaults; this skill does not authorize a runtime migration.
 
 ```typescript
 import { Command, Options } from "@effect/cli"

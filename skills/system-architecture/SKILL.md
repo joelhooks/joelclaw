@@ -216,6 +216,13 @@ Flagg Gate 4 is complete: shadow Central recovered after hard reboot with no GUI
 
 ## 2) Process Inventory (Long-Running)
 
+### Herdr launch-domain split
+
+- `com.joelclaw.herdr-server` is the default interactive server. It runs as a per-user LaunchAgent in `gui/<uid>` so pane descendants inherit the Aqua bootstrap namespace and can reach user Keychain services.
+- `com.joelclaw.herdr-system-server` is the boot-safe automation server. It remains a system LaunchDaemon and owns only the named `system` Herdr session.
+- Never install the default server as a system LaunchDaemon. A `UserName` on a LaunchDaemon changes the Unix identity, not the launchd bootstrap namespace. Native macOS clients in those panes cannot resolve the user's `com.apple.securityd.xpc` service.
+- The installer and cutover contract lives in `infra/install-herdr-default-launchagent.sh`. The durable rationale is `.brain/resources/herdr-launch-domain-contract.svx`.
+
 ## Host launchd inventory (Panda live Central snapshot)
 
 > Snapshot source: `launchctl print gui/$(id -u)/<label>` and plist inspection.
@@ -511,7 +518,7 @@ exists.
 
 ## "Why did this run / not run" trace recipe
 
-1. `joelclaw send <event> -d '<payload>'`
+1. Start with an existing event or run id. Send a probe only when its destination and effects are explicitly authorized.
 2. `joelclaw events --prefix <event-prefix> --hours 1`
 3. `joelclaw event <event-id>` (fan-out to function runs)
 4. `joelclaw run <run-id>` (step trace + errors)
@@ -1064,26 +1071,7 @@ joelclaw otel search "<component_or_action>" --hours 1
 
 ## Run capture + session search
 
-```bash
-# Central Run capture health from a Machine with ~/.joelclaw/auth.json
-python3 - <<'PY'
-import json, os, urllib.request
-p=os.path.expanduser('~/.joelclaw/auth.json')
-a=json.load(open(p))
-req=urllib.request.Request(
-  'https://panda.tail7af24.ts.net/api/runs/health',
-  headers={'Authorization': 'Bearer '+a['token']},
-)
-print(urllib.request.urlopen(req, timeout=10).status)
-PY
-
-# Recent indexed Runs
-joelclaw runs --count 5 --hours 1 --compact
-
-# Search derived index first, but keep raw fallback ready
-joelclaw sessions search "<query>" --source both --machine dark-wizard --runtime all --limit 8 --extract
-joelclaw sessions search "<query>" --source local --machine "$(hostname -s)" --limit 8 --extract
-```
+Use `recall` and the current `session-search` contract. Keep private queries in structured MCP arguments. Raw evidence requires a scope-bound `evidenceDrilldownReceipt`; missing projections do not grant raw access.
 
 ## Flagg Central shadow
 
@@ -1131,7 +1119,7 @@ tailscale status --json
   - Check `/Library/LaunchDaemons`, `launchctl print system/<label>`, and `infra/central/scripts/health.sh`.
   - **UNKNOWN until verified on Flagg**
 - Typesense session search can be stale or missing expected collections while raw session files / Run blobs exist.
-  - Use `joelclaw sessions search --source local|ssh` and backfill from blobs before declaring memory lost.
+  - Diagnose capture and index metadata before declaring memory lost. Raw search and extraction require the scope-bound evidence receipt.
 - Exact command-line ownership of all Colima ssh forwarding ports (`64784`, `64785`, `9627`, etc.)
   - **UNKNOWN — needs manual verification**
 - Ingress controller runtime status for `k8s/docs-api-ingress.yaml`

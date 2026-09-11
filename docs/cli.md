@@ -193,7 +193,7 @@ joelclaw docs
 Semantics:
 
 - active chunk search collection is switchable via `DOCS_CHUNKS_COLLECTION` and now defaults to `docs_chunks_v2`
-- markdown + summary read durable artifacts from `DOCS_ARTIFACTS_DIR` (default `/Volumes/three-body/docs-artifacts`)
+- markdown + summary read durable artifacts from `DOCS_ARTIFACTS_DIR` (default `/Volumes/services/joelclaw/docs-artifacts`)
 - `docs status` reports both `docs_chunks` (v1) and `docs_chunks_v2` plus artifact directory availability
 - agentic expansion flow is `docs search` → `docs context` → `docs markdown` / `docs summary`
 

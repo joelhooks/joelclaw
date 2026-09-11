@@ -64,41 +64,9 @@ cd ~/Code/steipete/imsg && ./build-local.sh
 
 The `imsg` binary needs Full Disk Access. macOS requires a verifiable code signature to accept it.
 
-### 1. Create local signing cert (once per machine)
+### 1. Use an existing signing identity
 
-```bash
-cat > /tmp/imsg-ext.cnf << 'EOF'
-[req]
-distinguished_name = req_distinguished_name
-x509_extensions = v3_req
-[req_distinguished_name]
-[v3_req]
-keyUsage = critical, digitalSignature
-extendedKeyUsage = critical, codeSigning
-basicConstraints = CA:FALSE
-EOF
-
-openssl req -x509 -newkey rsa:2048 \
-  -keyout /tmp/imsg-key.pem -out /tmp/imsg-cert.pem \
-  -days 3650 -nodes \
-  -subj "/CN=imsg Local Signing/O=Joel Hooks" \
-  -config /tmp/imsg-ext.cnf -extensions v3_req
-
-openssl pkcs12 -export \
-  -out /tmp/imsg-sign.p12 \
-  -inkey /tmp/imsg-key.pem -in /tmp/imsg-cert.pem \
-  -passout pass:imsg123 -name "imsg Local Signing" \
-  -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
-
-security import /tmp/imsg-sign.p12 \
-  -k ~/Library/Keychains/login.keychain-db \
-  -P imsg123 -T /usr/bin/codesign
-
-security add-trusted-cert -d -r trustRoot \
-  -k ~/Library/Keychains/login.keychain-db /tmp/imsg-cert.pem
-
-security find-identity -v -p codesigning  # should show "imsg Local Signing"
-```
+Inspect available code-signing identities without exporting keys. Reuse the service’s established identity when valid. If a new identity is required, use the approved Keychain procedure; private keys must stay in Keychain or a task-owned restrictive temporary directory with cleanup. Do not use shared fixed temporary filenames or a hardcoded export password. Verify identity and trust before signing.
 
 ### 2. Build and sign
 

@@ -143,7 +143,7 @@ http://100.127.252.116:4788/
 http://flagg.tail7af24.ts.net:4788/
 ```
 
-The `100.127.252.116` / `flagg.tail7af24.ts.net` root-daemon Tailscale path is optional. Prefer `joels-mac-studio.tail7af24.ts.net` unless the task specifically targets the root Tailscale node. For dashboard access from any tailnet machine, answer with `http://joels-mac-studio.tail7af24.ts.net:4789/` first.
+Resolve current dashboard endpoints from the installed Executor configuration and verified network identity. Verify the exact URL returns the expected page before sharing it. Historical IPs and hostnames above are diagnostic history, not routing defaults.
 
 Do not use Tailscale Serve for Executor without preserving the existing Serve config for `/`, `/notes`, Vite asset paths, and the Convex TCP forwards. Direct ports `4788` and `4789` are the current contract.
 
@@ -175,7 +175,7 @@ scripts/open-executor-dashboard.sh
 
 That helper installs the dashboard LaunchDaemon with `sudo` if needed, checks `http://joels-mac-studio.tail7af24.ts.net:4789/`, then opens it.
 
-If the shell does not have passwordless sudo, do not fake success. Report that the files and dry-run checks passed, then give Joel the exact sudo command.
+If the shell does not have passwordless sudo, do not fake success. Report the actual file and dry-run results, including failures or checks not run, then identify the exact privileged step that remains.
 
 Do not run:
 

@@ -218,7 +218,7 @@ Installed only on the host assigned `joelclaw-headless-runtime` in `packages/end
 - `infra/launchd/com.joel.system-bus-worker.plist`
 - `infra/launchd/com.joel.gateway.plist`
 - `infra/launchd/com.joelclaw.agent-mail.plist`
-- `infra/launchd/com.joelclaw.herdr-server.plist`
+- `infra/launchd/com.joelclaw.herdr-system-server.plist`
 - `infra/launchd/com.joelclaw.wiki-serve.plist`
 - `infra/launchd/com.joelclaw.wiki-serve-check.plist`
 - `infra/agent-mail-daemon.sh`
@@ -255,15 +255,17 @@ What the installer does:
 - reads the current machine roles from `packages/endpoint-resolver/config/service-placement.json`
 - installs the headless runtime only on its assigned host and k8s daemons only on the assigned k8s host
 - validates every selected plist, wrapper, executable, and external checkout before stopping any live service
-- copies the repo-managed plists appropriate to this host into `/Library/LaunchDaemons/`
+- copies boot-safe system plists into `/Library/LaunchDaemons/`
+- installs the default operator Herdr server as `~/Library/LaunchAgents/com.joelclaw.herdr-server.plist`; without a GUI login it stages the plist for the next login
 - removes non-local headless and k8s daemons, including on a former owner that is no longer assigned either role
-- removes the old `~/Library/LaunchAgents/<label>.plist` copies for the critical labels, including the legacy `com.joelhooks.agent-secrets` alias
+- removes old `~/Library/LaunchAgents/<label>.plist` copies for system-only critical labels, including the legacy `com.joelhooks.agent-secrets` alias
 - removes the superseded `/Library/LaunchDaemons/com.joel.headless-bootstrap.plist` bridge
 - kills known manual `nohup` and stale `autossh` colima-tunnel fallbacks from reboot recovery
 - removes the deprecated `com.joel.colima-tunnel` daemon instead of reinstalling it, because Colima/Lima already owns docker-published host ports for `joelclaw-controlplane-1`
 - removes the deprecated `com.joel.typesense-portforward` daemon instead of reinstalling it, because Typesense is now exposed by the `typesense` NodePort service on stable host port `8108` and a separate `kubectl port-forward` daemon only adds churn
 - removes stale manual kube operator tunnels on `16443` and `15000` before reinstalling the canonical daemon
-- bootstraps the critical services directly into the `system` launchd domain; agent-secrets runs as `joelclaw`, while operator-owned processes use `UserName=joel` only when required
+- bootstraps boot-safe services into the `system` launchd domain; agent-secrets runs as `joelclaw`, while operator-owned system processes use `UserName=joel` only when required
+- bootstraps the interactive Herdr server into `gui/<uid>` when that Aqua login domain exists
 
 Agent-mail note: `com.joelclaw.agent-mail` now goes through `infra/agent-mail-daemon.sh`, which resolves the joelclaw-managed `joelhooks/mcp_agent_mail` checkout instead of baking a third-party path into the plist. If the local checkout still lives under a legacy directory name, that is fine as long as the git `origin` remote is `joelhooks/mcp_agent_mail`. The launchd plist and wrapper both raise `NumberOfFiles` to 8192 because git-backed mailbox writes can temporarily hold hundreds of descriptors under multi-agent traffic; the wrapper fallback matters when the installed system plist is stale.
 
@@ -271,7 +273,7 @@ Agent-secrets note: `com.joel.agent-secrets` owns its store under `/Users/joelcl
 
 Gateway note: `com.joel.gateway` starts through `infra/gateway-daemon.sh`, which waits for agent-secrets readiness before running the private gateway start script. LaunchDaemons start concurrently, and the gateway leases channel tokens only once, so this readiness gate prevents a boot race from leaving Telegram and Slack disabled until a manual restart.
 
-Herdr note: `com.joelclaw.herdr-server` keeps the persistent headless workspace server available before GUI login. Its wrapper waits when an incumbent detached server already owns the live panes, preserving continuity during installation, and takes over when that process exits. Reinstalling the runtime also leaves an already-loaded system herdr job untouched while its socket has an owner, so an installer refresh cannot kill live panes. The separate herdr relay and focus helpers are remote/UI conveniences and may remain user LaunchAgents.
+Herdr note: `com.joelclaw.herdr-server` is the interactive operator server. It runs in `gui/<uid>` so pane descendants inherit the Aqua bootstrap namespace and can reach user Keychain services. `com.joelclaw.herdr-system-server` keeps the named `system` automation session available before GUI login. During migration, `infra/install-herdr-default-launchagent.sh` loads a waiting GUI replacement without stopping the incumbent. An explicit `--cutover` from an external terminal or the named system session cycles the default panes, verifies the GUI PID owns the socket and answers, and restores the old system job on failure. Never run `--cutover` from a default Herdr pane; the script refuses that self-termination path. The separate Herdr relay and focus helpers are remote/UI conveniences and may remain user LaunchAgents.
 
 System Brain note: `com.joelclaw.wiki-serve` keeps the static Brain host available before GUI login. `com.joelclaw.wiki-serve-check` periodically restores only its dedicated Tailscale Serve route. Both call the canonical scripts in the `joelclaw-wiki` checkout.
 
@@ -301,7 +303,9 @@ launchctl print system/com.joel.system-bus-worker | rg 'state =|pid =|last exit 
 launchctl print system/com.joel.kube-operator-access | rg 'state =|pid =|last exit code'
 launchctl print system/com.joel.agent-secrets | rg 'state =|pid =|last exit code'
 launchctl print system/com.joelclaw.agent-mail | rg 'state =|pid =|last exit code'
-launchctl print system/com.joelclaw.herdr-server | rg 'state =|pid =|last exit code'
+launchctl print gui/$(id -u)/com.joelclaw.herdr-server | rg 'state =|pid =|last exit code'
+launchctl print system/com.joelclaw.herdr-system-server | rg 'state =|pid =|last exit code'
+launchctl print system/com.joelclaw.herdr-server # must fail after cutover
 launchctl print system/com.joelclaw.wiki-serve | rg 'state =|pid =|last exit code'
 herdr status --json
 curl -fsS http://127.0.0.1:8790/

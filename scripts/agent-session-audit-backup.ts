@@ -94,7 +94,7 @@ const hostList = String(args.get("hosts") || "flagg,blaine,panda")
   .split(",")
   .map((host) => host.trim())
   .filter(Boolean) as HostName[];
-const backupRoot = String(args.get("backup-root") || "/Volumes/three-body/sessions");
+const backupRoot = String(args.get("backup-root") || "/Volumes/services/joelclaw/sessions");
 const centralUrl = String(
   args.get("central-url") || "http://joels-mac-studio.tail7af24.ts.net:3111",
 ).replace(/\/$/, "");

@@ -28,7 +28,7 @@ PDF (source, immutable)
 - **Recoverable**: re-run any stage from existing artifacts without re-extracting
 - **Observable**: OTEL event per stage per book
 
-**Artifacts dir**: `/Volumes/three-body/docs-artifacts/{docId}/`
+**Artifacts dir**: `${DOCS_ARTIFACTS_DIR}/{docId}/`, using the machine-local value from `~/.config/system-bus.env`
 - `{docId}.md` — structured markdown extraction
 - `{docId}.meta.json` — taxonomy, summary, metadata
 - `{docId}.chunks.jsonl` — chunk records, one per line
@@ -63,7 +63,7 @@ Fires `docs/reindex-v2.requested` → 4-stage artifact pipeline → NAS artifact
 ### 4) Batch Reindex (full library)
 
 ```bash
-# Reindex all PDFs from NAS /Volumes/three-body/books/
+# Reindex all PDFs from the configured NAS book root
 joelclaw docs batch-reindex --skip-existing
 
 # Reindex from existing Typesense docs collection
@@ -77,8 +77,9 @@ Fires `docs/reindex-batch.requested` → scans NAS/collection → dispatches ind
 ### 5) Monitor Progress
 
 ```bash
-# Artifact count on NAS
-ls /Volumes/three-body/docs-artifacts/ | wc -l
+# Artifact count on NAS (load machine-local config without printing it)
+set -a; . ~/.config/system-bus.env; set +a
+find "$DOCS_ARTIFACTS_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l
 
 # v2 collection chunk count
 joelclaw docs status
@@ -101,10 +102,11 @@ joelclaw docs markdown <doc-id>
 # Read the summary + taxonomy metadata
 joelclaw docs summary <doc-id>
 
-# Or directly on NAS
-cat /Volumes/three-body/docs-artifacts/<docId>/<docId>.md
-cat /Volumes/three-body/docs-artifacts/<docId>/<docId>.meta.json | jq
-wc -l /Volumes/three-body/docs-artifacts/<docId>/<docId>.chunks.jsonl
+# Or directly on NAS after loading machine-local config
+set -a; . ~/.config/system-bus.env; set +a
+cat "$DOCS_ARTIFACTS_DIR/<docId>/<docId>.md"
+cat "$DOCS_ARTIFACTS_DIR/<docId>/<docId>.meta.json" | jq
+wc -l "$DOCS_ARTIFACTS_DIR/<docId>/<docId>.chunks.jsonl"
 ```
 
 ### 7) Retrieval from v2

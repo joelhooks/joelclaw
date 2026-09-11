@@ -267,7 +267,7 @@ Create reusable middleware with configuration options for different environments
 ### Design Principles
 
 1. **Keep middleware focused:** One concern per middleware
-2. **Handle errors gracefully:** Don't let middleware crash functions
+2. **Choose the failure policy:** Optional telemetry may degrade gracefully. Authentication, authorization, validation, and encryption failures must fail closed.
 3. **Consider performance:** Middleware runs on every execution
 4. **Use proper typing:** Let TypeScript infer middleware types
 5. **Test thoroughly:** Middleware affects all functions that use it
@@ -284,8 +284,8 @@ Create reusable middleware with configuration options for different environments
 ### Error Handling in Middleware
 
 ```typescript
-const robustMiddleware = new InngestMiddleware({
-  name: "Robust Middleware",
+const optionalTelemetryMiddleware = new InngestMiddleware({
+  name: "Optional Telemetry Middleware",
   init() {
     return {
       onFunctionRun({ ctx, fn }) {
@@ -295,10 +295,10 @@ const robustMiddleware = new InngestMiddleware({
               // Your middleware logic here
               return performTransformation(result);
             } catch (middlewareError) {
-              // Log error but don't break the function
+              // This example is optional telemetry only; required guards must throw.
               console.error("Middleware error:", middlewareError);
 
-              // Return original result on middleware failure
+              // Optional telemetry only. Security/validation middleware must propagate failure.
               return { result };
             }
           }

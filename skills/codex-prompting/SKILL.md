@@ -8,155 +8,28 @@ tags: [codex, prompting, automation, pi, operations]
 disable-model-invocation: true
 ---
 
-# Codex Prompting Skill
+# Codex prompting
 
-## What this skill is for
+Turn the user's request into a bounded task and execute the requested handoff. State the outcome, repository and relevant paths, constraints, write authority, and evidence required for completion. Omit sections that do not help the task.
 
-Use this when the request is any of the following:
-- "send to codex"
-- "prompt codex"
-- "use codex"
-- "ask codex"
-- "delegate to codex"
-- "delegate this to codex"
-- "run this in codex"
-- "run in codex"
-- "handoff to codex"
-- "handoff this to codex"
-- "codex this"
+## Model and harness
 
-The job is to produce a high-signal Codex request that gets directly executed with minimal ambiguity.
+Honor an explicitly requested model. Otherwise resolve the configured runtime role or inference catalog. Verify availability through the active harness; an old model name in a skill is not configuration. Record the actual model and settings for evaluations.
 
-## Required model default
+Use available tools by their real names. Read `codex exec --help` for CLI flags. Follow the active harness's sandbox, approval, progress-update, and instruction-priority rules. A rejected action is not permission to weaken those controls or retry an equivalent command.
 
-- Codex tasks must set model to `gpt-5.4` when unspecified. This remains the stable Codex worker default even though pipeline inference now routes heavy/default work to `openai-codex/gpt-5.6-sol` and cheap classification/json/rewrite work to `openai-codex/gpt-5.4-mini`.
-- Use an explicit model override only when user explicitly requests another.
-- Do not invent a nano tier: pi 0.73.0 exposes no Codex nano model.
+## Execution
 
-## Local runtime defaults (Panda)
+A clear action request authorizes the necessary work within its scope. Do not stop at a plan or ask again for permission already given. Ask only when a missing decision materially affects the outcome; continue independent work meanwhile.
 
-- Global defaults live in `~/.codex/config.toml`:
-  - `approval_policy = "never"`
-  - `sandbox_mode = "danger-full-access"`
-  - `allow_login_shell = false`
-- Hard safety rails live in `~/.codex/rules/safety.rules`:
-  - forbid force/mirror pushes
-  - forbid obvious filesystem root wipe commands
-  - forbid disk-destruction primitives (`diskutil eraseDisk`, `mkfs`, `dd`)
-- `pi-tools` `codex` extension defaults to:
-  - `--ask-for-approval never`
-  - `--sandbox danger-full-access`
-  - `full_auto = false` (opt-in legacy mode)
-- Expected behavior:
-  - normal `git commit` and `git push` should run without permission friction
-  - blocked commands fail fast with explicit `forbidden` decision
+Load relevant domain skills, not a generic checklist of every infrastructure skill. Keep user instructions above skill preferences. If a skill would block authorized work, name the exact file and rule and resolve the conflict by instruction priority.
 
-## System shape to anchor Codex prompts
+For delegation, use the operator's configured orchestration workflow. Give each worker a bounded result and explicit write scope; preserve other sessions' edits. Use completion events or bounded waits, with useful work between checks.
 
-- Orchestrated by `packages/system-bus` and durable `Inngest` functions.
-- Event bridge and notifications flow through Redis, gateway, and Telegram.
-- Observability is required: OTEL -> Typesense (`otel_events`) -> Convex/UI surfaces.
-- CLI-first operations are expected; prefer `joelclaw` and skill commands instead of direct daemon/db/process pokes. Runtime telemetry goes through `joelclaw otel`; durable receipts go to Brain `.svx`.
+## Verification and report
 
-## Always-follow execution contract (from OpenAI Codex prompting guide)
+Run checks appropriate to the change. A typo edit needs diff inspection; a behavior change needs evidence for the affected behavior. Do not add repetitive tests or repeat a passing suite without new evidence.
 
-1. No preamble, no plans, and no “I’ll do X then Y” narration.
-2. Preserve strict action-first output:
-   - do exactly what the user asked
-   - include only necessary confirmation
-   - return direct results.
-3. Keep prompts structured and executable.
-4. Preserve one clear objective and constrained scope.
-5. Prioritize safe shell/tool actions and explicit failure handling.
-6. Use parallel tool calls whenever independent work can run concurrently.
-7. Use durable workflow patterns in Codex loops:
-   - explicit IDs
-   - explicit rollback/retry context
-   - structured outputs for downstream steps.
+Return the result, artifact or commit, checks and outcomes, and exact unresolved limitations. Do not claim execution, deployment, or delivery from a proposed command.
 
-## Canonical request format for Codex handoff
-
-Use this exact shape unless the user already provided a better one:
-
-- Goal: `<single concrete outcome>`
-- Context: `<repo/path/runtime facts>`
-- Constraints: `<time/risk/tool limits>`
-- Do:
-  - `<task 1>`
-  - `<task 2>`
-- Deliver:
-  - `<artifact paths>`
-  - `<verification commands + expected signals>`
-- Rollback:
-  - `<quick recovery command>`
-
-If asking Codex to operate this repo, include absolute paths and the owning system paths (`apps/web`, `packages/system-bus`, etc.).
-
-## Skill routing reminders
-
-When Codex output needs deeper execution, remind Codex to use these local/system skills first:
-
-- `inngest` and `inngest-durable-functions` for durable work definitions and retries
-- `gateway` and `gateway-diagnose` for session/event bridge and Telegram path checks
-- `o11y-logging` for telemetry-first implementations
-- `joelclaw-system-check` for full environment health checks
-- `skill-creator` when defining/expanding skill content
-- `joelclaw` CLI (`status`, `runs`, `logs`, etc.) for validation
-
-If context is web work, add:
-- `joelclaw-web`, `frontend-design`, and any relevant `next-*` skill.
-
-## Do NOT poll codex_tasks
-
-After dispatching a codex task, **do not poll `codex_tasks` in a loop**. The widget shows live status automatically. Polling every 2-3 seconds wastes tokens, clutters the conversation, and adds no value.
-
-Instead:
-- Dispatch the task
-- Do other useful work (read files, update ADRs, prepare next steps)
-- Check `codex_tasks` **once** after ~60 seconds, or when the widget shows completion
-- If the task is still running after 60s, check once more at ~120s
-- Never poll more than 3 times total for a single task
-
-The task result is reported back automatically when it finishes. Trust the widget.
-
-## What to include in prompts
-
-For any Codex-requested operational run:
-- exact paths
-- exact command(s) to run
-- expected signals for success/failure
-- idempotency strategy
-- rollback command.
-
-For any code change:
-- file targets (absolute or repo-relative)
-- compatibility constraints
-- observability check to prove behavior.
-
-## Mac volume mounting note
-
-- Do not assume this is solved universally.
-- Treat macOS volume mount failures as environmental and include explicit mount/permission checks before retries.
-- If failures recur, route through retry + diagnostic signal collection before reattempt.
-
-## Trigger and detection notes
-
-- This is an intent skill: treat natural language variants as valid.
-- If user includes any of:
-  - "send to codex"
-  - "prompt codex"
-  - "use codex"
-  - "ask codex"
-  - "delegate to codex"
-  - "run in codex"
-  then route here first.
-- If phrasing is vague, ask one minimal clarification and keep the response minimal.
-
-## Quick command patterns
-
-```bash
-rg -n "toolName\\\":\\\"codex\\\"|send to codex|prompt codex|use codex|ask codex|delegate to codex|delegate this to codex|run this in codex|run in codex|handoff to codex|handoff this to codex|codex this" ~/.pi/agent/sessions
-joelclaw status
-joelclaw runs --count 10 --hours 24
-joelclaw otel stats --hours 24
-```
+For prompt changes, consult current official model guidance and compare old/new behavior with harmless fixtures. A model explaining an instruction is a comprehension check, not proof of operational reliability.

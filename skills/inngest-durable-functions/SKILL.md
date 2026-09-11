@@ -65,7 +65,7 @@ If you're hitting these limits, break your function into smaller functions conne
 - Pure calculations and data transformations
 - Simple validation logic
 - Deterministic operations with no side effects
-- Logging (use outside steps)
+- Replay-aware SDK logging may remain outside steps. External emit-once telemetry is a side effect and belongs inside a durable step.
 
 ## Function Creation
 

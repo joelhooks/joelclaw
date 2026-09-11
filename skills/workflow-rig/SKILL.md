@@ -73,8 +73,8 @@ Do not push Redis vs Restate vs sandbox trivia back onto the caller unless that 
 ## Canonical operator flow
 
 1. Shape the work with `joelclaw workload plan`, including the verification contract for every stage.
-2. Present the shaped workload, the verification proof path, and ask **approved?**
-3. After approval:
+2. Present the shaped workload and verification path. Use existing authorization for a scoped run request; ask only for missing consequential choices or additional scope.
+3. Within the authorized scope:
    - execute inline if it is bounded, local, and reversible
    - use `joelclaw workload run` for real durable execution
    - use `joelclaw workload dispatch` only for a real baton pass

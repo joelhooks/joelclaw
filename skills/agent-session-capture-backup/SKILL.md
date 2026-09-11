@@ -63,7 +63,7 @@ What it does:
 5. replays a bounded number of outbox JSON payloads to `/api/runs`
 6. writes a JSON receipt with source counts, backup counts, newest mtimes, byte totals, and outbox before/after
 
-Use `--sync=false` for read-only audit.
+For a metadata-only audit, use `--sync=false` and omit both `--repair-env` and `--replay-outbox`. Those flags mutate state independently of sync. Discover the current Central endpoint and host set from service configuration; historical endpoint examples are not current authority. Raw transcript content still requires the session evidence receipt.
 
 Use a low `--replay-limit` first when clearing a huge outbox. Do not unleash tens of thousands of run-capture events without checking worker/Inngest health.
 

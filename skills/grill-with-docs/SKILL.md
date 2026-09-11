@@ -75,7 +75,7 @@ If a `CONTEXT-MAP.md` exists at the root, the repo has multiple contexts. The ma
 │       └── docs/adr/
 ```
 
-Create files lazily — only when you have something to write. If no `CONTEXT.md` exists, create one when the first term is resolved. If no `docs/adr/` exists, create it when the first ADR is needed.
+Use the project’s existing canonical glossary and ADR location. In a Brain project, write `.svx` under its established structure. The CONTEXT.md layout below is a fallback for projects that use it, not a reason to create a competing truth store. Create only artifacts needed for resolved decisions.
 
 ## During the session
 

@@ -123,17 +123,7 @@ find /Users/Shared/joelclaw/data/brain-daily -maxdepth 3 -name latest.json -prin
 - Discord request/response files
 - matching Codex rollout transcript
 
-3. Use transcript summaries before raw transcript reads:
-
-```bash
-cd /Users/joel/Code/joelhooks/joelclaw-brain
-bun run src/main.ts daily transcript-summary \
-  --session /Users/joel/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl \
-  --max-outputs 8 \
-  --suspicious-output-token-threshold 1000
-```
-
-Expand raw rollout ranges only when the summary points to a suspicious command, final message, `brain daily` command, receipt gap, or oversized output. Do not dump huge transcript chunks by default.
+3. Use the saved memory integration for summaries. Raw rollout content, including local summary scripts that read it, requires the exact scope-bound `evidenceDrilldownReceipt`. A suspicious summary or missing result does not itself authorize extraction. Keep private queries in structured MCP arguments.
 
 4. Write optimizer outputs under:
 

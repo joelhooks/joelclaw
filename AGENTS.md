@@ -1,286 +1,46 @@
-# joelclaw — Agent Instructions
+# JoelClaw
 
-Personal AI infrastructure monorepo. Event-driven pipelines, always-on gateway, CLI tooling, and the joelclaw.com website. Built by Joel Hooks, operated by agents.
+Personal AI infrastructure: event-driven workflows, gateway, CLI, and website. Read relevant project Brain and `VISION.md` when present. Verify runtime placement from current configuration and the owning runbook; historical host diagrams and version tables are not live state.
 
 ## Architecture
 
-```
-┌─ Mac Mini "Panda" (M4 Pro, 64GB, always-on) ──────────────────────┐
-│                                                                     │
-│  Colima VM (VZ framework, aarch64, grpc port-forwarder, 24 GiB)     │
-│    └─ Talos v1.12.4 container (18 GiB cap) → k8s v1.35.0 (single node) │
-│        └─ namespace: joelclaw                                       │
-│            ├─ inngest-0          (StatefulSet, ports 8288/8289)     │
-│            ├─ redis-0            (StatefulSet, port 6379)          │
-│            ├─ typesense-0        (StatefulSet, port 8108)          │
-│            ├─ restate-0          (StatefulSet, ports 8080/9070/9071) │
-│            ├─ system-bus-worker  (Deployment, port 3111)           │
-│            ├─ restate-worker     (Deployment, port 9080)           │
-│            ├─ dkron-0            (StatefulSet, port 8080)          │
-│            ├─ minio-0            (StatefulSet, ports 9000/9001)    │
-│            ├─ docs-api           (Deployment, port 3838)           │
-│            ├─ livekit-server     (Deployment, ports 7880/7881)     │
-│            └─ bluesky-pds        (Deployment, port 3000)           │
-│                                                                     │
-│  Operator access: direct Colima ports 6443 (kube) / 50000 (Talos)   │
-│  Gateway daemon (pi session, always-on, Redis event bridge)         │
-│  NAS "three-body" (ASUSTOR, 10GbE NFS, 64TB RAID5 + 1.9TB NVMe)  │
-│  Tailscale mesh (all devices)                                       │
-└─────────────────────────────────────────────────────────────────────┘
-```
+Keep reusable domain logic in `@joelclaw/*` packages behind interfaces. Gateway and CLI are composition roots. Import across packages by package name, not relative source paths. Put concrete adapter wiring at composition roots.
 
-Load the `system-architecture` skill before any cross-cutting architectural work, debugging event flow, or tracing why something ran/didn't run.
+Use `TelemetryEmitter` from `@joelclaw/telemetry` for structured operational events and the `@joelclaw/inference-router` catalog for runtime model selection. Honor an explicit model request when the runtime supports it. Keep model/provider mappings in configuration, not prompt prose.
 
-## Monorepo Layout
+System-bus inference uses the existing `lib/inference` entry point. Do not read auth files or introduce another paid inference path as a side effect.
 
-```
-joelclaw/
-├── apps/
-│   ├── web/                    # joelclaw.com (Next.js 16, RSC, Vercel)
-│   ├── docs/                   # Documentation site
-│   └── docs-api/               # PDF/docs REST API (k8s)
-├── packages/
-│   ├── cli/                    # @joelclaw/cli — `joelclaw` command
-│   ├── sdk/                    # @joelclaw/sdk — programmatic wrapper for CLI contracts
-│   ├── system-bus/             # @joelclaw/system-bus — 110+ Inngest functions
-│   ├── gateway/                # @joelclaw/gateway — contract-v2 policy + Chat SDK adapters
-│   ├── restate/                # @joelclaw/restate — durable DAG runtime + workers
-│   ├── inference-router/       # @joelclaw/inference-router — model selection catalog
-│   ├── model-fallback/         # @joelclaw/model-fallback — provider fallback chains
-│   ├── message-store/          # @joelclaw/message-store — Redis message queue
-│   ├── vault-reader/           # @joelclaw/vault-reader — Vault context injection
-│   ├── markdown-formatter/     # @joelclaw/markdown-formatter — per-platform formatting
-│   ├── telemetry/              # @joelclaw/telemetry — OTEL emission interface
-│   ├── pi-extensions/          # @joelclaw/pi-extensions — pi agent extensions
-│   ├── email/                  # @joelclaw/email — email processing
-│   ├── mdx-pipeline/           # @joelclaw/mdx-pipeline — MDX content processing
-│   ├── lexicons/               # @joelclaw/lexicons — AT Protocol lexicons
-│   ├── discord-ui/             # @joelclaw/discord-ui — Discord components
-│   ├── things-cloud/           # @joelclaw/things-cloud — Things integration
-│   └── ui/                     # @repo/ui — shared UI components
-├── k8s/                        # Kubernetes manifests + deploy scripts
-├── skills/                     # Agent skills (canonical, 76 skills)
-├── scripts/                    # Utility scripts
-├── infra/                      # Infrastructure config
-│   └── firecracker/            # Firecracker microVM infrastructure
-└── AGENTS.md                   # This file
-```
+## Task routes
 
-## Tech Stack
+Load the skill for the domain being changed, then its relevant branch references:
 
-| Layer | Technology |
-|-------|-----------|
-| Runtime | Bun |
-| Package manager | pnpm workspaces |
-| Language | TypeScript (strict) |
-| Web framework | Next.js 16 (App Router, RSC, PPR) |
-| Effect system | Effect, @effect/cli, @effect/schema, @effect/platform |
-| Workflows | Inngest + Restate DAG runtime |
-| State | Redis (k8s StatefulSet) |
-| Search | Typesense (full-text + vector) |
-| Video | Mux |
-| Sandbox substrate | Firecracker microVMs in k8s pods |
-| Observability | OTEL → Typesense + Langfuse |
-| Infrastructure | Talos Linux on Colima, k8s v1.35.0 |
-| Deployment | Vercel (web), GHCR + k8s (worker) |
-| Storage | NAS (NFS over 10GbE), Vault (Obsidian) |
+| Area | Start here |
+| --- | --- |
+| Website | `skills/joelclaw-web/SKILL.md` |
+| System bus and durable events | `skills/system-bus/SKILL.md` |
+| Gateway and channel ownership | `skills/gateway/SKILL.md` |
+| Kubernetes | `skills/k8s/SKILL.md` |
+| Cross-cutting architecture or event flow | `skills/system-architecture/SKILL.md` |
+| Staged workloads | `skills/workflow-rig/SKILL.md` |
+| Skills | `skills/skill-review/SKILL.md` |
 
-## Hexagonal Architecture (ADR-0144) — MANDATORY
+The CLI is the primary operator interface. Read `joelclaw --help` and command help for the current surface. Keep heavy dependencies lazy-loaded so unrelated commands can start.
 
-Heavy logic lives in standalone `@joelclaw/*` packages behind interfaces. Consumers (gateway, CLI) are thin composition roots that wire adapters together.
+## Gateway boundary
 
-### Package Boundary Rules
+Preserve the single gateway and transport owners. Never start a second Telegram poller, Slack socket, Discord listener, or standalone adapter process. Read the current gateway runbook before changing channel ownership or performing cutover. Follow the existing durable inbound queue and correlation contracts.
 
-- **Import via `@joelclaw/*`**, never via relative paths across package boundaries.
-- **DI via interfaces** in library packages. Only composition roots do concrete wiring.
-- **New heavy logic → new package** if it's >100 lines and reusable.
-- **One telemetry interface** — `TelemetryEmitter` from `@joelclaw/telemetry`.
-- **One model resolver** — `@joelclaw/inference-router` catalog for ALL model selection.
+## Validation
 
-```typescript
-// ✅ Correct
-import { persist, drainByPriority } from "@joelclaw/message-store";
-import type { TelemetryEmitter } from "@joelclaw/telemetry";
+Use repository and package scripts as the command source. Run checks for the affected behavior and complete applicable CI gates. Root scripts include `pnpm check-types`, `pnpm lint`, and `pnpm fmt:check`; scope them when the package supports it. Documentation-only changes need source, metadata, link, and diff checks, not live service probes.
 
-// ❌ Wrong — cross-package relative import
-import { persist } from "../../message-store/src/store";
-```
+For a push that affects website deployment, check the resulting deployment and fix a failed build before stacking more deployment changes. Report observed status, not an assumed success based on elapsed time. Deployments require task authorization.
 
-### Validation
+## Work and records
 
-After any code change:
-```bash
-bunx tsc --noEmit
-pnpm biome check packages/ apps/
-```
+Execute a clear request within its scope. Skill workflow preferences do not require repeating permission already given. Ask when a missing consequential decision blocks correctness. Preserve unrelated edits and shared history; stage only this task's changes. Never reset a divergent shared checkout to make publishing easier.
 
-### Post-Push Deploy Verification
-
-After every `git push` that touches `apps/web/` or root config (`turbo.json`, `package.json`, `pnpm-lock.yaml`):
-1. Wait 60–90s, then: `cd ~/Code/joelhooks/joelclaw && vercel ls --yes 2>&1 | head -10`
-2. **● Error** → STOP. Fix the build before pushing anything else.
-3. **● Ready** → Continue.
-Never stack commits on a broken deploy. This rule exists because a 2026-03-01 session pushed 57 commits without checking — broke production for 45 minutes.
-
-### Mandatory Skill Loading
-
-Before modifying code in any domain, load the relevant skills FIRST:
-
-| Path | Required Skills |
-|---|---|
-| `apps/web/` | `next-best-practices`, `next-cache-components`, `nextjs-static-shells`, `vercel-debug` |
-| `packages/system-bus/` | `inngest-durable-functions`, `inngest-steps`, `inngest-events`, `inngest-flow-control`, `system-bus` |
-| `packages/gateway/` | `gateway`, `telegram` |
-| `k8s/` | `k8s` |
-| Architecture / cross-cutting | `system-architecture` |
-
-## CLI — `joelclaw`
-
-The CLI is the primary operator interface. Built with `@effect/cli`, compiled to binary at `~/.bun/bin/joelclaw`. Returns HATEOAS JSON envelopes.
-
-**If the CLI crashes, that's the highest priority fix.** Heavy deps must be lazy-loaded.
-
-### Key Commands
-
-```bash
-joelclaw status                        # Health check (server, worker, k8s)
-joelclaw runs [--count N] [--hours H]  # Recent Inngest runs
-joelclaw run <run-id>                  # Step trace for a run
-joelclaw send <event> [-d JSON]        # Send Inngest event
-joelclaw logs worker|errors|server     # Service logs
-joelclaw subscribe list|add|remove|check|summary  # Feed subscriptions
-joelclaw gateway status|events|test    # Gateway operations
-joelclaw otel list|search|stats        # Observability
-joelclaw loop start|status|cancel      # Agent coding loops
-joelclaw workload plan "intent" [--stages-from stages.json] [--write-plan plan.json]
-joelclaw workload run <plan.json>      # Redis queue → Restate DAG runtime
-joelclaw workload dispatch <plan.json> # Stage handoff contract
-joelclaw workload sandboxes list|cleanup|janitor
-joelclaw discover <url> [-c context]   # Capture discovery
-joelclaw recall <query>                # Search disposable Brain + observation projections
-joelclaw inngest status|restart-worker # Inngest management
-```
-
-### Building
-
-```bash
-cd ~/Code/joelhooks/joelclaw
-bun build packages/cli/src/cli.ts --compile --outfile ~/.bun/bin/joelclaw
-```
-
-Test after every change: `joelclaw status`, `joelclaw send --help`, `joelclaw runs --count 1`.
-
-## Workload Rig
-
-`joelclaw workload` is the canonical front door for staged runtime work.
-
-- `joelclaw workload plan ... --stages-from stages.json` loads an explicit stage DAG, validates dependencies/cycles, and preserves per-stage acceptance truth.
-- `joelclaw workload run <plan.json>` dispatches through **Redis queue → Restate `dagOrchestrator` → `dagWorker`**.
-- `dagWorker` currently runs `shell`, `infer`, and `microvm` handlers.
-- The `restate-worker` pod is a full agent environment: Bun + Node + `pi` + `codex`, the full monorepo checkout, 76 repo skills, mounted pi auth, and the joelclaw identity chain.
-- Firecracker microVMs run inside the pod via nested virtualization on Colima VZ (`/dev/kvm`) with ~9ms snapshot restore.
-- Persistent Firecracker assets live on PVC `firecracker-images` (kernel, rootfs, snapshots).
-
-Example:
-
-```bash
-joelclaw workload plan "intent" --stages-from stages.json --write-plan plan.json
-```
-
-## System Bus Worker
-
-110+ Inngest functions in `packages/system-bus/src/inngest/functions/`. Deployed to k8s as `system-bus-worker`.
-
-### Deploy
-
-```bash
-~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh
-```
-
-Builds ARM64 image, pushes to GHCR, updates k8s deployment, verifies rollout.
-
-### LLM Inference in Functions
-
-System-bus functions that need LLM calls MUST use:
-```typescript
-import { infer } from "../../lib/inference";
-```
-
-This shells to `pi -p --no-session --no-extensions` — zero config, zero API cost. Never use OpenRouter, never read auth.json directly, never use paid API keys.
-
-## Gateway
-
-Always-on pi session with Redis event bridge. Chat SDK is the canonical adapter layer for Telegram and Slack behind joelclaw contract-v2 policy; Discord and iMessage remain on their existing channel owners. Inbound work reaches Pi only through the durable command queue. `joelclaw notify send` remains compatible and always maps to contract v2 after the Chat SDK runtime is ready.
-
-- Gateway middleware (`packages/system-bus/src/inngest/middleware/gateway.ts`) auto-injects `gateway` context into Inngest functions.
-- Contract schemas and routing: `packages/message-contract/`; canonical adapters and inbound dispatch: `packages/gateway/src/chat-sdk/` and `packages/gateway/src/chat-sdk-inbound/`.
-- Reactions return on the bus as `message/reaction.received` with the original `flowId`.
-- Never start a second Telegram poller, Slack socket, Discord listener, or standalone Chat SDK process. Chat SDK directly owns Telegram and Slack; rollback is source control plus one supervised restart.
-- Cutover and rollback runbook: `.brain/projects/messaging-stabilization/run-shadow-window-cutover.svx`.
-
-## Observability
-
-Silent failures are bugs. Every pipeline step emits structured telemetry.
-
-```bash
-joelclaw otel list --hours 1           # Recent events
-joelclaw otel search "error" --hours 24 # Search
-joelclaw otel stats --hours 24          # Aggregate stats
-```
-
-Storage: Typesense `otel_events` collection.
-
-<!-- Memory observation instructions are injected by the memory-enforcer extension.
-     Do NOT duplicate them here — see pi/extensions/memory-enforcer/index.ts -->
-
-## Skills
-
-76 skills in `skills/` — **canonical source, fully tracked in git**.
-
-Canonical coordination protocol skill: `skills/clawmail/SKILL.md`.
-
-Home directories symlink in:
-- `~/.agents/skills/<name>` → `~/Code/joelhooks/joelclaw/skills/<name>`
-- `~/.pi/agent/skills/<name>` → `~/Code/joelhooks/joelclaw/skills/<name>`
-
-**Never** put skill content in dot directories (`.agents/`, `.pi/`, `.claude/`). Those are symlink consumers, not sources. The `skills/` directory is sacred.
-
-When operational reality changes, update the relevant skill immediately.
-
-## Vault
-
-`~/Vault` (Obsidian, PARA method) is the knowledge base:
-- `docs/decisions/` — Architecture Decision Records (ADR-0001 through ADR-0157+)
-- `Resources/` — contacts, discoveries, video notes
-- `Projects/` — active project notes
-
-## Key ADRs
-
-| ADR | Title | Status |
-|-----|-------|--------|
-| 0088 | NAS-backed storage tiering | Phase 1-2 ✅, Phase 3-4 open |
-| 0127 | Feed subscriptions & resource monitoring | Shipped |
-| 0140 | Inference router | Shipped |
-| 0144 | Gateway hexagonal architecture | Shipped |
-| 0155 | Three-stage story pipeline | Shipped |
-| 0156 | Graceful worker restart | Accepted |
-| 0157 | Agent lifecycle CLI | Proposed |
-
-## Recording System Changes
-
-Use canonical OTEL events and durable Brain receipts. The legacy `slog` JSONL journal is retired.
-
-## Git Workflow
-
-- Do not use destructive commands (`git reset --hard`) unless explicitly requested.
-- Never discard user changes without consent.
-- Commit to `main` directly for operational work. PRs for features when loops are involved.
-
-## Model Policy
-
-- Codex tasks MUST use `gpt-5.4`.
-- All model selection goes through `@joelclaw/inference-router` catalog.
-- Never hardcode model→provider mappings.
+Edit canonical skills in `skills/`; installed links and namespaced packs are consumers. Preserve invocation metadata and provenance. Record durable decisions and operational receipts in Brain, with OTEL for runtime events. Keep private topology, credentials, customer data, and private source material out of public artifacts.
 
 <!-- pi-notes-agent:start -->
 ## pi-notes Brain workflow

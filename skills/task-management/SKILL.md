@@ -85,7 +85,7 @@ todoist-cli review                   # Daily standup: today, inbox, overdue, pro
 todoist-cli add "Title" --due today --description "Details" --project ID
 
 # With labels, priority, deadline
-todoist-cli add "Ship feature" --due "next monday" --priority 3 --labels agent,urgent --deadline 2026-03-01
+todoist-cli add "Ship feature" --due "next monday" --priority 3 --labels urgent --deadline 2026-03-01
 
 # Complete
 todoist-cli complete ID
@@ -120,7 +120,7 @@ Use Todoist's native p1–p4. The API inverts these: `--priority 4` = p1 (red) i
 | **p3** 🔵 | `--priority 2` | Medium / this cycle | Scheduled work. Gets done when p1-p2 clear. |
 | **p4** ⚪ | `--priority 1` | Backlog | Someday/maybe. Reviewed weekly, killed if stale. |
 
-**SOP: When creating agent tasks from ADRs or session work, always set priority.** Default to p3. Promote to p2 if it unblocks other work. p1 is rare — something is broken or blocking Joel.
+**SOP: When creating authorized human actions from ADRs or session work, always set priority.** Default to p3. Promote to p2 if it unblocks other work. p1 is rare — something is broken or blocking Joel.
 
 ### Schedule Mapping
 
@@ -168,7 +168,7 @@ todoist-cli add "The thing Joel said"
 
 Then confirm: **"Captured → Inbox: 'The thing Joel said'"**
 
-Don't ask permission to capture. Ask permission before scheduling or assigning to a project. Capturing is free.
+Capture the requested task directly. A specified due date or project authorizes that assignment. If the user omitted them, keep the task in Inbox rather than inventing a schedule or asking an unnecessary question.
 
 ### Process Inbox (GTD)
 
@@ -239,14 +239,14 @@ Google Tasks via `gog` is available as secondary adapter.
 
 ## SOP: ADR → Tasks
 
-When an ADR is `accepted` or `proposed`, its remaining work should exist as Todoist tasks. This is how the system tracks what's actually next.
+For an authorized ADR-to-task sweep, put only concrete human next actions in Todoist. Proposed ADRs do not authorize implementation. Agent execution, project work, and verification receipts stay in the owning issue, Brain, or runtime.
 
 **After an ADR sweep or session that produces action items:**
 
 1. Check the ADR's verification checklist for unchecked items
-2. Each unchecked item → one Todoist task (verb-first, concrete)
+2. Create a task only for a concrete human-owned action; skip machine-only checks and deduplicate existing work.
 3. Set priority based on leverage: does it unblock other ADRs? p2. Standalone? p3. Research? p3.
-4. Label `agent` (agent can do it) or `joel` (needs human). Add `joelclaw` if it's system work.
+4. Label the actual human owner; autonomous work stays in its execution system. Add `joelclaw` if it's system work.
 5. Description includes ADR reference and enough context to pick up cold
 6. Cross-reference: if a task completes the last item in an ADR, update the ADR to `implemented`
 

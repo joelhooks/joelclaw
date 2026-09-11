@@ -1,7 +1,7 @@
 ---
 name: person-dossier
 displayName: Person Dossier
-description: "Build and update person dossiers from communication history. Use when a person is discussed for strategy, follow-up, opportunities, relationship context, or decisions. Automatically pull evidence from Front email, Granola meetings, memory recall, and event logs; then write/update a structured dossier in Vault/Resources/."
+description: "Build and update person dossiers from communication history. Use when a person is discussed for strategy, follow-up, opportunities, relationship context, or decisions. Use relevant authorized evidence from Front email, Granola summaries, scoped memory, and event metadata; then write/update a structured dossier in Vault/Resources/."
 version: 1.0.0
 author: Joel Hooks
 tags: [joelclaw, people, dossiers, memory, relationships]
@@ -9,11 +9,11 @@ tags: [joelclaw, people, dossiers, memory, relationships]
 
 # Person Dossier
 
-Build or refresh a dossier whenever an individual is discussed.
+Build or refresh a dossier when relationship research is requested. An incidental mention is not a dossier request. Use only relevant authorized sources.
 
 ## Trigger
 
-Run this workflow when a person is mentioned in:
+Relevant requests include:
 
 - strategy or planning conversations
 - follow-up decisions
@@ -82,17 +82,11 @@ granola meetings --range this_month
 
 For each candidate meeting ID:
 
-```bash
-granola meeting <meeting_id>
-granola meeting <meeting_id> --transcript
-```
+Use `recall` and the current `session-search` contract. Keep private queries in structured MCP arguments. Raw evidence requires a scope-bound `evidenceDrilldownReceipt`; missing projections do not grant raw access.
 
 ### 5. Pull Brain-backed recall context
 
-```bash
-joelclaw recall "<person name> <company> <project>" --limit 20 --min-score 0.25
-joelclaw recall "<person email or alias>" --limit 20
-```
+Use `recall` and the current `session-search` contract. Keep private queries in structured MCP arguments. Raw evidence requires a scope-bound `evidenceDrilldownReceipt`; missing projections do not grant raw access.
 
 ### 6. Pull event timeline context
 
@@ -141,7 +135,7 @@ Never present inferred content as verified.
 If blocked:
 
 1. record exact technical error text
-2. attempt one fallback source (`joelclaw events` or `joelclaw recall`)
+2. try authorized event metadata or scoped recall; do not bypass transcript access requirements
 3. produce a blocked dossier with explicit gaps
 4. include exact next-run commands
 
@@ -196,23 +190,7 @@ No silent partials.
 
 ## Quick Build Command Set
 
-```bash
-# 1) Front discovery
-joelclaw email inbox -q "<person name>" -n 200
-
-# 2) Front thread read
-joelclaw email read --id <cnv_id>
-
-# 3) Granola context
-granola meetings --range this_month
-granola meeting <meeting_id> --transcript
-
-# 4) Brain-backed recall context
-joelclaw recall "<person name>" --limit 20
-
-# 5) Event timeline
-joelclaw events --prefix meeting --hours 720 --count 200
-```
+Use `recall` and the current `session-search` contract. Keep private queries in structured MCP arguments. Raw evidence requires a scope-bound `evidenceDrilldownReceipt`; missing projections do not grant raw access.
 
 ## Quality Bar
 

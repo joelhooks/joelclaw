@@ -37,7 +37,7 @@ All routes except `/health` require:
 - `TYPESENSE_API_KEY` (required)
 - `PDF_BRAIN_API_TOKEN` (required)
 - `DOCS_CHUNKS_COLLECTION` (default `docs_chunks_v2`)
-- `DOCS_ARTIFACTS_DIR` (default `/Volumes/three-body/docs-artifacts`)
+- `DOCS_ARTIFACTS_DIR` (default `/Volumes/services/joelclaw/docs-artifacts`)
 
 ## Notes
 

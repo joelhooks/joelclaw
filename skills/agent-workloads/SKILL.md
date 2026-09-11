@@ -129,7 +129,7 @@ Canonical posture for coding/repo work:
 
 1. operator gives intent + context
 2. agent returns a shaped workload plan
-3. agent asks **approved?**
+3. agent asks only for unresolved consequential scope; an explicit scoped run request already authorizes execution
 4. once approved, follow `guidance.executionLoop.approvedNextStep` instead of re-planning
 5. while work is running, let the pi extension/TUI show honest status at real stage boundaries
 6. finish with a terse outcome summary: what changed, what was verified, what remains, and whether the next move is push / handoff / stop
@@ -227,7 +227,7 @@ Until the rest exists:
 
 1. run `joelclaw workload plan`
 2. read the returned `guidance` before doing anything cute
-3. present the plan, then ask **approved?**
+3. present the plan and execute within existing authorization; ask only for unresolved consequential scope
 4. once approved, follow `guidance.executionLoop.approvedNextStep`
 5. if `recommendedExecution=execute-inline-now`, reserve the scoped files and just do the work
 6. if `recommendedExecution=tighten-scope-first`, rerun the planner with explicit `--paths` or `--paths-from ...`

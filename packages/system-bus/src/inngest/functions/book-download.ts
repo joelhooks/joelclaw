@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { constants as fsConstants } from "node:fs";
 import { access, chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
+import { NAS_BOOKS_REMOTE_ROOT, NAS_SSH_HOST } from "@joelclaw/endpoint-resolver";
 import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
 import { assertAllowedModel, MODEL } from "../../lib/models";
@@ -25,8 +26,8 @@ const BOOK_DOWNLOAD_TIMEOUT_MS = Math.max(
   60_000,
   Number.parseInt(process.env.JOELCLAW_BOOK_DOWNLOAD_TIMEOUT_MS ?? "900000", 10)
 );
-const NAS_HOST = process.env.JOELCLAW_NAS_HOST?.trim() || "joel@three-body";
-const NAS_BOOKS_DIR = process.env.JOELCLAW_NAS_BOOKS_DIR?.trim() || "/volume1/home/joel/books";
+const NAS_HOST = NAS_SSH_HOST;
+const NAS_BOOKS_DIR = NAS_BOOKS_REMOTE_ROOT;
 const NAS_BACKUP_TIMEOUT_MS = 30_000;
 
 // aa-book's own Calibre auto-convert (bin/aa-book download_book) only handles

@@ -20,7 +20,7 @@ Contract:
 - extract all URLs from message text
 - normalize Slack angle links like `<https://x|label>`
 - send one `discovery/noted` event per unique URL in the message
-- defaults: `site=joelclaw`, `visibility=public`
+- defaults: `site=joelclaw`, `visibility=private`
 - include Slack channel/message context in the event
 - fire-and-forget; Slack handling must not block on discovery pipeline failures
 
@@ -47,14 +47,14 @@ Preferred explicit fields:
 
 **Sensible default when not specified**:
 - `site = joelclaw`
-- `visibility = public`
+- `visibility = private`
 
 ### 2. Canonical operator path when you need the final link back
 
 Use the event surface directly and follow the run to completion:
 
 ```bash
-joelclaw send discovery/noted --data '{"url":"<url>","context":"<optional context>","site":"joelclaw","visibility":"public"}' --follow
+joelclaw send discovery/noted --data '{"url":"<url>","context":"<optional context>","site":"joelclaw","visibility":"private"}' --follow
 ```
 
 The terminal run result now includes the final link for the created piece:
@@ -70,7 +70,7 @@ If Joel explicitly wants the piece published somewhere other than joelclaw and t
 `joelclaw discover` still works as the thin fire-and-forget shortcut and now accepts explicit site/visibility too:
 
 ```bash
-joelclaw discover <url> --site joelclaw --visibility public
+joelclaw discover <url> --site joelclaw --visibility private
 joelclaw discover <url> -c "what Joel said about it" --site wizardshit --visibility private
 ```
 
