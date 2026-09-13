@@ -42,12 +42,12 @@ const text = (result: Awaited<ReturnType<Client["callTool"]>>) =>
   (result.content as Array<{ type: string; text: string }>)[0]?.text ?? "";
 
 describe("imsg MCP server", () => {
-  test("lists the five tools with send flagged non-read-only", async () => {
+  test("lists the seven tools with send flagged non-read-only", async () => {
     const { client, close } = await connect();
     try {
       const listed = await client.listTools();
       expect(listed.tools.map((t) => t.name)).toEqual([
-        "imsg_status", "imsg_chats", "imsg_group", "imsg_history", "imsg_send",
+        "imsg_status", "imsg_chats", "imsg_group", "imsg_history", "imsg_send", "imsg_contacts", "imsg_top_contacts",
       ]);
       const send = listed.tools.find((t) => t.name === "imsg_send");
       expect(send?.annotations?.readOnlyHint).toBe(false);

@@ -3,27 +3,41 @@ import { dirname, resolve, sep } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import * as z from "zod/v4";
+import { createContactsStore, type ContactsStore } from "./contacts.ts";
 import {
   createImsgExec,
+  READ_TIMEOUT_MS,
   runImsgJson,
   toErrorText,
   truncateMessageTexts,
+  type ErrorTextContext,
   type ImsgExec,
   type NdjsonResult,
 } from "./imsg-cli.ts";
+import { resolveChatDbPath, topContacts } from "./messages-db.ts";
 
 export const SERVER_NAME = "imsg-mcp";
 export const SERVER_VERSION = "0.1.0";
 const HISTORY_DEFAULT = 20;
 const HISTORY_MAX = 200;
 const CHATS_DEFAULT = 20;
-const CHATS_MAX = 500;
+const CHATS_MAX = 200;
+const CONTACTS_DEFAULT = 10;
+const CONTACTS_MAX = 50;
+const TOP_DAYS_DEFAULT = 180;
+const TOP_DAYS_MAX = 3650;
+const TOP_LIMIT_DEFAULT = 30;
+const TOP_LIMIT_MAX = 200;
 export const SEND_TIMEOUT_MS = 120_000;
 export const ATTACHMENT_DIRS = ["/Users/joel/.joelclaw/imsg-outbox", "/tmp"] as const;
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/u;
 
 export interface ImsgMcpOptions {
   readonly exec?: ImsgExec;
+  readonly contacts?: ContactsStore;
+  readonly chatDbPath?: string;
+  /** Clock for imsg_top_contacts windows (tests). */
+  readonly now?: () => number;
 }
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -71,20 +85,26 @@ export function validateAttachment(input: string, dirs: readonly string[] = ATTA
   return path;
 }
 
-function fail(error: unknown): CallToolResult {
-  return { content: [{ type: "text", text: toErrorText(error) }], isError: true };
+function fail(error: unknown, context?: ErrorTextContext): CallToolResult {
+  return { content: [{ type: "text", text: toErrorText(error, context) }], isError: true };
 }
 
-async function guarded(work: () => Promise<unknown>): Promise<CallToolResult> {
+const READ_CONTEXT: ErrorTextContext = { kind: "read", timeoutMs: READ_TIMEOUT_MS };
+const READ_OPTIONS = { timeoutMs: READ_TIMEOUT_MS } as const;
+
+async function guarded(work: () => Promise<unknown>, context: ErrorTextContext = READ_CONTEXT): Promise<CallToolResult> {
   try {
     return ok(await work());
   } catch (error) {
-    return fail(error);
+    return fail(error, context);
   }
 }
 
 export function createImsgMcpServer(options: ImsgMcpOptions = {}): McpServer {
   const exec = options.exec ?? createImsgExec();
+  const contacts = options.contacts ?? createContactsStore();
+  const chatDbPath = options.chatDbPath ?? resolveChatDbPath();
+  const now = options.now ?? Date.now;
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 
   server.registerTool(
@@ -98,10 +118,10 @@ export function createImsgMcpServer(options: ImsgMcpOptions = {}): McpServer {
     },
     async (_input, extra) => {
       try {
-        const result = await runImsgJson(exec, ["chats", "--limit", "1"], { signal: extra.signal });
+        const result = await runImsgJson(exec, ["chats", "--limit", "1"], { ...READ_OPTIONS, signal: extra.signal });
         return ok(withWarnings({ ok: true, sampleChats: result.rows.length }, result));
       } catch (error) {
-        return ok({ ok: false, error: toErrorText(error) });
+        return ok({ ok: false, error: toErrorText(error, READ_CONTEXT) });
       }
     },
   );
@@ -122,7 +142,7 @@ export function createImsgMcpServer(options: ImsgMcpOptions = {}): McpServer {
       guarded(async () => {
         const args = ["chats", "--limit", String(input.limit ?? CHATS_DEFAULT)];
         if (input.unreadOnly === true) args.push("--unread-only");
-        const result = await runImsgJson(exec, args, { signal: extra.signal });
+        const result = await runImsgJson(exec, args, { ...READ_OPTIONS, signal: extra.signal });
         return withWarnings({ chats: result.rows }, result);
       }),
   );
@@ -138,7 +158,7 @@ export function createImsgMcpServer(options: ImsgMcpOptions = {}): McpServer {
     },
     (input, extra) =>
       guarded(async () => {
-        const result = await runImsgJson(exec, ["group", "--chat-id", String(input.chatId)], { signal: extra.signal });
+        const result = await runImsgJson(exec, ["group", "--chat-id", String(input.chatId)], { ...READ_OPTIONS, signal: extra.signal });
         const { rows } = result;
         if (rows.length === 1 && result.warnings.length === 0) return rows[0];
         return withWarnings({ rows }, result);
@@ -166,7 +186,7 @@ export function createImsgMcpServer(options: ImsgMcpOptions = {}): McpServer {
         if (input.start !== undefined) args.push("--start", input.start);
         if (input.end !== undefined) args.push("--end", input.end);
         if (input.attachments === true) args.push("--attachments");
-        const result = await runImsgJson(exec, args, { signal: extra.signal });
+        const result = await runImsgJson(exec, args, { ...READ_OPTIONS, signal: extra.signal });
         return withWarnings({ messages: truncateMessageTexts(result.rows) }, result);
       }),
   );
@@ -211,6 +231,64 @@ export function createImsgMcpServer(options: ImsgMcpOptions = {}): McpServer {
         const result = await runImsgJson(exec, args, { timeoutMs: SEND_TIMEOUT_MS });
         const { rows } = result;
         return withWarnings({ sent: true, result: rows.length === 1 ? rows[0] : rows }, result);
+      }, { kind: "send" }),
+  );
+
+  server.registerTool(
+    "imsg_contacts",
+    {
+      title: "Look up people in Contacts",
+      description:
+        "Resolve iMessage handles to people using the macOS Contacts (AddressBook) databases, read-only. Pass exactly one of query (case-insensitive substring over first/last/nickname/organization, or an exact phone/email) or handle (a phone number or email; returns the one matching person). Phones are normalized to E.164 (US default). Empty results are not errors.",
+      inputSchema: {
+        query: z.string().min(1).max(200).optional().describe("Name fragment, organization, or exact phone/email."),
+        handle: z.string().min(1).max(320).optional().describe("Phone number or email to resolve to one person."),
+        limit: z.number().int().min(1).max(CONTACTS_MAX).optional().describe(`Max people for query (default ${CONTACTS_DEFAULT}, max ${CONTACTS_MAX}).`),
+      },
+      annotations: READ,
+    },
+    (input) =>
+      guarded(async () => {
+        const hasQuery = input.query !== undefined;
+        const hasHandle = input.handle !== undefined;
+        if (hasQuery === hasHandle) throw new Error("Provide exactly one of query or handle.");
+        const people = hasHandle
+          ? [contacts.lookupHandle(input.handle as string)].filter((p) => p !== null)
+          : contacts.searchPeople(input.query as string, input.limit ?? CONTACTS_DEFAULT);
+        const status = contacts.status();
+        const payload: Record<string, unknown> = {
+          ok: true,
+          people: people.map((p) => ({ name: p.name, phones: p.phones, emails: p.emails, organization: p.organization })),
+          sources: status.sources,
+        };
+        if (status.errors.length > 0) payload.warnings = status.errors;
+        return payload;
+      }),
+  );
+
+  server.registerTool(
+    "imsg_top_contacts",
+    {
+      title: "Most-messaged contacts",
+      description:
+        `Who this Mac messages most: per-handle message counts from ~/Library/Messages/chat.db (opened read-only, immutable) over the last N days, with inbound/outbound split, last activity, chat rowids, and the Contacts person when known. Group chats are excluded unless includeGroups=true (then inbound group messages count toward their sender). Sorted by total desc. Default ${TOP_DAYS_DEFAULT} days, ${TOP_LIMIT_DEFAULT} rows.`,
+      inputSchema: {
+        days: z.number().int().min(1).max(TOP_DAYS_MAX).optional().describe(`Window in days (default ${TOP_DAYS_DEFAULT}, max ${TOP_DAYS_MAX}).`),
+        limit: z.number().int().min(1).max(TOP_LIMIT_MAX).optional().describe(`Rows to return (default ${TOP_LIMIT_DEFAULT}, max ${TOP_LIMIT_MAX}).`),
+        includeGroups: z.boolean().optional().describe("Count inbound group-chat messages toward their sender (default false)."),
+      },
+      annotations: READ,
+    },
+    (input) =>
+      guarded(async () => {
+        const days = input.days ?? TOP_DAYS_DEFAULT;
+        const rows = topContacts(chatDbPath, contacts, {
+          days,
+          limit: input.limit ?? TOP_LIMIT_DEFAULT,
+          includeGroups: input.includeGroups === true,
+          now: now(),
+        });
+        return { days, contacts: rows };
       }),
   );
 

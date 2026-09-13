@@ -60,7 +60,7 @@ describe("imsg MCP HTTP transport", () => {
       try {
         const listed = await client.listTools();
         expect(listed.tools.map((t) => t.name)).toEqual([
-          "imsg_status", "imsg_chats", "imsg_group", "imsg_history", "imsg_send",
+          "imsg_status", "imsg_chats", "imsg_group", "imsg_history", "imsg_send", "imsg_contacts", "imsg_top_contacts",
         ]);
         const chats = await client.callTool({ name: "imsg_chats", arguments: { limit: 2 } });
         const payload = JSON.parse((chats.content as Array<{ text: string }>)[0]?.text ?? "{}");

@@ -8,10 +8,21 @@ export const FDA_MESSAGE =
 export const AUTOMATION_MESSAGE =
   "Automation access to Messages is not granted; grant Automation → Messages to /Applications/imsg-mcp.app in System Settings › Privacy & Security › Automation";
 export const KILLED_MESSAGE = "send outcome unknown; check Messages.app before retrying";
+export const READ_TIMEOUT_MS = 60_000;
+
+export function readTimeoutMessage(timeoutMs: number = READ_TIMEOUT_MS): string {
+  return `imsg timed out after ${Math.round(timeoutMs / 1000)}s; reduce limit or narrow the window`;
+}
+
+export interface ErrorTextContext {
+  /** Which kind of tool failed; a killed read tool gets the timeout hint, a killed send the unknown-outcome text. */
+  readonly kind?: "send" | "read";
+  readonly timeoutMs?: number;
+}
 
 const FDA_PATTERNS = [/authorization denied/iu, /full disk access/iu];
 const AUTOMATION_PATTERNS = [/applescript/iu, /automation/iu, /-1743/u, /not permitted to send apple events/iu];
-export const DEFAULT_TIMEOUT_MS = 30_000;
+export const DEFAULT_TIMEOUT_MS = READ_TIMEOUT_MS;
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export type ImsgFailureClass = "fda" | "automation" | "killed" | "other";
@@ -135,15 +146,17 @@ export function truncateMessageTexts(rows: unknown[]): unknown[] {
   });
 }
 
-export function toErrorText(error: unknown): string {
+export function toErrorText(error: unknown, context: ErrorTextContext = {}): string {
   if (error instanceof ImsgError) {
     switch (error.failure) {
       case "fda":
         return `${FDA_MESSAGE}\n\nimsg said:\n${error.message}`;
       case "automation":
         return `${AUTOMATION_MESSAGE}\n\nimsg said:\n${error.message}`;
-      case "killed":
-        return `${KILLED_MESSAGE}\n\nimsg said:\n${error.message}`;
+      case "killed": {
+        const headline = context.kind === "read" ? readTimeoutMessage(context.timeoutMs) : KILLED_MESSAGE;
+        return `${headline}\n\nimsg said:\n${error.message}`;
+      }
       default:
         return error.message;
     }
