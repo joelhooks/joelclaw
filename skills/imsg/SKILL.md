@@ -82,3 +82,17 @@ brew install steipete/tap/imsg
 ## Credit
 
 CLI by [steipete](https://github.com/steipete/imsg). Adopted per ADR-0067.
+
+## Flagg: imsg via Executor
+
+On Flagg, do not call `imsg` from a terminal for reads. Use Executor's saved connection, which runs a signed service that holds the Full Disk Access grant.
+
+- Address: `tools.imsg.org.flaggImsg.<tool>`. Discover with `tools.search({ namespace: "imsg", query: "" })`.
+- Tools: `imsg_status`, `imsg_chats`, `imsg_group`, `imsg_history`, `imsg_send`. Call `imsg_status` first.
+- Service: LaunchAgent `com.joel.imsg-mcp` on `127.0.0.1:4793`, code in `packages/imsg-mcp`, bundle `/Applications/imsg-mcp.app`.
+- `imsg_send` needs Joel's explicit approval for recipient and text. An org `require_approval` policy on it is expected in Executor; check the Tools tab. Attachments only from `~/.joelclaw/imsg-outbox` or `/tmp`. A killed send returns "outcome unknown", so check Messages.app before retrying.
+- Health: `curl -s http://127.0.0.1:4793/healthz` and `launchctl print gui/501/com.joel.imsg-mcp`. Restart with `launchctl kickstart -k gui/501/com.joel.imsg-mcp`.
+- Bearer: `imsg_mcp_bearer_token` in agent-secrets. Never print it.
+- Joel-only grants: Full Disk Access for `/Applications/imsg-mcp.app` (re-toggle after any re-sign) and the Automation prompt for Messages.app on first send.
+
+Full receipts: `~/Code/joelhooks/dark-wizard/.brain/projects/imsg-mcp-executor-2026-09.svx`.
