@@ -156,6 +156,7 @@ preflight_selected_assets() {
       exit 1
     }
     require_executable "${REPO_ROOT}/infra/install-agent-secrets-service-account.sh"
+    require_executable "${REPO_ROOT}/infra/install-agent-secrets-break-glass.sh"
     id "$AGENT_SECRETS_SERVICE_USER" >/dev/null 2>&1 || {
       echo "Missing agent-secrets service account: $AGENT_SECRETS_SERVICE_USER"
       exit 1
@@ -384,6 +385,9 @@ herdr_server_has_owner() {
 }
 
 preflight_selected_assets
+if [ "$HOSTNAME_SHORT" = "$HEADLESS_RUNTIME_HOST" ]; then
+  "${REPO_ROOT}/infra/install-agent-secrets-break-glass.sh"
+fi
 ensure_runtime_dirs
 sync_agent_secrets_service_binary
 remove_headless_bridge
