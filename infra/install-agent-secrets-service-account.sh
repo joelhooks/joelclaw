@@ -16,6 +16,7 @@ SERVICE_ROOT="${SERVICE_ROOT:-/Users/Shared/joelclaw}"
 SOCKET_PATH="${SOCKET_PATH:-${SERVICE_ROOT}/run/agent-secrets.sock}"
 REPO_ROOT="${REPO_ROOT:-${OPERATOR_HOME}/Code/joelhooks/joelclaw}"
 SOURCE_PLIST="${REPO_ROOT}/infra/launchd/${LABEL}.plist"
+BREAK_GLASS_INSTALLER="${REPO_ROOT}/infra/install-agent-secrets-break-glass.sh"
 LIVE_PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 PLIST_BACKUP="${LIVE_PLIST}.pre-service-account"
 CLIENT_CONFIG="${OPERATOR_HOME}/.agent-secrets/config.json"
@@ -80,6 +81,7 @@ rollback() {
 trap rollback ERR
 
 require "$SOURCE_PLIST"
+require "$BREAK_GLASS_INSTALLER"
 require "$SOURCE_BINARY"
 require "$SHITRAT_BINARY"
 require "$SOURCE_STORE/identity.age"
@@ -91,6 +93,7 @@ id "$SERVICE_USER" >/dev/null
   echo "Installed secrets binary lacks service-account restart support: $SOURCE_BINARY" >&2
   exit 1
 }
+"$BREAK_GLASS_INSTALLER"
 
 group_has_member() {
   /usr/bin/dscl . -read "/Groups/${SOCKET_GROUP}" GroupMembership 2>/dev/null \
@@ -264,6 +267,6 @@ agent-secrets service-account cutover verified.
   socket: ${SOCKET_PATH} (${socket_owner}:${socket_group} ${socket_mode})
   old store retained: ${SOURCE_STORE}
   routine restart: secrets daemon restart
-  break glass: sudo launchctl kickstart -k system/${LABEL}
+  automatic break glass: sudo -n /bin/launchctl kickstart -k system/${LABEL}
   note: operator processes started before group preparation must be restarted
 EOF

@@ -237,7 +237,13 @@ One-time agent-secrets service-account migration on Flagg:
 sudo ~/Code/joelhooks/joelclaw/infra/install-agent-secrets-service-account.sh
 ```
 
-The first run may stop after it creates `joelclaw-secrets`. Restart Joel's login/session processes so they inherit the new group, then run the command again for cutover. The cutover moves daemon ownership to `joelclaw`, keeps the original Joel-owned store as rollback material, and gives Joel's CLI access only through the dedicated socket group. Routine cycles use `secrets daemon restart`; sudo is break-glass only.
+The first run may stop after it creates `joelclaw-secrets`. Restart Joel's login/session processes so they inherit the new group, then run the command again for cutover. The cutover moves daemon ownership to `joelclaw`, keeps the original Joel-owned store as rollback material, and gives Joel's CLI access only through the dedicated socket group. The installer also installs one exact passwordless recovery command. Routine cycles use `secrets daemon restart`; an unresponsive daemon is recovered without a password or UI:
+
+```bash
+sudo -n /bin/launchctl kickstart -k system/com.joel.agent-secrets
+```
+
+Any password prompt is a bootstrap defect. Repair it with `infra/install-agent-secrets-break-glass.sh` during the root-owned host install instead of asking an operator to approve a runtime dialog.
 
 Canonical installer after that migration:
 
@@ -269,7 +275,7 @@ What the installer does:
 
 Agent-mail note: `com.joelclaw.agent-mail` now goes through `infra/agent-mail-daemon.sh`, which resolves the joelclaw-managed `joelhooks/mcp_agent_mail` checkout instead of baking a third-party path into the plist. If the local checkout still lives under a legacy directory name, that is fine as long as the git `origin` remote is `joelhooks/mcp_agent_mail`. The launchd plist and wrapper both raise `NumberOfFiles` to 8192 because git-backed mailbox writes can temporarily hold hundreds of descriptors under multi-agent traffic; the wrapper fallback matters when the installed system plist is stale.
 
-Agent-secrets note: `com.joel.agent-secrets` owns its store under `/Users/joelclaw/.agent-secrets` and exposes only `/Users/Shared/joelclaw/run/agent-secrets.sock` as `joelclaw:joelclaw-secrets` mode `0660`. Joel's `~/.agent-secrets/config.json` points the CLI at that socket; it does not grant filesystem access to the service store.
+Agent-secrets note: `com.joel.agent-secrets` owns its store under `/Users/joelclaw/.agent-secrets` and exposes only `/Users/Shared/joelclaw/run/agent-secrets.sock` as `joelclaw:joelclaw-secrets` mode `0660`. Joel's `~/.agent-secrets/config.json` points the CLI at that socket; it does not grant filesystem access to the service store. `/etc/sudoers.d/agent-secrets` grants only the exact `launchctl kickstart` command above, so agents can recover a wedged daemon without exposing broader root access.
 
 Gateway note: `com.joel.gateway` starts through `infra/gateway-daemon.sh`, which waits for agent-secrets readiness before running the private gateway start script. LaunchDaemons start concurrently, and the gateway leases channel tokens only once, so this readiness gate prevents a boot race from leaving Telegram and Slack disabled until a manual restart.
 
