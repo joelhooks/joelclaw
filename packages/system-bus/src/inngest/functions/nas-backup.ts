@@ -2158,6 +2158,8 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
             centralUrl,
             receiptPath: receipt,
             repairEnv,
+            // 20 minutes: the runs-dev tree has 600k+ files and the count must finish over SMB.
+            statTimeoutMs: 20 * 60 * 1000,
             ...(transportMode === "remote"
               ? { backupSsh: NAS_SSH_HOST, backupSshFlags: NAS_SSH_ARGS.join(" ") }
               : {}),
