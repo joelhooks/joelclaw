@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
-import { DEFAULT_SERVICE_PLACEMENT, NAS_BACKUPS_HDD_ROOT, NAS_BACKUPS_REMOTE_ROOT } from "@joelclaw/endpoint-resolver";
+import { DEFAULT_SERVICE_PLACEMENT, NAS_BACKUPS_HDD_ROOT, NAS_BACKUPS_REMOTE_ROOT, NAS_REMOTE_ROOT } from "@joelclaw/endpoint-resolver";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
 import { buildAgentSessionBackupCommand } from "../../lib/agent-session-backup-command";
@@ -94,6 +94,10 @@ const NAS_BACKUP_QUEUE_ROOT = process.env.NAS_BACKUP_QUEUE_ROOT?.trim() || "/tmp
 const JOELCLAW_REPO_ROOT = process.env.JOELCLAW_REPO_ROOT?.trim() || "/Users/joel/Code/joelhooks/joelclaw";
 const AGENT_SESSION_BACKUP_SCRIPT = `${JOELCLAW_REPO_ROOT}/scripts/agent-session-audit-backup.ts`;
 const AGENT_SESSION_BACKUP_ROOT = `${NAS_HDD_ROOT}/sessions`;
+// Same tree as seen over SSH on the NAS. Remote mode uses this so the daily job does not depend on
+// the SMB mount, which rsync handles badly (rename "File exists" errors, multi-minute stats).
+const AGENT_SESSION_BACKUP_REMOTE_ROOT = `${NAS_REMOTE_ROOT}/sessions`;
+const AGENT_SESSION_RECEIPT_LOCAL_ROOT = `${HOME_DIR}/.joelclaw/backup-receipts/agent-session`;
 const AGENT_SESSION_CENTRAL_URL = process.env.JOELCLAW_SESSION_CAPTURE_URL?.trim() || "http://joels-mac-studio.tail7af24.ts.net:3111";
 
 type BackupTarget = "typesense" | "redis";
@@ -862,6 +866,23 @@ async function checkRemoteBackupTarget(path: string): Promise<boolean> {
   const probe = `${path}/.joelclaw-backup-probe-${Date.now()}`;
   const probeResult = await $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "touch ${probe} && rm -f ${probe}"`.quiet().nothrow();
   return probeResult.exitCode === 0;
+}
+
+/**
+ * True when the NAS accepts an rsync push over ssh. Synology answers ssh but refuses
+ * `rsync --server` until the DSM rsync service is enabled for the user, so a bare ssh
+ * probe is not enough for the session backup transport.
+ */
+async function checkRemoteRsyncPush(path: string): Promise<boolean> {
+  const probeDir = `${path}/.joelclaw-rsync-probe-${Date.now()}`;
+  const localProbe = `/tmp/joelclaw-rsync-probe-${Date.now()}`;
+  const prepared = await $`mkdir -p ${localProbe} && touch ${localProbe}/probe`.quiet().nothrow();
+  if (prepared.exitCode !== 0) return false;
+  const sshCommand = ["ssh", ...NAS_SSH_ARGS].join(" ");
+  const push = await $`rsync -a -e ${sshCommand} ${localProbe}/ ${NAS_SSH_HOST}:${probeDir}/`.quiet().nothrow();
+  await $`rm -rf ${localProbe}`.quiet().nothrow();
+  await $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "rm -rf ${probeDir}"`.quiet().nothrow();
+  return push.exitCode === 0;
 }
 
 async function ensureRemoteDirectory(path: string): Promise<void> {
@@ -2085,7 +2106,6 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
       hosts,
       repairEnv,
       centralUrl,
-      backupRoot: AGENT_SESSION_BACKUP_ROOT,
     };
 
     return emitMeasuredOtelEvent(
@@ -2097,18 +2117,41 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
         metadata,
       },
       async () => {
-        await step.run("check-nas-mount", ensureNasMounted);
+        // Transport selection: prefer ssh rsync straight to the NAS, fall back to the SMB mount.
+        // Both are probed with a real write so a half-working transport cannot be chosen.
+        const transportMode = await step.run("select-backup-transport", async (): Promise<BackupMode> => {
+          const remoteWanted = NAS_BACKUP_PREFER_REMOTE && NAS_SSH_HOST.length > 0;
+          const remoteOk =
+            remoteWanted &&
+            (await checkRemoteBackupTarget(`${AGENT_SESSION_BACKUP_REMOTE_ROOT}/receipts`)) &&
+            (await checkRemoteRsyncPush(AGENT_SESSION_BACKUP_REMOTE_ROOT));
+          if (remoteOk) return "remote";
+          const mountResult = await $`stat ${NAS_HDD_ROOT}`.quiet().nothrow();
+          if (mountResult.exitCode === 0) return "local";
+          throw new NonRetriableError(
+            `no session backup transport: ssh rsync to ${NAS_SSH_HOST || "<unset>"} ${remoteWanted ? "refused" : "not preferred"} and NAS mount unavailable at ${NAS_HDD_ROOT}`
+          );
+        });
+        const backupRoot = transportMode === "remote" ? AGENT_SESSION_BACKUP_REMOTE_ROOT : AGENT_SESSION_BACKUP_ROOT;
+        metadata.transportMode = transportMode;
+        metadata.backupRoot = backupRoot;
 
         const receiptPath = await step.run("run-agent-session-audit-backup", async () => {
           const stamp = new Date().toISOString().replace(/[:.]/g, "");
-          const receipt = `${AGENT_SESSION_BACKUP_ROOT}/receipts/agent-session-audit-${stamp}.json`;
+          const receipt =
+            transportMode === "remote"
+              ? `${AGENT_SESSION_RECEIPT_LOCAL_ROOT}/agent-session-audit-${stamp}.json`
+              : `${backupRoot}/receipts/agent-session-audit-${stamp}.json`;
           const proc = Bun.spawnSync(buildAgentSessionBackupCommand({
             scriptPath: AGENT_SESSION_BACKUP_SCRIPT,
             hosts,
-            backupRoot: AGENT_SESSION_BACKUP_ROOT,
+            backupRoot,
             centralUrl,
             receiptPath: receipt,
             repairEnv,
+            ...(transportMode === "remote"
+              ? { backupSsh: NAS_SSH_HOST, backupSshFlags: NAS_SSH_ARGS.join(" ") }
+              : {}),
           }), {
             cwd: JOELCLAW_REPO_ROOT,
             env: process.env,
@@ -2126,7 +2169,7 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
         });
 
         metadata.receiptPath = receiptPath;
-        return { receiptPath, hosts, repairEnv, centralUrl };
+        return { receiptPath, hosts, repairEnv, centralUrl, transportMode, backupRoot };
       }
     );
   }

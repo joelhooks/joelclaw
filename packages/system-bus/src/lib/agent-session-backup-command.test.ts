@@ -33,6 +33,7 @@ describe("scheduled agent-session backup command", () => {
     });
 
     try {
+      expect(command).not.toContain("--backup-ssh");
       expect(command).not.toContain("--replay-outbox");
       expect(command).not.toContain("--replay-limit");
       expect(command).not.toContain("--replay-max-bytes");
@@ -52,5 +53,24 @@ describe("scheduled agent-session backup command", () => {
     } finally {
       healthServer.stop(true);
     }
+  });
+
+  test("passes the ssh backup transport through when configured", () => {
+    const command = buildAgentSessionBackupCommand({
+      scriptPath: "/tmp/script.ts",
+      hosts: "flagg",
+      backupRoot: "/volume1/services/joelclaw/sessions",
+      centralUrl: "http://127.0.0.1:1",
+      receiptPath: "/tmp/receipt.json",
+      repairEnv: false,
+      backupSsh: "joel@nas.example",
+      backupSshFlags: "-o BatchMode=yes",
+    });
+    expect(command.slice(command.indexOf("--backup-ssh"))).toEqual([
+      "--backup-ssh",
+      "joel@nas.example",
+      "--backup-ssh-flags",
+      "-o BatchMode=yes",
+    ]);
   });
 });

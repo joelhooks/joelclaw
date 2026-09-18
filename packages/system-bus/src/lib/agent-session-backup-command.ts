@@ -5,11 +5,16 @@ export type AgentSessionBackupCommandInput = {
   centralUrl: string;
   receiptPath: string;
   repairEnv: boolean;
+  /** SSH target for the NAS. When set, backupRoot is a path on the NAS and no local mount is needed. */
+  backupSsh?: string;
+  backupSshFlags?: string;
 };
 
 export function buildAgentSessionBackupCommand(
   input: AgentSessionBackupCommandInput,
 ): string[] {
+  const backupSsh = input.backupSsh?.trim() ?? "";
+  const backupSshFlags = input.backupSshFlags?.trim() ?? "";
   return [
     "bun",
     input.scriptPath,
@@ -23,5 +28,7 @@ export function buildAgentSessionBackupCommand(
     "--receipt",
     input.receiptPath,
     ...(input.repairEnv ? ["--repair-env"] : []),
+    ...(backupSsh ? ["--backup-ssh", backupSsh] : []),
+    ...(backupSsh && backupSshFlags ? ["--backup-ssh-flags", backupSshFlags] : []),
   ];
 }

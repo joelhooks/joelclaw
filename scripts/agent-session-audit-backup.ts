@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 type HostName = "flagg" | "blaine" | "panda";
 
@@ -95,6 +95,22 @@ const hostList = String(args.get("hosts") || "flagg,blaine,panda")
   .map((host) => host.trim())
   .filter(Boolean) as HostName[];
 const backupRoot = String(args.get("backup-root") || "/Volumes/services/joelclaw/sessions");
+// Optional SSH backup transport. When set, backupRoot is a path on the NAS itself and every
+// copy, stat, and receipt write goes over ssh/rsync instead of a local SMB or NFS mount.
+const backupSsh = typeof args.get("backup-ssh") === "string" ? String(args.get("backup-ssh")).trim() : "";
+const backupSshFlags =
+  typeof args.get("backup-ssh-flags") === "string"
+    ? String(args.get("backup-ssh-flags")).trim()
+    : "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2";
+const backupHost: HostConfig | null = backupSsh ? { name: "flagg", ssh: backupSsh } : null;
+// Per-source rsync bound. The first SMB backfill of ~/.joelclaw/runs-dev (676k files) needed more
+// than the old 30 minute cap; incremental nightly passes are much shorter but still walk every file.
+const requestedRsyncTimeoutMs = Number(args.get("rsync-timeout-ms") || 4 * 60 * 60_000);
+const rsyncTimeoutMs =
+  Number.isFinite(requestedRsyncTimeoutMs) && requestedRsyncTimeoutMs > 0
+    ? Math.floor(requestedRsyncTimeoutMs)
+    : 4 * 60 * 60_000;
+const backupTransport: "local" | "ssh" = backupHost ? "ssh" : "local";
 const centralUrl = String(
   args.get("central-url") || "http://joels-mac-studio.tail7af24.ts.net:3111",
 ).replace(/\/$/, "");
@@ -169,6 +185,12 @@ function hostShell(host: HostConfig, command: string, timeoutMs = 60_000) {
   );
 }
 
+/** Shell on the backup target. The NAS runs a plain sh, so no bash -lc wrapper. */
+function backupShell(command: string, timeoutMs = 60_000) {
+  if (!backupHost?.ssh) return run(command, { timeoutMs, quiet: true });
+  return run(`ssh ${backupSshFlags} ${q(backupHost.ssh)} ${q(command)}`, { timeoutMs, quiet: true });
+}
+
 function expandLocal(path: string): string {
   return path.replace(/^~/, process.env.HOME || "/Users/joel");
 }
@@ -221,6 +243,13 @@ function statRemoteFiles(host: HostConfig, path: string): FileStats {
   return parseStatOutput(result.stdout);
 }
 
+function statBackupFiles(path: string): FileStats {
+  if (!backupHost) return statLocalFiles(path);
+  const result = backupShell(`python3 -c ${q(statPython)} ${q(path)}`, statTimeoutMs);
+  if (result.code !== 0) return failedFileStats(`backup stat ${backupHost.ssh}:${path}`, result);
+  return parseStatOutput(result.stdout);
+}
+
 function rsyncBinary(): string {
   return existsSync("/opt/homebrew/bin/rsync") ? "/opt/homebrew/bin/rsync" : "rsync";
 }
@@ -230,17 +259,45 @@ function rsyncSource(
   source: SourceConfig,
   destination: string,
 ): { ok: boolean; error?: string } {
+  const destDir = source.kind === "dir" ? destination : dirname(destination);
+  const destArg = source.kind === "dir" ? `${destination}/` : destination;
+
+  if (backupHost?.ssh) {
+    // SSH transport. rsync cannot copy remote-to-remote, so a remote source host runs rsync
+    // itself and pushes straight to the NAS; that needs the source host's key on the NAS.
+    const mkdir = backupShell(`mkdir -p ${q(destDir)}`, 60_000);
+    if (mkdir.code !== 0) return { ok: false, error: describeRunFailure(`mkdir ${backupHost.ssh}:${destDir}`, mkdir) };
+    const sshTransport = `ssh ${backupSshFlags}`;
+    const remoteDest = `${backupHost.ssh}:${destArg}`;
+    if (host.ssh) {
+      const sourceArg = source.kind === "dir" ? `${source.path.replace(/\/$/, "")}/` : source.path;
+      const cmd = `rsync -a --ignore-existing -e ${q(sshTransport)} ${q(sourceArg)} ${q(remoteDest)}`;
+      const result = hostShell(host, cmd, rsyncTimeoutMs);
+      if (result.code !== 0) return { ok: false, error: describeRunFailure(`${host.name} push rsync`, result) };
+      return { ok: true };
+    }
+    const srcPath = expandLocal(source.path);
+    const sourceArg = source.kind === "dir" ? `${srcPath.replace(/\/$/, "")}/` : srcPath;
+    const cmd = `${q(rsyncBinary())} -a --ignore-existing -e ${q(sshTransport)} ${q(sourceArg)} ${q(remoteDest)}`;
+    const result = run(cmd, { timeoutMs: rsyncTimeoutMs, quiet: true });
+    if (result.code !== 0) return { ok: false, error: describeRunFailure("local push rsync", result) };
+    return { ok: true };
+  }
+
   mkdirSync(dirname(destination), { recursive: true });
   const srcPath = host.ssh ? source.path : expandLocal(source.path);
-  const destArg = source.kind === "dir" ? `${destination}/` : destination;
   const remotePrefix = host.ssh ? `${host.ssh}:` : "";
   const sourceArg =
     source.kind === "dir"
       ? `${remotePrefix}${srcPath.replace(/\/$/, "")}/`
       : `${remotePrefix}${srcPath}`;
-  mkdirSync(source.kind === "dir" ? destination : dirname(destination), { recursive: true });
-  const cmd = `${q(rsyncBinary())} -a --ignore-existing ${q(sourceArg)} ${q(destArg)}`;
-  const result = run(cmd, { timeoutMs: 30 * 60_000, quiet: true });
+  mkdirSync(destDir, { recursive: true });
+  // --inplace: SMB mounts reject rsync's temp-file rename with "File exists"; writing the target
+  // directly is safe here because existing files are never rewritten (--ignore-existing).
+  // --no-links: SMB cannot create symlinks (claude-projects carries one into .claude-memory), and
+  // a transcript archive has no use for them.
+  const cmd = `${q(rsyncBinary())} -a --no-links --ignore-existing --inplace ${q(sourceArg)} ${q(destArg)}`;
+  const result = run(cmd, { timeoutMs: rsyncTimeoutMs, quiet: true });
   if (result.code !== 0)
     return {
       ok: false,
@@ -309,7 +366,7 @@ function auditHost(hostName: HostName): HostReport {
         error = appendError(error, detail);
       }
     }
-    const backupStats = statLocalFiles(destination);
+    const backupStats = statBackupFiles(destination);
     if (backupStats.status === "timeout" || backupStats.status === "error") {
       const detail = `${source.key}: ${backupStats.error || `backup verification ${backupStats.status}`}`;
       errors.push(detail);
@@ -364,15 +421,36 @@ const report = {
   ok: true,
   createdAt: new Date().toISOString(),
   backupRoot,
+  backupTransport,
+  backupSsh: backupHost?.ssh ?? null,
+  receiptRemotePath: null as string | null,
   centralUrl,
   repairEnv,
   sync,
   statTimeoutMs,
+  rsyncTimeoutMs,
   hosts: hostList.map(auditHost),
 };
 report.ok = report.hosts.every(
   (host) => host.reachable && host.centralHealthOk && host.errors.length === 0,
 );
+if (backupHost?.ssh) {
+  // Receipts also land on the NAS so the archive stays self-describing without a local mount.
+  const remoteReceiptDir = join(backupRoot, "receipts");
+  const remoteReceiptPath = join(remoteReceiptDir, basename(receiptPath));
+  report.receiptRemotePath = remoteReceiptPath;
+  writeFileSync(receiptPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+  const mkdir = backupShell(`mkdir -p ${q(remoteReceiptDir)}`, 60_000);
+  const copy =
+    mkdir.code === 0
+      // -O forces the legacy scp protocol; the NAS has no SFTP subsystem, so default scp dies with "Connection closed".
+      ? run(`scp -O ${backupSshFlags} -q ${q(receiptPath)} ${q(`${backupHost.ssh}:${remoteReceiptPath}`)}`, { timeoutMs: 60_000, quiet: true })
+      : mkdir;
+  if (copy.code !== 0) {
+    report.receiptRemotePath = null;
+    process.stderr.write(`${describeRunFailure("receipt copy to NAS", copy)}\n`);
+  }
+}
 writeFileSync(receiptPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
 console.log(
   JSON.stringify(
