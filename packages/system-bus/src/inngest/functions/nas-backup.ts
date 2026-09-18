@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { DEFAULT_SERVICE_PLACEMENT, NAS_BACKUPS_HDD_ROOT, NAS_BACKUPS_REMOTE_ROOT, NAS_REMOTE_ROOT } from "@joelclaw/endpoint-resolver";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
@@ -91,7 +91,9 @@ const OTEL_EXPORT_ROOT = `${NAS_HDD_ROOT}/otel`;
 const MEMORY_LOG_ROOT = `${HOME_DIR}/.joelclaw/workspace/memory`;
 const MEMORY_LOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/logs`;
 const NAS_BACKUP_QUEUE_ROOT = process.env.NAS_BACKUP_QUEUE_ROOT?.trim() || "/tmp/joelclaw/nas-queue";
-const JOELCLAW_REPO_ROOT = process.env.JOELCLAW_REPO_ROOT?.trim() || "/Users/joel/Code/joelhooks/joelclaw";
+// Default to the checkout this worker is running from, so the audit script version always
+// matches the worker code. The main clone can lag the live worker branch.
+const JOELCLAW_REPO_ROOT = process.env.JOELCLAW_REPO_ROOT?.trim() || resolve(import.meta.dir, "../../../../..");
 const AGENT_SESSION_BACKUP_SCRIPT = `${JOELCLAW_REPO_ROOT}/scripts/agent-session-audit-backup.ts`;
 const AGENT_SESSION_BACKUP_ROOT = `${NAS_HDD_ROOT}/sessions`;
 // Same tree as seen over SSH on the NAS. Remote mode uses this so the daily job does not depend on
@@ -2136,13 +2138,20 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
         metadata.transportMode = transportMode;
         metadata.backupRoot = backupRoot;
 
-        const receiptPath = await step.run("run-agent-session-audit-backup", async () => {
+        // The audit rsyncs hundreds of thousands of files and can run for an hour. It must not run
+        // inside a step: a blocking child freezes the Bun event loop, Inngest then reports
+        // "Unable to reach SDK URL", and worker-supervisor restarts the worker mid-copy. So the
+        // script is launched detached and the function polls for its receipt in short steps.
+        const launch = await step.run("start-agent-session-audit-backup", async () => {
           const stamp = new Date().toISOString().replace(/[:.]/g, "");
           const receipt =
             transportMode === "remote"
               ? `${AGENT_SESSION_RECEIPT_LOCAL_ROOT}/agent-session-audit-${stamp}.json`
               : `${backupRoot}/receipts/agent-session-audit-${stamp}.json`;
-          const proc = Bun.spawnSync(buildAgentSessionBackupCommand({
+          const logDir = `${AGENT_SESSION_RECEIPT_LOCAL_ROOT}/logs`;
+          const log = `${logDir}/agent-session-audit-${stamp}.log`;
+          await ensureDir(logDir);
+          const command = buildAgentSessionBackupCommand({
             scriptPath: AGENT_SESSION_BACKUP_SCRIPT,
             hosts,
             backupRoot,
@@ -2152,24 +2161,71 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
             ...(transportMode === "remote"
               ? { backupSsh: NAS_SSH_HOST, backupSshFlags: NAS_SSH_ARGS.join(" ") }
               : {}),
-          }), {
-            cwd: JOELCLAW_REPO_ROOT,
-            env: process.env,
-            stdout: "pipe",
-            stderr: "pipe",
           });
-
-          if (proc.exitCode !== 0) {
-            throw new Error(
-              `agent session audit backup failed (${proc.exitCode}): ${toText(proc.stderr) || toText(proc.stdout)}`
-            );
+          const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+          // No nohup: under the supervisor it dies with "can't detach from console". A non-interactive
+          // bash does not HUP its background jobs, and the trap covers the worker's own restarts.
+          const detached = `trap '' HUP; cd ${shellQuote(JOELCLAW_REPO_ROOT)} && ${command.map(shellQuote).join(" ")} >${shellQuote(log)} 2>&1 </dev/null & echo $!`;
+          const proc = Bun.spawnSync(["bash", "-c", detached], { env: process.env, stdout: "pipe", stderr: "pipe" });
+          const pid = Number(toText(proc.stdout).trim());
+          if (proc.exitCode !== 0 || !Number.isInteger(pid) || pid <= 0) {
+            throw new Error(`agent session audit backup failed to launch: ${toText(proc.stderr) || toText(proc.stdout)}`);
           }
-
-          return receipt;
+          return { pid, receipt, log, startedAt: new Date().toISOString() };
         });
+        metadata.receiptPath = launch.receipt;
+        metadata.auditPid = launch.pid;
 
-        metadata.receiptPath = receiptPath;
-        return { receiptPath, hosts, repairEnv, centralUrl, transportMode, backupRoot };
+        const pollEvery = "90s";
+        const maxPolls = 200; // 5 hours, above the script's 4 hour per-source rsync bound
+        let outcome: { state: "receipt" | "exited" | "timeout"; ok?: boolean; errors?: number; logTail?: string } = { state: "timeout" };
+        for (let i = 0; i < maxPolls; i += 1) {
+          await step.sleep(`audit-wait-${i}`, pollEvery);
+          const polled = await step.run(`audit-poll-${i}`, async () => {
+            const receiptFile = Bun.file(launch.receipt);
+            if (await receiptFile.exists()) {
+              const parsed = (await receiptFile.json().catch(() => null)) as { ok?: boolean; hosts?: Array<{ errors?: string[] }> } | null;
+              return {
+                state: "receipt" as const,
+                ok: parsed?.ok === true,
+                errors: parsed?.hosts?.reduce((n, h) => n + (h.errors?.length ?? 0), 0) ?? -1,
+              };
+            }
+            let alive = true;
+            try {
+              process.kill(launch.pid, 0);
+            } catch {
+              alive = false;
+            }
+            if (alive) return { state: "running" as const };
+            const logTail = toText(Bun.spawnSync(["tail", "-n", "20", launch.log]).stdout).slice(-1500);
+            return { state: "exited" as const, logTail };
+          });
+          if (polled.state !== "running") {
+            outcome = polled;
+            break;
+          }
+        }
+
+        if (outcome.state === "exited") {
+          throw new Error(`agent session audit backup exited without a receipt (pid ${launch.pid}). log tail: ${outcome.logTail ?? ""}`);
+        }
+        if (outcome.state === "timeout") {
+          throw new Error(`agent session audit backup still running after ${maxPolls} polls (pid ${launch.pid}, log ${launch.log})`);
+        }
+        metadata.receiptOk = outcome.ok;
+        metadata.receiptErrors = outcome.errors;
+        return {
+          receiptPath: launch.receipt,
+          receiptOk: outcome.ok,
+          receiptErrors: outcome.errors,
+          log: launch.log,
+          hosts,
+          repairEnv,
+          centralUrl,
+          transportMode,
+          backupRoot,
+        };
       }
     );
   }
