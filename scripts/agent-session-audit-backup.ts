@@ -77,6 +77,9 @@ const sources: SourceConfig[] = [
   { key: "codex-session-index", path: "~/.codex/session_index.jsonl", kind: "file" },
   { key: "joelclaw-runs-dev", path: "~/.joelclaw/runs-dev", kind: "dir" },
   { key: "joelclaw-outbox", path: "~/.joelclaw/outbox", kind: "dir" },
+  // Support CLI Front cache: context-pull log plus per-conversation message dumps. This is the
+  // support reply corpus (thousands of sent replies), so it rides the same daily backup.
+  { key: "skill-front-cache", path: "~/.config/skill/cache", kind: "dir" },
 ];
 
 const args = new Map<string, string | boolean>();
