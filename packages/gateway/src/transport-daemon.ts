@@ -32,6 +32,7 @@ import {
 import { SlackThreadSessionRegistry } from "./slack-thread-session";
 import {
   createSlackUserWebClient,
+  isSlackMembershipVisibilityError,
   isSlackUserChannelReady,
   resolveSlackChannelNameWithUserFallback,
 } from "./slack-user-token-fallback";
@@ -178,6 +179,34 @@ export async function startSlimTransportDaemon(): Promise<void> {
   ) => resolveFlowId(command, platform, platformMessageId, conversationId);
   const slackChannelNames = new Map<string, string>();
   const slackUserWebClient = createSlackUserWebClient();
+  // Joel's user token delivers his coworker DMs too. The bot token can only
+  // see the bot's own DMs, so a visible D* conversation is a DM to the bot.
+  const slackBotDirectMessages = new Map<string, boolean>();
+  const isSlackBotDirectMessage = async (conversationId: string): Promise<boolean> => {
+    const known = slackBotDirectMessages.get(conversationId);
+    if (known !== undefined) return known;
+    const slack = runtime.adapters.slack;
+    if (!slack) return false;
+    try {
+      await slack.webClient.conversations.info({ channel: conversationId });
+      slackBotDirectMessages.set(conversationId, true);
+      return true;
+    } catch (error) {
+      if (isSlackMembershipVisibilityError(error)) {
+        slackBotDirectMessages.set(conversationId, false);
+        return false;
+      }
+      void emitGatewayOtel({
+        level: "warn",
+        component: "slack-dm-addressing",
+        action: "slack.dm.bot_lookup_failed",
+        success: false,
+        error: String(error),
+        metadata: { conversationId },
+      });
+      return false;
+    }
+  };
   const slackThreadSessions = new SlackThreadSessionRegistry();
   const slackThreadReapIntervalMs = Number.parseInt(
     process.env.SLACK_SHITRAT_THREAD_REAP_INTERVAL_MS ?? "60000",
@@ -306,6 +335,7 @@ export async function startSlimTransportDaemon(): Promise<void> {
     publisher: createStreamInboundPublisher({
       eventLog,
       resolveFlowId: resolveInboundFlow,
+      isSlackBotDirectMessage,
       resolveWorkRequest,
       acknowledgeWorkRequest: async (request) => {
         if (request.userDeliveryReady !== true) return;
