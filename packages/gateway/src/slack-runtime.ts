@@ -763,9 +763,8 @@ async function handleIncomingMessage(
   const isAllowedUser = allowedUserId ? message.user === allowedUserId : false;
   const isImportantChannel = !isDm && isImportantSlackChannel(message.channel, channelName);
   let replyGrantShouldPost = false;
-  // Joel DMs are passive intel, not session turns: they fall through to the
-  // isAllowedUser branch below and are stored/indexed without prompting.
-  const isInvoke = () => replyGrantShouldPost
+  const isInvoke = () => (isDm && isAllowedUser)
+    || replyGrantShouldPost
     || kind === "mention"
     || (threadTs && mentionThreads.has(threadTs));
 
@@ -850,8 +849,8 @@ async function handleIncomingMessage(
   }
 
   // ADR-0131/0210 + ADR-0244: Slack routing.
-  // Invoke: Joel-authorized @mentions, active Reply Grants, and tracked mention threads.
-  // Passive intel: Joel DMs, Joel-authored channel messages, and messages from selected important channels.
+  // Invoke: Joel DM, Joel-authorized @mentions, active Reply Grants, and tracked mention threads.
+  // Passive intel: Joel-authored channel messages and messages from selected important channels.
   // Everything else stays quiet to avoid turning Slack into a firehose.
   if (isInvoke()) {
     const prompt = `${context.prefix} ${userLabel}: ${text}`;

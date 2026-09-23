@@ -34,6 +34,7 @@ function slackEvent(authorizedJoel: boolean): InboundEvent {
 function harness(input: {
   authorizedJoel: boolean;
   withWorkRequest: boolean;
+  isSlackBotDirectMessage?: (conversationId: string) => Promise<boolean>;
 }) {
   const appended: AppendMessageEventInput[] = [];
   const acknowledged: string[] = [];
@@ -75,6 +76,7 @@ function harness(input: {
     },
     onWorkRequestError: (error, phase) => errors.push(`${phase}:${String(error)}`),
     machineId: "flagg-test",
+    isSlackBotDirectMessage: input.isSlackBotDirectMessage,
   });
   return { publisher, event, appended, acknowledged, errors, order };
 }
@@ -117,13 +119,34 @@ describe("stream inbound ShitRat work requests", () => {
     expect(tested.appended[0]?.payload).toMatchObject({ addressing: "ambient" });
   });
 
-  test("keeps Joel's Slack DM to the bot ambient", async () => {
+  const slackDm = (event: InboundEvent, conversationId: string) => ({
+    ...event,
+    platformIds: { ...event.platformIds, conversationId },
+  }) as InboundEvent;
+
+  test("keeps Joel's Slack DM with a coworker ambient", async () => {
+    const tested = harness({
+      authorizedJoel: true,
+      withWorkRequest: false,
+      isSlackBotDirectMessage: async (id) => id === "DBOT",
+    });
+    await tested.publisher.publishEvent(slackDm(tested.event, "DCOWORKER"));
+    expect(tested.appended[0]?.payload).toMatchObject({ addressing: "ambient" });
+  });
+
+  test("addresses Joel's Slack DM to the bot", async () => {
+    const tested = harness({
+      authorizedJoel: true,
+      withWorkRequest: false,
+      isSlackBotDirectMessage: async (id) => id === "DBOT",
+    });
+    await tested.publisher.publishEvent(slackDm(tested.event, "DBOT"));
+    expect(tested.appended[0]?.payload).toMatchObject({ addressing: "addressed" });
+  });
+
+  test("keeps Slack DMs ambient when the bot DM check is unavailable", async () => {
     const tested = harness({ authorizedJoel: true, withWorkRequest: false });
-    const dm = {
-      ...tested.event,
-      platformIds: { ...tested.event.platformIds, conversationId: "DEXAMPLE" },
-    } as InboundEvent;
-    await tested.publisher.publishEvent(dm);
+    await tested.publisher.publishEvent(slackDm(tested.event, "DBOT"));
     expect(tested.appended[0]?.payload).toMatchObject({ addressing: "ambient" });
   });
 
