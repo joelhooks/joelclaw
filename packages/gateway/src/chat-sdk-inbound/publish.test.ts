@@ -117,6 +117,16 @@ describe("stream inbound ShitRat work requests", () => {
     expect(tested.appended[0]?.payload).toMatchObject({ addressing: "ambient" });
   });
 
+  test("keeps Joel's Slack DM to the bot ambient", async () => {
+    const tested = harness({ authorizedJoel: true, withWorkRequest: false });
+    const dm = {
+      ...tested.event,
+      platformIds: { ...tested.event.platformIds, conversationId: "DEXAMPLE" },
+    } as InboundEvent;
+    await tested.publisher.publishEvent(dm);
+    expect(tested.appended[0]?.payload).toMatchObject({ addressing: "ambient" });
+  });
+
   test("records the request even when reaction acknowledgement fails", async () => {
     const appended: AppendMessageEventInput[] = [];
     const errors: string[] = [];

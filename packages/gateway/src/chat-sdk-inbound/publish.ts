@@ -151,11 +151,9 @@ function isDirectConversation(event: InboundEvent): boolean {
   if (event.platform === "telegram") {
     return event.platformIds.conversationId === event.actor.platformUserId;
   }
-  if (event.platform === "slack") {
-    // Slack conversation IDs beginning with D are `im` conversations. Chat SDK
-    // keeps that platform-native ID in the normalized envelope.
-    return event.platformIds.conversationId.startsWith("D");
-  }
+  // Slack DMs are deliberately not direct turns: Joel uses them as a notepad,
+  // so they stay ambient (observe, zero outbound). @mentions, replies on
+  // gateway flows, and :shitrat: work requests still address the gateway.
   return false;
 }
 
