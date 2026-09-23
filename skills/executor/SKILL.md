@@ -49,16 +49,19 @@ Service shape:
 - Service user: `joelclaw`
 - Raw daemon bind: `0.0.0.0:4788`
 - Easy dashboard bind: `0.0.0.0:4789`
-- Primary easy dashboard URL: `http://joels-mac-studio.tail7af24.ts.net:4789/`
-- Optional root easy dashboard URL: `http://flagg.tail7af24.ts.net:4789/`
+- Primary easy dashboard URL: `http://flagg.tail7af24.ts.net:4789/`
 - Local URL: `http://127.0.0.1:4788/`
-- LAN URL: `http://192.168.1.10:4788/`
+- LAN URL: `http://10.0.0.159:4788/`
 - Tailnet app-node URL: `http://100.99.76.47:4788/`
-- Tailnet MagicDNS URL: `http://joels-mac-studio.tail7af24.ts.net:4788/`
-- Optional root Tailscale node URL: `http://100.127.252.116:4788/` / `http://flagg.tail7af24.ts.net:4788/`
-- Pinned package version at time of service creation: `executor@1.5.12`
+- Tailnet MagicDNS URL: `http://flagg.tail7af24.ts.net:4788/`
+- Pinned package version: `executor@1.6.10`
+- The earlier 1.5.42 boot ran `2026-06-20-google-openapi-ownership`. That rewrite pointed Discovery-bundle integrations at a `google` plugin the local build did not load. `google_user` must stay on `plugin_id=openapi` unless a verified later migration changes it. Receipt: `/Users/joel/.brain/projects/executor-google-user-2026-08.svx`.
+- 1.6.0 updates outbound MCP protocol negotiation, compacts connection health output, expands Gmail settings scopes, and clarifies Executor's `skills` tool.
+- 1.6.7 adds the 1.6.1–1.6.7 security, concurrency, MCP health, telemetry-redaction, and local-plugin fixes. Fal MCP does not support OAuth; register `https://mcp.fal.ai/mcp` as Streamable HTTP with `Authorization: Bearer <FAL_KEY>`.
+- 1.6.10 (2026-09-22) returns upstream MCP 4xx and JSON-RPC refusals as typed `mcp_tool_error` failures, bounds `describe.tool` on large OpenAPI specs, carries approval persistence through elicitation, and adds `?mode=passthrough`.
+- Do not take npm `executor@2.0.0`; it is a March 2026 artifact. Executor v2 beta lives on the `v2` branch of `UsefulSoftwareCo/executor`, is not on npm, and does not migrate a v1 database. Run it only as a separate trial beside Central.
 - Wrapper: `/Users/Shared/joelclaw/bin/central-executor`
-- Installed package prefix: `/Users/Shared/joelclaw/opt/executor/1.5.12`
+- Installed package prefix: `/Users/Shared/joelclaw/opt/executor/1.6.10`
 - State: `/Users/Shared/joelclaw/data/executor`
 - Config/scope: `/Users/Shared/joelclaw/etc/executor`
 - Logs: `/Users/Shared/joelclaw/logs/executor`
@@ -111,16 +114,14 @@ Do not put Executor state on `three-body` or a NAS mount. NAS storage can disapp
 
 Executor is intentionally available to joelclaw machines over LAN and tailnet. The daemon binds `0.0.0.0:4788`; do not "repair" it back to localhost unless Joel explicitly reverses the service-access decision.
 
-For humans, prefer the easy dashboard proxy on `4789`. It runs as `joelclaw`, reads the local bearer token server-side, injects `Authorization: Bearer ...` only on upstream requests to `127.0.0.1:4788`, and allows only loopback, Flagg LAN `192.168.1.0/24`, Tailscale IPv4 `100.64.0.0/10`, and Tailscale IPv6 `fd7a:115c:a1e0::/48`.
+For humans, prefer the easy dashboard proxy on `4789`. It runs as `joelclaw`, reads the local bearer token server-side, injects `Authorization: Bearer ...` only on upstream requests to `127.0.0.1:4788`, and allows loopback, Flagg LAN `10.0.0.0/24`, the former LAN `192.168.1.0/24`, Tailscale IPv4 `100.64.0.0/10`, and Tailscale IPv6 `fd7a:115c:a1e0::/48`.
 
 Easy dashboard URLs:
 
 ```sh
 http://127.0.0.1:4789/
-http://192.168.1.10:4789/
+http://10.0.0.159:4789/
 http://100.99.76.47:4789/
-http://joels-mac-studio.tail7af24.ts.net:4789/
-http://100.127.252.116:4789/
 http://flagg.tail7af24.ts.net:4789/
 ```
 
@@ -136,14 +137,18 @@ Raw daemon URLs:
 
 ```sh
 http://127.0.0.1:4788/
-http://192.168.1.10:4788/
+http://10.0.0.159:4788/
 http://100.99.76.47:4788/
-http://joels-mac-studio.tail7af24.ts.net:4788/
-http://100.127.252.116:4788/
 http://flagg.tail7af24.ts.net:4788/
 ```
 
 Resolve current dashboard endpoints from the installed Executor configuration and verified network identity. Verify the exact URL returns the expected page before sharing it. Historical IPs and hostnames above are diagnostic history, not routing defaults.
+
+For a non-tailnet machine on Flagg's LAN, configure its MCP client with `http://10.0.0.159:4788/mcp` and store Executor's bearer token in that machine's secret manager. Never put the token in a URL, command history, docs, or chat. Never port-forward raw `4788`.
+
+The approved public cloud-agent endpoint is `https://mcp.joelclaw.com/mcp`. Vercel project `mcp-joelclaw-gateway` exposes only `/mcp`, disables caching, forwards the Executor bearer unchanged, and proxies to a path-scoped Tailscale Funnel route. Local gateway source is `/Users/joel/Code/joelhooks/mcp-joelclaw-gateway`. Vercel deployment protection is intentionally off because Executor owns bearer authentication. After any gateway change, prove unauthenticated `401 Bearer realm="executor"` and authenticated MCP `initialize` HTTP 200 with `text/event-stream`.
+
+The ShitRat 1Password service account was read-only during setup: `op item create` returned permission error 101. Do not claim the `Executor MCP Bearer Token` vault item exists until a write-capable actor creates and verifies it.
 
 Do not use Tailscale Serve for Executor without preserving the existing Serve config for `/`, `/notes`, Vite asset paths, and the Convex TCP forwards. Direct ports `4788` and `4789` are the current contract.
 
@@ -173,7 +178,7 @@ cd /Users/joel/Code/joelhooks/joelclaw-central
 scripts/open-executor-dashboard.sh
 ```
 
-That helper installs the dashboard LaunchDaemon with `sudo` if needed, checks `http://joels-mac-studio.tail7af24.ts.net:4789/`, then opens it.
+That helper installs the dashboard LaunchDaemon with `sudo` if needed, checks `http://flagg.tail7af24.ts.net:4789/`, then opens it.
 
 If the shell does not have passwordless sudo, do not fake success. Report the actual file and dry-run results, including failures or checks not run, then identify the exact privileged step that remains.
 
@@ -194,12 +199,12 @@ launchctl print system/com.joelclaw.central.executor
 launchctl print system/com.joelclaw.central.executor-dashboard
 curl -fsS -m 5 http://127.0.0.1:4788/ >/dev/null
 curl -fsS -m 5 http://127.0.0.1:4789/ >/dev/null
-curl --noproxy '*' -fsS -m 5 http://192.168.1.10:4788/ >/dev/null
-curl --noproxy '*' -fsS -m 5 http://192.168.1.10:4789/ >/dev/null
+curl --noproxy '*' -fsS -m 5 http://10.0.0.159:4788/ >/dev/null
+curl --noproxy '*' -fsS -m 5 http://10.0.0.159:4789/ >/dev/null
 curl --noproxy '*' -fsS -m 5 http://100.99.76.47:4788/ >/dev/null
 curl --noproxy '*' -fsS -m 5 http://100.99.76.47:4789/ >/dev/null
-curl --noproxy '*' -fsS -m 5 http://joels-mac-studio.tail7af24.ts.net:4788/ >/dev/null
-curl --noproxy '*' -fsS -m 5 http://joels-mac-studio.tail7af24.ts.net:4789/ >/dev/null
+curl --noproxy '*' -fsS -m 5 http://flagg.tail7af24.ts.net:4788/ >/dev/null
+curl --noproxy '*' -fsS -m 5 http://flagg.tail7af24.ts.net:4789/ >/dev/null
 scripts/verify-executor-runtime.sh
 ```
 
@@ -220,14 +225,14 @@ tail -n 120 /Users/Shared/joelclaw/logs/executor-dashboard/launchd.out.log
 Version check:
 
 ```sh
-/Users/Shared/joelclaw/opt/executor/1.5.12/bin/executor --version
+/Users/Shared/joelclaw/opt/executor/1.6.10/bin/executor --version
 ```
 
 Status check:
 
 ```sh
 EXECUTOR_DATA_DIR=/Users/Shared/joelclaw/data/executor \
-  /Users/Shared/joelclaw/opt/executor/1.5.12/bin/executor daemon status
+  /Users/Shared/joelclaw/opt/executor/1.6.10/bin/executor daemon status
 ```
 
 ## Safety Rules
