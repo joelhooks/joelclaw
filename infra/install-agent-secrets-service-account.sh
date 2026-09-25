@@ -17,6 +17,8 @@ SOCKET_PATH="${SOCKET_PATH:-${SERVICE_ROOT}/run/agent-secrets.sock}"
 REPO_ROOT="${REPO_ROOT:-${OPERATOR_HOME}/Code/joelhooks/joelclaw}"
 SOURCE_PLIST="${REPO_ROOT}/infra/launchd/${LABEL}.plist"
 BREAK_GLASS_INSTALLER="${REPO_ROOT}/infra/install-agent-secrets-break-glass.sh"
+# Wait for launchd teardown before touching binaries, stores, or job definitions.
+source "${REPO_ROOT}/infra/lib/launchd-wait-removed.sh"
 LIVE_PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 PLIST_BACKUP="${LIVE_PLIST}.pre-service-account"
 CLIENT_CONFIG="${OPERATOR_HOME}/.agent-secrets/config.json"
@@ -53,8 +55,12 @@ rollback() {
   trap - ERR
   set +e
   if [ "$CUTOVER_STARTED" -eq 1 ]; then
-    echo "Cutover failed; restoring the Joel-owned daemon" >&2
+    echo "Cutover failed; restoring the previous daemon configuration" >&2
     launchctl bootout "system/${LABEL}" >/dev/null 2>&1
+    if ! launchd_wait_removed "system/${LABEL}"; then
+      echo "CRITICAL: teardown unverified; leaving files untouched. Plist backup: ${RUN_PLIST_BACKUP}" >&2
+      exit 70
+    fi
     restore_operator_config || rollback_failed=1
     if [ -n "$RUN_PLIST_BACKUP" ] && [ -f "$RUN_PLIST_BACKUP" ]; then
       if [ "$FIRST_MIGRATION" -eq 1 ] && [ -d "$SERVICE_STORE" ]; then
@@ -151,7 +157,7 @@ fi
 
 CUTOVER_STARTED=1
 launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
-sleep 1
+launchd_wait_removed "system/${LABEL}"
 
 install -d -o "$SERVICE_USER" -g "$SOCKET_GROUP" -m 755 "${SERVICE_ROOT}/bin"
 install -d -o "$SERVICE_USER" -g "$SOCKET_GROUP" -m 700 "${SERVICE_ROOT}/logs"
