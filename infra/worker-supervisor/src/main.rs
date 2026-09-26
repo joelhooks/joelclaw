@@ -358,7 +358,7 @@ fn run_supervisor(config: Config) -> Result<(), DynError> {
     let mut backoff_secs = 1_u64;
 
     loop {
-        kill_processes_on_port(config.port)?;
+        kill_processes_on_port(&config)?;
         let env_overrides = load_child_env(&config)?;
 
         if let Err(error) = run_host_import_preflight(&config, &env_overrides) {
@@ -707,34 +707,119 @@ fn lease_secret(secret_name: &str) -> Result<Option<String>, DynError> {
     Ok(Some(value))
 }
 
-fn kill_processes_on_port(port: u16) -> Result<(), DynError> {
+// lsof exit 1 means no listener. Any other failure is not evidence that the port is free.
+fn listener_pids(port: u16) -> Result<Vec<CInt>, DynError> {
     let output = Command::new("/usr/sbin/lsof")
-        .arg("-ti")
-        .arg(format!(":{port}"))
+        .args(["-nP", "-ti", &format!("tcp:{port}"), "-sTCP:LISTEN"])
         .output()?;
-
-    if output.stdout.is_empty() {
-        return Ok(());
+    if !output.status.success() && output.status.code() != Some(1) {
+        return Err(io::Error::other(format!("lsof failed: {}", output.status)).into());
     }
+    Ok(parse_listener_pids(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
 
-    let pids = String::from_utf8_lossy(&output.stdout);
-    for pid_line in pids.lines() {
-        let pid = match pid_line.trim().parse::<CInt>() {
-            Ok(pid) => pid,
-            Err(_) => continue,
-        };
+fn parse_listener_pids(output: &str) -> Vec<CInt> {
+    output
+        .lines()
+        .filter_map(|line| line.trim().parse::<CInt>().ok())
+        .filter(|pid| *pid > 0)
+        .collect()
+}
 
+fn pid_command(pid: CInt) -> Result<Option<String>, DynError> {
+    let output = Command::new("/bin/ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()?;
+    if !output.status.success() {
+        return Ok(None); // The process may have exited between lsof and ps.
+    }
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
+}
+
+fn is_worker_command(command_line: &str, configured: &[String]) -> bool {
+    let actual: Vec<&str> = command_line.split_whitespace().collect();
+    actual.len() == configured.len()
+        && !actual.is_empty()
+        && Path::new(actual[0]).file_name() == Path::new(&configured[0]).file_name()
+        && actual[1..]
+            .iter()
+            .zip(&configured[1..])
+            .all(|(a, b)| *a == b)
+}
+
+fn kill_processes_on_port(config: &Config) -> Result<(), DynError> {
+    for pid in listener_pids(config.port)? {
+        let command = pid_command(pid)?.unwrap_or_default();
+        if !is_worker_command(&command, &config.command) {
+            eprintln!(
+                "[worker-supervisor] refusing to kill pid={} (not the worker): {}",
+                pid, command
+            );
+            continue;
+        }
+        // Recheck both the socket and identity before signalling a potentially reused PID.
+        if !listener_pids(config.port)?.contains(&pid)
+            || !pid_command(pid)?.is_some_and(|cmd| is_worker_command(&cmd, &config.command))
+        {
+            continue;
+        }
         eprintln!(
-            "[worker-supervisor] killing stale pid={} on port {}",
-            pid, port
+            "[worker-supervisor] terminating stale worker pid={} on port {}",
+            pid, config.port
         );
         unsafe {
-            let _ = kill(pid, SIGKILL);
+            let _ = kill(pid, SIGTERM);
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if !listener_pids(config.port)?.contains(&pid) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        if listener_pids(config.port)?.contains(&pid) {
+            let command = pid_command(pid)?.unwrap_or_default();
+            if is_worker_command(&command, &config.command) {
+                eprintln!(
+                    "[worker-supervisor] killing unresponsive worker pid={} on port {}",
+                    pid, config.port
+                );
+                unsafe {
+                    let _ = kill(pid, SIGKILL);
+                }
+            } else {
+                eprintln!(
+                    "[worker-supervisor] refusing to kill pid={} (not the worker): {}",
+                    pid, command
+                );
+            }
         }
     }
-
-    thread::sleep(Duration::from_secs(1));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listener_pids_and_worker_identity_exclude_clients() {
+        assert_eq!(parse_listener_pids("42\nnot-a-pid\n0\n"), vec![42]);
+        let worker = Config::default().command;
+        assert!(is_worker_command("bun run src/serve.ts", &worker));
+        assert!(is_worker_command(
+            "/opt/homebrew/bin/bun run src/serve.ts",
+            &worker
+        ));
+        assert!(!is_worker_command("pi --port 3111", &worker));
+        assert!(!is_worker_command("bun run src/other.ts", &worker));
+        assert!(!is_worker_command("bun run src/serve.ts --client", &worker));
+    }
 }
 
 fn shutdown_child(child: &mut Child, signal: CInt, timeout_secs: u64) -> Result<(), DynError> {
