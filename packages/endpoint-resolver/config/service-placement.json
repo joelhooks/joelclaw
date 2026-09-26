@@ -4,10 +4,6 @@
     {
       "hostname": "flagg",
       "services": ["joelclaw-headless-runtime"]
-    },
-    {
-      "hostname": "panda",
-      "services": ["k8s"]
     }
   ]
 }
