@@ -6,15 +6,27 @@ The gateway agent pins Claude Sonnet 4.6. It handles fast comms judgment and dis
 
 ```bash
 MESSAGE_EVENT_CONVEX_URL=http://127.0.0.1:3210 \
-  claude --model claude-sonnet-4-6 \
+  cswap run "$GATEWAY_CLAUDE_ACCOUNT" --require-session --share-history -- \
+  --model claude-sonnet-4-6 \
   --effort medium \
   --plugin-dir prototypes/agent-comms-gateway/claude-plugin \
   --agent joelclaw-gateway
 ```
 
+`infra/agent-comms-driver-daemon.sh` builds this command into `GATEWAY_SUCCESSOR_COMMAND`. The driver package default is still bare `claude`; start the driver through the launcher, not the package command, so successors never land on the shared login.
+
 Do not use the moving `sonnet` alias here. Pin `MESSAGE_EVENT_CONVEX_URL` locally so a stale fleet `JOELCLAW_CENTRAL_URL` cannot send the plugin to the ghost `flagg` node. A Herdr-restored bare `claude --resume` process is not healthy because it lacks the gateway plugin tools.
 
-The gateway lives in the named Herdr session `system`, inside workspace `[jc] gateway agent`. Its stable pane label is `📨 gateway loop`. Human work stays in Herdr's `default` session. Keep the gateway session and driver in the system workspace as separate panes.
+The gateway lives in Herdr's `default` session, inside workspace `[jc] gateway agent`. Its stable pane label is `📨 gateway loop`. Other automation stays in the named `system` session. After a reboot, the gateway starts only after Joel logs into the Mac; until then transport delivers raw fallback messages.
+
+## Claude login
+
+The gateway runs on its own claude-swap account in a session profile (`cswap run`), never on the default Claude login that `cswap switch` swaps. Two failures forced this on 2026-09-28:
+
+- Claude refresh tokens are one-time-use. A long-lived gateway on the shared login refreshed whichever account was active at launch and wrote that token over later switches, so another account's stored token went stale and needed a re-login.
+- Processes in the system launch domain cannot read the login Keychain reliably. cSwap logged `find-generic-password timed out`, then refused switches with `Current account credential is empty (Keychain unreadable?)`.
+
+`GATEWAY_CLAUDE_ACCOUNT` in the driver LaunchAgent names the dedicated cSwap slot. Keep that slot disabled from auto-rotation (`cswap disable <slot>`) and never `cswap switch` the default login to it. `--require-session` refuses to launch if it already is the default login.
 
 ## Runtime split
 
@@ -84,7 +96,7 @@ The policy contract gives platform choice to the gateway agent. The current deci
 - refreshes the heartbeat only while the gateway session is healthy
 - spawns a successor directly through Herdr when the session disappears
 
-Successor creation is Herdr-native. It does not use the wake registry. The target is the stable pane label `📨 gateway loop`. The default successor command is the Opus launch command shown above.
+Successor creation is Herdr-native. It does not use the wake registry. The target is the stable pane label `📨 gateway loop`. The driver launcher sets the successor command to the `cswap run` launch command shown above.
 
 The driver must never inspect message text or choose delivery, routing, grouping, suppression, or escalation.
 
@@ -156,13 +168,12 @@ Do not write the heartbeat by hand to make a red check green. That would hide a 
 
 ## Routine checks
 
-The named `system` server is supervised by the system LaunchDaemon source at
-`infra/launchd/com.joelclaw.herdr-system-server.plist`. Check the target session,
+The gateway pane lives in Herdr's `default` session. Check the target session,
 not bare Herdr commands:
 
 ```bash
-launchctl print system/com.joelclaw.herdr-system-server
-herdr --session system pane list
+launchctl print gui/$(id -u)/com.joelclaw.agent-comms-driver
+herdr --session default pane list
 joelclaw gateway status
 joelclaw gateway diagnose --hours 1 --lines 120
 ```
@@ -187,6 +198,8 @@ Never start another listener or gateway session as a repair. A Telegram `409` is
 
 ## Move automation out of Herdr default
 
+Historical. On 2026-09-28 the gateway itself moved back to `default` (see Claude login); other automation stays in `system`.
+
 This is a single-owner cutover. Do not start the gateway in `system` while the
 old gateway is live in `default`.
 
@@ -206,19 +219,15 @@ them. The reconciler fires overdue schedules after the worker returns.
 
 ## Start the driver
 
-The production target is the stable pane label inside the named `system` session. The successor brief remains required by the package interface, even though successor spawning is now Herdr-native.
+The production target is the stable pane label in Herdr's `default` session. The supervised LaunchAgent runs the launcher, which refuses to start without `GATEWAY_CLAUDE_ACCOUNT`. The successor brief remains required by the package interface, even though successor spawning is now Herdr-native.
 
 ```bash
-GATEWAY_AGENT_TARGET='📨 gateway loop' \
-GATEWAY_HERDR_SESSION='system' \
-GATEWAY_HERDR_WORKSPACE='[jc] gateway agent' \
-GATEWAY_SUCCESSOR_BRIEF_PATH="$PWD/.brain/tasks/gateway-session-boot.svx" \
-pnpm --filter @joelclaw/agent-comms-driver start
+GATEWAY_CLAUDE_ACCOUNT='<dedicated cswap slot>' infra/agent-comms-driver-daemon.sh
 ```
 
 Optional defaults:
 
-- `GATEWAY_HERDR_SESSION=system`
+- `GATEWAY_HERDR_SESSION=default` (launcher; the package default is `system`)
 - `GATEWAY_HEARTBEAT_KEY=gateway:agent:heartbeat`
 - `GATEWAY_HEARTBEAT_REFRESH_MS=15000`
 - `GATEWAY_HEARTBEAT_TTL_MS=60000`
@@ -234,7 +243,7 @@ The kill drill proves the real fallback. It closes the real gateway pane and sen
 
 ```bash
 GATEWAY_AGENT_TARGET='📨 gateway loop' \
-GATEWAY_HERDR_SESSION='system' \
+GATEWAY_HERDR_SESSION='default' \
 GATEWAY_HERDR_WORKSPACE='[jc] gateway agent' \
 GATEWAY_SUCCESSOR_BRIEF_PATH="$PWD/.brain/tasks/gateway-session-boot.svx" \
 pnpm --filter @joelclaw/agent-comms-driver kill-drill
@@ -271,11 +280,11 @@ PANE_ID='<verified gateway pane id>'
 BACKUP="$HOME/.joelclaw/scripts/gateway-start.sh.pre-cutover"
 
 test -f "$BACKUP" || { echo "missing rollback backup: $BACKUP" >&2; exit 1; }
-herdr --session system pane get "$PANE_ID" >/dev/null
+herdr --session default pane get "$PANE_ID" >/dev/null
 scripts/gateway-cutover-rollback.sh "$PANE_ID"
 ```
 
-The script stops the supervised driver, closes and verifies the system gateway pane,
+The script stops the supervised driver, closes and verifies the gateway pane,
 restores the pre-cutover start script, restarts the gateway daemon, and sends a probe.
 
 After success, verify the probe appeared in Telegram and inspect its receipt.
