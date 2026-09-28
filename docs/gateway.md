@@ -172,7 +172,7 @@ The gateway pane lives in Herdr's `default` session. Check the target session,
 not bare Herdr commands:
 
 ```bash
-launchctl print gui/$(id -u)/com.joelclaw.agent-comms-driver
+launchctl print user/$(id -u)/com.joelclaw.agent-comms-driver
 herdr --session default pane list
 joelclaw gateway status
 joelclaw gateway diagnose --hours 1 --lines 120
