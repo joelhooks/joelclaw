@@ -234,6 +234,7 @@ Optional defaults:
 - `GATEWAY_POKE_DEADLINE_MS=120000`
 - `GATEWAY_SUCCESSOR_DEADLINE_MS=120000`
 - `GATEWAY_DRIVER_RECEIPT_PATH=/tmp/joelclaw/agent-comms-driver.jsonl`
+- `GATEWAY_DEADLINE_LOOKBACK_MS=259200000` (72 hours). A cold start replays only this much stream history into the backstop deadline index. The gateway's `wake_schedule_aggregate_deadline` timer is the primary deadline path. Replaying the full stream once took hours and kept the driver from spawning a gateway.
 
 Do not point scratch tests at the production pane or heartbeat key. Tests must use a `test:*` key.
 

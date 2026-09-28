@@ -25,6 +25,13 @@ export type LiveAdapterOptions = {
   herdrWorkspace?: string;
   /** Shell command that boots a gateway session inside a fresh pane. */
   successorCommand?: string;
+  /**
+   * Earliest recordedAt the deadline index replays on a cold start. Defaults to
+   * the stream's beginning. The gateway's own wake timer fires each aggregate
+   * deadline, so the driver's index is a backstop and needs only recent history;
+   * replaying the whole stream made a driver restart take hours.
+   */
+  deadlineReplayFromMs?: number;
 };
 
 export const DEFAULT_SUCCESSOR_COMMAND =
@@ -385,11 +392,11 @@ export function makeDeadlineIndex() {
   };
 }
 
-function makeDeadlineReader(client: StreamClient) {
+function makeDeadlineReader(client: StreamClient, replayFromMs = 0) {
   const index = makeDeadlineIndex();
   return {
     listDue: async (now: number): Promise<AggregateDeadline[]> => {
-      const passWatermark = index.watermark;
+      const passWatermark = Math.max(index.watermark, replayFromMs);
       let cursor: string | null = null;
       do {
         const page = await client.readSince(passWatermark, 250, cursor);
@@ -439,7 +446,7 @@ export function makeLiveDriverPorts(
   const herdrSession = options.herdrSession?.trim() || DEFAULT_GATEWAY_HERDR_SESSION;
   const runCommand = (argv: string[]) => baseRunCommand(scopeHerdrCommand(argv, herdrSession));
   const stream = dependencies.stream ?? createMessageEventLogClient();
-  const deadlines = makeDeadlineReader(stream);
+  const deadlines = makeDeadlineReader(stream, options.deadlineReplayFromMs);
   const redis =
     dependencies.redis ??
     new Redis(options.redisUrl ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379", {
