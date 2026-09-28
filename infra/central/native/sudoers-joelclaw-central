@@ -8,6 +8,13 @@
 # add explicitly if wanted), and anything outside the central service set.
 #
 # Install with: sudo ./install-central-kickstart-sudoers.sh
+#
+# Executor is sudo-free by design (2026-09-28, joelclaw-central
+# scripts/update-executor.sh): joel updates files under
+# /Users/Shared/joelclaw/opt/executor via ACL, then restarts with the two
+# executor kickstart lines below. They are load-bearing; do not remove them,
+# and do not add a root install script here instead (a root process reading a
+# joel-writable plist is a path to root).
 joel ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/com.joelclaw.central.typesense
 joel ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/com.joelclaw.central.inngest
 joel ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/com.joelclaw.central.executor
