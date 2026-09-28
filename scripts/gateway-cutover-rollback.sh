@@ -7,12 +7,12 @@ set -euo pipefail
 GATEWAY_START="$HOME/.joelclaw/scripts/gateway-start.sh"
 BACKUP="$GATEWAY_START.pre-cutover"
 PANE_ID="${1:-}"
-HERDR_SESSION="${GATEWAY_HERDR_SESSION:-system}"
+HERDR_SESSION="${GATEWAY_HERDR_SESSION:-default}"
 DRIVER_LABEL="com.joelclaw.agent-comms-driver"
 DRIVER_DOMAIN="user/$(id -u)"
 
 [ -n "$PANE_ID" ] || {
-  echo "FATAL: usage: $0 <verified-system-gateway-pane-id>" >&2
+  echo "FATAL: usage: $0 <verified-gateway-pane-id>" >&2
   exit 64
 }
 [ -f "$BACKUP" ] || { echo "FATAL: backup missing: $BACKUP" >&2; exit 1; }
