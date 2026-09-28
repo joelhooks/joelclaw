@@ -190,6 +190,40 @@ describe("deadline replay", () => {
     expect(stream.reads.at(-2)?.recordedAt).toBe(100);
     await ports.close();
   });
+
+  test("starts a cold replay at the configured floor, then follows the watermark", async () => {
+    const stream = streamFake([
+      event("open", 100, "gateway.decision.recorded", {
+        decision: {
+          verb: "aggregate",
+          action: "open",
+          aggregateId: "agg-1",
+          memberEventIds: ["event-a"],
+          holdUntil: 200,
+        },
+      }),
+    ]);
+    const redis = redisFake();
+    const ports = makeLiveDriverPorts(
+      { target: "scratch", successorBriefPath: "/tmp/scratch.svx", deadlineReplayFromMs: 50 },
+      {
+        stream: stream.client,
+        redis: redis.client,
+        runCommand: async () => ({ stdout: '{"result":{"agents":[],"panes":[]}}', stderr: "" }),
+      },
+    );
+
+    expect(await ports.listDueDeadlines(200)).toEqual([
+      { aggregateId: "agg-1", memberEventIds: ["event-a"], holdUntil: 200 },
+    ]);
+    expect(stream.reads.slice(0, 2)).toEqual([
+      { recordedAt: 50, cursor: null },
+      { recordedAt: 50, cursor: "page-2" },
+    ]);
+    await ports.listDueDeadlines(200);
+    expect(stream.reads.at(-2)?.recordedAt).toBe(100);
+    await ports.close();
+  });
 });
 
 describe("live adapters", () => {

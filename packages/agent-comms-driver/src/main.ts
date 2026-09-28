@@ -58,12 +58,16 @@ const main = Effect.gen(function* () {
   const successorCommand = yield* Config.string("GATEWAY_SUCCESSOR_COMMAND").pipe(
     Config.withDefault(""),
   );
+  const deadlineLookbackMs = yield* Config.integer("GATEWAY_DEADLINE_LOOKBACK_MS").pipe(
+    Config.withDefault(72 * 60 * 60 * 1000),
+  );
   const ports = makeLiveDriverPorts({
     target,
     successorBriefPath,
     redisUrl,
     receiptPath,
     herdrSession,
+    deadlineReplayFromMs: Math.max(0, Date.now() - deadlineLookbackMs),
     ...(herdrWorkspace ? { herdrWorkspace } : {}),
     ...(successorCommand ? { successorCommand } : {}),
   });
