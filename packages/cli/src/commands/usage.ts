@@ -139,10 +139,10 @@ export const usageCmd = Command.make(
             "usage",
             result.left.message,
             "USAGE_QUERY_FAILED",
-            "Check ClickHouse reachability: curl 'http://192.168.1.163:8123/?query=SELECT+1' (override with CLICKHOUSE_QUERY_URL)",
+            "Check the ClickHouse tunnel: curl 'http://127.0.0.1:18123/ping' (override with CLICKHOUSE_QUERY_URL or CLICKHOUSE_URL); set CLICKHOUSE_USER/CLICKHOUSE_PASSWORD to the scoped reader credentials",
             [
               { command: "joelclaw status", description: "Check worker/server health" },
-              { command: "joelclaw otel list --hours 24", description: "Inspect OTEL events via Typesense" },
+              { command: "joelclaw otel list --hours 24", description: "Inspect OTEL events via the configured adapter" },
             ],
           ),
         )

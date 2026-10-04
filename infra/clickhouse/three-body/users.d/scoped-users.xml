@@ -1,6 +1,11 @@
 <clickhouse>
   <!--
-    Prepared access policy for the three-body ClickHouse instance.
+    Final combined access policy for the three-body ClickHouse instance.
+    Do not install this as the first OTEL cutover step: it restricts default.
+    Stage otel-users.xml first, prove the runtime write and reader readback,
+    then replace the old default fragment with restricted-default.xml.
+    This combined policy also requires journal credentials and migrations;
+    never load it alongside the staged fragments (duplicate identities).
 
     Password values are SHA-256 hashes supplied by docker-compose.override.yml.
     Flagg reaches these users through the SSH tunnel in infra/clickhouse/flagg/;

@@ -1,308 +1,133 @@
 # ClickHouse access-control cutover
 
-Status: **prepared, not applied**. This runbook changes the live ClickHouse instance on three-body. Do not run the apply section without Joel present.
+Status: **prepared, not applied**. This runbook changes live credentials and access on three-body and Flagg. Run it only in an approved operator window with Joel present. Repository preparation does not authorize live changes.
 
-## Goal
+## Goal and current baseline
 
-- Remove wildcard access from `default`.
-- Give each workload only the ClickHouse rights it needs.
-- Move OTEL writes and reads to separate scoped identities without breaking the pipeline.
-- Carry ClickHouse credentials only through a Flagg-local SSH tunnel, never plaintext LAN HTTP.
-- Keep ClickHouse bound to the NAS LAN address. Do not expose it through Tailscale Serve/Funnel.
-- Preserve a fast rollback to the current config and OTEL outbox behavior.
+Move Central's OTEL writes to `otel_runtime` and operator reads to `otel_reader`, then remove wildcard access from `default`. Preserve the OTEL outbox and a configuration-only rollback. Do not change table data, engines, or network exposure.
 
-## Live baseline inspected 2026-07-16
+The 2026-10-03 inspection found:
 
-Read-only inspection found:
+- Flagg uses `com.joelclaw.clickhouse-tunnel` at `http://127.0.0.1:18123` to reach ClickHouse on three-body.
+- Central has `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, and `CLICKHOUSE_OTEL_TABLE`, but no user/password; it writes as passwordless `default`.
+- The complete `scoped-users.xml` policy has not been applied. Installing it first would cut off the writer.
+- ClickHouse has had memory failures and a large queued OTEL backlog. A running tunnel, `/ping`, or `stored:true` is not proof of a successful insert. Resolve store failures before narrowing `default`.
 
-- Host/container: three-body / `joelclaw-clickhouse-proof`.
-- Image/version: `clickhouse/clickhouse-server:24.12-alpine`, server `24.12.6.70`.
-- Docker publishes `192.168.1.163:8123` and `192.168.1.163:9000` only.
-- The only ClickHouse identity is `default`; it has broad grant-option privileges across all databases.
-- Flagg currently reaches `http://192.168.1.163:8123` with no `CLICKHOUSE_USER` or `CLICKHOUSE_PASSWORD`.
-- `joelclaw.otel_events` is live as plain `MergeTree`; `joelclaw_private` does not exist yet.
-- `joelclaw otel search telegram.delivery --hours 24 --limit 1` works before the cutover.
-
-This runbook does not change the existing OTEL table engine. That is a separate data migration.
+The direct NAS LAN URL is not a Flagg default. Use the tunnel for credential-bearing requests. Keep ClickHouse off Tailscale Serve/Funnel. Verify live paths, container name, active XML fragments, and Compose service before applying; old proof paths are not deployment discovery.
 
 ## Prepared files
 
-| File | Destination / purpose |
+| File under `infra/clickhouse/` | Purpose |
 |---|---|
-| `infra/clickhouse/three-body/users.d/scoped-users.xml` | Complete `users.d` policy replacing the live `proof-user.xml` |
-| `infra/clickhouse/three-body/docker-compose.override.yml` | Adds the local password-hash env file to the existing service |
-| `infra/clickhouse/three-body/clickhouse-password-hashes.env.example` | Server-side hash-only secret template |
-| `infra/clickhouse/flagg/com.joelclaw.clickhouse-tunnel.plist.template` | Flagg-local `127.0.0.1:18123` SSH tunnel |
-| `infra/clickhouse/flagg/system-bus.env.example` | OTEL runtime and journal writer config |
-| `infra/clickhouse/flagg/joelclaw.config.toml.example` | OTEL capability reader config |
-| `infra/clickhouse/flagg/otel-reader.env.example` | Reader env for direct query commands such as `joelclaw usage` and `video trace` |
-| `infra/clickhouse/flagg/message-journal-admin.env.example` | Operator-only migration identity config |
-| `infra/clickhouse/flagg/message-journal-reader.env.example` | Operator-only journal reader config |
+| `three-body/users.d/otel-users.xml` | Stage 1: add only OTEL users/profiles; leave the existing `default` fragment active |
+| `three-body/users.d/restricted-default.xml` | Stage 2: replace the old default fragment after the write/readback gate |
+| `three-body/users.d/scoped-users.xml` | Combined final OTEL + journal policy, not the first rollout step |
+| `three-body/docker-compose.override.yml` | Supply server-side password hashes |
+| `three-body/clickhouse-password-hashes.env.example` | Hash-only template; never commit a populated file |
+| `flagg/system-bus.env.example` | OTEL runtime env; journal keys are a separate rollout |
+| `flagg/otel-reader.env.example` | Direct queries (`usage`, `video trace`) with reader credentials |
+| `flagg/joelclaw.config.toml.example` | OTEL capability reader credentials |
+| `flagg/com.joelclaw.clickhouse-tunnel.plist.template` | Loopback SSH tunnel template, not a second tunnel to launch |
 
-The XML was boot-tested against ClickHouse `24.12.6.70` in a disposable local container. Allow/deny probes confirmed:
+`otel_runtime` needs SELECT/INSERT on `joelclaw.otel_events`, CREATE DATABASE on `joelclaw.*`, CREATE TABLE and ALTER ADD COLUMN on the OTEL table, and SELECT on `system.tables`. Central performs schema checks and daily usage reads as well as inserts. `otel_reader` gets SELECT on the OTEL table and `system.tables`, with a read-only profile. `default` ends with SELECT on `system.one` only.
 
-- `default`: `SELECT system.one` only.
-- `otel_runtime`: `SELECT`/`INSERT` on the OTEL table plus only the idempotent `CREATE DATABASE`, `CREATE TABLE`, and `ALTER ADD COLUMN` checks executed by `ensureClickHouseOtelSchema()`. `SELECT` is required because the same system-bus process runs the daily usage report.
-- `otel_reader`: `SELECT` on `joelclaw.otel_events` and `system.tables`; no `INSERT`.
-- `message_journal_migration`: DDL/read/write only inside `joelclaw_private`; no OTEL access.
-- `message_journal_writer`: `INSERT` only on the journal table.
-- `message_journal_reader`: `SELECT` only on the journal table.
+## Ordered rollout and rollback at each step
 
-## Stop conditions
+One operator performs these steps in order. Keep a secret-free receipt with timestamps and outcomes. Never dump env files, plaintext passwords, hashes, or credential-bearing command arguments into logs.
 
-Stop and roll back if any of these happen:
+### 1. Capture baseline and backups
 
-- The tunnel is not listening only on `127.0.0.1:18123`.
-- ClickHouse fails to restart cleanly or the server error log reports access-config parsing errors.
-- `SHOW GRANTS` differs from the prepared policy.
-- The system-bus worker can neither write the canary nor durably queue it to the OTEL outbox.
-- `joelclaw otel search` cannot read the canary through `otel_reader`.
-- A scoped credential works directly against `http://192.168.1.163:8123` from Flagg.
-- Any ClickHouse port appears in Tailscale Serve/Funnel state.
+Verify the existing tunnel listens only on `127.0.0.1:18123`; do not start a duplicate. Inspect ClickHouse version, active users/config and grants through the current operator connection. Record `count(), max(timestamp)` from `joelclaw.otel_events`, the OTEL outbox count, and recent worker errors. Count a large spool asynchronously rather than blocking the operator.
 
-## Preparation before the window
+Back up the actual three-body Compose files, `users.d/`, `config.d/`, and existing hash file to a timestamped private directory. Preserve ownership and mode. Do not touch ClickHouse data directories. On Flagg, back up `~/.config/system-bus.env`, the reader env file if present, and `~/.joelclaw/config.toml`. Record whether each file existed so rollback can remove a newly created config by moving it aside rather than inventing an empty replacement.
 
-### 1. Capture the baseline
+**Rollback:** none needed; this step is read-only apart from private backups. If baseline queries fail, stop before applying ACL changes. Recover the store first.
 
-On Flagg:
+### 2. Generate and store passwords
 
-```sh
-set -eu
-joelclaw otel search telegram.delivery --hours 24 --limit 1
-joelclaw otel stats --adapter clickhouse-otel --hours 24
-curl -fsS 'http://192.168.1.163:8123/?query=SELECT%20version()%20FORMAT%20TabSeparated'
-curl -fsS 'http://192.168.1.163:8123/?query=SELECT%20count()%2C%20max(timestamp)%20FROM%20joelclaw.otel_events%20FORMAT%20TabSeparated'
-OTEL_OUTBOX_DIR="${OTEL_OUTBOX_DIR:-$HOME/.joelclaw/spool/otel}"
-printf 'otel_outbox_files='; find "$OTEL_OUTBOX_DIR" -maxdepth 1 -type f \
-  \( -name '*.json' -o -name '*.processing' \) 2>/dev/null | wc -l | tr -d ' '
-ssh -o BatchMode=yes joel@three-body \
-  'netstat -tln 2>/dev/null | grep -E "192[.]168[.]1[.]163:(8123|9000)"'
-tailscale serve status
-```
-
-Save the OTEL count/newest timestamp and spool count in the cutover receipt. Do not print the existing password or environment values.
-
-### 2. Generate six independent passwords
-
-Create secrets outside the repo with `umask 077`. The server receives SHA-256 hashes only; Flagg receives plaintext values for the identities it uses.
-
-Required identities:
-
-```txt
-default
-message_journal_migration
-message_journal_writer
-message_journal_reader
-otel_runtime
-otel_reader
-```
-
-Use 48-character values from the env/TOML-safe alphabet `[A-Za-z0-9_-]`. Do not use spaces, quotes, backslashes, `$`, or shell metacharacters. One safe generator is:
+Generate independent 48-character values from `[A-Za-z0-9_-]` outside the repository with `umask 077`. For example, assign without printing:
 
 ```sh
 PASSWORD="$(openssl rand -base64 48 | tr '+/' '_-' | tr -d '=\n' | cut -c1-48)"
 case "$PASSWORD" in (*[!A-Za-z0-9_-]*|'') echo 'unsafe password encoding' >&2; exit 1;; esac
-printf '%s' "$PASSWORD" | shasum -a 256 | awk '{print $1}'
+test "${#PASSWORD}" -eq 48
 ```
 
-Populate a private `clickhouse-password-hashes.env` from the provided example. Every hash must be exactly 64 lowercase hex characters. Populate the Flagg config copies separately. Never copy plaintext credentials to three-body.
+Store the two OTEL plaintext values in agent-secrets under exactly:
 
-### 3. Prepare backups, but do not change services yet
+- `clickhouse_otel_runtime_password`
+- `clickhouse_otel_reader_password`
 
-On Flagg:
+Use the current agent-secrets CLI help for its secure input/storage interface; do not pass passwords in argv or print lease results. If these names exist, preserve their prior values and consumers before rotating. Generate a separate default password for the later restriction step and keep it in the approved private operator store. Journal passwords are not required for the staged OTEL rollout.
 
-```sh
-cp -p ~/.config/system-bus.env ~/.config/system-bus.env.pre-clickhouse-acl
-mkdir -p ~/.joelclaw
-if [ -f ~/.joelclaw/config.toml ]; then
-  cp -p ~/.joelclaw/config.toml ~/.joelclaw/config.toml.pre-clickhouse-acl
-  printf 'present\n' > ~/.joelclaw/config.toml.pre-clickhouse-acl.state
-else
-  printf 'absent\n' > ~/.joelclaw/config.toml.pre-clickhouse-acl.state
-fi
-```
+Compute lowercase SHA-256 digests from each value using `printf '%s'` (no newline). Populate a private copy of the hash env example, mode `0600`. The staged policies require `CLICKHOUSE_OTEL_RUNTIME_PASSWORD_SHA256`, `CLICKHOUSE_OTEL_READER_PASSWORD_SHA256`, and, at step 6, `CLICKHOUSE_DEFAULT_PASSWORD_SHA256`. Validate each used hash is exactly 64 lowercase hex characters. Copy only hashes to three-body. Lease plaintext into private Flagg config copies without logging it. Clear temporary shell values after use.
 
-On three-body, create one timestamped backup of the whole proof config directory before replacing files. The backup must include `docker-compose.yml`, `users.d/`, and `config.d/`. Do not touch `/volume2/data/clickhouse-proof/data`.
+**Rollback:** before any consumer switches, restore previous secret values if rotated; revoke leases and retire only newly created unused credentials. Retain the old credentials until all consumers have passed verification. Never overwrite an existing secret without its recovery copy.
 
-## Apply sequence
+### 3. Install hashes and add users, preserving default
 
-This section is intentionally not automated. One operator performs it in order while Joel watches the receipts.
+Install the hash env file and Compose override on three-body, keeping the file mode `0600`. Run `docker compose config --quiet` in the verified active Compose directory, not `docker compose config` (which can print hashes).
 
-### 1. Install and prove the SSH tunnel first
+Add **only** `users.d/otel-users.xml`. Keep the existing live fragment defining `default` unchanged. Do not install `scoped-users.xml` or `restricted-default.xml` yet. Inventory all active fragments for duplicate users/profiles and stop if either OTEL name already exists with a conflicting definition. Recreate the verified ClickHouse service if necessary for Docker to load the new hash environment; inspect access-config errors immediately.
 
-Create `~/.joelclaw/logs`, copy the plist template to `~/Library/LaunchAgents/com.joelclaw.clickhouse-tunnel.plist`, bootstrap it, then verify:
+Through the tunnel, prove both OTEL users authenticate and their `SHOW GRANTS` match the prepared policy. Prove `otel_reader` can SELECT but cannot INSERT; prove `otel_runtime` cannot access unrelated databases. Confirm the unchanged default connection still works. Keep credentials in private client config or a protected request file, never URL query parameters or argv. Check the listener and Serve/Funnel state without exposing credentials.
 
-```sh
-launchctl print gui/$(id -u)/com.joelclaw.clickhouse-tunnel
-lsof -nP -iTCP:18123 -sTCP:LISTEN
-curl -fsS 'http://127.0.0.1:18123/?query=SELECT%201%20FORMAT%20TabSeparated'
-```
+**Rollback:** move the additive OTEL fragment aside and restore the prior Compose/hash files, then recreate the service if necessary. Default has not changed, so Central keeps its old credential path. Preserve failed config and redacted error excerpts. Do not touch tables.
 
-Expected listener: `127.0.0.1:18123` only. The remote leg terminates at the NAS LAN endpoint `192.168.1.163:8123`; ClickHouse itself remains off the tailnet.
+### 4. Switch Central and reader config
 
-### 2. Stage server access files on three-body
-
-Copy these three prepared files into `/volume1/home/joel/clickhouse-proof/`:
-
-- `users.d/scoped-users.xml`
-- `docker-compose.override.yml`
-- populated `clickhouse-password-hashes.env` with mode `0600`
-
-Move the old `users.d/proof-user.xml` out of `users.d/` into the timestamped backup. Do not leave both files active: both define `default`, and mixed authentication fields can prevent ClickHouse from starting.
-
-Inventory every active fragment before restart:
-
-```sh
-cd /volume1/home/joel/clickhouse-proof
-find users.d -maxdepth 1 -type f -name '*.xml' -print -exec \
-  grep -nE '<(default|message_journal_|otel_|profiles)>' {} \;
-test "$(find users.d -maxdepth 1 -type f -name '*.xml' | wc -l | tr -d ' ')" = 1
-```
-
-The only active XML must be `users.d/scoped-users.xml`. If any other fragment is required, stop and merge it into a complete reviewed policy first.
-
-Validate Compose without rendering the hash environment into a receipt or temp file:
-
-```sh
-cd /volume1/home/joel/clickhouse-proof
-docker compose config --quiet
-```
-
-### 3. Restart ClickHouse once
-
-```sh
-cd /volume1/home/joel/clickhouse-proof
-docker compose up -d --force-recreate clickhouse-proof
-docker compose ps
-```
-
-Check server logs immediately. If the service is not healthy, restore the old `users.d` and compose files before doing anything on Flagg.
-
-### 4. Verify the access policy through the tunnel
-
-Use the scoped plaintext credentials from private Flagg files. Do not place passwords on command lines or in receipts.
-
-Required `SHOW GRANTS` results:
+Merge only the OTEL keys from `flagg/system-bus.env.example` into `~/.config/system-bus.env`:
 
 ```txt
-default: GRANT SELECT ON system.one
-otel_runtime: CREATE DATABASE ON joelclaw.*; CREATE TABLE, ALTER ADD COLUMN, SELECT, INSERT on joelclaw.otel_events; SELECT on system.tables
-otel_reader: SELECT on joelclaw.otel_events and system.tables
-message_journal_migration: CREATE DATABASE/TABLE, ALTER TABLE, DROP TABLE, SELECT, INSERT on joelclaw_private.*
-message_journal_writer: INSERT on joelclaw_private.message_journal_events
-message_journal_reader: SELECT on joelclaw_private.message_journal_events
+OTEL_STORE=clickhouse
+CLICKHOUSE_URL=http://127.0.0.1:18123
+CLICKHOUSE_DATABASE=joelclaw
+CLICKHOUSE_OTEL_TABLE=otel_events
+CLICKHOUSE_USER=otel_runtime
+CLICKHOUSE_PASSWORD=<private lease of clickhouse_otel_runtime_password>
 ```
 
-Also prove negative rights: `message_journal_writer` cannot `SELECT`; reader identities cannot `INSERT`; `otel_runtime` cannot access `joelclaw_private`; the migration identity cannot read `joelclaw.otel_events`; and unauthenticated access fails.
+Keep the file mode `0600`. The placeholder above is explanatory, not a shell command. Reload the owning Central/system-bus service using its verified current supervisor procedure. For an installation owned by `com.joel.system-bus-worker`, the command is `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`; verify ownership first.
 
-From Flagg, a scoped credential must fail against the direct LAN URL and succeed against `http://127.0.0.1:18123`. This proves credentials are not accepted over plaintext LAN transport.
+Configure the OTEL capability TOML with `otel_reader`. Populate a private reader env file from `otel-reader.env.example` using `clickhouse_otel_reader_password`. Direct usage queries already forward `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`; they do not read capability TOML. Run them in a subshell sourcing that reader file so the runtime password cannot leak into the operator shell. `CLICKHOUSE_QUERY_URL` takes precedence over `CLICKHOUSE_URL`, then defaults to the tunnel; verify any override deliberately.
 
-### 5. Run journal migrations with the migration identity
+**Rollback:** restore the Flagg env/TOML/reader backups (move new files aside when previously absent) and reload the owning service. Leave additive users available while investigating. Default is still unchanged, so the prior writer configuration remains valid.
 
-Export the private copy of `message-journal-admin.env.example`, then run:
+### 5. Gate on a real write and scoped readback
+
+Emit a body-free canary with a unique action through the normal ingest path, for example `clickhouse.access.cutover.canary.<unique-id>`:
 
 ```sh
-set -a
-. ~/.config/clickhouse-message-journal-admin.env
-set +a
-bun -e '
-import { Effect } from "effect";
-import { runMessageJournalMigrationsFromEnvironment } from "./packages/message-journal/src/migrations.ts";
-console.log(await Effect.runPromise(runMessageJournalMigrationsFromEnvironment()));
-'
+joelclaw otel emit <unique-canary-action> --source operator \
+  --component clickhouse-access --metadata '{"transport":"ssh-tunnel"}'
+joelclaw otel search <unique-canary-action> --hours 1 --limit 5
+joelclaw otel stats --adapter clickhouse-otel --hours 1
+(
+  set -a
+  . ~/.config/clickhouse-otel-reader.env
+  set +a
+  joelclaw usage --hours 1
+)
 ```
 
-Expected: migrations `0001` and `0002` apply, and the migration ledger exists in `joelclaw_private`. Immediately clear the operator-only values:
+Confirm the emit reports `clickhouse.written:true`, not just `stored:true` or `queued:true`. Read the exact unique canary row as `otel_reader`, confirm a fresh timestamp, and verify server query evidence identifies the INSERT user as `otel_runtime`. Confirm schema checks and the daily usage query work, with no authentication/access/schema errors. With a historical backlog, record fresh-canary readback and actual drain progress separately; a full-spool baseline need not immediately reach zero. A successful usage aggregate alone is not the canary readback.
 
-```sh
-unset MESSAGE_JOURNAL_CLICKHOUSE_URL MESSAGE_JOURNAL_DATABASE MESSAGE_JOURNAL_TABLE \
-  MESSAGE_JOURNAL_ADMIN_USER MESSAGE_JOURNAL_ADMIN_PASSWORD
-```
+**Rollback:** on any failed gate, stop. Restore the step 4 client configs and reload Central; leave default unrestricted. If failure is server-side, also use step 3 rollback. Preserve queued events. Do not proceed on a queued-only canary.
 
-Do not add the admin credential to `~/.config/system-bus.env`.
+### 6. Only now restrict default
 
-### 6. Move OTEL runtime and CLI reader config
+After step 5 passes, move the old fragment defining `default` into the private backup and install `users.d/restricted-default.xml`. Keep `otel-users.xml` active. The default SHA-256 env value must already be loaded into the container. Inventory fragments again: exactly one definition per user/profile, with no legacy wildcard default fragment remaining. Reload/recreate the service as required and inspect startup errors.
 
-Merge the prepared system-bus keys into `~/.config/system-bus.env` and the OTEL reader section into `~/.joelclaw/config.toml`; keep both files mode `0600`.
+Repeat the scoped write/readback canary after restriction. Prove authenticated `default` can SELECT `system.one` but cannot read or insert into `joelclaw.otel_events`. Prove unauthenticated OTEL access fails and reader INSERT still fails. Inspect Central errors and spool drain progress. No ClickHouse port may appear in Serve/Funnel state. A default-config file on disk is not proof that the running server has narrowed grants.
 
-The split is deliberate:
+**Rollback:** first move the restricted-default fragment aside and restore the old default fragment. Reload/recreate ClickHouse and verify the prior default rights return. Only then restore client env/TOML and reload Central if needed. Restoring client default credentials while the restricted policy is still active would keep the writer broken. Leave additive OTEL users active until all consumers have reverted; then step 3 can remove them. No database/table changes are part of rollback.
 
-- system-bus gets `otel_runtime`, scoped to the OTEL table for writes, schema checks, and the daily usage query;
-- the OTEL capability config overrides that shared environment with `otel_reader` and cannot write;
-- direct query commands that do not use capability TOML yet (`joelclaw usage`, `joelclaw video trace`) must run with a private copy of `otel-reader.env.example` sourced. Verify both during the window so narrowing `default` does not silently break them.
+## Separate journal rollout
 
-Restart the user LaunchAgent:
+Do not mix the journal migration into this OTEL access window. The combined `scoped-users.xml` also requires independent credentials for `message_journal_migration`, `message_journal_writer`, and `message_journal_reader`. Before a later consolidation, back up the staged policy, configure all hash env values, migrate `joelclaw_private` with the operator-only migration identity, and verify journal writer/reader allow/deny canaries without real message text. Keep migration credentials out of Central's runtime env.
 
-```sh
-launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker
-```
-
-### 7. Verify OTEL before and after
-
-Emit a body-free canary through the normal worker path, then read it through the CLI reader:
-
-```sh
-joelclaw otel emit clickhouse.access.cutover.canary \
-  --source operator \
-  --component clickhouse-access \
-  --metadata '{"transport":"ssh-tunnel"}'
-joelclaw otel search clickhouse.access.cutover.canary --hours 1 --limit 5
-joelclaw otel stats --adapter clickhouse-otel --hours 24
-set -a; . ~/.config/clickhouse-otel-reader.env; set +a
-joelclaw usage --hours 1
-# Use a known recent target for the live `joelclaw video trace` read probe.
-unset CLICKHOUSE_PASSWORD CLICKHOUSE_USER CLICKHOUSE_QUERY_URL CLICKHOUSE_URL \
-  CLICKHOUSE_DATABASE CLICKHOUSE_OTEL_TABLE
-```
-
-Verify:
-
-1. The canary is newer than the captured baseline timestamp.
-2. The OTEL outbox did not grow, or any temporary queued row drained.
-3. `joelclaw otel search telegram.delivery --hours 24 --limit 1` still works.
-4. Worker logs contain no `ACCESS_DENIED`, authentication, or ClickHouse schema errors.
-5. Direct unauthenticated LAN access now fails.
-6. `tailscale serve status` contains no ClickHouse listener or proxy.
-
-### 8. Verify journal writer and reader
-
-After migrations:
-
-- Insert one non-sensitive canary row with `message_journal_writer`.
-- Confirm the same row with `message_journal_reader` using `FINAL`.
-- Confirm writer `SELECT` fails.
-- Confirm reader `INSERT` fails.
-- Confirm the migration identity cannot select OTEL rows.
-
-Do not use real Telegram text for this infrastructure canary.
-
-## Rollback
-
-Rollback is configuration-only. Do not touch ClickHouse data directories or drop databases/tables.
-
-1. Restore the timestamped three-body copies of `docker-compose.yml`, `users.d/`, and `config.d/`; remove the new override/hash files from the active compose directory by moving them into the failed-cutover receipt directory.
-2. Recreate `clickhouse-proof` with the restored config and verify the old direct endpoint with the pre-cutover credentials.
-3. Restore `~/.config/system-bus.env.pre-clickhouse-acl`. Read `~/.joelclaw/config.toml.pre-clickhouse-acl.state`: restore the TOML backup when it says `present`; when it says `absent`, move the cutover-created TOML into the failed-cutover receipt directory so no stale tunnel credential config survives.
-4. Restart `com.joel.system-bus-worker`.
-5. Run the original `joelclaw otel search` and stats commands.
-6. Re-run the exact OTEL `count(), max(timestamp)` query and the `OTEL_OUTBOX_DIR` file-count command from the baseline section. The newest timestamp must advance and the queued-file count must return to its baseline.
-7. Stop and boot out `com.joelclaw.clickhouse-tunnel` only after OTEL is healthy. Leaving the loopback-only tunnel running is safe during investigation, but it is not proof of a successful cutover.
-8. Preserve the failed config, ClickHouse error log excerpt, worker error excerpt, baseline/post row counts, and exact rollback time. Redact every credential.
-
-If ClickHouse cannot start with the restored config, stop. Do not modify table data, run repair commands, or widen network exposure.
+When replacing the staged policy with the combined policy, move both staged fragments aside atomically with activation of the reviewed combined policy; never load duplicate definitions. Repeat the OTEL canary gates. Roll back to the staged fragments if any journal or OTEL grant/probe fails. Consolidation is not required to finish the OTEL rollout.
 
 ## Success receipt
 
-The live half is complete only when one receipt records:
-
-- three-body config backup path;
-- ClickHouse version and container state;
-- exact `SHOW GRANTS` output with no secrets;
-- allow/deny probe results for all six identities;
-- tunnel listener proof (`127.0.0.1:18123` only);
-- direct-LAN credential rejection;
-- OTEL baseline and post-cutover canary/readback;
-- OTEL outbox count before and after;
-- journal migration receipt and writer/reader canary;
-- Tailscale Serve/Funnel check;
-- rollback files and command path.
+Record backup locations, server version/state, secret names (not values), redacted grants, scoped allow/deny outcomes, the tunnel-only listener, Central's active user, unique canary ID and timestamp before/after default restriction, spool drain evidence, Serve/Funnel check, and each rollback path. The live rollout is complete only when both scoped canaries land and read back and default no longer has OTEL access.
