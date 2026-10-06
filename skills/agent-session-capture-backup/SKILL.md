@@ -1,7 +1,7 @@
 ---
 name: agent-session-capture-backup
 displayName: Agent Session Capture Backup
-description: Verify, repair, backfill, and back up Pi/Claude/Codex session capture across Flagg, Blaine, and Panda. Use when checking whether agent activity is captured, clearing joelclaw outbox backlogs, backing transcripts up to three-body NAS, or scheduling capture verification.
+description: Verify, repair, backfill, and back up Pi/Claude/Codex session capture across active machines. Use when checking whether agent activity is captured, reviewing capture outbox backlogs, backing transcripts up to NAS, or scheduling capture verification.
 version: 0.1.0
 author: joel
 tags:
@@ -24,48 +24,48 @@ Transcript/raw activity sources:
 - Claude Code: `~/.claude/projects`
 - Codex: `~/.codex/sessions`, `~/.codex/archived_sessions`, `~/.codex/session_index.jsonl`
 - joelclaw run capture: `~/.joelclaw/runs-dev`
-- failed run-capture posts: `~/.joelclaw/outbox`
+- failed run-capture posts: per-machine, per-runtime capture outboxes; see the private operator map for current paths. `~/.joelclaw/outbox` is the legacy outbox, not complete capture coverage.
 
-NAS backup target:
+NAS audit mirror:
 
-- `/Volumes/three-body/sessions/<machine>/<source-key>/...`
-- receipts: `/Volumes/three-body/sessions/receipts/*.json`
+- `/Volumes/services/joelclaw/sessions/<machine>/<source-key>/...`
+- receipts: `/Volumes/services/joelclaw/sessions/receipts/*.json`
 
-Current live capture endpoint, per 2026-07-09 repair receipt:
+The separate additive raw archive has full and priority server receipts plus local steward receipts. For its root and receipt paths, see the private operator map. Do not confuse this archive with the cross-machine audit mirror. An hourly priority job, `com.joelclaw.raw-transcript-backup`, is being added; verify its deployment and fresh receipts before treating it as active.
 
-- `http://joels-mac-studio.tail7af24.ts.net:3111/api/runs`
-- health: `http://joels-mac-studio.tail7af24.ts.net:3111/api/runs/health`
+Capture routing:
 
-Important drift note: older system-architecture docs say Panda is Central. Flagg/Mac Studio is the working capture endpoint for Blaine. Capture authentication uses Flagg's persistent local `~/.joelclaw/capture-auth.db`; Typesense `machines_dev` is only its enrollment/migration mirror.
+- Flagg capture uses loopback: `http://127.0.0.1:3111/api/runs`; health: `http://127.0.0.1:3111/api/runs/health`.
+- A local capture endpoint override file is being added; see the private operator map for its path and deployment status.
+- Satellites need an approved reachable Central address. Never configure a satellite with Flagg's loopback URL.
+
+Panda is retired, not a live capture host, Central, or relay. Remove it from routine host lists. Capture authentication uses Flagg's persistent local `~/.joelclaw/capture-auth.db`; Typesense `machines_dev` is only its enrollment/migration mirror.
 
 ## Manual verification / repair
 
-From `~/Code/joelhooks/joelclaw-runtime`:
+From `~/Code/joelhooks/joelclaw-runtime`, this Flagg-only metadata audit writes a receipt but does not sync, repair environment files, or replay payloads:
 
 ```bash
 bun scripts/agent-session-audit-backup.ts \
-  --hosts flagg,blaine,panda \
-  --central-url http://joels-mac-studio.tail7af24.ts.net:3111 \
-  --backup-root /Volumes/three-body/sessions \
-  --repair-env \
-  --sync=true \
-  --replay-outbox \
-  --replay-limit 250 \
-  --replay-max-bytes 10485760
+  --hosts flagg \
+  --central-url http://127.0.0.1:3111 \
+  --backup-root /Volumes/services/joelclaw/sessions \
+  --sync=false
 ```
 
-What it does:
+For satellites, select active hosts and an approved Central URL reachable from each selected host. Do not rely on the script's historical host or endpoint defaults.
+
+Audit script behavior:
 
 1. verifies each host is reachable
 2. verifies each host can reach the Central run-capture health endpoint
 3. optionally repairs `JOELCLAW_CENTRAL_URL` in `.zshrc`, `.zprofile`, and `~/.config/system-bus.env`
-4. rsyncs transcript/run/outbox sources to the NAS without deleting source files
-5. replays a bounded number of outbox JSON payloads to `/api/runs`
-6. writes a JSON receipt with source counts, backup counts, newest mtimes, byte totals, and outbox before/after
+4. optionally rsyncs transcript/run/outbox sources to the NAS without deleting source files
+5. writes a JSON receipt with source counts, backup counts, newest mtimes, byte totals, and legacy outbox metadata
 
-For a metadata-only audit, use `--sync=false` and omit both `--repair-env` and `--replay-outbox`. Those flags mutate state independently of sync. Discover the current Central endpoint and host set from service configuration; historical endpoint examples are not current authority. Raw transcript content still requires the session evidence receipt.
+`--repair-env` (`repairEnv` in the scheduled event), `--sync=true`, and outbox replay are mutations requiring a repair request. Authorization for verification alone does not authorize them. For metadata-only verification, use `--sync=false` and omit repair and replay flags. Raw transcript content still requires the session evidence receipt.
 
-Use a low `--replay-limit` first when clearing a huge outbox. Do not unleash tens of thousands of run-capture events without checking worker/Inngest health.
+The audit script rejects its old `--replay-outbox`, `--replay-limit`, and `--replay-max-bytes` flags. Use `scripts/replay-capture-outbox.ts` for separately requested, bounded replay. Review its catalog, checkpoint, and per-batch receipts against stored hashes and index coverage. Preserve queued payloads. Check worker/Inngest health before replay; do not unleash a large backlog.
 
 ## Durable scheduled workflow
 
@@ -75,31 +75,30 @@ Host worker function:
 - manual event: `system/agent-session.capture-backup.requested`
 - daily cron: `TZ=America/Los_Angeles 15 5 * * *`
 
-Manual trigger:
+Manual trigger for a requested Flagg backup:
 
 ```bash
 joelclaw send system/agent-session.capture-backup.requested -d '{
-  "hosts": "flagg,blaine,panda",
-  "centralUrl": "http://joels-mac-studio.tail7af24.ts.net:3111",
-  "repairEnv": true,
-  "replayLimit": 250,
-  "replayMaxBytes": 10485760
+  "hosts": "flagg",
+  "centralUrl": "http://127.0.0.1:3111",
+  "repairEnv": false
 }'
 ```
+
+The scheduled worker syncs backups even with `repairEnv:false`; this is not metadata-only verification. It defaults `repairEnv` to true when omitted. Review cron repair ownership and explicit hosts/routing before relying on it. Replay is separate work, not part of this event.
 
 ## Green criteria
 
 - Every active machine reports `centralHealthOk=true`.
-- Every transcript source that exists locally has matching or increasing backup file counts on NAS.
-- `~/.joelclaw/outbox` count trends toward zero on each machine.
-- Receipts are written daily under `/Volumes/three-body/sessions/receipts`.
-- A recent receipt includes Flagg and Blaine with fresh Pi, Claude, Codex, `runs-dev`, and outbox counts.
+- Every local transcript source has a fresh per-source receipt confirming successful backup. Counts and preserved mtimes alone do not prove parity; partial rsync is not verified completion.
+- Each active machine/runtime has reconciled namespaced outbox, replay checkpoint, stored hash, and index coverage. An empty legacy outbox is not a green verdict. Covered queued files may remain on disk.
+- Audit receipts are written daily under `/Volumes/services/joelclaw/sessions/receipts`. Raw archive coverage needs its separate full/priority and local steward receipts; see the private operator map.
+- A recent receipt covers Flagg and Blaine with fresh Pi, Claude, Codex, `runs-dev`, and outbox metadata. An unreachable host or failed source sync remains unverified.
 
 ## Gotchas
 
-- Do not use `http://panda:3000`; that endpoint is stale and fails.
-- Do not use Panda's `/api/runs` until its local Typesense auth lookup is healthy again.
-- Flagg may have live local capture even when docs still say Panda is Central. Verify `system-architecture` and recent receipts before changing authority language.
+- Panda is retired. Historical Central/relay instructions do not authorize routing or repair work there.
+- Use current service configuration and fresh receipts for capture routing. Historical host names and endpoint examples are not current authority.
 - Backups must be copies, not rotations. Do not delete or move live transcript files during backup.
 - Outbox replay is a repair operation. Keep it bounded and leave receipts.
 - Never print auth tokens from `~/.joelclaw/auth.json`; the script reads them locally on each host.
