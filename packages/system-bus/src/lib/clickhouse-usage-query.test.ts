@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { __usageQueryTestables } from "./clickhouse-usage-query";
+import { describe, expect, spyOn, test } from "bun:test";
+import { __usageQueryTestables, queryUsageRollup, queryUsageTotals } from "./clickhouse-usage-query";
 
 const {
   boundedInt,
@@ -38,7 +38,49 @@ describe("clickhouse-usage-query", () => {
       const fromDefault = resolveUsageQueryConfig({} as NodeJS.ProcessEnv);
 
       expect(fromUrl.url).toBe("http://write.example:8123");
-      expect(fromDefault.url).toBe("http://192.168.1.163:8123");
+      expect(fromDefault.url).toBe("http://127.0.0.1:18123");
+    });
+  });
+
+  describe("query authentication", () => {
+    test("both queries pass scoped reader credentials in headers, not the URL", async () => {
+      const config = resolveUsageQueryConfig({
+        CLICKHOUSE_QUERY_URL: "http://query.example:18123/",
+        CLICKHOUSE_USER: "otel_reader",
+        CLICKHOUSE_PASSWORD: "test-only-password",
+      });
+      const requests: { url: unknown; init: RequestInit | undefined }[] = [];
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(Object.assign(
+        async (url: URL | RequestInfo, init?: RequestInit) => {
+          requests.push({ url, init });
+          return new Response("{}\n");
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      ));
+      try {
+        await queryUsageRollup({}, config);
+        await queryUsageTotals({}, config);
+        expect(requests).toHaveLength(2);
+        for (const request of requests) {
+          expect(request.url).toBe("http://query.example:18123");
+          expect(request.init?.headers).toEqual({
+            "X-ClickHouse-User": "otel_reader",
+            "X-ClickHouse-Key": "test-only-password",
+          });
+        }
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    test("unset credentials do not add authentication headers", async () => {
+      const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}\n"));
+      try {
+        await queryUsageTotals({}, resolveUsageQueryConfig({}));
+        expect(fetchSpy.mock.calls[0]?.[1]?.headers).toEqual({});
+      } finally {
+        fetchSpy.mockRestore();
+      }
     });
   });
 

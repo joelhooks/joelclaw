@@ -1,0 +1,27 @@
+<clickhouse>
+  <!-- Stage 2: replace the old default fragment only after Central writes as
+       otel_runtime and the canary reads back as otel_reader.
+       Keep otel-users.xml active. Do not also install scoped-users.xml. -->
+  <users>
+    <default replace="replace">
+      <password_sha256_hex from_env="CLICKHOUSE_DEFAULT_PASSWORD_SHA256" />
+      <networks>
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+        <ip>192.168.1.163</ip>
+      </networks>
+      <profile>restricted_default</profile>
+      <quota>default</quota>
+      <grants>
+        <query>GRANT SELECT ON system.one</query>
+      </grants>
+    </default>
+  </users>
+  <profiles>
+    <restricted_default>
+      <readonly>1</readonly>
+      <max_memory_usage>250000000</max_memory_usage>
+      <max_threads>1</max_threads>
+    </restricted_default>
+  </profiles>
+</clickhouse>

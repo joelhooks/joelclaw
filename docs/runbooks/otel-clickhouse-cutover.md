@@ -22,13 +22,21 @@ Do not send random callers directly to ClickHouse. Keep `/observability/emit` an
 
 ## Runtime endpoints
 
-Proof ClickHouse endpoint:
+Flagg runtime endpoint through the existing SSH tunnel (not the NAS LAN URL):
 
 ```txt
-CLICKHOUSE_URL=http://192.168.1.163:8123
+CLICKHOUSE_URL=http://127.0.0.1:18123
 CLICKHOUSE_DATABASE=joelclaw
 CLICKHOUSE_OTEL_TABLE=otel_events
 ```
+
+The 2026-10-03 inspection found Central still using passwordless `default`.
+The scoped policy is prepared, not applied. Follow
+[the access-control rollout](./clickhouse-access-control.md): store
+`clickhouse_otel_runtime_password` and `clickhouse_otel_reader_password` in
+agent-secrets, install hashes and additive OTEL users first, switch Central to
+`otel_runtime`, prove a written canary and `otel_reader` readback, and only then
+restrict `default`. Do not install the combined policy first.
 
 NAS proof paths:
 
@@ -46,9 +54,12 @@ OTEL_STORE=clickhouse        # clickhouse | forward | typesense | dual
 OTEL_STORE_MODE=clickhouse   # alias, lower precedence than OTEL_STORE
 OTEL_TYPESENSE_PROJECTION=0  # set 1 only for a bounded projection, never raw unbounded OTEL
 OTEL_OUTBOX_DIR=$HOME/.joelclaw/spool/otel
-CLICKHOUSE_URL=http://192.168.1.163:8123
+CLICKHOUSE_URL=http://127.0.0.1:18123
 CLICKHOUSE_DATABASE=joelclaw
 CLICKHOUSE_OTEL_TABLE=otel_events
+# Set only after the additive users are installed (private config, never logs).
+CLICKHOUSE_USER=otel_runtime
+CLICKHOUSE_PASSWORD=<private lease of clickhouse_otel_runtime_password>
 OTEL_CLICKHOUSE_TTL_DAYS=180
 
 # Relay hosts such as Panda
@@ -64,7 +75,14 @@ JOELCLAW_CAPABILITY_OTEL_ADAPTER=clickhouse-otel  # default
 JOELCLAW_CAPABILITY_OTEL_ADAPTER=typesense-otel   # rollback
 ```
 
-Per-command rollback:
+The OTEL capability reader uses `otel_reader` in private capability TOML.
+`joelclaw usage` and `joelclaw video trace` instead read `CLICKHOUSE_USER` and
+`CLICKHOUSE_PASSWORD` from the environment; source a private copy of
+`infra/clickhouse/flagg/otel-reader.env.example` in a subshell. Query URL
+precedence is `CLICKHOUSE_QUERY_URL`, then `CLICKHOUSE_URL`, then
+`http://127.0.0.1:18123`. Never print passwords or pass them in URLs/argv.
+
+Per-command adapter rollback (not credential rollback):
 
 ```sh
 joelclaw otel list --adapter typesense-otel --hours 1
@@ -89,10 +107,13 @@ This means `stored` means “accepted durably,” not necessarily “already vis
 Backfill Typesense `otel_events` into ClickHouse:
 
 ```sh
-CLICKHOUSE_URL=http://192.168.1.163:8123 \
+CLICKHOUSE_URL=http://127.0.0.1:18123 \
 TYPESENSE_URL=http://127.0.0.1:8108 \
 bun run scripts/backfill-otel-clickhouse.ts
 ```
+
+Run this only in an approved backfill window, with scoped runtime credentials
+loaded from private config and the store's write/readback gate passing.
 
 The script leases `typesense_api_key` via `agent-secrets` if `TYPESENSE_API_KEY` is not already set. Do not print the key.
 
@@ -102,7 +123,7 @@ The script leases `typesense_api_key` via `agent-secrets` if `TYPESENSE_API_KEY`
    ```sh
    sudo sh ~/clickhouse-proof/restart-proof.sh
    ```
-2. `curl -fsS "$CLICKHOUSE_URL/?query=SELECT%201%20FORMAT%20TabSeparated"` returns `1` from Flagg.
+2. The tunnel answers `/ping` from Flagg. This proves reachability only; a normal ingest canary must report `clickhouse.written:true` and its exact ID must read back through `otel_reader` before declaring the store healthy.
 3. `joelclaw otel list --adapter clickhouse-otel --hours 24` returns recent events.
 4. `joelclaw otel stats --adapter clickhouse-otel --hours 24` returns sane totals.
 5. Dual-write window compares ClickHouse vs Typesense counts by day/source/level.

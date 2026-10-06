@@ -1,6 +1,6 @@
 import { type ClickHouseConfig, resolveClickHouseConfig } from "../observability/clickhouse-store";
 
-const DEFAULT_QUERY_URL = "http://192.168.1.163:8123";
+const DEFAULT_QUERY_URL = "http://127.0.0.1:18123";
 const DEFAULT_HOURS = 24;
 const MAX_HOURS = 24 * 365;
 const DEFAULT_LIMIT = 500;
