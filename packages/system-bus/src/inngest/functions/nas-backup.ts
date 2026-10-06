@@ -7,6 +7,7 @@ import { DEFAULT_SERVICE_PLACEMENT, NAS_BACKUPS_HDD_ROOT, NAS_BACKUPS_REMOTE_ROO
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
 import { buildAgentSessionBackupCommand } from "../../lib/agent-session-backup-command";
+import { runAgentSessionBackup } from "../../lib/agent-session-backup-runner";
 import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
 import { infer } from "../../lib/inference";
 import { assertAllowedModel } from "../../lib/models";
@@ -2102,25 +2103,17 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
         const receiptPath = await step.run("run-agent-session-audit-backup", async () => {
           const stamp = new Date().toISOString().replace(/[:.]/g, "");
           const receipt = `${AGENT_SESSION_BACKUP_ROOT}/receipts/agent-session-audit-${stamp}.json`;
-          const proc = Bun.spawnSync(buildAgentSessionBackupCommand({
-            scriptPath: AGENT_SESSION_BACKUP_SCRIPT,
-            hosts,
-            backupRoot: AGENT_SESSION_BACKUP_ROOT,
-            centralUrl,
-            receiptPath: receipt,
-            repairEnv,
-          }), {
+          await runAgentSessionBackup({
+            command: buildAgentSessionBackupCommand({
+              scriptPath: AGENT_SESSION_BACKUP_SCRIPT,
+              hosts,
+              backupRoot: AGENT_SESSION_BACKUP_ROOT,
+              centralUrl,
+              receiptPath: receipt,
+              repairEnv,
+            }),
             cwd: JOELCLAW_REPO_ROOT,
-            env: process.env,
-            stdout: "pipe",
-            stderr: "pipe",
           });
-
-          if (proc.exitCode !== 0) {
-            throw new Error(
-              `agent session audit backup failed (${proc.exitCode}): ${toText(proc.stderr) || toText(proc.stdout)}`
-            );
-          }
 
           return receipt;
         });
