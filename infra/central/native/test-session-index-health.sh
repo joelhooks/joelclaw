@@ -60,7 +60,12 @@ run_probe() {
   MAX_INDEX_LAG_SECONDS=300 \
   RECOVER_AFTER_FAILURES=3 \
   RECOVERY_COOLDOWN_SECONDS=900 \
-  sh "${SCRIPT_DIR}/session-index-health.sh" >/dev/null 2>&1 || true
+  INDEX_PROGRESS_WINDOW_SECONDS=900 \
+  sh "${SCRIPT_DIR}/session-index-health.sh" >>"${TEST_ROOT}/probe.log" 2>&1 || true
+}
+
+kick_count() {
+  wc -l <"${TEST_ROOT}/launchctl.log" | tr -d ' '
 }
 
 # index_lag_exceeded: recovery is scoped to the worker; the third failing probe
@@ -127,4 +132,38 @@ run_probe
 [ "$(tail -n 1 "${TEST_ROOT}/launchctl.log")" = "kickstart -k system/com.joelclaw.central.typesense" ]
 printf '%s\n' '0' >"${TEST_ROOT}/fail-typesense"
 
-printf 'PASS session-index-health system-domain recovery, scoped cooldown, retry, and OTEL delivery (%s)\n' "${TEST_ROOT}"
+# index_lag_exceeded under an Inngest backlog: the index lags but keeps
+# advancing, so recovery is deferred and nothing is kicked (2026-10-07: the
+# kick killed in-flight runs and deepened a 27h backlog). Failures keep counting.
+printf '%s\n' '1' >"${TEST_ROOT}/state/last-recovery-epoch"
+rm -f "${TEST_ROOT}/state/last-indexed-epoch" "${TEST_ROOT}/state/last-index-progress-epoch"
+kicks_before="$(kick_count)"
+: >"${TEST_ROOT}/probe.log"
+for indexed_ms in 1000000000000 1000000060000 1000000120000 1000000180000 1000000240000; do
+  printf '%s\n' "1|${indexed_ms}" >"${TEST_ROOT}/indexed.txt"
+  run_probe
+done
+[ "$(kick_count)" = "${kicks_before}" ]
+[ "$(cat "${TEST_ROOT}/state/consecutive-failures")" = "5" ]
+grep -q 'recovery deferred (inngest backlog)' "${TEST_ROOT}/probe.log"
+grep -q '"recoveryDeferred": true' "${TEST_ROOT}/state/latest.json"
+
+# Truly stuck: the index stopped advancing longer than the window ago, so the
+# next lagging pass kicks the worker immediately (failures are already past the
+# threshold) and only the worker.
+printf '%s\n' '1' >"${TEST_ROOT}/state/last-index-progress-epoch"
+run_probe
+[ "$(kick_count)" = "$((kicks_before + 1))" ]
+[ "$(tail -n 1 "${TEST_ROOT}/launchctl.log")" = "kickstart -k system/com.joel.system-bus-worker" ]
+grep -q '"recoveryDeferred": false' "${TEST_ROOT}/state/latest.json"
+
+# A first observation with no recorded progress cannot defer, so a fresh
+# install or wiped state still recovers a stuck index.
+rm -f "${TEST_ROOT}/state/last-indexed-epoch" "${TEST_ROOT}/state/last-index-progress-epoch"
+printf '%s\n' '1' >"${TEST_ROOT}/state/last-recovery-epoch"
+printf '%s\n' '1|1000000300000' >"${TEST_ROOT}/indexed.txt"
+printf '%s\n' '3' >"${TEST_ROOT}/state/consecutive-failures"
+run_probe
+[ "$(kick_count)" = "$((kicks_before + 2))" ]
+
+printf 'PASS session-index-health system-domain recovery, scoped cooldown, retry, OTEL delivery, and backlog deferral (%s)\n' "${TEST_ROOT}"

@@ -12,6 +12,7 @@ TYPESENSE_INI="${TYPESENSE_INI:-${CENTRAL_ROOT}/etc/typesense/typesense.ini}"
 MAX_INDEX_LAG_SECONDS="${MAX_INDEX_LAG_SECONDS:-300}"
 RECOVER_AFTER_FAILURES="${RECOVER_AFTER_FAILURES:-3}"
 RECOVERY_COOLDOWN_SECONDS="${RECOVERY_COOLDOWN_SECONDS:-900}"
+INDEX_PROGRESS_WINDOW_SECONDS="${INDEX_PROGRESS_WINDOW_SECONDS:-900}"
 STATE_DIR="${STATE_DIR:-${CENTRAL_ROOT}/state/session-index-health}"
 LOG_PREFIX="session-index-health"
 
@@ -22,6 +23,8 @@ LAST_STATUS_FILE="${STATE_DIR}/last-emitted-status"
 PENDING_OTEL_FILE="${STATE_DIR}/pending-otel.json"
 PENDING_STATUS_FILE="${STATE_DIR}/pending-otel-status"
 RECEIPT_FILE="${STATE_DIR}/latest.json"
+LAST_INDEXED_FILE="${STATE_DIR}/last-indexed-epoch"
+LAST_PROGRESS_FILE="${STATE_DIR}/last-index-progress-epoch"
 
 number_file() {
   file="$1"
@@ -146,9 +149,11 @@ write_receipt() {
   rows="$5"
   lag="$6"
   failures="$7"
-  python3 - "${status}" "${reason}" "${raw}" "${indexed}" "${rows}" "${lag}" "${failures}" >"${RECEIPT_FILE}.tmp" <<'PY'
+  progress="$8"
+  deferred="$9"
+  python3 - "${status}" "${reason}" "${raw}" "${indexed}" "${rows}" "${lag}" "${failures}" "${progress}" "${deferred}" >"${RECEIPT_FILE}.tmp" <<'PY'
 import datetime, json, sys
-status, reason, raw, indexed, rows, lag, failures = sys.argv[1:]
+status, reason, raw, indexed, rows, lag, failures, progress, deferred = sys.argv[1:]
 print(json.dumps({
   "checkedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
   "status": status,
@@ -158,6 +163,8 @@ print(json.dumps({
   "indexedRunCount": int(rows),
   "indexLagSeconds": int(lag),
   "consecutiveFailures": int(failures),
+  "indexLastAdvancedEpoch": int(progress),
+  "recoveryDeferred": deferred == "1",
 }, indent=2))
 PY
   mv "${RECEIPT_FILE}.tmp" "${RECEIPT_FILE}"
@@ -216,7 +223,7 @@ recover() {
   return 0
 }
 
-case "${MAX_INDEX_LAG_SECONDS}:${RECOVER_AFTER_FAILURES}:${RECOVERY_COOLDOWN_SECONDS}" in
+case "${MAX_INDEX_LAG_SECONDS}:${RECOVER_AFTER_FAILURES}:${RECOVERY_COOLDOWN_SECONDS}:${INDEX_PROGRESS_WINDOW_SECONDS}" in
   *[!0-9:]*|'') log 'invalid numeric configuration'; exit 2 ;;
 esac
 
@@ -233,6 +240,25 @@ if [ "${indexed}" -gt 10000000000 ]; then
 fi
 lag=0
 [ "${raw}" -le "${indexed}" ] || lag=$((raw - indexed))
+
+# Index progress separates slow from stuck. On 2026-10-07 a 27h Inngest backlog
+# queued memory/run.captured writes; the index lagged but kept advancing, and
+# kicking the worker killed in-flight runs and deepened the backlog. This is the
+# cheapest backlog signal the probe has: the worker already answered 200 above,
+# and MAX(captured_at) comes from the same index read. It needs no Inngest API
+# key or queue introspection. A first observation records no progress, so a
+# fresh install cannot defer recovery.
+previous_indexed="$(number_file "${LAST_INDEXED_FILE}" 0)"
+last_progress="$(number_file "${LAST_PROGRESS_FILE}" 0)"
+if [ "${indexed}" -gt 0 ]; then
+  if [ "${previous_indexed}" -gt 0 ] && [ "${indexed}" -gt "${previous_indexed}" ]; then
+    last_progress="${now}"
+    write_number "${LAST_PROGRESS_FILE}" "${now}"
+  fi
+  write_number "${LAST_INDEXED_FILE}" "${indexed}"
+fi
+progress_age=-1
+[ "${last_progress}" -eq 0 ] || progress_age=$((now - last_progress))
 status="healthy"
 reason="current"
 actionable=0
@@ -270,11 +296,24 @@ else
   write_number "${FAILURE_FILE}" 0
 fi
 
-write_receipt "${status}" "${reason}" "${raw}" "${indexed}" "${rows}" "${lag}" "${failures}"
+# Only index_lag_exceeded can defer. Failures keep counting, so recovery fires
+# on the first pass after progress stops for the window. worker_unavailable
+# and inngest_unavailable recover as before.
+deferred=0
+if [ "${actionable}" -eq 1 ] && [ "${reason}" = "index_lag_exceeded" ] \
+  && [ "${progress_age}" -ge 0 ] && [ "${progress_age}" -le "${INDEX_PROGRESS_WINDOW_SECONDS}" ]; then
+  deferred=1
+fi
+
+write_receipt "${status}" "${reason}" "${raw}" "${indexed}" "${rows}" "${lag}" "${failures}" "${last_progress}" "${deferred}"
 emit_otel "${status}" "${reason}" "${lag}"
 
 if [ "${actionable}" -eq 1 ] && [ "${failures}" -ge "${RECOVER_AFTER_FAILURES}" ]; then
-  recover "${reason}" "${now}" || true
+  if [ "${deferred}" -eq 1 ]; then
+    log "recovery deferred (inngest backlog): index advanced ${progress_age}s ago, lag=${lag}s"
+  else
+    recover "${reason}" "${now}" || true
+  fi
 fi
 
 if [ "${status}" = "healthy" ]; then

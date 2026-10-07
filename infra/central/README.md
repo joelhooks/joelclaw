@@ -279,7 +279,8 @@ Its recovery machine is `healthy -> degraded -> recovering -> healthy|cooldown`.
 - compares the raw Run month-directory freshness with SQLite `MAX(captured_at)` and checks that the index has rows;
 - treats Inngest or worker HTTP failure and index lag over 300 seconds as actionable;
 - waits for three consecutive actionable failures;
-- restarts `com.joelclaw.central.inngest` and `com.joel.system-bus-worker` from a root LaunchDaemon;
+- restarts only the failing target from a root LaunchDaemon: `com.joelclaw.central.inngest` for Inngest, `com.joelclaw.central.typesense` for Typesense, otherwise `com.joel.system-bus-worker`;
+- defers the worker restart for index lag while `MAX(captured_at)` has advanced within `INDEX_PROGRESS_WINDOW_SECONDS` (default 900), and logs `recovery deferred (inngest backlog)`. A lagging but advancing index means an Inngest backlog is draining; a restart kills in-flight runs and makes the backlog worse. Failures keep counting, so the restart fires on the first pass after progress stalls past the window;
 - enforces a 15-minute recovery cooldown;
 - writes `/Users/Shared/joelclaw/state/session-index-health/latest.json` and emits `session.index.health_checked` OTEL events on state changes.
 
