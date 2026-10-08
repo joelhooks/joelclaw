@@ -68,7 +68,7 @@ Functions are split between `index.host.ts` and `index.cluster.ts`. The combined
 ## Deployment Model
 
 - **Source of truth**: `~/Code/joelhooks/joelclaw/packages/system-bus/`
-- **Running host worker**: `worker-supervisor` process running `bun run src/serve.ts` from Central's deployed export of `packages/system-bus/`, the service-owned checkout that `infra/central/scripts/sync-service-checkout.sh` syncs from the source repo
+- **Running host worker**: `worker-supervisor` process running `bun run src/serve.ts` from a deployed export of `packages/system-bus/`; confirm its location from the live port-3111 process cwd
   - verify with `lsof -iTCP:3111 -sTCP:LISTEN -n -P` and `lsof -p <pid> | awk '$4=="cwd"{print}'`
 - **Cluster runtime**: `system-bus-worker` Deployment in the Talos/Colima k8s cluster for cluster-role workloads
 - **Cluster deploy path**: `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh`
@@ -81,7 +81,7 @@ After changing `packages/system-bus/src/inngest/functions/*` that run on the hos
 
 1. commit + push the monorepo change to `origin`
 2. confirm the live worker cwd: `pid=$(lsof -tiTCP:3111 -sTCP:LISTEN); lsof -p "$pid" | awk '$4=="cwd"{print}'`
-3. if cwd is the deployed export's `packages/system-bus`, sync the export, then kill the Bun worker PID and let `worker-supervisor` respawn it
+3. if cwd is the deployed export, update that export to the merged source (back up the files you replace), then kill the Bun worker PID and let `worker-supervisor` respawn it
 4. if cwd is anywhere else (for example a legacy worker clone), inspect its status and divergence, preserve both sides, and use the current deployment source; never reset the legacy clone to discard work
 5. verify `curl http://127.0.0.1:3111/` shows functions and `joelclaw functions` returns >0
 

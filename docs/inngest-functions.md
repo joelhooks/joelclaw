@@ -232,7 +232,7 @@ Reboot recovery gotchas that bit for real:
 - `com.joel.system-bus-worker` is a system LaunchDaemon on Panda. Talon must detect it through `launchctl print system/com.joel.system-bus-worker`; checking only `launchctl list <label>` in the user bootstrap domain creates a false negative and starts a second supervisor that fights over port 3111.
 - If the reboot lands in a headless/non-Aqua session and the system worker is truly unavailable, start `worker-supervisor` manually with the launchd env (`HOME`, `PATH`, `VAULT_PATH`, `WORKER_ROLE=host`, `INNGEST_DEV=1` for local/self-hosted Inngest) until launchd is back. The SDK must run in dev mode against local self-hosted Inngest callbacks, otherwise it expects signed cloud callbacks and functions fail with `No x-inngest-signature provided`.
 
-Do not rely on stale instructions about a separate legacy worker clone. The host worker runs from Central's deployed export of `packages/system-bus`: the service-owned checkout that `infra/central/scripts/sync-service-checkout.sh` syncs from the source repo.
+Do not rely on stale instructions about a separate legacy worker clone. The host worker runs from a deployed export of `packages/system-bus`; confirm its location from the live port-3111 process cwd.
 
 ### Host worker startup preflight + supervisor OTEL
 
