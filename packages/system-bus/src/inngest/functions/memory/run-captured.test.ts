@@ -1,18 +1,25 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InngestTestEngine } from "@inngest/test";
-import { memoryRunCaptured } from "./run-captured";
+import type { CaptureGrowthCheckReceipt } from "../typesense-recovery-alerts";
+import {
+  __runCapturedTestUtils,
+  memoryRunCaptured,
+  runIndexedEventId,
+} from "./run-captured";
 
 const originalOtelEnabled = process.env.OTEL_EVENTS_ENABLED;
 const originalSessionIndexPath = process.env.SESSION_INDEX_PATH;
 
 let testDirectory = "";
 let sessionIndexPath = "";
-const spooledPaths = new Set<string>();
+let indexedEvents: Array<{ id: string; name: string; data: unknown }> = [];
+let growthChecks: Array<Record<string, unknown>> = [];
+let sendIndexedFailures = 0;
 
 beforeEach(() => {
   testDirectory = mkdtempSync(join(tmpdir(), "run-captured-test-"));
@@ -42,6 +49,22 @@ beforeEach(() => {
   db.close(false);
 
   process.env.OTEL_EVENTS_ENABLED = "0";
+  indexedEvents = [];
+  growthChecks = [];
+  sendIndexedFailures = 0;
+  __runCapturedTestUtils.setDependencies({
+    checkCaptureGrowth: async (data): Promise<CaptureGrowthCheckReceipt> => {
+      growthChecks.push(data);
+      return { checked: true, finding: null, alerted: false };
+    },
+    sendIndexed: async (event) => {
+      if (sendIndexedFailures > 0) {
+        sendIndexedFailures -= 1;
+        throw new Error("event API unavailable");
+      }
+      indexedEvents.push(event);
+    },
+  });
 });
 
 afterEach(() => {
@@ -50,14 +73,7 @@ afterEach(() => {
   if (originalSessionIndexPath === undefined) delete process.env.SESSION_INDEX_PATH;
   else process.env.SESSION_INDEX_PATH = originalSessionIndexPath;
 
-  for (const path of spooledPaths) {
-    try {
-      unlinkSync(path);
-    } catch {
-      // A failed test may not have created its spool yet.
-    }
-  }
-  spooledPaths.clear();
+  __runCapturedTestUtils.resetDependencies();
   rmSync(testDirectory, { recursive: true, force: true });
 });
 
@@ -79,29 +95,25 @@ interface CaptureEventData {
   jsonl_inline?: string;
 }
 
+const spoolDirectory = join(tmpdir(), "joelclaw-memory-run-capture");
+
+function spooledFiles(): string[] {
+  return existsSync(spoolDirectory) ? readdirSync(spoolDirectory) : [];
+}
+
 async function executeRun(data: CaptureEventData) {
+  // Every step.* call is one executor round trip on self-hosted Inngest.
+  // The handler must finish without any of them.
   const stepIds: string[] = [];
-  const stepOutputs = new Map<string, unknown>();
-  const sentEvents: Array<{ stepId: string; event: unknown }> = [];
-  const step = {
-    run: async <T>(stepId: string, fn: () => T | Promise<T>): Promise<T> => {
-      stepIds.push(stepId);
-      const output = await fn();
-      stepOutputs.set(stepId, output);
-      if (
-        typeof output === "object" &&
-        output !== null &&
-        "path" in output &&
-        typeof output.path === "string"
-      ) {
-        spooledPaths.add(output.path);
-      }
-      return output;
+  const step = new Proxy(
+    {},
+    {
+      get: (_target, method) => (stepId: string) => {
+        stepIds.push(`${String(method)}:${stepId}`);
+        throw new Error(`unexpected step.${String(method)}("${stepId}")`);
+      },
     },
-    sendEvent: async (stepId: string, event: unknown) => {
-      sentEvents.push({ stepId, event });
-    },
-  };
+  );
 
   const result = await (memoryRunCaptured as any).fn({
     event: {
@@ -112,7 +124,21 @@ async function executeRun(data: CaptureEventData) {
     step,
   });
 
-  return { result, sentEvents, stepIds, stepOutputs };
+  return { result, stepIds };
+}
+
+function conversationJsonl(turns: number): string {
+  const lines = ['{"type":"session","version":3}'];
+  for (let index = 0; index < turns; index += 1) {
+    lines.push(
+      JSON.stringify({
+        type: "message",
+        timestamp: new Date(1_721_238_660_000 + index * 1000).toISOString(),
+        message: { role: index % 2 === 0 ? "user" : "assistant", content: `turn ${index}` },
+      }),
+    );
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function emptyRunData(): CaptureEventData {
@@ -144,9 +170,11 @@ describe("memory/run.captured", () => {
       run_id: "run-empty",
       chunks_indexed: 0,
       reason: "empty",
+      session_index_status: "appended",
+      session_index_run_id: "run-empty",
     });
-    expect(stepIds).not.toContain("ensure-collections");
-    expect(stepIds).not.toContain("index-run");
+    expect(stepIds).toEqual([]);
+    expect(indexedEvents).toEqual([]);
 
     const db = new Database(sessionIndexPath, { readonly: true, strict: true });
     expect(db.query(`SELECT run_id, user_id, machine_id, agent_runtime, parent_run_id,
@@ -171,15 +199,15 @@ describe("memory/run.captured", () => {
     const first = await executeRun(data);
     const replay = await executeRun(data);
 
-    expect(first.stepOutputs.get("append-session-index")).toMatchObject({
-      status: "appended",
-      run_id: "run-empty",
-      chunk_count: 0,
+    expect(first.result).toMatchObject({
+      session_index_status: "appended",
+      session_index_run_id: "run-empty",
+      chunks_indexed: 0,
     });
-    expect(replay.stepOutputs.get("append-session-index")).toMatchObject({
-      status: "already_indexed",
-      run_id: "run-empty",
-      chunk_count: 0,
+    expect(replay.result).toMatchObject({
+      session_index_status: "already_indexed",
+      session_index_run_id: "run-empty",
+      chunks_indexed: 0,
     });
 
     const db = new Database(sessionIndexPath, { readonly: true, strict: true });
@@ -208,9 +236,9 @@ describe("memory/run.captured", () => {
       run_id: "run-fresh-overlap",
     });
 
-    expect(duplicate.stepOutputs.get("append-session-index")).toMatchObject({
-      status: "already_indexed",
-      run_id: original.run_id,
+    expect(duplicate.result).toMatchObject({
+      session_index_status: "already_indexed",
+      session_index_run_id: original.run_id,
     });
     const db = new Database(sessionIndexPath, { readonly: true, strict: true });
     expect(
@@ -286,7 +314,7 @@ describe("memory/run.captured", () => {
     ).rejects.toThrow("already exists with different JSONL bytes");
   });
 
-  test("keeps every durable step output small for a large inline capture", async () => {
+  test("indexes a large inline capture with no checkpoint and a small persisted result", async () => {
     const marker = "large-payload-content-must-not-enter-step-output";
     const messageText = `${marker}:${"x".repeat(1024)}`;
     const messages = Array.from({ length: 128 }, (_, index) =>
@@ -305,7 +333,8 @@ describe("memory/run.captured", () => {
       "",
     ].join("\n");
 
-    const { result, sentEvents, stepIds, stepOutputs } = await executeRun({
+    const spoolsBefore = spooledFiles().length;
+    const { result, stepIds } = await executeRun({
       run_id: "run-large-inline",
       user_id: "joel",
       machine_id: "flagg",
@@ -323,43 +352,25 @@ describe("memory/run.captured", () => {
       run_id: "run-large-inline",
       chunks_indexed: 128,
       turn_count: 128,
+      session_index_status: "appended",
     });
-    expect(stepOutputs.get("spool-inline-jsonl")).toEqual({
-      run_id: "run-large-inline",
-      path: expect.stringContaining("joelclaw-memory-run-capture"),
-      bytes: Buffer.byteLength(jsonlInline),
-      sha256: expect.any(String),
-    });
-    expect(stepOutputs.get("chunk")).toEqual({
-      turn_count: 128,
-      candidate_count: 128,
-    });
-    expect(stepIds).not.toContain("index-chunks");
-    expect(stepIds).not.toContain("index-run");
-    expect(stepOutputs.get("cleanup-inline-jsonl")).toEqual({
-      run_id: "run-large-inline",
-    });
-    expect(stepIds).not.toContain("load-jsonl");
-    expect(stepIds).not.toContain("prepare-chunks");
+    expect(stepIds).toEqual([]);
+    expect(spooledFiles().length).toBe(spoolsBefore);
 
-    for (const output of stepOutputs.values()) {
-      if (output === undefined) continue;
-      const serialized = JSON.stringify(output);
-      expect(serialized.length).toBeLessThan(1024);
-      expect(serialized).not.toContain(marker);
-    }
+    // The return value is the only state Inngest persists for the run.
+    const serialized = JSON.stringify(result);
+    expect(serialized.length).toBeLessThan(1024);
+    expect(serialized).not.toContain(marker);
 
-    expect(sentEvents).toEqual([
+    expect(indexedEvents).toEqual([
       {
-        stepId: "emit-indexed",
-        event: {
-          name: "memory/run.indexed",
-          data: {
-            run_id: "run-large-inline",
-            user_id: "joel",
-            chunk_count: 128,
-            index_duration_ms: expect.any(Number),
-          },
+        id: runIndexedEventId("run-large-inline"),
+        name: "memory/run.indexed",
+        data: {
+          run_id: "run-large-inline",
+          user_id: "joel",
+          chunk_count: 128,
+          index_duration_ms: expect.any(Number),
         },
       },
     ]);
@@ -399,5 +410,155 @@ describe("memory/run.captured", () => {
     const count = db.query("SELECT COUNT(*) AS n FROM runs").get() as { n: number };
     db.close(false);
     expect(count.n).toBe(1);
+  });
+  test("indexes today's path-based event shape in one invocation", async () => {
+    const jsonl = conversationJsonl(4);
+    const path = join(testDirectory, "run-path.jsonl");
+    writeFileSync(path, jsonl);
+    const sourceIdentity = `sha256:${"d".repeat(64)}`;
+
+    const { result, stepIds } = await executeRun({
+      run_id: "run-path",
+      user_id: "joel",
+      machine_id: "test-machine",
+      agent_runtime: "pi",
+      jsonl_path: path,
+      jsonl_bytes: Buffer.byteLength(jsonl),
+      jsonl_sha256: createHash("sha256").update(jsonl).digest("hex"),
+      started_at: 1_721_238_660_000,
+      tags: [],
+      from_offset: 0,
+      to_offset: Buffer.byteLength(jsonl),
+      source_identity: sourceIdentity,
+    });
+
+    expect(stepIds).toEqual([]);
+    expect(result).toMatchObject({
+      run_id: "run-path",
+      chunks_indexed: 4,
+      turn_count: 4,
+      session_index_status: "appended",
+    });
+    expect(indexedEvents.map((event) => event.id)).toEqual([runIndexedEventId("run-path")]);
+    expect(growthChecks).toEqual([
+      expect.objectContaining({ run_id: "run-path", source_identity: sourceIdentity }),
+    ]);
+  });
+
+  test("still indexes a legacy event with no source cursor or tags", async () => {
+    const jsonl = conversationJsonl(2);
+    const path = join(testDirectory, "run-legacy.jsonl");
+    writeFileSync(path, jsonl);
+
+    const { result } = await executeRun({
+      run_id: "run-legacy",
+      user_id: "joel",
+      machine_id: "test-machine",
+      agent_runtime: "claude",
+      jsonl_path: path,
+      jsonl_bytes: Buffer.byteLength(jsonl),
+      jsonl_sha256: createHash("sha256").update(jsonl).digest("hex"),
+      started_at: 1_721_238_660_000,
+    });
+
+    expect(result).toMatchObject({ chunks_indexed: 2, session_index_status: "appended" });
+    const db = new Database(sessionIndexPath, { readonly: true, strict: true });
+    expect(
+      db.query("SELECT source_identity, from_offset, tags_json FROM runs WHERE run_id = ?")
+        .get("run-legacy"),
+    ).toEqual({ source_identity: "legacy-run:run-legacy", from_offset: null, tags_json: "[]" });
+    db.close(false);
+  });
+
+  test("a retry after a failed run.indexed send does not double-index", async () => {
+    const jsonl = conversationJsonl(3);
+    const data: CaptureEventData = {
+      run_id: "run-retry",
+      user_id: "joel",
+      machine_id: "test-machine",
+      agent_runtime: "pi",
+      jsonl_path: "/captures/run-retry.jsonl",
+      jsonl_bytes: Buffer.byteLength(jsonl),
+      jsonl_sha256: createHash("sha256").update(jsonl).digest("hex"),
+      started_at: 1_721_238_660_000,
+      from_offset: 0,
+      to_offset: Buffer.byteLength(jsonl),
+      source_identity: `sha256:${"e".repeat(64)}`,
+      jsonl_inline: jsonl,
+    };
+    const spoolsBefore = spooledFiles().length;
+
+    // The append commits, then the event send fails, so Inngest retries the
+    // whole handler.
+    sendIndexedFailures = 1;
+    await expect(executeRun(data)).rejects.toThrow("event API unavailable");
+    expect(spooledFiles().length).toBe(spoolsBefore);
+
+    const retry = await executeRun(data);
+    const redelivery = await executeRun(data);
+    expect(retry.result).toMatchObject({ session_index_status: "already_indexed", chunks_indexed: 3 });
+    expect(redelivery.result).toMatchObject({ session_index_status: "already_indexed" });
+
+    // Both sends share one event id, which Inngest dedupes to one event.
+    expect(new Set(indexedEvents.map((event) => event.id))).toEqual(
+      new Set([runIndexedEventId("run-retry")]),
+    );
+
+    const db = new Database(sessionIndexPath, { readonly: true, strict: true });
+    expect(db.query("SELECT count(*) AS count FROM runs").get()).toEqual({ count: 1 });
+    expect(db.query("SELECT count(*) AS count FROM chunks").get()).toEqual({ count: 3 });
+    expect(db.query("SELECT count(*) AS count FROM chunk_fts").get()).toEqual({ count: 3 });
+    db.close(false);
+  });
+
+  test("runs the growth check for a conflicting capture and stays non-retriable", async () => {
+    const original = emptyRunData();
+    await executeRun(original);
+
+    await expect(
+      executeRun({ ...original, from_offset: 1, to_offset: original.to_offset! + 1 }),
+    ).rejects.toThrow("already exists with different JSONL bytes");
+    expect(growthChecks.map((data) => data.run_id)).toEqual(["run-empty", "run-empty"]);
+  });
+
+  test("indexes the Run even when the growth check reports a failure", async () => {
+    __runCapturedTestUtils.setDependencies({
+      checkCaptureGrowth: async () => ({
+        checked: false,
+        finding: null,
+        alerted: false,
+        error: "capture growth check timed out after 2000ms",
+      }),
+      sendIndexed: async (event) => {
+        indexedEvents.push(event);
+      },
+    });
+    const jsonl = conversationJsonl(1);
+
+    const { result } = await executeRun({
+      ...emptyRunData(),
+      run_id: "run-growth-down",
+      jsonl_bytes: Buffer.byteLength(jsonl),
+      jsonl_sha256: createHash("sha256").update(jsonl).digest("hex"),
+      to_offset: Buffer.byteLength(jsonl),
+      jsonl_inline: jsonl,
+    });
+
+    expect(result).toMatchObject({ chunks_indexed: 1, session_index_status: "appended" });
+    expect(indexedEvents).toHaveLength(1);
+  });
+
+  test("keeps the queued function id and moves the prefix alert inline", async () => {
+    const alerts = await import("../typesense-recovery-alerts");
+    const captureConsumers = Object.values(alerts).filter((value: any) =>
+      (value?.opts?.triggers ?? []).some(
+        (trigger: { event?: string }) => trigger.event === "memory/run.captured",
+      ),
+    );
+
+    expect(captureConsumers).toEqual([]);
+    expect((memoryRunCaptured as any).opts.id).toBe("memory-run-captured-v3");
+    expect((memoryRunCaptured as any).opts.triggers).toEqual([{ event: "memory/run.captured" }]);
+    expect((memoryRunCaptured as any).opts.concurrency).toEqual({ limit: 8 });
   });
 });

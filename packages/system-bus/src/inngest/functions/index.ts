@@ -167,7 +167,7 @@ export { transcriptionAsrChunkRun } from "./transcription-asr-chunk";
 export { transcriptionCleanup } from "./transcription-cleanup";
 export { transcriptionDiarizeRun } from "./transcription-diarize";
 export {
-  capturePrefixGrowthAlert,
+  captureGrowthNotify,
   typesenseStartupBudgetCheck,
 } from "./typesense-recovery-alerts";
 export {

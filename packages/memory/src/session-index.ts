@@ -77,9 +77,9 @@ export function appendSessionCapture(input: SessionCaptureAppendInput): SessionC
 
   let transactionOpen = false;
   try {
-    db.exec("BEGIN IMMEDIATE");
-    transactionOpen = true;
-
+    // Read, verify and chunk the capture before taking the write lock. The
+    // blob may live on network storage, and holding BEGIN IMMEDIATE across that
+    // read would serialize every concurrent writer behind it.
     const blob = readFileSync(input.capturePath);
     if (blob.length !== input.jsonlBytes) {
       throw new Error(
@@ -92,6 +92,12 @@ export function appendSessionCapture(input: SessionCaptureAppendInput): SessionC
         `session index SHA-256 mismatch for ${input.runId}: event=${input.jsonlSha256} disk=${digest}`,
       );
     }
+    const entries = parseJsonl(blob.toString("utf8"));
+    const turns = extractTurns(entries, detectFormat(entries));
+    const chunks = chunkTurns(turns);
+
+    db.exec("BEGIN IMMEDIATE");
+    transactionOpen = true;
 
     const sourceIdentity = input.sourceIdentity ?? `legacy-run:${input.runId}`;
     const fromOffset = Number.isSafeInteger(input.fromOffset) ? input.fromOffset : undefined;
@@ -191,9 +197,6 @@ export function appendSessionCapture(input: SessionCaptureAppendInput): SessionC
       if (overlapping) throw new SessionIndexConflictError(overlapping.run_id);
     }
 
-    const entries = parseJsonl(blob.toString("utf8"));
-    const turns = extractTurns(entries, detectFormat(entries));
-    const chunks = chunkTurns(turns);
     const endedAt = turns[turns.length - 1]?.started_at ?? input.startedAt;
     db.query(`INSERT INTO runs (
       run_id, user_id, machine_id, agent_runtime, conversation_id, parent_run_id,

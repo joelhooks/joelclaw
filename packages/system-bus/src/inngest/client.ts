@@ -6,6 +6,7 @@ import type {
 import type { ChannelAuditSeed } from "@joelclaw/telemetry";
 import { EventSchemas, Inngest } from "inngest";
 import type { PaneScheduleEntry } from "../lib/pane-schedule";
+import type { CaptureGrowthFinding } from "../lib/search-maintenance";
 import { gatewayMiddleware } from "./middleware/gateway";
 
 /**
@@ -899,6 +900,13 @@ export type Events = {
       user_id: string;
       chunk_count: number;
       index_duration_ms: number;
+    };
+  };
+  /** Overlapping capture ranges found inline by memory/run.captured. */
+  "search/capture-growth.detected": {
+    data: {
+      event_id: string;
+      finding: CaptureGrowthFinding;
     };
   };
 
