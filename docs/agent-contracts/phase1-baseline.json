@@ -2,74 +2,168 @@
   "version": 1,
   "scope": "packages/cli/src/commands/*.ts",
   "commandFiles": [
+    "packages/cli/src/commands/agent.ts",
     "packages/cli/src/commands/approvals.ts",
+    "packages/cli/src/commands/briefing.ts",
     "packages/cli/src/commands/call.ts",
     "packages/cli/src/commands/capabilities.ts",
+    "packages/cli/src/commands/content.ts",
+    "packages/cli/src/commands/deploy.ts",
     "packages/cli/src/commands/diagnose.ts",
     "packages/cli/src/commands/discover.ts",
+    "packages/cli/src/commands/docs.ts",
     "packages/cli/src/commands/email.ts",
     "packages/cli/src/commands/event.ts",
     "packages/cli/src/commands/events.ts",
+    "packages/cli/src/commands/gateway-behavior.ts",
+    "packages/cli/src/commands/gateway-doctor.ts",
     "packages/cli/src/commands/gateway.ts",
+    "packages/cli/src/commands/heal.ts",
     "packages/cli/src/commands/inngest.ts",
-    "packages/cli/src/commands/langfuse.ts",
+    "packages/cli/src/commands/jobs.ts",
+    "packages/cli/src/commands/knowledge.ts",
     "packages/cli/src/commands/logs.ts",
     "packages/cli/src/commands/loop.ts",
+    "packages/cli/src/commands/mail.ts",
+    "packages/cli/src/commands/memory.ts",
+    "packages/cli/src/commands/messages.ts",
     "packages/cli/src/commands/nas.ts",
     "packages/cli/src/commands/note.ts",
+    "packages/cli/src/commands/notify.ts",
+    "packages/cli/src/commands/o11y.ts",
+    "packages/cli/src/commands/observations.ts",
+    "packages/cli/src/commands/observer.ts",
     "packages/cli/src/commands/otel.ts",
+    "packages/cli/src/commands/pds.ts",
+    "packages/cli/src/commands/queue.ts",
+    "packages/cli/src/commands/recall-compare.ts",
     "packages/cli/src/commands/recall.ts",
     "packages/cli/src/commands/recover.ts",
     "packages/cli/src/commands/refresh.ts",
+    "packages/cli/src/commands/restate.ts",
+    "packages/cli/src/commands/retro.ts",
     "packages/cli/src/commands/review.ts",
     "packages/cli/src/commands/runs.ts",
+    "packages/cli/src/commands/satellite.ts",
     "packages/cli/src/commands/schema.ts",
     "packages/cli/src/commands/search.ts",
+    "packages/cli/src/commands/secrets.ts",
     "packages/cli/src/commands/send.ts",
+    "packages/cli/src/commands/sessions.ts",
+    "packages/cli/src/commands/skills.ts",
+    "packages/cli/src/commands/sleep.ts",
     "packages/cli/src/commands/status.ts",
+    "packages/cli/src/commands/subscribe.ts",
+    "packages/cli/src/commands/summary.ts",
     "packages/cli/src/commands/tui.ts",
+    "packages/cli/src/commands/usage.ts",
     "packages/cli/src/commands/vault.ts",
-    "packages/cli/src/commands/watch.ts"
+    "packages/cli/src/commands/video.ts",
+    "packages/cli/src/commands/watch.ts",
+    "packages/cli/src/commands/webhook.ts",
+    "packages/cli/src/commands/workload-dispatch.ts",
+    "packages/cli/src/commands/workload-plan.ts",
+    "packages/cli/src/commands/workload-run.ts",
+    "packages/cli/src/commands/workload-stages.ts",
+    "packages/cli/src/commands/workload-types.ts",
+    "packages/cli/src/commands/workload-utils.ts",
+    "packages/cli/src/commands/workload.ts",
+    "packages/cli/src/commands/x.ts"
   ],
   "envelopeCommandFiles": [
+    "packages/cli/src/commands/agent.ts",
     "packages/cli/src/commands/approvals.ts",
+    "packages/cli/src/commands/briefing.ts",
     "packages/cli/src/commands/call.ts",
     "packages/cli/src/commands/capabilities.ts",
+    "packages/cli/src/commands/content.ts",
+    "packages/cli/src/commands/deploy.ts",
     "packages/cli/src/commands/diagnose.ts",
     "packages/cli/src/commands/discover.ts",
+    "packages/cli/src/commands/docs.ts",
     "packages/cli/src/commands/email.ts",
     "packages/cli/src/commands/event.ts",
     "packages/cli/src/commands/events.ts",
+    "packages/cli/src/commands/gateway-behavior.ts",
     "packages/cli/src/commands/gateway.ts",
+    "packages/cli/src/commands/heal.ts",
     "packages/cli/src/commands/inngest.ts",
-    "packages/cli/src/commands/langfuse.ts",
+    "packages/cli/src/commands/jobs.ts",
+    "packages/cli/src/commands/knowledge.ts",
     "packages/cli/src/commands/logs.ts",
     "packages/cli/src/commands/loop.ts",
+    "packages/cli/src/commands/mail.ts",
+    "packages/cli/src/commands/memory.ts",
     "packages/cli/src/commands/nas.ts",
     "packages/cli/src/commands/note.ts",
+    "packages/cli/src/commands/notify.ts",
+    "packages/cli/src/commands/o11y.ts",
+    "packages/cli/src/commands/observations.ts",
+    "packages/cli/src/commands/observer.ts",
     "packages/cli/src/commands/otel.ts",
+    "packages/cli/src/commands/pds.ts",
+    "packages/cli/src/commands/queue.ts",
+    "packages/cli/src/commands/recall-compare.ts",
     "packages/cli/src/commands/recall.ts",
     "packages/cli/src/commands/recover.ts",
     "packages/cli/src/commands/refresh.ts",
+    "packages/cli/src/commands/restate.ts",
+    "packages/cli/src/commands/retro.ts",
     "packages/cli/src/commands/review.ts",
     "packages/cli/src/commands/runs.ts",
+    "packages/cli/src/commands/satellite.ts",
     "packages/cli/src/commands/schema.ts",
     "packages/cli/src/commands/search.ts",
+    "packages/cli/src/commands/secrets.ts",
     "packages/cli/src/commands/send.ts",
+    "packages/cli/src/commands/sessions.ts",
+    "packages/cli/src/commands/skills.ts",
+    "packages/cli/src/commands/sleep.ts",
     "packages/cli/src/commands/status.ts",
+    "packages/cli/src/commands/subscribe.ts",
+    "packages/cli/src/commands/summary.ts",
     "packages/cli/src/commands/tui.ts",
-    "packages/cli/src/commands/vault.ts"
+    "packages/cli/src/commands/usage.ts",
+    "packages/cli/src/commands/vault.ts",
+    "packages/cli/src/commands/video.ts",
+    "packages/cli/src/commands/webhook.ts",
+    "packages/cli/src/commands/workload.ts"
   ],
   "rawOutputCommandFiles": [
+    "packages/cli/src/commands/briefing.ts",
     "packages/cli/src/commands/diagnose.ts",
+    "packages/cli/src/commands/gateway-behavior.ts",
+    "packages/cli/src/commands/knowledge.ts",
     "packages/cli/src/commands/loop.ts",
+    "packages/cli/src/commands/messages.ts",
     "packages/cli/src/commands/note.ts",
-    "packages/cli/src/commands/recall.ts",
-    "packages/cli/src/commands/tui.ts"
+    "packages/cli/src/commands/sessions.ts",
+    "packages/cli/src/commands/sleep.ts",
+    "packages/cli/src/commands/tui.ts",
+    "packages/cli/src/commands/usage.ts",
+    "packages/cli/src/commands/x.ts"
   ],
   "rawOutputByFile": {
+    "packages/cli/src/commands/briefing.ts": {
+      "count": 1,
+      "kinds": [
+        "Console.log"
+      ]
+    },
     "packages/cli/src/commands/diagnose.ts": {
       "count": 2,
+      "kinds": [
+        "Console.log"
+      ]
+    },
+    "packages/cli/src/commands/gateway-behavior.ts": {
+      "count": 6,
+      "kinds": [
+        "Console.log"
+      ]
+    },
+    "packages/cli/src/commands/knowledge.ts": {
+      "count": 1,
       "kinds": [
         "Console.log"
       ]
@@ -80,14 +174,26 @@
         "Console.log"
       ]
     },
+    "packages/cli/src/commands/messages.ts": {
+      "count": 3,
+      "kinds": [
+        "Console.log"
+      ]
+    },
     "packages/cli/src/commands/note.ts": {
       "count": 1,
       "kinds": [
         "Console.log"
       ]
     },
-    "packages/cli/src/commands/recall.ts": {
-      "count": 1,
+    "packages/cli/src/commands/sessions.ts": {
+      "count": 6,
+      "kinds": [
+        "process.stdout.write"
+      ]
+    },
+    "packages/cli/src/commands/sleep.ts": {
+      "count": 4,
       "kinds": [
         "Console.log"
       ]
@@ -98,9 +204,29 @@
         "Console.log",
         "process.stdout.write"
       ]
+    },
+    "packages/cli/src/commands/usage.ts": {
+      "count": 1,
+      "kinds": [
+        "Console.log"
+      ]
+    },
+    "packages/cli/src/commands/x.ts": {
+      "count": 2,
+      "kinds": [
+        "Console.log",
+        "console.log"
+      ]
     }
   },
   "unclassifiedCommandFiles": [
-    "packages/cli/src/commands/watch.ts"
+    "packages/cli/src/commands/gateway-doctor.ts",
+    "packages/cli/src/commands/watch.ts",
+    "packages/cli/src/commands/workload-dispatch.ts",
+    "packages/cli/src/commands/workload-plan.ts",
+    "packages/cli/src/commands/workload-run.ts",
+    "packages/cli/src/commands/workload-stages.ts",
+    "packages/cli/src/commands/workload-types.ts",
+    "packages/cli/src/commands/workload-utils.ts"
   ]
 }
