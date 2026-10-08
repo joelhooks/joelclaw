@@ -132,7 +132,7 @@ import { transcriptionAsrChunkRun } from "./transcription-asr-chunk";
 import { transcriptionCleanup } from "./transcription-cleanup";
 import { transcriptionDiarizeRun } from "./transcription-diarize";
 import {
-  capturePrefixGrowthAlert,
+  captureGrowthNotify,
   typesenseStartupBudgetCheck,
 } from "./typesense-recovery-alerts";
 import {
@@ -261,7 +261,7 @@ export const hostFunctionDefinitions = [
   memoryEmbed,
   memoryRetroWriter,
   memoryRunCaptured,
-  capturePrefixGrowthAlert,
+  captureGrowthNotify,
   typesenseStartupBudgetCheck,
   criticalDbScheduledRebuild,
   criticalDbStalenessCheck,

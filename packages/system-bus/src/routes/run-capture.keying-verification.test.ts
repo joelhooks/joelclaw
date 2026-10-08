@@ -14,7 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendSessionCapture, writeRunBlob } from "@joelclaw/memory";
 import { Hono } from "hono";
-import { memoryRunCaptured } from "../inngest/functions/memory/run-captured";
+import {
+  __runCapturedTestUtils,
+  memoryRunCaptured,
+} from "../inngest/functions/memory/run-captured";
 import { registerRunCaptureRoute } from "./run-capture";
 
 const roots = new Set<string>();
@@ -411,12 +414,12 @@ describe("Typesense reboot recovery source-cursor verification", () => {
     globalThis.fetch = (async () => new Response("{}", { status: 200 })) as typeof fetch;
     process.env.SESSION_INDEX_PATH = databasePath;
     process.env.OTEL_EVENTS_ENABLED = "0";
+    __runCapturedTestUtils.setDependencies({
+      checkCaptureGrowth: async () => ({ checked: false, finding: null, alerted: false }),
+      sendIndexed: async () => undefined,
+    });
 
     const emit = async (runId: string, jsonl: string, fromOffset: number) => {
-      const step = {
-        run: async <T>(_stepId: string, operation: () => T | Promise<T>) => operation(),
-        sendEvent: async () => undefined,
-      };
       return (memoryRunCaptured as any).fn({
         event: {
           id: `event-${runId}`,
@@ -436,7 +439,7 @@ describe("Typesense reboot recovery source-cursor verification", () => {
             jsonl_inline: jsonl,
           },
         },
-        step,
+        step: {},
       });
     };
 
@@ -446,6 +449,7 @@ describe("Typesense reboot recovery source-cursor verification", () => {
         emit("partial-b", overlappingSegment, Buffer.byteLength(firstLine)),
       ).rejects.toThrow(/conflict|partial-a/i);
     } finally {
+      __runCapturedTestUtils.resetDependencies();
       globalThis.fetch = originalFetch;
       if (originalIndexPath === undefined) delete process.env.SESSION_INDEX_PATH;
       else process.env.SESSION_INDEX_PATH = originalIndexPath;

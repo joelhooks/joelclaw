@@ -28,6 +28,7 @@ const CAPTURE_LEDGER_TTL_SECONDS = 90 * 24 * 60 * 60;
 const CAPTURE_INCIDENT_QUIET_MS = 24 * 60 * 60_000;
 const STARTUP_INCIDENT_QUIET_MS = 24 * 60 * 60_000;
 const HARD_ALERT_ATTEMPT_CAP = 3;
+const CAPTURE_GROWTH_CHECK_TIMEOUT_MS = 2_000;
 const MAX_CAPTURE_SEGMENTS_PER_SOURCE = 2_048;
 const TYPESENSE_STARTUP_BUDGET_MS = parseStartupBudgetMs(
   process.env.TYPESENSE_STARTUP_BUDGET_MS,
@@ -302,38 +303,131 @@ export async function readTypesenseRecoveryHealth(
   };
 }
 
-export const capturePrefixGrowthAlert = inngest.createFunction(
-  {
-    id: "search/capture-prefix-growth-alert",
-    concurrency: { limit: 1, key: "event.data.source_identity" },
-  },
-  { event: "memory/run.captured" },
-  async ({ event, step }) => {
-    const result = await step.run("check-capture-ranges", () =>
-      processCaptureGrowth(event.data as Record<string, unknown>, {
-        store: stateStore(),
-        notify: notifyCaptureGrowth,
-        resolve: async (sourceIdentity) => {
-          await resolveHardAlert({
-            latchKey: `typesense-recovery:capture-growth:${sourceIdentity}`,
-          });
-        },
-        now: Date.now,
-      })
+export interface CaptureGrowthCheckReceipt {
+  checked: boolean;
+  finding: CaptureGrowthFinding | null;
+  alerted: boolean;
+  error?: string;
+}
+
+// Replaces the old per-source Inngest concurrency key. Captures for one source
+// update a read-modify-write ledger, so this process applies them in order.
+const captureGrowthQueues = new Map<string, Promise<unknown>>();
+
+function serializeBySource<T>(
+  sourceIdentity: string,
+  operation: () => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  const previous = captureGrowthQueues.get(sourceIdentity) ?? Promise.resolve();
+  // The timeout applies inside the queue, so a hung store call releases the
+  // next capture for this source instead of blocking it forever.
+  const timed = () => withTimeout(operation(), timeoutMs);
+  const result = previous.then(timed, timed);
+  const tail = result.catch(() => undefined);
+  captureGrowthQueues.set(sourceIdentity, tail);
+  void tail.then(() => {
+    if (captureGrowthQueues.get(sourceIdentity) === tail) {
+      captureGrowthQueues.delete(sourceIdentity);
+    }
+  });
+  return result;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`capture growth check timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// Delivery shells out to the notify CLI and needs retries, so a finding goes to
+// a durable function instead of running inside the capture's time budget.
+async function queueCaptureGrowthAlert(
+  finding: CaptureGrowthFinding,
+  eventId: string,
+): Promise<boolean> {
+  await inngest.send({
+    id: eventId,
+    name: "search/capture-growth.detected",
+    data: { event_id: eventId, finding },
+  });
+  return true;
+}
+
+/**
+ * Cumulative-prefix growth check, run inline by memory/run.captured.
+ *
+ * This used to be its own `search/capture-prefix-growth-alert` function on the
+ * same event, which doubled queue work per capture. The ledger check runs here;
+ * only a finding costs a queue entry, for `search/capture-growth-notify`. It
+ * never throws: a slow or unavailable state store must not hold back session
+ * indexing.
+ */
+export async function checkCaptureGrowthForRun(
+  data: Record<string, unknown>,
+  dependencies: Partial<CaptureGrowthDependencies> & { timeoutMs?: number } = {},
+): Promise<CaptureGrowthCheckReceipt> {
+  const segment = captureSegment(data);
+  if (!segment || segment.toOffset <= segment.fromOffset) {
+    return { checked: false, finding: null, alerted: false };
+  }
+
+  try {
+    const result = await serializeBySource(
+      segment.sourceIdentity,
+      () =>
+        processCaptureGrowth(data, {
+          store: dependencies.store ?? stateStore(),
+          notify: dependencies.notify ?? queueCaptureGrowthAlert,
+          resolve:
+            dependencies.resolve ??
+            (async (sourceIdentity) => {
+              await resolveHardAlert({
+                latchKey: `typesense-recovery:capture-growth:${sourceIdentity}`,
+              });
+            }),
+          now: dependencies.now ?? Date.now,
+        }),
+      dependencies.timeoutMs ?? CAPTURE_GROWTH_CHECK_TIMEOUT_MS,
     );
     if (result.finding) {
-      await step.run("emit-capture-growth-otel", () =>
-        emitOtelEvent({
-          level: "fatal",
-          source: "system-bus",
-          component: "typesense-recovery-alerts",
-          action: "search.capture.cumulative_prefix_growth",
-          success: false,
-          metadata: result,
-        })
-      );
+      await emitOtelEvent({
+        level: "fatal",
+        source: "system-bus",
+        component: "typesense-recovery-alerts",
+        action: "search.capture.cumulative_prefix_growth",
+        success: false,
+        metadata: result,
+      });
     }
     return result;
+  } catch (error) {
+    const message = String(error).slice(0, 180);
+    await emitOtelEvent({
+      level: "warn",
+      source: "system-bus",
+      component: "typesense-recovery-alerts",
+      action: "search.capture.cumulative_prefix_growth.check_failed",
+      success: false,
+      metadata: { run_id: segment.runId, source_identity: segment.sourceIdentity, error: message },
+    });
+    return { checked: false, finding: null, alerted: false, error: message };
+  }
+}
+
+export const captureGrowthNotify = inngest.createFunction(
+  { id: "search/capture-growth-notify", retries: 3 },
+  { event: "search/capture-growth.detected" },
+  async ({ event, step }) => {
+    const sent = await step.run("send-hard-alert", () =>
+      notifyCaptureGrowth(event.data.finding, event.data.event_id)
+    );
+    return { event_id: event.data.event_id, sent };
   },
 );
 

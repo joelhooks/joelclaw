@@ -5,8 +5,17 @@
  * Rule 10). This function maintains the local SQLite FTS projection. The
  * retired Typesense runs_dev/run_chunks_dev projections must not be recreated.
  *
- * Concurrency stays bounded at four writers. SQLite serializes the short
- * append transactions and rejects overlapping source segments.
+ * The handler runs as plain code with no `step.*` checkpoints. On self-hosted
+ * Inngest every step costs one executor round trip and queue hop, and those
+ * hops, not SQLite, set the drain rate: a 2 MB append takes about 12 ms. One
+ * invocation per Run is safe because every side effect is idempotent:
+ * `appendSessionCapture` returns `already_indexed` for a repeated Run or source
+ * cursor, the growth ledger replaces entries by run_id, and
+ * `memory/run.indexed` carries a deterministic event id that Inngest dedupes.
+ *
+ * SQLite still serializes writers. The append transaction only covers the
+ * index checks and inserts, so eight concurrent Runs wait milliseconds on the
+ * write lock, well inside its 5 s busy timeout.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -30,6 +39,10 @@ import {
 import { NonRetriableError } from "inngest";
 import { emitOtelEvent } from "../../../observability/emit";
 import { inngest } from "../../client";
+import {
+  type CaptureGrowthCheckReceipt,
+  checkCaptureGrowthForRun,
+} from "../typesense-recovery-alerts";
 
 function readCapture(jsonlPath: string) {
   const entries = parseJsonl(readFileSync(jsonlPath, "utf8"));
@@ -65,19 +78,46 @@ function spoolInlineJsonl(runId: string, jsonl: string) {
   };
 }
 
+export interface RunCapturedDependencies {
+  checkCaptureGrowth: (data: Record<string, unknown>) => Promise<CaptureGrowthCheckReceipt>;
+  sendIndexed: (event: {
+    id: string;
+    name: "memory/run.indexed";
+    data: {
+      run_id: string;
+      user_id: string;
+      chunk_count: number;
+      index_duration_ms: number;
+    };
+  }) => Promise<unknown>;
+}
+
+const defaultDependencies: RunCapturedDependencies = {
+  checkCaptureGrowth: (data) => checkCaptureGrowthForRun(data),
+  sendIndexed: (event) => inngest.send(event),
+};
+
+let dependencies = defaultDependencies;
+
+/** Inngest dedupes events that share an id, so a retried Run sends one signal. */
+export function runIndexedEventId(runId: string): string {
+  return `memory-run-indexed:${runId}`;
+}
+
 export const memoryRunCaptured = inngest.createFunction(
   {
-    // v3 intentionally creates a fresh Inngest concurrency bucket after
+    // Never rename: queued memory/run.captured events are bound to this id.
+    // v3 intentionally created a fresh Inngest concurrency bucket after
     // decoupling slow embedding work. Earlier versions accumulated poisoned
     // queues whose Runs never reached indexing. Raw Run blobs remain
     // authoritative and are backfilled separately.
     id: "memory-run-captured-v3",
     name: "memory/run.captured",
-    concurrency: { limit: 4 },
+    concurrency: { limit: 8 },
     retries: 3,
   },
   { event: "memory/run.captured" },
-  async ({ event, step }) => {
+  async ({ event }) => {
     const t0 = performance.now();
     const {
       run_id,
@@ -97,22 +137,21 @@ export const memoryRunCaptured = inngest.createFunction(
       jsonl_inline,
     } = event.data;
 
-    // Inngest persists every step result. Keep transcript-scale data on disk and
-    // reopen it inside the steps that need it instead of returning it through
-    // durable step state.
-    const capturePath =
-      jsonl_inline === undefined
-        ? jsonl_path
-        : (
-            await step.run("spool-inline-jsonl", async () =>
-              spoolInlineJsonl(run_id, jsonl_inline)
-            )
-          ).path;
+    // Start the growth check before the synchronous append so its state-store
+    // round trip overlaps the SQLite work. It never throws.
+    const growthCheck = dependencies.checkCaptureGrowth(
+      event.data as Record<string, unknown>,
+    );
 
-    let sessionAppend: ReturnType<typeof appendSessionCapture>;
+    // Older events carry the transcript inline. Spool it to disk for the
+    // append, which verifies size and SHA-256 against the event.
+    const capturePath =
+      jsonl_inline === undefined ? jsonl_path : spoolInlineJsonl(run_id, jsonl_inline).path;
+
     try {
-      sessionAppend = await step.run("append-session-index", async () =>
-        appendSessionCapture({
+      let sessionAppend: ReturnType<typeof appendSessionCapture>;
+      try {
+        sessionAppend = appendSessionCapture({
           databasePath:
             process.env.SESSION_INDEX_PATH ??
             join(homedir(), ".joelclaw", "search", "sessions.db"),
@@ -132,11 +171,10 @@ export const memoryRunCaptured = inngest.createFunction(
           jsonlPath: jsonl_path,
           jsonlBytes: jsonl_bytes,
           jsonlSha256: jsonl_sha256,
-        })
-      );
-    } catch (error) {
-      if (!(error instanceof SessionIndexConflictError)) throw error;
-      await step.run("emit-session-index-conflict", async () => {
+        });
+      } catch (error) {
+        await growthCheck;
+        if (!(error instanceof SessionIndexConflictError)) throw error;
         await emitOtelEvent({
           level: "error",
           source: "system-bus",
@@ -149,116 +187,116 @@ export const memoryRunCaptured = inngest.createFunction(
             conflict: true,
           },
         });
-      });
-      throw new NonRetriableError(error.message, { cause: error });
-    }
+        throw new NonRetriableError(error.message, { cause: error });
+      }
 
-    await step.run("emit-session-index-append", async () => {
-      await emitOtelEvent({
-        level: "info",
-        source: "system-bus",
-        component: "memory-run-captured",
-        action: "memory.run.session-index.append",
-        success: true,
-        duration_ms: Math.round(sessionAppend.duration_ms),
-        metadata: {
-          run_id,
-          status: sessionAppend.status,
-          freshness_timestamp: sessionAppend.freshness_timestamp,
-          source_identity: sessionAppend.source_identity,
-          chunk_count: sessionAppend.chunk_count,
-          conflict: false,
-        },
-      });
-    });
+      const { candidates, format, turns } = readCapture(capturePath);
+      const growth = await growthCheck;
+      const duration_ms = performance.now() - t0;
+      const empty = candidates.length === 0;
 
-    const analysis = await step.run("chunk", async () => {
-      const { candidates, turns } = readCapture(capturePath);
-      return {
-        turn_count: turns.length,
-        candidate_count: candidates.length,
-      };
-    });
-
-    const cleanupInlineSpool = () =>
-      jsonl_inline === undefined
-        ? Promise.resolve()
-        : step.run("cleanup-inline-jsonl", async () => {
-            try {
-              unlinkSync(capturePath);
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-            }
-            return { run_id };
-          });
-
-    if (analysis.candidate_count === 0) {
-      await step.run("emit-empty", async () => {
-        const { format } = readCapture(capturePath);
-        await emitOtelEvent({
-          level: "warn",
+      await Promise.all([
+        emitOtelEvent({
+          level: "info",
           source: "system-bus",
           component: "memory-run-captured",
-          action: "memory.run.captured.empty",
+          action: "memory.run.session-index.append",
           success: true,
+          duration_ms: Math.round(sessionAppend.duration_ms),
           metadata: {
             run_id,
-            user_id,
-            reason: "no usable turns extracted from jsonl",
-            format,
+            status: sessionAppend.status,
+            freshness_timestamp: sessionAppend.freshness_timestamp,
+            source_identity: sessionAppend.source_identity,
+            chunk_count: sessionAppend.chunk_count,
+            conflict: false,
           },
-        });
-      });
-      await cleanupInlineSpool();
-      return {
-        run_id,
-        chunks_indexed: 0,
-        reason: "empty",
-      };
-    }
+        }),
+        empty
+          ? emitOtelEvent({
+              level: "warn",
+              source: "system-bus",
+              component: "memory-run-captured",
+              action: "memory.run.captured.empty",
+              success: true,
+              metadata: {
+                run_id,
+                user_id,
+                reason: "no usable turns extracted from jsonl",
+                format,
+              },
+            })
+          : emitOtelEvent({
+              level: "info",
+              source: "system-bus",
+              component: "memory-run-captured",
+              action: "memory.run.captured",
+              success: true,
+              duration_ms: Math.round(duration_ms),
+              metadata: {
+                run_id,
+                user_id,
+                machine_id,
+                agent_runtime,
+                chunk_count: sessionAppend.chunk_count,
+                turn_count: turns.length,
+                format,
+                session_index_status: sessionAppend.status,
+                session_index_freshness: sessionAppend.freshness_timestamp,
+                source_identity: sessionAppend.source_identity,
+                capture_growth_checked: growth.checked,
+                capture_growth_detected: growth.finding !== null,
+              },
+            }),
+      ]);
 
-    const duration_ms = performance.now() - t0;
+      if (empty) {
+        return {
+          run_id,
+          chunks_indexed: 0,
+          reason: "empty",
+          session_index_status: sessionAppend.status,
+          session_index_run_id: sessionAppend.run_id,
+        };
+      }
 
-    await step.run("emit-otel", async () => {
-      const { format } = readCapture(capturePath);
-      await emitOtelEvent({
-        level: "info",
-        source: "system-bus",
-        component: "memory-run-captured",
-        action: "memory.run.captured",
-        success: true,
-        duration_ms: Math.round(duration_ms),
-        metadata: {
+      await dependencies.sendIndexed({
+        id: runIndexedEventId(run_id),
+        name: "memory/run.indexed",
+        data: {
           run_id,
           user_id,
-          machine_id,
-          agent_runtime,
           chunk_count: sessionAppend.chunk_count,
-          turn_count: analysis.turn_count,
-          format,
-          session_index_status: sessionAppend.status,
-          session_index_freshness: sessionAppend.freshness_timestamp,
-          source_identity: sessionAppend.source_identity,
+          index_duration_ms: Math.round(duration_ms),
         },
       });
-    });
 
-    await step.sendEvent("emit-indexed", {
-      name: "memory/run.indexed",
-      data: {
+      return {
         run_id,
-        user_id,
-        chunk_count: sessionAppend.chunk_count,
-        index_duration_ms: Math.round(duration_ms),
-      },
-    });
-    await cleanupInlineSpool();
-
-    return {
-      run_id,
-      chunks_indexed: sessionAppend.chunk_count,
-      turn_count: analysis.turn_count,
-      duration_ms,
-    };
+        chunks_indexed: sessionAppend.chunk_count,
+        turn_count: turns.length,
+        duration_ms,
+        session_index_status: sessionAppend.status,
+        session_index_run_id: sessionAppend.run_id,
+      };
+    } finally {
+      if (jsonl_inline !== undefined) {
+        try {
+          unlinkSync(capturePath);
+        } catch {
+          // Best effort: a leftover temp spool must not mask the indexing
+          // result or error, and no later run reads it.
+        }
+      }
+    }
   }
 );
+
+export const __runCapturedTestUtils = {
+  setDependencies(overrides: Partial<RunCapturedDependencies>) {
+    dependencies = { ...defaultDependencies, ...overrides };
+  },
+  resetDependencies() {
+    dependencies = defaultDependencies;
+  },
+};

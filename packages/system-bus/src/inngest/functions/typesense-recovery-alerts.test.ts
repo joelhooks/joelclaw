@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   __typesenseRecoveryAlertTestUtils,
+  captureGrowthNotify,
+  checkCaptureGrowthForRun,
   processCaptureGrowth,
   processStartupBudget,
   readTypesenseRecoveryHealth,
@@ -153,6 +155,133 @@ describe("capture prefix growth alert", () => {
       checked: false,
     });
     expect(alerts).toBe(0);
+  });
+});
+
+describe("inline capture growth check", () => {
+  const originalOtel = process.env.OTEL_EVENTS_ENABLED;
+  beforeEach(() => {
+    process.env.OTEL_EVENTS_ENABLED = "0";
+  });
+  afterEach(() => {
+    if (originalOtel === undefined) delete process.env.OTEL_EVENTS_ENABLED;
+    else process.env.OTEL_EVENTS_ENABLED = originalOtel;
+  });
+
+  function slowStore() {
+    const store = memoryStore();
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+    return {
+      ...store,
+      get: async (key: string) => {
+        await pause();
+        return store.get(key);
+      },
+      set: async (key: string, value: string) => {
+        await pause();
+        await store.set(key, value);
+      },
+    };
+  }
+
+  test("serializes concurrent captures for one source so no ledger entry is lost", async () => {
+    const store = slowStore();
+    const dependencies = {
+      store,
+      notify: async () => true,
+      resolve: async () => {},
+      now: () => 100,
+    };
+
+    const receipts = await Promise.all([
+      checkCaptureGrowthForRun(capture("run-a", 0, 100), dependencies),
+      checkCaptureGrowthForRun(capture("run-b", 100, 200), dependencies),
+      checkCaptureGrowthForRun(capture("run-c", 50, 150), dependencies),
+    ]);
+
+    expect(receipts.map((receipt) => receipt.checked)).toEqual([true, true, true]);
+    expect(receipts[2].finding).toMatchObject({ overlapBytes: 50 });
+    const [ledger] = [...store.values.values()];
+    expect(JSON.parse(ledger ?? "[]").map((segment: { runId: string }) => segment.runId)).toEqual([
+      "run-a",
+      "run-b",
+      "run-c",
+    ]);
+  });
+
+  test("gives up on a hung state store without throwing", async () => {
+    const started = Date.now();
+    const receipt = await checkCaptureGrowthForRun(capture("run-a", 0, 100), {
+      store: {
+        get: () => new Promise<string | null>(() => {}),
+        set: async () => {},
+        delete: async () => {},
+      },
+      notify: async () => true,
+      now: () => 100,
+      resolve: async () => {},
+      timeoutMs: 20,
+    });
+
+    expect(receipt).toMatchObject({ checked: false, finding: null, alerted: false });
+    expect(receipt.error).toContain("timed out after 20ms");
+    expect(Date.now() - started).toBeLessThan(1_000);
+
+    // The hung call must not hold the source's queue for later captures.
+    const next = await checkCaptureGrowthForRun(capture("run-b", 100, 200), {
+      store: memoryStore(),
+      notify: async () => true,
+      resolve: async () => {},
+      now: () => 100,
+      timeoutMs: 20,
+    });
+    expect(next).toMatchObject({ checked: true, finding: null });
+  });
+
+  test("reports a notifier failure instead of failing the capture", async () => {
+    const store = memoryStore();
+    await checkCaptureGrowthForRun(capture("run-a", 0, 100), {
+      store,
+      notify: async () => true,
+      now: () => 100,
+      resolve: async () => {},
+    });
+
+    const receipt = await checkCaptureGrowthForRun(capture("run-b", 0, 200), {
+      store,
+      notify: async () => {
+        throw new Error("gateway down");
+      },
+      now: () => 100,
+      resolve: async () => {},
+    });
+    expect(receipt).toMatchObject({ checked: false, error: expect.stringContaining("gateway down") });
+  });
+
+  test("hands findings to a retrying notify function on its own event", () => {
+    const fn = captureGrowthNotify as any;
+    expect(fn.opts.id).toBe("search/capture-growth-notify");
+    expect(fn.opts.retries).toBe(3);
+    expect(fn.opts.triggers).toEqual([{ event: "search/capture-growth.detected" }]);
+  });
+
+  test("skips events without source provenance and never touches the store", async () => {
+    let reads = 0;
+    const receipt = await checkCaptureGrowthForRun(
+      { run_id: "legacy", jsonl_sha256: "x" },
+      {
+        store: {
+          get: async () => {
+            reads += 1;
+            return null;
+          },
+          set: async () => {},
+          delete: async () => {},
+        },
+      },
+    );
+    expect(receipt).toEqual({ checked: false, finding: null, alerted: false });
+    expect(reads).toBe(0);
   });
 });
 
