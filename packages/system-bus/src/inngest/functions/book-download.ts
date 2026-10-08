@@ -5,6 +5,7 @@ import { basename, dirname, extname, join } from "node:path";
 import { NAS_BOOKS_REMOTE_ROOT, NAS_SSH_HOST } from "@joelclaw/endpoint-resolver";
 import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
+import { isProtectedHarnessPath } from "../../lib/protected-harness-paths";
 import { assertAllowedModel, MODEL } from "../../lib/models";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
@@ -16,15 +17,15 @@ const DEFAULT_SECRET_PATH = `${HOME_DIR}/.config/annas-archive/secret.txt`;
 const AA_SECRET_TTL = process.env.JOELCLAW_AA_SECRET_TTL?.trim() || "4h";
 const BOOK_SEARCH_TIMEOUT_MS = Math.max(
   10_000,
-  Number.parseInt(process.env.JOELCLAW_BOOK_SEARCH_TIMEOUT_MS ?? "45000", 10)
+  Number.parseInt(process.env.JOELCLAW_BOOK_SEARCH_TIMEOUT_MS ?? "45000", 10),
 );
 const BOOK_SELECTION_TIMEOUT_MS = Math.max(
   10_000,
-  Number.parseInt(process.env.JOELCLAW_BOOK_SELECTION_TIMEOUT_MS ?? "60000", 10)
+  Number.parseInt(process.env.JOELCLAW_BOOK_SELECTION_TIMEOUT_MS ?? "60000", 10),
 );
 const BOOK_DOWNLOAD_TIMEOUT_MS = Math.max(
   60_000,
-  Number.parseInt(process.env.JOELCLAW_BOOK_DOWNLOAD_TIMEOUT_MS ?? "900000", 10)
+  Number.parseInt(process.env.JOELCLAW_BOOK_DOWNLOAD_TIMEOUT_MS ?? "900000", 10),
 );
 const NAS_HOST = NAS_SSH_HOST;
 const NAS_BOOKS_DIR = NAS_BOOKS_REMOTE_ROOT;
@@ -39,20 +40,24 @@ const NAS_BACKUP_TIMEOUT_MS = 30_000;
 const CONVERTIBLE_EBOOK_EXTENSIONS = new Set(["azw3", "fb2", "epub", "mobi"]);
 const EBOOK_CONVERT_TIMEOUT_MS = Math.max(
   30_000,
-  Number.parseInt(process.env.JOELCLAW_EBOOK_CONVERT_TIMEOUT_MS ?? "180000", 10)
+  Number.parseInt(process.env.JOELCLAW_EBOOK_CONVERT_TIMEOUT_MS ?? "180000", 10),
 );
 
 const AA_CONFIG_DIR = `${HOME_DIR}/.config/annas-archive`;
 const AA_MIRRORS_CACHE_PATH = `${AA_CONFIG_DIR}/mirrors.txt`;
 const AA_COOKIE_FILE_PATH = `${AA_CONFIG_DIR}/cookies.txt`;
-const AA_DEFAULT_MIRRORS = ["https://annas-archive.gl", "https://annas-archive.li", "https://welib.org"];
+const AA_DEFAULT_MIRRORS = [
+  "https://annas-archive.gl",
+  "https://annas-archive.li",
+  "https://welib.org",
+];
 const MD5_VERIFY_TIMEOUT_MS = Math.max(
   5_000,
-  Number.parseInt(process.env.JOELCLAW_MD5_VERIFY_TIMEOUT_MS ?? "15000", 10)
+  Number.parseInt(process.env.JOELCLAW_MD5_VERIFY_TIMEOUT_MS ?? "15000", 10),
 );
 const MAX_MD5_VERIFICATION_ATTEMPTS = Math.max(
   1,
-  Number.parseInt(process.env.JOELCLAW_MD5_VERIFY_MAX_ATTEMPTS ?? "6", 10)
+  Number.parseInt(process.env.JOELCLAW_MD5_VERIFY_MAX_ATTEMPTS ?? "6", 10),
 );
 // Anna's Archive labels a `format` per md5 in search results, but the file
 // behind the fast-download link can differ from that label, and some md5s
@@ -136,7 +141,7 @@ function readStream(stream: ReadableStream<Uint8Array> | null): Promise<string> 
 async function runProcess(
   cmd: string[],
   timeoutMs: number,
-  stdinText?: string
+  stdinText?: string,
 ): Promise<ProcessResult> {
   const proc = Bun.spawn(cmd, {
     env: { ...process.env, TERM: "dumb" },
@@ -319,7 +324,7 @@ async function resolveAABookBinary(): Promise<string> {
   }
 
   throw new NonRetriableError(
-    "aa-book binary not found. Set JOELCLAW_AA_BOOK_BIN or install aa-book in PATH."
+    "aa-book binary not found. Set JOELCLAW_AA_BOOK_BIN or install aa-book in PATH.",
   );
 }
 
@@ -364,11 +369,17 @@ type ConversionResult = {
 
 async function convertToPdfIfNeeded(
   filePath: string,
-  sizeBytes: number
+  sizeBytes: number,
 ): Promise<ConversionResult> {
   const extension = extname(filePath).replace(/^\./u, "").toLowerCase();
   if (!isConvertibleEbookExtension(extension) || extension === "pdf") {
-    return { filePath, format: extension || "unknown", sizeBytes, attempted: false, converted: false };
+    return {
+      filePath,
+      format: extension || "unknown",
+      sizeBytes,
+      attempted: false,
+      converted: false,
+    };
   }
 
   const ebookConvertBin = await resolveEbookConvertBinary();
@@ -379,14 +390,15 @@ async function convertToPdfIfNeeded(
       sizeBytes,
       attempted: true,
       converted: false,
-      reason: "ebook-convert binary not found (expected Calibre cask at /opt/homebrew/bin/ebook-convert)",
+      reason:
+        "ebook-convert binary not found (expected Calibre cask at /opt/homebrew/bin/ebook-convert)",
     };
   }
 
   const pdfPath = `${filePath.slice(0, -(extension.length + 1))}.pdf`;
   const result = await runProcess(
     [ebookConvertBin, filePath, pdfPath, "--pdf-page-numbers"],
-    EBOOK_CONVERT_TIMEOUT_MS
+    EBOOK_CONVERT_TIMEOUT_MS,
   );
 
   if (result.exitCode !== 0) {
@@ -425,9 +437,10 @@ async function convertToPdfIfNeeded(
     };
   }
 
-  // docs-ingest owns the file lifecycle from here; keep only the pdf artifact
-  // (matches aa-book's own epub/mobi conversion behavior of dropping the source).
-  await rm(filePath, { force: true }).catch(() => {});
+  // Retain originals stored inside agent harness directories. Other downloads
+  // keep the existing single-PDF lifecycle.
+  const protectedSource = isProtectedHarnessPath(filePath, HOME_DIR);
+  if (!protectedSource) await rm(filePath, { force: true }).catch(() => {});
 
   return {
     filePath: pdfPath,
@@ -435,6 +448,7 @@ async function convertToPdfIfNeeded(
     sizeBytes: pdfSizeBytes,
     attempted: true,
     converted: true,
+    ...(protectedSource ? { reason: "source retained under a protected harness path" } : {}),
   };
 }
 
@@ -464,7 +478,9 @@ async function resolveAnnasArchiveBaseUrl(): Promise<string | null> {
   return null;
 }
 
-async function verifyFastPartnerAvailable(md5: string): Promise<{ available: boolean; reason: string }> {
+async function verifyFastPartnerAvailable(
+  md5: string,
+): Promise<{ available: boolean; reason: string }> {
   const baseUrl = await resolveAnnasArchiveBaseUrl();
   if (!baseUrl) {
     return { available: false, reason: "no reachable Anna's Archive mirror to verify md5 page" };
@@ -476,17 +492,32 @@ async function verifyFastPartnerAvailable(md5: string): Promise<{ available: boo
   const cookieArgs = hasCookieFile ? ["-b", AA_COOKIE_FILE_PATH] : [];
 
   const result = await runProcess(
-    ["curl", "-s", "--connect-timeout", "6", "--max-time", "12", ...cookieArgs, `${baseUrl}/md5/${md5}`],
-    MD5_VERIFY_TIMEOUT_MS
+    [
+      "curl",
+      "-s",
+      "--connect-timeout",
+      "6",
+      "--max-time",
+      "12",
+      ...cookieArgs,
+      `${baseUrl}/md5/${md5}`,
+    ],
+    MD5_VERIFY_TIMEOUT_MS,
   );
 
   if (result.exitCode !== 0 || !result.stdout.trim()) {
-    return { available: false, reason: `unable to fetch /md5/${md5} page (exit ${result.exitCode})` };
+    return {
+      available: false,
+      reason: `unable to fetch /md5/${md5} page (exit ${result.exitCode})`,
+    };
   }
 
   return hasFastPartnerAvailability(result.stdout)
     ? { available: true, reason: "fast partner server link present on md5 page" }
-    : { available: false, reason: "no fast partner server link found on md5 page (likely libgen-only slow links)" };
+    : {
+        available: false,
+        reason: "no fast partner server link found on md5 page (likely libgen-only slow links)",
+      };
 }
 
 export type Md5VerificationAttempt = {
@@ -516,7 +547,9 @@ export async function selectVerifiedCandidate(input: {
   const seenMd5 = new Set<string>();
 
   if (input.inferredMd5) {
-    const inferredCandidate = input.candidates.find((candidate) => candidate.md5 === input.inferredMd5);
+    const inferredCandidate = input.candidates.find(
+      (candidate) => candidate.md5 === input.inferredMd5,
+    );
     if (inferredCandidate) {
       ordered.push({ candidate: inferredCandidate, origin: "inference" });
       seenMd5.add(inferredCandidate.md5);
@@ -531,7 +564,11 @@ export async function selectVerifiedCandidate(input: {
   const attempts: Md5VerificationAttempt[] = [];
   for (const entry of ordered.slice(0, Math.max(1, input.maxAttempts))) {
     const verification = await input.verify(entry.candidate.md5);
-    attempts.push({ md5: entry.candidate.md5, available: verification.available, reason: verification.reason });
+    attempts.push({
+      md5: entry.candidate.md5,
+      available: verification.available,
+      reason: verification.reason,
+    });
     if (verification.available) {
       return { picked: { candidate: entry.candidate, origin: entry.origin }, attempts };
     }
@@ -558,21 +595,21 @@ async function ensureAnnasArchiveSecret(secretPath: string): Promise<{
 
   const leaseRaw = await runProcess(
     ["secrets", "lease", "annas_archive_key", "--ttl", AA_SECRET_TTL, "--raw"],
-    10_000
+    10_000,
   );
   let leased = leaseRaw.exitCode === 0 ? leaseRaw.stdout.trim() : "";
 
   if (!leased) {
     const leaseFallback = await runProcess(
       ["secrets", "lease", "annas_archive_key", "--ttl", AA_SECRET_TTL],
-      10_000
+      10_000,
     );
     if (leaseFallback.exitCode === 0) leased = leaseFallback.stdout.trim();
   }
 
   if (!leased) {
     throw new NonRetriableError(
-      "Unable to lease annas_archive_key. Run: secrets add annas_archive_key --value <key>"
+      "Unable to lease annas_archive_key. Run: secrets add annas_archive_key --value <key>",
     );
   }
 
@@ -637,7 +674,7 @@ function formatResolvedPathDiagnostics(input: {
 async function resolveDownloadedPath(
   rawOutput: string,
   outputDir: string,
-  beforeEntries: OutputEntry[]
+  beforeEntries: OutputEntry[],
 ): Promise<string> {
   const resolveStartedAt = Date.now();
   const staleCutoffMs = resolveStartedAt - 5 * 60_000;
@@ -666,7 +703,7 @@ async function resolveDownloadedPath(
       const prev = beforeMap.get(entry.path);
       if (prev == null) return true;
       return entry.mtimeMs > prev + 1;
-      })
+    })
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
 
   const diagnostics = formatResolvedPathDiagnostics({
@@ -679,7 +716,7 @@ async function resolveDownloadedPath(
   const assertFresh = (entry: OutputEntry, source: "stdout" | "directory-diff"): string => {
     if (entry.mtimeMs < staleCutoffMs) {
       throw new Error(
-        `Resolved downloaded file from ${source} is stale: ${entry.path} (mtime ${new Date(entry.mtimeMs).toISOString()}). ${diagnostics}`
+        `Resolved downloaded file from ${source} is stale: ${entry.path} (mtime ${new Date(entry.mtimeMs).toISOString()}). ${diagnostics}`,
       );
     }
     return entry.path;
@@ -804,7 +841,8 @@ export const bookDownload = inngest.createFunction(
     const requestedMd5 = normalizeMd5(event.data.md5);
     const query = (event.data.query ?? "").trim();
     const requestedFormat = normalizeFormat(event.data.format);
-    const reason = (event.data.reason ?? "").trim() || "book acquisition via pipeline/book.download";
+    const reason =
+      (event.data.reason ?? "").trim() || "book acquisition via pipeline/book.download";
     const outputDir = (event.data.outputDir ?? "").trim() || DEFAULT_OUTPUT_DIR;
     const outputPath = outputDir.startsWith("/") ? outputDir : join(HOME_DIR, outputDir);
     const configuredSecretPath = (process.env.JOELCLAW_AA_SECRET_PATH ?? "").trim();
@@ -885,14 +923,14 @@ export const bookDownload = inngest.createFunction(
 
             if (searchResult.exitCode !== 0 && !combinedSearchOutput.trim()) {
               throw new Error(
-                `aa-book search failed (exit ${searchResult.exitCode}): ${searchResult.stderr.trim()}`
+                `aa-book search failed (exit ${searchResult.exitCode}): ${searchResult.stderr.trim()}`,
               );
             }
 
             const candidates = parseSearchCandidates(combinedSearchOutput);
             if (candidates.length === 0) {
               throw new NonRetriableError(
-                `No candidate MD5s found for query "${query}"${requestedFormat ? ` (${requestedFormat})` : ""}.`
+                `No candidate MD5s found for query "${query}"${requestedFormat ? ` (${requestedFormat})` : ""}.`,
               );
             }
 
@@ -953,7 +991,7 @@ export const bookDownload = inngest.createFunction(
                   requestedFormat ? ` (${requestedFormat})` : ""
                 }. Attempts: ${verification.attempts
                   .map((attempt) => `${attempt.md5}: ${attempt.reason}`)
-                  .join("; ")}`
+                  .join("; ")}`,
               );
             }
 
@@ -1033,7 +1071,7 @@ export const bookDownload = inngest.createFunction(
 
         if (result.exitCode !== 0) {
           throw new Error(
-            `aa-book download failed (exit ${result.exitCode}): ${result.stderr.trim().slice(0, 800)}`
+            `aa-book download failed (exit ${result.exitCode}): ${result.stderr.trim().slice(0, 800)}`,
           );
         }
 
@@ -1057,7 +1095,10 @@ export const bookDownload = inngest.createFunction(
       // and any leftover epub/mobi (if aa-book's conversion failed) need a
       // conversion pass here, or docs-ingest rejects the extension outright.
       const convertedFile = await step.run("convert-to-pdf", async () => {
-        const conversion = await convertToPdfIfNeeded(downloadResult.filePath, downloadResult.sizeBytes);
+        const conversion = await convertToPdfIfNeeded(
+          downloadResult.filePath,
+          downloadResult.sizeBytes,
+        );
         if (conversion.attempted) {
           await emitOtelEvent({
             level: conversion.converted ? "info" : "warn",
@@ -1096,37 +1137,51 @@ export const bookDownload = inngest.createFunction(
         });
       });
 
-      const nasBackup: NasBackupResult = await step.run("backup-to-nas", async (): Promise<NasBackupResult> => {
-        try {
-          const year = new Date().getFullYear().toString();
-          const filename = basename(convertedFile.filePath);
-          const nasDir = `${NAS_BOOKS_DIR}/${year}`;
-          const nasFullPath = `${NAS_HOST}:${nasDir}/${filename}`;
+      const nasBackup: NasBackupResult = await step.run(
+        "backup-to-nas",
+        async (): Promise<NasBackupResult> => {
+          try {
+            const year = new Date().getFullYear().toString();
+            const filename = basename(convertedFile.filePath);
+            const nasDir = `${NAS_BOOKS_DIR}/${year}`;
+            const nasFullPath = `${NAS_HOST}:${nasDir}/${filename}`;
 
-          const mkdirResult = await runProcess(
-            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", NAS_HOST, `mkdir -p '${nasDir}'`],
-            NAS_BACKUP_TIMEOUT_MS
-          );
-          if (mkdirResult.exitCode !== 0) {
-            return { backedUp: false as const, reason: `mkdir failed: ${mkdirResult.stderr.trim()}` };
+            const mkdirResult = await runProcess(
+              [
+                "ssh",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "BatchMode=yes",
+                NAS_HOST,
+                `mkdir -p '${nasDir}'`,
+              ],
+              NAS_BACKUP_TIMEOUT_MS,
+            );
+            if (mkdirResult.exitCode !== 0) {
+              return {
+                backedUp: false as const,
+                reason: `mkdir failed: ${mkdirResult.stderr.trim()}`,
+              };
+            }
+
+            const scpResult = await runProcess(
+              ["scp", "-o", "ConnectTimeout=10", convertedFile.filePath, nasFullPath],
+              NAS_BACKUP_TIMEOUT_MS,
+            );
+            if (scpResult.exitCode !== 0) {
+              return { backedUp: false as const, reason: `scp failed: ${scpResult.stderr.trim()}` };
+            }
+
+            return { backedUp: true as const, nasPath: `${nasDir}/${filename}` };
+          } catch (error) {
+            return {
+              backedUp: false as const,
+              reason: error instanceof Error ? error.message : String(error),
+            };
           }
-
-          const scpResult = await runProcess(
-            ["scp", "-o", "ConnectTimeout=10", convertedFile.filePath, nasFullPath],
-            NAS_BACKUP_TIMEOUT_MS
-          );
-          if (scpResult.exitCode !== 0) {
-            return { backedUp: false as const, reason: `scp failed: ${scpResult.stderr.trim()}` };
-          }
-
-          return { backedUp: true as const, nasPath: `${nasDir}/${filename}` };
-        } catch (error) {
-          return {
-            backedUp: false as const,
-            reason: error instanceof Error ? error.message : String(error),
-          };
-        }
-      });
+        },
+      );
       const backupNasPath = nasBackup.backedUp ? nasBackup.nasPath : undefined;
 
       await step.run("otel-nas-backup", async () => {
@@ -1146,12 +1201,12 @@ export const bookDownload = inngest.createFunction(
       });
 
       const resolvedTitle =
-        event.data.title?.trim()
-        || selected.candidate?.title?.trim()
-        || inferTitle(undefined, convertedFile.filePath);
+        event.data.title?.trim() ||
+        selected.candidate?.title?.trim() ||
+        inferTitle(undefined, convertedFile.filePath);
       const idempotencyKey =
-        (event.data.idempotencyKey ?? "").trim()
-        || `book:${selected.md5}:${basename(convertedFile.filePath).toLowerCase()}`;
+        (event.data.idempotencyKey ?? "").trim() ||
+        `book:${selected.md5}:${basename(convertedFile.filePath).toLowerCase()}`;
 
       await step.sendEvent("emit-book-events", [
         {
@@ -1265,7 +1320,7 @@ export const bookDownload = inngest.createFunction(
       });
       throw error;
     }
-  }
+  },
 );
 
 export {

@@ -1,7 +1,14 @@
 import { $ } from "bun";
 import { inngest } from "../../client";
 import { buildGatewaySignalMeta } from "../../middleware/gateway-signal";
-import { createLoopOnFailure, mintGitHubToken, pushGatewayEvent, readPrd } from "./utils";
+import {
+  assertSafeLoopId,
+  cleanLoopRootArtifacts,
+  createLoopOnFailure,
+  mintGitHubToken,
+  pushGatewayEvent,
+  readPrd,
+} from "./utils";
 
 /**
  * COMPLETER — Handles agent/loop.complete events.
@@ -20,8 +27,11 @@ export const agentLoopComplete = inngest.createFunction(
   },
   [{ event: "agent/loop.completed" }],
   async ({ event, step, ...rest }) => {
-    const gateway = (rest as any).gateway as import("../../middleware/gateway").GatewayContext | undefined;
-    const { loopId, project, branchName, storiesCompleted, storiesFailed, originSession } = event.data;
+    const gateway = (rest as any).gateway as
+      | import("../../middleware/gateway").GatewayContext
+      | undefined;
+    const { loopId, project, branchName, storiesCompleted, storiesFailed, originSession } =
+      event.data;
 
     // Only proceed if branchName is present (set by planner v2)
     if (!branchName) {
@@ -29,36 +39,72 @@ export const agentLoopComplete = inngest.createFunction(
     }
 
     // Step 0: Clean loop artifacts from worktree before merge
-    await step.run("clean-artifacts", async () => {
+    const artifactCleanup = await step.run("clean-artifacts", async () => {
       const worktreePath = `/tmp/agent-loop/${loopId}`;
       try {
-        // Delete __tests__/ dirs, *.acceptance.test.ts, *.out files, prd.json, progress.txt
-        await $`cd ${worktreePath} && find . -name "__tests__" -type d -exec rm -rf {} + 2>/dev/null; find . -name "*.acceptance.test.ts" -delete 2>/dev/null; rm -f *.out prd.json progress.txt`.quiet().nothrow();
-        // Commit cleanup if anything changed
-        await $`cd ${worktreePath} && git add -A && git diff --cached --quiet || git commit -m "chore: clean loop artifacts"`.quiet().nothrow();
+        assertSafeLoopId(loopId);
+        // Remove only loop-owned root artifacts. Never delete project tests or
+        // stage unrelated worktree changes as part of cleanup.
+        const cleanedRootArtifacts = await cleanLoopRootArtifacts(loopId);
+        if (!cleanedRootArtifacts) return { cleaned: false };
+
+        const deletedArtifacts =
+          await $`cd ${worktreePath} && git ls-files --deleted -- ':(top,glob)*.out' ':(top)prd.json' ':(top)progress.txt'`
+            .quiet()
+            .nothrow();
+        if (deletedArtifacts.exitCode !== 0) return { cleaned: false };
+        if (deletedArtifacts.text().trim()) {
+          const stageArtifacts =
+            await $`cd ${worktreePath} && git add -u -- ':(top,glob)*.out' ':(top)prd.json' ':(top)progress.txt'`
+              .quiet()
+              .nothrow();
+          if (stageArtifacts.exitCode !== 0) return { cleaned: false };
+
+          const commitArtifacts =
+            await $`cd ${worktreePath} && git commit --only -m "chore: clean loop artifacts" -- ':(top,glob)*.out' ':(top)prd.json' ':(top)progress.txt'`
+              .quiet()
+              .nothrow();
+          if (commitArtifacts.exitCode !== 0) return { cleaned: false };
+        }
         return { cleaned: true };
       } catch {
         return { cleaned: false };
       }
     });
+    if (!artifactCleanup.cleaned) {
+      return { status: "cleanup-failed", loopId, branchName };
+    }
 
     // Gateway progress: merge starting
     if (gateway) {
-      await gateway.progress(`🔀 Merging ${branchName} — ${storiesCompleted} completed, ${storiesFailed} failed`, {
-        ...buildGatewaySignalMeta("loop.lifecycle", "info"),
-        loopId, branchName, storiesCompleted, storiesFailed,
-      });
+      await gateway.progress(
+        `🔀 Merging ${branchName} — ${storiesCompleted} completed, ${storiesFailed} failed`,
+        {
+          ...buildGatewaySignalMeta("loop.lifecycle", "info"),
+          loopId,
+          branchName,
+          storiesCompleted,
+          storiesFailed,
+        },
+      );
     }
 
     // Step 1: Merge worktree branch back to main working directory
     const mergeResult = await step.run("merge-to-main", async () => {
       try {
         // Get the git root of the original project
-        const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet()).text().trim();
+        const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet())
+          .text()
+          .trim();
 
         // Check if there are any commits on the branch that aren't on main
-        const currentBranch = (await $`cd ${gitRoot} && git branch --show-current`.quiet()).text().trim();
-        const diffResult = await $`cd ${gitRoot} && git log ${currentBranch}..${branchName} --oneline`.quiet().nothrow();
+        const currentBranch = (await $`cd ${gitRoot} && git branch --show-current`.quiet())
+          .text()
+          .trim();
+        const diffResult =
+          await $`cd ${gitRoot} && git log ${currentBranch}..${branchName} --oneline`
+            .quiet()
+            .nothrow();
         const commits = diffResult.text().trim();
 
         if (!commits) {
@@ -106,9 +152,17 @@ export const agentLoopComplete = inngest.createFunction(
     // Step 2: Clean up worktree
     const cleanupResult = await step.run("cleanup-worktree", async () => {
       try {
-        const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet()).text().trim();
+        assertSafeLoopId(loopId);
+        const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet())
+          .text()
+          .trim();
         const worktreePath = `/tmp/agent-loop/${loopId}`;
-        await $`cd ${gitRoot} && git worktree remove ${worktreePath} --force`.quiet().nothrow();
+        const removeWorktree = await $`cd ${gitRoot} && git worktree remove ${worktreePath}`
+          .quiet()
+          .nothrow();
+        if (removeWorktree.exitCode !== 0) {
+          return { cleaned: false, reason: "worktree_not_clean_or_remove_failed" };
+        }
         // Delete the branch too (it's merged now)
         if (mergeResult.merged) {
           await $`cd ${gitRoot} && git branch -d ${branchName}`.quiet().nothrow();
@@ -134,7 +188,9 @@ export const agentLoopComplete = inngest.createFunction(
           if (!remoteUrl.endsWith(".git")) remoteUrl += ".git";
 
           const authUrl = remoteUrl.replace("https://", `https://x-access-token:${token}@`);
-          const currentBranch = (await $`cd ${project} && git branch --show-current`.quiet()).text().trim();
+          const currentBranch = (await $`cd ${project} && git branch --show-current`.quiet())
+            .text()
+            .trim();
           await $`cd ${project} && git push ${authUrl} ${currentBranch}`.quiet();
 
           return "pushed";
@@ -164,7 +220,7 @@ export const agentLoopComplete = inngest.createFunction(
       });
     } catch (e: any) {
       console.warn(
-        `[agent-loop-complete] emit-gateway-event failed for loop ${loopId}: ${e?.message ?? "unknown error"}`
+        `[agent-loop-complete] emit-gateway-event failed for loop ${loopId}: ${e?.message ?? "unknown error"}`,
       );
     }
 
@@ -177,5 +233,5 @@ export const agentLoopComplete = inngest.createFunction(
       deploymentModel: "single-source-worker",
       pushResult,
     };
-  }
+  },
 );

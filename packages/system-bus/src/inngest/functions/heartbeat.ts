@@ -1,17 +1,18 @@
 import { getRedisPort } from "../../lib/redis";
 
 /**
- * System heartbeat — pure fan-out dispatcher.
+ * System heartbeat — periodic fan-out dispatcher with a report-only session scan.
  * ADR-0062: Heartbeat-Driven Task Triage
  *
  * Every 15 minutes, emits events for independent check functions.
  * Each check function owns its own cooldown, retries, and gateway notification.
- * The heartbeat itself does NO work — it just says "time to check everything."
+ * Session retention reports bounded counts and never removes harness files.
  */
 
-import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Redis from "ioredis";
+import { pruneOldSessionFiles } from "../../lib/session-prune";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
@@ -94,50 +95,6 @@ function isAdrPitchWindow(hour: number): boolean {
   return hour >= 8 && hour < 10;
 }
 
-function listFilesRecursive(root: string): string[] {
-  if (!existsSync(root)) return [];
-  const entries = readdirSync(root, { withFileTypes: true });
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    const fullPath = join(root, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...listFilesRecursive(fullPath));
-    } else if (entry.isFile()) {
-      files.push(fullPath);
-    }
-  }
-
-  return files;
-}
-
-function pruneOldSessionFiles(now = Date.now()): { prunedCount: number } {
-  const cutoffMs = now - 30 * 24 * 60 * 60 * 1000;
-  const home = getHomeDirectory();
-  const piSessionsRoot = join(home, ".pi", "agent", "sessions");
-  const claudeDebugRoot = join(home, ".claude", "debug");
-
-  const targets = [
-    ...listFilesRecursive(piSessionsRoot).filter((path) => path.endsWith(".jsonl")),
-    ...listFilesRecursive(claudeDebugRoot),
-  ];
-
-  let prunedCount = 0;
-  for (const filePath of targets) {
-    try {
-      const stats = statSync(filePath);
-      if (stats.mtimeMs < cutoffMs) {
-        rmSync(filePath, { force: true });
-        prunedCount += 1;
-      }
-    } catch {
-      // Best-effort pruning; continue on filesystem races.
-    }
-  }
-
-  return { prunedCount };
-}
-
 function shouldEmitUserVisibleHeartbeat(now = Date.now()): boolean {
   if (now - lastUserVisibleHeartbeatAt < USER_VISIBLE_HEARTBEAT_INTERVAL_MS) {
     return false;
@@ -164,7 +121,7 @@ async function maybeEmitUserVisibleHeartbeat(source: "cron" | "wake"): Promise<b
 
 export const heartbeatCron = inngest.createFunction(
   { id: "system-heartbeat" },
-  [{ cron: "*/15 * * * *" }],
+  [{ cron: "7-59/15 * * * *" }],
   async ({ step }) => {
     const gate = await step.run("check-if-needed", async () => {
       const redis = getRedis();
@@ -187,7 +144,7 @@ export const heartbeatCron = inngest.createFunction(
       return { status: "skipped" as const, reason: gate.reason };
     }
 
-    await step.run("prune-old-sessions", async () => pruneOldSessionFiles());
+    const sessionPrune = await step.run("report-old-sessions", () => pruneOldSessionFiles());
 
     // Fan out all checks as independent events
     await step.sendEvent("fan-out-checks", HEARTBEAT_EVENTS);
@@ -213,7 +170,7 @@ export const heartbeatCron = inngest.createFunction(
           ADR_PITCH_LAST_FIRED_KEY,
           new Date(Date.now()).toISOString(),
           "EX",
-          ADR_PITCH_TTL_SECONDS
+          ADR_PITCH_TTL_SECONDS,
         );
         return {
           key: ADR_PITCH_LAST_FIRED_KEY,
@@ -253,6 +210,7 @@ export const heartbeatCron = inngest.createFunction(
           fanoutCount: HEARTBEAT_EVENTS.length,
           adrPitchRequested: shouldRequestAdrPitch,
           digestRequested: shouldRequestDigest,
+          sessionPrune,
         },
       });
     });
@@ -260,7 +218,7 @@ export const heartbeatCron = inngest.createFunction(
     // Quiet mode: only emit a green heartbeat marker once per hour.
     // Degradation notifications are emitted by check/* functions directly.
     await step.run("maybe-emit-user-visible-heartbeat", async () =>
-      maybeEmitUserVisibleHeartbeat("cron")
+      maybeEmitUserVisibleHeartbeat("cron"),
     );
 
     await step.run("record-last-run", async () => {
@@ -268,14 +226,14 @@ export const heartbeatCron = inngest.createFunction(
       await redis.set(HEARTBEAT_LAST_RUN_KEY, Date.now().toString());
       return { key: HEARTBEAT_LAST_RUN_KEY };
     });
-  }
+  },
 );
 
 export const heartbeatWake = inngest.createFunction(
   { id: "system-heartbeat-wake" },
   [{ event: "system/heartbeat.wake" }],
   async ({ step }) => {
-    await step.run("prune-old-sessions", async () => pruneOldSessionFiles());
+    const sessionPrune = await step.run("report-old-sessions", () => pruneOldSessionFiles());
 
     // Same fan-out on manual wake
     await step.sendEvent("fan-out-checks", HEARTBEAT_EVENTS);
@@ -309,12 +267,13 @@ export const heartbeatWake = inngest.createFunction(
         metadata: {
           fanoutCount: HEARTBEAT_EVENTS.length,
           digestRequested: shouldRequestDigest,
+          sessionPrune,
         },
       });
     });
 
     await step.run("maybe-emit-user-visible-heartbeat", async () =>
-      maybeEmitUserVisibleHeartbeat("wake")
+      maybeEmitUserVisibleHeartbeat("wake"),
     );
-  }
+  },
 );

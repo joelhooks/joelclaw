@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { realpathSync } from "node:fs";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
 import { querySystemKnowledge, SYSTEM_KNOWLEDGE_COLLECTION } from "../../../lib/typesense";
@@ -8,6 +7,8 @@ import { inngest } from "../../client";
 import { buildGatewaySignalMeta } from "../../middleware/gateway-signal";
 import {
   appendProgress,
+  assertSafeLoopId,
+  cleanupExistingLoopWorktree,
   claimStory,
   createLoopOnFailure,
   ensureClaudeAuth,
@@ -35,7 +36,7 @@ async function generatePrd(
   goal: string,
   project: string,
   contextPaths?: string[],
-  maxStories: number = 6
+  maxStories: number = 6,
 ): Promise<{ title: string; adr?: string; stories: any[] }> {
   // Read project structure
   let projectStructure = "";
@@ -45,8 +46,12 @@ async function generatePrd(
     try {
       const src = await $`cd ${project} && find src -maxdepth 3 -type f 2>/dev/null`.quiet();
       if (src.text().trim()) projectStructure += "\n\nsrc/ files:\n" + src.text().trim();
-    } catch { /* no src/ */ }
-  } catch { /* empty project */ }
+    } catch {
+      /* no src/ */
+    }
+  } catch {
+    /* empty project */
+  }
 
   // Read CLAUDE.md / AGENTS.md
   let projectInstructions = "";
@@ -54,7 +59,9 @@ async function generatePrd(
     try {
       const content = await Bun.file(join(project, f)).text();
       projectInstructions += `\n\n## ${f}\n${content.slice(0, 2000)}`;
-    } catch { /* not found */ }
+    } catch {
+      /* not found */
+    }
   }
 
   // Read context files (ADRs, docs)
@@ -64,7 +71,9 @@ async function generatePrd(
       try {
         const content = await Bun.file(p).text();
         contextContent += `\n\n## ${p.split("/").pop()}\n${content}`;
-      } catch { /* not found */ }
+      } catch {
+        /* not found */
+      }
     }
   }
 
@@ -109,10 +118,12 @@ Rules:
 - Keep stories small — one logical change per story`;
 
   ensureClaudeAuth();
-  const proc = Bun.spawn(
-    ["claude", "-p", prompt, "--output-format", "json"],
-    { cwd: project, stdout: "pipe", stderr: "pipe", env: process.env }
-  );
+  const proc = Bun.spawn(["claude", "-p", prompt, "--output-format", "json"], {
+    cwd: project,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: process.env,
+  });
 
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
@@ -140,7 +151,9 @@ Rules:
 
   // Validate shape
   if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
-    throw new NonRetriableError(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+    throw new NonRetriableError(
+      `Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`,
+    );
   }
 
   // Cap stories
@@ -213,10 +226,21 @@ export const agentLoopPlan = inngest.createFunction(
       },
     ],
   },
-  [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
+  [
+    { event: "agent/loop.started" },
+    { event: "agent/loop.story.passed" },
+    { event: "agent/loop.story.failed" },
+  ],
   async ({ event, step, ...rest }) => {
-    const gateway = (rest as any).gateway as import("../../middleware/gateway").GatewayContext | undefined;
+    const gateway = (rest as any).gateway as
+      | import("../../middleware/gateway").GatewayContext
+      | undefined;
     const { loopId, project } = event.data;
+    try {
+      assertSafeLoopId(loopId);
+    } catch {
+      throw new NonRetriableError("invalid or unsafe agent-loop id");
+    }
     const eventWorkDir = event.data.workDir ?? event.data.project;
     const prdPath = event.data.prdPath ?? "prd.json";
     const goal = (event.data as any).goal as string | undefined;
@@ -226,17 +250,17 @@ export const agentLoopPlan = inngest.createFunction(
     // Read maxIterations from start event or re-entry plan event (default 100)
     const maxIterations =
       event.name === "agent/loop.started"
-        ? event.data.maxIterations ?? 100
-        : (event.data as any).maxIterations ?? 100;
+        ? (event.data.maxIterations ?? 100)
+        : ((event.data as any).maxIterations ?? 100);
     const retryLadder =
       event.name === "agent/loop.started"
-        ? event.data.retryLadder ?? [...DEFAULT_RETRY_LADDER]
-        : (event.data as any).retryLadder ?? [...DEFAULT_RETRY_LADDER];
+        ? (event.data.retryLadder ?? [...DEFAULT_RETRY_LADDER])
+        : ((event.data as any).retryLadder ?? [...DEFAULT_RETRY_LADDER]);
     // ADR-0035: carry originSession through the pipeline for gateway routing
     const originSession =
       event.name === "agent/loop.started"
         ? event.data.originSession
-        : (event.data as any).originSession as string | undefined;
+        : ((event.data as any).originSession as string | undefined);
 
     const isStartEvent = event.name === "agent/loop.started";
 
@@ -247,45 +271,33 @@ export const agentLoopPlan = inngest.createFunction(
     // Worktree isolation: each loop gets its own working directory.
     // Main repo working tree is NEVER touched by loop operations.
     const worktreeBase = `/tmp/agent-loop`;
-    const worktreePath = `${worktreeBase}/${loopId}`;  // Always the worktree root
+    const worktreePath = `${worktreeBase}/${loopId}`; // Always the worktree root
     const branchName = `agent-loop/${loopId}`;
 
     if (isStartEvent) {
       await step.run("create-worktree", async () => {
+        assertSafeLoopId(loopId);
         await $`mkdir -p ${worktreeBase}`.quiet();
-        const normalizedWorktreePath = (() => {
-          try {
-            return join(realpathSync(worktreeBase), loopId);
-          } catch {
-            return worktreePath;
-          }
-        })();
         // Compute relative path from git root to project (e.g. "packages/system-bus")
-        const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet()).text().trim();
+        const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet())
+          .text()
+          .trim();
         const relPath = project.startsWith(gitRoot) ? project.slice(gitRoot.length + 1) : "";
-        // Inngest retries can re-run this step after partial failure, leaving stale branch/worktree state behind.
-        const existingBranch = await $`cd ${gitRoot} && git branch --list ${branchName}`.quiet().nothrow();
-        if (shellText(existingBranch.stdout)) {
-          await $`cd ${gitRoot} && git branch -D ${branchName}`.quiet().nothrow();
-        }
 
-        const worktreeList = await $`cd ${gitRoot} && git worktree list --porcelain`.quiet().nothrow();
-        const existingWorktreePath = shellText(worktreeList.stdout)
-          .split("\n")
-          .filter((line) => line.startsWith("worktree "))
-          .map((line) => line.replace(/^worktree\s+/, "").trim())
-          .find((path) => path === worktreePath || path === normalizedWorktreePath);
-        if (existingWorktreePath) {
-          await $`cd ${gitRoot} && git worktree remove --force ${existingWorktreePath}`.quiet().nothrow();
-        }
-        await $`cd ${gitRoot} && git worktree prune`.quiet().nothrow();
-        const existingBranchAfterCleanup = await $`cd ${gitRoot} && git branch --list ${branchName}`.quiet().nothrow();
-        if (shellText(existingBranchAfterCleanup.stdout)) {
-          await $`cd ${gitRoot} && git branch -D ${branchName}`.quiet().nothrow();
+        // A retry may find a stale loop worktree. Remove it only when Git says
+        // it is clean; preserve dirty work and unmerged branches for recovery.
+        try {
+          await cleanupExistingLoopWorktree(gitRoot, loopId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown cleanup error";
+          throw new NonRetriableError(`refusing destructive stale loop cleanup: ${message}`);
         }
 
         // Create worktree on a new branch from current HEAD
-        const addWorktree = await $`cd ${gitRoot} && git worktree add ${worktreePath} -b ${branchName}`.quiet().nothrow();
+        const addWorktree =
+          await $`cd ${gitRoot} && git worktree add ${worktreePath} -b ${branchName}`
+            .quiet()
+            .nothrow();
         if (addWorktree.exitCode !== 0) {
           const stderr = shellText(addWorktree.stderr);
           const stdout = shellText(addWorktree.stdout);
@@ -306,7 +318,9 @@ export const agentLoopPlan = inngest.createFunction(
       await step.run("install-worktree-deps", async () => {
         // Detect package manager from lockfile
         const hasPnpmLock = await Bun.file(`${worktreePath}/pnpm-lock.yaml`).exists();
-        const hasBunLock = await Bun.file(`${worktreePath}/bun.lock`).exists() || await Bun.file(`${worktreePath}/bun.lockb`).exists();
+        const hasBunLock =
+          (await Bun.file(`${worktreePath}/bun.lock`).exists()) ||
+          (await Bun.file(`${worktreePath}/bun.lockb`).exists());
         const hasYarnLock = await Bun.file(`${worktreePath}/yarn.lock`).exists();
 
         let installCmd: string;
@@ -349,7 +363,9 @@ export const agentLoopPlan = inngest.createFunction(
       await step.run("verify-worktree", async () => {
         const exists = await Bun.file(`${worktreePath}/.git`).exists();
         if (!exists) {
-          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+          throw new NonRetriableError(
+            `Worktree missing at ${worktreePath} — loop may have been cleaned up`,
+          );
         }
       });
 
@@ -362,15 +378,29 @@ export const agentLoopPlan = inngest.createFunction(
         }
         // Same install logic as create path
         const hasPnpmLock = await Bun.file(`${worktreePath}/pnpm-lock.yaml`).exists();
-        const hasBunLock = await Bun.file(`${worktreePath}/bun.lock`).exists() || await Bun.file(`${worktreePath}/bun.lockb`).exists();
+        const hasBunLock =
+          (await Bun.file(`${worktreePath}/bun.lock`).exists()) ||
+          (await Bun.file(`${worktreePath}/bun.lockb`).exists());
         let installCmd: string;
         let pm: string;
-        if (hasPnpmLock) { pm = "pnpm"; installCmd = "pnpm install --frozen-lockfile 2>&1"; }
-        else if (hasBunLock) { pm = "bun"; installCmd = "bun install --frozen-lockfile 2>&1"; }
-        else { pm = "npm"; installCmd = "npm ci 2>&1"; }
+        if (hasPnpmLock) {
+          pm = "pnpm";
+          installCmd = "pnpm install --frozen-lockfile 2>&1";
+        } else if (hasBunLock) {
+          pm = "bun";
+          installCmd = "bun install --frozen-lockfile 2>&1";
+        } else {
+          pm = "npm";
+          installCmd = "npm ci 2>&1";
+        }
         try {
           const { execSync } = await import("node:child_process");
-          execSync(installCmd, { cwd: worktreePath, timeout: 120_000, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
+          execSync(installCmd, {
+            cwd: worktreePath,
+            timeout: 120_000,
+            encoding: "utf-8",
+            maxBuffer: 10 * 1024 * 1024,
+          });
           return { installed: true, packageManager: pm };
         } catch (e: any) {
           return { installed: false, packageManager: pm, error: e?.message?.slice(0, 200) };
@@ -381,7 +411,9 @@ export const agentLoopPlan = inngest.createFunction(
     // Compute workDir: worktree root + relative subpath to the actual project
     // e.g. /tmp/agent-loop/{loopId}/packages/system-bus
     const workDir = await step.run("resolve-workdir", async () => {
-      const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet()).text().trim();
+      const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet())
+        .text()
+        .trim();
       const relPath = project.startsWith(gitRoot) ? project.slice(gitRoot.length + 1) : "";
       return relPath ? join(worktreePath, relPath) : worktreePath;
     });
@@ -403,13 +435,16 @@ export const agentLoopPlan = inngest.createFunction(
         const diskPath = join(project, prdPath ?? "prd.json");
         await Bun.write(diskPath, JSON.stringify(generated, null, 2) + "\n");
 
-        await appendProgress(loopId, [
-          `## PRD Generated from Goal`,
-          `Goal: ${goal}`,
-          `Context: ${contextFiles?.join(", ") ?? "none"}`,
-          `Stories: ${generated.stories.length}`,
-          ...generated.stories.map((s: any) => `- ${s.id}: ${s.title}`),
-        ].join("\n"));
+        await appendProgress(
+          loopId,
+          [
+            `## PRD Generated from Goal`,
+            `Goal: ${goal}`,
+            `Context: ${contextFiles?.join(", ") ?? "none"}`,
+            `Stories: ${generated.stories.length}`,
+            ...generated.stories.map((s: any) => `- ${s.id}: ${s.title}`),
+          ].join("\n"),
+        );
 
         // Seed to Redis
         return seedPrdFromData(loopId, generated, {
@@ -426,9 +461,7 @@ export const agentLoopPlan = inngest.createFunction(
     });
 
     // Count attempted stories (passed + skipped) for maxIterations enforcement
-    const attemptedStories = prd.stories.filter(
-      (s) => s.passes || (s as any).skipped
-    ).length;
+    const attemptedStories = prd.stories.filter((s) => s.passes || (s as any).skipped).length;
 
     // Gateway progress: report story counts at each planning cycle
     const totalStories = prd.stories.length;
@@ -437,7 +470,8 @@ export const agentLoopPlan = inngest.createFunction(
     if (gateway && isStartEvent) {
       await gateway.progress(`🚀 Loop started: ${prd.title ?? loopId} — ${totalStories} stories`, {
         ...buildGatewaySignalMeta("loop.lifecycle", "info"),
-        loopId, totalStories,
+        loopId,
+        totalStories,
       });
     }
 
@@ -508,10 +542,16 @@ export const agentLoopPlan = inngest.createFunction(
       const completed = prd.stories.filter((s) => s.passes).length;
       const skipped = prd.stories.filter((s) => (s as any).skipped).length;
       if (gateway) {
-        await gateway.progress(`⏱️ Max iterations (${maxIterations}) reached. ${completed} completed, ${skipped} skipped.`, {
-          ...buildGatewaySignalMeta("loop.outcome", "warn"),
-          loopId, completed, skipped, maxIterations,
-        });
+        await gateway.progress(
+          `⏱️ Max iterations (${maxIterations}) reached. ${completed} completed, ${skipped} skipped.`,
+          {
+            ...buildGatewaySignalMeta("loop.outcome", "warn"),
+            loopId,
+            completed,
+            skipped,
+            maxIterations,
+          },
+        );
       }
       await step.sendEvent("emit-complete-max-iterations", {
         name: "agent/loop.completed",
@@ -543,7 +583,7 @@ export const agentLoopPlan = inngest.createFunction(
 
       for (const skippedStory of skippedStories) {
         const checks = await step.run(`recheck-suite-${skippedStory.id}`, () =>
-          runRecheckSuite(workDir)
+          runRecheckSuite(workDir),
         );
 
         if (checks.passed) {
@@ -555,7 +595,7 @@ export const agentLoopPlan = inngest.createFunction(
                 `**Story ${skippedStory.id}: ${skippedStory.title}** — RECHECK PASS`,
                 "- Recheck result: typecheck + tests now pass",
                 "- Action: unskipped and marked passes=true",
-              ].join("\n")
+              ].join("\n"),
             );
           });
           recheckResults.push({ storyId: skippedStory.id, status: "passed" });
@@ -566,7 +606,7 @@ export const agentLoopPlan = inngest.createFunction(
               [
                 `**Story ${skippedStory.id}: ${skippedStory.title}** — RECHECK STILL FAILING`,
                 "- Recheck result: still failing typecheck/tests",
-              ].join("\n")
+              ].join("\n"),
             );
           });
           recheckResults.push({ storyId: skippedStory.id, status: "still-failing" });
@@ -574,20 +614,25 @@ export const agentLoopPlan = inngest.createFunction(
       }
 
       const finalPrd = await step.run("read-prd-post-recheck", () =>
-        readPrd(workDir, prdPath, loopId)
+        readPrd(workDir, prdPath, loopId),
       );
       const completed = finalPrd.stories.filter((s) => s.passes).length;
       const failed = finalPrd.stories.filter((s) => (s as any).skipped).length;
       const recovered = recheckResults.filter((r) => r.status === "passed").length;
-      const stillFailing = recheckResults.filter(
-        (r) => r.status === "still-failing"
-      ).length;
+      const stillFailing = recheckResults.filter((r) => r.status === "still-failing").length;
 
       if (gateway) {
-        await gateway.progress(`✅ All stories processed. ${completed} completed, ${failed} skipped. Recheck: ${recovered} recovered, ${stillFailing} still failing.`, {
-          ...buildGatewaySignalMeta("loop.outcome", "info"),
-          loopId, completed, failed, recovered, stillFailing,
-        });
+        await gateway.progress(
+          `✅ All stories processed. ${completed} completed, ${failed} skipped. Recheck: ${recovered} recovered, ${stillFailing} still failing.`,
+          {
+            ...buildGatewaySignalMeta("loop.outcome", "info"),
+            loopId,
+            completed,
+            failed,
+            recovered,
+            stillFailing,
+          },
+        );
       }
       await step.sendEvent("emit-complete", {
         name: "agent/loop.completed",
@@ -625,16 +670,14 @@ export const agentLoopPlan = inngest.createFunction(
 
     // Determine tool assignment
     const toolAssignments =
-      event.name === "agent/loop.started"
-        ? event.data.toolAssignments
-        : undefined;
+      event.name === "agent/loop.started" ? event.data.toolAssignments : undefined;
 
     const assignment = toolAssignments?.[next.id];
     const implTool = assignment?.implementor ?? "codex";
     const maxRetries =
       event.name === "agent/loop.started"
-        ? event.data.maxRetries ?? 2
-        : (event.data as any).maxRetries ?? 2;
+        ? (event.data.maxRetries ?? 2)
+        : ((event.data as any).maxRetries ?? 2);
 
     const runToken = await step.run("derive-run-token", () => {
       const eventId = (event as { id?: string }).id;
@@ -642,12 +685,12 @@ export const agentLoopPlan = inngest.createFunction(
     });
 
     const claimedRunToken = await step.run("claim-story", () =>
-      claimStory(loopId, next.id, runToken)
+      claimStory(loopId, next.id, runToken),
     );
 
     if (!claimedRunToken) {
       console.warn(
-        `[agent-loop-plan] story already claimed, skipping dispatch loopId=${loopId} storyId=${next.id}`
+        `[agent-loop-plan] story already claimed, skipping dispatch loopId=${loopId} storyId=${next.id}`,
       );
       return {
         status: "already-claimed",
@@ -659,10 +702,15 @@ export const agentLoopPlan = inngest.createFunction(
     }
 
     if (gateway) {
-      await gateway.progress(`🔄 Story ${passedStories + 1}/${totalStories}: ${next.title} (${implTool})`, {
-        ...buildGatewaySignalMeta("loop.story", "info"),
-        loopId, storyId: next.id, tool: implTool,
-      });
+      await gateway.progress(
+        `🔄 Story ${passedStories + 1}/${totalStories}: ${next.title} (${implTool})`,
+        {
+          ...buildGatewaySignalMeta("loop.story", "info"),
+          loopId,
+          storyId: next.id,
+          tool: implTool,
+        },
+      );
     }
 
     await step.sendEvent("emit-test", {
@@ -690,5 +738,5 @@ export const agentLoopPlan = inngest.createFunction(
       remaining: remaining.length,
       maxIterations,
     };
-  }
+  },
 );

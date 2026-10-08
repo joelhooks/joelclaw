@@ -3,10 +3,12 @@ import {
   type JournalEvent,
   MessageJournalQuery,
   messageJournalQueryLayer,
+  readEnvFile,
   resolveMessageJournalConnection,
 } from "@joelclaw/message-journal";
 // @joelclaw/message-journal owns the Effect runtime used by its services.
 import { Effect, Layer } from "@joelclaw/message-journal/node_modules/effect";
+import { NonRetriableError } from "inngest";
 import Redis from "ioredis";
 import { getRedisPort } from "../../lib/redis";
 import { emitOtelEvent } from "../../observability/emit";
@@ -42,6 +44,30 @@ const CONVERSATION_REPLY_REASON =
   "deliver.exempt.joel-initiated-conversation-reply";
 const CANARY_MARKER = /(?:^|[./:_-])(canary|telegram-flow-audit)(?:$|[./:_-])/iu;
 const CONTENT_KIND_SET = new Set<string>(TELEGRAM_SIGNAL_CONTENT_KINDS);
+const MISSING_JOURNAL_CONFIG_LOG_INTERVAL_MS = 60 * 60 * 1_000;
+
+export function createMissingJournalConfigReporter(
+  log: (message: string) => void,
+): (missing: ReadonlyArray<string>, now?: number) => NonRetriableError {
+  let lastLoggedAt: number | undefined;
+  return (missing, now = Date.now()) => {
+    const names = [...new Set(missing)].filter((name) => name.length > 0).sort();
+    const message =
+      `noise-rate-guard skipped: missing message-journal variables: ${names.join(", ")}`;
+    if (
+      lastLoggedAt === undefined ||
+      now - lastLoggedAt >= MISSING_JOURNAL_CONFIG_LOG_INTERVAL_MS
+    ) {
+      lastLoggedAt = now;
+      log(message);
+    }
+    return new NonRetriableError(message);
+  };
+}
+
+const missingJournalConfigFailure = createMissingJournalConfigReporter((message) => {
+  console.warn(message);
+});
 
 export type NoiseRateGuardReport = {
   window: string;
@@ -95,6 +121,7 @@ export type NoiseRateGuardDependencies = {
     report: NoiseRateGuardReport,
     digest: { queued: boolean } | undefined,
   ): Promise<void>;
+  missingJournalReaderVariables?(): Promise<ReadonlyArray<string>>;
   now(): Date;
 };
 
@@ -252,10 +279,40 @@ let queryPromise: Promise<
   (window: string) => Promise<ReadonlyArray<JournalEvent>>
 > | undefined;
 
+async function resolveJournalReaderConfiguration(
+  env: NodeJS.ProcessEnv = process.env,
+  fileEnv: Record<string, string> = readEnvFile(),
+) {
+  return Effect.runPromise(
+    resolveMessageJournalConnection("reader", env, fileEnv).pipe(
+      Effect.match({
+        onFailure: (error) => ({ tag: "missing" as const, missing: error.missing }),
+        onSuccess: (connection) => ({ tag: "ready" as const, connection }),
+      }),
+    ),
+  );
+}
+
+export async function getMissingMessageJournalReaderVariables(
+  env: NodeJS.ProcessEnv = process.env,
+  fileEnv: Record<string, string> = readEnvFile(),
+): Promise<ReadonlyArray<string>> {
+  const result = await resolveJournalReaderConfiguration(env, fileEnv);
+  return result.tag === "missing" ? result.missing : [];
+}
+
+async function missingJournalReaderVariables(): Promise<ReadonlyArray<string>> {
+  return getMissingMessageJournalReaderVariables();
+}
+
 async function createJournalLoader(): Promise<
   (window: string) => Promise<ReadonlyArray<JournalEvent>>
 > {
-  const connection = await Effect.runPromise(resolveMessageJournalConnection("reader"));
+  const resolution = await resolveJournalReaderConfiguration();
+  if (resolution.tag === "missing") {
+    throw missingJournalConfigFailure(resolution.missing);
+  }
+  const connection = resolution.connection;
   const queryLayer = messageJournalQueryLayer(connection).pipe(
     Layer.provide(clickHouseClientLayer(connection)),
   );
@@ -278,7 +335,13 @@ async function createJournalLoader(): Promise<
 
 async function measureNoiseRate(window: string): Promise<NoiseRateGuardReport> {
   queryPromise ??= createJournalLoader();
-  const load = await queryPromise;
+  let load: (window: string) => Promise<ReadonlyArray<JournalEvent>>;
+  try {
+    load = await queryPromise;
+  } catch (error) {
+    queryPromise = undefined;
+    throw error;
+  }
   const rows = await load(window);
   return computeNoiseRate(rows, { window });
 }
@@ -340,6 +403,7 @@ const defaultDependencies: NoiseRateGuardDependencies = {
   measureNoiseRate,
   enqueueDigestItem,
   emitReport,
+  missingJournalReaderVariables,
   now: () => new Date(),
 };
 
@@ -355,6 +419,12 @@ export function createNoiseRateGuardFunction(
     },
     { cron: "23 * * * *" },
     async ({ step }) => {
+      const missingJournalVariables =
+        (await dependencies.missingJournalReaderVariables?.()) ?? [];
+      if (missingJournalVariables.length > 0) {
+        throw missingJournalConfigFailure(missingJournalVariables, dependencies.now().getTime());
+      }
+
       const window = process.env.TELEGRAM_NOISE_RATE_WINDOW?.trim() || NOISE_RATE_WINDOW;
       // Keep exact journal bodies inside this step. Only the body-free aggregate
       // enters Inngest run state.

@@ -1,4 +1,3 @@
-import { Database } from "bun:sqlite";
 import { resolve } from "node:path";
 import {
   CRITICAL_DB_REQUIRED_SOURCES,
@@ -10,6 +9,7 @@ import {
   sendHardAlert,
   stableAlertId,
 } from "../../lib/search-maintenance";
+import { openHostDatabase } from "../../lib/sqlite";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
@@ -107,7 +107,7 @@ export function inspectCriticalDbFreshness(input: {
     sourceStaleAfterMs,
   };
   try {
-    const db = new Database(dbPath, { readonly: true, strict: true });
+    const db = openHostDatabase(dbPath, { readonly: true, strict: true });
     try {
       const rows = db.query("SELECT key, value FROM metadata").all() as Array<{
         key: string;

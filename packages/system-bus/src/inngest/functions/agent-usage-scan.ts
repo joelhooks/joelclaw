@@ -12,9 +12,10 @@ export const agentUsageScan = inngest.createFunction(
   {
     id: "system/agent-usage.scan",
     name: "Agent Usage Scan",
-    retries: 1,
+    concurrency: { limit: 1 },
+    retries: 0,
   },
-  [{ cron: "*/15 * * * *" }, { event: "system/agent-usage.scan.requested" }],
+  [{ cron: "2-59/15 * * * *" }, { event: "system/agent-usage.scan.requested" }],
   async ({ step }) => {
     const summary = await step.run("scan-agent-transcripts", async () => {
       return scanAgentUsage();
@@ -22,7 +23,7 @@ export const agentUsageScan = inngest.createFunction(
 
     await step.run("emit-scan-summary", async () => {
       await emitOtelEvent({
-        level: "info",
+        level: summary.oversizedFiles > 0 ? "warn" : "info",
         source: "agent-usage",
         component: "agent-usage",
         action: "agent_usage.scan.summary",
@@ -32,5 +33,5 @@ export const agentUsageScan = inngest.createFunction(
     });
 
     return { status: "ok", ...summary };
-  }
+  },
 );

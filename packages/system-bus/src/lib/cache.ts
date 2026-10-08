@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { NAS_NVME_ROOT } from "@joelclaw/endpoint-resolver";
 import { getRedisClient } from "./redis";
+import { isProtectedHarnessPath } from "./protected-harness-paths";
 
 type CacheTier = "hot" | "warm" | "cold";
 
@@ -40,7 +41,10 @@ function normalizeNamespace(namespace?: string): string {
   if (!trimmed) return DEFAULT_NAMESPACE;
 
   const normalized = trimmed.replace(/[^a-zA-Z0-9._:-]/g, "-");
-  return normalized.length > 0 ? normalized : DEFAULT_NAMESPACE;
+  if (normalized.length === 0 || normalized === "." || normalized === "..") {
+    return DEFAULT_NAMESPACE;
+  }
+  return normalized;
 }
 
 function resolveOptions(options?: CacheOptions): ResolvedCacheOptions {
@@ -111,18 +115,22 @@ function parseEnvelope<T>(raw: unknown, fallbackCachedAtMs: number): CacheEnvelo
 }
 
 async function writeJsonFileAtomic(filePath: string, data: unknown): Promise<void> {
+  if (isProtectedHarnessPath(filePath)) {
+    throw new Error("Refusing cache write under a protected harness path");
+  }
   await mkdir(path.dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(tmpPath, JSON.stringify(data), "utf8");
   await rename(tmpPath, filePath);
 }
 
-async function readFileCache<T>(filePath: string, ttlSeconds: number): Promise<{ value: T; ageSeconds: number } | null> {
+async function readFileCache<T>(
+  filePath: string,
+  ttlSeconds: number,
+): Promise<{ value: T; ageSeconds: number } | null> {
+  if (isProtectedHarnessPath(filePath)) return null;
   try {
-    const [rawText, fileStats] = await Promise.all([
-      readFile(filePath, "utf8"),
-      stat(filePath),
-    ]);
+    const [rawText, fileStats] = await Promise.all([readFile(filePath, "utf8"), stat(filePath)]);
     const parsed = JSON.parse(rawText) as unknown;
     const envelope = parseEnvelope<T>(parsed, fileStats.mtimeMs);
     const ageSeconds = ageSecondsFromMs(envelope.cached_at_ms);
@@ -194,7 +202,7 @@ export async function cacheGet<T>(key: string, opts?: CacheOptions): Promise<T |
             keyForRedis,
             JSON.stringify(envelope),
             "EX",
-            options.hotTtlSeconds
+            options.hotTtlSeconds,
           );
         } catch {}
       }
@@ -248,27 +256,16 @@ export async function cacheSet<T>(key: string, value: T, opts?: CacheOptions): P
 
   if (tiers.includes("hot")) {
     await getRedisClient()
-      .set(
-        redisKey(options.namespace, key),
-        JSON.stringify(envelope),
-        "EX",
-        options.hotTtlSeconds
-      )
+      .set(redisKey(options.namespace, key), JSON.stringify(envelope), "EX", options.hotTtlSeconds)
       .catch(() => {});
   }
 
   if (tiers.includes("warm")) {
-    await writeJsonFileAtomic(
-      warmFilePath(options.namespace, key),
-      envelope
-    ).catch(() => {});
+    await writeJsonFileAtomic(warmFilePath(options.namespace, key), envelope).catch(() => {});
   }
 
   if (tiers.includes("cold") && (await isNasMounted())) {
-    await writeJsonFileAtomic(
-      coldFilePath(options.namespace, key),
-      envelope
-    ).catch(() => {});
+    await writeJsonFileAtomic(coldFilePath(options.namespace, key), envelope).catch(() => {});
   }
 }
 
@@ -283,11 +280,17 @@ export async function cacheInvalidate(key: string, opts?: CacheOptions): Promise
   }
 
   if (tiers.includes("warm")) {
-    await rm(warmFilePath(options.namespace, key), { force: true }).catch(() => {});
+    const filePath = warmFilePath(options.namespace, key);
+    if (!isProtectedHarnessPath(filePath)) {
+      await rm(filePath, { force: true }).catch(() => {});
+    }
   }
 
   if (tiers.includes("cold") && (await isNasMounted())) {
-    await rm(coldFilePath(options.namespace, key), { force: true }).catch(() => {});
+    const filePath = coldFilePath(options.namespace, key);
+    if (!isProtectedHarnessPath(filePath)) {
+      await rm(filePath, { force: true }).catch(() => {});
+    }
   }
 
   logCacheEvent("cache.invalidate", {
@@ -300,7 +303,7 @@ export async function cacheInvalidate(key: string, opts?: CacheOptions): Promise
 export async function cacheWrap<T>(
   key: string,
   opts: CacheOptions,
-  fetcher: () => Promise<T>
+  fetcher: () => Promise<T>,
 ): Promise<T> {
   const cached = await cacheGet<T>(key, opts);
   if (cached !== null) return cached;

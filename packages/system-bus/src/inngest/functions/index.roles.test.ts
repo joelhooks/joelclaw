@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
 import { clusterFunctionIds } from "./index.cluster";
 import { hostFunctionIds } from "./index.host";
+import { memoryIndexerFunctionIds } from "./index.memory-indexer";
+import { findUnexpectedDuplicateIds, INTENTIONAL_DUAL_ROLE_IDS } from "./role-contract";
+import { capturePrefixGrowthAlert } from "./typesense-recovery-alerts";
 
 /**
- * Functions deliberately registered in BOTH worker roles.
+ * Functions deliberately registered in more than one worker role.
  *
  * Cluster-only registration silently never runs on flagg — the Front incident
  * proved that the expensive way (commit 2810c4d6). Dual registration is the
@@ -11,24 +14,48 @@ import { hostFunctionIds } from "./index.host";
  * being deleted, which would stop catching the accidental duplicates it exists
  * for. Adding an id here is a deliberate act; leaving one out is the bug.
  */
-const INTENTIONAL_DUAL_ROLE_IDS = new Set<string>([
-  "webhook-subscription-dispatch-generic",
-]);
+test("worker role function ids are unique across host, cluster, and memory indexer", () => {
+  expect(
+    findUnexpectedDuplicateIds([
+      ...hostFunctionIds,
+      ...clusterFunctionIds,
+      ...memoryIndexerFunctionIds,
+    ]),
+  ).toEqual([]);
+});
 
-function duplicates(values: string[]): string[] {
-  const seen = new Set<string>();
-  const repeated = new Set<string>();
-  for (const value of values) {
-    if (seen.has(value)) repeated.add(value);
-    seen.add(value);
+test("memory indexer owns the blocking session and transcript indexers", () => {
+  for (const id of ["memory-run-captured-v3", "meeting-transcript-index", "transcript-index-web"]) {
+    expect(memoryIndexerFunctionIds).toContain(id);
+    expect(hostFunctionIds).not.toContain(id);
+    expect(clusterFunctionIds).not.toContain(id);
   }
-  return [...repeated].sort();
-}
+});
 
-test("worker role function ids are unique across host and cluster", () => {
-  const repeated = duplicates([...hostFunctionIds, ...clusterFunctionIds]);
-  const unexpected = repeated.filter((id) => !INTENTIONAL_DUAL_ROLE_IDS.has(id));
-  expect(unexpected).toEqual([]);
+test("memory indexer owns session-database search monitors", () => {
+  for (const id of ["search/capture-prefix-growth-alert", "search/typesense-startup-budget"]) {
+    expect(memoryIndexerFunctionIds).toContain(id);
+    expect(hostFunctionIds).not.toContain(id);
+    expect(clusterFunctionIds).not.toContain(id);
+  }
+});
+
+test("capture-growth alerts have a global cap of two and a per-source cap of one", () => {
+  expect(capturePrefixGrowthAlert.opts.concurrency).toEqual([
+    { scope: "fn", limit: 2 },
+    { limit: 1, key: "event.data.source_identity" },
+  ]);
+});
+
+test("duplicate detector only suppresses intentional dual-role ids", () => {
+  expect(
+    findUnexpectedDuplicateIds([
+      "webhook-subscription-dispatch-generic",
+      "webhook-subscription-dispatch-generic",
+      "accidental-duplicate",
+      "accidental-duplicate",
+    ]),
+  ).toEqual(["accidental-duplicate"]);
 });
 
 test("every intentional dual-role id is actually registered in both roles", () => {
@@ -41,7 +68,11 @@ test("every intentional dual-role id is actually registered in both roles", () =
 });
 
 test("retired observation producers and maintenance are not registered", () => {
-  const registered = new Set([...hostFunctionIds, ...clusterFunctionIds]);
+  const registered = new Set([
+    ...hostFunctionIds,
+    ...clusterFunctionIds,
+    ...memoryIndexerFunctionIds,
+  ]);
   for (const retiredId of [
     "memory/observe-session",
     "observe-session-noted",

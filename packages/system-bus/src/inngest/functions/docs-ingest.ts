@@ -10,6 +10,7 @@ import {
   chunkBookText,
   renderChunkForEmbedding,
 } from "../../lib/book-chunk";
+import { isProtectedHarnessPath } from "../../lib/protected-harness-paths";
 import { infer } from "../../lib/inference";
 import { type LlmUsage } from "../../lib/pi-output";
 import * as typesense from "../../lib/typesense";
@@ -1820,16 +1821,18 @@ export const docsIngest = inngest.createFunction(
       // file lifecycle, not the acquisition tool (aa-book).
       const originalPath = requestedNasPath;
       let incomingCleaned = false;
+      const protectedHarnessPath = originalPath ? isProtectedHarnessPath(originalPath) : false;
       if (
         originalPath &&
         originalPath !== validated.nasPath &&
-        !originalPath.startsWith(THREE_BODY_ROOT)
+        !originalPath.startsWith(THREE_BODY_ROOT) &&
+        !protectedHarnessPath
       ) {
         await rm(originalPath, { force: true }).catch(() => {});
         incomingCleaned = true;
       }
 
-      return { textRemoved: true, incomingCleaned, originalPath };
+      return { textRemoved: true, incomingCleaned, protectedHarnessPath, originalPath };
     });
 
     return {

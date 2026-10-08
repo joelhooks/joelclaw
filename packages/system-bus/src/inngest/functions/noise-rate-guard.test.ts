@@ -1,10 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { InngestTestEngine } from "@inngest/test";
 import { createJournalEvent, type JournalEvent } from "@joelclaw/message-journal";
+import { NonRetriableError } from "inngest";
 import {
   buildNoiseRateDigestItem,
   computeNoiseRate,
+  createMissingJournalConfigReporter,
   createNoiseRateGuardFunction,
+  getMissingMessageJournalReaderVariables,
   enqueueNoiseRateDigestItemWithRedis,
   type NoiseRateDigestItem,
   type NoiseRateDigestRedis,
@@ -142,7 +145,81 @@ describe("Telegram noise-rate measurement", () => {
   });
 });
 
+describe("missing message-journal configuration", () => {
+  test("reports required names without reading configured secrets", async () => {
+    expect(await getMissingMessageJournalReaderVariables({}, {})).toEqual([
+      "MESSAGE_JOURNAL_READER_USER",
+      "MESSAGE_JOURNAL_READER_PASSWORD",
+    ]);
+  });
+
+  test("returns a non-retriable failure and logs only missing variable names once per hour", () => {
+    const logs: string[] = [];
+    const reportMissing = createMissingJournalConfigReporter((message) => logs.push(message));
+    const missing = ["MESSAGE_JOURNAL_READER_USER", "MESSAGE_JOURNAL_READER_PASSWORD"];
+
+    const first = reportMissing(missing, 1_000);
+    const withinHour = reportMissing(missing, 3_600_999);
+    const nextHour = reportMissing(missing, 3_601_000);
+
+    expect(first).toBeInstanceOf(NonRetriableError);
+    expect(withinHour).toBeInstanceOf(NonRetriableError);
+    expect(nextHour).toBeInstanceOf(NonRetriableError);
+    const missingNames = [...missing].sort().join(", ");
+    expect(first.message).toContain(missingNames);
+    expect(first.message).not.toContain("fixture-secret");
+    expect(logs).toHaveLength(2);
+    expect(logs.every((message) => message.includes(missingNames))).toBe(true);
+    expect(logs.join(" ")).not.toContain("fixture-secret");
+  });
+});
+
 describe("Telegram noise-rate guard function", () => {
+  test("skips missing message-journal configuration without retrying or logging values", async () => {
+    const missing = [
+      "MESSAGE_JOURNAL_READER_USER",
+      "MESSAGE_JOURNAL_READER_PASSWORD",
+    ];
+    const logs: string[] = [];
+    let measureCalls = 0;
+    const warn = spyOn(console, "warn").mockImplementation((message) => {
+      logs.push(String(message));
+    });
+    const errorLog = spyOn(console, "error").mockImplementation(() => undefined);
+    const dependencies = {
+      measureNoiseRate: async () => {
+        measureCalls += 1;
+        return computeNoiseRate([]);
+      },
+      enqueueDigestItem: async () => ({ queued: false }),
+      emitReport: async () => undefined,
+      now: () => new Date("2026-07-16T13:00:00.000Z"),
+      missingJournalReaderVariables: async () => missing,
+    } satisfies NoiseRateGuardDependencies & {
+      missingJournalReaderVariables: () => Promise<ReadonlyArray<string>>;
+    };
+    const engine = new InngestTestEngine({
+      function: createNoiseRateGuardFunction(dependencies) as any,
+      events: [{ name: "cron", data: { cron: "23 * * * *" } } as any],
+    });
+
+    try {
+      const execution = await engine.execute();
+      const error = execution.error as { message?: unknown } | undefined;
+      const message = typeof error?.message === "string" ? error.message : "";
+      const missingNames = [...missing].sort().join(", ");
+
+      expect(message).toContain(missingNames);
+      expect(message).not.toContain("fixture-secret");
+      expect(measureCalls).toBe(0);
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain(missingNames);
+      expect(logs[0]).not.toContain("fixture-secret");
+    } finally {
+      warn.mockRestore();
+      errorLog.mockRestore();
+    }
+  });
   test("queues a digest-owned agent investigation on breach", async () => {
     const queued: NoiseRateDigestItem[] = [];
     const emitted: NoiseRateGuardReport[] = [];

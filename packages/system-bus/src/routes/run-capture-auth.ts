@@ -1,7 +1,7 @@
-import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { openHostDatabase } from "../lib/sqlite";
 import type { MemoryIdentity } from "./run-capture";
 
 export type CaptureIdentityLookupOptions = {
@@ -163,10 +163,9 @@ async function fetchMachineRecords(
 
 function openRegistry(databasePath: string) {
   mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
-  const database = new Database(databasePath, { create: true, strict: true });
+  const database = openHostDatabase(databasePath, { create: true, strict: true });
   chmodSync(databasePath, 0o600);
   database.exec("PRAGMA journal_mode = WAL");
-  database.exec("PRAGMA busy_timeout = 1000");
   database.exec(`
     CREATE TABLE IF NOT EXISTS capture_identities (
       machine_id TEXT PRIMARY KEY,

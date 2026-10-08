@@ -1,11 +1,54 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import {
+  archiveSessionFile,
   isLocalSnapshotPathWithinRoot,
   parseTypesenseSnapshotSource,
   stageRedisBackupFromCluster,
   stageTypesenseSnapshotForBackup,
 } from "./nas-backup";
+
+describe("session archive", () => {
+  test("copies a session to NAS and retains the local source", async () => {
+    const root = await mkdtemp(join(tmpdir(), "session-archive-test-"));
+    const source = join(root, ".pi", "sessions", "old.jsonl");
+    const destination = join(root, "archive", ".pi", "sessions", "old.jsonl");
+    const content = "session fixture\\n";
+
+    try {
+      await mkdir(dirname(source), { recursive: true });
+      await writeFile(source, content);
+
+      await archiveSessionFile(source, destination);
+
+      expect(await readFile(source, "utf8")).toBe(content);
+      expect(await readFile(destination, "utf8")).toBe(content);
+      expect((await stat(source)).isFile()).toBe(true);
+      expect(await archiveSessionFile(source, destination)).toBe("already_present");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a same-sized but different existing archive without touching the source", async () => {
+    const root = await mkdtemp(join(tmpdir(), "session-archive-conflict-test-"));
+    const source = join(root, "source.jsonl");
+    const destination = join(root, "archive.jsonl");
+
+    try {
+      await writeFile(source, "source\n");
+      await writeFile(destination, "target\n");
+
+      await expect(archiveSessionFile(source, destination)).rejects.toThrow("different content");
+      expect(await readFile(source, "utf8")).toBe("source\n");
+      expect(await readFile(destination, "utf8")).toBe("target\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("Typesense backup source", () => {
   test("defaults to the native local Typesense source", () => {

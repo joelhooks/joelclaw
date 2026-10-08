@@ -34,14 +34,15 @@ describe("service placement", () => {
     });
   });
 
-  test("keeps the checked-in default placement on Flagg with k8s retired", () => {
+  test("keeps the checked-in default placement aligned with Flagg and Panda", () => {
     expect(resolveServicePlacement("joelclaw-headless-runtime", "flagg", DEFAULT_SERVICE_PLACEMENT)).toMatchObject({
       hostedHere: true,
       hostedOn: ["flagg"],
     });
-    const k8s = resolveServicePlacement("k8s", "flagg", DEFAULT_SERVICE_PLACEMENT);
-    expect(k8s).toMatchObject({ hostedHere: false, hostedOn: [] });
-    expect(formatNotHostedHere(k8s)).toBe("not-hosted-here (hosted on: unassigned)");
+    expect(resolveServicePlacement("k8s", "panda", DEFAULT_SERVICE_PLACEMENT)).toMatchObject({
+      hostedHere: true,
+      hostedOn: ["panda"],
+    });
   });
 
   test("reports a non-hosting machine as healthy context without running kubectl", () => {

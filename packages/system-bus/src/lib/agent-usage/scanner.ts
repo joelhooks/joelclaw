@@ -3,7 +3,11 @@ import { mkdir, open, readdir, readFile, rename, stat, writeFile } from "node:fs
 import { dirname, join } from "node:path";
 import { emitOtelEvent } from "../../observability/emit";
 import type { OtelEventInput } from "../../observability/otel-event";
-import { type AgentRuntimeName, type AgentUsageCaptureConfig, resolveAgentUsageCaptureConfig } from "./config";
+import {
+  type AgentRuntimeName,
+  type AgentUsageCaptureConfig,
+  resolveAgentUsageCaptureConfig,
+} from "./config";
 import * as claudeParser from "./parsers/claude";
 import * as codexParser from "./parsers/codex";
 import * as cursorParser from "./parsers/cursor";
@@ -17,8 +21,18 @@ const PARSERS: Record<AgentRuntimeName, AgentUsageParser> = {
   cursor: cursorParser,
 };
 
+export type AgentUsageFileState = {
+  offset: number;
+  mtimeMs: number;
+  skipped?: {
+    reason: "unread-remainder-limit";
+    bytes: number;
+    atMs: number;
+  };
+};
+
 export type AgentUsageScanState = {
-  files: Record<string, { offset: number; mtimeMs: number }>;
+  files: Record<string, AgentUsageFileState>;
   lastScanMs: number;
 };
 
@@ -28,16 +42,28 @@ export type RuntimeScanSummary = {
   emittedEvents: number;
   skippedFiles: number;
   droppedFiles: number;
+  oversizedFiles: number;
+  skippedBytes: number;
 };
 
 export type AgentUsageScanSummary = RuntimeScanSummary & {
   byRuntime: Partial<Record<AgentRuntimeName, RuntimeScanSummary>>;
 };
 
+export type AgentUsageScanLimits = {
+  readChunkBytes: number;
+  maxUnreadBytesPerFile: number;
+  maxReadBytesPerScan: number;
+};
+
 export type AgentUsageScanOptions = {
   config?: AgentUsageCaptureConfig;
   /** Override transcript roots per runtime (tests). */
   roots?: Partial<Record<AgentRuntimeName, string>>;
+  /** Override parsers per runtime (tests). */
+  parsers?: Partial<Record<AgentRuntimeName, AgentUsageParser>>;
+  /** Override bounded-reader limits (tests). */
+  limits?: Partial<AgentUsageScanLimits>;
   /** Override the OTEL emitter (tests). */
   emit?: (input: OtelEventInput) => Promise<unknown>;
   now?: number;
@@ -91,55 +117,171 @@ async function collectJsonlFiles(root: string): Promise<string[]> {
 }
 
 type CompletedLine = { text: string; endOffset: number };
+type LineConsumer = (line: CompletedLine) => boolean;
+
+type ReadNewLinesResult = {
+  start: number;
+  fileSize: number;
+  mtimeMs: number;
+  bytesRead: number;
+  consumedOffset: number;
+  reachedEnd: boolean;
+  skippedUnreadBytes?: number;
+};
+
+const DEFAULT_SCAN_LIMITS: AgentUsageScanLimits = {
+  readChunkBytes: 1024 * 1024,
+  maxUnreadBytesPerFile: 64 * 1024 * 1024,
+  maxReadBytesPerScan: 64 * 1024 * 1024,
+};
+
+function resolveScanLimits(overrides: Partial<AgentUsageScanLimits> = {}): AgentUsageScanLimits {
+  const positiveInteger = (value: number | undefined, fallback: number) =>
+    typeof value === "number" && Number.isFinite(value) && value > 0
+      ? Math.max(1, Math.floor(value))
+      : fallback;
+  return {
+    readChunkBytes: positiveInteger(overrides.readChunkBytes, DEFAULT_SCAN_LIMITS.readChunkBytes),
+    maxUnreadBytesPerFile: positiveInteger(
+      overrides.maxUnreadBytesPerFile,
+      DEFAULT_SCAN_LIMITS.maxUnreadBytesPerFile,
+    ),
+    maxReadBytesPerScan: positiveInteger(
+      overrides.maxReadBytesPerScan,
+      DEFAULT_SCAN_LIMITS.maxReadBytesPerScan,
+    ),
+  };
+}
+
+function joinLineParts(parts: Buffer[], length: number): Buffer {
+  if (parts.length === 0) return Buffer.alloc(0);
+  if (parts.length === 1) return parts[0]!;
+  return Buffer.concat(parts, length);
+}
 
 /**
- * Read bytes past `offset` and split into complete lines with absolute byte
- * offsets. A trailing unterminated line is only consumed if it parses as JSON
- * (a writer may be mid-line); otherwise it is left for the next scan.
+ * Read in bounded chunks, consuming complete lines as they arrive. A single
+ * line may span chunks, but its parts are joined only once. Huge unread tails
+ * are advanced and marked rather than allocating or retrying the same bytes.
  */
-async function readNewLines(path: string, offset: number): Promise<{ lines: CompletedLine[]; start: number }> {
+async function readNewLines(
+  path: string,
+  offset: number,
+  maxBytesToRead: number,
+  limits: AgentUsageScanLimits,
+  consume: LineConsumer,
+): Promise<ReadNewLinesResult> {
   const fileStat = await stat(path);
   const start = fileStat.size < offset ? 0 : offset;
-  if (fileStat.size <= start) return { lines: [], start };
+  const unreadBytes = fileStat.size - start;
+  if (unreadBytes > limits.maxUnreadBytesPerFile) {
+    return {
+      start,
+      fileSize: fileStat.size,
+      mtimeMs: fileStat.mtimeMs,
+      bytesRead: 0,
+      consumedOffset: fileStat.size,
+      reachedEnd: true,
+      skippedUnreadBytes: unreadBytes,
+    };
+  }
+  if (unreadBytes === 0) {
+    return {
+      start,
+      fileSize: fileStat.size,
+      mtimeMs: fileStat.mtimeMs,
+      bytesRead: 0,
+      consumedOffset: start,
+      reachedEnd: true,
+    };
+  }
 
+  const readLimit = Math.min(unreadBytes, maxBytesToRead);
+  let bytesRead = 0;
+  let consumedOffset = start;
+  let stoppedEarly = false;
+  let pendingParts: Buffer[] = [];
+  let pendingLength = 0;
   const handle = await open(path, "r");
-  let buffer: Buffer;
   try {
-    const length = fileStat.size - start;
-    buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, start);
+    while (bytesRead < readLimit) {
+      const chunkLength = Math.min(limits.readChunkBytes, readLimit - bytesRead);
+      const buffer = Buffer.allocUnsafe(chunkLength);
+      const result = await handle.read(buffer, 0, chunkLength, start + bytesRead);
+      if (result.bytesRead === 0) break;
+
+      const chunk = buffer.subarray(0, result.bytesRead);
+      const chunkStart = start + bytesRead;
+      bytesRead += result.bytesRead;
+      let cursor = 0;
+
+      while (cursor < chunk.length) {
+        const newlineIndex = chunk.indexOf(0x0a, cursor);
+        const lineEnd = newlineIndex === -1 ? chunk.length : newlineIndex;
+        const segment = chunk.subarray(cursor, lineEnd);
+        if (segment.length > 0) {
+          pendingParts.push(segment);
+          pendingLength += segment.length;
+        }
+        if (newlineIndex === -1) break;
+
+        const endOffset = chunkStart + newlineIndex + 1;
+        const accepted = consume({
+          text: joinLineParts(pendingParts, pendingLength).toString("utf8"),
+          endOffset,
+        });
+        if (!accepted) {
+          stoppedEarly = true;
+          break;
+        }
+
+        consumedOffset = endOffset;
+        pendingParts = [];
+        pendingLength = 0;
+        cursor = newlineIndex + 1;
+      }
+      if (stoppedEarly) break;
+    }
   } finally {
     await handle.close();
   }
 
-  const lines: CompletedLine[] = [];
-  let cursor = 0;
-  while (cursor < buffer.length) {
-    const newlineIndex = buffer.indexOf(0x0a, cursor);
-    if (newlineIndex === -1) {
-      const tail = buffer.subarray(cursor).toString("utf8");
-      const trimmed = tail.trim();
-      if (trimmed.startsWith("{")) {
-        try {
-          JSON.parse(trimmed);
-          lines.push({ text: tail, endOffset: start + buffer.length });
-        } catch {
-          // partial write in progress — leave for next scan
-        }
+  const reachedEnd = !stoppedEarly && bytesRead >= unreadBytes;
+  if (reachedEnd && pendingLength > 0) {
+    const tail = joinLineParts(pendingParts, pendingLength).toString("utf8");
+    const trimmed = tail.trim();
+    if (trimmed.startsWith("{")) {
+      try {
+        JSON.parse(trimmed);
+        const endOffset = start + bytesRead;
+        if (consume({ text: tail, endOffset })) consumedOffset = endOffset;
+        else stoppedEarly = true;
+      } catch {
+        // partial write in progress — leave for the next scan
       }
-      break;
     }
-    lines.push({
-      text: buffer.subarray(cursor, newlineIndex).toString("utf8"),
-      endOffset: start + newlineIndex + 1,
-    });
-    cursor = newlineIndex + 1;
   }
-  return { lines, start };
+
+  return {
+    start,
+    fileSize: fileStat.size,
+    mtimeMs: fileStat.mtimeMs,
+    bytesRead,
+    consumedOffset,
+    reachedEnd: reachedEnd && !stoppedEarly,
+  };
 }
 
 function emptyRuntimeSummary(): RuntimeScanSummary {
-  return { scannedFiles: 0, parsedEvents: 0, emittedEvents: 0, skippedFiles: 0, droppedFiles: 0 };
+  return {
+    scannedFiles: 0,
+    parsedEvents: 0,
+    emittedEvents: 0,
+    skippedFiles: 0,
+    droppedFiles: 0,
+    oversizedFiles: 0,
+    skippedBytes: 0,
+  };
 }
 
 function toOtelInput(event: AgentUsageEvent): OtelEventInput {
@@ -162,21 +304,25 @@ function toOtelInput(event: AgentUsageEvent): OtelEventInput {
   };
 }
 
-export async function scanAgentUsage(options: AgentUsageScanOptions = {}): Promise<AgentUsageScanSummary> {
+export async function scanAgentUsage(
+  options: AgentUsageScanOptions = {},
+): Promise<AgentUsageScanSummary> {
   const config = options.config ?? resolveAgentUsageCaptureConfig();
   const emit = options.emit ?? emitOtelEvent;
   const now = options.now ?? Date.now();
   const firstRunCutoff = now - config.lookbackHours * 60 * 60 * 1000;
+  const limits = resolveScanLimits(options.limits);
 
   const state = await readState(config.statePath);
   const summary: AgentUsageScanSummary = { ...emptyRuntimeSummary(), byRuntime: {} };
   let eventBudget = config.maxEventsPerScan;
   let fileBudget = config.maxFilesPerScan;
+  let readBudget = limits.maxReadBytesPerScan;
 
   for (const runtime of config.agents) {
     const runtimeSummary = emptyRuntimeSummary();
     summary.byRuntime[runtime] = runtimeSummary;
-    const parser = PARSERS[runtime];
+    const parser = options.parsers?.[runtime] ?? PARSERS[runtime];
     const root = options.roots?.[runtime] ?? parser.transcriptRoot();
 
     const candidates: { path: string; mtimeMs: number }[] = [];
@@ -198,62 +344,65 @@ export async function scanAgentUsage(options: AgentUsageScanOptions = {}): Promi
     fileBudget -= selected.length;
 
     for (const [index, candidate] of selected.entries()) {
-      if (eventBudget <= 0) {
-        // Event budget exhausted — remaining selected files carry to next scan.
+      if (eventBudget <= 0 || readBudget <= 0) {
+        // Remaining selected files carry to the next bounded scan.
         runtimeSummary.droppedFiles += selected.length - index;
         break;
       }
 
-      const storedOffset = state.files[candidate.path]?.offset ?? 0;
-      let lines: CompletedLine[];
-      let start: number;
+      const previousFileState = state.files[candidate.path];
+      const storedOffset = previousFileState?.offset ?? 0;
+      const context = { path: candidate.path };
+      const parserState = parser.createState(context);
+      const events: AgentUsageEvent[] = [];
+      let readResult: ReadNewLinesResult;
       try {
-        ({ lines, start } = await readNewLines(candidate.path, storedOffset));
+        readResult = await readNewLines(
+          candidate.path,
+          storedOffset,
+          readBudget,
+          limits,
+          (line) => {
+            const parsed = parser.parseLine(line.text, context, parserState);
+            runtimeSummary.parsedEvents += parsed.length;
+            if (parsed.length > eventBudget - events.length) return false;
+            events.push(...parsed);
+            return true;
+          },
+        );
       } catch {
         runtimeSummary.skippedFiles += 1;
         continue;
       }
       runtimeSummary.scannedFiles += 1;
+      readBudget -= readResult.bytesRead;
 
-      const allEvents = parser.parseTranscriptLines(
-        lines.map((line) => line.text),
-        { path: candidate.path }
-      );
-      runtimeSummary.parsedEvents += allEvents.length;
-
-      let events = allEvents;
-      let consumedOffset = lines.length > 0 ? (lines[lines.length - 1]?.endOffset ?? start) : start;
-
-      if (allEvents.length > eventBudget) {
-        // Over budget: find the longest line prefix whose parse fits, advance
-        // the offset only past what was emitted, and carry the rest next scan.
-        let prefixLength = 0;
-        let prefixEvents: AgentUsageEvent[] = [];
-        for (let i = 1; i <= lines.length; i += 1) {
-          const parsedPrefix = parser.parseTranscriptLines(
-            lines.slice(0, i).map((line) => line.text),
-            { path: candidate.path }
-          );
-          if (parsedPrefix.length > eventBudget) break;
-          prefixLength = i;
-          prefixEvents = parsedPrefix;
-        }
-        events = prefixEvents;
-        consumedOffset = prefixLength > 0 ? (lines[prefixLength - 1]?.endOffset ?? start) : start;
+      if (readResult.skippedUnreadBytes !== undefined) {
+        runtimeSummary.skippedFiles += 1;
+        runtimeSummary.oversizedFiles += 1;
+        runtimeSummary.skippedBytes += readResult.skippedUnreadBytes;
+        state.files[candidate.path] = {
+          offset: readResult.fileSize,
+          mtimeMs: readResult.mtimeMs,
+          skipped: {
+            reason: "unread-remainder-limit",
+            bytes: readResult.skippedUnreadBytes,
+            atMs: now,
+          },
+        };
+        continue;
       }
 
-      for (const event of events) {
-        await emit(toOtelInput(event));
-      }
+      for (const event of events) await emit(toOtelInput(event));
       runtimeSummary.emittedEvents += events.length;
       eventBudget -= events.length;
 
-      const fullyConsumed = events.length === allEvents.length;
+      const priorSkip = previousFileState?.skipped;
       state.files[candidate.path] = {
-        offset: consumedOffset,
-        // A partially consumed file stays eligible: stored mtime just below
-        // the file's mtime keeps `mtime > threshold` true next scan.
-        mtimeMs: fullyConsumed ? candidate.mtimeMs : candidate.mtimeMs - 1,
+        offset: readResult.consumedOffset,
+        // A partially consumed file stays eligible for the next scan.
+        mtimeMs: readResult.reachedEnd ? readResult.mtimeMs : readResult.mtimeMs - 1,
+        ...(priorSkip ? { skipped: priorSkip } : {}),
       };
     }
 
@@ -262,6 +411,8 @@ export async function scanAgentUsage(options: AgentUsageScanOptions = {}): Promi
     summary.emittedEvents += runtimeSummary.emittedEvents;
     summary.skippedFiles += runtimeSummary.skippedFiles;
     summary.droppedFiles += runtimeSummary.droppedFiles;
+    summary.oversizedFiles += runtimeSummary.oversizedFiles;
+    summary.skippedBytes += runtimeSummary.skippedBytes;
   }
 
   state.lastScanMs = now;

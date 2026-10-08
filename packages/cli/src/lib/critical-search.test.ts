@@ -696,7 +696,8 @@ describe("critical search database", () => {
     expect(memory?.sourceFreshness.sourceKey).toBe("archive:memory_observations")
     expect(memory?.sourceFreshness.highWaterAt).toBe("2026-05-31T03:30:53.000Z")
     expect(memory?.sourceFreshness.ageSeconds).toBeGreaterThan(4_000_000)
-    expect(result.freshness.status).toBe("stale")
+    // A frozen archive keeps its historical age without failing live-source freshness.
+    expect(result.freshness.status).toBe("ok")
   })
 
   test("refuses missing sources and preserves the healthy database", async () => {
@@ -721,6 +722,26 @@ describe("critical search database", () => {
       skillsDir: missing,
       memoryArchivePath: missing,
     })).rejects.toThrow("refusing to replace critical.db with degraded sources")
+    expect(readFileSync(paths.db)).toEqual(before)
+  })
+
+  test("refuses changed archive bytes and preserves the previous index", async () => {
+    const paths = fixture()
+    const options = {
+      dbPath: paths.db,
+      observationsDir: paths.observations,
+      brainRoots: [paths.brain],
+      vaultDir: paths.vault,
+      skillsDir: paths.skills,
+      memoryArchivePath: paths.archive,
+      allowNonFlagg: true,
+    }
+    await buildCriticalDb(options)
+    const before = readFileSync(paths.db)
+    await expect(buildCriticalDb({
+      ...options,
+      memoryArchiveSha256: "0".repeat(64),
+    })).rejects.toThrow("memory archive checksum mismatch")
     expect(readFileSync(paths.db)).toEqual(before)
   })
 

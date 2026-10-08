@@ -305,7 +305,10 @@ export async function readTypesenseRecoveryHealth(
 export const capturePrefixGrowthAlert = inngest.createFunction(
   {
     id: "search/capture-prefix-growth-alert",
-    concurrency: { limit: 1, key: "event.data.source_identity" },
+    concurrency: [
+      { scope: "fn", limit: 2 },
+      { limit: 1, key: "event.data.source_identity" },
+    ],
   },
   { event: "memory/run.captured" },
   async ({ event, step }) => {

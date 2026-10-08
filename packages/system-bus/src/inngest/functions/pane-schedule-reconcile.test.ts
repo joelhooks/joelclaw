@@ -24,7 +24,7 @@ test("reconciler triggers on a five-minute cron and an explicit request event", 
   const triggers = (paneScheduleReconcile as unknown as { opts?: { triggers?: unknown[] } }).opts
     ?.triggers;
   expect(triggers).toEqual([
-    { cron: "*/5 * * * *" },
+    { cron: "1-59/5 * * * *" },
     { event: "pane/schedule.reconcile.requested" },
   ]);
 });

@@ -61,7 +61,7 @@ export const paneScheduleReconcile = inngest.createFunction(
     concurrency: { limit: 1 },
     retries: 2,
   },
-  [{ cron: "*/5 * * * *" }, { event: "pane/schedule.reconcile.requested" }],
+  [{ cron: "1-59/5 * * * *" }, { event: "pane/schedule.reconcile.requested" }],
   async ({ step }) => {
     const scan = await step.run("read-pending-registry", async () => {
       const redis = getRedisClient();

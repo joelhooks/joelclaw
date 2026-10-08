@@ -1,4 +1,3 @@
-import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,6 +12,7 @@ import {
 import { Effect } from "effect";
 import { emitOtelEvent } from "../observability/emit";
 import { getRedisClient } from "./redis";
+import { openHostDatabase } from "./sqlite";
 
 export type CaptureSegment = {
   runId: string;
@@ -153,17 +153,20 @@ export function classifySearchProjection(
   };
 }
 
+export const SEARCH_PROJECTION_HEALTH_QUERY = `SELECT run_id, started_at, ended_at, jsonl_path,
+  jsonl_sha256, from_offset, to_offset, source_identity
+  FROM runs ORDER BY ended_at DESC LIMIT 1`;
+
 export function readSearchProjectionHealth(
   databasePath: string,
   observedAt = Date.now(),
 ): SearchProjectionHealth {
-  const db = new Database(databasePath, { readonly: true, strict: true });
+  const db = openHostDatabase(databasePath, { readonly: true, strict: true });
   try {
-    const document = db.query(`SELECT run_id, started_at, ended_at, jsonl_path,
-      jsonl_sha256, from_offset, to_offset, source_identity
-      FROM runs ORDER BY ended_at DESC, started_at DESC LIMIT 1`).get() as
-      | Record<string, unknown>
-      | null;
+    const document = db.query(SEARCH_PROJECTION_HEALTH_QUERY).get() as Record<
+      string,
+      unknown
+    > | null;
     return classifySearchProjection(document, observedAt);
   } finally {
     db.close(false);

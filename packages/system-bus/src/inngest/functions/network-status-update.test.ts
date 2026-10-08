@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import type { ServicePlacementConfig } from "@joelclaw/endpoint-resolver";
 import { buildPlacedKubectlCommand } from "./network-status-update";
 
@@ -19,7 +20,7 @@ describe("network/status-update Kubernetes placement", () => {
         hostname: "flagg",
         placement,
         kubectlPath: "/opt/homebrew/bin/kubectl",
-      })
+      }),
     ).toEqual({
       command: "ssh",
       args: [
@@ -55,7 +56,15 @@ describe("network/status-update Kubernetes placement", () => {
       buildPlacedKubectlCommand(podArgs, {
         hostname: "flagg",
         placement: unassigned,
-      })
+      }),
     ).toThrow("Kubernetes has no host in service-placement.json");
+  });
+
+  test("the host handler does not use synchronous child-process APIs", async () => {
+    const source = await Bun.file(join(import.meta.dir, "network-status-update.ts")).text();
+
+    expect(source).toContain("runExecFile");
+    expect(source).not.toContain("execSync");
+    expect(source).not.toContain("execFileSync");
   });
 });

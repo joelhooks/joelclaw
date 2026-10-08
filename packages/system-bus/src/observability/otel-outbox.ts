@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isProtectedHarnessPath } from "../lib/protected-harness-paths";
 import { type OtelEvent } from "./otel-event";
 import { writeClickHouseOtelEvents } from "./clickhouse-store";
 
@@ -30,10 +31,21 @@ export function resolveOtelOutboxDir(env: NodeJS.ProcessEnv = process.env): stri
 
 function queuedName(event: OtelEvent): string {
   const timestamp = String(event.timestamp || Date.now()).padStart(13, "0");
-  return `${timestamp}-${event.id || randomUUID()}.json`;
+  const id = createHash("sha256")
+    .update(event.id || randomUUID())
+    .digest("hex")
+    .slice(0, 24);
+  return `${timestamp}-${id}.json`;
+}
+
+function assertOutboxPathIsNotHarnessData(dir: string): void {
+  if (isProtectedHarnessPath(dir)) {
+    throw new Error("Refusing OTEL outbox access under a protected harness path");
+  }
 }
 
 async function listQueuedFiles(dir: string, limit: number): Promise<string[]> {
+  assertOutboxPathIsNotHarnessData(dir);
   await mkdir(dir, { recursive: true });
   const names = await readdir(dir);
   return names
@@ -45,9 +57,10 @@ async function listQueuedFiles(dir: string, limit: number): Promise<string[]> {
 
 export async function enqueueOtelOutboxEvent(
   event: OtelEvent,
-  dir = resolveOtelOutboxDir()
+  dir = resolveOtelOutboxDir(),
 ): Promise<OutboxEnqueueResult> {
   try {
+    assertOutboxPathIsNotHarnessData(dir);
     await mkdir(dir, { recursive: true });
     const finalPath = join(dir, queuedName(event));
     const tempPath = `${finalPath}.tmp-${process.pid}-${randomUUID()}`;
@@ -63,12 +76,17 @@ export async function enqueueOtelOutboxEvent(
 let drainInFlight: Promise<OutboxDrainResult> | null = null;
 
 export async function drainOtelOutbox(
-  options: { dir?: string; limit?: number } = {}
+  options: { dir?: string; limit?: number } = {},
 ): Promise<OutboxDrainResult> {
+  const dir = options.dir ?? resolveOtelOutboxDir();
+  try {
+    assertOutboxPathIsNotHarnessData(dir);
+  } catch (error) {
+    return { drained: 0, failed: 0, error: String(error) };
+  }
   if (drainInFlight) return drainInFlight;
 
   drainInFlight = (async () => {
-    const dir = options.dir ?? resolveOtelOutboxDir();
     const limit = options.limit ?? DEFAULT_DRAIN_LIMIT;
     const files = await listQueuedFiles(dir, limit);
     if (files.length === 0) return { drained: 0, failed: 0 };

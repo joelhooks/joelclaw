@@ -5,7 +5,7 @@ import { getRedisClient, getRedisPort } from "../../lib/redis";
  * ADR-0062. Only notifies gateway on degradation.
  */
 
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -1009,6 +1009,40 @@ type SecretsStatusResult = {
   stderr?: string | null;
 };
 
+type AsyncCommandResult = SecretsStatusResult & { timedOut: boolean };
+
+function runAsyncCommand(
+  command: string,
+  args: string[],
+  timeoutMs = 5000,
+): Promise<AsyncCommandResult> {
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        command,
+        args,
+        {
+          encoding: "utf8",
+          timeout: timeoutMs,
+          killSignal: "SIGKILL",
+          maxBuffer: 64 * 1024,
+        },
+        (error, stdout, stderr) => {
+          const failure = error as (Error & { code?: string | number; killed?: boolean }) | null;
+          resolve({
+            status: failure ? (typeof failure.code === "number" ? failure.code : null) : 0,
+            stdout: stdout ?? "",
+            stderr: stderr || failure?.message || "",
+            timedOut: failure?.code === "ETIMEDOUT" || failure?.killed === true,
+          });
+        },
+      );
+    } catch (error) {
+      resolve({ status: null, stdout: "", stderr: String(error), timedOut: false });
+    }
+  });
+}
+
 function interpretAgentSecretsStatus(result: SecretsStatusResult): ServiceStatus {
   const stdout = (result.stdout ?? "").trim();
   const stderr = (result.stderr ?? "").trim();
@@ -1056,43 +1090,23 @@ function interpretAgentSecretsStatus(result: SecretsStatusResult): ServiceStatus
 }
 
 async function checkAgentSecrets(): Promise<ServiceStatus> {
-  try {
-    const result = spawnSync("secrets", ["status"], {
-      encoding: "utf8",
-      timeout: 5000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    return interpretAgentSecretsStatus(result);
-  } catch (err) {
-    return { name: "Agent Secrets", ok: false, detail: String(err).slice(0, 140) };
-  }
+  const result = await runAsyncCommand("secrets", ["status"]);
+  return interpretAgentSecretsStatus(result);
 }
 
 async function checkNfsMounts(): Promise<ServiceStatus> {
-  const mounts = NAS_EXPECTED_MOUNTS;
-  const results: string[] = [];
-  let allOk = true;
-
-  for (const mount of mounts) {
-    try {
-      const probe = spawnSync("stat", [mount.path], { timeout: 5000 });
-      if (probe.status === 0) {
-        results.push(`${mount.name}: ok`);
-      } else {
-        allOk = false;
-        results.push(`${mount.name}: missing`);
-      }
-    } catch {
-      allOk = false;
-      results.push(`${mount.name}: timeout`);
-    }
-  }
+  const results = await Promise.all(
+    NAS_EXPECTED_MOUNTS.map(async (mount) => {
+      const probe = await runAsyncCommand("stat", [mount.path]);
+      const status = probe.status === 0 ? "ok" : probe.timedOut ? "timeout" : "missing";
+      return { ok: probe.status === 0, detail: `${mount.name}: ${status}` };
+    }),
+  );
 
   return {
     name: "NFS Mounts",
-    ok: allOk,
-    detail: results.join(", "),
+    ok: results.every((result) => result.ok),
+    detail: results.map((result) => result.detail).join(", "),
   };
 }
 
@@ -1994,6 +2008,7 @@ export const __checkSystemHealthTestUtils = {
   selectLatestPlausibleTimestamp,
   classifyFrontProjectionFreshness,
   interpretAgentSecretsStatus,
+  runAsyncCommand,
   resolveHealthCanaryScheduleMode,
   classifyHealthSummary,
   isCriticalHealthComponent,

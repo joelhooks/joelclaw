@@ -5,8 +5,9 @@
  * Rule 10). This function maintains the local SQLite FTS projection. The
  * retired Typesense runs_dev/run_chunks_dev projections must not be recreated.
  *
- * Concurrency stays bounded at four writers. SQLite serializes the short
- * append transactions and rejects overlapping source segments.
+ * Concurrency is bounded at four writers. sessions.db has a single SQLite
+ * writer, and appendSessionCapture runs on Central's event loop, so higher
+ * concurrency mostly adds contention and HTTP latency.
  */
 
 import { createHash, randomUUID } from "node:crypto";

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { InngestTestEngine } from "@inngest/test";
+import { MessageEventLogError } from "@joelclaw/message-event-log";
 import type {
   MaterializeMessageEventReceipt,
   MessageEventDocument,
@@ -91,6 +92,52 @@ describe("message event consumer", () => {
     expect(execution.result).toMatchObject({ deduplicated: 1, materialized: 0 });
     expect(emitted).toEqual([
       expect.objectContaining({ action: "message.event.replay_deduplicated" }),
+    ]);
+  });
+
+  test("fails non-retriably and latches repeated work when Convex is unreachable", async () => {
+    let pendingCalls = 0;
+    const emitted: Array<Record<string, unknown>> = [];
+    const connectionError = Object.assign(new Error("connect ECONNREFUSED"), {
+      code: "ECONNREFUSED",
+    });
+    const fn = createMessageEventConsumerFunction({
+      pending: async () => {
+        pendingCalls += 1;
+        throw new MessageEventLogError("pending", "MESSAGE_EVENT_PENDING_FAILED", connectionError);
+      },
+      materialize: async () => {
+        throw new Error("must not run");
+      },
+      emit: async (input) => {
+        emitted.push(input as Record<string, unknown>);
+        return { stored: true };
+      },
+    });
+
+    const first = await new InngestTestEngine({
+      function: fn as any,
+      events: [event],
+    }).execute();
+    const second = await new InngestTestEngine({
+      function: fn as any,
+      events: [{ ...event, id: "message-event-consume:fixture-2" }],
+    }).execute();
+
+    expect(first.error).toBeDefined();
+    expect(String((first.error as { message?: string })?.message ?? first.error)).toContain(
+      "dependency unavailable",
+    );
+    expect(second.error).toBeDefined();
+    expect(String((second.error as { message?: string })?.message ?? second.error)).toContain(
+      "latched",
+    );
+    expect(pendingCalls).toBe(1);
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        action: "message.event.dependency_unavailable",
+        success: false,
+      }),
     ]);
   });
 

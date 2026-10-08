@@ -20,7 +20,7 @@ import { createHash } from "node:crypto";
 const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
 const GQL = `${INNGEST_URL}/v0/gql`;
 
-export type WorkerRole = "host" | "cluster";
+export type WorkerRole = "host" | "cluster" | "memory-indexer";
 export type TriggerSpec = { type: string; value: string; condition?: string };
 export type RegisteredFunctionSpec = {
   id: string;
@@ -90,21 +90,31 @@ function normalizeCodeTrigger(t: Record<string, unknown>): string {
   return `UNKNOWN:${JSON.stringify(t)}`;
 }
 
+type TriggerAuditEnv = {
+  [key: string]: string | undefined;
+  WORKER_ROLE?: string;
+  INNGEST_APP_ID?: string;
+  INNGEST_WORKER_URL?: string;
+  MEMORY_INDEXER_PORT?: string;
+};
+
 function parseWorkerRole(value: string | undefined): WorkerRole {
   const normalized = (value ?? "host").trim().toLowerCase();
-  return normalized === "cluster" ? "cluster" : "host";
+  if (normalized === "cluster" || normalized === "memory-indexer") return normalized;
+  return "host";
 }
 
-export function getTriggerAuditConfig(): TriggerAuditConfig {
-  const workerRole = parseWorkerRole(process.env.WORKER_ROLE);
-  const explicitAppId = process.env.INNGEST_APP_ID?.trim();
+export function getTriggerAuditConfig(env: TriggerAuditEnv = process.env): TriggerAuditConfig {
+  const workerRole = parseWorkerRole(env.WORKER_ROLE);
+  const explicitAppId = env.INNGEST_APP_ID?.trim();
   const appId = explicitAppId && explicitAppId.length > 0
     ? explicitAppId
     : `system-bus-${workerRole}`;
+  const port = workerRole === "memory-indexer" ? env.MEMORY_INDEXER_PORT ?? "3112" : "3111";
   return {
     appId,
     workerRole,
-    baseUrl: new URL("http://localhost:3111"),
+    baseUrl: new URL(env.INNGEST_WORKER_URL?.trim() || `http://localhost:${port}`),
   };
 }
 
@@ -169,6 +179,10 @@ async function getRoleFunctionDefinitions(workerRole: WorkerRole): Promise<unkno
   if (workerRole === "cluster") {
     const mod = await import("./index.cluster");
     return mod.clusterFunctionDefinitions;
+  }
+  if (workerRole === "memory-indexer") {
+    const mod = await import("./index.memory-indexer");
+    return mod.memoryIndexerFunctionDefinitions;
   }
 
   const mod = await import("./index.host");

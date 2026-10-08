@@ -30,6 +30,7 @@ import {
   verifyMediaMount,
 } from "../../transcription/rig";
 import { parsePlan, type TranscriptionPlan } from "../../transcription/types";
+import { isProtectedHarnessPath } from "../../lib/protected-harness-paths";
 import { inngest } from "../client";
 
 /**
@@ -115,6 +116,9 @@ export const mediaTranscriptionPipeline = inngest.createFunction(
       );
     }
     const rigRoot = process.env.TRANSCRIPT_RIG_ROOT ?? DEFAULT_RIG_ROOT;
+    if (isProtectedHarnessPath(rigRoot)) {
+      throw new NonRetriableError("transcript rig root cannot be inside a protected agent harness");
+    }
 
     const mount = await step.run("00-verify-badass-media-mount", async () =>
       pipelineDeps.verifyMediaMount(absoluteSource),
@@ -146,14 +150,15 @@ export const mediaTranscriptionPipeline = inngest.createFunction(
         );
       }
       const manifestJson = await readJsonIfExists(manifestPath);
-      const rawMedia = (manifestJson as { media?: ManifestMediaEntry[] } | undefined)
-        ?.media;
+      const rawMedia = (manifestJson as { media?: ManifestMediaEntry[] } | undefined)?.media;
       if (!Array.isArray(rawMedia)) {
         throw new Error(`stage_manifest_invalid: no media[] in ${manifestPath}`);
       }
       const media = rawMedia
         .filter(
-          (entry): entry is Required<Pick<ManifestMediaEntry, "sourceId" | "path" | "role">> &
+          (
+            entry,
+          ): entry is Required<Pick<ManifestMediaEntry, "sourceId" | "path" | "role">> &
             ManifestMediaEntry =>
             typeof entry.sourceId === "string" &&
             typeof entry.path === "string" &&
@@ -167,8 +172,7 @@ export const mediaTranscriptionPipeline = inngest.createFunction(
           speaker: entry.speaker,
         }));
       const artifactId =
-        result.artifactId ??
-        (manifestJson as { artifactId?: string } | undefined)?.artifactId;
+        result.artifactId ?? (manifestJson as { artifactId?: string } | undefined)?.artifactId;
       if (!artifactId) {
         throw new Error(`stage_manifest_missing_artifact_id: ${absoluteSource}`);
       }

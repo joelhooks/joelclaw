@@ -6,6 +6,7 @@ import {
   finiteNumber,
   hasUsageSignal,
   type ParseContext,
+  type AgentUsageParserState,
   parseJsonLine,
   parseTimestampMs,
   usageEventId,
@@ -34,48 +35,57 @@ type ClaudeMessage = {
   usage?: ClaudeUsage;
 };
 
-export function parseTranscriptLines(lines: string[], ctx: ParseContext): AgentUsageEvent[] {
-  const events: AgentUsageEvent[] = [];
-  // Claude Code writes one JSONL line per content block, each repeating the
-  // same message.usage — count each message.id once or tokens inflate ~2x.
-  const seenMessageIds = new Set<string>();
+export function createState(_ctx: ParseContext): AgentUsageParserState {
+  return { seenMessageIds: new Set() };
+}
 
-  for (const line of lines) {
-    const parsed = parseJsonLine(line);
-    if (!parsed) continue;
-    if (parsed.type !== "assistant") continue;
+export function parseLine(
+  line: string,
+  ctx: ParseContext,
+  state: AgentUsageParserState,
+): AgentUsageEvent[] {
+  const parsed = parseJsonLine(line);
+  if (!parsed || parsed.type !== "assistant") return [];
 
-    const message = parsed.message as ClaudeMessage | undefined;
-    if (!message || typeof message !== "object") continue;
-    const rawUsage = message.usage;
-    if (!rawUsage || typeof rawUsage !== "object") continue;
+  const message = parsed.message as ClaudeMessage | undefined;
+  if (!message || typeof message !== "object") return [];
+  const rawUsage = message.usage;
+  if (!rawUsage || typeof rawUsage !== "object") return [];
 
-    const inputTokens = finiteNumber(rawUsage.input_tokens);
-    const outputTokens = finiteNumber(rawUsage.output_tokens);
-    const cacheReadTokens = finiteNumber(rawUsage.cache_read_input_tokens);
-    const cacheWriteTokens = finiteNumber(rawUsage.cache_creation_input_tokens);
-    const usage: AgentUsageTokens = {
-      inputTokens,
-      outputTokens,
-      totalTokens:
-        inputTokens != null || outputTokens != null || cacheReadTokens != null || cacheWriteTokens != null
-          ? (inputTokens ?? 0) + (outputTokens ?? 0) + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0)
-          : undefined,
-      cacheReadTokens,
-      cacheWriteTokens,
-    };
-    if (!hasUsageSignal(usage)) continue;
+  const inputTokens = finiteNumber(rawUsage.input_tokens);
+  const outputTokens = finiteNumber(rawUsage.output_tokens);
+  const cacheReadTokens = finiteNumber(rawUsage.cache_read_input_tokens);
+  const cacheWriteTokens = finiteNumber(rawUsage.cache_creation_input_tokens);
+  const usage: AgentUsageTokens = {
+    inputTokens,
+    outputTokens,
+    totalTokens:
+      inputTokens != null ||
+      outputTokens != null ||
+      cacheReadTokens != null ||
+      cacheWriteTokens != null
+        ? (inputTokens ?? 0) +
+          (outputTokens ?? 0) +
+          (cacheReadTokens ?? 0) +
+          (cacheWriteTokens ?? 0)
+        : undefined,
+    cacheReadTokens,
+    cacheWriteTokens,
+  };
+  if (!hasUsageSignal(usage)) return [];
 
-    const timestampMs = parseTimestampMs(parsed.timestamp);
-    if (timestampMs == null) continue;
+  const timestampMs = parseTimestampMs(parsed.timestamp);
+  if (timestampMs == null) return [];
 
-    const messageId = typeof message.id === "string" && message.id.length > 0 ? message.id : null;
-    if (messageId) {
-      if (seenMessageIds.has(messageId)) continue;
-      seenMessageIds.add(messageId);
-    }
+  const messageId = typeof message.id === "string" && message.id.length > 0 ? message.id : null;
+  if (messageId) {
+    const seenMessageIds = (state.seenMessageIds ??= new Set());
+    if (seenMessageIds.has(messageId)) return [];
+    seenMessageIds.add(messageId);
+  }
 
-    events.push({
+  return [
+    {
       id: usageEventId("claude", ctx.path, messageId ?? line.trim()),
       timestampMs,
       runtime: "claude",
@@ -84,8 +94,13 @@ export function parseTranscriptLines(lines: string[], ctx: ParseContext): AgentU
       provider: "anthropic",
       usage,
       transcriptPath: ctx.path,
-    });
-  }
+    },
+  ];
+}
 
+export function parseTranscriptLines(lines: string[], ctx: ParseContext): AgentUsageEvent[] {
+  const state = createState(ctx);
+  const events: AgentUsageEvent[] = [];
+  for (const line of lines) events.push(...parseLine(line, ctx, state));
   return events;
 }

@@ -74,6 +74,7 @@ export function appendSessionCapture(input: SessionCaptureAppendInput): SessionC
   db.exec(
     "CREATE INDEX IF NOT EXISTS runs_source_cursor ON runs(source_identity, from_offset)",
   );
+  db.exec("CREATE INDEX IF NOT EXISTS runs_ended_at_idx ON runs(ended_at)");
 
   let transactionOpen = false;
   try {

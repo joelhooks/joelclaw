@@ -86,12 +86,10 @@ import { manifestArchive } from "./manifest-archive";
 import { mediaProcess } from "./media-process";
 import { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
 import { meetingAnalyze } from "./meeting-analyze";
-import { meetingTranscriptIndex } from "./meeting-transcript-index";
 import { megaJourneyWatch } from "./mega-journey-watch";
 import { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 import { memoryEmbed } from "./memory/embed";
 import { memoryRetroWriter } from "./memory/retro-writer";
-import { memoryRunCaptured } from "./memory/run-captured";
 import { messageEventConsumer } from "./message-event-consumer";
 import {
   messageReactionBridge,
@@ -126,15 +124,10 @@ import { summarize, summarizeLegacyAlias } from "./summarize";
 import { taskTriage } from "./task-triage";
 import { telegramCallbackReceived } from "./telegram-callback";
 import { telnyxNotify } from "./telnyx-notify";
-import { transcriptIndexWeb } from "./transcript-index-web";
 import { transcriptProcess, transcriptProcessLegacyAlias } from "./transcript-process";
 import { transcriptionAsrChunkRun } from "./transcription-asr-chunk";
 import { transcriptionCleanup } from "./transcription-cleanup";
 import { transcriptionDiarizeRun } from "./transcription-diarize";
-import {
-  capturePrefixGrowthAlert,
-  typesenseStartupBudgetCheck,
-} from "./typesense-recovery-alerts";
 import {
   typesenseBlogSync,
   typesenseFullSync,
@@ -191,7 +184,6 @@ export const hostFunctionDefinitions = [
   webhookSubscriptionDispatchGeneric,
   transcriptProcess,
   transcriptProcessLegacyAlias,
-  transcriptIndexWeb,
   summarize,
   summarizeLegacyAlias,
   contentSync,
@@ -244,7 +236,6 @@ export const hostFunctionDefinitions = [
   vercelDeployCanceled,
   megaJourneyWatch,
   meetingAnalyze,
-  meetingTranscriptIndex,
   messageEventConsumer,
   messageReactionBridge,
   neatMemoryReactionGrade,
@@ -260,9 +251,6 @@ export const hostFunctionDefinitions = [
   adrEvidenceCapture,
   memoryEmbed,
   memoryRetroWriter,
-  memoryRunCaptured,
-  capturePrefixGrowthAlert,
-  typesenseStartupBudgetCheck,
   criticalDbScheduledRebuild,
   criticalDbStalenessCheck,
   taskTriage,

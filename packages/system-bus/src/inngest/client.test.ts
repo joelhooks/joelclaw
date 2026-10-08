@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type Events, inngest } from "./client";
+import { type Events, getInngestAppId, inngest } from "./client";
 
 type SendEventArg = Parameters<typeof inngest.send>[0];
 
@@ -297,5 +297,24 @@ describe("MEM-2 client event schema acceptance tests", () => {
         title: "AI Hero planning sync",
       },
     });
+  });
+});
+
+describe("Inngest worker app IDs", () => {
+  test("assigns a distinct app ID to each worker role", () => {
+    expect(getInngestAppId({ WORKER_ROLE: "host" })).toBe("system-bus-host");
+    expect(getInngestAppId({ WORKER_ROLE: "cluster" })).toBe("system-bus-cluster");
+    expect(getInngestAppId({ WORKER_ROLE: "memory-indexer" })).toBe(
+      "system-bus-memory-indexer",
+    );
+  });
+
+  test("explicit app ID overrides the role-derived default", () => {
+    expect(
+      getInngestAppId({
+        INNGEST_APP_ID: "configured-app",
+        WORKER_ROLE: "memory-indexer",
+      }),
+    ).toBe("configured-app");
   });
 });

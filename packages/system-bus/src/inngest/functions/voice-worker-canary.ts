@@ -11,7 +11,7 @@ const COOLDOWN_MS = 30 * 60 * 1000;
 
 export const voiceWorkerCanary = inngest.createFunction(
   { id: "voice-worker-canary", concurrency: { limit: 1 }, retries: 0 },
-  { cron: "*/5 * * * *" },
+  { cron: "4-59/5 * * * *" },
   async ({ step, ...rest }) => {
     const gateway = (rest as { gateway?: GatewayContext }).gateway;
     const result = await step.run("probe-worker-dispatch", () => probeWorkerDispatch());

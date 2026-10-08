@@ -509,7 +509,7 @@ export const o11yTriage = inngest.createFunction(
     retries: 1,
   },
   [
-    { cron: "TZ=America/Los_Angeles */15 * * * *" },
+    { cron: "TZ=America/Los_Angeles 12-59/15 * * * *" },
     { event: "check/o11y-triage.requested" },
   ],
   async ({ step, ...rest }) => {

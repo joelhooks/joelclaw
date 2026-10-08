@@ -58,7 +58,7 @@ function buildFixPrompt(
   title: string,
   summary: string,
   suggestion: string,
-  evidence: string[]
+  evidence: string[],
 ): string {
   return `Fix a detected friction pattern in the joelclaw monorepo.
 
@@ -95,7 +95,8 @@ export const frictionFix = inngest.createFunction(
     const { patternId, title, summary, suggestion, evidence, todoistTaskId } = event.data;
 
     if (process.env.FRICTION_FIX_AUTOMATION_ENABLED !== "true") {
-      const message = "Auto-fix disabled: memory/friction-fix must not mutate the canonical host checkout. Use an isolated worktree/sandbox before enabling.";
+      const message =
+        "Auto-fix disabled: memory/friction-fix must not mutate the canonical host checkout. Use an isolated worktree/sandbox before enabling.";
       await step.sendEvent("emit-friction-fix-disabled", {
         name: "memory/friction.fix.completed",
         data: {
@@ -123,9 +124,9 @@ export const frictionFix = inngest.createFunction(
 
       try {
         runGit(`git show-ref --verify --quiet refs/heads/${branchName}`);
-        runGit(`git branch -D ${branchName}`);
+        runGit(`git branch -d ${branchName}`);
       } catch {
-        // Branch does not exist; continue.
+        // Missing or unmerged branch: preserve it, then fail closed on branch creation.
       }
 
       runGit(`git checkout -b ${branchName}`);
@@ -307,7 +308,7 @@ export const frictionFix = inngest.createFunction(
     await step.run("cleanup-branch", async () => {
       try {
         runGit("git checkout main");
-        runGit(`git branch -D ${branchName}`);
+        runGit(`git branch -d ${branchName}`);
         return { deleted: true };
       } catch (error) {
         return {
@@ -335,5 +336,5 @@ export const frictionFix = inngest.createFunction(
       filesChanged,
       message,
     };
-  }
+  },
 );

@@ -6,6 +6,7 @@ import {
   finiteNumber,
   hasUsageSignal,
   type ParseContext,
+  type AgentUsageParserState,
   parseJsonLine,
   parseTimestampMs,
   sessionIdFromFilename,
@@ -44,54 +45,67 @@ type CodexPayload = {
   } | null;
 };
 
-export function parseTranscriptLines(lines: string[], ctx: ParseContext): AgentUsageEvent[] {
-  const events: AgentUsageEvent[] = [];
-  let sessionId = sessionIdFromFilename(ctx.path);
-  let model: string | undefined;
+export function createState(ctx: ParseContext): AgentUsageParserState {
+  return { sessionId: sessionIdFromFilename(ctx.path) };
+}
 
-  for (const line of lines) {
-    const parsed = parseJsonLine(line);
-    if (!parsed) continue;
-    const payload = parsed.payload as CodexPayload | undefined;
-    if (!payload || typeof payload !== "object") continue;
+export function parseLine(
+  line: string,
+  ctx: ParseContext,
+  state: AgentUsageParserState,
+): AgentUsageEvent[] {
+  const parsed = parseJsonLine(line);
+  if (!parsed) return [];
+  const payload = parsed.payload as CodexPayload | undefined;
+  if (!payload || typeof payload !== "object") return [];
 
-    if (parsed.type === "session_meta" && typeof payload.id === "string" && payload.id.length > 0) {
-      sessionId = payload.id;
-      continue;
-    }
-    if (parsed.type === "turn_context" && typeof payload.model === "string" && payload.model.length > 0) {
-      model = payload.model;
-      continue;
-    }
+  if (parsed.type === "session_meta" && typeof payload.id === "string" && payload.id.length > 0) {
+    state.sessionId = payload.id;
+    return [];
+  }
+  if (
+    parsed.type === "turn_context" &&
+    typeof payload.model === "string" &&
+    payload.model.length > 0
+  ) {
+    state.model = payload.model;
+    return [];
+  }
 
-    if (parsed.type !== "event_msg" || payload.type !== "token_count") continue;
-    const info = payload.info;
-    if (!info || typeof info !== "object") continue;
-    const turnUsage = info.last_token_usage;
-    if (!turnUsage || typeof turnUsage !== "object") continue;
+  if (parsed.type !== "event_msg" || payload.type !== "token_count") return [];
+  const info = payload.info;
+  if (!info || typeof info !== "object") return [];
+  const turnUsage = info.last_token_usage;
+  if (!turnUsage || typeof turnUsage !== "object") return [];
 
-    const usage: AgentUsageTokens = {
-      inputTokens: finiteNumber(turnUsage.input_tokens),
-      outputTokens: finiteNumber(turnUsage.output_tokens),
-      totalTokens: finiteNumber(turnUsage.total_tokens),
-      cacheReadTokens: finiteNumber(turnUsage.cached_input_tokens),
-    };
-    if (!hasUsageSignal(usage)) continue;
+  const usage: AgentUsageTokens = {
+    inputTokens: finiteNumber(turnUsage.input_tokens),
+    outputTokens: finiteNumber(turnUsage.output_tokens),
+    totalTokens: finiteNumber(turnUsage.total_tokens),
+    cacheReadTokens: finiteNumber(turnUsage.cached_input_tokens),
+  };
+  if (!hasUsageSignal(usage)) return [];
 
-    const timestampMs = parseTimestampMs(parsed.timestamp);
-    if (timestampMs == null) continue;
+  const timestampMs = parseTimestampMs(parsed.timestamp);
+  if (timestampMs == null) return [];
 
-    events.push({
+  return [
+    {
       id: usageEventId("codex", ctx.path, line.trim()),
       timestampMs,
       runtime: "codex",
-      sessionId,
-      model,
+      sessionId: state.sessionId,
+      model: state.model,
       provider: "openai",
       usage,
       transcriptPath: ctx.path,
-    });
-  }
+    },
+  ];
+}
 
+export function parseTranscriptLines(lines: string[], ctx: ParseContext): AgentUsageEvent[] {
+  const state = createState(ctx);
+  const events: AgentUsageEvent[] = [];
+  for (const line of lines) events.push(...parseLine(line, ctx, state));
   return events;
 }

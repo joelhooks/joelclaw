@@ -8,9 +8,9 @@ const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true })
-    ),
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -18,24 +18,30 @@ describe("check/gateway-health operator action", () => {
   test("requests operator action only after the existing streak threshold", () => {
     const shouldRequest = __checkGatewayHealthTestUtils.shouldRequestOperatorAction;
 
-    expect(shouldRequest({
-      generalFailure: true,
-      generalStreak: 1,
-      alertSuppressed: false,
-      threshold: 2,
-    })).toBe(false);
-    expect(shouldRequest({
-      generalFailure: true,
-      generalStreak: 2,
-      alertSuppressed: false,
-      threshold: 2,
-    })).toBe(true);
-    expect(shouldRequest({
-      generalFailure: true,
-      generalStreak: 3,
-      alertSuppressed: true,
-      threshold: 2,
-    })).toBe(false);
+    expect(
+      shouldRequest({
+        generalFailure: true,
+        generalStreak: 1,
+        alertSuppressed: false,
+        threshold: 2,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRequest({
+        generalFailure: true,
+        generalStreak: 2,
+        alertSuppressed: false,
+        threshold: 2,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRequest({
+        generalFailure: true,
+        generalStreak: 3,
+        alertSuppressed: true,
+        threshold: 2,
+      }),
+    ).toBe(false);
   });
 
   test("writes an idempotent local receipt with automatic restart disabled", async () => {
@@ -72,12 +78,17 @@ describe("check/gateway-health operator action", () => {
   });
 
   test("the checker source contains no gateway restart invocation", async () => {
-    const source = await Bun.file(
-      join(import.meta.dir, "check-gateway-health.ts"),
-    ).text();
+    const source = await Bun.file(join(import.meta.dir, "check-gateway-health.ts")).text();
 
-    expect(source).not.toContain("[\"gateway\", \"restart\"]");
+    expect(source).not.toContain('["gateway", "restart"]');
     expect(source).not.toContain("maybe-auto-restart-gateway");
     expect(source).not.toContain("gateway.health.self-healed");
+  });
+
+  test("gateway diagnosis does not block the host with a synchronous child process", async () => {
+    const source = await Bun.file(join(import.meta.dir, "check-gateway-health.ts")).text();
+
+    expect(source).toContain("runExecFile");
+    expect(source).not.toContain("spawnSync");
   });
 });

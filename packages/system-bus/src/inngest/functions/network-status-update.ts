@@ -1,11 +1,10 @@
-import { execFileSync, execSync } from "node:child_process";
+import { readdir } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
-import {
-  resolveServicePlacement,
-  type ServicePlacementConfig,
-} from "@joelclaw/endpoint-resolver";
+import { join } from "node:path";
+import { resolveServicePlacement, type ServicePlacementConfig } from "@joelclaw/endpoint-resolver";
 import { anyApi, type FunctionReference } from "convex/server";
 import { getConvexClient, pushContentResource, removeContentResources } from "../../lib/convex";
+import { runExecFile } from "../../lib/async-exec-file";
 import { inngest } from "../client";
 
 type ResourceDoc = {
@@ -50,12 +49,18 @@ const DEFAULT_DAEMON_DESCRIPTIONS: Record<string, string> = {
   "content-sync-watcher": "Vault content → web deploy trigger",
 };
 
-function runCommand(command: string): string {
-  return execSync(command, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 10_000,
-  }).trim();
+async function runCommand(command: string, args: readonly string[]): Promise<string> {
+  const result = await runExecFile(command, args, { timeoutMs: 10_000 });
+  if (result.status === "failure") throw result.error;
+  return result.stdout.trim();
+}
+
+async function runCommandBestEffort(command: string, args: readonly string[]): Promise<string> {
+  const result = await runExecFile(command, args, { timeoutMs: 10_000 });
+  if (result.status === "failure" && result.reason !== "exit" && result.reason !== "spawn") {
+    throw result.error;
+  }
+  return result.stdout.trim();
 }
 
 type PlacedKubectlCommand = {
@@ -74,12 +79,12 @@ type PlacedKubectlOptions = {
 // This host-local function also reports fleet pods, so route only that probe to the k8s host.
 export function buildPlacedKubectlCommand(
   kubectlArgs: readonly string[],
-  options: PlacedKubectlOptions = {}
+  options: PlacedKubectlOptions = {},
 ): PlacedKubectlCommand {
   const placement = resolveServicePlacement(
     "k8s",
     options.hostname ?? osHostname(),
-    options.placement
+    options.placement,
   );
 
   if (placement.hostedHere) {
@@ -109,13 +114,9 @@ export function buildPlacedKubectlCommand(
   };
 }
 
-function runPlacedKubectl(kubectlArgs: readonly string[]): string {
+async function runPlacedKubectl(kubectlArgs: readonly string[]): Promise<string> {
   const target = buildPlacedKubectlCommand(kubectlArgs);
-  return execFileSync(target.command, target.args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 10_000,
-  }).trim();
+  return runCommand(target.command, target.args);
 }
 
 async function listByType(type: string): Promise<ResourceDoc[]> {
@@ -190,21 +191,23 @@ function parseFunctionsCountFromWorkerApi(raw: string): number {
         };
       };
     };
-    const count = typeof data.count === "number"
-      ? data.count
-      : (typeof data.worker?.roleCounts?.active === "number" ? data.worker.roleCounts.active : 0);
+    const count =
+      typeof data.count === "number"
+        ? data.count
+        : typeof data.worker?.roleCounts?.active === "number"
+          ? data.worker.roleCounts.active
+          : 0;
     return Number.isFinite(count) ? count : 0;
   } catch {
     return 0;
   }
 }
 
-function getSkillsCount(): number {
+async function getSkillsCount(): Promise<number> {
   try {
     const home = process.env.HOME || "/Users/joel";
-    const output = runCommand(`ls -1 ${JSON.stringify(`${home}/.agents/skills`)} | wc -l`);
-    const count = Number.parseInt(output.trim(), 10);
-    return Number.isFinite(count) ? count : 0;
+    const entries = await readdir(join(home, ".agents", "skills"));
+    return entries.filter((entry) => !entry.startsWith(".")).length;
   } catch {
     return 0;
   }
@@ -216,7 +219,7 @@ export const networkStatusUpdate = inngest.createFunction(
   async ({ step }) => {
     // ADR-0085: collect-pod-status
     await step.run("collect-pod-status", async () => {
-      const podsOutput = runPlacedKubectl([
+      const podsOutput = await runPlacedKubectl([
         "get",
         "pods",
         "-n",
@@ -231,14 +234,20 @@ export const networkStatusUpdate = inngest.createFunction(
       const currentPodResourceIds = new Set(rows.map((row) => `pod:${row.name}`));
 
       for (const doc of existing) {
-        const name = typeof doc.fields?.name === "string" ? doc.fields.name : doc.resourceId.replace(/^pod:/, "");
-        const description = typeof doc.fields?.description === "string" ? doc.fields.description : "";
+        const name =
+          typeof doc.fields?.name === "string"
+            ? doc.fields.name
+            : doc.resourceId.replace(/^pod:/, "");
+        const description =
+          typeof doc.fields?.description === "string" ? doc.fields.description : "";
         if (name) descriptionByName.set(name, description);
       }
 
       const staleResourceIds = existing
         .map((doc) => doc.resourceId)
-        .filter((resourceId) => resourceId.startsWith("pod:") && !currentPodResourceIds.has(resourceId));
+        .filter(
+          (resourceId) => resourceId.startsWith("pod:") && !currentPodResourceIds.has(resourceId),
+        );
       await removeContentResources(staleResourceIds);
 
       for (const row of rows) {
@@ -257,8 +266,13 @@ export const networkStatusUpdate = inngest.createFunction(
 
     // ADR-0085: collect-daemon-status
     await step.run("collect-daemon-status", async () => {
-      const launchRaw = runCommand("launchctl list | grep com.joel || true");
-      const rows = parseLaunchctlRows(launchRaw);
+      const launchRaw = await runCommandBestEffort("launchctl", ["list"]);
+      const rows = parseLaunchctlRows(
+        launchRaw
+          .split("\n")
+          .filter((line) => line.includes("com.joel"))
+          .join("\n"),
+      );
 
       const rowByDaemon = new Map<string, LaunchdRow>();
       for (const row of rows) {
@@ -269,8 +283,12 @@ export const networkStatusUpdate = inngest.createFunction(
       const existing = await listByType("network_daemon");
       const descriptionByName = new Map<string, string>();
       for (const doc of existing) {
-        const name = typeof doc.fields?.name === "string" ? doc.fields.name : doc.resourceId.replace(/^daemon:/, "");
-        const description = typeof doc.fields?.description === "string" ? doc.fields.description : "";
+        const name =
+          typeof doc.fields?.name === "string"
+            ? doc.fields.name
+            : doc.resourceId.replace(/^daemon:/, "");
+        const description =
+          typeof doc.fields?.description === "string" ? doc.fields.description : "";
         if (name) descriptionByName.set(name, description);
       }
 
@@ -279,7 +297,8 @@ export const networkStatusUpdate = inngest.createFunction(
         await pushContentResource(`daemon:${daemonName}`, "network_daemon", {
           name: daemonName,
           status,
-          description: descriptionByName.get(daemonName) ?? DEFAULT_DAEMON_DESCRIPTIONS[daemonName] ?? "",
+          description:
+            descriptionByName.get(daemonName) ?? DEFAULT_DAEMON_DESCRIPTIONS[daemonName] ?? "",
         });
       }
 
@@ -288,18 +307,23 @@ export const networkStatusUpdate = inngest.createFunction(
 
     // ADR-0085: collect-tailscale-status
     await step.run("collect-tailscale-status", async () => {
-      const tailscaleRaw = runCommand("tailscale status || true");
+      const tailscaleRaw = await runCommandBestEffort("tailscale", ["status"]);
       const tailscaleLines = tailscaleRaw.toLowerCase().split("\n");
       const nodes = await listByType("network_node");
 
       for (const node of nodes) {
         const fields = node.fields ?? {};
-        const publicName = typeof fields.publicName === "string" ? fields.publicName : node.resourceId.replace(/^node:/, "");
+        const publicName =
+          typeof fields.publicName === "string"
+            ? fields.publicName
+            : node.resourceId.replace(/^node:/, "");
         const privateName = typeof fields.privateName === "string" ? fields.privateName : "";
         const privateNameLower = privateName.toLowerCase();
 
         let status = typeof fields.status === "string" ? fields.status : "Offline";
-        const line = tailscaleLines.find((candidate) => privateNameLower && candidate.includes(privateNameLower));
+        const line = tailscaleLines.find(
+          (candidate) => privateNameLower && candidate.includes(privateNameLower),
+        );
 
         if (line) {
           if (line.includes("offline")) {
@@ -329,13 +353,13 @@ export const networkStatusUpdate = inngest.createFunction(
       let functionCount = 0;
 
       try {
-        const apiJson = runCommand("curl -s http://localhost:3111/");
+        const apiJson = await runCommand("curl", ["-s", "http://localhost:3111/"]);
         functionCount = parseFunctionsCountFromWorkerApi(apiJson);
       } catch {
         functionCount = 0;
       }
 
-      const skillsCount = getSkillsCount();
+      const skillsCount = await getSkillsCount();
 
       await pushContentResource("cluster:Functions", "network_cluster", {
         key: "Functions",
@@ -351,5 +375,5 @@ export const networkStatusUpdate = inngest.createFunction(
     });
 
     return { ok: true };
-  }
+  },
 );

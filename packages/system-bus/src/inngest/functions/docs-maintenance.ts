@@ -4,6 +4,7 @@ import { extname } from "node:path";
 import { NAS_HDD_ROOT, NAS_INGEST_STAGING_ROOT } from "@joelclaw/endpoint-resolver";
 import { NonRetriableError } from "inngest";
 import * as typesense from "../../lib/typesense";
+import { createDependencyFailureLatch } from "../../lib/dependency-latch";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
@@ -767,6 +768,54 @@ async function resolveManifestPath(requestedPath: unknown): Promise<string> {
   throw new NonRetriableError(`Manifest file not found. Checked: ${candidatePaths.join(", ")}`);
 }
 
+const DOCS_MANIFEST_DEPENDENCY_LATCH_MS = 5 * 60_000;
+
+export function createDocsManifestDependencyGuard(
+  options: {
+    cooldownMs?: number;
+    now?: () => number;
+    resolve?: (requestedPath: unknown) => Promise<string>;
+  } = {},
+) {
+  const latch = createDependencyFailureLatch({
+    cooldownMs: options.cooldownMs ?? DOCS_MANIFEST_DEPENDENCY_LATCH_MS,
+    now: options.now,
+  });
+  const resolvePath = options.resolve ?? resolveManifestPath;
+
+  return {
+    async resolve(requestedPath: unknown): Promise<string> {
+      const active = latch.read();
+      if (active._tag === "Open") {
+        throw new NonRetriableError(
+          `docs backlog manifest dependency latched until ${new Date(active.retryAtMs).toISOString()} (${active.reason})`,
+        );
+      }
+
+      try {
+        const manifestPath = await resolvePath(requestedPath);
+        latch.reset();
+        return manifestPath;
+      } catch (error) {
+        if (
+          !(error instanceof NonRetriableError) ||
+          !error.message.includes("Manifest file not found")
+        ) {
+          throw error;
+        }
+        const opened = latch.trip("manifest unavailable");
+        throw new NonRetriableError(
+          `docs backlog manifest dependency unavailable; latched until ${new Date(opened.retryAtMs).toISOString()}`,
+        );
+      }
+    },
+    read: () => latch.read(),
+    shouldSkipDriver: () => latch.read()._tag === "Open",
+  };
+}
+
+const docsBacklogManifestGuard = createDocsManifestDependencyGuard();
+
 async function loadManifestEntries(manifestPath: string): Promise<ManifestBacklogEntry[]> {
   const text = await readFile(manifestPath, "utf8");
   const entries: ManifestBacklogEntry[] = [];
@@ -980,7 +1029,7 @@ export const docsBacklog = inngest.createFunction(
     };
 
     const manifestPath = await step.run("resolve-manifest-path", async () =>
-      resolveManifestPath(eventData.manifestPath),
+      docsBacklogManifestGuard.resolve(eventData.manifestPath),
     );
     const maxEntries = asPositiveInt(eventData.maxEntries);
     const booksOnly = asBoolean(eventData.booksOnly, true);
@@ -1291,6 +1340,30 @@ export const docsBacklogDriver = inngest.createFunction(
       includePodcasts?: unknown;
       idempotencyPrefix?: unknown;
     };
+
+    const manifestLatch = docsBacklogManifestGuard.read();
+    if (manifestLatch._tag === "Open") {
+      await step.run("emit-backlog-driver-manifest-latched-otel", async () =>
+        emitMeasuredOtelEvent(
+          {
+            level: "warn",
+            source: "worker",
+            component: "docs-backlog-driver",
+            action: "docs.backlog.driver.skipped",
+            metadata: {
+              reason: "manifest-dependency-latched",
+              retryAt: new Date(manifestLatch.retryAtMs).toISOString(),
+            },
+          },
+          async () => ({ dispatched: false }),
+        ),
+      );
+      return {
+        dispatched: false,
+        reason: "manifest-dependency-latched",
+        retryAt: new Date(manifestLatch.retryAtMs).toISOString(),
+      };
+    }
 
     const force = asBoolean(eventData.force, false);
     const reason = asString(eventData.reason) ?? null;

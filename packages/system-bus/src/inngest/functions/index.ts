@@ -1,5 +1,3 @@
-import { emitOtelEvent } from "../../observability/emit";
-
 export { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 export { adrPitchExecute } from "./adr-pitch-execute";
 export { agentChainRun } from "./agent-chain-run";
@@ -97,6 +95,10 @@ export { granolaBackfill } from "./granola-backfill";
 export { heartbeatCron, heartbeatWake } from "./heartbeat";
 export { clusterFunctionDefinitions, clusterFunctionIds } from "./index.cluster";
 export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
+export {
+  memoryIndexerFunctionDefinitions,
+  memoryIndexerFunctionIds,
+} from "./index.memory-indexer";
 export { knowledgeTurnWrite } from "./knowledge-turn-write";
 export {
   createLearnerFlowActionFunction,
@@ -144,6 +146,7 @@ export { o11yTriage } from "./o11y-triage";
 export { paneSchedule } from "./pane-schedule";
 export { paneScheduleReconcile, partitionPaneScheduleRegistry } from "./pane-schedule-reconcile";
 export { queueObserver, queueObserverRequested } from "./queue-observer";
+export { emitInngestRegistryLoaded } from "./registry-events";
 export { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
 export { signalReminder } from "./signal-reminder";
 export { slackBackfillBatch, slackChannelBackfill } from "./slack-backfill";
@@ -200,17 +203,3 @@ export { xAccountActivityReceived } from "./x-account-activity-notify";
 export { xContentHook } from "./x-content-hook";
 export { xDiscoveryHook } from "./x-discovery-hook";
 export { xPost } from "./x-post";
-
-export async function emitInngestRegistryLoaded(functionIds: string[]): Promise<void> {
-  await emitOtelEvent({
-    level: "info",
-    source: "worker",
-    component: "inngest.functions",
-    action: "registry.loaded",
-    success: true,
-    metadata: {
-      count: functionIds.length,
-      functionIds,
-    },
-  });
-}

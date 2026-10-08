@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OtelEventInput } from "../../observability/otel-event";
 import type { AgentUsageCaptureConfig } from "./config";
+import type { AgentUsageEvent, AgentUsageParser, AgentUsageParserState } from "./types";
 import { scanAgentUsage } from "./scanner";
 
 // Synthesized fixture lines: real field structure, fake content.
@@ -140,6 +141,231 @@ describe("scanner", () => {
     expect(second.emittedEvents).toBe(1);
     expect(emitted).toHaveLength(3);
     expect(new Set(emitted.map((event) => event.id)).size).toBe(3);
+  });
+
+  test("parses each line once and stops at the first event beyond the budget", async () => {
+    const config = makeConfig({ agents: ["pi"], maxEventsPerScan: 1 });
+    const transcript = join(roots.pi, "single-pass.jsonl");
+    const lines = [...Array.from({ length: 200 }, () => "ignored"), "event-1", "event-2", "after"];
+    await writeFile(transcript, `${lines.join("\n")}\n`, "utf8");
+
+    let parseLineCalls = 0;
+    const parseLine = (
+      line: string,
+      ctx: { path: string },
+      _state: AgentUsageParserState,
+    ): AgentUsageEvent[] => {
+      parseLineCalls += 1;
+      return line.startsWith("event-")
+        ? [
+            {
+              id: line,
+              timestampMs: 1,
+              runtime: "pi",
+              usage: { totalTokens: 1 },
+              transcriptPath: ctx.path,
+            },
+          ]
+        : [];
+    };
+    const parser: AgentUsageParser = {
+      transcriptRoot: () => roots.pi,
+      createState: () => ({}),
+      parseLine,
+      parseTranscriptLines: (input, ctx) => {
+        const state: AgentUsageParserState = {};
+        return input.flatMap((line) => parseLine(line, ctx, state));
+      },
+    };
+
+    const first = await scanAgentUsage({
+      config,
+      roots,
+      parsers: { pi: parser },
+      emit: async (input) => {
+        emitted.push(input);
+        return { stored: true };
+      },
+    });
+
+    expect(first).toMatchObject({ parsedEvents: 2, emittedEvents: 1 });
+    expect(parseLineCalls).toBe(202);
+
+    const second = await scanAgentUsage({
+      config,
+      roots,
+      parsers: { pi: parser },
+      emit: async (input) => {
+        emitted.push(input);
+        return { stored: true };
+      },
+    });
+    expect(second.emittedEvents).toBe(1);
+    expect(emitted.map((event) => event.id)).toEqual(["event-1", "event-2"]);
+  });
+
+  test("reads across bounded chunks and preserves complete-line offsets", async () => {
+    const config = makeConfig({ agents: ["pi"] });
+    const transcript = join(roots.pi, "chunk-boundary.jsonl");
+    const contents = `${JSON.stringify({ type: "ignored", padding: "x".repeat(90) })}\n${piAssistantLine(1)}`;
+    await writeFile(transcript, contents, "utf8");
+
+    const summary = await scanAgentUsage({
+      config,
+      roots,
+      limits: { readChunkBytes: 16, maxUnreadBytesPerFile: 512, maxReadBytesPerScan: 512 },
+      emit: async (input) => {
+        emitted.push(input);
+        return { stored: true };
+      },
+    });
+
+    expect(summary.emittedEvents).toBe(1);
+    const state = JSON.parse(await readFile(config.statePath, "utf8")) as {
+      files: Record<string, { offset: number }>;
+    };
+    expect(state.files[transcript]?.offset).toBe(Buffer.byteLength(contents, "utf8"));
+  });
+
+  test("caps total bytes read per scan and resumes at the last complete line", async () => {
+    const config = makeConfig({ agents: ["pi"] });
+    const transcript = join(roots.pi, "read-budget.jsonl");
+    const contents = "skip\nevent\nskip\nevent\nskip\nevent\n";
+    await writeFile(transcript, contents, "utf8");
+
+    const parseLine = (
+      line: string,
+      ctx: { path: string },
+      _state: AgentUsageParserState,
+    ): AgentUsageEvent[] =>
+      line === "event"
+        ? [{
+            id: `${ctx.path}:${line}`,
+            timestampMs: 1,
+            runtime: "pi",
+            usage: { totalTokens: 1 },
+            transcriptPath: ctx.path,
+          }]
+        : [];
+    const parser: AgentUsageParser = {
+      transcriptRoot: () => roots.pi,
+      createState: () => ({}),
+      parseLine,
+      parseTranscriptLines: (lines, ctx) => {
+        const state: AgentUsageParserState = {};
+        return lines.flatMap((line) => parseLine(line, ctx, state));
+      },
+    };
+    const limits = { readChunkBytes: 4, maxUnreadBytesPerFile: 128, maxReadBytesPerScan: 20 };
+    const options = {
+      config,
+      roots,
+      parsers: { pi: parser },
+      limits,
+      emit: async (input: OtelEventInput) => {
+        emitted.push(input);
+        return { stored: true };
+      },
+    };
+
+    const first = await scanAgentUsage(options);
+    const firstState = JSON.parse(await readFile(config.statePath, "utf8")) as {
+      files: Record<string, { offset: number }>;
+    };
+    expect(first.emittedEvents).toBe(1);
+    expect(firstState.files[transcript]?.offset).toBe(16);
+
+    const second = await scanAgentUsage(options);
+    const secondState = JSON.parse(await readFile(config.statePath, "utf8")) as {
+      files: Record<string, { offset: number }>;
+    };
+    expect(second.emittedEvents).toBe(2);
+    expect(emitted).toHaveLength(3);
+    expect(firstState.files[transcript]?.offset).toBeLessThan(Buffer.byteLength(contents, "utf8"));
+    expect(secondState.files[transcript]?.offset).toBe(Buffer.byteLength(contents, "utf8"));
+  });
+
+  test("preserves Codex session and model context while streaming transcript lines", async () => {
+    const config = makeConfig({ agents: ["codex"] });
+    await mkdir(roots.codex, { recursive: true });
+    const transcript = join(roots.codex, "rollout-fixture.jsonl");
+    const sessionId = "01900000-0000-7000-8000-000000000002";
+    const contents = [
+      JSON.stringify({ type: "session_meta", payload: { id: sessionId } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "fake-codex-model" } }),
+      JSON.stringify({
+        timestamp: "2026-07-09T12:00:02.000Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 } },
+        },
+      }),
+    ].join("\n") + "\n";
+    await writeFile(transcript, contents, "utf8");
+
+    const summary = await scanAgentUsage({
+      config,
+      roots,
+      limits: { readChunkBytes: 16, maxUnreadBytesPerFile: 1024, maxReadBytesPerScan: 2048 },
+      emit: async (input) => {
+        emitted.push(input);
+        return { stored: true };
+      },
+    });
+
+    expect(summary.emittedEvents).toBe(1);
+    expect((emitted[0]?.metadata as { model?: string }).model).toBe("fake-codex-model");
+    expect(emitted[0]?.sessionId).toBe(sessionId);
+  });
+
+  test("marks an oversized unread remainder and does not retry it every scan", async () => {
+    const config = makeConfig({ agents: ["pi"] });
+    const transcript = join(roots.pi, "oversized.jsonl");
+    const contents = "x\n".repeat(65);
+    await writeFile(transcript, contents, "utf8");
+
+    const limits = { readChunkBytes: 16, maxUnreadBytesPerFile: 128, maxReadBytesPerScan: 256 };
+    const first = await scanAgentUsage({
+      config,
+      roots,
+      limits,
+      emit: async () => ({ stored: true }),
+    });
+    expect(first.oversizedFiles).toBe(1);
+    expect(first.skippedBytes).toBe(Buffer.byteLength(contents, "utf8"));
+
+    const state = JSON.parse(await readFile(config.statePath, "utf8")) as {
+      files: Record<string, { offset: number; skipped?: { reason: string; bytes: number } }>;
+    };
+    expect(state.files[transcript]).toMatchObject({
+      offset: Buffer.byteLength(contents, "utf8"),
+      skipped: { reason: "unread-remainder-limit", bytes: Buffer.byteLength(contents, "utf8") },
+    });
+
+    const second = await scanAgentUsage({
+      config,
+      roots,
+      limits,
+      emit: async () => ({ stored: true }),
+    });
+    expect(second.scannedFiles).toBe(0);
+    expect(second.oversizedFiles).toBe(0);
+
+    await appendFile(transcript, piAssistantLine(1), "utf8");
+    const later = new Date(Date.now() + 5_000);
+    await utimes(transcript, later, later);
+    const third = await scanAgentUsage({
+      config,
+      roots,
+      limits: { ...limits, maxUnreadBytesPerFile: 512, maxReadBytesPerScan: 1024 },
+      emit: async (input) => {
+        emitted.push(input);
+        return { stored: true };
+      },
+    });
+    expect(third.emittedEvents).toBe(1);
+    expect(emitted).toHaveLength(1);
   });
 
   test("maxFilesPerScan caps files and reports the dropped count", async () => {

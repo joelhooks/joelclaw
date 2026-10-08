@@ -119,12 +119,6 @@ export interface StreamInboundPublisherOptions {
     event: InboundEvent,
   ) => void;
   readonly machineId?: string;
-  /**
-   * True only when a Slack D* conversation is the bot's own DM. Joel's user
-   * token also delivers his DMs with coworkers, which share the D* prefix and
-   * must stay ambient. Omitted means no Slack DM addresses the gateway.
-   */
-  readonly isSlackBotDirectMessage?: (conversationId: string) => Promise<boolean>;
 }
 
 function inboundOrigin(event: InboundEvent, machineId: string): MessageEventOrigin {
@@ -153,31 +147,25 @@ function inboundContent(event: InboundEvent): { text?: string; data: unknown } {
   }
 }
 
-async function isDirectConversation(
-  event: InboundEvent,
-  isSlackBotDirectMessage?: (conversationId: string) => Promise<boolean>,
-): Promise<boolean> {
+function isDirectConversation(event: InboundEvent): boolean {
   if (event.platform === "telegram") {
     return event.platformIds.conversationId === event.actor.platformUserId;
   }
   if (event.platform === "slack") {
-    // Slack conversation IDs beginning with D are `im` conversations, but
-    // only the bot's own DM addresses the gateway.
-    const conversationId = event.platformIds.conversationId;
-    if (!conversationId.startsWith("D") || !isSlackBotDirectMessage) return false;
-    return isSlackBotDirectMessage(conversationId);
+    // Slack conversation IDs beginning with D are `im` conversations. Chat SDK
+    // keeps that platform-native ID in the normalized envelope.
+    return event.platformIds.conversationId.startsWith("D");
   }
   return false;
 }
 
-export async function inboundAddressing(
+export function inboundAddressing(
   event: InboundEvent,
   replyFlowId?: string,
-  isSlackBotDirectMessage?: (conversationId: string) => Promise<boolean>,
-): Promise<InboundAddressing> {
+): InboundAddressing {
   if (replyFlowId) return "addressed";
   if (event.type === "message" && event.isMention) return "addressed";
-  if (await isDirectConversation(event, isSlackBotDirectMessage)) return "addressed";
+  if (isDirectConversation(event)) return "addressed";
   return "ambient";
 }
 
@@ -228,7 +216,7 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
         : undefined;
       const addressing = workRequest
         ? "addressed"
-        : await inboundAddressing(event, replyFlowId, options.isSlackBotDirectMessage);
+        : inboundAddressing(event, replyFlowId);
       const payload: InboundReceivedPayload = {
         addressing,
         platformEventId: event.eventId,

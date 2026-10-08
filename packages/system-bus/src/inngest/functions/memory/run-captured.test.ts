@@ -137,6 +137,11 @@ function emptyRunData(): CaptureEventData {
 }
 
 describe("memory/run.captured", () => {
+  test("bounds session index concurrency at four writers", () => {
+    const opts = (memoryRunCaptured as unknown as { opts?: { concurrency?: unknown } }).opts;
+    expect(opts?.concurrency).toEqual({ limit: 4 });
+  });
+
   test("stores a zero-turn Run in sessions.db without a Typesense step", async () => {
     const { result, stepIds } = await executeRun(emptyRunData());
 

@@ -1,11 +1,41 @@
 import { describe, expect, test } from "bun:test";
+import { NonRetriableError } from "inngest";
 import {
   classifyFinalizationFailure,
+  createDocsManifestDependencyGuard,
   shouldDispatchBacklogDriver,
   shouldRequeueAfterCancelAttempt,
 } from "./docs-maintenance";
 
 describe("docs-maintenance helpers", () => {
+  test("latches a missing manifest and probes again after cooldown", async () => {
+    let now = 1_000;
+    let attempts = 0;
+    let available = false;
+    const guard = createDocsManifestDependencyGuard({
+      cooldownMs: 500,
+      now: () => now,
+      resolve: async () => {
+        attempts += 1;
+        if (!available) throw new NonRetriableError("Manifest file not found");
+        return "/fixture/manifest.clean.jsonl";
+      },
+    });
+
+    await expect(guard.resolve(undefined)).rejects.toBeInstanceOf(NonRetriableError);
+    expect(guard.read()).toMatchObject({ _tag: "Open", retryAtMs: 1_500 });
+    await expect(guard.resolve(undefined)).rejects.toThrow("latched");
+    expect(guard.shouldSkipDriver()).toBe(true);
+    expect(attempts).toBe(1);
+
+    now = 1_500;
+    available = true;
+    await expect(guard.resolve(undefined)).resolves.toBe("/fixture/manifest.clean.jsonl");
+    expect(guard.read()).toEqual({ _tag: "Closed" });
+    expect(guard.shouldSkipDriver()).toBe(false);
+    expect(attempts).toBe(2);
+  });
+
   test("backlog driver dispatches when queue depth is below gates", () => {
     const allowed = shouldDispatchBacklogDriver({
       docsRunning: 1,

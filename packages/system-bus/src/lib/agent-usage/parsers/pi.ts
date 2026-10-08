@@ -6,6 +6,7 @@ import {
   finiteNumber,
   hasUsageSignal,
   type ParseContext,
+  type AgentUsageParserState,
   parseJsonLine,
   parseTimestampMs,
   sessionIdFromFilename,
@@ -41,52 +42,62 @@ type PiMessage = {
   usage?: PiUsage;
 };
 
-export function parseTranscriptLines(lines: string[], ctx: ParseContext): AgentUsageEvent[] {
-  const events: AgentUsageEvent[] = [];
-  let sessionId = sessionIdFromFilename(ctx.path);
+export function createState(ctx: ParseContext): AgentUsageParserState {
+  return { sessionId: sessionIdFromFilename(ctx.path) };
+}
 
-  for (const line of lines) {
-    const parsed = parseJsonLine(line);
-    if (!parsed) continue;
+export function parseLine(
+  line: string,
+  ctx: ParseContext,
+  state: AgentUsageParserState,
+): AgentUsageEvent[] {
+  const parsed = parseJsonLine(line);
+  if (!parsed) return [];
 
-    if (parsed.type === "session" && typeof parsed.id === "string" && parsed.id.length > 0) {
-      sessionId = parsed.id;
-      continue;
-    }
+  if (parsed.type === "session" && typeof parsed.id === "string" && parsed.id.length > 0) {
+    state.sessionId = parsed.id;
+    return [];
+  }
 
-    if (parsed.type !== "message") continue;
-    const message = parsed.message as PiMessage | undefined;
-    if (!message || typeof message !== "object" || message.role !== "assistant") continue;
-    const rawUsage = message.usage;
-    if (!rawUsage || typeof rawUsage !== "object") continue;
+  if (parsed.type !== "message") return [];
+  const message = parsed.message as PiMessage | undefined;
+  if (!message || typeof message !== "object" || message.role !== "assistant") return [];
+  const rawUsage = message.usage;
+  if (!rawUsage || typeof rawUsage !== "object") return [];
 
-    const cost = rawUsage.cost && typeof rawUsage.cost === "object" ? rawUsage.cost : undefined;
-    const usage: AgentUsageTokens = {
-      inputTokens: finiteNumber(rawUsage.input),
-      outputTokens: finiteNumber(rawUsage.output),
-      totalTokens: finiteNumber(rawUsage.totalTokens),
-      cacheReadTokens: finiteNumber(rawUsage.cacheRead),
-      cacheWriteTokens: finiteNumber(rawUsage.cacheWrite),
-      costInput: finiteNumber(cost?.input),
-      costOutput: finiteNumber(cost?.output),
-      costTotal: finiteNumber(cost?.total),
-    };
-    if (!hasUsageSignal(usage)) continue;
+  const cost = rawUsage.cost && typeof rawUsage.cost === "object" ? rawUsage.cost : undefined;
+  const usage: AgentUsageTokens = {
+    inputTokens: finiteNumber(rawUsage.input),
+    outputTokens: finiteNumber(rawUsage.output),
+    totalTokens: finiteNumber(rawUsage.totalTokens),
+    cacheReadTokens: finiteNumber(rawUsage.cacheRead),
+    cacheWriteTokens: finiteNumber(rawUsage.cacheWrite),
+    costInput: finiteNumber(cost?.input),
+    costOutput: finiteNumber(cost?.output),
+    costTotal: finiteNumber(cost?.total),
+  };
+  if (!hasUsageSignal(usage)) return [];
 
-    const timestampMs = parseTimestampMs(message.timestamp) ?? parseTimestampMs(parsed.timestamp);
-    if (timestampMs == null) continue;
+  const timestampMs = parseTimestampMs(message.timestamp) ?? parseTimestampMs(parsed.timestamp);
+  if (timestampMs == null) return [];
 
-    events.push({
+  return [
+    {
       id: usageEventId("pi", ctx.path, line.trim()),
       timestampMs,
       runtime: "pi",
-      sessionId,
+      sessionId: state.sessionId,
       model: typeof message.model === "string" ? message.model : undefined,
       provider: typeof message.provider === "string" ? message.provider : undefined,
       usage,
       transcriptPath: ctx.path,
-    });
-  }
+    },
+  ];
+}
 
+export function parseTranscriptLines(lines: string[], ctx: ParseContext): AgentUsageEvent[] {
+  const state = createState(ctx);
+  const events: AgentUsageEvent[] = [];
+  for (const line of lines) events.push(...parseLine(line, ctx, state));
   return events;
 }

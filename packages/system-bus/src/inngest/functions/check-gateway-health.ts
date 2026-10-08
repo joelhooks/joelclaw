@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { runExecFile } from "../../lib/async-exec-file";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import Redis from "ioredis";
@@ -22,8 +22,9 @@ const GENERAL_ALERT_COOLDOWN_KEY = "gateway:health:monitor:general-alert-cooldow
 const CHANNEL_STREAK_KEY_PREFIX = "gateway:health:monitor:channel-streak:";
 const CHANNEL_ALERT_COOLDOWN_KEY = "gateway:health:monitor:channel-alert-cooldown";
 const MUTED_CHANNELS_KEY = "gateway:health:muted-channels";
-const GATEWAY_OPERATOR_ACTION_RECEIPT_DIR = process.env.GATEWAY_HEALTH_RECEIPT_DIR
-  ?? join(
+const GATEWAY_OPERATOR_ACTION_RECEIPT_DIR =
+  process.env.GATEWAY_HEALTH_RECEIPT_DIR ??
+  join(
     process.env.HOME || "/Users/joel",
     ".joelclaw",
     "receipts",
@@ -52,13 +53,40 @@ function asBoolean(raw: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
-const CHANNEL_OTEL_PROBES_ENABLED = asBoolean(process.env.GATEWAY_CHANNEL_OTEL_PROBES_ENABLED, false);
-const TYPESENSE_PROBE_SEARCH_CUTOFF_MS = asPositiveInt(process.env.GATEWAY_CHANNEL_OTEL_SEARCH_CUTOFF_MS, 750, 100);
-const CHANNEL_WINDOW_MINUTES = asPositiveInt(process.env.GATEWAY_CHANNEL_HEALTH_WINDOW_MINUTES, 30, 5);
-const CHANNEL_DEGRADED_ERROR_THRESHOLD = asPositiveInt(process.env.GATEWAY_CHANNEL_DEGRADED_THRESHOLD, 3, 1);
-const CHANNEL_FAILED_ERROR_THRESHOLD = asPositiveInt(process.env.GATEWAY_CHANNEL_FAILED_THRESHOLD, 6, 2);
-const GENERAL_ALERT_STREAK_THRESHOLD = asPositiveInt(process.env.GATEWAY_GENERAL_ALERT_STREAK_THRESHOLD, 2, 1);
-const CHANNEL_ALERT_STREAK_THRESHOLD = asPositiveInt(process.env.GATEWAY_CHANNEL_ALERT_STREAK_THRESHOLD, 2, 1);
+const CHANNEL_OTEL_PROBES_ENABLED = asBoolean(
+  process.env.GATEWAY_CHANNEL_OTEL_PROBES_ENABLED,
+  false,
+);
+const TYPESENSE_PROBE_SEARCH_CUTOFF_MS = asPositiveInt(
+  process.env.GATEWAY_CHANNEL_OTEL_SEARCH_CUTOFF_MS,
+  750,
+  100,
+);
+const CHANNEL_WINDOW_MINUTES = asPositiveInt(
+  process.env.GATEWAY_CHANNEL_HEALTH_WINDOW_MINUTES,
+  30,
+  5,
+);
+const CHANNEL_DEGRADED_ERROR_THRESHOLD = asPositiveInt(
+  process.env.GATEWAY_CHANNEL_DEGRADED_THRESHOLD,
+  3,
+  1,
+);
+const CHANNEL_FAILED_ERROR_THRESHOLD = asPositiveInt(
+  process.env.GATEWAY_CHANNEL_FAILED_THRESHOLD,
+  6,
+  2,
+);
+const GENERAL_ALERT_STREAK_THRESHOLD = asPositiveInt(
+  process.env.GATEWAY_GENERAL_ALERT_STREAK_THRESHOLD,
+  2,
+  1,
+);
+const CHANNEL_ALERT_STREAK_THRESHOLD = asPositiveInt(
+  process.env.GATEWAY_CHANNEL_ALERT_STREAK_THRESHOLD,
+  2,
+  1,
+);
 
 let redisClient: Redis | null = null;
 
@@ -167,11 +195,7 @@ const CHANNEL_PROBES: ChannelProbeConfig[] = [
       "discord.send.failed",
       "discord.send.channel_fetch_failed",
     ],
-    successActions: [
-      "discord.channel.started",
-      "discord.send.completed",
-      "discord.dm.received",
-    ],
+    successActions: ["discord.channel.started", "discord.send.completed", "discord.dm.received"],
   },
   {
     id: "imessage",
@@ -198,11 +222,7 @@ const CHANNEL_PROBES: ChannelProbeConfig[] = [
       "slack.send.failed",
       "slack.send_media.failed",
     ],
-    successActions: [
-      "slack.channel.started",
-      "slack.send.completed",
-      "slack.message.received",
-    ],
+    successActions: ["slack.channel.started", "slack.send.completed", "slack.message.received"],
   },
 ];
 
@@ -294,26 +314,26 @@ async function writeOperatorActionReceipt(
   return receiptPath;
 }
 
-function runJoelclawEnvelope<T>(args: string[], timeoutMs: number): CliResult<T> {
+async function runJoelclawEnvelope<T>(args: string[], timeoutMs: number): Promise<CliResult<T>> {
   try {
-    const proc = spawnSync("joelclaw", args, {
-      encoding: "utf-8",
-      timeout: timeoutMs,
-      stdio: ["ignore", "pipe", "pipe"],
+    const proc = await runExecFile("joelclaw", args, {
+      timeoutMs,
       env: { ...process.env, TERM: "dumb" },
     });
 
-    if (proc.error) {
-      return { ok: false, error: `spawn failed: ${String(proc.error)}` };
+    if (proc.status === "failure") {
+      if (proc.reason !== "exit") {
+        return { ok: false, error: `${proc.reason}: ${proc.error.message}` };
+      }
+
+      const stdout = toSafeText(proc.stdout, "");
+      const stderr = toSafeText(proc.stderr, "");
+      const detail = stderr || stdout || `exit ${proc.exitCode ?? "unknown"}`;
+      return { ok: false, error: truncate(detail), stderr: stderr || undefined };
     }
 
     const stdout = toSafeText(proc.stdout, "");
     const stderr = toSafeText(proc.stderr, "");
-
-    if (proc.status !== 0) {
-      const detail = stderr || stdout || `exit ${proc.status ?? "unknown"}`;
-      return { ok: false, error: truncate(detail), stderr: stderr || undefined };
-    }
 
     if (!stdout) {
       return { ok: false, error: "empty CLI response" };
@@ -428,7 +448,9 @@ async function countActionEvents(filterBy: string): Promise<number> {
   return result.found ?? 0;
 }
 
-async function fetchLatestError(baseFilter: string): Promise<{ action?: string; error?: string } | null> {
+async function fetchLatestError(
+  baseFilter: string,
+): Promise<{ action?: string; error?: string } | null> {
   const result = await typesense.search({
     collection: "otel_events",
     q: "*",
@@ -512,11 +534,7 @@ function buildGeneralAlertPrompt(args: {
   criticalFailures: GatewayDiagnoseLayer[];
   diagnoseError?: string;
 }): string {
-  const lines = [
-    "## 🚨 Gateway Health Degradation",
-    "",
-    `Failure streak: ${args.streak}`,
-  ];
+  const lines = ["## 🚨 Gateway Health Degradation", "", `Failure streak: ${args.streak}`];
 
   if (args.summary) {
     lines.push(`Summary: ${args.summary}`);
@@ -582,14 +600,14 @@ export const checkGatewayHealth = inngest.createFunction(
   { event: GATEWAY_MONITOR_EVENT },
   async ({ event, step }) => {
     const mutedChannels = await step.run("load-muted-channels", async () =>
-      loadMutedChannelsFromRedis()
+      loadMutedChannelsFromRedis(),
     );
 
     const diagnose = await step.run("diagnose-gateway", async () =>
       runJoelclawEnvelope<GatewayDiagnoseResult>(
         ["gateway", "diagnose", "--hours", "1", "--lines", "120"],
         60_000,
-      )
+      ),
     );
 
     let diagnoseError: string | undefined;
@@ -610,7 +628,7 @@ export const checkGatewayHealth = inngest.createFunction(
     const generalFailure = !diagnose.ok || criticalFailures.length > 0;
 
     const generalStreak = await step.run("update-general-streak", async () =>
-      setFailureStreak(GENERAL_STREAK_KEY, generalFailure)
+      setFailureStreak(GENERAL_STREAK_KEY, generalFailure),
     );
 
     const channelHealth = await step.run("probe-channel-health", async () => {
@@ -622,7 +640,8 @@ export const checkGatewayHealth = inngest.createFunction(
           severeCount: 0,
           successCount: 0,
           latestErrorAction: "monitor.probe.skipped",
-          latestError: "Typesense OTEL channel probes disabled by default; set GATEWAY_CHANNEL_OTEL_PROBES_ENABLED=1 after otel_events recovery.",
+          latestError:
+            "Typesense OTEL channel probes disabled by default; set GATEWAY_CHANNEL_OTEL_PROBES_ENABLED=1 after otel_events recovery.",
           streak: 0,
         }));
       }
@@ -642,8 +661,8 @@ export const checkGatewayHealth = inngest.createFunction(
 
     const actionableChannels = channelHealth.filter(
       (item) =>
-        (item.status === "failed" || item.status === "degraded")
-        && item.streak >= CHANNEL_ALERT_STREAK_THRESHOLD,
+        (item.status === "failed" || item.status === "degraded") &&
+        item.streak >= CHANNEL_ALERT_STREAK_THRESHOLD,
     );
 
     const { alertableChannels, mutedActionableChannels } = partitionAlertableChannels(
@@ -651,17 +670,20 @@ export const checkGatewayHealth = inngest.createFunction(
       mutedChannels,
     );
     const alertSuppressed = await step.run("check-alert-suppression", () =>
-      isAlertSuppressed("check-gateway-health")
+      isAlertSuppressed("check-gateway-health"),
     );
 
     const operatorActionCooldownClaimed = await step.run(
       "claim-general-operator-action-cooldown",
       async () => {
-        if (!shouldRequestOperatorAction({
-          generalFailure,
-          generalStreak,
-          alertSuppressed,
-        })) return false;
+        if (
+          !shouldRequestOperatorAction({
+            generalFailure,
+            generalStreak,
+            alertSuppressed,
+          })
+        )
+          return false;
         return claimCooldown(GENERAL_ALERT_COOLDOWN_KEY, GENERAL_ALERT_COOLDOWN_SECONDS);
       },
     );
@@ -708,7 +730,10 @@ export const checkGatewayHealth = inngest.createFunction(
       if (alertSuppressed) return false;
       if (alertableChannels.length === 0) return false;
 
-      const shouldAlert = await claimCooldown(CHANNEL_ALERT_COOLDOWN_KEY, CHANNEL_ALERT_COOLDOWN_SECONDS);
+      const shouldAlert = await claimCooldown(
+        CHANNEL_ALERT_COOLDOWN_KEY,
+        CHANNEL_ALERT_COOLDOWN_SECONDS,
+      );
       if (!shouldAlert) return false;
 
       await pushGatewayEvent({
@@ -762,10 +787,14 @@ export const checkGatewayHealth = inngest.createFunction(
         action: "gateway.health.checked",
         success: !generalFailure && actionableChannels.length === 0,
         error: generalFailure
-          ? diagnoseError ?? criticalFailures.map((layer) => `${layer.layer}:${layer.detail}`).join(" | ")
+          ? (diagnoseError ??
+            criticalFailures.map((layer) => `${layer.layer}:${layer.detail}`).join(" | "))
           : actionableChannels.length > 0
             ? actionableChannels
-                .map((channel) => `${channel.channel}:${channel.status}:s${channel.severeCount}:k${channel.streak}`)
+                .map(
+                  (channel) =>
+                    `${channel.channel}:${channel.status}:s${channel.severeCount}:k${channel.streak}`,
+                )
                 .join(" | ")
             : undefined,
         metadata: {

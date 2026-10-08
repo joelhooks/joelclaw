@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import type { IncidentLatch } from "@joelclaw/incident-latch";
 import { Effect } from "effect";
@@ -9,6 +10,7 @@ import {
   parseStartupBudgetMs,
   sendHardAlert,
   stableAlertId,
+  SEARCH_PROJECTION_HEALTH_QUERY,
 } from "./search-maintenance";
 
 const alwaysOpenLatch: IncidentLatch = {
@@ -137,6 +139,26 @@ describe("search startup budgets", () => {
 });
 
 describe("search health projection", () => {
+  test("uses the ended_at index without a temporary sort", () => {
+    const db = new Database(":memory:");
+    try {
+      db.exec(`CREATE TABLE runs (
+        run_id TEXT, started_at INTEGER, ended_at INTEGER, jsonl_path TEXT,
+        jsonl_sha256 TEXT, from_offset INTEGER, to_offset INTEGER, source_identity TEXT
+      );
+      CREATE INDEX runs_ended_at_idx ON runs(ended_at);`);
+      const plan = db.query(`EXPLAIN QUERY PLAN ${SEARCH_PROJECTION_HEALTH_QUERY}`).all() as Array<{
+        detail: string;
+      }>;
+      const details = plan.map((row) => row.detail).join(" ");
+
+      expect(details).toContain("runs_ended_at_idx");
+      expect(details).not.toContain("TEMP B-TREE");
+    } finally {
+      db.close(false);
+    }
+  });
+
   test("reports freshness and raw source provenance", () => {
     const observedAt = Date.parse("2026-07-20T03:00:00.000Z");
     const endedAt = observedAt - 5_000;

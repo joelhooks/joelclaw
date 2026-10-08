@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
+import { lstat, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { $ } from "bun";
 import matter from "gray-matter";
 import { buildDiscoveryFinalLink, resolveDiscoveryRouting } from "../../lib/discovery-routing";
+import { resolveSafeTemporaryDirectory } from "../../lib/protected-harness-paths";
 import { infer } from "../../lib/inference";
 import { enqueueRegisteredQueueEvent, isQueuePilotEnabled } from "../../lib/queue";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
@@ -31,7 +35,9 @@ function shouldQueueDiscoveryCaptured(): boolean {
   return isQueuePilotEnabled("discovery-captured");
 }
 
-function buildDiscoveryCapturedEventData(input: DiscoveryCapturedEventData): DiscoveryCapturedEventData {
+function buildDiscoveryCapturedEventData(
+  input: DiscoveryCapturedEventData,
+): DiscoveryCapturedEventData {
   const data: DiscoveryCapturedEventData = {
     vaultPath: input.vaultPath,
     topic: input.topic,
@@ -129,7 +135,12 @@ function buildFallbackDiscoveryNote(opts: {
   const source = opts.url?.trim() || "conversation";
   const context = opts.context?.trim() || "Joel flagged this as interesting.";
   const sourceLink = opts.url?.trim() ? `[${title}](${opts.url.trim()})` : title;
-  const fingerprintSeed = [source, context, opts.sourceContent.trim().slice(0, 500), opts.captureId?.trim()]
+  const fingerprintSeed = [
+    source,
+    context,
+    opts.sourceContent.trim().slice(0, 500),
+    opts.captureId?.trim(),
+  ]
     .filter(Boolean)
     .join("\n");
   const fingerprint = sourceFingerprint(fingerprintSeed || title);
@@ -192,7 +203,9 @@ export const discoveryCapture = inngest.createFunction(
   },
   { event: "discovery/noted" },
   async ({ event, step, ...rest }) => {
-    const gateway = (rest as any).gateway as import("../middleware/gateway").GatewayContext | undefined;
+    const gateway = (rest as any).gateway as
+      | import("../middleware/gateway").GatewayContext
+      | undefined;
     const { url, context, site, visibility } = event.data;
     const today = new Date().toISOString().split("T")[0];
     const requestedRouting = resolveDiscoveryRouting({
@@ -234,20 +247,28 @@ export const discoveryCapture = inngest.createFunction(
 
             if (url?.includes("github.com")) {
               sourceType = "repo";
-              const tmpDir = `/tmp/discovery-${Date.now()}`;
+              const tempRoot = resolveSafeTemporaryDirectory(tmpdir());
+              if (!tempRoot) throw new Error("unsafe discovery temp root");
+              const tmpDir = await mkdtemp(join(tempRoot, "discovery-"));
+              const safeTmpDir = resolveSafeTemporaryDirectory(tmpDir, { tmpRoot: tempRoot });
+              if (!safeTmpDir) throw new Error("unsafe discovery temp directory");
               try {
-                await $`git clone --depth 1 ${url} ${tmpDir} 2>/dev/null`.quiet();
-                const readmePath = `${tmpDir}/README.md`;
-                if (await Bun.file(readmePath).exists()) {
+                await $`git clone --depth 1 ${url} ${safeTmpDir} 2>/dev/null`.quiet();
+                const readmePath = join(safeTmpDir, "README.md");
+                const readmeStat = await lstat(readmePath).catch(() => undefined);
+                if (readmeStat?.isFile()) {
                   const readme = await Bun.file(readmePath).text();
-                  content = readme.length > 8000 ? readme.slice(0, 8000) + "\n\n[truncated]" : readme;
+                  content =
+                    readme.length > 8000 ? readme.slice(0, 8000) + "\n\n[truncated]" : readme;
                 }
-                const tree = await $`find ${tmpDir} -maxdepth 2 -not -path '*/.*' -not -path '*/node_modules/*' | head -40`.text();
+                const tree =
+                  await $`find ${safeTmpDir} -maxdepth 2 -not -path '*/.*' -not -path '*/node_modules/*' | head -40`.text();
                 content += `\n\n## File Structure\n\`\`\`\n${tree}\n\`\`\``;
               } catch {
                 content = `Could not clone ${url}.`;
               } finally {
-                await $`rm -rf ${tmpDir}`.quiet();
+                const cleanupDir = resolveSafeTemporaryDirectory(safeTmpDir, { tmpRoot: tempRoot });
+                if (cleanupDir) await rm(cleanupDir, { recursive: true, force: true });
               }
             } else if (url) {
               sourceType = "article";
@@ -281,7 +302,8 @@ export const discoveryCapture = inngest.createFunction(
                 task: "summary",
                 component: "discovery-capture",
                 action: "discovery.capture.generate",
-                system: "You are a discovery analysis assistant that writes discovery notes using Vault conventions.",
+                system:
+                  "You are a discovery analysis assistant that writes discovery notes using Vault conventions.",
                 model: "openai-codex/gpt-5.6-sol",
                 maxAttempts: 1,
                 timeout: DISCOVERY_GENERATE_TIMEOUT_MS,
@@ -372,9 +394,10 @@ export const discoveryCapture = inngest.createFunction(
             const { data, content } = matter(raw);
             const titleMatch = content.match(/^# (.+)$/m);
             const resolvedTitle = titleMatch?.[1] ?? result.noteName;
-            const slug = typeof data.slug === "string" && data.slug.trim().length > 0
-              ? data.slug.trim()
-              : result.noteName;
+            const slug =
+              typeof data.slug === "string" && data.slug.trim().length > 0
+                ? data.slug.trim()
+                : result.noteName;
             const routing = resolveDiscoveryRouting({
               slug,
               privateFlag: data.private === true,
@@ -431,7 +454,9 @@ export const discoveryCapture = inngest.createFunction(
               source: `vault:Resources/discoveries/${result.noteName}.md`,
               tags: ["discovery", resolved.site, resolved.visibility],
             });
-          } catch { /* graceful */ }
+          } catch {
+            /* graceful */
+          }
 
           const discoveryCapturedData = buildDiscoveryCapturedEventData({
             vaultPath: result.vaultPath,
@@ -447,16 +472,19 @@ export const discoveryCapture = inngest.createFunction(
           });
 
           const discoveryCapturedMode = shouldQueueDiscoveryCaptured() ? "queue" : "inngest";
-          const queueResult = discoveryCapturedMode === "queue"
-            ? await step.run("queue-discovery-captured", async () => enqueueRegisteredQueueEvent({
-                name: "discovery/captured",
-                data: discoveryCapturedData as Record<string, unknown>,
-                source: "inngest:discovery-capture",
-                metadata: {
-                  trigger: event.name,
-                },
-              }))
-            : null;
+          const queueResult =
+            discoveryCapturedMode === "queue"
+              ? await step.run("queue-discovery-captured", async () =>
+                  enqueueRegisteredQueueEvent({
+                    name: "discovery/captured",
+                    data: discoveryCapturedData as Record<string, unknown>,
+                    source: "inngest:discovery-capture",
+                    metadata: {
+                      trigger: event.name,
+                    },
+                  }),
+                )
+              : null;
 
           if (discoveryCapturedMode === "inngest") {
             await step.sendEvent("emit-discovery-captured", {
@@ -518,7 +546,7 @@ export const discoveryCapture = inngest.createFunction(
           });
           throw error;
         }
-      }
+      },
     );
-  }
+  },
 );

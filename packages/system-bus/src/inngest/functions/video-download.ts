@@ -1,14 +1,16 @@
-import { readdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { NAS_SSH_HOST, NAS_VIDEO_REMOTE_ROOT } from "@joelclaw/endpoint-resolver";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
 import { inngest } from "../client";
+import { resolveSafeTemporaryPath } from "../../lib/protected-harness-paths";
 import { pushGatewayEvent } from "./agent-loop/utils";
 
 const NAS_HOST = NAS_SSH_HOST;
 const NAS_VIDEO_BASE = NAS_VIDEO_REMOTE_ROOT;
 const TMP_BASE = "/tmp/video-ingest";
+const HOME_DIR = process.env.HOME ?? "/Users/joel";
 
 function slugify(title: string): string {
   return title
@@ -44,22 +46,31 @@ export const videoDownload = inngest.createFunction(
     const download = await step.run("download", async () => {
       const url = event.data.url;
       const maxQuality = event.data.maxQuality ?? "1080";
-      const runTmpDir = join(TMP_BASE, crypto.randomUUID());
-
-      // Clean only this run's directory to avoid deleting in-flight downloads.
-      await $`rm -rf ${runTmpDir} && mkdir -p ${runTmpDir}`.quiet();
+      const safeTmpBase = resolveSafeTemporaryPath(TMP_BASE, {
+        tmpRoot: "/tmp",
+        homeDir: HOME_DIR,
+      });
+      if (!safeTmpBase) {
+        throw new NonRetriableError("Unsafe video download temp root");
+      }
+      await mkdir(safeTmpBase, { recursive: true });
+      const runTmpDir = join(safeTmpBase, crypto.randomUUID());
+      await mkdir(runTmpDir);
 
       const ytdlp = Bun.spawn(
         [
           "yt-dlp",
-          "-f", `bestvideo[height<=${maxQuality}]+bestaudio/best[height<=${maxQuality}]`,
-          "--merge-output-format", "mp4",
+          "-f",
+          `bestvideo[height<=${maxQuality}]+bestaudio/best[height<=${maxQuality}]`,
+          "--merge-output-format",
+          "mp4",
           "--write-info-json",
           "--write-thumbnail",
-          "--output", `${runTmpDir}/%(title)s/%(title)s.%(ext)s`,
+          "--output",
+          `${runTmpDir}/%(title)s/%(title)s.%(ext)s`,
           url,
         ],
-        { stdout: "pipe", stderr: "pipe", env: process.env }
+        { stdout: "pipe", stderr: "pipe", env: process.env },
       );
       await ytdlp.exited;
       // non-zero exit will surface as missing files below
@@ -163,7 +174,7 @@ export const videoDownload = inngest.createFunction(
       nasPath,
       status: "downloaded",
     };
-  }
+  },
 );
 
 /** Compatibility shim for the legacy public event documented before the pipeline moved to *.requested names. */
@@ -182,5 +193,5 @@ export const videoDownloadLegacyAlias = inngest.createFunction(
       status: "forwarded",
       forwardedTo: "pipeline/video.requested",
     };
-  }
+  },
 );

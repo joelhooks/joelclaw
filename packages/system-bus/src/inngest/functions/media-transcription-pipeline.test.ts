@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { InngestTestEngine, mockCtx } from "@inngest/test";
 import { pipelineDeps } from "./media-transcription-pipeline";
@@ -20,7 +20,10 @@ const originalRigRoot = process.env.TRANSCRIPT_RIG_ROOT;
 const runRigCalls: string[][] = [];
 let mockVerifyMediaMount = async (
   _sourcePath: string,
-): Promise<{ available: boolean; blocker?: { code: "mount_unavailable"; message: string; retryable: true } }> => ({
+): Promise<{
+  available: boolean;
+  blocker?: { code: "mount_unavailable"; message: string; retryable: true };
+}> => ({
   available: true,
 });
 let mockRunRig = async (
@@ -46,8 +49,10 @@ let mockRunRig = async (
 const realPipelineDeps = { ...pipelineDeps };
 pipelineDeps.verifyMediaMount = ((sourcePath: string) =>
   mockVerifyMediaMount(sourcePath)) as typeof pipelineDeps.verifyMediaMount;
-pipelineDeps.runRig = ((args: string[], opts?: { needsHuggingFace?: boolean; needsTypesense?: boolean }) =>
-  mockRunRig(args, opts)) as typeof pipelineDeps.runRig;
+pipelineDeps.runRig = ((
+  args: string[],
+  opts?: { needsHuggingFace?: boolean; needsTypesense?: boolean },
+) => mockRunRig(args, opts)) as typeof pipelineDeps.runRig;
 pipelineDeps.recordStage = async () => {};
 afterAll(() => {
   Object.assign(pipelineDeps, realPipelineDeps);
@@ -71,7 +76,11 @@ describe("mediaTranscriptionPipeline (v2)", () => {
     manifestFixturePath = join(tempRoot, "manifest.v1.json");
     writeFileSync(
       manifestFixturePath,
-      JSON.stringify({ schemaVersion: "transcript-rig.manifest.v1", artifactId: "artifact-fixture", media: [] }),
+      JSON.stringify({
+        schemaVersion: "transcript-rig.manifest.v1",
+        artifactId: "artifact-fixture",
+        media: [],
+      }),
     );
     runRigCalls.length = 0;
     mockVerifyMediaMount = async () => ({ available: true });
@@ -105,6 +114,32 @@ describe("mediaTranscriptionPipeline (v2)", () => {
     expect(typeof opts.onFailure).toBe("function");
   });
 
+  test("refuses protected rig roots before touching media or launching the rig", async () => {
+    process.env.TRANSCRIPT_RIG_ROOT = join(homedir(), ".pi", "agent", "sessions");
+    mockVerifyMediaMount = async () => {
+      throw new Error("mount verification should not run");
+    };
+
+    const { mediaTranscriptionPipeline } = await import("./media-transcription-pipeline");
+    const engine = new InngestTestEngine({
+      function: mediaTranscriptionPipeline as any,
+      events: [
+        {
+          name: "media/transcription.requested",
+          data: {
+            requestId: "req-protected-root",
+            sourcePath: "/Volumes/badass-media/meetings/example.m4a",
+          },
+        } as any,
+      ],
+      transformCtx: sendEventTransformCtx([]),
+    });
+
+    const execution = await engine.execute();
+    expect((execution.error as Error | undefined)?.message).toContain("protected agent harness");
+    expect(runRigCalls).toHaveLength(0);
+  });
+
   test("mount unavailable emits blocked and returns blocked (v1 parity)", async () => {
     mockVerifyMediaMount = async () => ({
       available: false,
@@ -130,7 +165,9 @@ describe("mediaTranscriptionPipeline (v2)", () => {
     const execution = await engine.execute();
     expect(execution.result).toMatchObject({ status: "blocked", requestId: "req-blocked" });
     expect(
-      sendEventCalls.some((call) => (call[1] as { name?: string })?.name === "media/transcription.blocked"),
+      sendEventCalls.some(
+        (call) => (call[1] as { name?: string })?.name === "media/transcription.blocked",
+      ),
     ).toBe(true);
   });
 

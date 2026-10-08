@@ -29,8 +29,16 @@ export type ParseContext = {
   path: string;
 };
 
+export type AgentUsageParserState = {
+  sessionId?: string;
+  model?: string;
+  seenMessageIds?: Set<string>;
+};
+
 export type AgentUsageParser = {
   transcriptRoot(): string;
+  createState(ctx: ParseContext): AgentUsageParserState;
+  parseLine(line: string, ctx: ParseContext, state: AgentUsageParserState): AgentUsageEvent[];
   parseTranscriptLines(lines: string[], ctx: ParseContext): AgentUsageEvent[];
 };
 

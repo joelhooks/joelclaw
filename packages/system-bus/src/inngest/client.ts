@@ -874,6 +874,9 @@ export type Events = {
         | "pi"
         | "claude-code"
         | "codex"
+        | "cursor"
+        | "grok"
+        | "opencode"
         | "loop"
         | "workload-stage"
         | "gateway"
@@ -2250,15 +2253,23 @@ function shouldUseInngestDevMode(): boolean {
   return false;
 }
 
+type WorkerAppIdEnv = {
+  [key: string]: string | undefined;
+  INNGEST_APP_ID?: string;
+  WORKER_ROLE?: string;
+};
+
+export function getInngestAppId(env: WorkerAppIdEnv = process.env): string {
+  const explicit = env.INNGEST_APP_ID?.trim();
+  if (explicit) return explicit;
+  const role = (env.WORKER_ROLE ?? "host").trim().toLowerCase();
+  const appRole = role === "cluster" || role === "memory-indexer" ? role : "host";
+  return `system-bus-${appRole}`;
+}
+
 export const inngest = new Inngest({
-  // Ensure host and cluster workers register independently and cannot
-  // overwrite each other's function graph in Inngest.
-  id: (() => {
-    const explicit = process.env.INNGEST_APP_ID?.trim();
-    if (explicit) return explicit;
-    const role = process.env.WORKER_ROLE === "cluster" ? "cluster" : "host";
-    return `system-bus-${role}`;
-  })(),
+  // Keep each worker role's function graph in a separate Inngest app.
+  id: getInngestAppId(),
   isDev: shouldUseInngestDevMode(),
   schemas: new EventSchemas().fromRecord<Events>(),
   middleware: [gatewayMiddleware],

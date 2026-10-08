@@ -1,9 +1,11 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { readdir, unlink } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { $ } from "bun";
 import Redis from "ioredis";
 import { MODEL } from "../../../lib/models";
 import { getRedisPort } from "../../../lib/redis";
+import { isProtectedHarnessPath } from "../../../lib/protected-harness-paths";
 import { emitOtelEvent } from "../../../observability/emit";
 
 const redisClass = Redis as unknown as {
@@ -19,7 +21,7 @@ const AGENT_MAIL_URL = process.env.AGENT_MAIL_URL?.trim() || "http://127.0.0.1:8
 
 export async function callAgentMailMcp(
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
 ): Promise<unknown> {
   const resp = await fetch(`${AGENT_MAIL_URL}/mcp`, {
     method: "POST",
@@ -32,8 +34,9 @@ export async function callAgentMailMcp(
     }),
   });
   if (!resp.ok) throw new Error(`agent-mail ${toolName}: HTTP ${resp.status}`);
-  const body = await resp.json() as { error?: { message?: string }; result?: unknown };
-  if (body.error) throw new Error(`agent-mail ${toolName}: ${body.error.message ?? "unknown error"}`);
+  const body = (await resp.json()) as { error?: { message?: string }; result?: unknown };
+  if (body.error)
+    throw new Error(`agent-mail ${toolName}: ${body.error.message ?? "unknown error"}`);
   return body.result;
 }
 
@@ -42,7 +45,18 @@ export async function callAgentMailMcp(
  * Loop IDs are like "loop-abc123" — we use a simple hash to pick from a small set.
  */
 export function loopAgentName(loopId: string): string {
-  const adjectives = ["Red", "Blue", "Green", "Gold", "Iron", "Dark", "Bright", "Swift", "Calm", "Bold"];
+  const adjectives = [
+    "Red",
+    "Blue",
+    "Green",
+    "Gold",
+    "Iron",
+    "Dark",
+    "Bright",
+    "Swift",
+    "Calm",
+    "Bold",
+  ];
   const nouns = ["Fox", "Wolf", "Hawk", "Bear", "Lynx", "Crow", "Deer", "Ox", "Ram", "Elk"];
   let hash = 0;
   for (const ch of loopId) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffff;
@@ -59,7 +73,7 @@ export function loopAgentName(loopId: string): string {
 export async function reserveFiles(
   loopId: string,
   project: string,
-  paths: string[]
+  paths: string[],
 ): Promise<boolean> {
   if (paths.length === 0) return true;
   const agentName = loopAgentName(loopId);
@@ -114,7 +128,7 @@ export function ensureClaudeAuth(): void {
   try {
     const result = Bun.spawnSync(
       ["secrets", "lease", "claude_oauth_token", "--ttl", "1h", "--raw"],
-      { stdout: "pipe", stderr: "pipe" }
+      { stdout: "pipe", stderr: "pipe" },
     );
     const token = result.stdout.toString().trim();
     if (token && result.exitCode === 0) {
@@ -128,7 +142,7 @@ export function ensureClaudeAuth(): void {
   if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) {
     throw new Error(
       "CLAUDE_CODE_OAUTH_TOKEN not set and secrets lease failed. " +
-      "Fix: run 'secrets add claude_oauth_token --value <token>' or 'claude setup-token'."
+        "Fix: run 'secrets add claude_oauth_token --value <token>' or 'claude setup-token'.",
     );
   }
 }
@@ -171,7 +185,7 @@ type LoopOnFailureContext = {
           error: string;
           timestamp: string;
         };
-      }
+      },
     ) => Promise<unknown>;
   };
 };
@@ -232,17 +246,23 @@ export function parseClaudeOutput(raw: string): unknown {
 }
 
 function extractJson(content: string): unknown {
-  try { return JSON.parse(content.trim()); } catch {}
+  try {
+    return JSON.parse(content.trim());
+  } catch {}
 
   const fenced = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   if (fenced?.[1]) {
-    try { return JSON.parse(fenced[1]); } catch {}
+    try {
+      return JSON.parse(fenced[1]);
+    } catch {}
   }
 
   const start = content.indexOf("{");
   const end = content.lastIndexOf("}");
   if (start !== -1 && end > start) {
-    try { return JSON.parse(content.slice(start, end + 1)); } catch {}
+    try {
+      return JSON.parse(content.slice(start, end + 1));
+    } catch {}
   }
 
   return null;
@@ -360,7 +380,7 @@ const CLAIM_LEASE_SECONDS = 1800;
 export async function claimStory(
   loopId: string,
   storyId: string,
-  runToken: string
+  runToken: string,
 ): Promise<string | null> {
   const redis = getRedis();
   const result = await redis.set(
@@ -368,7 +388,7 @@ export async function claimStory(
     runToken,
     "EX",
     CLAIM_LEASE_SECONDS,
-    "NX"
+    "NX",
   );
   return result === "OK" ? runToken : null;
 }
@@ -376,10 +396,9 @@ export async function claimStory(
 export async function guardStory(
   loopId: string,
   storyId: string,
-  runToken: string
+  runToken: string,
 ): Promise<
-  | { ok: true }
-  | { ok: false; reason: "already_claimed" | "already_passed" | "lease_expired" }
+  { ok: true } | { ok: false; reason: "already_claimed" | "already_passed" | "lease_expired" }
 > {
   const redis = getRedis();
   const claim = await redis.get(claimKey(loopId, storyId));
@@ -415,7 +434,7 @@ export async function guardStory(
 export async function renewLease(
   loopId: string,
   storyId: string,
-  runToken: string
+  runToken: string,
 ): Promise<boolean> {
   const redis = getRedis();
   const key = claimKey(loopId, storyId);
@@ -425,17 +444,120 @@ export async function renewLease(
   return true;
 }
 
-export async function releaseClaim(
-  loopId: string,
-  storyId: string
-): Promise<void> {
+export async function releaseClaim(loopId: string, storyId: string): Promise<void> {
   const redis = getRedis();
   await redis.del(claimKey(loopId, storyId));
 }
 
 // ── Directory helpers ────────────────────────────────────────────────
 
+export function assertSafeLoopId(loopId: string, loopRoot = LOOP_TMP, homeDir?: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(loopId)) {
+    throw new Error("Refusing unsafe agent-loop id");
+  }
+
+  const root = resolve(loopRoot);
+  const directory = resolve(root, loopId);
+  const relativeDirectory = relative(root, directory);
+  if (
+    relativeDirectory === "" ||
+    relativeDirectory === ".." ||
+    relativeDirectory.startsWith(`..${sep}`) ||
+    isAbsolute(relativeDirectory)
+  ) {
+    throw new Error("Refusing agent-loop path outside its temporary root");
+  }
+
+  let realRoot = root;
+  if (existsSync(root)) {
+    if (lstatSync(root).isSymbolicLink()) throw new Error("Refusing symlinked agent-loop root");
+    realRoot = realpathSync(root);
+    if (isProtectedHarnessPath(realRoot, homeDir)) {
+      throw new Error("Refusing agent-loop root under a protected harness path");
+    }
+  }
+
+  if (existsSync(directory)) {
+    if (lstatSync(directory).isSymbolicLink()) {
+      throw new Error("Refusing symlinked agent-loop worktree");
+    }
+    const realDirectory = realpathSync(directory);
+    const realRelative = relative(realRoot, realDirectory);
+    if (
+      realRelative === "" ||
+      realRelative === ".." ||
+      realRelative.startsWith(`..${sep}`) ||
+      isAbsolute(realRelative) ||
+      isProtectedHarnessPath(realDirectory, homeDir)
+    ) {
+      throw new Error("Refusing agent-loop worktree under a protected or external path");
+    }
+  }
+}
+
+export async function cleanLoopRootArtifacts(
+  loopId: string,
+  loopRoot = LOOP_TMP,
+): Promise<boolean> {
+  assertSafeLoopId(loopId, loopRoot);
+  const worktreePath = join(loopRoot, loopId);
+  const entries = await readdir(worktreePath, { withFileTypes: true });
+  for (const entry of entries) {
+    const isLoopArtifact =
+      entry.name.endsWith(".out") || entry.name === "prd.json" || entry.name === "progress.txt";
+    if (isLoopArtifact && (entry.isFile() || entry.isSymbolicLink())) {
+      await unlink(join(worktreePath, entry.name));
+    }
+  }
+  return true;
+}
+
+export async function cleanupExistingLoopWorktree(
+  gitRoot: string,
+  loopId: string,
+  loopRoot = LOOP_TMP,
+): Promise<void> {
+  assertSafeLoopId(loopId, loopRoot);
+  const realRoot = realpathSync(loopRoot);
+  const expectedPaths = new Set([resolve(loopRoot, loopId), join(realRoot, loopId)]);
+  const worktrees = await $`cd ${gitRoot} && git worktree list --porcelain`.quiet().nothrow();
+  if (worktrees.exitCode !== 0) throw new Error("Unable to inspect existing agent-loop worktrees");
+
+  const existingWorktree = worktrees
+    .text()
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length).trim())
+    .find((path) => expectedPaths.has(path));
+
+  if (existingWorktree) {
+    const removed = await $`cd ${gitRoot} && git worktree remove ${existingWorktree}`
+      .quiet()
+      .nothrow();
+    if (removed.exitCode !== 0) {
+      throw new Error("Refusing to force-remove an existing dirty agent-loop worktree");
+    }
+  }
+
+  const branchName = `agent-loop/${loopId}`;
+  const existingBranch = await $`cd ${gitRoot} && git branch --list ${branchName}`
+    .quiet()
+    .nothrow();
+  if (existingBranch.exitCode !== 0)
+    throw new Error("Unable to inspect existing agent-loop branch");
+  if (existingBranch.text().trim()) {
+    const deleted = await $`cd ${gitRoot} && git branch -d ${branchName}`.quiet().nothrow();
+    if (deleted.exitCode !== 0) {
+      throw new Error("Refusing to force-delete an unmerged agent-loop branch");
+    }
+  }
+
+  const pruned = await $`cd ${gitRoot} && git worktree prune`.quiet().nothrow();
+  if (pruned.exitCode !== 0) throw new Error("Unable to prune stale agent-loop metadata");
+}
+
 export function loopDir(loopId: string): string {
+  assertSafeLoopId(loopId);
   const dir = join(LOOP_TMP, loopId);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
@@ -447,8 +569,9 @@ export function cancelPath(loopId: string): string {
   return join(loopDir(loopId), "cancelled");
 }
 
-export function isCancelled(loopId: string): boolean {
-  return existsSync(cancelPath(loopId));
+export function isCancelled(loopId: string, loopRoot = LOOP_TMP): boolean {
+  assertSafeLoopId(loopId, loopRoot);
+  return existsSync(join(loopRoot, loopId, "cancelled"));
 }
 
 export async function writeCancelFlag(loopId: string, reason: string) {
@@ -471,7 +594,9 @@ export async function cleanupPid(loopId: string) {
     try {
       await Bun.file(p).text(); // ensure it exists
       await $`rm -f ${p}`.quiet();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -495,7 +620,9 @@ export async function killSubprocess(loopId: string): Promise<boolean> {
     // Force kill
     try {
       process.kill(pid, "SIGKILL");
-    } catch { /* already dead */ }
+    } catch {
+      /* already dead */
+    }
     await cleanupPid(loopId);
     return true;
   } catch {
@@ -511,10 +638,7 @@ export interface ToolOutput {
   tokensUsed?: number;
 }
 
-export async function parseToolOutput(
-  tool: string,
-  outputPath: string
-): Promise<ToolOutput> {
+export async function parseToolOutput(tool: string, outputPath: string): Promise<ToolOutput> {
   if (!existsSync(outputPath)) {
     return { success: false, output: "No output file found" };
   }
@@ -533,7 +657,9 @@ export async function parseToolOutput(
           tokensUsed: parsed.usage?.total_tokens,
         };
       }
-    } catch { /* not JSON, treat as plain text */ }
+    } catch {
+      /* not JSON, treat as plain text */
+    }
   }
 
   // Default: treat as plain text, success if non-empty
@@ -549,7 +675,7 @@ export async function parseToolOutput(
 export async function claimCheckWrite(
   loopId: string,
   name: string,
-  data: unknown
+  data: unknown,
 ): Promise<string> {
   const path = join(loopDir(loopId), `${name}.json`);
   await Bun.write(path, JSON.stringify(data, null, 2));
@@ -562,11 +688,7 @@ export async function claimCheckRead<T = unknown>(path: string): Promise<T> {
 
 // ── Output file path ─────────────────────────────────────────────────
 
-export function outputPath(
-  loopId: string,
-  storyId: string,
-  attempt: number
-): string {
+export function outputPath(loopId: string, storyId: string, attempt: number): string {
   return join(loopDir(loopId), `${storyId}-${attempt}.out`);
 }
 
@@ -629,18 +751,16 @@ function normalizeStringArray(value: unknown): string[] {
     .filter((item) => item.length > 0);
 }
 
-export function normalizePrdOrThrow(
-  input: unknown,
-  source: string
-): { prd: Prd; fixes: string[] } {
+export function normalizePrdOrThrow(input: unknown, source: string): { prd: Prd; fixes: string[] } {
   if (!input || typeof input !== "object") {
     throw new Error(`Invalid PRD (${source}): expected JSON object`);
   }
 
   const raw = input as PrdInput;
-  const title = typeof raw.title === "string" && raw.title.trim().length > 0
-    ? raw.title.trim()
-    : "Untitled PRD";
+  const title =
+    typeof raw.title === "string" && raw.title.trim().length > 0
+      ? raw.title.trim()
+      : "Untitled PRD";
 
   if (!Array.isArray(raw.stories) || raw.stories.length === 0) {
     throw new Error(`Invalid PRD (${source}): stories must be a non-empty array`);
@@ -653,23 +773,26 @@ export function normalizePrdOrThrow(
     }
 
     const story = storyRaw as StoryInput;
-    const id = typeof story.id === "string" && story.id.trim().length > 0
-      ? story.id.trim()
-      : (() => {
-        throw new Error(`Invalid PRD (${source}): story[${index}] missing id`);
-      })();
+    const id =
+      typeof story.id === "string" && story.id.trim().length > 0
+        ? story.id.trim()
+        : (() => {
+            throw new Error(`Invalid PRD (${source}): story[${index}] missing id`);
+          })();
 
-    const storyTitle = typeof story.title === "string" && story.title.trim().length > 0
-      ? story.title.trim()
-      : (() => {
-        throw new Error(`Invalid PRD (${source}): story ${id} missing title`);
-      })();
+    const storyTitle =
+      typeof story.title === "string" && story.title.trim().length > 0
+        ? story.title.trim()
+        : (() => {
+            throw new Error(`Invalid PRD (${source}): story ${id} missing title`);
+          })();
 
-    const description = typeof story.description === "string" && story.description.trim().length > 0
-      ? story.description.trim()
-      : (() => {
-        throw new Error(`Invalid PRD (${source}): story ${id} missing description`);
-      })();
+    const description =
+      typeof story.description === "string" && story.description.trim().length > 0
+        ? story.description.trim()
+        : (() => {
+            throw new Error(`Invalid PRD (${source}): story ${id} missing description`);
+          })();
 
     const canonicalCriteria = normalizeStringArray(story.acceptance_criteria);
     const legacyAcceptance = normalizeStringArray(story.acceptance);
@@ -687,13 +810,14 @@ export function normalizePrdOrThrow(
 
     if (acceptanceCriteria.length === 0) {
       throw new Error(
-        `Invalid PRD (${source}): story ${id} is missing acceptance_criteria (accepted aliases: acceptance, acceptanceCriteria)`
+        `Invalid PRD (${source}): story ${id} is missing acceptance_criteria (accepted aliases: acceptance, acceptanceCriteria)`,
       );
     }
 
-    const priority = typeof story.priority === "number" && Number.isFinite(story.priority)
-      ? story.priority
-      : index + 1;
+    const priority =
+      typeof story.priority === "number" && Number.isFinite(story.priority)
+        ? story.priority
+        : index + 1;
     if (!(typeof story.priority === "number" && Number.isFinite(story.priority))) {
       fixes.push(`story ${id}: default priority=${index + 1}`);
     }
@@ -718,11 +842,17 @@ export function normalizePrdOrThrow(
   return {
     prd: {
       title,
-      ...(typeof raw.description === "string" && raw.description.length > 0 ? { description: raw.description } : {}),
+      ...(typeof raw.description === "string" && raw.description.length > 0
+        ? { description: raw.description }
+        : {}),
       ...(typeof raw.adr === "string" && raw.adr.length > 0 ? { adr: raw.adr } : {}),
       ...(Array.isArray(raw.context) ? { context: normalizeStringArray(raw.context) } : {}),
-      ...(typeof raw.project === "string" && raw.project.length > 0 ? { project: raw.project } : {}),
-      ...(typeof raw.workDir === "string" && raw.workDir.length > 0 ? { workDir: raw.workDir } : {}),
+      ...(typeof raw.project === "string" && raw.project.length > 0
+        ? { project: raw.project }
+        : {}),
+      ...(typeof raw.workDir === "string" && raw.workDir.length > 0
+        ? { workDir: raw.workDir }
+        : {}),
       stories,
     },
     fixes,
@@ -739,7 +869,7 @@ export async function seedPrd(
   loopId: string,
   project: string,
   prdPath: string,
-  metadata?: PrdMetadata
+  metadata?: PrdMetadata,
 ): Promise<Prd> {
   const fullPath = join(project, prdPath);
   const rawPrd = JSON.parse(await Bun.file(fullPath).text()) as unknown;
@@ -775,7 +905,10 @@ export async function seedPrd(
   if (setResult === null) {
     const existing = await redis.get(key);
     if (existing) {
-      const existingNormalized = normalizePrdOrThrow(JSON.parse(existing) as unknown, `redis:${key}`);
+      const existingNormalized = normalizePrdOrThrow(
+        JSON.parse(existing) as unknown,
+        `redis:${key}`,
+      );
       return existingNormalized.prd;
     }
   }
@@ -790,7 +923,7 @@ export async function seedPrd(
 export async function seedPrdFromData(
   loopId: string,
   prd: Prd,
-  metadata?: PrdMetadata
+  metadata?: PrdMetadata,
 ): Promise<Prd> {
   const normalized = normalizePrdOrThrow(prd, `event:agent/loop.started:${loopId}`);
   const prdWithMetadata = metadata
@@ -823,11 +956,7 @@ export async function seedPrdFromData(
  * Read PRD from Redis. Falls back to disk if not seeded yet (backward compat).
  * loopId is extracted from the function context — callers pass it through.
  */
-export async function readPrd(
-  project: string,
-  prdPath: string,
-  loopId?: string
-): Promise<Prd> {
+export async function readPrd(project: string, prdPath: string, loopId?: string): Promise<Prd> {
   if (loopId) {
     const redis = getRedis();
     const data = await redis.get(prdKey(loopId));
@@ -843,12 +972,7 @@ export async function readPrd(
 /**
  * Write PRD state back to Redis (and optionally to disk for human review).
  */
-async function writePrd(
-  loopId: string,
-  prd: Prd,
-  project?: string,
-  prdPath?: string
-) {
+async function writePrd(loopId: string, prd: Prd, project?: string, prdPath?: string) {
   const redis = getRedis();
   await redis.set(prdKey(loopId), JSON.stringify(prd));
   // Also write to disk if project path is available (for human review)
@@ -856,7 +980,9 @@ async function writePrd(
     try {
       const fullPath = join(project, prdPath);
       await Bun.write(fullPath, JSON.stringify(prd, null, 2) + "\n");
-    } catch { /* disk write is best-effort in Docker */ }
+    } catch {
+      /* disk write is best-effort in Docker */
+    }
   }
 }
 
@@ -864,7 +990,7 @@ export async function updateStoryPass(
   project: string,
   prdPath: string,
   storyId: string,
-  loopId?: string
+  loopId?: string,
 ) {
   const prd = await readPrd(project, prdPath, loopId);
   const story = prd.stories.find((s) => s.id === storyId);
@@ -882,7 +1008,7 @@ export async function markStorySkipped(
   project: string,
   prdPath: string,
   storyId: string,
-  loopId?: string
+  loopId?: string,
 ) {
   const prd = await readPrd(project, prdPath, loopId);
   const story = prd.stories.find((s) => s.id === storyId) as any;
@@ -903,7 +1029,7 @@ export async function markStoryRechecked(
   project: string,
   prdPath: string,
   storyId: string,
-  loopId?: string
+  loopId?: string,
 ) {
   const prd = await readPrd(project, prdPath, loopId);
   const story = prd.stories.find((s) => s.id === storyId) as any;
@@ -921,10 +1047,7 @@ export async function markStoryRechecked(
 
 // ── Progress + loop context (Redis-backed) ──────────────────────────
 
-export async function appendProgress(
-  loopId: string,
-  entry: string
-): Promise<void> {
+export async function appendProgress(loopId: string, entry: string): Promise<void> {
   const redis = getRedis();
   const timestamp = new Date().toISOString();
   const newEntry = `### ${timestamp}\n${entry}`;
@@ -938,15 +1061,13 @@ export async function readProgress(loopId: string): Promise<string[]> {
 
 export async function writeRecommendations(
   project: string,
-  recommendations: unknown
+  recommendations: unknown,
 ): Promise<void> {
   const redis = getRedis();
   await redis.set(recommendationsKey(project), JSON.stringify(recommendations));
 }
 
-export async function readRecommendations<T = unknown>(
-  project: string
-): Promise<T | null> {
+export async function readRecommendations<T = unknown>(project: string): Promise<T | null> {
   const redis = getRedis();
   const raw = await redis.get(recommendationsKey(project));
   if (!raw) return null;
@@ -957,10 +1078,7 @@ export async function readRecommendations<T = unknown>(
   }
 }
 
-export async function writePatterns(
-  project: string,
-  patterns: string
-): Promise<void> {
+export async function writePatterns(project: string, patterns: string): Promise<void> {
   const redis = getRedis();
   await redis.set(patternsKey(project), patterns);
 }
@@ -972,10 +1090,7 @@ export async function readPatterns(project: string): Promise<string> {
 
 // ── Lessons learned (cross-loop memory) ─────────────────────────────
 
-export async function appendLessons(
-  project: string,
-  entry: string
-): Promise<void> {
+export async function appendLessons(project: string, entry: string): Promise<void> {
   const redis = getRedis();
   const timestamp = new Date().toISOString();
   await redis.rpush(lessonsKey(project), `[${timestamp}] ${entry}`);
@@ -992,7 +1107,7 @@ export function commitMessage(
   loopId: string,
   storyId: string,
   attempt: number,
-  title: string
+  title: string,
 ): string {
   return `feat: [${loopId}] [${storyId}] attempt-${attempt} — ${title}`;
 }
@@ -1001,7 +1116,7 @@ export async function commitExists(
   project: string,
   loopId: string,
   storyId: string,
-  attempt: number
+  attempt: number,
 ): Promise<boolean> {
   try {
     const result =
@@ -1012,10 +1127,7 @@ export async function commitExists(
   }
 }
 
-export async function gitCommit(
-  project: string,
-  message: string
-): Promise<string> {
+export async function gitCommit(project: string, message: string): Promise<string> {
   await $`cd ${project} && git add -A`.quiet();
   // Check if there's anything to commit
   try {
@@ -1093,9 +1205,9 @@ export async function getHeadBeforeTool(project: string): Promise<string> {
 // ── Tool timeout map ─────────────────────────────────────────────────
 
 export const TOOL_TIMEOUTS: Record<string, number> = {
-  codex: 15 * 60 * 1000,  // 15 min
+  codex: 15 * 60 * 1000, // 15 min
   claude: 20 * 60 * 1000, // 20 min
-  pi: 20 * 60 * 1000,     // 20 min
+  pi: 20 * 60 * 1000, // 20 min
 };
 
 // ── LLM judge helpers ────────────────────────────────────────────────
@@ -1131,10 +1243,10 @@ export async function llmEvaluate(opts: {
   const skStarted = Date.now();
   try {
     const { querySystemKnowledge } = await import("../../../lib/typesense");
-    systemContext = await querySystemKnowledge(
-      opts.criteria.join(" "),
-      { types: ["lesson", "pattern", "failed_target"], limit: 3 },
-    );
+    systemContext = await querySystemKnowledge(opts.criteria.join(" "), {
+      types: ["lesson", "pattern", "failed_target"],
+      limit: 3,
+    });
     void emitOtelEvent({
       action: "system_knowledge.retrieval",
       component: "agent-loop",
@@ -1192,10 +1304,10 @@ export async function llmEvaluate(opts: {
 
   try {
     ensureClaudeAuth();
-    const proc = Bun.spawn(
-      ["claude", "-p", prompt, "--output-format", "json"],
-      { stdout: "pipe", stderr: "pipe" }
-    );
+    const proc = Bun.spawn(["claude", "-p", prompt, "--output-format", "json"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
     const readStdout = async (): Promise<string> => {
       const stdout = proc.stdout as unknown;
@@ -1289,7 +1401,7 @@ export async function spawnInContainer(
   repoUrl: string,
   branch: string,
   loopId: string,
-  storyId: string
+  storyId: string,
 ): Promise<ContainerResult> {
   const token = await mintGitHubToken();
   const containerName = `agent-loop-${loopId}-${storyId}-${Date.now()}`;
@@ -1313,27 +1425,42 @@ export async function spawnInContainer(
       toolCmd = `codex exec --full-auto -m ${codexModel} "${prompt.replace(/"/g, '\\"')}"`;
   }
 
-  const proc = Bun.spawn([
-    "docker", "run", "--rm",
-    "--name", containerName,
-    "-e", `REPO_URL=${repoUrl}`,
-    "-e", `BRANCH=${branch}`,
-    "-e", `GITHUB_TOKEN=${token}`,
-    // Pass through API keys from host environment
-    ...(process.env.OPENAI_API_KEY ? ["-e", `OPENAI_API_KEY=${process.env.OPENAI_API_KEY}`] : []),
-    ...(process.env.ANTHROPIC_API_KEY ? ["-e", `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`] : []),
-    "agent-loop-runner",
-    "bash", "-c", toolCmd,
-  ], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const proc = Bun.spawn(
+    [
+      "docker",
+      "run",
+      "--rm",
+      "--name",
+      containerName,
+      "-e",
+      `REPO_URL=${repoUrl}`,
+      "-e",
+      `BRANCH=${branch}`,
+      "-e",
+      `GITHUB_TOKEN=${token}`,
+      // Pass through API keys from host environment
+      ...(process.env.OPENAI_API_KEY ? ["-e", `OPENAI_API_KEY=${process.env.OPENAI_API_KEY}`] : []),
+      ...(process.env.ANTHROPIC_API_KEY
+        ? ["-e", `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`]
+        : []),
+      "agent-loop-runner",
+      "bash",
+      "-c",
+      toolCmd,
+    ],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
 
   // Set up timeout
   const timeoutId = setTimeout(async () => {
     try {
       await $`docker kill ${containerName}`.quiet();
-    } catch { /* container may have already exited */ }
+    } catch {
+      /* container may have already exited */
+    }
   }, timeout);
 
   const stdout = await new Response(proc.stdout).text();

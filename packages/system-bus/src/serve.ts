@@ -56,18 +56,12 @@ if (SHOULD_LEASE_WEBHOOK_SECRETS) {
   console.log("[secrets] skipping local webhook secret leasing in cluster worker role");
 }
 
-import {
-  emitInngestRegistryLoaded,
-  runProductionFunctionHealthCheck,
-} from "./inngest/functions";
-import {
-  clusterFunctionDefinitions,
-  clusterFunctionIds,
-} from "./inngest/functions/index.cluster";
-import {
-  hostFunctionDefinitions,
-  hostFunctionIds,
-} from "./inngest/functions/index.host";
+import { runProductionFunctionHealthCheck } from "./inngest/functions/function-health";
+import { clusterFunctionDefinitions, clusterFunctionIds } from "./inngest/functions/index.cluster";
+import { hostFunctionDefinitions, hostFunctionIds } from "./inngest/functions/index.host";
+import { emitInngestRegistryLoaded } from "./inngest/functions/registry-events";
+import { findUnexpectedDuplicateIds } from "./inngest/functions/role-contract";
+import { summarizeInngestRequestBody } from "./lib/inngest-body-summary";
 import { enqueueRegisteredQueueEvent } from "./lib/queue";
 import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
 import { type MemoryIdentity, registerRunCaptureRoute } from "./routes/run-capture";
@@ -105,17 +99,6 @@ function getFunctionId(fn: FunctionDefinition): string {
   return fn.opts?.id ?? "unknown";
 }
 
-function findDuplicateIds(ids: string[]): string[] {
-  const counts = new Map<string, number>();
-  for (const id of ids) {
-    counts.set(id, (counts.get(id) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .filter(([, count]) => count > 1)
-    .map(([id]) => id)
-    .sort();
-}
-
 const WORKER_ROLE = parseWorkerRole(process.env.WORKER_ROLE);
 let lastRegistrationAt = WORKER_STARTED_AT;
 const configuredServeHost = process.env.INNGEST_SERVE_HOST?.trim();
@@ -131,7 +114,7 @@ const registeredFunctions = (
     ? clusterFunctionDefinitions
     : hostFunctionDefinitions
 ) as any[];
-const duplicateFunctionIds = findDuplicateIds([
+const duplicateFunctionIds = findUnexpectedDuplicateIds([
   ...hostFunctionIds,
   ...clusterFunctionIds,
 ]);
@@ -742,8 +725,7 @@ app.on(
     }
 
     const query = parseQueryMap(c.req.raw);
-    const rawBody = await c.req.raw.clone().text().catch(() => null);
-    const bodySummary = summarizeInngestBody(rawBody);
+    const bodySummary = await summarizeInngestRequestBody(c.req.raw, summarizeInngestBody);
     const fnId = query.fnId;
 
     const response = await inngestApiHandler(c);

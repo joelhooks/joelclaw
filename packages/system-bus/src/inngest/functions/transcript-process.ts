@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { NAS_SSH_HOST } from "@joelclaw/endpoint-resolver";
 import { $ } from "bun";
@@ -10,30 +10,191 @@ import { chunkBySegments, chunkBySpeakerTurns } from "../../lib/transcript-chunk
 import * as typesense from "../../lib/typesense";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import {
+  normalizeTranscriptSlug,
+  resolveSafeTemporaryDirectory,
+  resolveSafeVideoIngestTempDir,
+} from "./transcript-paths";
 
 const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
-const INVALID_ANTHROPIC_KEY_ERROR =
-  "secrets lease returned invalid value for anthropic_api_key";
+const HOME_DIR = process.env.HOME ?? "/Users/joel";
+const TRANSCRIPT_OUTPUT_DIR = "/tmp/transcript-process";
+const INVALID_ANTHROPIC_KEY_ERROR = "secrets lease returned invalid value for anthropic_api_key";
 
 // --- Screenshot naming: extract descriptive slugs from transcript context ---
 const STOP_WORDS = new Set([
-  "the","a","an","is","are","was","were","be","been","being","have","has","had",
-  "do","does","did","will","would","could","should","may","might","shall","can",
-  "to","of","in","for","on","with","at","by","from","as","into","through",
-  "during","before","after","above","below","between","out","off","over","under",
-  "again","further","then","once","here","there","when","where","why","how",
-  "all","both","each","few","more","most","other","some","such","no","not",
-  "only","own","same","so","than","too","very","just","because","but","and",
-  "or","if","while","about","up","its","it","this","that","these","those",
-  "i","me","my","we","our","you","your","he","him","his","she","her","they",
-  "them","their","what","which","who","whom","am","like","going","get","got",
-  "know","think","thing","things","really","actually","kind","right","well",
-  "also","now","way","much","many","even","still","back","something",
-  "dont","ive","thats","youre","lets","gonna","wanna","yeah","okay",
-  "um","uh","sort","lot","bit","want","need","say","said","see","look",
-  "come","take","make","go","use","try","put","basically","literally",
-  "absolutely","definitely","probably","obviously","essentially","talking",
-  "showing","looking","pretty","stuff","everything","nothing",
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "shall",
+  "can",
+  "to",
+  "of",
+  "in",
+  "for",
+  "on",
+  "with",
+  "at",
+  "by",
+  "from",
+  "as",
+  "into",
+  "through",
+  "during",
+  "before",
+  "after",
+  "above",
+  "below",
+  "between",
+  "out",
+  "off",
+  "over",
+  "under",
+  "again",
+  "further",
+  "then",
+  "once",
+  "here",
+  "there",
+  "when",
+  "where",
+  "why",
+  "how",
+  "all",
+  "both",
+  "each",
+  "few",
+  "more",
+  "most",
+  "other",
+  "some",
+  "such",
+  "no",
+  "not",
+  "only",
+  "own",
+  "same",
+  "so",
+  "than",
+  "too",
+  "very",
+  "just",
+  "because",
+  "but",
+  "and",
+  "or",
+  "if",
+  "while",
+  "about",
+  "up",
+  "its",
+  "it",
+  "this",
+  "that",
+  "these",
+  "those",
+  "i",
+  "me",
+  "my",
+  "we",
+  "our",
+  "you",
+  "your",
+  "he",
+  "him",
+  "his",
+  "she",
+  "her",
+  "they",
+  "them",
+  "their",
+  "what",
+  "which",
+  "who",
+  "whom",
+  "am",
+  "like",
+  "going",
+  "get",
+  "got",
+  "know",
+  "think",
+  "thing",
+  "things",
+  "really",
+  "actually",
+  "kind",
+  "right",
+  "well",
+  "also",
+  "now",
+  "way",
+  "much",
+  "many",
+  "even",
+  "still",
+  "back",
+  "something",
+  "dont",
+  "ive",
+  "thats",
+  "youre",
+  "lets",
+  "gonna",
+  "wanna",
+  "yeah",
+  "okay",
+  "um",
+  "uh",
+  "sort",
+  "lot",
+  "bit",
+  "want",
+  "need",
+  "say",
+  "said",
+  "see",
+  "look",
+  "come",
+  "take",
+  "make",
+  "go",
+  "use",
+  "try",
+  "put",
+  "basically",
+  "literally",
+  "absolutely",
+  "definitely",
+  "probably",
+  "obviously",
+  "essentially",
+  "talking",
+  "showing",
+  "looking",
+  "pretty",
+  "stuff",
+  "everything",
+  "nothing",
 ]);
 
 function extractKeyPhrase(text: string, maxWords = 4): string {
@@ -86,10 +247,10 @@ function leaseAnthropicApiKey(): string {
   }
 
   try {
-    const leased = execSync(
-      "secrets lease anthropic_api_key --ttl 1h 2>/dev/null",
-      { encoding: "utf-8", timeout: 5000 },
-    ).trim();
+    const leased = execSync("secrets lease anthropic_api_key --ttl 1h 2>/dev/null", {
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
     return assertValidAnthropicKey(leased);
   } catch (error) {
     if (error instanceof Error && error.message === INVALID_ANTHROPIC_KEY_ERROR) {
@@ -122,45 +283,55 @@ export const transcriptProcess = inngest.createFunction(
       audioPath,
       text: rawText,
       title,
-      slug,
+      slug: rawSlug,
       channel,
       publishedDate,
       duration,
       sourceUrl,
       nasPath,
-      tmpDir,
+      tmpDir: requestedTmpDir,
     } = event.data;
+    // These values cross the Inngest event boundary; they are not filesystem ownership proof.
+    const slug = normalizeTranscriptSlug(rawSlug);
+    const safeVideoTmpDir = resolveSafeVideoIngestTempDir(requestedTmpDir, { homeDir: HOME_DIR });
+
+    const transcriptOutputDir = await step.run("prepare-transcript-output-dir", async () => {
+      await mkdir(TRANSCRIPT_OUTPUT_DIR, { recursive: true });
+      const safePath = resolveSafeTemporaryDirectory(TRANSCRIPT_OUTPUT_DIR, { homeDir: HOME_DIR });
+      if (!safePath) throw new NonRetriableError("Unsafe transcript output directory");
+      return safePath;
+    });
 
     // Step 1: Get transcript — writes to file, returns path (avoids Inngest step output size limit)
     const transcriptPath = await step.run("transcribe", async () => {
-      const outFile = `/tmp/transcript-process/${slug ?? "transcript"}-processed.json`;
-      await $`mkdir -p /tmp/transcript-process`.quiet();
+      const outFile = join(transcriptOutputDir, `${slug}-processed.json`);
 
       if (rawText) {
         // Direct text input (Granola, Fathom, manual paste)
-        await Bun.write(outFile, JSON.stringify({
-          text: rawText,
-          segments: [],
-        }));
+        await Bun.write(
+          outFile,
+          JSON.stringify({
+            text: rawText,
+            segments: [],
+          }),
+        );
         return outFile;
       }
 
       if (!audioPath) {
-        throw new NonRetriableError(
-          "transcript.process requires either audioPath or text"
-        );
+        throw new NonRetriableError("transcript.process requires either audioPath or text");
       }
 
-      // Run mlx-whisper on the audio/video file
-      const outputDir = tmpDir ?? "/tmp/transcript-process";
-      await $`mkdir -p ${outputDir}`.quiet();
+      // Never use an event-supplied directory as a write or cleanup target.
+      const outputDir = safeVideoTmpDir ?? transcriptOutputDir;
+      await mkdir(outputDir, { recursive: true });
 
       await $`mlx_whisper --model mlx-community/whisper-large-v3-turbo --output-format json --output-dir ${outputDir} ${audioPath}`.quiet();
 
       // Find transcript JSON (not info.json if present)
       const postFiles = await readdir(outputDir);
       const transcriptFile = postFiles.find(
-        (f) => f.endsWith(".json") && !f.endsWith(".info.json")
+        (f) => f.endsWith(".json") && !f.endsWith(".info.json"),
       );
       if (!transcriptFile) throw new Error("No transcript JSON found");
       // mlx-whisper outputs NaN values (valid Python, invalid JSON) — sanitize
@@ -169,11 +340,15 @@ export const transcriptProcess = inngest.createFunction(
 
       // Write cleaned transcript to a separate file — step returns only the path
       // (full transcript data can be >1MB, exceeds Inngest step output limit)
-      await Bun.write(outFile, JSON.stringify({
-        text: data.text as string,
-        segments: (data.segments as Array<{ start: number; end: number; text: string }>)
-          .map(({ start, end, text }) => ({ start, end, text })),
-      }));
+      await Bun.write(
+        outFile,
+        JSON.stringify({
+          text: data.text as string,
+          segments: (data.segments as Array<{ start: number; end: number; text: string }>).map(
+            ({ start, end, text }) => ({ start, end, text }),
+          ),
+        }),
+      );
 
       return outFile;
     });
@@ -187,14 +362,15 @@ export const transcriptProcess = inngest.createFunction(
         segments: Array<{ start: number; end: number; text: string }>;
       } = await Bun.file(transcriptPath).json();
 
-      if (!transcript.segments.length)
-        return [] as Array<{ name: string; timestamp: string }>;
+      if (!transcript.segments.length) return [] as Array<{ name: string; timestamp: string }>;
 
-      const screenshotDir = `/tmp/screenshots-${slug}`;
-      await $`mkdir -p ${screenshotDir}`.quiet();
+      const createdScreenshotDir = await mkdtemp("/tmp/screenshots-");
+      const screenshotDir = resolveSafeTemporaryDirectory(createdScreenshotDir, {
+        homeDir: HOME_DIR,
+      });
+      if (!screenshotDir) throw new NonRetriableError("Unsafe screenshot temp directory");
 
-      const totalDur =
-        transcript.segments[transcript.segments.length - 1]!.end;
+      const totalDur = transcript.segments[transcript.segments.length - 1]!.end;
       // ~1 screenshot per 2 minutes, min 4 max 10
       const count = Math.min(10, Math.max(4, Math.floor(totalDur / 120)));
       const interval = totalDur / (count + 1);
@@ -227,11 +403,7 @@ export const transcriptProcess = inngest.createFunction(
       }
 
       // Copy to vault
-      const vaultDir = join(
-        process.env.HOME ?? "/Users/joel",
-        "Vault/Resources/videos",
-        slug
-      );
+      const vaultDir = join(process.env.HOME ?? "/Users/joel", "Vault/Resources/videos", slug);
       await $`mkdir -p ${vaultDir}`.quiet();
       for (const f of results) {
         await $`cp ${join(screenshotDir, f.name)} ${join(vaultDir, f.name)}`.quiet();
@@ -245,215 +417,210 @@ export const transcriptProcess = inngest.createFunction(
         } catch {}
       }
 
-      await $`rm -rf ${screenshotDir}`.quiet();
+      await rm(screenshotDir, { recursive: true, force: true }).catch(() => {});
       return results;
     });
 
     // Step 1c: LLM vision review — describe, name, and filter screenshots
-    const reviewedScreenshots = await step.run(
-      "review-screenshots",
-      async () => {
-        type Reviewed = { name: string; altText: string; timestamp: string };
-        if (screenshots.length === 0) return [] as Reviewed[];
+    const reviewedScreenshots = await step.run("review-screenshots", async () => {
+      type Reviewed = { name: string; altText: string; timestamp: string };
+      if (screenshots.length === 0) return [] as Reviewed[];
 
-        const apiKey = leaseAnthropicApiKey();
+      const apiKey = leaseAnthropicApiKey();
 
-        // Read transcript for cross-reference
-        const transcript: {
-          text: string;
-          segments: Array<{ start: number; end: number; text: string }>;
-        } = await Bun.file(transcriptPath).json();
+      // Read transcript for cross-reference
+      const transcript: {
+        text: string;
+        segments: Array<{ start: number; end: number; text: string }>;
+      } = await Bun.file(transcriptPath).json();
 
-        const vaultDir = join(
-          process.env.HOME ?? "/Users/joel",
-          "Vault/Resources/videos",
-          slug,
+      const vaultDir = join(process.env.HOME ?? "/Users/joel", "Vault/Resources/videos", slug);
+      const fallback = screenshots.map((s) => ({
+        name: s.name,
+        altText: s.name.replace(".jpg", "").replace(/-/g, " "),
+        timestamp: s.timestamp,
+      }));
+
+      const sceneLines = [
+        `Review these ${screenshots.length} screenshots from "${title}". Return only JSON.`,
+        "Return a JSON array with this exact schema:",
+        '[{"index":0,"keep":true,"filename":"descriptive-name.jpg","altText":"what is visible in frame"}]',
+        "Rules:",
+        "- index maps to the screenshot number in this list.",
+        "- KEEP: diagrams, code, demos, slides with text, terminal output, dashboards, meaningful visuals.",
+        "- DISCARD (keep:false): speaker-only faces, blurry frames, transition slides, duplicates.",
+        "- filename: lowercase-kebab-case, max 50 chars; describe what is visible.",
+        "- altText: concise text visible in image and context.",
+        "No markdown fences or explanation.",
+        "",
+        "Screenshots:",
+      ];
+
+      for (let idx = 0; idx < screenshots.length; idx++) {
+        const shot = screenshots[idx]!;
+        const [mins, secs] = shot.timestamp.split(":").map(Number);
+        const ts = (mins ?? 0) * 60 + (secs ?? 0);
+        const windowText = transcript.segments
+          .filter((s) => s.start >= ts - 20 && s.start <= ts + 20)
+          .map((s) => s.text)
+          .join(" ")
+          .trim();
+
+        sceneLines.push(
+          `- index ${idx}: ${join(vaultDir, shot.name)} (speaker says: "${windowText.slice(0, 300)}")`,
         );
-        const fallback = screenshots.map((s) => ({
-          name: s.name,
-          altText: s.name.replace(".jpg", "").replace(/-/g, " "),
-          timestamp: s.timestamp,
-        }));
+      }
 
-        const sceneLines = [
-          `Review these ${screenshots.length} screenshots from "${title}". Return only JSON.`,
-          "Return a JSON array with this exact schema:",
-          '[{"index":0,"keep":true,"filename":"descriptive-name.jpg","altText":"what is visible in frame"}]',
-          "Rules:",
-          "- index maps to the screenshot number in this list.",
-          "- KEEP: diagrams, code, demos, slides with text, terminal output, dashboards, meaningful visuals.",
-          "- DISCARD (keep:false): speaker-only faces, blurry frames, transition slides, duplicates.",
-          "- filename: lowercase-kebab-case, max 50 chars; describe what is visible.",
-          "- altText: concise text visible in image and context.",
-          "No markdown fences or explanation.",
-          "",
-          "Screenshots:",
-        ];
+      const prompt = sceneLines.join("\n");
 
-        for (let idx = 0; idx < screenshots.length; idx++) {
-          const shot = screenshots[idx]!;
-          const [mins, secs] = shot.timestamp.split(":").map(Number);
-          const ts = (mins ?? 0) * 60 + (secs ?? 0);
-          const windowText = transcript.segments
-            .filter((s) => s.start >= ts - 20 && s.start <= ts + 20)
-            .map((s) => s.text)
-            .join(" ")
-            .trim();
+      const reviewModel = "anthropic/claude-sonnet-4-6";
+      let result: Awaited<ReturnType<typeof infer>>;
+      try {
+        result = await infer(prompt, {
+          task: "vision",
+          model: reviewModel,
+          print: true,
+          system: "You are a careful screenshot reviewer for technical videos.",
+          component: "transcript-process",
+          action: "transcript.screenshot.review",
+          timeout: 120_000,
+          json: true,
+          env: { ...process.env, TERM: "dumb", ANTHROPIC_API_KEY: apiKey },
+          metadata: {
+            slug,
+            title,
+            screenshotCount: screenshots.length,
+          },
+        });
+      } catch (error) {
+        console.error(
+          "[transcript-process] screenshot review inference failed, using passthrough:",
+          error instanceof Error ? error.message : String(error),
+        );
+        return fallback;
+      }
 
-          sceneLines.push(
-            `- index ${idx}: ${join(vaultDir, shot.name)} (speaker says: "${windowText.slice(0, 300)}")`,
-          );
-        }
+      const rawReviews = result.data;
+      if (!Array.isArray(rawReviews) || rawReviews.length === 0) {
+        // Keep behavior conservative on model parse issues
+        return fallback;
+      }
 
-        const prompt = sceneLines.join("\n");
-
-        const reviewModel = "anthropic/claude-sonnet-4-6";
-        let result: Awaited<ReturnType<typeof infer>>;
-        try {
-          result = await infer(prompt, {
-            task: "vision",
-            model: reviewModel,
-            print: true,
-            system: "You are a careful screenshot reviewer for technical videos.",
-            component: "transcript-process",
-            action: "transcript.screenshot.review",
-            timeout: 120_000,
-            json: true,
-            env: { ...process.env, TERM: "dumb", ANTHROPIC_API_KEY: apiKey },
-            metadata: {
-              slug,
-              title,
-              screenshotCount: screenshots.length,
-            },
-          });
-        } catch (error) {
-          console.error(
-            "[transcript-process] screenshot review inference failed, using passthrough:",
-            error instanceof Error ? error.message : String(error),
-          );
-          return fallback;
-        }
-
-        const rawReviews = result.data;
-        if (!Array.isArray(rawReviews) || rawReviews.length === 0) {
-          // Keep behavior conservative on model parse issues
-          return fallback;
-        }
-
-        let reviews: Array<{
-          index: number;
-          keep: boolean;
-          filename: string;
-          altText: string;
-        }> = rawReviews
-          .map((raw) => {
-            if (!raw || typeof raw !== "object") return null;
-            const entry = raw as {
-              index?: unknown;
-              keep?: unknown;
-              filename?: unknown;
-              altText?: unknown;
-            };
-            if (typeof entry.index !== "number" || typeof entry.keep !== "boolean") return null;
-            if (typeof entry.filename !== "string" || typeof entry.altText !== "string") return null;
-            return {
-              index: entry.index,
-              keep: entry.keep,
-              filename: entry.filename,
-              altText: entry.altText,
-            };
-          })
-          .filter(
-            (
-              value: {
-                index: number;
-                keep: boolean;
-                filename: string;
-                altText: string;
-              } | null,
-            ): value is {
+      let reviews: Array<{
+        index: number;
+        keep: boolean;
+        filename: string;
+        altText: string;
+      }> = rawReviews
+        .map((raw) => {
+          if (!raw || typeof raw !== "object") return null;
+          const entry = raw as {
+            index?: unknown;
+            keep?: unknown;
+            filename?: unknown;
+            altText?: unknown;
+          };
+          if (typeof entry.index !== "number" || typeof entry.keep !== "boolean") return null;
+          if (typeof entry.filename !== "string" || typeof entry.altText !== "string") return null;
+          return {
+            index: entry.index,
+            keep: entry.keep,
+            filename: entry.filename,
+            altText: entry.altText,
+          };
+        })
+        .filter(
+          (
+            value: {
               index: number;
               keep: boolean;
               filename: string;
               altText: string;
-            } => value !== null && value.index >= 0 && value.index < screenshots.length
-          );
+            } | null,
+          ): value is {
+            index: number;
+            keep: boolean;
+            filename: string;
+            altText: string;
+          } => value !== null && value.index >= 0 && value.index < screenshots.length,
+        );
 
-        if (reviews.length === 0) {
-          return fallback;
+      if (reviews.length === 0) {
+        return fallback;
+      }
+
+      // Rename kept files, discard the rest
+      const approved: Reviewed[] = [];
+      const usedNames = new Set<string>();
+
+      for (const review of reviews) {
+        if (!review.keep || review.index >= screenshots.length) continue;
+        const shot = screenshots[review.index]!;
+
+        // Sanitize and deduplicate filename
+        let cleaned = review.filename
+          .toLowerCase()
+          .replace(/[^a-z0-9-\.]/g, "")
+          .slice(0, 54);
+        if (!cleaned.endsWith(".jpg")) cleaned = cleaned.replace(/\.jpg$/, "") + ".jpg";
+        let baseName = cleaned.replace(".jpg", "");
+        let finalName = cleaned;
+        let n = 2;
+        while (usedNames.has(finalName)) {
+          finalName = `${baseName}-${n}.jpg`;
+          n++;
+        }
+        usedNames.add(finalName);
+
+        // Rename in vault
+        try {
+          await $`mv ${join(vaultDir, shot.name)} ${join(vaultDir, finalName)}`.quiet();
+        } catch {}
+
+        // Rename on NAS
+        if (nasPath) {
+          try {
+            await $`ssh ${NAS_SSH_HOST} "mv '${nasPath}/screenshots/${shot.name}' '${nasPath}/screenshots/${finalName}'"`.quiet();
+          } catch {}
         }
 
-        // Rename kept files, discard the rest
-        const approved: Reviewed[] = [];
-        const usedNames = new Set<string>();
+        approved.push({
+          name: finalName,
+          altText: review.altText,
+          timestamp: shot.timestamp,
+        });
+      }
 
-        for (const review of reviews) {
-          if (!review.keep || review.index >= screenshots.length) continue;
-          const shot = screenshots[review.index]!;
+      if (approved.length === 0) {
+        return fallback;
+      }
 
-          // Sanitize and deduplicate filename
-          let cleaned = review.filename
-            .toLowerCase()
-            .replace(/[^a-z0-9-\.]/g, "")
-            .slice(0, 54);
-          if (!cleaned.endsWith(".jpg")) cleaned = cleaned.replace(/\.jpg$/, "") + ".jpg";
-          let baseName = cleaned.replace(".jpg", "");
-          let finalName = cleaned;
-          let n = 2;
-          while (usedNames.has(finalName)) {
-            finalName = `${baseName}-${n}.jpg`;
-            n++;
-          }
-          usedNames.add(finalName);
-
-          // Rename in vault
+      // Clean up discarded screenshots from vault + NAS
+      for (const shot of screenshots) {
+        if (!approved.some((r) => r.timestamp === shot.timestamp)) {
           try {
-            await $`mv ${join(vaultDir, shot.name)} ${join(vaultDir, finalName)}`.quiet();
+            await $`rm -f ${join(vaultDir, shot.name)}`.quiet();
           } catch {}
-
-          // Rename on NAS
           if (nasPath) {
             try {
-              await $`ssh ${NAS_SSH_HOST} "mv '${nasPath}/screenshots/${shot.name}' '${nasPath}/screenshots/${finalName}'"`.quiet();
+              await $`ssh ${NAS_SSH_HOST} "rm -f '${nasPath}/screenshots/${shot.name}'"`.quiet();
             } catch {}
           }
-
-          approved.push({
-            name: finalName,
-            altText: review.altText,
-            timestamp: shot.timestamp,
-          });
         }
+      }
 
-        if (approved.length === 0) {
-          return fallback;
-        }
-
-        // Clean up discarded screenshots from vault + NAS
-        for (const shot of screenshots) {
-          if (!approved.some((r) => r.timestamp === shot.timestamp)) {
-            try {
-              await $`rm -f ${join(vaultDir, shot.name)}`.quiet();
-            } catch {}
-            if (nasPath) {
-              try {
-                await $`ssh ${NAS_SSH_HOST} "rm -f '${nasPath}/screenshots/${shot.name}'"`.quiet();
-              } catch {}
-            }
-          }
-        }
-
-        return approved;
-      },
-    );
+      return approved;
+    });
 
     // Step 2: Create Vault note — reads transcript from file
     const vaultPath = await step.run("create-vault-note", async () => {
       const notePath = `${VAULT}/Resources/videos/${slug}.md`;
 
       // Read transcript from file (kept off step state to avoid Inngest size limit)
-      const transcript: { text: string; segments: Array<{ start: number; end: number; text: string }> } =
-        await Bun.file(transcriptPath).json();
+      const transcript: {
+        text: string;
+        segments: Array<{ start: number; end: number; text: string }>;
+      } = await Bun.file(transcriptPath).json();
 
       // Format transcript — with timestamps if segments available
       let formattedTranscript = "";
@@ -516,10 +683,14 @@ ${tagLines}
 ---
 
 # ${title}
-${infoLine || urlLine ? `
+${
+  infoLine || urlLine
+    ? `
 > [!info] Source
 > ${infoLine}${urlLine}
-` : ""}
+`
+    : ""
+}
 ## Executive Summary
 
 <!-- TODO: enrichment via content/summarize -->
@@ -586,9 +757,7 @@ ${screenshotSection}
             title,
             ...(chunk.speaker ? { speaker: chunk.speaker } : {}),
             text: chunk.text,
-            ...(chunk.start_seconds != null
-              ? { start_seconds: chunk.start_seconds }
-              : {}),
+            ...(chunk.start_seconds != null ? { start_seconds: chunk.start_seconds } : {}),
             ...(chunk.end_seconds != null ? { end_seconds: chunk.end_seconds } : {}),
             ...(sourceUrl ? { source_url: sourceUrl } : {}),
             ...(channel ? { channel } : {}),
@@ -600,12 +769,7 @@ ${screenshotSection}
 
         let convex = 0;
         for (const doc of docs) {
-          const searchText = [
-            doc.title,
-            doc.speaker ?? "",
-            doc.text,
-            doc.channel ?? "",
-          ]
+          const searchText = [doc.title, doc.speaker ?? "", doc.text, doc.channel ?? ""]
             .filter(Boolean)
             .join(" ");
 
@@ -626,7 +790,7 @@ ${screenshotSection}
               sourceDate: doc.source_date,
               vaultPath,
             },
-            searchText
+            searchText,
           ).catch(() => {});
           convex++;
         }
@@ -674,12 +838,16 @@ date: ${today}
       await Bun.write(dailyPath, content);
     });
 
-    // Step 5: Cleanup temporary files.
+    // Step 5: Cleanup only a validated UUID directory owned by video-download.
     await step.run("cleanup", async () => {
-      // Cleanup tmp dir if we created one
-      if (tmpDir) {
-        await $`rm -rf ${tmpDir}`.quiet();
+      if (safeVideoTmpDir) {
+        await rm(safeVideoTmpDir, { recursive: true, force: true });
       }
+      return {
+        requested: Boolean(requestedTmpDir),
+        removed: Boolean(safeVideoTmpDir),
+        refusedUnsafePath: Boolean(requestedTmpDir) && !safeVideoTmpDir,
+      };
     });
 
     // Step 6: Emit completion + trigger summarization
@@ -719,7 +887,7 @@ date: ${today}
       source,
       status: "processed",
     };
-  }
+  },
 );
 
 /** Compatibility shim for the legacy public event documented before the pipeline moved to *.requested names. */
@@ -738,5 +906,5 @@ export const transcriptProcessLegacyAlias = inngest.createFunction(
       status: "forwarded",
       forwardedTo: "pipeline/transcript.requested",
     };
-  }
+  },
 );
