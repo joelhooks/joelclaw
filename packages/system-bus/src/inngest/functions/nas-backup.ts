@@ -95,6 +95,8 @@ const NAS_BACKUP_QUEUE_ROOT = process.env.NAS_BACKUP_QUEUE_ROOT?.trim() || "/tmp
 const JOELCLAW_REPO_ROOT = process.env.JOELCLAW_REPO_ROOT?.trim() || "/Users/joel/Code/joelhooks/joelclaw";
 const AGENT_SESSION_BACKUP_SCRIPT = `${JOELCLAW_REPO_ROOT}/scripts/agent-session-audit-backup.ts`;
 const AGENT_SESSION_BACKUP_ROOT = `${NAS_HDD_ROOT}/sessions`;
+// Local, not on the NAS: the lock must work while the mount is flaky.
+const AGENT_SESSION_BACKUP_LOCK = `${HOME_DIR}/.joelclaw/run/agent-session-backup.lock`;
 const AGENT_SESSION_CENTRAL_URL = process.env.JOELCLAW_SESSION_CAPTURE_URL?.trim() || "http://joels-mac-studio.tail7af24.ts.net:3111";
 
 type BackupTarget = "typesense" | "redis";
@@ -2113,6 +2115,7 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
               repairEnv,
             }),
             cwd: JOELCLAW_REPO_ROOT,
+            lockPath: AGENT_SESSION_BACKUP_LOCK,
           });
 
           return receipt;
