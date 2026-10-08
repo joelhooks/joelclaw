@@ -68,9 +68,8 @@ Functions are split between `index.host.ts` and `index.cluster.ts`. The combined
 ## Deployment Model
 
 - **Source of truth**: `~/Code/joelhooks/joelclaw/packages/system-bus/`
-- **Running host worker**: `worker-supervisor` process running `bun run src/serve.ts` from `~/Code/joelhooks/joelclaw/packages/system-bus/`
+- **Running host worker**: `worker-supervisor` process running `bun run src/serve.ts` from a deployed export of `packages/system-bus/`; confirm its location from the live port-3111 process cwd
   - verify with `lsof -iTCP:3111 -sTCP:LISTEN -n -P` and `lsof -p <pid> | awk '$4=="cwd"{print}'`
-  - legacy clone `~/Code/system-bus-worker/` may still exist, but it is not the active host worker when port 3111's cwd points at the monorepo
 - **Cluster runtime**: `system-bus-worker` Deployment in the Talos/Colima k8s cluster for cluster-role workloads
 - **Cluster deploy path**: `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh`
 
@@ -82,8 +81,8 @@ After changing `packages/system-bus/src/inngest/functions/*` that run on the hos
 
 1. commit + push the monorepo change to `origin`
 2. confirm the live worker cwd: `pid=$(lsof -tiTCP:3111 -sTCP:LISTEN); lsof -p "$pid" | awk '$4=="cwd"{print}'`
-3. if cwd is `~/Code/joelhooks/joelclaw/packages/system-bus`, kill the Bun worker PID and let `worker-supervisor` respawn it
-4. if cwd is the legacy `~/Code/system-bus-worker`, inspect its status and divergence, preserve both sides, and use the current deployment source; never reset the legacy clone to discard work
+3. if cwd is the deployed export, update that export to the merged source (back up the files you replace), then kill the Bun worker PID and let `worker-supervisor` respawn it
+4. if cwd is anywhere else (for example a legacy worker clone), inspect its status and divergence, preserve both sides, and use the current deployment source; never reset the legacy clone to discard work
 5. verify `curl http://127.0.0.1:3111/` shows functions and `joelclaw functions` returns >0
 
 The stale failure mode: a host worker can keep running old source for days. In that state, OTEL may show behavior that current monorepo code has already fixed. Always verify the live port-3111 process cwd and start time before debugging source that "should" already be deployed.
