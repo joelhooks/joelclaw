@@ -2077,7 +2077,7 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
     const eventData = (event.data ?? {}) as Record<string, unknown>;
     const hosts = typeof eventData.hosts === "string" && eventData.hosts.trim().length > 0
       ? eventData.hosts.trim()
-      : "flagg,blaine,panda";
+      : process.env.JOELCLAW_SESSION_AUDIT_HOSTS?.trim() || "flagg,blaine";
     const repairEnv = eventData.repairEnv !== false;
     const centralUrl = typeof eventData.centralUrl === "string" && eventData.centralUrl.trim().length > 0
       ? eventData.centralUrl.trim()
