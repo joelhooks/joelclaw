@@ -19,13 +19,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import {
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -79,6 +73,7 @@ function spoolInlineJsonl(runId: string, jsonl: string) {
 }
 
 export interface RunCapturedDependencies {
+  emitOtel: typeof emitOtelEvent;
   checkCaptureGrowth: (data: Record<string, unknown>) => Promise<CaptureGrowthCheckReceipt>;
   sendIndexed: (event: {
     id: string;
@@ -93,11 +88,39 @@ export interface RunCapturedDependencies {
 }
 
 const defaultDependencies: RunCapturedDependencies = {
+  emitOtel: emitOtelEvent,
   checkCaptureGrowth: (data) => checkCaptureGrowthForRun(data),
   sendIndexed: (event) => inngest.send(event),
 };
 
 let dependencies = defaultDependencies;
+
+/**
+ * Telemetry is best effort, not part of capture acknowledgement. The long-lived
+ * worker lets these requests finish after the handler returns. A process crash
+ * or restart can lose in-flight telemetry; indexed event delivery stays awaited.
+ */
+function emitCaptureOtel(input: Parameters<typeof emitOtelEvent>[0]): void {
+  const emit = dependencies.emitOtel;
+  void Promise.resolve()
+    .then(() => emit(input))
+    .then((result) => {
+      // emitOtelEvent normally returns failures instead of throwing them.
+      // Forward-mode HTTP failures live in result.forward, not result.error.
+      const error = result.error ?? result.forward?.error;
+      if (error) throw new Error(error);
+      if (!result.stored && !result.skipped && !result.dropped) {
+        throw new Error(result.clickhouse.error ?? "telemetry was not stored");
+      }
+    })
+    .catch((error) => {
+      console.warn("[memory-run-captured] telemetry failed", {
+        action: input.action,
+        run_id: input.metadata?.run_id,
+        error: String(error),
+      });
+    });
+}
 
 /** Inngest dedupes events that share an id, so a retried Run sends one signal. */
 export function runIndexedEventId(runId: string): string {
@@ -139,9 +162,7 @@ export const memoryRunCaptured = inngest.createFunction(
 
     // Start the growth check before the synchronous append so its state-store
     // round trip overlaps the SQLite work. It never throws.
-    const growthCheck = dependencies.checkCaptureGrowth(
-      event.data as Record<string, unknown>,
-    );
+    const growthCheck = dependencies.checkCaptureGrowth(event.data as Record<string, unknown>);
 
     // Older events carry the transcript inline. Spool it to disk for the
     // append, which verifies size and SHA-256 against the event.
@@ -153,8 +174,7 @@ export const memoryRunCaptured = inngest.createFunction(
       try {
         sessionAppend = appendSessionCapture({
           databasePath:
-            process.env.SESSION_INDEX_PATH ??
-            join(homedir(), ".joelclaw", "search", "sessions.db"),
+            process.env.SESSION_INDEX_PATH ?? join(homedir(), ".joelclaw", "search", "sessions.db"),
           capturePath,
           runId: run_id,
           userId: user_id,
@@ -175,7 +195,7 @@ export const memoryRunCaptured = inngest.createFunction(
       } catch (error) {
         await growthCheck;
         if (!(error instanceof SessionIndexConflictError)) throw error;
-        await emitOtelEvent({
+        emitCaptureOtel({
           level: "error",
           source: "system-bus",
           component: "memory-run-captured",
@@ -195,60 +215,60 @@ export const memoryRunCaptured = inngest.createFunction(
       const duration_ms = performance.now() - t0;
       const empty = candidates.length === 0;
 
-      await Promise.all([
-        emitOtelEvent({
+      emitCaptureOtel({
+        level: "info",
+        source: "system-bus",
+        component: "memory-run-captured",
+        action: "memory.run.session-index.append",
+        success: true,
+        duration_ms: Math.round(sessionAppend.duration_ms),
+        metadata: {
+          run_id,
+          status: sessionAppend.status,
+          freshness_timestamp: sessionAppend.freshness_timestamp,
+          source_identity: sessionAppend.source_identity,
+          chunk_count: sessionAppend.chunk_count,
+          conflict: false,
+        },
+      });
+      if (empty) {
+        emitCaptureOtel({
+          level: "warn",
+          source: "system-bus",
+          component: "memory-run-captured",
+          action: "memory.run.captured.empty",
+          success: true,
+          metadata: {
+            run_id,
+            user_id,
+            reason: "no usable turns extracted from jsonl",
+            format,
+          },
+        });
+      } else {
+        emitCaptureOtel({
           level: "info",
           source: "system-bus",
           component: "memory-run-captured",
-          action: "memory.run.session-index.append",
+          action: "memory.run.captured",
           success: true,
-          duration_ms: Math.round(sessionAppend.duration_ms),
+          duration_ms: Math.round(duration_ms),
           metadata: {
             run_id,
-            status: sessionAppend.status,
-            freshness_timestamp: sessionAppend.freshness_timestamp,
-            source_identity: sessionAppend.source_identity,
+            user_id,
+            machine_id,
+            agent_runtime,
             chunk_count: sessionAppend.chunk_count,
-            conflict: false,
+            turn_count: turns.length,
+            format,
+            session_index_status: sessionAppend.status,
+            session_index_freshness: sessionAppend.freshness_timestamp,
+            source_identity: sessionAppend.source_identity,
+            capture_growth_checked: growth.checked,
+            capture_growth_detected: growth.finding !== null,
           },
-        }),
-        empty
-          ? emitOtelEvent({
-              level: "warn",
-              source: "system-bus",
-              component: "memory-run-captured",
-              action: "memory.run.captured.empty",
-              success: true,
-              metadata: {
-                run_id,
-                user_id,
-                reason: "no usable turns extracted from jsonl",
-                format,
-              },
-            })
-          : emitOtelEvent({
-              level: "info",
-              source: "system-bus",
-              component: "memory-run-captured",
-              action: "memory.run.captured",
-              success: true,
-              duration_ms: Math.round(duration_ms),
-              metadata: {
-                run_id,
-                user_id,
-                machine_id,
-                agent_runtime,
-                chunk_count: sessionAppend.chunk_count,
-                turn_count: turns.length,
-                format,
-                session_index_status: sessionAppend.status,
-                session_index_freshness: sessionAppend.freshness_timestamp,
-                source_identity: sessionAppend.source_identity,
-                capture_growth_checked: growth.checked,
-                capture_growth_detected: growth.finding !== null,
-              },
-            }),
-      ]);
+        });
+      }
 
       if (empty) {
         return {
@@ -289,7 +309,7 @@ export const memoryRunCaptured = inngest.createFunction(
         }
       }
     }
-  }
+  },
 );
 
 export const __runCapturedTestUtils = {

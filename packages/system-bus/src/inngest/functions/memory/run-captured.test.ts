@@ -1,15 +1,18 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InngestTestEngine } from "@inngest/test";
+import { NonRetriableError } from "inngest";
+import { emitOtelEvent } from "../../../observability/emit";
 import type { CaptureGrowthCheckReceipt } from "../typesense-recovery-alerts";
 import {
   __runCapturedTestUtils,
   memoryRunCaptured,
   runIndexedEventId,
+  type RunCapturedDependencies,
 } from "./run-captured";
 
 const originalOtelEnabled = process.env.OTEL_EVENTS_ENABLED;
@@ -20,6 +23,7 @@ let sessionIndexPath = "";
 let indexedEvents: Array<{ id: string; name: string; data: unknown }> = [];
 let growthChecks: Array<Record<string, unknown>> = [];
 let sendIndexedFailures = 0;
+let testDependencies: RunCapturedDependencies;
 
 beforeEach(() => {
   testDirectory = mkdtempSync(join(tmpdir(), "run-captured-test-"));
@@ -52,7 +56,8 @@ beforeEach(() => {
   indexedEvents = [];
   growthChecks = [];
   sendIndexedFailures = 0;
-  __runCapturedTestUtils.setDependencies({
+  testDependencies = {
+    emitOtel: emitOtelEvent,
     checkCaptureGrowth: async (data): Promise<CaptureGrowthCheckReceipt> => {
       growthChecks.push(data);
       return { checked: true, finding: null, alerted: false };
@@ -64,7 +69,8 @@ beforeEach(() => {
       }
       indexedEvents.push(event);
     },
-  });
+  };
+  __runCapturedTestUtils.setDependencies(testDependencies);
 });
 
 afterEach(() => {
@@ -162,7 +168,149 @@ function emptyRunData(): CaptureEventData {
   };
 }
 
+function nonEmptyRunData(): CaptureEventData {
+  const jsonl = conversationJsonl(2);
+  return {
+    ...emptyRunData(),
+    run_id: "run-telemetry",
+    jsonl_inline: jsonl,
+    jsonl_bytes: Buffer.byteLength(jsonl),
+    jsonl_sha256: createHash("sha256").update(jsonl).digest("hex"),
+    to_offset: Buffer.byteLength(jsonl),
+  };
+}
+
+// Let detached emission and its rejection handler settle without a real sink.
+function settleTelemetry(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 describe("memory/run.captured", () => {
+  test("finishes and sends run.indexed while telemetry is still pending", async () => {
+    const emitted: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let settled = 0;
+    __runCapturedTestUtils.setDependencies({
+      ...testDependencies,
+      emitOtel: async (input) => {
+        emitted.push(input.action);
+        await gate;
+        settled += 1;
+        return emitOtelEvent(input);
+      },
+    });
+
+    try {
+      const { result, stepIds } = await executeRun(nonEmptyRunData());
+      expect(result).toMatchObject({ chunks_indexed: 2, session_index_status: "appended" });
+      expect(stepIds).toEqual([]);
+      expect(indexedEvents.map((event) => event.id)).toEqual([runIndexedEventId("run-telemetry")]);
+      expect(emitted).toEqual(["memory.run.session-index.append", "memory.run.captured"]);
+      expect(settled).toBe(0);
+    } finally {
+      release();
+      await settleTelemetry();
+    }
+    expect(settled).toBe(2);
+  });
+
+  for (const failure of ["throw", "reject", "result", "forward", "store"] as const) {
+    test(`logs ${failure} telemetry failures without failing capture or indexed delivery`, async () => {
+      const warn = spyOn(console, "warn").mockImplementation(() => {});
+      __runCapturedTestUtils.setDependencies({
+        ...testDependencies,
+        emitOtel: (input) => {
+          if (failure === "throw") throw new Error("telemetry unavailable");
+          if (failure === "reject") return Promise.reject(new Error("telemetry unavailable"));
+          return emitOtelEvent(input).then((result) => {
+            if (failure === "forward") {
+              return {
+                ...result,
+                forward: { attempted: true, accepted: false, error: "telemetry unavailable" },
+              };
+            }
+            if (failure === "store") {
+              return {
+                ...result,
+                skipped: false,
+                dropped: false,
+                clickhouse: { ...result.clickhouse, error: "telemetry unavailable" },
+              };
+            }
+            return { ...result, error: "telemetry unavailable" };
+          });
+        },
+      });
+      try {
+        const { result } = await executeRun(nonEmptyRunData());
+        await settleTelemetry();
+        expect(result).toMatchObject({ chunks_indexed: 2, session_index_status: "appended" });
+        expect(indexedEvents.map((event) => event.id)).toEqual([
+          runIndexedEventId("run-telemetry"),
+        ]);
+        expect(warn).toHaveBeenCalledTimes(2);
+        expect(warn).toHaveBeenCalledWith("[memory-run-captured] telemetry failed", {
+          action: "memory.run.captured",
+          run_id: "run-telemetry",
+          error: "Error: telemetry unavailable",
+        });
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  }
+
+  test("telemetry failure cannot hide a non-retriable SQLite conflict", async () => {
+    const original = emptyRunData();
+    await executeRun(original);
+    await settleTelemetry();
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    __runCapturedTestUtils.setDependencies({
+      ...testDependencies,
+      emitOtel: async () => {
+        throw new Error("telemetry unavailable");
+      },
+    });
+    try {
+      await expect(
+        executeRun({ ...original, from_offset: 1, to_offset: original.to_offset! + 1 }),
+      ).rejects.toBeInstanceOf(NonRetriableError);
+      await settleTelemetry();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(indexedEvents).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("empty captures return without waiting for their warning telemetry", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const emitted: string[] = [];
+    __runCapturedTestUtils.setDependencies({
+      ...testDependencies,
+      emitOtel: async (input) => {
+        emitted.push(input.action);
+        await gate;
+        return emitOtelEvent(input);
+      },
+    });
+    try {
+      const { result } = await executeRun(emptyRunData());
+      expect(result).toMatchObject({ reason: "empty", session_index_status: "appended" });
+      expect(emitted).toEqual(["memory.run.session-index.append", "memory.run.captured.empty"]);
+      expect(indexedEvents).toEqual([]);
+    } finally {
+      release();
+      await settleTelemetry();
+    }
+  });
+
   test("stores a zero-turn Run in sessions.db without a Typesense step", async () => {
     const { result, stepIds } = await executeRun(emptyRunData());
 
@@ -177,19 +325,22 @@ describe("memory/run.captured", () => {
     expect(indexedEvents).toEqual([]);
 
     const db = new Database(sessionIndexPath, { readonly: true, strict: true });
-    expect(db.query(`SELECT run_id, user_id, machine_id, agent_runtime, parent_run_id,
+    expect(
+      db
+        .query(`SELECT run_id, user_id, machine_id, agent_runtime, parent_run_id,
       conversation_id, turn_count, chunk_count, tags_json FROM runs WHERE run_id = ?`)
-      .get("run-empty")).toEqual({
-        run_id: "run-empty",
-        user_id: "joel",
-        machine_id: "flagg",
-        agent_runtime: "pi",
-        parent_run_id: "run-parent",
-        conversation_id: "conversation-empty",
-        turn_count: 0,
-        chunk_count: 0,
-        tags_json: '["capture-outbox"]',
-      });
+        .get("run-empty"),
+    ).toEqual({
+      run_id: "run-empty",
+      user_id: "joel",
+      machine_id: "flagg",
+      agent_runtime: "pi",
+      parent_run_id: "run-parent",
+      conversation_id: "conversation-empty",
+      turn_count: 0,
+      chunk_count: 0,
+      tags_json: '["capture-outbox"]',
+    });
     db.close(false);
   });
 
@@ -211,14 +362,20 @@ describe("memory/run.captured", () => {
     });
 
     const db = new Database(sessionIndexPath, { readonly: true, strict: true });
-    expect(db.query("SELECT count(*) AS count FROM runs WHERE run_id = ?").get("run-empty")).toEqual({
+    expect(
+      db.query("SELECT count(*) AS count FROM runs WHERE run_id = ?").get("run-empty"),
+    ).toEqual({
       count: 1,
     });
-    expect(db.query("SELECT count(*) AS count FROM chunks WHERE run_id = ?").get("run-empty")).toEqual({
+    expect(
+      db.query("SELECT count(*) AS count FROM chunks WHERE run_id = ?").get("run-empty"),
+    ).toEqual({
       count: 0,
     });
     expect(
-      db.query("SELECT from_offset, to_offset, tags_json FROM runs WHERE run_id = ?").get("run-empty"),
+      db
+        .query("SELECT from_offset, to_offset, tags_json FROM runs WHERE run_id = ?")
+        .get("run-empty"),
     ).toEqual({
       from_offset: 0,
       to_offset: data.to_offset,
@@ -241,9 +398,9 @@ describe("memory/run.captured", () => {
       session_index_run_id: original.run_id,
     });
     const db = new Database(sessionIndexPath, { readonly: true, strict: true });
-    expect(
-      db.query("SELECT run_id, from_offset FROM runs ORDER BY run_id").all(),
-    ).toEqual([{ run_id: original.run_id, from_offset: original.from_offset }]);
+    expect(db.query("SELECT run_id, from_offset FROM runs ORDER BY run_id").all()).toEqual([
+      { run_id: original.run_id, from_offset: original.from_offset },
+    ]);
     db.close(false);
   });
 
@@ -280,7 +437,9 @@ describe("memory/run.captured", () => {
     expect(replay.result).toMatchObject({ run_id: "run-empty", chunks_indexed: 0 });
 
     const db = new Database(sessionIndexPath, { readonly: true, strict: true });
-    expect(db.query("SELECT count(*) AS count FROM runs WHERE run_id = ?").get("run-empty")).toEqual({
+    expect(
+      db.query("SELECT count(*) AS count FROM runs WHERE run_id = ?").get("run-empty"),
+    ).toEqual({
       count: 1,
     });
     db.close(false);
@@ -325,13 +484,9 @@ describe("memory/run.captured", () => {
           role: index % 2 === 0 ? "user" : "assistant",
           content: `${messageText}:${index}`,
         },
-      })
+      }),
     );
-    const jsonlInline = [
-      '{"type":"session","version":3}',
-      ...messages,
-      "",
-    ].join("\n");
+    const jsonlInline = ['{"type":"session","version":3}', ...messages, ""].join("\n");
 
     const spoolsBefore = spooledFiles().length;
     const { result, stepIds } = await executeRun({
@@ -464,7 +619,8 @@ describe("memory/run.captured", () => {
     expect(result).toMatchObject({ chunks_indexed: 2, session_index_status: "appended" });
     const db = new Database(sessionIndexPath, { readonly: true, strict: true });
     expect(
-      db.query("SELECT source_identity, from_offset, tags_json FROM runs WHERE run_id = ?")
+      db
+        .query("SELECT source_identity, from_offset, tags_json FROM runs WHERE run_id = ?")
         .get("run-legacy"),
     ).toEqual({ source_identity: "legacy-run:run-legacy", from_offset: null, tags_json: "[]" });
     db.close(false);
@@ -496,7 +652,10 @@ describe("memory/run.captured", () => {
 
     const retry = await executeRun(data);
     const redelivery = await executeRun(data);
-    expect(retry.result).toMatchObject({ session_index_status: "already_indexed", chunks_indexed: 3 });
+    expect(retry.result).toMatchObject({
+      session_index_status: "already_indexed",
+      chunks_indexed: 3,
+    });
     expect(redelivery.result).toMatchObject({ session_index_status: "already_indexed" });
 
     // Both sends share one event id, which Inngest dedupes to one event.
