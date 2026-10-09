@@ -217,6 +217,52 @@ describe("memory/run.captured", () => {
     expect(settled).toBe(2);
   });
 
+  test("puts indexed text bytes on the session-index append row", async () => {
+    const appendRows: Array<Record<string, unknown> | undefined> = [];
+    __runCapturedTestUtils.setDependencies({
+      ...testDependencies,
+      emitOtel: (input) => {
+        if (input.action === "memory.run.session-index.append") appendRows.push(input.metadata);
+        return emitOtelEvent(input);
+      },
+    });
+
+    const jsonl = conversationJsonl(2).replace("turn 0", "turn 0 🐀 日本語");
+    const data = {
+      ...nonEmptyRunData(),
+      jsonl_inline: jsonl,
+      jsonl_bytes: Buffer.byteLength(jsonl),
+      jsonl_sha256: createHash("sha256").update(jsonl).digest("hex"),
+      to_offset: Buffer.byteLength(jsonl),
+    };
+    await executeRun(data);
+    await executeRun(data);
+    await settleTelemetry();
+
+    const db = new Database(sessionIndexPath, { readonly: true, strict: true });
+    const texts = db
+      .query("SELECT text FROM chunks WHERE run_id = ?")
+      .all("run-telemetry") as Array<{ text: string }>;
+    db.close(false);
+    const textBytes = texts.reduce((sum, row) => sum + Buffer.byteLength(row.text, "utf8"), 0);
+
+    expect(textBytes).toBeGreaterThan(texts.reduce((sum, row) => sum + row.text.length, 0));
+    expect(appendRows).toEqual([
+      expect.objectContaining({
+        status: "appended",
+        chunk_count: 2,
+        turn_count: 2,
+        text_bytes: textBytes,
+      }),
+      expect.objectContaining({
+        status: "already_indexed",
+        chunk_count: 2,
+        turn_count: 0,
+        text_bytes: 0,
+      }),
+    ]);
+  });
+
   for (const failure of ["throw", "reject", "result", "forward", "store"] as const) {
     test(`logs ${failure} telemetry failures without failing capture or indexed delivery`, async () => {
       const warn = spyOn(console, "warn").mockImplementation(() => {});
