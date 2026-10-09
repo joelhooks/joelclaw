@@ -28,6 +28,10 @@ export interface SessionCaptureAppendResult {
   status: "appended" | "already_indexed";
   run_id: string;
   chunk_count: number;
+  /** Turns inserted by this call; 0 when nothing was inserted. */
+  turn_count: number;
+  /** UTF-8 bytes of chunk text inserted by this call; 0 when nothing was inserted. */
+  text_bytes: number;
   freshness_timestamp: number;
   source_identity: string;
   duration_ms: number;
@@ -131,6 +135,8 @@ export function appendSessionCapture(input: SessionCaptureAppendInput): SessionC
         status: "already_indexed",
         run_id: input.runId,
         chunk_count: existing.chunk_count,
+        turn_count: 0,
+        text_bytes: 0,
         freshness_timestamp: existing.captured_at,
         source_identity: existing.source_identity,
         duration_ms: performance.now() - started,
@@ -178,6 +184,8 @@ export function appendSessionCapture(input: SessionCaptureAppendInput): SessionC
         status: "already_indexed",
         run_id: existingByCursor.run_id,
         chunk_count: existingByCursor.chunk_count,
+        turn_count: 0,
+        text_bytes: 0,
         freshness_timestamp: existingByCursor.captured_at,
         source_identity: existingByCursor.source_identity,
         duration_ms: performance.now() - started,
@@ -230,7 +238,9 @@ export function appendSessionCapture(input: SessionCaptureAppendInput): SessionC
       chunk_id, run_id, chunk_idx, role, text, started_at, token_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?)`);
     const insertFts = db.prepare("INSERT INTO chunk_fts(rowid, text) VALUES (?, ?)");
+    let textBytes = 0;
     for (const chunk of chunks) {
+      textBytes += Buffer.byteLength(chunk.text, "utf8");
       const inserted = insertChunk.run(
         `${input.runId}:${chunk.chunk_idx}`,
         input.runId,
@@ -249,6 +259,8 @@ export function appendSessionCapture(input: SessionCaptureAppendInput): SessionC
       status: "appended",
       run_id: input.runId,
       chunk_count: chunks.length,
+      turn_count: turns.length,
+      text_bytes: textBytes,
       freshness_timestamp: input.capturedAt,
       source_identity: sourceIdentity,
       duration_ms: performance.now() - started,

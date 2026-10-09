@@ -228,6 +228,8 @@ export const memoryRunCaptured = inngest.createFunction(
           freshness_timestamp: sessionAppend.freshness_timestamp,
           source_identity: sessionAppend.source_identity,
           chunk_count: sessionAppend.chunk_count,
+          turn_count: sessionAppend.turn_count,
+          text_bytes: sessionAppend.text_bytes,
           conflict: false,
         },
       });
