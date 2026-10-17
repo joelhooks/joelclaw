@@ -11,6 +11,7 @@
  *   bun run dag -- --id my-run-1
  */
 
+import { buildResearchPipeline, parseResearchSearchProvider } from "./research-pipeline";
 import { buildHealthPipeline, buildPiMonoArtifactsSyncPipeline } from "./pipelines";
 import type { DagNodeInput } from "./workflows/dag-orchestrator";
 
@@ -68,66 +69,6 @@ function demoPipeline(): DagNodeInput[] {
 
 function healthPipeline(): DagNodeInput[] {
   return buildHealthPipeline();
-}
-
-function researchPipeline(researchTopic: string): DagNodeInput[] {
-  return [
-    {
-      id: "web-search",
-      task: `search the web for: ${researchTopic}`,
-      handler: "shell",
-      config: {
-        command: `curl -sS "https://api.duckduckgo.com/?q=${encodeURIComponent(researchTopic)}&format=json&no_html=1" | jq -r '.AbstractText // .RelatedTopics[:5][] .Text // "no results"' 2>/dev/null | head -50`,
-      },
-    },
-    {
-      id: "vault-search",
-      task: `search local vault for: ${researchTopic}`,
-      handler: "shell",
-      config: {
-        command: `grep -ril "${researchTopic.replace(/"/g, '\\"').slice(0, 60)}" ~/Vault/docs/decisions/ 2>/dev/null | head -10 | while read f; do echo "--- $f ---"; head -30 "$f"; echo; done || echo "no vault matches"`,
-      },
-    },
-    {
-      id: "memory-recall",
-      task: "search optional agent memory",
-      handler: "recall",
-      config: {
-        query: researchTopic.slice(0, 1_000),
-        scope: { project: "joelclaw-fleet", workstream: "default" },
-        access: {
-          principalRef: "service:restate-research",
-          purpose: "research-pipeline",
-          allowedPrivacy: ["public", "private"],
-        },
-      },
-    },
-    {
-      id: "synthesize",
-      task: "synthesize research findings",
-      handler: "infer",
-      dependsOn: ["web-search", "vault-search", "memory-recall"],
-      config: {
-        prompt: [
-          `Research topic: ${researchTopic}`,
-          "",
-          "Synthesize these sources into a brief research memo.",
-          "Cite which source each finding came from.",
-          "",
-          "## Web search results",
-          "{{web-search}}",
-          "",
-          "## Vault/ADR matches",
-          "{{vault-search}}",
-          "",
-          "## Agent memory",
-          "{{memory-recall}}",
-        ].join("\n"),
-        system:
-          "You are a research analyst. Produce a structured memo: key findings, source attribution, gaps, and recommended next steps. Under 300 words.",
-      },
-    },
-  ];
 }
 
 // ━━━ Contact Enrichment Pipeline (ADR-0133) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -386,7 +327,7 @@ switch (pipeline) {
     nodes = healthPipeline();
     break;
   case "research":
-    nodes = researchPipeline(topic);
+    nodes = buildResearchPipeline(topic, parseResearchSearchProvider(args));
     break;
   case "enrich-contact": {
     if (!contactName) {
