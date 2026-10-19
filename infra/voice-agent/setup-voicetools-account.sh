@@ -145,6 +145,7 @@ sudo install -o root -g wheel -m 0644 "$TMP/sha" "$GATE.sha"
 # change, and _voicetools must get every restriction. Any miss: remove, exit.
 effective() { sudo sshd -T -C "user=$1,host=x,addr=100.64.0.1" 2>/dev/null | sort; }
 effective joel > "$TMP/joel.before"
+[ -s "$TMP/joel.before" ] || { echo "sshd -T printed nothing for joel; not touching sshd" >&2; exit 1; }
 printf '%s\n' "$SSHD_BLOCK" > "$TMP/sshd.conf"
 sudo install -o root -g wheel -m 0644 "$TMP/sshd.conf" "$SSHD_CONF"
 fail_sshd() { sudo rm -f "$SSHD_CONF"; echo "sshd check failed ($1); removed $SSHD_CONF, sshd untouched" >&2; exit 1; }
