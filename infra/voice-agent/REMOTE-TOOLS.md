@@ -30,15 +30,18 @@ not allowed off Flagg. The tool says so and the line tells Joel.
 4. **authorized_keys** for `_voicetools`, with the guest's tailnet IP:
    `restrict,from="<guest tailnet IP>",command="sudo -n -u joel /usr/bin/python3 -I /usr/local/libexec/voice_remote_gate.py" ssh-ed25519 <guest key>`.
 5. **sshd** `Match User _voicetools`: `MaxSessions 4`, `PermitTTY no`,
-   `AllowTcpForwarding no`.
+   `AllowTcpForwarding no`, `X11Forwarding no`, `AllowAgentForwarding no`,
+   on top of `restrict` in the key line.
 
 ## Guest setup
 
 - `VOICE_FLAGG_HOST=_voicetools@flagg` in the worker env.
 - Pin Flagg's host key in a `UserKnownHostsFile` with `StrictHostKeyChecking yes`.
   Never trust on first use.
-- Tailnet ACL: the guest can reach only Flagg's ssh and the Rat King endpoint
-  (Servo's `tag:shardik-voice` proposal).
+- Tailnet ACL (`tag:shardik-voice`): the guest reaches Flagg port 22 and the
+  Rat King mailbox's one host and port, nothing else. The ACL can't name a unix
+  account. What limits ssh to `_voicetools` is that the guest holds only that
+  key, plus `from=` and sshd's `Match User`.
 - Check: `python3 -m pytest tests/test_flagg_remote.py`, then one call each for
   `joelclaw status` and `brain-git pages` through ssh. A refused call exits 126,
   busy exits 75, and an unreachable Flagg makes the tool say so aloud.
