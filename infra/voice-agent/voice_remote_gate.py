@@ -49,9 +49,23 @@ MAX_OUT = 64_000
 TIMEOUT_S = 25          # below the worker's 30 s, so no orphan outlives its caller
 READ_DEADLINE_S = 5
 MAX_CONCURRENT = 3
-WRITE_BUDGET_PER_MIN = 10   # caps volume, not just concurrency: no wiping a calendar in a loop
-WRITES = {"gog cal-create", "todoist-cli add", "todoist-cli complete", "todoist-cli comment", "joelclaw note"}
-BUDGET = HOME / ".local" / "state" / "voice-remote-gate" / "writes.json"
+# Per-minute caps on anything that changes state or reaches Joel: volume, not just
+# concurrency, so a compromised worker can't wipe a calendar or flood his chat.
+BUDGETS = {
+    "writes": (10, {"gog cal-create", "todoist-cli add", "todoist-cli complete", "todoist-cli comment", "joelclaw note", "joelclaw transcript"}),
+    "notes": (3, {"node-script message-shitrat"}),
+}
+BUDGET_DIR = HOME / ".local" / "state" / "voice-remote-gate"
+# Each tool runs by absolute path, so nothing dropped early on PATH can shadow it.
+# Same trust as on Flagg: these are joel's own tools, run as joel.
+EXE = {
+    "joelclaw": str(HOME / ".bun" / "bin" / "joelclaw"),
+    "gog": str(HOME / ".local" / "bin" / "gog"),
+    "todoist-cli": str(HOME / ".local" / "bin" / "todoist-cli"),
+    "node": str(HOME / ".local" / "share" / "fnm" / "aliases" / "default" / "bin" / "node"),
+    "git": "/opt/homebrew/bin/git",
+    "secrets": str(HOME / ".local" / "bin" / "secrets"),
+}
 ACCT = "joelhooks@gmail.com"
 NOTE_PREFIX = "[voice line] "
 
@@ -94,13 +108,32 @@ def rel_path(v: str) -> bool:
     return text(v) and not v.startswith(("/", "~")) and ".." not in Path(v).parts and len(v) <= 300
 
 
-def json_object(v: str) -> bool:
+# The transcript events' exact payloads (main.py _save_call_transcript and the
+# public-session save). Unknown keys or wrong types are refused.
+TRANSCRIPT_SCHEMAS = {
+    "voice/call.completed": {"transcript": str, "room": str, "timestamp": str, "turns": int},
+    "voice/public-call.completed": {"transcript": str, "room": str, "caller": str, "timestamp": str, "duration_s": (int, float), "turns": int},
+}
+TRANSCRIPT_MAX = {"transcript": 8000, "room": 200, "caller": 40, "timestamp": 40}
+
+
+def transcript_payload(event: str, v: str) -> bool:
     if len(v) > MAX_ARG_CHARS:
         return False
     try:
-        return isinstance(json.loads(v), dict)
+        data = json.loads(v)
     except (ValueError, RecursionError):
         return False
+    schema = TRANSCRIPT_SCHEMAS.get(event)
+    if not isinstance(data, dict) or schema is None or set(data) != set(schema):
+        return False
+    for key, kind in schema.items():
+        value = data[key]
+        if isinstance(value, bool) or not isinstance(value, kind):
+            return False
+        if isinstance(value, str) and len(value) > TRANSCRIPT_MAX.get(key, 200):
+            return False
+    return True
 
 
 FLAG = None  # a flag that takes no value
@@ -171,7 +204,7 @@ SCHEMAS: dict[str, list[tuple[str, callable]]] = {
         ("loop-status", lambda r: match(r, ["loop", "status"], [], {"--goal": short})),
         ("note", lambda r: match(r, ["note", "--title"], [short, lambda v: v == "--body", text])),
         ("email-inbox", lambda r: r == ["email", "inbox", "-q", "is:open", "-n", "10"]),
-        ("transcript", lambda r: match(r, ["send"], [lambda v: v in {"voice/call.completed", "voice/public-call.completed"}, lambda v: v == "-d", json_object])),
+        ("transcript", lambda r: len(r) == 4 and r[0] == "send" and r[2] == "-d" and transcript_payload(r[1], r[3])),
     ],
     "gog": [
         ("cal-events", lambda r: match(r, ["cal", "events", ACCT, "-a", ACCT, "--plain"], [], ONE_WHEN)
@@ -234,23 +267,18 @@ def resolve(argv: list[str]) -> list[str]:
         script, args = rest[0], rest[1:]
         if script == "message-shitrat":
             args = [*args[:-1], NOTE_PREFIX + args[-1]]  # the text is always last
-        return ["node", str(NODE_SCRIPTS[script]), *args]
+        return [EXE["node"], str(NODE_SCRIPTS[script]), *args]
     if tool == "brain-git":
-        return ["git", "-C", str(BRAIN), *rest]
-    if tool == "joelclaw" and rest[0] == "send":
-        # Downstream can tell a transcript relayed from off Flagg from a local one.
-        data = json.loads(rest[3])
-        data["relayedBy"] = "voice-remote-gate"
-        return ["joelclaw", "send", rest[1], "-d", json.dumps(data)]
-    return [tool, *rest]
+        return [EXE["git"], "-C", str(BRAIN), *rest]
+    return [EXE[tool], *rest]
 
 
 def tool_env(argv: list[str]) -> dict[str, str]:
     env = {"HOME": str(HOME), "PATH": PATH, "LANG": "en_US.UTF-8", "USER": "joel"}
-    if argv[0] == "gog":
+    if argv[0] == EXE["gog"]:
         try:
             out = subprocess.run(
-                ["secrets", "lease", "gog_keyring_password", "--ttl", "1m"],
+                [EXE["secrets"], "lease", "gog_keyring_password", "--ttl", "1m"],
                 capture_output=True, text=True, timeout=5, env=env,
             )
             if out.returncode == 0 and out.stdout.strip():
@@ -270,18 +298,25 @@ def log(entry: dict) -> None:
         pass
 
 
-def spend_write(now: float | None = None) -> bool:
-    """Reserve one write from the per-minute budget, under a lock."""
+def budget_for(name: str) -> tuple[str, int] | None:
+    for bucket, (cap, calls) in BUDGETS.items():
+        if name in calls:
+            return bucket, cap
+    return None
+
+
+def spend(bucket: str, cap: int, now: float | None = None) -> bool:
+    """Reserve one call from a per-minute budget, under a lock."""
     now = now or time.time()
-    BUDGET.parent.mkdir(parents=True, exist_ok=True)
-    with open(BUDGET, "a+") as f:
+    BUDGET_DIR.mkdir(parents=True, exist_ok=True)
+    with open(BUDGET_DIR / f"{bucket}.json", "a+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         f.seek(0)
         try:
             recent = [t for t in json.loads(f.read() or "[]") if isinstance(t, (int, float)) and now - t < 60]
         except ValueError:
             recent = []
-        if len(recent) >= WRITE_BUDGET_PER_MIN:
+        if len(recent) >= cap:
             return False
         f.seek(0)
         f.truncate()
@@ -338,9 +373,10 @@ def main(stdin: str) -> int:
         return 126
     try:
         slot = take_slot()
-        if slot is not None and name in WRITES and not spend_write():
+        budget = budget_for(name)
+        if slot is not None and budget and not spend(*budget):
             slot.close()
-            log({"call": name, "refused": "write budget"})
+            log({"call": name, "refused": f"{budget[0]} budget"})
             sys.stderr.write("refused: too many changes in the last minute\n")
             return 126
     except OSError:

@@ -36,8 +36,15 @@ not allowed off Flagg. The tool says so and the line tells Joel.
 ## Guest setup
 
 - `VOICE_FLAGG_HOST=_voicetools@flagg` in the worker env.
-- Pin Flagg's host key in a `UserKnownHostsFile` with `StrictHostKeyChecking yes`.
-  Never trust on first use.
+- Key `~/.ssh/voice-flagg_ed25519` and Flagg's host key in
+  `~/.ssh/voice-flagg-known_hosts`. `flagg_remote.ssh_argv` pins both itself
+  (`-F none`, `IdentitiesOnly`, `StrictHostKeyChecking yes`), whatever the
+  guest's ssh config says. Never trust on first use: copy Flagg's host key
+  over a channel you already trust.
+- `relayedBy` is not stamped: transcript payloads are validated against the
+  exact event schemas instead. Per-minute caps: 10 writes, 3 chat notes.
+- The gate runs each tool by absolute path (`EXE` in the gate). If a tool
+  moves, update `EXE` and reinstall the reviewed copy.
 - Tailnet ACL (`tag:shardik-voice`): the guest reaches Flagg port 22 and the
   Rat King mailbox's one host and port, nothing else. The ACL can't name a unix
   account. What limits ssh to `_voicetools` is that the guest holds only that
