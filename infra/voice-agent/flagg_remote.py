@@ -32,10 +32,21 @@ def logical(cmd: list[str]) -> list[str]:
     return [exe, *cmd[1:]]
 
 
+KEY = Path.home() / ".ssh" / "voice-flagg_ed25519"
+KNOWN_HOSTS = Path.home() / ".ssh" / "voice-flagg-known_hosts"
+
+
 def ssh_argv(host: str) -> list[str]:
+    """Pinned: one key only, and Flagg's host key from our own known_hosts,
+    never trust on first use, whatever the guest's default ssh config says."""
     control = Path.home() / ".ssh" / "voice-flagg-%C"
     return [
-        "ssh", "-T",
+        "ssh", "-T", "-F", "none",
+        "-o", f"IdentityFile={KEY}",
+        "-o", "IdentitiesOnly=yes",
+        "-o", f"UserKnownHostsFile={KNOWN_HOSTS}",
+        "-o", "StrictHostKeyChecking=yes",
+        "-o", "GlobalKnownHostsFile=/dev/null",
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=3",
         "-o", "ControlMaster=auto",

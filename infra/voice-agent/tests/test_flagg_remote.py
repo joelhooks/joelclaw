@@ -31,7 +31,8 @@ ALLOWED = [
     ["joelclaw", "loop", "status"],
     ["joelclaw", "note", "--title", "Idea", "--body", "Sticker vending machine"],
     ["joelclaw", "email", "inbox", "-q", "is:open", "-n", "10"],
-    ["joelclaw", "send", "voice/call.completed", "-d", json.dumps({"transcript": "x" * 5000})],
+    ["joelclaw", "send", "voice/call.completed", "-d", json.dumps({"transcript": "x" * 5000, "room": "r", "timestamp": "t", "turns": 3})],
+    ["joelclaw", "send", "voice/public-call.completed", "-d", json.dumps({"transcript": "x" * 8000, "room": "r", "caller": "c", "timestamp": "t", "duration_s": 12.5, "turns": 3})],
     ["gog", "cal", "events", ACCT, "-a", ACCT, "--plain", "--today"],
     ["gog", "cal", "events", ACCT, "-a", ACCT, "--plain", "--from", "2026-10-20", "--days", "3"],
     ["gog", "cal", "create", ACCT, "-a", ACCT, "--force", "--summary", "Lunch", "--from", "2026-10-20T12:00", "--to", "2026-10-20T13:00", "--location", "Cafe"],
@@ -55,6 +56,10 @@ REFUSED = [
     ["joelclaw", "call", "ring someone"],
     ["joelclaw", "send", "system/deploy", "-d", "{}"],  # only the transcript hand-off
     ["joelclaw", "send", "voice/call.completed", "-d", "[1]"],
+    ["joelclaw", "send", "voice/call.completed", "-d", json.dumps({"transcript": "x", "room": "r", "timestamp": "t", "turns": 1, "extra": 1})],
+    ["joelclaw", "send", "voice/call.completed", "-d", json.dumps({"transcript": "x", "room": "r", "timestamp": "t", "turns": "1"})],
+    ["joelclaw", "send", "voice/call.completed", "-d", json.dumps({"transcript": "x" * 8001, "room": "r", "timestamp": "t", "turns": 1})],
+    ["joelclaw", "send", "voice/call.completed", "-d", json.dumps({"transcript": "x", "room": "r", "timestamp": "t", "turns": True})],
     ["joelclaw", "status", "--config", "/tmp/x"],  # free flags
     ["joelclaw", "search", "--output", "/tmp/x"],
     ["joelclaw", "vault", "read", "../../.ssh/id_ed25519"],
@@ -86,15 +91,15 @@ class SchemaTest(unittest.TestCase):
             logical = flagg_remote.logical(real)
             self.assertFalse(any(str(HOME) in a for a in logical[:2]), logical)  # no Flagg paths on the wire
             resolved = gate.resolve(gate._check_args(json.loads(json.dumps(logical))))
-            if real[:3] == ["joelclaw", "send", "voice/call.completed"]:
-                self.assertEqual(json.loads(resolved[4])["relayedBy"], "voice-remote-gate")
-                continue
-            if Path(real[0]).name == "node":
-                self.assertEqual(resolved[:2], ["node", MSG])
+            exe = Path(real[0]).name
+            self.assertTrue(resolved[0].startswith("/"), resolved)  # absolute: nothing on PATH can shadow it
+            self.assertEqual(resolved[0], gate.EXE[exe])
+            if exe == "node":
+                self.assertEqual(resolved[1], MSG)
                 self.assertEqual(resolved[2:-1], real[2:-1])
                 self.assertEqual(resolved[-1], gate.NOTE_PREFIX + real[-1])  # can't pose as anyone
             else:
-                self.assertEqual(resolved, real)
+                self.assertEqual(resolved[1:], real[1:])
 
     def test_refuses_outward_agentic_and_free_form_calls(self) -> None:
         for argv in REFUSED:
@@ -144,16 +149,24 @@ class GateMainTest(unittest.TestCase):
         self.assertIn("timed out", err)
 
 
-class WriteBudgetTest(unittest.TestCase):
-    def test_writes_are_capped_per_minute(self) -> None:
-        with tempfile.TemporaryDirectory() as d, patch.object(gate, "BUDGET", Path(d) / "w.json"):
-            got = [gate.spend_write(now=1000.0 + i) for i in range(gate.WRITE_BUDGET_PER_MIN + 2)]
-            self.assertEqual(sum(got), gate.WRITE_BUDGET_PER_MIN)
-            self.assertTrue(gate.spend_write(now=1000.0 + 61 + gate.WRITE_BUDGET_PER_MIN))
+class BudgetTest(unittest.TestCase):
+    def test_every_state_changing_or_outward_call_has_a_budget(self) -> None:
+        for name in ("gog cal-create", "todoist-cli add", "todoist-cli complete", "todoist-cli comment",
+                     "joelclaw note", "joelclaw transcript", "node-script message-shitrat"):
+            self.assertIsNotNone(gate.budget_for(name), name)
+        self.assertEqual(gate.budget_for("node-script message-shitrat"), ("notes", 3))
+        self.assertIsNone(gate.budget_for("joelclaw status"))
 
-    def test_main_refuses_a_write_over_budget(self) -> None:
+    def test_caps_per_minute(self) -> None:
+        with tempfile.TemporaryDirectory() as d, patch.object(gate, "BUDGET_DIR", Path(d)):
+            got = [gate.spend("notes", 3, now=1000.0 + i) for i in range(5)]
+            self.assertEqual(sum(got), 3)
+            self.assertTrue(gate.spend("notes", 3, now=1070.0))
+            self.assertTrue(gate.spend("writes", 10, now=1000.0))  # buckets are separate
+
+    def test_main_refuses_over_budget(self) -> None:
         slot = open(tempfile.mktemp(), "a")
-        with patch.object(gate, "log"), patch.object(gate, "take_slot", return_value=slot), patch.object(gate, "spend_write", return_value=False), patch.object(gate, "run") as run:
+        with patch.object(gate, "log"), patch.object(gate, "take_slot", return_value=slot), patch.object(gate, "spend", return_value=False), patch.object(gate, "run") as run:
             self.assertEqual(gate.main(json.dumps(["todoist-cli", "complete", "123"])), 126)
         run.assert_not_called()
 
@@ -162,6 +175,15 @@ class RemoteRunTest(unittest.TestCase):
     def test_local_mode_is_unchanged(self) -> None:
         with patch.dict("os.environ", {"VOICE_FLAGG_HOST": ""}):
             self.assertEqual(flagg_remote.wrap(["joelclaw", "status"]), (["joelclaw", "status"], None))
+
+    def test_ssh_pins_key_and_host_key_whatever_the_config(self) -> None:
+        argv = flagg_remote.ssh_argv("voice-tools@flagg")
+        joined = " ".join(argv)
+        self.assertIn("-F none", joined)
+        for opt in ("IdentitiesOnly=yes", "StrictHostKeyChecking=yes", f"IdentityFile={flagg_remote.KEY}",
+                    f"UserKnownHostsFile={flagg_remote.KNOWN_HOSTS}", "GlobalKnownHostsFile=/dev/null", "BatchMode=yes"):
+            self.assertIn(opt, argv)
+        self.assertNotIn("StrictHostKeyChecking=accept-new", joined)
 
     def test_remote_mode_sends_json_and_reports_unreachable(self) -> None:
         import main
