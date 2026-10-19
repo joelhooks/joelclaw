@@ -24,6 +24,7 @@ from pathlib import Path
 import yaml
 import call_tracker
 import pronounce
+import flagg_remote
 import ratking_cli
 import voice_desk
 import voice_snapshot
@@ -42,7 +43,7 @@ CONFIG_PATH = Path(
     os.environ.get("JOELCLAW_VOICE_CONFIG", str(DEFAULT_CONFIG_PATH))
 ).expanduser()
 SOUL_DIR = Path.home() / ".agents"
-TODOIST_CLI = "/Users/joel/bin/todoist-cli"
+TODOIST_CLI = "todoist-cli"  # on PATH via ~/.local/bin; the old ~/bin path is gone
 MUSTER_DIGEST = Path.home() / "Code" / "joelhooks" / "pi-muster" / "bin" / "muster-digest.ts"
 MESSAGE_SHITRAT = Path.home() / "Code" / "joelhooks" / "dark-wizard" / "scripts" / "message-shitrat.mjs"
 ALLOWED_CALLERS_ENV = "JOELCLAW_VOICE_ALLOWED_CALLERS"
@@ -298,13 +299,23 @@ def _speak_cover() -> None:
         pass
 
 
+FLAGG_UNREACHABLE = "Command failed: Flagg isn't reachable right now, so this tool is down. Say so plainly."
+
+
 def _run(cmd: list[str], timeout: int = 30) -> str:
     _speak_cover()
-    """Run a shell command and return stdout. Swallows errors gracefully for voice."""
+    """Run a shell command and return stdout. Swallows errors gracefully for voice.
+    When the worker runs off Flagg, the call goes to Flagg's gate (flagg_remote)."""
+    argv, stdin = flagg_remote.wrap(cmd)
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, env=_tool_env()
+            # Remote: one ssh round trip on top; the gate gives up at 25 s itself.
+            argv, input=stdin, capture_output=True, text=True,
+            timeout=timeout if stdin is None else max(timeout, 10),
+            env=os.environ.copy() if stdin is not None else _tool_env(),
         )
+        if stdin is not None and result.returncode == 255:
+            return FLAGG_UNREACHABLE
         if result.returncode != 0:
             return f"Command failed: {result.stderr.strip()[:200]}"
         return result.stdout.strip()[:2000]  # cap output for LLM context
@@ -1529,10 +1540,8 @@ def _brain_show(rel_path: str) -> str | None:
     Workers draft in the working tree; only reviewed-and-committed content may
     reach a caller. Empty repo / missing file / git failure all return None."""
     try:
-        out = subprocess.run(
-            ["git", "-C", str(SHITRAT_BRAIN_DIR), "show", f"HEAD:{rel_path}"],
-            capture_output=True, text=True, timeout=2,
-        )
+        argv, stdin = flagg_remote.wrap(["git", "-C", str(SHITRAT_BRAIN_DIR), "show", f"HEAD:{rel_path}"])
+        out = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=2 if stdin is None else 5)
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()
     except Exception:
@@ -1572,10 +1581,8 @@ def _read_wiki_page(slug: str) -> str:
 
 def _list_wiki_slugs() -> list[str]:
     try:
-        out = subprocess.run(
-            ["git", "-C", str(SHITRAT_BRAIN_DIR), "ls-tree", "-r", "--name-only", "HEAD", "pages/"],
-            capture_output=True, text=True, timeout=2,
-        )
+        argv, stdin = flagg_remote.wrap(["git", "-C", str(SHITRAT_BRAIN_DIR), "ls-tree", "-r", "--name-only", "HEAD", "pages/"])
+        out = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=2 if stdin is None else 5)
         return [p[len("pages/"):-len(".svx")] for p in out.stdout.split() if p.endswith(".svx")]
     except Exception:
         return []
