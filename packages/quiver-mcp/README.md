@@ -6,8 +6,8 @@ Loopback MCP server that puts [QuiverAI](https://docs.quiver.ai) SVG generation 
 
 | Tool | What it does | Spends credits |
 | --- | --- | --- |
-| `quiver_models` | List models this key can use, with operations and credit prices | no |
-| `quiver_generate_svg` | Text prompt to one or more SVGs (`arrow-1.1` default, `arrow-1.1-max` for dense diagrams) | yes |
+| `quiver_models` | List models this key can use, with operations and prices (Arrow 2 is token-billed, so its `pricingCredits` is empty) | no |
+| `quiver_generate_svg` | Text prompt to one or more SVGs (`arrow-2` default, `arrow-2-telos` for dense diagrams; Arrow 1.x retired 2026-10-16) | yes |
 | `quiver_vectorize_image` | Raster image (URL or local path) to SVG (`arrow-2` default, `arrow-2-telos` for detail) | yes |
 
 Outputs are written to `~/.joelclaw/quiver-out/<stamp>-<slug>[-n].svg` and the paths are returned. SVG markup is also returned inline when the total is under 64 KB.
