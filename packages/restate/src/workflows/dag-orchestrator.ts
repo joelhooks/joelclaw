@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,7 +29,7 @@ const PI_PATH_DIRS = [
 
 // --- Types ---
 
-export type DagHandler = "noop" | "shell" | "http" | "infer" | "microvm" | "recall";
+export type DagHandler = "noop" | "shell" | "http" | "infer" | "microvm" | "recall" | "parallel";
 
 export interface DagNodeInput {
   id: string;
@@ -108,7 +109,7 @@ const normalizeNode = (node: DagNodeInput): DagNodeNormalized => {
   if (!task) throw new Error(`DAG node ${id} requires a non-empty task`);
 
   const handler = node.handler ?? "noop";
-  const validHandlers: DagHandler[] = ["noop", "shell", "http", "infer", "microvm", "recall"];
+  const validHandlers: DagHandler[] = ["noop", "shell", "http", "infer", "microvm", "recall", "parallel"];
   if (!validHandlers.includes(handler)) {
     throw new Error(`DAG node ${id} has invalid handler: ${handler}`);
   }
@@ -121,7 +122,7 @@ const normalizeNode = (node: DagNodeInput): DagNodeNormalized => {
   return { id, task, dependsOn, handler, config: node.config ?? {}, simulatedMs };
 };
 
-const validateAndNormalize = (nodes: DagNodeInput[]): DagNodeNormalized[] => {
+export const validateAndNormalize = (nodes: DagNodeInput[]): DagNodeNormalized[] => {
   if (!Array.isArray(nodes) || nodes.length === 0) {
     throw new Error("DAG requires at least one node");
   }
@@ -546,6 +547,17 @@ export const dagWorker = restate.service({
       try {
         output = await ctx.run("execute-task", async () => {
           switch (input.handler) {
+            case "parallel": {
+              const { executeParallel } = await import("../parallel-search");
+              return executeParallel(
+                resolvedConfig,
+                handlerTimeoutMs,
+                ctx.request().attemptCompletedSignal,
+                input.workflowId
+                  ? createHash("sha256").update(input.workflowId).digest("hex")
+                  : undefined,
+              );
+            }
             case "shell":
               return executeShell(resolvedConfig, depEnv, handlerTimeoutMs);
             case "recall":
