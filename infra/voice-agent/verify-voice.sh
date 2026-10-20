@@ -101,7 +101,10 @@ from voice_recall import MEMORY_DOWN, NOTHING_DISTILLED, run_recall_work
 # This is an index/tool health check, not an unverified-caller privacy check.
 # The observation index may legitimately contain only sensitive recent hits;
 # verified Joel recall must still prove the tool can read a non-empty index.
-result = run_recall_work("*", days=7, caller_verified=True)
+# Observation distillation stopped on 2026-10-11 by design, so a 7-day window
+# reports NOTHING_DISTILLED forever; use the widest window (365d) to prove the
+# index is readable and non-empty rather than freshly written.
+result = run_recall_work("*", days=365, caller_verified=True)
 if result in {MEMORY_DOWN, NOTHING_DISTILLED}:
     raise SystemExit(1)
 print(result)
