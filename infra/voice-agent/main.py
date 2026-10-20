@@ -2410,6 +2410,10 @@ if __name__ == "__main__":
         entrypoint_fnc=entrypoint,
         prewarm_fnc=prewarm,   # VAD loads at process spawn, not on the caller's clock
         num_idle_processes=1,  # keep a warm process ready for instant pickup
+        # livekit's default 10s init timeout kills the warm process when flagg
+        # is loaded (inits ran 8s+ at load ~27), so it never warms and every
+        # call waits on a cold spawn: an init crash loop (2026-10-20).
+        initialize_process_timeout=60.0,
         port=0,                # ephemeral health port — an orphaned worker squatting a
                                # fixed port crash-looped every launchd respawn (2026-07-12)
         # NEVER shed load: the prod default (0.7 CPU) marked the worker
