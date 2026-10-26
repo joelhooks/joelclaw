@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import flagg_remote
 import voice_remote_gate as gate
 
+# Flagg path fixtures for argv translation only; real filesystem work uses temp dirs.
 HOME = Path("/Users/joel")
 CODE = HOME / "Code" / "joelhooks"
 ACCT = "joelhooks@gmail.com"
@@ -137,13 +138,24 @@ class GateMainTest(unittest.TestCase):
     def test_log_names_the_call_never_its_arguments(self) -> None:
         entries = []
         slot = open(tempfile.mktemp(), "a")
-        with patch.object(gate, "log", entries.append), patch.object(gate, "take_slot", return_value=slot), patch.object(gate, "run", return_value=(0, "", "")):
-            gate.main(json.dumps(["todoist-cli", "add", "secret birthday gift", "--labels", "voice"]))
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.object(gate, "BUDGET_DIR", Path(d)),
+            patch.object(gate, "log", entries.append),
+            patch.object(gate, "take_slot", return_value=slot),
+            patch.object(gate, "run", return_value=(0, "", "")),
+        ):
+            self.assertEqual(gate.main(json.dumps(["todoist-cli", "add", "secret birthday gift", "--labels", "voice"])), 0)
         self.assertEqual(entries[0]["call"], "todoist-cli add")
         self.assertNotIn("secret", json.dumps(entries))
 
     def test_timeout_kills_the_process_group(self) -> None:
-        with patch.object(gate, "TIMEOUT_S", 0.5), patch.object(gate, "tool_env", return_value={"PATH": "/bin:/usr/bin"}):
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.object(gate, "HOME", Path(d)),
+            patch.object(gate, "TIMEOUT_S", 0.5),
+            patch.object(gate, "tool_env", return_value={"PATH": "/bin:/usr/bin"}),
+        ):
             code, _, err = gate.run(["/bin/sh", "-c", "sleep 30 & sleep 30"])
         self.assertEqual(code, 124)
         self.assertIn("timed out", err)
