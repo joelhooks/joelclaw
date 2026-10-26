@@ -88,7 +88,7 @@ class GuestSessionTest(unittest.TestCase):
         session = MagicMock()
         session.start = AsyncMock()
         session.say = MagicMock(side_effect=lambda *a, **k: asyncio.sleep(0))
-        verdict = SimpleNamespace(category=main.AMDCategory(category))
+        verdict = SimpleNamespace(category=main.AMDCategory(category), reason="r", delay=0.5, speech_duration=1.0)
         detector = MagicMock()
         detector.execute = AsyncMock(return_value=verdict)
         amd = MagicMock()
@@ -100,7 +100,8 @@ class GuestSessionTest(unittest.TestCase):
              patch.multiple(main, build_tts=MagicMock(), build_llm=MagicMock(), _vad_for=MagicMock(),
                             _interruption_kwargs=MagicMock(return_value={}), _room_input_options=MagicMock()), \
              patch.object(main.deepgram, "STT", MagicMock()), \
-             patch.object(main, "call_tracker", MagicMock()):
+             patch.object(main, "call_tracker", MagicMock()), \
+             patch.object(main, "GUEST_UNCERTAIN_WAIT_S", 0.01):
             asyncio.run(main._run_guest_outbound_session(ctx, {}, spec))
         return session, ctx
 
@@ -116,6 +117,16 @@ class GuestSessionTest(unittest.TestCase):
             session.say.assert_not_called()
             session.generate_reply.assert_not_called()
             ctx.delete_room.assert_awaited()
+
+
+class GuestUncertainTest(unittest.TestCase):
+    _run = GuestSessionTest._run
+
+    def test_uncertain_with_no_words_after_the_opener_hangs_up(self) -> None:
+        session, ctx = self._run("uncertain")
+        self.assertEqual([c.args[0] for c in session.say.call_args_list], [OPENER])
+        session.generate_reply.assert_not_called()
+        ctx.delete_room.assert_awaited()
 
 
 def _ctx(room: str, attributes: dict) -> SimpleNamespace:
