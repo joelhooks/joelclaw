@@ -1975,6 +1975,7 @@ GUEST_TOPICS_DIR = Path(__file__).parent / "guest-topics"
 GUEST_OUTBOUND_TOOLS = {"current_time", "end_call"}
 GUEST_END_CALL_DELAY_S = 3.0
 GUEST_UNCERTAIN_WAIT_S = 8.0
+GUEST_NO_SPEECH_S = 3.0
 _TOPIC_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789-")
 
 
@@ -2121,6 +2122,9 @@ async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
         async with AMD(
             session, llm=None, stt=None, ivr_detection=False,
             participant_identity="guest", suppress_compatibility_warning=True,
+            # A person who answers an unknown number often waits for the caller to talk:
+            # give them the opener after a short silence, not the library's 10 s.
+            detection_options={"no_speech_threshold": GUEST_NO_SPEECH_S},
         ) as detector:
             verdict = await detector.execute()
         category = verdict.category.value
@@ -2132,6 +2136,9 @@ async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
         logger.warning("Guest AMD failed (%s); treating as uncertain", type(e).__name__)
         category = "uncertain"
         amd_note.update(category=category, reason=f"amd failed: {type(e).__name__}")
+    if closed.is_set():
+        logger.info("Guest outbound: call ended before a verdict room=%s", ctx.room.name)
+        return
     action, text = guest_greeting_plan(category, spec)
     logger.info("Guest outbound action=%s room=%s", action, ctx.room.name)
     if action == "hangup":
