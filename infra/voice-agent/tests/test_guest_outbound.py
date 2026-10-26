@@ -84,13 +84,21 @@ class GuestGreetingTest(unittest.TestCase):
 
 
 class GuestSessionTest(unittest.TestCase):
-    def _run(self, category: str, spec: dict = SPEC):
+    def _run(self, category: str, spec: dict = SPEC, hang_up_first: bool = False):
         session = MagicMock()
         session.start = AsyncMock()
         session.say = MagicMock(side_effect=lambda *a, **k: asyncio.sleep(0))
+        handlers = {}
+        session.on = lambda name: (lambda fn: handlers.setdefault(name, fn))
         verdict = SimpleNamespace(category=main.AMDCategory(category), reason="r", delay=0.5, speech_duration=1.0)
+
+        async def execute():
+            if hang_up_first:
+                handlers["close"]()
+            return verdict
+
         detector = MagicMock()
-        detector.execute = AsyncMock(return_value=verdict)
+        detector.execute = execute
         amd = MagicMock()
         amd.return_value.__aenter__ = AsyncMock(return_value=detector)
         amd.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -103,6 +111,7 @@ class GuestSessionTest(unittest.TestCase):
              patch.object(main, "call_tracker", MagicMock()), \
              patch.object(main, "GUEST_UNCERTAIN_WAIT_S", 0.01):
             asyncio.run(main._run_guest_outbound_session(ctx, {}, spec))
+        self.amd = amd
         return session, ctx
 
     def test_voicemail_gets_only_the_approved_line_then_hangs_up(self) -> None:
@@ -127,6 +136,21 @@ class GuestUncertainTest(unittest.TestCase):
         self.assertEqual([c.args[0] for c in session.say.call_args_list], [OPENER])
         session.generate_reply.assert_not_called()
         ctx.delete_room.assert_awaited()
+
+
+class GuestSilentPickupTest(unittest.TestCase):
+    _run = GuestSessionTest._run
+
+    def test_amd_waits_only_a_short_silence(self) -> None:
+        self._run("machine-ivr")
+        self.assertEqual(self.amd.call_args.kwargs["detection_options"], {"no_speech_threshold": main.GUEST_NO_SPEECH_S})
+        self.assertLessEqual(main.GUEST_NO_SPEECH_S, 3.0)
+
+    def test_call_closed_before_a_verdict_does_nothing(self) -> None:
+        with patch.object(main, "_save_guest_transcript"):
+            session, ctx = self._run("human", hang_up_first=True)
+        session.say.assert_not_called()
+        session.generate_reply.assert_not_called()
 
 
 def _ctx(room: str, attributes: dict) -> SimpleNamespace:
