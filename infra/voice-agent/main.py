@@ -1942,7 +1942,7 @@ async def _run_guest_session(ctx, cfg: dict, caller: str) -> None:
     ctx.shutdown(reason="guest session cap")
 
 
-def _save_guest_transcript(session: AgentSession, room_name: str, caller: str) -> None:
+def _save_guest_transcript(session: AgentSession, room_name: str, caller: str, amd: dict | None = None) -> None:
     """Save guest transcript to a quarantined dir. Deliberately NO Inngest event —
     untrusted caller words must never flow into the observation/memory pipeline."""
     try:
@@ -1955,7 +1955,9 @@ def _save_guest_transcript(session: AgentSession, room_name: str, caller: str) -
         filepath = guest_dir / f"{timestamp}.md"
         filepath.write_text(
             f"---\ntype: voice-call-guest\ncaller: {caller}\ndate: {datetime.now().isoformat()}\n"
-            f"room: {room_name}\nuntrusted: true\n---\n\n"
+            f"room: {room_name}\nuntrusted: true\n"
+            + (f"amd: {amd.get('category')}\namd_reason: {json.dumps(str(amd.get('reason', ''))[:300])}\n" if amd else "")
+            + "---\n\n"
             f"# Guest Call — {caller} — {timestamp}\n\n" + "\n\n".join(lines) + "\n"
         )
         logger.info("Guest transcript saved: %s (%d turns, no event fired)", filepath, len(lines))
@@ -1972,6 +1974,7 @@ GUEST_OUTBOUND_ROOM_PREFIX = "call-outbound-guest-"
 GUEST_TOPICS_DIR = Path(__file__).parent / "guest-topics"
 GUEST_OUTBOUND_TOOLS = {"current_time", "end_call"}
 GUEST_END_CALL_DELAY_S = 3.0
+GUEST_UNCERTAIN_WAIT_S = 8.0
 _TOPIC_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789-")
 
 
@@ -2057,10 +2060,13 @@ class GuestOutboundAgent(Agent):
         # Silent until the approved opener has played: no auto-reply to "Hello?"
         # or to a voicemail greeting while detection runs.
         self.opened = False
+        # Set by the first caller turn after the opener: proof a person is there.
+        self.heard = asyncio.Event()
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         if not self.opened:
             raise StopResponse()
+        self.heard.set()
 
     @function_tool
     async def current_time(self) -> str:
@@ -2101,12 +2107,14 @@ async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
     heartbeat_task = call_tracker.start_heartbeat(ctx.room.name)
     closed = asyncio.Event()
 
+    amd_note: dict = {}
+
     @session.on("close")
     def on_close(*args, **kwargs):
         closed.set()
         heartbeat_task.cancel()
         call_tracker.track_session_end(ctx.room.name, "disconnect")
-        _save_guest_transcript(session, ctx.room.name, who)
+        _save_guest_transcript(session, ctx.room.name, who, amd_note)
 
     # Person or recording? The session's own STT and LLM classify the greeting.
     try:
@@ -2114,12 +2122,18 @@ async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
             session, llm=None, stt=None, ivr_detection=False,
             participant_identity="guest", suppress_compatibility_warning=True,
         ) as detector:
-            category = (await detector.execute()).category.value
+            verdict = await detector.execute()
+        category = verdict.category.value
+        amd_note.update(category=category, reason=verdict.reason)
+        # The reason is model text that can quote the greeting: transcript only, never the log.
+        logger.info("Guest outbound AMD verdict=%s delay=%.2fs speech=%.2fs room=%s",
+                    category, verdict.delay, verdict.speech_duration, ctx.room.name)
     except Exception as e:
         logger.warning("Guest AMD failed (%s); treating as uncertain", type(e).__name__)
         category = "uncertain"
+        amd_note.update(category=category, reason=f"amd failed: {type(e).__name__}")
     action, text = guest_greeting_plan(category, spec)
-    logger.info("Guest outbound AMD=%s action=%s room=%s", category, action, ctx.room.name)
+    logger.info("Guest outbound action=%s room=%s", action, ctx.room.name)
     if action == "hangup":
         _hang_up()
         return
@@ -2130,6 +2144,16 @@ async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
         await asyncio.sleep(1.0)
         _hang_up()
         return
+    if category == "uncertain":
+        # Could be a recording AMD misread: no human words soon after the opener, hang up.
+        await handle
+        try:
+            await asyncio.wait_for(agent.heard.wait(), timeout=GUEST_UNCERTAIN_WAIT_S)
+        except asyncio.TimeoutError:
+            logger.info("Guest outbound: no caller words %.0fs after the opener; hanging up room=%s",
+                        GUEST_UNCERTAIN_WAIT_S, ctx.room.name)
+            _hang_up()
+            return
     try:
         await asyncio.wait_for(closed.wait(), timeout=GUEST_MAX_SECONDS)
         return
