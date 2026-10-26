@@ -30,7 +30,8 @@ import voice_desk
 import voice_snapshot
 from voice_recall import run_recall_work
 from livekit import rtc
-from livekit.agents import Agent, AgentSession, RoomInputOptions, WorkerOptions, cli, function_tool
+from livekit.agents import Agent, AgentSession, RoomInputOptions, StopResponse, WorkerOptions, cli, function_tool
+from livekit.agents.voice.amd import AMD, AMDCategory
 from livekit.plugins import deepgram, elevenlabs, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.english import EnglishModel
 
@@ -1991,6 +1992,7 @@ def guest_call_spec(attributes: dict, topics_dir: Path = GUEST_TOPICS_DIR) -> di
     name = str(attributes.get("guest_name", "")).strip()[:40]
     topic = str(attributes.get("guest_topic", "")).strip()
     opener = str(attributes.get("guest_opener", "")).strip()[:400]
+    voicemail = str(attributes.get("guest_voicemail", "")).strip()[:400]
     if not name or not opener or not topic or len(topic) > 40 or not set(topic) <= _TOPIC_CHARS:
         return None
     try:
@@ -1999,7 +2001,18 @@ def guest_call_spec(attributes: dict, topics_dir: Path = GUEST_TOPICS_DIR) -> di
         return None
     if not brief:
         return None
-    return {"name": name, "topic": topic, "opener": opener, "brief": brief}
+    return {"name": name, "topic": topic, "opener": opener, "voicemail": voicemail, "brief": brief}
+
+
+def guest_greeting_plan(category: str, spec: dict) -> tuple[str, str]:
+    """What to say once answering-machine detection settles. Only approved text is ever
+    spoken unprompted: the opener to a person, or the voicemail line to a recording.
+    A recording with no approved line, a phone menu or a full mailbox gets silence."""
+    if category in ("human", "uncertain"):
+        return ("opener", spec["opener"])
+    if category == "machine-vm" and spec.get("voicemail"):
+        return ("voicemail", spec["voicemail"])
+    return ("hangup", "")
 
 
 def _guest_public_context() -> str:
@@ -2041,6 +2054,13 @@ class GuestOutboundAgent(Agent):
     def __init__(self, instructions: str) -> None:
         super().__init__(instructions=instructions)
         self.hang_up = lambda: None
+        # Silent until the approved opener has played: no auto-reply to "Hello?"
+        # or to a voicemail greeting while detection runs.
+        self.opened = False
+
+    async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+        if not self.opened:
+            raise StopResponse()
 
     @function_tool
     async def current_time(self) -> str:
@@ -2059,7 +2079,7 @@ class GuestOutboundAgent(Agent):
 async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
     """Guest outbound call: the exact approved opener, then the topic. Ten-minute cap.
     The transcript goes to the quarantined guests dir with no event; the number is never logged."""
-    logger.info("Guest outbound session starting — room=%s guest=%s topic=%s", ctx.room.name, spec["name"], spec["topic"])
+    logger.info("Guest outbound session starting — room=%s topic=%s", ctx.room.name, spec["topic"])
     tts_instance = build_tts(cfg)
     session = AgentSession(
         stt=deepgram.STT(), llm=build_llm(cfg), tts=tts_instance,
@@ -2079,15 +2099,42 @@ async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
     who = f"outbound guest {spec['name']}"
     call_tracker.track_session_start(ctx.room.name, "guest-outbound", who)
     heartbeat_task = call_tracker.start_heartbeat(ctx.room.name)
+    closed = asyncio.Event()
 
     @session.on("close")
     def on_close(*args, **kwargs):
+        closed.set()
         heartbeat_task.cancel()
         call_tracker.track_session_end(ctx.room.name, "disconnect")
         _save_guest_transcript(session, ctx.room.name, who)
 
-    session.say(spec["opener"])
-    await asyncio.sleep(GUEST_MAX_SECONDS)
+    # Person or recording? The session's own STT and LLM classify the greeting.
+    try:
+        async with AMD(
+            session, llm=None, stt=None, ivr_detection=False,
+            participant_identity="guest", suppress_compatibility_warning=True,
+        ) as detector:
+            category = (await detector.execute()).category.value
+    except Exception as e:
+        logger.warning("Guest AMD failed (%s); treating as uncertain", type(e).__name__)
+        category = "uncertain"
+    action, text = guest_greeting_plan(category, spec)
+    logger.info("Guest outbound AMD=%s action=%s room=%s", category, action, ctx.room.name)
+    if action == "hangup":
+        _hang_up()
+        return
+    agent.opened = True
+    handle = session.say(text, allow_interruptions=action == "opener")
+    if action == "voicemail":
+        await handle
+        await asyncio.sleep(1.0)
+        _hang_up()
+        return
+    try:
+        await asyncio.wait_for(closed.wait(), timeout=GUEST_MAX_SECONDS)
+        return
+    except asyncio.TimeoutError:
+        pass
     try:
         session.generate_reply(user_input="Time's up. Thank them and say goodbye in one sentence.")
         await asyncio.sleep(8)

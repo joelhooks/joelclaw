@@ -63,6 +63,61 @@ class GuestAgentTest(unittest.TestCase):
             self.assertNotIn(joel_only, text)
 
 
+SPEC = {"name": "Sam", "topic": "ratstack", "opener": OPENER, "voicemail": "VM-LINE", "brief": "b"}
+
+
+class GuestGreetingTest(unittest.TestCase):
+    def test_only_approved_text_is_spoken_first(self) -> None:
+        self.assertEqual(main.guest_greeting_plan("human", SPEC), ("opener", OPENER))
+        self.assertEqual(main.guest_greeting_plan("uncertain", SPEC), ("opener", OPENER))
+        self.assertEqual(main.guest_greeting_plan("machine-vm", SPEC), ("voicemail", "VM-LINE"))
+        self.assertEqual(main.guest_greeting_plan("machine-vm", {**SPEC, "voicemail": ""}), ("hangup", ""))
+        self.assertEqual(main.guest_greeting_plan("machine-ivr", SPEC), ("hangup", ""))
+        self.assertEqual(main.guest_greeting_plan("machine-unavailable", SPEC), ("hangup", ""))
+
+    def test_agent_is_silent_until_the_opener(self) -> None:
+        agent = main.GuestOutboundAgent(instructions="x")
+        with self.assertRaises(main.StopResponse):
+            asyncio.run(agent.on_user_turn_completed(None, None))
+        agent.opened = True
+        self.assertIsNone(asyncio.run(agent.on_user_turn_completed(None, None)))
+
+
+class GuestSessionTest(unittest.TestCase):
+    def _run(self, category: str, spec: dict = SPEC):
+        session = MagicMock()
+        session.start = AsyncMock()
+        session.say = MagicMock(side_effect=lambda *a, **k: asyncio.sleep(0))
+        verdict = SimpleNamespace(category=main.AMDCategory(category))
+        detector = MagicMock()
+        detector.execute = AsyncMock(return_value=verdict)
+        amd = MagicMock()
+        amd.return_value.__aenter__ = AsyncMock(return_value=detector)
+        amd.return_value.__aexit__ = AsyncMock(return_value=False)
+        ctx = SimpleNamespace(room=SimpleNamespace(name=ROOM), delete_room=AsyncMock(), shutdown=MagicMock())
+        with patch.object(main, "AgentSession", return_value=session), \
+             patch.object(main, "AMD", amd), \
+             patch.multiple(main, build_tts=MagicMock(), build_llm=MagicMock(), _vad_for=MagicMock(),
+                            _interruption_kwargs=MagicMock(return_value={}), _room_input_options=MagicMock()), \
+             patch.object(main.deepgram, "STT", MagicMock()), \
+             patch.object(main, "call_tracker", MagicMock()):
+            asyncio.run(main._run_guest_outbound_session(ctx, {}, spec))
+        return session, ctx
+
+    def test_voicemail_gets_only_the_approved_line_then_hangs_up(self) -> None:
+        session, ctx = self._run("machine-vm")
+        self.assertEqual([c.args[0] for c in session.say.call_args_list], ["VM-LINE"])
+        session.generate_reply.assert_not_called()
+        ctx.delete_room.assert_awaited()
+
+    def test_menu_or_no_line_hangs_up_silently(self) -> None:
+        for category, spec in (("machine-ivr", SPEC), ("machine-vm", {**SPEC, "voicemail": ""})):
+            session, ctx = self._run(category, spec)
+            session.say.assert_not_called()
+            session.generate_reply.assert_not_called()
+            ctx.delete_room.assert_awaited()
+
+
 def _ctx(room: str, attributes: dict) -> SimpleNamespace:
     participant = SimpleNamespace(attributes=attributes, kind=rtc.ParticipantKind.PARTICIPANT_KIND_SIP)
     return SimpleNamespace(
