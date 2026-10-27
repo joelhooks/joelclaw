@@ -509,7 +509,7 @@ class JoelclawVoiceAgent(Agent):
         self.actions: list[dict] = []
         self._decided: dict[tuple[str, str], str] = {}
         self._sent: dict[tuple[str, str], str] = {}
-        self._tool_requests: set[tuple[str, ...]] = set()
+        self._tool_requests: dict[tuple[str, ...], str] = {}
         self._pronounce = pronounce.load()
         # Set by the entrypoint once the call is up.
         self.room = ""
@@ -712,17 +712,33 @@ class JoelclawVoiceAgent(Agent):
         key = (tool, *(" ".join(arg.split()) for arg in args))
         if key in self._tool_requests:
             return False
-        self._tool_requests.add(key)
+        self._tool_requests[key] = "uncertain"
         return True
 
+    def _tool_repeat_message(self, tool: str, *args: str) -> str:
+        key = (tool, *(" ".join(arg.split()) for arg in args))
+        noun, verb = {
+            "call_joel": ("call", "dialling again"),
+            "text_joel": ("text", "sending again"),
+            "slack_reply": ("Slack reply", "sending again"),
+            "create_calendar_event": ("calendar event", "creating it again"),
+        }[tool]
+        if self._tool_requests[key] == "uncertain":
+            return f"That {noun} may have gone through; not {verb}."
+        return f"Already attempted that {noun} on this call. Not {verb}."
+
     def _release_tool_request(self, tool: str, *args: str) -> None:
-        self._tool_requests.discard((tool, *(" ".join(arg.split()) for arg in args)))
+        self._tool_requests.pop((tool, *(" ".join(arg.split()) for arg in args)), None)
 
     def _settle_tool_output(self, out: str, tool: str, *args: str) -> None:
         # _run returns timeouts as text, not exceptions. Delivery is still
         # uncertain, so retain that reservation just as for a raised timeout.
-        if out.startswith(("FAILED", "Error", "Command")) and "timeout" not in out.casefold() and "timed out" not in out.casefold():
+        if "timeout" in out.casefold() or "timed out" in out.casefold():
+            return
+        if out.startswith(("FAILED", "Error", "Command")):
             self._release_tool_request(tool, *args)
+        else:
+            self._tool_requests[(tool, *(" ".join(arg.split()) for arg in args))] = "done"
 
     @function_tool(on_duplicate="reject", duplicate_scope="name_and_args")
     async def text_joel(self, message: str, link: str = "") -> str:
@@ -733,7 +749,7 @@ class JoelclawVoiceAgent(Agent):
         if refused := self._hands_refused():
             return refused
         if not self._reserve_tool_request("text_joel", message, link):
-            return "Already attempted that text on this call. Not sending twice."
+            return self._tool_repeat_message("text_joel", message, link)
         cmd = [ratking_cli._node(), str(MESSAGE_SHITRAT), "--kind", "link" if link else "update"]
         if link:
             cmd += ["--link", link]
@@ -868,7 +884,7 @@ class JoelclawVoiceAgent(Agent):
         if locked := self._locked("create_calendar_event"):
             return locked
         if not self._reserve_tool_request("create_calendar_event", title, start, end, description, location, attendees):
-            return "Already attempted that calendar event on this call. Not creating it twice."
+            return self._tool_repeat_message("create_calendar_event", title, start, end, description, location, attendees)
         cmd = [
             "gog", "cal", "create", "joelhooks@gmail.com",
             "-a", "joelhooks@gmail.com", "--force",
@@ -1291,7 +1307,7 @@ class JoelclawVoiceAgent(Agent):
         except (ValueError, IndexError):
             return "Run slack_search first, then pass one of its result numbers."
         if not self._reserve_tool_request("slack_reply", hit["channel_id"], hit["ts"], message):
-            return "Already attempted that Slack reply on this call. Not sending twice."
+            return self._tool_repeat_message("slack_reply", hit["channel_id"], hit["ts"], message)
         data = await asyncio.to_thread(_slack_api, "chat.postMessage", {
             "channel": hit["channel_id"], "thread_ts": hit["ts"],
             "text": message, "as_user": "true",
@@ -1299,6 +1315,7 @@ class JoelclawVoiceAgent(Agent):
         if not data.get("ok"):
             self._release_tool_request("slack_reply", hit["channel_id"], hit["ts"], message)
             return f"Reply failed: {data.get('error')}"
+        self._settle_tool_output("", "slack_reply", hit["channel_id"], hit["ts"], message)
         return f"Sent as Joel to #{hit['channel_name']}."
 
     # --- Long-term memory recall (Typesense via joelclaw CLI) ---
@@ -1344,7 +1361,7 @@ class JoelclawVoiceAgent(Agent):
         if locked := self._locked("call_joel"):
             return locked
         if not self._reserve_tool_request("call_joel", message):
-            return "Already attempted that phone call. Not dialling twice."
+            return self._tool_repeat_message("call_joel", message)
         out = await asyncio.to_thread(
             _run, ["joelclaw", "call", message], 60
         )
@@ -2107,9 +2124,9 @@ def is_real_turn(text: str) -> bool:
 def looks_like_greeting(duration_s: float, text: str, interrupted: bool) -> bool:
     """Conservative late-voicemail check: a long barge-in with no question back."""
     words = _turn_words(text)
-    question = "?" in text or any(word in {"who", "what", "when", "where", "why", "how"} for word in words)
-    question = question or bool(re.search(
-        r"\b(?:can|could|would|will|do|did|are|have) you\b|\bis (?:this|that)\b",
+    question = "?" in text or bool(re.match(
+        r"^(?:(?:hi|hey|hello|yeah|sorry)\s+)?"
+        r"(?:who|what|when|where|why|how|(?:can|could|would|do|are) you|is this)\b",
         " ".join(words),
     ))
     return interrupted and (duration_s > 4.0 or len(words) > 12) and not question

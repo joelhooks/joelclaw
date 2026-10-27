@@ -50,7 +50,7 @@ class ToolRepeatGuardsTest(unittest.IsolatedAsyncioTestCase):
                 first = asyncio.create_task(tool(*args))
                 await entered.wait()
                 duplicate = await tool(*args)
-                self.assertIn("Already attempted", duplicate)
+                self.assertIn("may have gone through", duplicate)
                 release.set()
                 await first
                 action.assert_awaited_once()
@@ -61,7 +61,13 @@ class ToolRepeatGuardsTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(tool=tool.__name__), patch.object(main.asyncio, "to_thread", AsyncMock(side_effect=TimeoutError)) as action:
                 with self.assertRaises(TimeoutError):
                     await tool(*args)
-                self.assertIn("Already attempted", await tool(*args))
+                expected = {
+                    "call_joel": "That call may have gone through; not dialling again.",
+                    "text_joel": "That text may have gone through; not sending again.",
+                    "create_calendar_event": "That calendar event may have gone through; not creating it again.",
+                    "slack_reply": "That Slack reply may have gone through; not sending again.",
+                }[tool.__name__]
+                self.assertEqual(await tool(*args), expected)
                 action.assert_awaited_once()
 
     async def test_definite_failure_allows_identical_retry(self):
@@ -99,7 +105,12 @@ class ToolRepeatGuardsTest(unittest.IsolatedAsyncioTestCase):
                     main.asyncio, "to_thread", AsyncMock(return_value=result)
                 ) as action:
                     await tool(*args)
-                    self.assertIn("Already attempted", await tool(*args))
+                    expected = {
+                        "call_joel": "That call may have gone through; not dialling again.",
+                        "text_joel": "That text may have gone through; not sending again.",
+                        "create_calendar_event": "That calendar event may have gone through; not creating it again.",
+                    }[tool.__name__]
+                    self.assertEqual(await tool(*args), expected)
                     action.assert_awaited_once()
 
     async def test_exception_and_cancellation_keep_all_reservations(self):
@@ -111,7 +122,7 @@ class ToolRepeatGuardsTest(unittest.IsolatedAsyncioTestCase):
                 ) as action:
                     with self.assertRaises(error):
                         await tool(*args)
-                    self.assertIn("Already attempted", await tool(*args))
+                    self.assertIn("may have gone through", await tool(*args))
                     action.assert_awaited_once()
 
     async def test_different_requests_and_new_calls_still_act(self):

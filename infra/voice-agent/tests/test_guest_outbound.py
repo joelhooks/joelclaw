@@ -161,7 +161,10 @@ class GuestUncertainTest(unittest.TestCase):
 
     def test_late_voicemail_barge_in_gets_no_generated_reply(self) -> None:
         for text, duration in (("You have reached Sam please leave a message after the tone thank you goodbye", 2.0),
-                               ("Please leave a message", 4.1)):
+                               ("Please leave a message", 4.1),
+                               ("You've reached Sam, leave a message when you hear the tone", 5.0),
+                               ("You've reached Sam, leave your name and tell me what it's about", 5.0),
+                               ("Hi, you've reached Sam, I can't take your call right now, please leave a message after the beep", 5.0)):
             with self.subTest(text=text), patch.object(main, "_save_guest_transcript"):
                 session, ctx = self._run("uncertain", turn={"text": text, "duration": duration, "interrupted": True})
             session.generate_reply.assert_not_called()
@@ -179,7 +182,7 @@ class GuestUncertainTest(unittest.TestCase):
     def test_long_question_is_still_a_person(self) -> None:
         with patch.object(main, "_save_guest_transcript"):
             session, ctx = self._run("uncertain", turn={
-                "text": "Hello I was just in the other room can you tell me who is calling",
+                "text": "Hello I was just in the other room can you tell me who is calling?",
                 "duration": 5.0, "interrupted": True,
             })
         session.generate_reply.assert_called_once()
@@ -209,6 +212,20 @@ class GuestTurnChecksTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(main.looks_like_greeting(1.0, "Hello", True))
         self.assertFalse(main.looks_like_greeting(1.0, "one two three four five six seven eight nine ten eleven twelve", True))
         self.assertTrue(main.looks_like_greeting(1.0, "one two three four five six seven eight nine ten eleven twelve thirteen", True))
+
+    def test_questions_must_start_the_turn_or_have_question_mark(self) -> None:
+        for text in ("Who is this?", "what's ratstack", "can you say that again",
+                     "could you repeat that", "would you explain", "do you know Sam",
+                     "are you calling for Joel", "is this about ratstack",
+                     "when should I call", "where is this", "why are you calling", "how does it work"):
+            for prefix in ("", "Hi, ", "Hey, ", "Hello, ", "Yeah, ", "Sorry, "):
+                with self.subTest(text=text, prefix=prefix):
+                    self.assertFalse(main.looks_like_greeting(6.0, prefix + text, True))
+        for text in ("Please leave a message when you hear the tone",
+                     "Please tell me what it's about", "Thanks for calling do you have a message",
+                     "Whatever you need leave a message", "Is that a message you want to leave"):
+            with self.subTest(text=text):
+                self.assertTrue(main.looks_like_greeting(6.0, text, True))
 
     async def test_rejected_greeting_stays_silent(self) -> None:
         agent = main.GuestOutboundAgent(instructions="x")
