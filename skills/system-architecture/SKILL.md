@@ -1003,6 +1003,14 @@ See `k8s/agent-runner.yaml` for full runtime contract specification.
 
 ---
 
+## 10.2) Research search provider
+
+Restate's research DAG also has an optional read-only `parallel` MCP handler for
+web search and page fetching. `--search-provider parallel` selects it in
+`packages/restate/src/research-pipeline.ts`; DuckDuckGo remains the default and
+`none` skips the web-search node. The existing `web-search` output feeds Pi synthesis.
+See `packages/restate/README.md` and `.brain/resources/parallel-research-search.svx`.
+
 ## 11) Verification Commands (Health + Wiring)
 
 ## Core topology

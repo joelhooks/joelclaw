@@ -1,0 +1,15 @@
+---
+title: Parallel search in Restate research
+summary: Optional anonymous MCP search and fetch feeding the existing research synthesis path.
+status: implemented
+updated: 2026-10-17
+---
+
+The Restate research CLI accepts `--search-provider parallel` for anonymous
+[Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp).
+DuckDuckGo remains the default; `none` skips the web-search node. Selection
+belongs in `packages/restate/src/research-pipeline.ts`, with MCP execution behind
+the worker's `parallel` handler. Search output remains the `web-search` dependency
+consumed by the existing Pi synthesis prompt. Explicit provider failures never
+fall back to another service. Workflow identity supplies stable search/fetch
+correlation, and the Restate attempt signal and node timeout bound network work.
