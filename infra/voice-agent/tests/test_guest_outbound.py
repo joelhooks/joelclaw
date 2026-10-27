@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from livekit import rtc
+from livekit.agents import llm
 
 import main
 
@@ -80,14 +81,34 @@ class GuestGreetingTest(unittest.TestCase):
         with self.assertRaises(main.StopResponse):
             asyncio.run(agent.on_user_turn_completed(None, None))
         agent.opened = True
-        self.assertIsNone(asyncio.run(agent.on_user_turn_completed(None, None)))
+        self.assertIsNone(asyncio.run(agent.on_user_turn_completed(None, llm.ChatMessage(role="user", content=["Hello"]))))
 
 
 class GuestSessionTest(unittest.TestCase):
-    def _run(self, category: str, spec: dict = SPEC, hang_up_first: bool = False):
+    def _run(self, category: str, spec: dict = SPEC, hang_up_first: bool = False, turn: dict | None = None):
         session = MagicMock()
         session.start = AsyncMock()
-        session.say = MagicMock(side_effect=lambda *a, **k: asyncio.sleep(0))
+
+        class OpenerHandle:
+            interrupted = bool(turn and turn.get("interrupted"))
+
+            def __await__(self):
+                async def play():
+                    if turn:
+                        agent = session.start.call_args.kwargs["agent"]
+                        message = llm.ChatMessage(role="user", content=[turn["text"]], metrics={
+                            "started_speaking_at": 100.0,
+                            "stopped_speaking_at": 100.0 + turn.get("duration", 1.0),
+                        })
+                        try:
+                            await agent.on_user_turn_completed(None, message)
+                        except main.StopResponse:
+                            return
+                        session.generate_reply()
+                        handlers["close"]()
+                return play().__await__()
+
+        session.say = MagicMock(side_effect=lambda *a, **k: OpenerHandle())
         handlers = {}
         session.on = lambda name: (lambda fn: handlers.setdefault(name, fn))
         verdict = SimpleNamespace(category=main.AMDCategory(category), reason="r", delay=0.5, speech_duration=1.0)
@@ -136,6 +157,125 @@ class GuestUncertainTest(unittest.TestCase):
         self.assertEqual([c.args[0] for c in session.say.call_args_list], [OPENER])
         session.generate_reply.assert_not_called()
         ctx.delete_room.assert_awaited()
+
+
+    def test_late_voicemail_barge_in_gets_no_generated_reply(self) -> None:
+        for text, duration in (("You have reached Sam please leave a message after the tone thank you goodbye", 2.0),
+                               ("Please leave a message", 4.1),
+                               ("You've reached Sam, leave a message when you hear the tone", 5.0),
+                               ("You've reached Sam, leave your name and tell me what it's about", 5.0),
+                               ("Hi, you've reached Sam, I can't take your call right now, please leave a message after the beep", 5.0)):
+            with self.subTest(text=text), patch.object(main, "_save_guest_transcript"):
+                session, ctx = self._run("uncertain", turn={"text": text, "duration": duration, "interrupted": True})
+            session.generate_reply.assert_not_called()
+            ctx.delete_room.assert_awaited_once()
+            agent = session.start.call_args.kwargs["agent"]
+            self.assertFalse(agent.heard.is_set())
+            self.assertTrue(agent.greeting_rejected)
+
+    def test_noise_gets_no_reply_and_does_not_prove_a_person(self) -> None:
+        session, ctx = self._run("uncertain", turn={"text": "um beep", "interrupted": True})
+        session.generate_reply.assert_not_called()
+        ctx.delete_room.assert_awaited_once()
+        self.assertFalse(session.start.call_args.kwargs["agent"].heard.is_set())
+
+    def test_long_question_is_still_a_person(self) -> None:
+        with patch.object(main, "_save_guest_transcript"):
+            session, ctx = self._run("uncertain", turn={
+                "text": "Hello I was just in the other room can you tell me who is calling?",
+                "duration": 5.0, "interrupted": True,
+            })
+        session.generate_reply.assert_called_once()
+        ctx.delete_room.assert_not_awaited()
+        self.assertTrue(session.start.call_args.kwargs["agent"].heard.is_set())
+
+
+class GuestTurnChecksTest(unittest.IsolatedAsyncioTestCase):
+    async def test_noise_is_silent_even_after_a_real_turn(self) -> None:
+        agent = main.GuestOutboundAgent(instructions="x")
+        agent.opened = True
+        for text in ("", "...", "uh", "Um, mm, beep!", "123"):
+            with self.subTest(text=text), self.assertRaises(main.StopResponse):
+                await agent.on_user_turn_completed(None, llm.ChatMessage(role="user", content=[text]))
+            self.assertFalse(agent.heard.is_set())
+        await agent.on_user_turn_completed(None, llm.ChatMessage(role="user", content=["Um, hello"]))
+        self.assertTrue(agent.heard.is_set())
+        with self.assertRaises(main.StopResponse):
+            await agent.on_user_turn_completed(None, llm.ChatMessage(role="user", content=["beep"]))
+
+    def test_greeting_boundaries(self) -> None:
+        self.assertTrue(main.looks_like_greeting(4.01, "Leave a message", True))
+        self.assertFalse(main.looks_like_greeting(4.0, "Leave a message", True))
+        self.assertFalse(main.looks_like_greeting(6.0, "Leave a message", False))
+        self.assertFalse(main.looks_like_greeting(6.0, "Hello?", True))
+        self.assertFalse(main.looks_like_greeting(6.0, "Can you hear me", True))
+        self.assertFalse(main.looks_like_greeting(1.0, "Hello", True))
+        self.assertFalse(main.looks_like_greeting(1.0, "one two three four five six seven eight nine ten eleven twelve", True))
+        self.assertTrue(main.looks_like_greeting(1.0, "one two three four five six seven eight nine ten eleven twelve thirteen", True))
+
+    def test_questions_must_start_the_turn_or_have_question_mark(self) -> None:
+        for text in ("Who is this?", "what's ratstack", "can you say that again",
+                     "could you repeat that", "would you explain", "do you know Sam",
+                     "are you calling for Joel", "is this about ratstack",
+                     "when should I call", "where is this", "why are you calling", "how does it work"):
+            for prefix in ("", "Hi, ", "Hey, ", "Hello, ", "Yeah, ", "Sorry, "):
+                with self.subTest(text=text, prefix=prefix):
+                    self.assertFalse(main.looks_like_greeting(6.0, prefix + text, True))
+        for text in ("Please leave a message when you hear the tone",
+                     "Please tell me what it's about", "Thanks for calling do you have a message",
+                     "Whatever you need leave a message", "Is that a message you want to leave"):
+            with self.subTest(text=text):
+                self.assertTrue(main.looks_like_greeting(6.0, text, True))
+
+    async def test_rejected_greeting_stays_silent(self) -> None:
+        agent = main.GuestOutboundAgent(instructions="x")
+        agent.opened = agent.uncertain = True
+        agent.opener_handle = SimpleNamespace(interrupted=True)
+        agent.hang_up = MagicMock()
+        for text in ("Please leave a message", "Hello"):
+            with self.assertRaises(main.StopResponse):
+                await agent.on_user_turn_completed(None, llm.ChatMessage(role="user", content=[text], metrics={
+                    "started_speaking_at": 10.0, "stopped_speaking_at": 15.0,
+                }))
+        agent.hang_up.assert_called_once()
+        self.assertFalse(agent.heard.is_set())
+
+    async def test_noise_does_not_consume_first_real_greeting_check(self) -> None:
+        agent = main.GuestOutboundAgent(instructions="x")
+        agent.opened = agent.uncertain = True
+        agent.opener_handle = SimpleNamespace(interrupted=True)
+        with self.assertRaises(main.StopResponse):
+            await agent.on_user_turn_completed(None, llm.ChatMessage(role="user", content=["um"]))
+        self.assertFalse(agent.heard.is_set())
+        self.assertFalse(agent.first_turn_done.is_set())
+        self.assertFalse(agent._first_turn_seen)
+        agent.hang_up = MagicMock()
+        with self.assertRaises(main.StopResponse):
+            await agent.on_user_turn_completed(None, llm.ChatMessage(role="user", content=[
+                "Please leave a message"
+            ], metrics={"started_speaking_at": 10.0, "stopped_speaking_at": 15.0}))
+        agent.hang_up.assert_called_once()
+        self.assertFalse(agent.heard.is_set())
+        self.assertTrue(agent.greeting_rejected)
+
+    async def test_missing_duration_still_uses_word_count(self) -> None:
+        agent = main.GuestOutboundAgent(instructions="x")
+        agent.opened = agent.uncertain = True
+        agent.opener_handle = SimpleNamespace(interrupted=True)
+        with self.assertRaises(main.StopResponse):
+            await agent.on_user_turn_completed(None, llm.ChatMessage(role="user", content=[
+                "You have reached Sam please leave a message after the tone thank you goodbye"
+            ]))
+        self.assertTrue(agent.greeting_rejected)
+
+    async def test_human_verdict_does_not_apply_voicemail_heuristic(self) -> None:
+        agent = main.GuestOutboundAgent(instructions="x")
+        agent.opened = True
+        agent.opener_handle = SimpleNamespace(interrupted=True)
+        await agent.on_user_turn_completed(None, llm.ChatMessage(role="user", content=[
+            "Hello I was walking back from the other room and just picked up the phone"
+        ]))
+        self.assertTrue(agent.heard.is_set())
 
 
 class GuestSilentPickupTest(unittest.TestCase):
