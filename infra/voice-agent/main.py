@@ -17,6 +17,7 @@ import math
 import time
 import os
 import random
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -508,6 +509,7 @@ class JoelclawVoiceAgent(Agent):
         self.actions: list[dict] = []
         self._decided: dict[tuple[str, str], str] = {}
         self._sent: dict[tuple[str, str], str] = {}
+        self._tool_requests: set[tuple[str, ...]] = set()
         self._pronounce = pronounce.load()
         # Set by the entrypoint once the call is up.
         self.room = ""
@@ -703,7 +705,26 @@ class JoelclawVoiceAgent(Agent):
         )
         return out if not out.startswith(("Command", "Error")) else f"FAILED: {out}"
 
-    @function_tool
+    def _reserve_tool_request(self, tool: str, *args: str) -> bool:
+        """Reserve before awaiting: even a cancelled/uncertain action must not repeat.
+        Normalize whitespace only; case can change a message or a URL's meaning.
+        """
+        key = (tool, *(" ".join(arg.split()) for arg in args))
+        if key in self._tool_requests:
+            return False
+        self._tool_requests.add(key)
+        return True
+
+    def _release_tool_request(self, tool: str, *args: str) -> None:
+        self._tool_requests.discard((tool, *(" ".join(arg.split()) for arg in args)))
+
+    def _settle_tool_output(self, out: str, tool: str, *args: str) -> None:
+        # _run returns timeouts as text, not exceptions. Delivery is still
+        # uncertain, so retain that reservation just as for a raised timeout.
+        if out.startswith(("FAILED", "Error", "Command")) and "timeout" not in out.casefold() and "timed out" not in out.casefold():
+            self._release_tool_request(tool, *args)
+
+    @function_tool(on_duplicate="reject", duplicate_scope="name_and_args")
     async def text_joel(self, message: str, link: str = "") -> str:
         """Text Joel himself (his ShitRat chat), e.g. a link he asked for on the call.
         Only to Joel."""
@@ -711,11 +732,21 @@ class JoelclawVoiceAgent(Agent):
             return locked
         if refused := self._hands_refused():
             return refused
+        if not self._reserve_tool_request("text_joel", message, link):
+            return "Already attempted that text on this call. Not sending twice."
         cmd = [ratking_cli._node(), str(MESSAGE_SHITRAT), "--kind", "link" if link else "update"]
         if link:
             cmd += ["--link", link]
         out = await asyncio.to_thread(_run, cmd + [message], 3)
-        failed = out.startswith(("Command", "Error"))
+        self._settle_tool_output(out, "text_joel", message, link)
+        failed = out.startswith(("FAILED", "Command", "Error"))
+        try:
+            result = json.loads(out)
+        except (ValueError, TypeError):
+            result = None
+        if isinstance(result, dict) and result.get("ok") is False:
+            failed = True
+            self._release_tool_request("text_joel", message, link)
         self.actions.append({"type": "text_joel", "status": "failed" if failed else "delivered", "detail": out[:160]})
         return f"FAILED: {out}" if failed else "Texted Joel."
 
@@ -828,7 +859,7 @@ class JoelclawVoiceAgent(Agent):
             cmd.extend(["--from", day, "--days", str(days)])
         return await asyncio.to_thread(_run, cmd)
 
-    @function_tool
+    @function_tool(on_duplicate="reject", duplicate_scope="name_and_args")
     async def create_calendar_event(
         self, title: str, start: str, end: str,
         description: str = "", location: str = "", attendees: str = ""
@@ -836,6 +867,8 @@ class JoelclawVoiceAgent(Agent):
         """Create a calendar event. start/end: RFC3339 (2026-02-20T14:00:00-08:00) or date for all-day. attendees: comma-separated emails."""
         if locked := self._locked("create_calendar_event"):
             return locked
+        if not self._reserve_tool_request("create_calendar_event", title, start, end, description, location, attendees):
+            return "Already attempted that calendar event on this call. Not creating it twice."
         cmd = [
             "gog", "cal", "create", "joelhooks@gmail.com",
             "-a", "joelhooks@gmail.com", "--force",
@@ -850,7 +883,9 @@ class JoelclawVoiceAgent(Agent):
         # Check if all-day (date-only, no T)
         if "T" not in start:
             cmd.append("--all-day")
-        return await asyncio.to_thread(_run, cmd)
+        out = await asyncio.to_thread(_run, cmd)
+        self._settle_tool_output(out, "create_calendar_event", title, start, end, description, location, attendees)
+        return out
 
     @function_tool
     async def delete_calendar_event(self, event_id: str) -> str:
@@ -1243,7 +1278,7 @@ class JoelclawVoiceAgent(Agent):
             lines.append(f"- {m.get('user', '?')}: {text}")
         return f"Thread in #{hit['channel_name']}:\n" + "\n".join(lines)
 
-    @function_tool
+    @function_tool(on_duplicate="reject", duplicate_scope="name_and_args")
     async def slack_reply(self, result_number: str, message: str) -> str:
         """Reply in the thread of a slack_search result AS JOEL (his real account).
         ONLY when Joel explicitly directs a reply on this call. Say the exact
@@ -1255,11 +1290,14 @@ class JoelclawVoiceAgent(Agent):
             hit = hits[int(result_number.strip()) - 1]
         except (ValueError, IndexError):
             return "Run slack_search first, then pass one of its result numbers."
+        if not self._reserve_tool_request("slack_reply", hit["channel_id"], hit["ts"], message):
+            return "Already attempted that Slack reply on this call. Not sending twice."
         data = await asyncio.to_thread(_slack_api, "chat.postMessage", {
             "channel": hit["channel_id"], "thread_ts": hit["ts"],
             "text": message, "as_user": "true",
         })
         if not data.get("ok"):
+            self._release_tool_request("slack_reply", hit["channel_id"], hit["ts"], message)
             return f"Reply failed: {data.get('error')}"
         return f"Sent as Joel to #{hit['channel_name']}."
 
@@ -1299,15 +1337,19 @@ class JoelclawVoiceAgent(Agent):
 
     # --- Call Joel (Telnyx) ---
 
-    @function_tool
+    @function_tool(on_duplicate="reject", duplicate_scope="name_and_args")
     async def call_joel(self, message: str) -> str:
         """Place an outbound phone call to Joel with a spoken message, with SMS fallback.
         Use when something urgent needs Joel's attention and he's not on this voice call."""
         if locked := self._locked("call_joel"):
             return locked
-        return await asyncio.to_thread(
+        if not self._reserve_tool_request("call_joel", message):
+            return "Already attempted that phone call. Not dialling twice."
+        out = await asyncio.to_thread(
             _run, ["joelclaw", "call", message], 60
         )
+        self._settle_tool_output(out, "call_joel", message)
+        return out
 
     # --- Agent loop management ---
 
@@ -2052,6 +2094,27 @@ Topic notes:
 {brief}{background}"""
 
 
+def _turn_words(text: str) -> list[str]:
+    return re.findall(r"[^\W\d_]+(?:['’][^\W\d_]+)*", text.casefold())
+
+
+def is_real_turn(text: str) -> bool:
+    """A filler or an answering-machine beep is not proof of a person."""
+    noise = {"uh", "uhh", "um", "umm", "mm", "mmm", "hmm", "hm", "beep"}
+    return any(word not in noise for word in _turn_words(text))
+
+
+def looks_like_greeting(duration_s: float, text: str, interrupted: bool) -> bool:
+    """Conservative late-voicemail check: a long barge-in with no question back."""
+    words = _turn_words(text)
+    question = "?" in text or any(word in {"who", "what", "when", "where", "why", "how"} for word in words)
+    question = question or bool(re.search(
+        r"\b(?:can|could|would|will|do|did|are|have) you\b|\bis (?:this|that)\b",
+        " ".join(words),
+    ))
+    return interrupted and (duration_s > 4.0 or len(words) > 12) and not question
+
+
 class GuestOutboundAgent(Agent):
     """Guest call agent: exactly two tools, the time and ending the call."""
 
@@ -2063,11 +2126,35 @@ class GuestOutboundAgent(Agent):
         self.opened = False
         # Set by the first caller turn after the opener: proof a person is there.
         self.heard = asyncio.Event()
+        self.uncertain = False
+        self.opener_handle = None
+        self.first_turn_done = asyncio.Event()
+        self.greeting_rejected = False
+        self._first_turn_seen = False
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
-        if not self.opened:
+        if not self.opened or self.greeting_rejected:
             raise StopResponse()
+        text = new_message.text_content if new_message is not None else ""
+        if not is_real_turn(text or ""):
+            raise StopResponse()
+        first_turn = not self._first_turn_seen
+        self._first_turn_seen = True
+        if self.uncertain and first_turn:
+            # LiveKit 1.8.9 attaches these metrics before this hook and interrupts
+            # current speech before calling it (voice/agent_activity.py).
+            metrics = new_message.metrics
+            start = metrics.get("started_speaking_at")
+            stop = metrics.get("stopped_speaking_at")
+            duration = max(0.0, stop - start) if start is not None and stop is not None else 0.0
+            interrupted = self.opener_handle is not None and self.opener_handle.interrupted
+            if looks_like_greeting(duration, text, interrupted):
+                self.greeting_rejected = True
+                self.first_turn_done.set()
+                self.hang_up()
+                raise StopResponse()
         self.heard.set()
+        self.first_turn_done.set()
 
     @function_tool
     async def current_time(self) -> str:
@@ -2144,8 +2231,10 @@ async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
     if action == "hangup":
         _hang_up()
         return
+    agent.uncertain = category == "uncertain"
     agent.opened = True
     handle = session.say(text, allow_interruptions=action == "opener")
+    agent.opener_handle = handle
     if action == "voicemail":
         await handle
         await asyncio.sleep(1.0)
@@ -2155,11 +2244,13 @@ async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
         # Could be a recording AMD misread: no human words soon after the opener, hang up.
         await handle
         try:
-            await asyncio.wait_for(agent.heard.wait(), timeout=GUEST_UNCERTAIN_WAIT_S)
+            await asyncio.wait_for(agent.first_turn_done.wait(), timeout=GUEST_UNCERTAIN_WAIT_S)
         except asyncio.TimeoutError:
             logger.info("Guest outbound: no caller words %.0fs after the opener; hanging up room=%s",
                         GUEST_UNCERTAIN_WAIT_S, ctx.room.name)
             _hang_up()
+            return
+        if agent.greeting_rejected:
             return
     try:
         await asyncio.wait_for(closed.wait(), timeout=GUEST_MAX_SECONDS)
