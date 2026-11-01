@@ -31,7 +31,7 @@ import voice_desk
 import voice_snapshot
 from voice_recall import run_recall_work
 from livekit import rtc
-from livekit.agents import Agent, AgentSession, RoomInputOptions, StopResponse, WorkerOptions, cli, function_tool
+from livekit.agents import Agent, AgentSession, StopResponse, TurnHandlingOptions, WorkerOptions, cli, function_tool, room_io
 from livekit.agents.voice.amd import AMD, AMDCategory
 from livekit.plugins import deepgram, elevenlabs, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.english import EnglishModel
@@ -135,23 +135,52 @@ def build_tts(cfg: dict) -> elevenlabs.TTS:
     return tts
 
 
-def _room_input_options() -> RoomInputOptions:
+def _room_options() -> room_io.RoomOptions:
     """Krisp background-voice cancellation, telephony-tuned — strips other
     voices/noise from the caller's audio before VAD/STT ever hear it."""
-    return RoomInputOptions(noise_cancellation=noise_cancellation.BVCTelephony())
+    return room_io.RoomOptions(
+        audio_input=room_io.AudioInputOptions(noise_cancellation=noise_cancellation.BVCTelephony())
+    )
 
 
-def _interruption_kwargs(cfg: dict) -> dict:
+def _turn_handling_options(cfg: dict, *, semantic: bool = False) -> TurnHandlingOptions:
     """Barge-in tuning, overridable via the local config's `audio:` section.
     Defaults biased against background noise: interrupting ShitRat requires
     sustained speech with actual words, and false barge-ins resume the reply."""
     audio = cfg.get("audio", {}) if isinstance(cfg, dict) else {}
-    return {
-        "min_interruption_duration": float(audio.get("min_interruption_duration", 0.8)),
-        "min_interruption_words": int(audio.get("min_interruption_words", 2)),
+    options = TurnHandlingOptions(interruption={
+        "min_duration": float(audio.get("min_interruption_duration", 0.8)),
+        "min_words": int(audio.get("min_interruption_words", 2)),
         "false_interruption_timeout": float(audio.get("false_interruption_timeout", 2.0)),
         "resume_false_interruption": bool(audio.get("resume_false_interruption", True)),
-    }
+    })
+    if semantic:
+        # Semantic end-of-turn detection keeps the low endpointing floor from
+        # cutting callers off mid-thought. Start the LLM on partial transcripts.
+        options.update(
+            turn_detection=EnglishModel(),
+            endpointing={"min_delay": 0.35, "max_delay": 4.0},
+            preemptive_generation={"enabled": True},
+        )
+    return options
+
+
+def _track_turn_metrics(ev, room_name: str, *, public: bool = False, turn_metrics=None) -> None:
+    """Keep per-turn latency logs and tracker fields on ChatMessage.metrics."""
+    prefix = "METRIC public" if public else "METRIC"
+    metrics = getattr(ev.item, "metrics", {})  # Handoff items have no latency metrics.
+    for metric, kind, label, field in (
+        ("llm_node_ttft", "llm", "ttft", "llmTtftMs"),
+        ("tts_node_ttfb", "tts", "ttfb", "ttsTtfbMs"),
+        ("end_of_turn_delay", "eou", "delay", "eouDelayMs"),
+    ):
+        value = metrics.get(metric)
+        if value is None:
+            continue
+        logger.info("%s %s %s=%.2fs", prefix, kind, label, value)
+        if turn_metrics is not None:
+            turn_metrics[kind].append(value)
+        call_tracker.track_turn(room_name, **{field: int(value * 1000)})
 
 
 def build_llm(cfg: dict) -> openai.LLM:
@@ -1827,31 +1856,17 @@ async def _run_public_session(ctx, cfg: dict, caller: str) -> None:
     session = AgentSession(
         stt=deepgram.STT(), llm=build_llm(cfg), tts=tts_instance,
         vad=_vad_for(ctx),
-        turn_detection=EnglishModel(),
-        min_endpointing_delay=0.35,
-        max_endpointing_delay=4.0,
-        preemptive_generation=True,
-        **_interruption_kwargs(cfg),
+        turn_handling=_turn_handling_options(cfg, semantic=True),
     )
 
-    @session.on("metrics_collected")
+    @session.on("conversation_item_added")
     def on_metrics(ev):
-        m = ev.metrics
-        kind = type(m).__name__
-        if kind == "LLMMetrics":
-            logger.info("METRIC public llm ttft=%.2fs", getattr(m, "ttft", -1.0))
-            call_tracker.track_turn(ctx.room.name, llmTtftMs=int(getattr(m, "ttft", 0) * 1000))
-        elif kind == "TTSMetrics":
-            logger.info("METRIC public tts ttfb=%.2fs", getattr(m, "ttfb", -1.0))
-            call_tracker.track_turn(ctx.room.name, ttsTtfbMs=int(getattr(m, "ttfb", 0) * 1000))
-        elif kind == "EOUMetrics":
-            logger.info("METRIC public eou delay=%.2fs", getattr(m, "end_of_utterance_delay", -1.0))
-            call_tracker.track_turn(ctx.room.name, eouDelayMs=int(getattr(m, "end_of_utterance_delay", 0) * 1000))
+        _track_turn_metrics(ev, ctx.room.name, public=True)
 
     await session.start(
         agent=PublicDocentAgent(instructions=_public_instructions()),
         room=ctx.room,
-        room_input_options=_room_input_options(),
+        room_options=_room_options(),
     )
     call_tracker.track_session_start(ctx.room.name, "public", caller)
     heartbeat_task = call_tracker.start_heartbeat(ctx.room.name)
@@ -1970,12 +1985,12 @@ async def _run_guest_session(ctx, cfg: dict, caller: str) -> None:
     session = AgentSession(
         stt=deepgram.STT(), llm=build_llm(cfg), tts=tts_instance,
         vad=_vad_for(ctx),
-        **_interruption_kwargs(cfg),
+        turn_handling=_turn_handling_options(cfg),
     )
     await session.start(
         agent=Agent(instructions=_guest_instructions()),
         room=ctx.room,
-        room_input_options=_room_input_options(),
+        room_options=_room_options(),
     )
     call_tracker.track_session_start(ctx.room.name, "guest", caller)
     heartbeat_task = call_tracker.start_heartbeat(ctx.room.name)
@@ -2195,7 +2210,7 @@ async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
     session = AgentSession(
         stt=deepgram.STT(), llm=build_llm(cfg), tts=tts_instance,
         vad=_vad_for(ctx),
-        **_interruption_kwargs(cfg),
+        turn_handling=_turn_handling_options(cfg),
     )
     agent = GuestOutboundAgent(
         instructions=_guest_outbound_instructions(spec["name"], spec["brief"], _guest_public_context())
@@ -2206,7 +2221,7 @@ async def _run_guest_outbound_session(ctx, cfg: dict, spec: dict) -> None:
         task.add_done_callback(lambda t: t.cancelled() or (t.exception() and logger.info("Guest hang-up: %s", t.exception())))
 
     agent.hang_up = _hang_up
-    await session.start(agent=agent, room=ctx.room, room_input_options=_room_input_options())
+    await session.start(agent=agent, room=ctx.room, room_options=_room_options())
     who = f"outbound guest {spec['name']}"
     call_tracker.track_session_start(ctx.room.name, "guest-outbound", who)
     heartbeat_task = call_tracker.start_heartbeat(ctx.room.name)
@@ -2422,32 +2437,12 @@ async def entrypoint(ctx) -> None:
         llm=build_llm(cfg),
         tts=tts_instance,
         vad=_vad_for(ctx),
-        # Semantic end-of-turn detection: judges "done vs thinking" from content,
-        # so the endpointing floor can drop without cutting Joel off mid-thought.
-        turn_detection=EnglishModel(),
-        min_endpointing_delay=0.35,
-        max_endpointing_delay=4.0,
-        # LLM starts on the partial transcript before end-of-turn is confirmed.
-        preemptive_generation=True,
-        **_interruption_kwargs(cfg),
+        turn_handling=_turn_handling_options(cfg, semantic=True),
     )
 
-    @session.on("metrics_collected")
+    @session.on("conversation_item_added")
     def on_metrics(ev):
-        m = ev.metrics
-        kind = type(m).__name__
-        if kind == "LLMMetrics":
-            logger.info("METRIC llm ttft=%.2fs", getattr(m, "ttft", -1.0))
-            turn_metrics["llm"].append(getattr(m, "ttft", -1.0))
-            call_tracker.track_turn(ctx.room.name, llmTtftMs=int(getattr(m, "ttft", 0) * 1000))
-        elif kind == "TTSMetrics":
-            logger.info("METRIC tts ttfb=%.2fs", getattr(m, "ttfb", -1.0))
-            turn_metrics["tts"].append(getattr(m, "ttfb", -1.0))
-            call_tracker.track_turn(ctx.room.name, ttsTtfbMs=int(getattr(m, "ttfb", 0) * 1000))
-        elif kind == "EOUMetrics":
-            logger.info("METRIC eou delay=%.2fs", getattr(m, "end_of_utterance_delay", -1.0))
-            turn_metrics["eou"].append(getattr(m, "end_of_utterance_delay", -1.0))
-            call_tracker.track_turn(ctx.room.name, eouDelayMs=int(getattr(m, "end_of_utterance_delay", 0) * 1000))
+        _track_turn_metrics(ev, ctx.room.name, turn_metrics=turn_metrics)
 
     # Tool access follows the private-line allowlist, but sensitive memory has a
     # narrower edge: the normalized caller ID must exactly match Joel's number.
@@ -2491,7 +2486,7 @@ async def entrypoint(ctx) -> None:
     if not agent.trusted:
         # Locked by default: an unverified inbound call only sees the read-only tools.
         await agent.update_tools([t for t in agent.tools if getattr(getattr(t, "info", None), "name", None) in INBOUND_READ_TOOLS])
-    await session.start(agent=agent, room=ctx.room, room_input_options=_room_input_options())
+    await session.start(agent=agent, room=ctx.room, room_options=_room_options())
     _arm_cover(session, asyncio.get_running_loop())
     call_tracker.track_session_start(ctx.room.name, "private", caller)
     heartbeat_task = call_tracker.start_heartbeat(ctx.room.name)

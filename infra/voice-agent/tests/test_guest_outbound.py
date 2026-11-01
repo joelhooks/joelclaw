@@ -127,7 +127,7 @@ class GuestSessionTest(unittest.TestCase):
         with patch.object(main, "AgentSession", return_value=session), \
              patch.object(main, "AMD", amd), \
              patch.multiple(main, build_tts=MagicMock(), build_llm=MagicMock(), _vad_for=MagicMock(),
-                            _interruption_kwargs=MagicMock(return_value={}), _room_input_options=MagicMock()), \
+                            _turn_handling_options=MagicMock(return_value={}), _room_options=MagicMock()), \
              patch.object(main.deepgram, "STT", MagicMock()), \
              patch.object(main, "call_tracker", MagicMock()), \
              patch.object(main, "GUEST_UNCERTAIN_WAIT_S", 0.01):
