@@ -154,14 +154,17 @@ def _turn_handling_options(cfg: dict, *, semantic: bool = False) -> TurnHandling
         "false_interruption_timeout": float(audio.get("false_interruption_timeout", 2.0)),
         "resume_false_interruption": bool(audio.get("resume_false_interruption", True)),
     })
+    # Keep turn detection local for every caller, including guest sessions.
+    options["turn_detection"] = EnglishModel()
+    options["preemptive_generation"] = {"enabled": True}
     if semantic:
         # Semantic end-of-turn detection keeps the low endpointing floor from
         # cutting callers off mid-thought. Start the LLM on partial transcripts.
-        options.update(
-            turn_detection=EnglishModel(),
-            endpointing={"min_delay": 0.35, "max_delay": 4.0},
-            preemptive_generation={"enabled": True},
-        )
+        options["endpointing"] = {"min_delay": 0.35, "max_delay": 4.0}
+    else:
+        # Preserve the guest delays previously inherited from the SDK's hosted
+        # streaming detector; the local detector has different default delays.
+        options["endpointing"] = {"min_delay": 0.3, "max_delay": 2.5}
     return options
 
 
