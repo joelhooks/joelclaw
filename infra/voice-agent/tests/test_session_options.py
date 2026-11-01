@@ -46,24 +46,56 @@ def test_session_preserves_turn_handling(semantic, audio, caplog):
         assert resolved["interruption"]["min_words"] == audio.get("min_interruption_words", 2)
         assert resolved["interruption"]["false_interruption_timeout"] == audio.get("false_interruption_timeout", 2.0)
         assert resolved["interruption"]["resume_false_interruption"] == audio.get("resume_false_interruption", True)
+        assert session.turn_detection is detector
+        assert resolved["preemptive_generation"]["enabled"] is True
+        factory.assert_called_once_with()
         if semantic:
             assert resolved["endpointing"]["min_delay"] == 0.35
             assert resolved["endpointing"]["max_delay"] == 4.0
-            assert resolved["preemptive_generation"]["enabled"] is True
-            assert session.turn_detection is detector
-            factory.assert_called_once_with()
         else:
-            assert set(options) == {"interruption"}
-            # Guest sessions still inherit 1.8's streaming-detector defaults.
+            assert set(options) == {
+                "interruption", "turn_detection", "endpointing", "preemptive_generation",
+            }
+            # Guest sessions retain the previous streaming-detector delays.
             assert resolved["endpointing"]["min_delay"] == 0.3
             assert resolved["endpointing"]["max_delay"] == 2.5
-            factory.assert_not_called()
         session.on("conversation_item_added", lambda ev: None)
         assert room_io.RoomOptions._ensure_options(main._room_options()).audio_input is not None
 
     with caplog.at_level(logging.WARNING):
         asyncio.run(check())
     assert not caplog.records
+
+
+@pytest.mark.parametrize("audio", [{}, {
+    "min_interruption_duration": 1.2,
+    "min_interruption_words": 3,
+    "false_interruption_timeout": 3.5,
+    "resume_false_interruption": False,
+}])
+def test_guest_local_detector_preserves_other_resolved_options(audio):
+    async def check():
+        detector = SimpleNamespace()
+        with patch.object(main, "EnglishModel", return_value=detector) as factory:
+            options = main._turn_handling_options({"audio": audio})
+        factory.assert_called_once_with()
+        assert options["turn_detection"] is detector
+        # Before this change guests supplied only interruption overrides. Let
+        # the installed SDK resolve that exact old input for the comparison.
+        before = AgentSession(turn_handling={"interruption": options["interruption"]})
+        after = AgentSession(turn_handling=options)
+        assert before.turn_detection is not detector
+        assert after.turn_detection is detector
+        before_resolved = dict(before.options.turn_handling)
+        after_resolved = dict(after.options.turn_handling)
+        before_resolved.pop("turn_detection")
+        after_resolved.pop("turn_detection")
+        assert before_resolved["endpointing"]["min_delay"] == 0.3
+        assert before_resolved["endpointing"]["max_delay"] == 2.5
+        assert before_resolved["preemptive_generation"]["enabled"] is True
+        assert after_resolved == before_resolved
+
+    asyncio.run(check())
 
 
 @pytest.mark.parametrize("public", [False, True])
