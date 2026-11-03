@@ -32,6 +32,10 @@ cat >"${TEST_ROOT}/bin/curl" <<'MOCK'
 case "$*" in
   *observability/emit*)
     printf '%s\n' otel >>"${TEST_ROOT}/otel-attempts.log"
+    case "$*" in
+      *"-H @${TEST_ROOT}/emit-token.header"*) printf '%s\n' header >>"${TEST_ROOT}/otel-headers.log" ;;
+      *) printf '%s\n' noheader >>"${TEST_ROOT}/otel-headers.log" ;;
+    esac
     [ "$(cat "${TEST_ROOT}/fail-otel")" = "0" ]
     ;;
   *127.0.0.1:8288/health*) [ "$(cat "${TEST_ROOT}/fail-inngest")" = "0" ] ;;
@@ -53,6 +57,7 @@ chmod +x "${TEST_ROOT}/bin/curl" "${TEST_ROOT}/bin/launchctl" "${TEST_ROOT}/bin/
 run_probe() {
   PATH="${TEST_ROOT}/bin:${PATH}" \
   STATE_DIR="${TEST_ROOT}/state" \
+  EMIT_TOKEN_HEADER_FILE="${TEST_ROOT}/emit-token.header" \
   RUNS_ROOT="${TEST_ROOT}/runs" \
   SESSION_INDEX_PATH="${TEST_ROOT}/sessions.db" \
   SQLITE3_BIN="${TEST_ROOT}/bin/sqlite3" \
@@ -165,5 +170,16 @@ printf '%s\n' '1|1000000300000' >"${TEST_ROOT}/indexed.txt"
 printf '%s\n' '3' >"${TEST_ROOT}/state/consecutive-failures"
 run_probe
 [ "$(kick_count)" = "$((kicks_before + 2))" ]
+
+# Emits carry the worker token from the header file once it is installed, and
+# never without the file (sec-20261103-011).
+grep -qx noheader "${TEST_ROOT}/otel-headers.log"
+! grep -qx header "${TEST_ROOT}/otel-headers.log"
+printf 'x-otel-emit-token: test\n' >"${TEST_ROOT}/emit-token.header"
+printf '%s\n' '0' >"${TEST_ROOT}/fail-otel"
+printf '%s\n' '{"probe":true}' >"${TEST_ROOT}/state/pending-otel.json"
+printf '%s\n' 'degraded:index_lag_exceeded' >"${TEST_ROOT}/state/pending-otel-status"
+run_probe
+[ "$(tail -1 "${TEST_ROOT}/otel-headers.log")" = "header" ]
 
 printf 'PASS session-index-health system-domain recovery, scoped cooldown, retry, OTEL delivery, and backlog deferral (%s)\n' "${TEST_ROOT}"
