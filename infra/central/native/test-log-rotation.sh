@@ -265,3 +265,17 @@ wait "${own_writer_pid}" 2>/dev/null || true
 printf 'PASS log rotation preserved inode, process, sequence, age trigger, retention, pause budget, stale-snapshot recovery, own-log bounds, and failure propagation\n'
 printf 'scratch=%s pid=%s inode=%s archive_max=%s live_min=%s archives=%s full_copy_bytes=67108864 pause_ms=%s budget_ms=500\n' \
   "${TEST_ROOT}" "${writer_pid}" "${inode_after}" "${archive_max}" "${live_min}" "${archive_count}" "${full_pause_ms}"
+
+# sec-20261103-015: the executor writer patterns match the service command lines and nothing nearby.
+fake_root=/srv/central-root
+executor_pattern="$(CENTRAL_ROOT="${fake_root}"; eval "$(grep -E '^EXECUTOR_WRITER_PATTERN=' "${SCRIPT_DIR}/rotate-service-logs.sh")"; printf '%s' "${EXECUTOR_WRITER_PATTERN:-}")"
+dashboard_pattern="$(CENTRAL_ROOT="${fake_root}"; eval "$(grep -E '^EXECUTOR_DASHBOARD_WRITER_PATTERN=' "${SCRIPT_DIR}/rotate-service-logs.sh")"; printf '%s' "${EXECUTOR_DASHBOARD_WRITER_PATTERN:-}")"
+[ -n "${executor_pattern}" ] && [ -n "${dashboard_pattern}" ] || { echo "executor writer patterns missing" >&2; exit 1; }
+matches() { printf '%s\n' "$2" | grep -Eq -- "$1"; }
+matches "${executor_pattern}" "${fake_root}/opt/executor/1.6.10/lib/node_modules/executor/node_modules/executor-darwin-arm64/bin/executor daemon run --foreground --port 4788" || { echo "executor pattern misses the daemon" >&2; exit 1; }
+! matches "${executor_pattern}" "${fake_root}/opt/executor/1.6.10/lib/node_modules/executor/node_modules/executor-darwin-arm64/bin/executor web" || { echo "executor pattern matches a non-daemon executor" >&2; exit 1; }
+matches "${dashboard_pattern}" "/usr/local/libexec/joelclaw/node-v26.7.0-darwin-arm64/bin/node ${fake_root}/opt/executor/bin/executor-dashboard-proxy.mjs" || { echo "dashboard pattern misses the proxy" >&2; exit 1; }
+! matches "${dashboard_pattern}" "/opt/homebrew/bin/node ${fake_root}/opt/executor/bin/executor-dashboard-proxy.mjs" || { echo "dashboard pattern matches a Homebrew node" >&2; exit 1; }
+grep -q 'logs/executor-dashboard/launchd.out.log' "${SCRIPT_DIR}/rotate-service-logs.sh" || { echo "dashboard log not rotated" >&2; exit 1; }
+printf 'ok executor writer patterns\n'
+
