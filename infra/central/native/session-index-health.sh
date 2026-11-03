@@ -14,6 +14,8 @@ RECOVER_AFTER_FAILURES="${RECOVER_AFTER_FAILURES:-3}"
 RECOVERY_COOLDOWN_SECONDS="${RECOVERY_COOLDOWN_SECONDS:-900}"
 INDEX_PROGRESS_WINDOW_SECONDS="${INDEX_PROGRESS_WINDOW_SECONDS:-900}"
 STATE_DIR="${STATE_DIR:-${CENTRAL_ROOT}/state/session-index-health}"
+# Root-only header file carrying the worker's emit token (written by the installer).
+EMIT_TOKEN_HEADER_FILE="${EMIT_TOKEN_HEADER_FILE:-${CENTRAL_ROOT}/etc/session-index-health/emit-token.header}"
 LOG_PREFIX="session-index-health"
 
 mkdir -p "${STATE_DIR}"
@@ -91,6 +93,15 @@ index_stats() {
 }
 
 post_otel() {
+  # The worker refuses emits without its token. curl reads the header from the
+  # file, so the token never appears in argv.
+  if [ -r "${EMIT_TOKEN_HEADER_FILE}" ]; then
+    curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS \
+      -H 'content-type: application/json' \
+      -H "@${EMIT_TOKEN_HEADER_FILE}" \
+      --data-binary "@$1" "${WORKER_URL}/observability/emit" >/dev/null 2>&1
+    return
+  fi
   curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS \
     -H 'content-type: application/json' \
     --data-binary "@$1" "${WORKER_URL}/observability/emit" >/dev/null 2>&1
