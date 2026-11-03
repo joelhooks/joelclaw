@@ -3,15 +3,34 @@
  *
  * Fires a content/review.submitted Inngest event.
  * Called by the ReviewSheet after marking drafts as submitted in Convex.
+ * Owner only, rate limited (sec-20261103-014).
  */
 import { createHmac } from "node:crypto";
 import { NextResponse } from "next/server";
+import { fetchAuthQuery } from "@/lib/auth-server";
+import { api } from "@/lib/convex-api";
+import {
+  checkReviewSubmit,
+  clientIdentifier,
+  getReviewSubmitRatelimit,
+} from "@/lib/review-submit-guard";
 
 const DEFAULT_INNGEST_EVENT_URL = "https://panda.tail7af24.ts.net/webhooks/joelclaw";
 const INNGEST_EVENT_URL = process.env.INNGEST_EVENT_URL ?? DEFAULT_INNGEST_EVENT_URL;
 const JOELCLAW_WEBHOOK_SECRET = process.env.JOELCLAW_WEBHOOK_SECRET;
 
 export async function POST(request: Request) {
+  const decision = await checkReviewSubmit({
+    isOwner: async () => (await fetchAuthQuery(api.auth.isOwner, {})) === true,
+    limit: async () => {
+      const limiter = getReviewSubmitRatelimit();
+      return limiter ? limiter.limit(clientIdentifier(request)) : null;
+    },
+  });
+  if (!decision.ok) {
+    return NextResponse.json({ error: decision.error }, { status: decision.status });
+  }
+
   try {
     const body = await request.json();
     const { contentSlug, contentType } = body as {
