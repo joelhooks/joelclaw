@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { type InboxResult, isSandboxExecutionResult } from "@joelclaw/agent-execution";
 import { MACHINES_COLLECTION, writeRunBlob } from "@joelclaw/memory";
 import { Hono } from "hono";
+import { getConnInfo } from "hono/bun";
 import { connect as inngestConnect } from "inngest/connect";
 import { serve as inngestServe } from "inngest/hono";
 import { type Events, inngest } from "./inngest/client";
@@ -70,6 +71,14 @@ import {
 } from "./inngest/functions/index.host";
 import { enqueueRegisteredQueueEvent } from "./lib/queue";
 import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
+import {
+  createDenialLogger,
+  decideInternalAuth,
+  internalAuthMode,
+  isLoopbackAddress,
+  resolveBindHosts,
+  serveOnHosts,
+} from "./lib/internal-auth";
 import { type MemoryIdentity, registerRunCaptureRoute } from "./routes/run-capture";
 import { createCaptureIdentityResolver } from "./routes/run-capture-auth";
 import { registerRunHealthRoute } from "./routes/run-health";
@@ -144,13 +153,39 @@ void emitInngestRegistryLoaded(functionNames).catch((error) => {
   console.warn("[otel] failed to emit registry snapshot", error);
 });
 
-function verifyInternalToken(c: any) {
-  if (!OTEL_EMIT_TOKEN) return null;
-  const token = c.req.header("x-otel-emit-token") ?? c.req.header("x-internal-token");
-  if (!token || token !== OTEL_EMIT_TOKEN) {
-    return c.json({ error: "Unauthorized" }, 401);
+const INTERNAL_AUTH_MODE = internalAuthMode();
+const logInternalAuth = createDenialLogger();
+if (!OTEL_EMIT_TOKEN?.trim()) {
+  console.warn(
+    `[internal-auth] OTEL_EMIT_TOKEN is not set: /internal/* and /observability/emit ${INTERNAL_AUTH_MODE === "log-only" ? "pass in log-only mode" : "refuse every request (503)"}`,
+  );
+}
+
+function callerAddress(c: any): string | undefined {
+  try {
+    return getConnInfo(c).remote.address;
+  } catch {
+    return undefined;
   }
-  return null;
+}
+
+/** Fails closed: see lib/internal-auth.ts. Returns a response to send, or null to continue. */
+function verifyInternalToken(c: any) {
+  const decision = decideInternalAuth({
+    configured: OTEL_EMIT_TOKEN,
+    presented: c.req.header("x-otel-emit-token") ?? c.req.header("x-internal-token"),
+    mode: INTERNAL_AUTH_MODE,
+  });
+  if (decision.reason !== "ok") {
+    logInternalAuth({
+      route: c.req.routePath ?? c.req.path,
+      caller: callerAddress(c),
+      userAgent: c.req.header("user-agent"),
+      decision,
+    });
+  }
+  if (decision.allow) return null;
+  return c.json({ error: decision.status === 503 ? "Internal auth not configured" : "Unauthorized" }, decision.status ?? 401);
 }
 
 async function readAgentResult(requestId: string): Promise<Record<string, unknown> | null> {
@@ -445,6 +480,14 @@ app.post("/internal/agent-dispatch", async (c) => {
   }
 
   const requestPayload = payload as Events["system/agent.requested"]["data"];
+  // Host execution runs the agent as this user on this machine. Only loopback
+  // callers may ask for it; remote callers default to the sandbox.
+  if (!isLoopbackAddress(callerAddress(c))) {
+    if (requestPayload.executionMode === "host") {
+      return c.json({ ok: false, error: "Host execution is only available to loopback callers; use executionMode \"sandbox\"" }, 403);
+    }
+    requestPayload.executionMode = "sandbox";
+  }
   const existingResult = await readAgentResult(requestId);
   const existingStatus = readAgentResultStatus(existingResult);
   const shouldDedupe = isTerminalState(existingStatus)
@@ -776,14 +819,15 @@ app.on(
   }
 );
 
-export default {
+serveOnHosts({
+  hosts: resolveBindHosts(),
   port: 3111,
   // Inngest registration PUTs can take longer than Bun's 10s default when the
   // self-hosted runtime is under cron/backlog pressure. A 10s idle timeout
   // causes an empty reply, leaving the server with stale function triggers.
   idleTimeout: 255,
   fetch: app.fetch,
-};
+});
 
 console.log("🚌 system-bus worker running on http://localhost:3111");
 console.log(`👷 worker role: ${WORKER_ROLE}`);
