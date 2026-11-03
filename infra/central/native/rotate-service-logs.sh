@@ -11,6 +11,9 @@ MAX_PAUSE_MS="${LOG_ROTATION_MAX_PAUSE_MS:-500}"
 OWN_LOG_MAX_BYTES="${LOG_ROTATION_OWN_LOG_MAX_BYTES:-1048576}"
 LOCK_DIR="${STATE_DIR}/lock"
 LOGGER_TAG="com.joelclaw.central.log-rotation"
+# Writers matched by pgrep -f (extended regex) against the full command line, as the joelclaw user.
+EXECUTOR_WRITER_PATTERN="^${CENTRAL_ROOT}/opt/executor/[^/ ]+/lib/node_modules/executor/node_modules/executor-darwin-arm64/bin/executor daemon run "
+EXECUTOR_DASHBOARD_WRITER_PATTERN="^/usr/local/libexec/joelclaw/node-v[^/ ]+/bin/node ${CENTRAL_ROOT}/opt/executor/bin/executor-dashboard-proxy\\.mjs\$"
 STOPPED_PID=""
 STOPPED_SERVICE=""
 PAUSE_STARTED_MS=""
@@ -434,16 +437,33 @@ run_rotation() {
     return
   fi
 
+  # One group failing must not stop the others from rotating.
+  status=0
   rotate_group \
     "inngest" \
     '^/Users/Shared/joelclaw/opt/inngest/[^/]*/inngest ' \
     "${CENTRAL_ROOT}/logs/inngest/launchd.err.log" \
-    "${CENTRAL_ROOT}/logs/inngest/launchd.out.log"
+    "${CENTRAL_ROOT}/logs/inngest/launchd.out.log" || status=1
 
   rotate_group \
     "typesense" \
     '^/opt/homebrew/opt/typesense-server@[^/]*/bin/typesense-server ' \
-    "${CENTRAL_ROOT}/logs/typesense/typesense.log"
+    "${CENTRAL_ROOT}/logs/typesense/typesense.log" || status=1
+
+  # sec-20261103-015: the executor and its dashboard proxy log every request; the size cap bounds a 403 flood.
+  rotate_group \
+    "executor" \
+    "${EXECUTOR_WRITER_PATTERN}" \
+    "${CENTRAL_ROOT}/logs/executor/launchd.err.log" \
+    "${CENTRAL_ROOT}/logs/executor/launchd.out.log" || status=1
+
+  rotate_group \
+    "executor-dashboard" \
+    "${EXECUTOR_DASHBOARD_WRITER_PATTERN}" \
+    "${CENTRAL_ROOT}/logs/executor-dashboard/launchd.err.log" \
+    "${CENTRAL_ROOT}/logs/executor-dashboard/launchd.out.log" || status=1
+
+  return "${status}"
 }
 
 compact_daemon_logs
