@@ -19,7 +19,7 @@ CUSTOM_MINIO_CONSOLE_URL="${CUSTOM_MINIO_CONSOLE_URL:-http://100.67.156.41:39001
 CE_MINIO_URL="${CE_MINIO_URL:-http://100.67.156.41:29990}"
 LOCAL_CONVEX_URL="${LOCAL_CONVEX_URL:-http://127.0.0.1:3210}"
 LOCAL_CONVEX_DASHBOARD="${LOCAL_CONVEX_DASHBOARD:-http://127.0.0.1:6791}"
-LAN_CONVEX_URL="${LAN_CONVEX_URL:-http://192.168.1.10:3210}"
+CONVEX_PROXY_URL="${CONVEX_PROXY_URL:-http://127.0.0.1:13210}"
 TAILNET_CONVEX_URL="${TAILNET_CONVEX_URL:-http://100.99.76.47:3210}"
 POSTGRES_SOCKET="${POSTGRES_SOCKET:-/Users/Shared/joelclaw/run/.s.PGSQL.5432}"
 POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}"
@@ -288,6 +288,10 @@ postgres_ready_ok() {
   fi
 }
 
+convex_origin_proxy_ok() {
+  curl -fsS --max-time 5 -D - -o /dev/null "${1}/version" | grep -qi '^x-convex-origin-proxy: 1'
+}
+
 convex_version_ok() {
   local url="$1"
   local body
@@ -367,10 +371,10 @@ probe required 'Central Postgres ready' postgres_ready_ok
 
 probe required 'local Convex backend' convex_version_ok "$LOCAL_CONVEX_URL"
 probe required 'local Convex dashboard' http_head_ok "$LOCAL_CONVEX_DASHBOARD"
-probe warn 'Convex LAN forward' convex_version_ok "$LAN_CONVEX_URL"
+probe warn 'Convex origin proxy' convex_origin_proxy_ok "$CONVEX_PROXY_URL"
 probe warn 'Convex tailnet forward' convex_version_ok "$TAILNET_CONVEX_URL"
 probe warn 'Convex heavy smoke gate' convex_heavy_smoke
-probe warn 'local Convex LAN launchd' launchd_user_ok com.joelclaw.local-convex.lan-forwarder
+probe warn 'Convex origin proxy launchd' launchd_user_ok com.joelclaw.convex-origin-proxy
 
 probe warn 'Flagg shadow central health' "${CENTRAL_SCRIPTS}/health.sh"
 probe warn 'legacy full health gate' run_full_health_if_requested

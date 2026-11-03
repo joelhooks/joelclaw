@@ -200,52 +200,52 @@ http://127.0.0.1:3210
 http://127.0.0.1:3211
 http://127.0.0.1:6791
 
-# LAN on Flagg
-http://192.168.1.10:3210
-http://192.168.1.10:3211
-http://192.168.1.10:6791
-
-# Tailnet on Flagg
-http://100.99.76.47:3210
-http://100.99.76.47:3211
-http://100.99.76.47:6791
+# Tailnet (through the Origin proxy)
+http://<host-tailnet-ip>:3210
+http://<host-tailnet-ip>:3211
+http://<host-tailnet-ip>:6791
 ```
+
+The LAN listener is retired (sec-20261103-003, 2026-11-03): the old
+`com.joelclaw.local-convex.lan-forwarder` LaunchDaemon is booted out and
+disabled. Do not bring it back; LAN clients use the tailnet address.
 
 Implementation:
 
 - Docker Compose keeps the Convex backend and dashboards bound to `127.0.0.1` only.
-- LAN exposure is a system LaunchDaemon that runs the TCP forwarder as `joel` before GUI login:
-  - plist source: `infra/central/native/com.joelclaw.local-convex.lan-forwarder.plist.template`
-  - forwarder source: `infra/central/native/local-convex-lan-forwarder.mjs`
-  - installer: `infra/central/native/install-local-convex-lan-forwarder.sh`
-  - binds `192.168.1.10:{3210,3211,6791}` and forwards to `127.0.0.1:{3210,3211,6791}`
-- Tailnet exposure is Tailscale Serve TCP forwarding:
-  - `100.99.76.47:3210 -> 127.0.0.1:3210`
-  - `100.99.76.47:3211 -> 127.0.0.1:3211`
-  - `100.99.76.47:6791 -> 127.0.0.1:6792`
-- The tailnet dashboard uses a second local dashboard container on `127.0.0.1:6792` so its `NEXT_PUBLIC_DEPLOYMENT_URL` points at `http://100.99.76.47:3210`.
-- The LAN/local dashboard on `127.0.0.1:6791` is configured with `NEXT_PUBLIC_DEPLOYMENT_URL=http://192.168.1.10:3210`.
+- Tailnet 3210/3211 go through the Convex origin proxy, not straight to Convex:
+  - source: `infra/central/native/convex-origin-proxy.mjs` (tests: `test-convex-origin-proxy.mjs`)
+  - installer: `infra/central/native/install-convex-origin-proxy.sh` (user LaunchAgents, no sudo; `--uninstall` points Serve back at Convex)
+  - listens on `127.0.0.1:13210 -> 3210` and `127.0.0.1:13211 -> 3211`
+  - requests with no `Origin` (convex CLI, Node and bun clients) pass; browser requests pass only from the allowlist in `~/.config/joelclaw/convex-origin-proxy.json`; foreign and `null` Origins get 403 on HTTP and WebSocket upgrades, logged to `~/.local/log/convex-origin-proxy.err`
+  - every proxied answer carries `x-convex-origin-proxy: 1`
+  - `com.joelclaw.convex-origin-proxy-check` probes both ports every 300 s and sends one Rat King message per up/down change
+- Tailscale Serve TCP forwarding:
+  - `3210 -> 127.0.0.1:13210` (proxy)
+  - `3211 -> 127.0.0.1:13211` (proxy)
+  - `6791 -> 127.0.0.1:6792` (tailnet dashboard)
+- Both dashboards set `NEXT_PUBLIC_DEPLOYMENT_URL` to the tailnet Convex address (`LAN_DASHBOARD_DEPLOYMENT_URL` and `TAILNET_DASHBOARD_DEPLOYMENT_URL` in the compose `.env`); their Origins are on the proxy allowlist.
+- The proxy only closes the cross-site browser path. Public functions still have no auth for non-browser tailnet callers; function-level auth is the real fix.
 
 Known Docker Desktop gotcha:
 
-- Docker could not bind directly to `192.168.1.10` or `100.99.76.47` on this Mac; attempts failed with `cannot assign requested address`.
+- Docker could not bind directly to the LAN or tailnet address on this Mac; attempts failed with `cannot assign requested address`.
 - Keep Docker localhost-only and expose selected services through host-level forwarders.
 
-Manage LAN forwarder:
+Manage the proxy:
 
 ```sh
 cd /Users/joel/Code/joelhooks/joelclaw
-sudo ./infra/central/native/install-local-convex-lan-forwarder.sh
-sudo launchctl print system/com.joelclaw.local-convex.lan-forwarder
+CONVEX_PROXY_ALARM_AS=<sender name> CONVEX_PROXY_ALARM_TO=<desk> ./infra/central/native/install-convex-origin-proxy.sh
+launchctl print gui/$(id -u)/com.joelclaw.convex-origin-proxy
+node --test infra/central/native/test-convex-origin-proxy.mjs
 ```
-
-The old GUI LaunchAgent under the protected `Documents/Codex` work directory did not start after a reboot without GUI login. Do not restore that shape.
 
 Manage tailnet forwards without disturbing unrelated Tailscale Serve config:
 
 ```sh
-tailscale serve --bg --yes --tcp 3210 127.0.0.1:3210
-tailscale serve --bg --yes --tcp 3211 127.0.0.1:3211
+tailscale serve --bg --yes --tcp 3210 tcp://127.0.0.1:13210
+tailscale serve --bg --yes --tcp 3211 tcp://127.0.0.1:13211
 tailscale serve --bg --yes --tcp 6791 127.0.0.1:6792
 tailscale serve status --json
 
@@ -261,14 +261,20 @@ Exposure checks:
 
 ```sh
 curl -fsS -m 5 http://127.0.0.1:3210/version
-curl -fsS -m 5 http://192.168.1.10:3210/version
-curl -fsS -m 5 http://100.99.76.47:3210/version
+curl -fsS -m 5 http://<host-tailnet-ip>:3210/version
+curl -fsSI -m 5 http://127.0.0.1:13210/version | grep -i x-convex-origin-proxy   # proxy answers
+
+# A foreign Origin must get 403; no Origin must reach Convex.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Origin: https://evil.example' \
+  -H 'content-type: application/json' -d '{"path":"x:y","args":{}}' http://<host-tailnet-ip>:3210/api/mutation
+
+# The LAN address must refuse connections (listener retired).
+curl -fsS -m 5 http://<host-lan-ip>:3210/version || echo "refused, as intended"
 
 curl -fsSI -m 5 http://127.0.0.1:6791
-curl -fsSI -m 5 http://192.168.1.10:6791
-curl -fsSI -m 5 http://100.99.76.47:6791
+curl -fsSI -m 5 http://<host-tailnet-ip>:6791
 
-lsof -nP -iTCP:3210 -iTCP:3211 -iTCP:6791 -iTCP:6792 -sTCP:LISTEN
+lsof -nP -iTCP:3210 -iTCP:3211 -iTCP:6791 -iTCP:6792 -iTCP:13210 -iTCP:13211 -sTCP:LISTEN
 ```
 
 The healthy self-hosted backend `/version` response is currently `unknown`.
