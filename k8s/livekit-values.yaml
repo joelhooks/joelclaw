@@ -7,8 +7,6 @@ image:
 terminationGracePeriodSeconds: 18000
 
 livekit:
-  keys:
-    joelclaw_da7b9907: YLhImqs19jXyQDY5vYQWzWzGxywYVmwf99JyUk21
   log_level: info
   port: 7880
   redis:
@@ -22,9 +20,12 @@ livekit:
     enabled: false
     loadBalancerAnnotations: {}
 
+# API keys live in a k8s Secret, never in this file (sec-20261105-002).
+# Create it with: kubectl -n joelclaw create secret generic livekit-keys --from-file=keys.yaml
+# where keys.yaml holds one "<key>: <secret>" line. Never reuse the old in-file pair.
 storeKeysInSecret:
-  enabled: false
-  existingSecret: ""
+  enabled: true
+  existingSecret: livekit-keys
   keys: {}
 
 loadBalancer:
