@@ -5,6 +5,7 @@ import { classifyObservationCategory, normalizeCategoryId, TAXONOMY_VERSION } fr
 import { WRITE_GATE_VERSION } from "../../memory/write-gate";
 import { emitMeasuredOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
+import { redactSecrets } from "./observation-secrets";
 
 type NotedObservationInput = {
   category?: unknown;
@@ -65,7 +66,7 @@ function toUnixSeconds(value: unknown): number | null {
   return null;
 }
 
-function normalizeObservations(
+export function normalizeObservations(
   items: NotedObservationInput[],
   eventId: string
 ): MemoryObservationDoc[] {
@@ -74,7 +75,7 @@ function normalizeObservations(
   const docs: MemoryObservationDoc[] = [];
 
   for (const input of items) {
-    const summary = typeof input.summary === "string" ? input.summary.trim() : "";
+    const summary = typeof input.summary === "string" ? redactSecrets(input.summary).trim() : "";
     if (!summary) continue;
 
     const metadata = asRecord(input.metadata);

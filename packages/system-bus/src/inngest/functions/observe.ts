@@ -19,6 +19,7 @@ import { inngest } from "../client.ts";
 import { sanitizeObservationText, sanitizeObservationTranscript } from "./observation-sanitize";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+import { redactSecrets } from "./observation-secrets";
 
 type ObserveCompactionInput = {
   sessionId: string;
@@ -485,7 +486,7 @@ export const observeSessionFunction = inngest.createFunction(
       };
     }
 
-    const llmOutput = await step.run("call-observer-llm", async () => {
+    const rawLlmOutput = await step.run("call-observer-llm", async () => {
       const sessionName =
         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
       const transcriptForPrompt = sanitizedMessages;
@@ -521,6 +522,7 @@ Session context:
       }
 
     });
+    const llmOutput = redactSecrets(rawLlmOutput);
 
     const parsedObservations = await step.run(
       "parse-observations",

@@ -1,3 +1,5 @@
+import { redactSecrets } from "./observation-secrets";
+
 const TOOL_CALL_BLOCK_PATTERN = /<toolCall\b[\s\S]*?<\/toolCall>/giu;
 const ARGUMENTS_BLOCK_PATTERN = /<arguments\b[\s\S]*?<\/arguments>/giu;
 const TOOL_CALL_TAG_PATTERN = /<\/?toolCall\b[^>]*>/giu;
@@ -75,7 +77,7 @@ function looksLikeInternalShellAction(text: string): boolean {
 }
 
 export function sanitizeObservationText(rawText: string): string | null {
-  const stripped = stripToolCallArtifacts(rawText);
+  const stripped = stripToolCallArtifacts(redactSecrets(rawText));
 
   const filteredLines = stripped
     .split(/\r?\n/u)
@@ -95,7 +97,7 @@ export function sanitizeObservationText(rawText: string): string | null {
 }
 
 export function sanitizeObservationTranscript(messages: string): string {
-  const stripped = stripToolCallArtifacts(messages);
+  const stripped = stripToolCallArtifacts(redactSecrets(messages));
   if (stripped.trim().length === 0) return "";
 
   const sanitizedLines = stripped
