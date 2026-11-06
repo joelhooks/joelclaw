@@ -46,7 +46,14 @@ gui_session() { launchctl print "gui/$(id -u)" >/dev/null; }
 # `secrets health` performs slow checks that can outlive the CLI's 5s timeout and
 # block the daemon's following lease requests. Status is the fast liveness probe.
 secrets_healthy() { secrets status >/dev/null; }
-lease_named() { lease "$1" >/dev/null; }
+# Presence check by name: one `secrets list` per run, no value leased. Leasing 11 values every
+# 30 minutes only to discard them was ~500 leases/day of exposure for a health check. Probes that
+# actually call a provider (LiveKit, Typesense, Telnyx) still lease their own value.
+SECRET_NAMES=""
+secret_named() {
+  [[ -n "$SECRET_NAMES" ]] || SECRET_NAMES="$(secrets list 2>/dev/null)" || return 1
+  grep -Fq "\"name\": \"$1\"" <<<"$SECRET_NAMES"
+}
 
 cleanup_room() {
   if [[ -n "$ROOM" && ${#LK_ENV[@]} -gt 0 ]]; then
@@ -159,7 +166,7 @@ probe 'voice LaunchAgent installed and running' plist_running
 probe 'GUI launchd session available' gui_session
 probe 'agent-secrets healthy' secrets_healthy
 for secret in livekit_url livekit_api_key livekit_api_secret openrouter_api_key deepgram_api_key elevenlabs_api_key gog_keyring_password slack_user_token telnyx_api_key telnyx_phone_number joel_phone_number; do
-  probe "secret leases: $secret" lease_named "$secret"
+  probe "secret stored: $secret" secret_named "$secret"
 done
 probe 'LiveKit worker dispatch registered' live_dispatch
 probe 'no recent voice-agent FATAL crash loop' no_recent_fatal
