@@ -171,7 +171,13 @@ done
 probe 'LiveKit worker dispatch registered' live_dispatch
 probe 'no recent voice-agent FATAL crash loop' no_recent_fatal
 probe 'Typesense healthy' typesense_healthy
-probe 'voice recall tool registered with non-empty observation index' recall_tool_healthy
+# Flowing memory is halted on purpose (10-11), so no new distilled hits can
+# land in the 7-day window. Grade halted instead of failing until it resumes.
+if [[ -e "$HOME/.joelclaw/flowing-memory/HALTED" ]]; then
+  printf 'ok   %s (halted: flowing memory frozen)\n' 'voice recall tool registered with non-empty observation index'
+else
+  probe 'voice recall tool registered with non-empty observation index' recall_tool_healthy
+fi
 warn_probe 'wiki edition endpoint healthy' wiki_healthy
 probe 'Telnyx available credit at least $10' balance_check
 warn_probe 'Telnyx available credit at least $25' balance_warn
