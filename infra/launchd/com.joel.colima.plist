@@ -5,8 +5,13 @@
     <key>Label</key>
     <string>com.joel.colima</string>
 
-    <key>LimitLoadToSessionType</key>
-    <string>Background</string>
+    <!-- The same profile can be supervised as a login agent or a system daemon.
+         Do not restrict it to Background: normal GUI login must load it too. -->
+    <key>UserName</key>
+    <string>joel</string>
+
+    <key>GroupName</key>
+    <string>staff</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -37,9 +42,9 @@
     <string>Background</string>
 
     <key>StandardOutPath</key>
-    <string>/tmp/joelclaw/colima.log</string>
+    <string>/Users/joel/Library/Logs/joelclaw-colima/stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/tmp/joelclaw/colima.err</string>
+    <string>/Users/joel/Library/Logs/joelclaw-colima/stderr.log</string>
 </dict>
 </plist>

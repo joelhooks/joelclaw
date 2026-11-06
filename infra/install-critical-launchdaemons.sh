@@ -1,10 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ "$(id -u)" -ne 0 ]; then
-  echo "Run as root: sudo $0"
-  exit 1
-fi
+case "${1:-}" in
+  --help|-h)
+    echo "Usage: $0 [--plan]"
+    echo "--plan prints host placement without changing services or requiring root."
+    exit 0
+    ;;
+  --plan|"") ;;
+  *) echo "Unknown argument: $1" >&2; exit 64 ;;
+esac
 
 TARGET_USER="${TARGET_USER:-joel}"
 TARGET_GROUP="${TARGET_GROUP:-staff}"
@@ -14,7 +19,7 @@ REPO_ROOT="${REPO_ROOT:-${TARGET_HOME}/Code/joelhooks/joelclaw}"
 SYSTEM_DAEMONS_DIR="/Library/LaunchDaemons"
 LAUNCH_AGENTS_DIR="${TARGET_HOME}/Library/LaunchAgents"
 SERVICE_PLACEMENT_FILE="${REPO_ROOT}/packages/endpoint-resolver/config/service-placement.json"
-HOSTNAME_SHORT="${JOELCLAW_HOSTNAME_OVERRIDE:-$(hostname -s)}"
+HOSTNAME_SHORT="$(printf '%s' "${JOELCLAW_HOSTNAME_OVERRIDE:-$(hostname -s)}" | tr '[:upper:]' '[:lower:]')"
 JQ_BIN="${JQ_BIN:-/opt/homebrew/bin/jq}"
 AGENT_SECRETS_SERVICE_USER="${AGENT_SECRETS_SERVICE_USER:-joelclaw}"
 AGENT_SECRETS_SOCKET_GROUP="${AGENT_SECRETS_SOCKET_GROUP:-joelclaw-secrets}"
@@ -22,6 +27,8 @@ AGENT_SECRETS_SERVICE_ROOT="${AGENT_SECRETS_SERVICE_ROOT:-/Users/Shared/joelclaw
 AGENT_SECRETS_SERVICE_HOME="${AGENT_SECRETS_SERVICE_HOME:-/Users/${AGENT_SECRETS_SERVICE_USER}}"
 
 HEADLESS_RUNTIME_LABELS=(
+  # Container services still need Colima when Kubernetes is unassigned.
+  com.joel.colima
   com.joel.agent-secrets
   com.joel.system-bus-worker
   com.joel.gateway
@@ -34,7 +41,6 @@ INTERACTIVE_LAUNCH_AGENT_LABELS=(
   com.joelclaw.herdr-server
 )
 K8S_LABELS=(
-  com.joel.colima
   com.joel.k8s-reboot-heal
   com.joel.kube-operator-access
 )
@@ -49,8 +55,8 @@ CRITICAL_LABELS=()
   exit 1
 }
 
-HEADLESS_RUNTIME_HOST="$($JQ_BIN -r 'first(.hosts[] | select(.services | index("joelclaw-headless-runtime")) | .hostname) // empty' "$SERVICE_PLACEMENT_FILE")"
-K8S_HOST="$($JQ_BIN -r 'first(.hosts[] | select(.services | index("k8s")) | .hostname) // empty' "$SERVICE_PLACEMENT_FILE")"
+HEADLESS_RUNTIME_HOST="$($JQ_BIN -r '(first(.hosts[] | select(.services | index("joelclaw-headless-runtime")) | .hostname) // "") | ascii_downcase' "$SERVICE_PLACEMENT_FILE")"
+K8S_HOST="$($JQ_BIN -r '(first(.hosts[] | select(.services | index("k8s")) | .hostname) // "") | ascii_downcase' "$SERVICE_PLACEMENT_FILE")"
 
 if [ "$HOSTNAME_SHORT" = "$HEADLESS_RUNTIME_HOST" ]; then
   CRITICAL_LABELS+=("${HEADLESS_RUNTIME_LABELS[@]}")
@@ -61,6 +67,21 @@ fi
 INSTALL_MODE="install"
 if [ "${#CRITICAL_LABELS[@]}" -eq 0 ]; then
   INSTALL_MODE="cleanup-only"
+fi
+
+if [ "${1:-}" = "--plan" ]; then
+  printf '%s\n' "host: $HOSTNAME_SHORT" "mode: $INSTALL_MODE" \
+    "headless runtime host: ${HEADLESS_RUNTIME_HOST:-unconfigured}" \
+    "k8s host: ${K8S_HOST:-unconfigured}"
+  if [ "${#CRITICAL_LABELS[@]}" -gt 0 ]; then
+    printf 'install: %s\n' "${CRITICAL_LABELS[@]}"
+  fi
+  exit 0
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Run as root: sudo $0"
+  exit 1
 fi
 
 require_executable() {
@@ -150,6 +171,7 @@ preflight_selected_assets() {
       /usr/bin/plutil -lint "$plist" >/dev/null
     done
 
+    require_executable "${REPO_ROOT}/infra/colima-start.sh"
     require_executable "${TARGET_HOME}/.local/bin/secrets"
     "${TARGET_HOME}/.local/bin/secrets" daemon restart --help >/dev/null 2>&1 || {
       echo "Installed secrets binary lacks service-account restart support"
@@ -207,7 +229,6 @@ preflight_selected_assets() {
   fi
 
   if [ "$HOSTNAME_SHORT" = "$K8S_HOST" ]; then
-    require_executable "${REPO_ROOT}/infra/colima-start.sh"
     require_executable "${REPO_ROOT}/infra/k8s-reboot-heal.sh"
     require_executable "${REPO_ROOT}/infra/kube-operator-access.sh"
   fi
@@ -231,6 +252,7 @@ ensure_runtime_dirs() {
     "${TARGET_HOME}/.local/log" \
     "${TARGET_HOME}/.joelclaw/logs" \
     "${TARGET_HOME}/.agent-secrets" \
+    "${TARGET_HOME}/Library/Logs/joelclaw-colima" \
     /tmp/joelclaw \
     "$LAUNCH_AGENTS_DIR"
   chown "${TARGET_USER}:${TARGET_GROUP}" \
@@ -239,6 +261,7 @@ ensure_runtime_dirs() {
     "${TARGET_HOME}/.joelclaw" \
     "${TARGET_HOME}/.joelclaw/logs" \
     "${TARGET_HOME}/.agent-secrets" \
+    "${TARGET_HOME}/Library/Logs/joelclaw-colima" \
     "$LAUNCH_AGENTS_DIR"
 }
 
