@@ -21,7 +21,6 @@ import { channelMessageIngest } from "./channel-message-ingest";
 import { channelIntelligenceGarden } from "./channels/channel-intelligence-garden";
 import { channelIntelligenceTodoist } from "./channels/channel-intelligence-todoist";
 import { checkCalendar } from "./check-calendar";
-import { checkEmail } from "./check-email";
 import { checkGatewayHealth } from "./check-gateway-health";
 import { checkGranola, granolaCheckCron } from "./check-granola";
 import { checkLoops } from "./check-loops";
@@ -63,7 +62,6 @@ import {
 } from "./docs-maintenance";
 import { docsReindexBatch } from "./docs-reindex-batch";
 import { docsReindexV2 } from "./docs-reindex-v2";
-import { emailNag } from "./email-nag";
 import { embedText } from "./embed";
 import { frictionFix } from "./friction-fix";
 import {
@@ -277,8 +275,6 @@ export const hostFunctionDefinitions = [
   checkVaultSync,
   checkGranola,
   granolaCheckCron,
-  checkEmail,
-  emailNag,
   checkGatewayHealth,
   vipEmailThreadsBackfill,
   vipEmailReceived,
