@@ -872,6 +872,9 @@ importers:
       '@joelclaw/recall':
         specifier: workspace:*
         version: link:../recall
+      '@modelcontextprotocol/sdk':
+        specifier: 1.26.0
+        version: 1.26.0(zod@4.3.6)
       '@restatedev/restate-sdk':
         specifier: ^1.10.4
         version: 1.10.4
