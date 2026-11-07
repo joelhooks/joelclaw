@@ -14,13 +14,48 @@ SOURCE_DB="${CRITICAL_DB_SOURCE:-$HOME/.joelclaw/search/critical.db}"
 # builder atomically renames critical.db, so reading the live path twice can
 # otherwise combine the old file's checksum with the new file's built_at.
 SOURCE_SNAPSHOT="$(mktemp -t critical-search-source.XXXXXX)"
+CACHE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/joelclaw/critical-search-source.sha"
+CACHE_TEMP=""
 cleanup() {
   rm -f "$SOURCE_SNAPSHOT"
+  [ -z "$CACHE_TEMP" ] || rm -f "$CACHE_TEMP"
 }
 trap cleanup EXIT HUP INT TERM
+source_identity() {
+  stat -f '%d %i %z %Fm' "$SOURCE_DB"
+}
+SOURCE_ID_BEFORE="$(source_identity)"
 cp -c -p "$SOURCE_DB" "$SOURCE_SNAPSHOT" 2>/dev/null || cp -p "$SOURCE_DB" "$SOURCE_SNAPSHOT"
+SOURCE_ID_AFTER="$(source_identity)"
 
-SOURCE_SHA="$(shasum -a 256 "$SOURCE_SNAPSHOT" | awk '{print $1}')"
+CACHE_LINE="$(cat "$CACHE_FILE" 2>/dev/null || true)"
+CACHED_SHA="${CACHE_LINE##* }"
+case "$CACHED_SHA" in
+  *[!0-9a-f]*|'') CACHED_SHA="" ;;
+esac
+if [ "$SOURCE_ID_BEFORE" = "$SOURCE_ID_AFTER" ] &&
+   [ "${#CACHED_SHA}" -eq 64 ] &&
+   [ "$CACHE_LINE" = "$SOURCE_ID_BEFORE $CACHED_SHA" ]; then
+  SOURCE_SHA="$CACHED_SHA"
+  echo 'source_sha=cached'
+else
+  SOURCE_SHA="$(shasum -a 256 "$SOURCE_SNAPSHOT" | awk '{print $1}')"
+  echo 'source_sha=hashed'
+  # Never associate a snapshot with a generation published during its copy/hash.
+  if [ "$SOURCE_ID_BEFORE" = "$SOURCE_ID_AFTER" ] &&
+     [ "$SOURCE_ID_BEFORE" = "$(source_identity)" ]; then
+    # A cache write failure must not interrupt replica heartbeats.
+    if mkdir -p "${CACHE_FILE%/*}" &&
+       CACHE_TEMP="$(mktemp "${CACHE_FILE}.XXXXXX")" &&
+       chmod 600 "$CACHE_TEMP" &&
+       printf '%s %s\n' "$SOURCE_ID_BEFORE" "$SOURCE_SHA" > "$CACHE_TEMP" &&
+       mv -f "$CACHE_TEMP" "$CACHE_FILE"; then
+      CACHE_TEMP=""
+    else
+      echo 'source checksum cache write failed; continuing without cache' >&2
+    fi
+  fi
+fi
 SOURCE_VERSION="$(CRITICAL_DB_SOURCE="$SOURCE_SNAPSHOT" bun -e '
   import { Database } from "bun:sqlite";
   const db = new Database(process.env.CRITICAL_DB_SOURCE, { readonly: true });
