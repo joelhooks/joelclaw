@@ -1,0 +1,40 @@
+---
+title: "LiveKit Dispatch Cold-Start False Failure"
+type: "incident"
+status: "closed"
+created_at: "2026-11-13"
+interaction: "AFK"
+parent: "./voice-workroom-brief.svx"
+---
+
+# LiveKit Dispatch Cold-Start False Failure
+
+## Cause
+
+At 12:09Z, `verify-voice.sh` failed only its LiveKit dispatch check. The probe created `canary-verify-1794571761` and stopped waiting after 20 seconds. LiveKit had accepted the worker's dispatch request, but the worker had no warmed subprocess available. Its next subprocess initialized after the probe's deadline, so the probe deleted the room before it could prove the delayed join.
+
+The five-minute `voice-worker-canary` had just dispatched its own `canary-worker-1794571740482` room. Flagg's `voice-agent.log` records that request at 12:09:14Z, the verify-room request at 12:09:22Z, and `no warmed process available for job` immediately after. A cold subprocess initialization took 28.8 seconds. This was a process-pool cold-start / concurrent-probe timing miss, not a disconnected or misconfigured worker.
+
+## Evidence and scope
+
+- LaunchAgent `com.joel.voice-agent` was running. Its wrapper PID was 53057, started 2026-11-04 06:15 PT; LiveKit worker PID 53164 remained active.
+- Worker logs show repeated LiveKit dispatches through the incident window, including the five-minute canary immediately before the failed verify probe. No auth, API-key, project, agent-name, or websocket-reconnect error appeared.
+- The 10:13Z–11:59Z fleet-digest failure ended before this 12:09Z check. Flagg's dispatch logs continued during that interval. The earlier network trouble at another site has no supporting link to this local Flagg worker failure.
+- The five-minute canary state remained healthy. The 30-minute verify probe's 20-second deadline was the failing threshold.
+
+## Fix
+
+`infra/voice-agent/verify-voice.sh` now waits up to 45 seconds for a dispatch participant. That gives a cold subprocess time to initialize while leaving the separate five-minute canary's 20-second outage check unchanged. No worker restart was needed: the worker was connected and accepting dispatches. Restarting it would risk active calls and would not address cold subprocess initialization.
+
+## Verification
+
+- 2026-11-13 12:21:31Z: `bash infra/voice-agent/verify-voice.sh` passed every check, including LiveKit dispatch.
+- 2026-11-13 12:23:51Z: repeated; every check passed again.
+- 2026-11-13 12:29:53Z: third run passed every check. The second and third runs were 6m02s apart.
+- `bash -n infra/voice-agent/verify-voice.sh` passed. `git diff --check` passed.
+
+`pnpm exec tsc --noEmit -p packages/system-bus/tsconfig.json` was also attempted while checking the related canary. It fails on existing unrelated type errors in the CLI, system-bus tests, missing `@joelclaw/recall` types, and session-capture event contracts; no TypeScript file is changed by this fix.
+
+## Prevention
+
+Keep the five-minute worker canary as the fast alarm. Keep the 30-minute verify check as broader boot/configuration coverage, but don't let its room cleanup race a legitimate cold worker process. A worker self-restart is appropriate only if it stops accepting dispatches or reports a persistent connection/auth fault, neither of which happened here.

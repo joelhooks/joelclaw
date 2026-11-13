@@ -70,13 +70,15 @@ live_dispatch() {
   LK_ENV=("LIVEKIT_URL=$url" "LIVEKIT_API_KEY=$key" "LIVEKIT_API_SECRET=$secret")
   ROOM="canary-verify-$(date +%s)"
   env "${LK_ENV[@]}" /opt/homebrew/bin/lk room create "$ROOM" >/dev/null || return 1
-  local i
-  for i in {1..10}; do
+  # A cold LiveKit agent subprocess took 28.8s to initialize; leave a margin
+  # so this probe doesn't delete the room before the queued job can join.
+  local started=$SECONDS
+  while (( SECONDS - started < 45 )); do
     output="$(env "${LK_ENV[@]}" /opt/homebrew/bin/lk room participants list "$ROOM" 2>/dev/null || true)"
     if grep -Eq 'agent-[[:alnum:]_-]+' <<<"$output"; then return 0; fi
     sleep 2
   done
-  printf 'no agent-* participant joined %s within 20s\n' "$ROOM"
+  printf 'no agent-* participant joined %s within 45s\n' "$ROOM"
   return 1
 }
 
