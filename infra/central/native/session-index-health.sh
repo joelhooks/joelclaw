@@ -51,6 +51,16 @@ http_ok() {
   curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS "$1" >/dev/null 2>&1
 }
 
+# The SDK registration route may require a signature during drain. Probe the
+# worker's read-only health route instead, and require registered functions.
+worker_ok() {
+  body="$(curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS "${WORKER_URL}/" 2>/dev/null)" || return 1
+  # Keep the worker decision independent of optional language runtimes: a
+  # missing interpreter must not turn a healthy worker into a restart target.
+  printf '%s\n' "${body}" | grep -q '"status"[[:space:]]*:[[:space:]]*"running"' || return 1
+  printf '%s\n' "${body}" | grep -Eq '"count"[[:space:]]*:[[:space:]]*[1-9][0-9]*[[:space:]]*[,}]'
+}
+
 # /health stays 200 while the search threadpool is dead (2026-08-07 wedge:
 # applying stuck, 16/16 threads blocked, 8700+ queued, /health green for two
 # days). Unauthenticated requests get a fast 401 before the threadpool, so the
@@ -278,7 +288,7 @@ if ! http_ok "${INNGEST_URL}/health"; then
   status="degraded"
   reason="inngest_unavailable"
   actionable=1
-elif ! http_ok "${WORKER_URL}/api/inngest"; then
+elif ! worker_ok; then
   status="degraded"
   reason="worker_unavailable"
   actionable=1
