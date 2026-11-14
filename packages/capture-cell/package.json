@@ -4,7 +4,8 @@
   "private": true,
   "bin": {
     "capture-cell": "src/cli.ts",
-    "capture-intake": "src/intake/cli.ts"
+    "capture-intake": "src/intake/cli.ts",
+    "capture-reconcile": "src/reconcile-cli.mjs"
   },
   "type": "module",
   "main": "src/index.ts",
@@ -17,7 +18,8 @@
   },
   "scripts": {
     "check-types": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test ./__tests__/*.test.ts && node --test __tests__/reconcile.test.mjs",
+    "test:reconcile": "node --test __tests__/reconcile.test.mjs",
     "serve": "bun run src/cli.ts serve"
   },
   "dependencies": {
