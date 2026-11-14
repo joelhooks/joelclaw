@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { pushContentResource } from "../../lib/convex";
+import { createSafeScratchDir, resolveSafeScratchCleanup } from "../../lib/safe-scratch-dir";
 import { chunkBySegments, chunkBySpeakerTurns } from "../../lib/transcript-chunk";
 import * as typesense from "../../lib/typesense";
 import { inngest } from "../client";
@@ -18,7 +20,7 @@ function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, "\"")
+    .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
     .replace(/&apos;/gi, "'")
     .replace(/&lt;/gi, "<")
@@ -35,7 +37,7 @@ function htmlToPlainText(html: string): string {
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<\/(p|div|li|section|article|h[1-6]|br|tr)>/gi, "\n")
-      .replace(/<[^>]+>/g, " ")
+      .replace(/<[^>]+>/g, " "),
   );
 
   return plain
@@ -113,20 +115,21 @@ export const transcriptIndexWeb = inngest.createFunction(
     const canonicalSourceUrl = sourceUrl ?? url;
     const sourceDate = Math.floor(Date.now() / 1000);
 
-    const htmlPath = await step.run("fetch-transcript-page", async () => {
+    const fetchedPage = await step.run("fetch-transcript-page", async () => {
       const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
       if (!response.ok) {
         throw new Error(`transcript web fetch failed (${response.status})`);
       }
       const html = await response.text();
-      await mkdir("/tmp/transcript-web", { recursive: true });
-      const outPath = `/tmp/transcript-web/${sourceId}.html`;
-      await Bun.write(outPath, html);
-      return outPath;
+      const safeTempDir = await createSafeScratchDir("transcript-web");
+      if (!safeTempDir) throw new Error("unsafe transcript page temp directory");
+      const htmlPath = join(safeTempDir, `${sourceId}.html`);
+      await Bun.write(htmlPath, html);
+      return { htmlPath, tempDir: safeTempDir };
     });
 
     const indexed = await step.run("chunk-and-index", async () => {
-      const html = await Bun.file(htmlPath).text();
+      const html = await Bun.file(fetchedPage.htmlPath).text();
       const turns = extractSpeakerTurnsFromHtml(html);
 
       const chunks =
@@ -136,7 +139,7 @@ export const transcriptIndexWeb = inngest.createFunction(
                 text: turn.text,
                 ...(turn.speaker ? { speaker: turn.speaker } : {}),
               })),
-              { maxTokens: 500, overlapSentences: 1 }
+              { maxTokens: 500, overlapSentences: 1 },
             )
           : chunkBySpeakerTurns(htmlToPlainText(html), {
               maxTokens: 500,
@@ -206,7 +209,7 @@ export const transcriptIndexWeb = inngest.createFunction(
             channel: doc.channel,
             sourceDate: doc.source_date,
           },
-          searchText
+          searchText,
         ).catch(() => {});
 
         convex++;
@@ -222,8 +225,9 @@ export const transcriptIndexWeb = inngest.createFunction(
     });
 
     await step.run("cleanup-transcript-page", async () => {
-      await rm(htmlPath, { force: true }).catch(() => {});
-      return { cleaned: true };
+      const safeTempDir = resolveSafeScratchCleanup(fetchedPage.tempDir);
+      if (safeTempDir) await rm(safeTempDir, { recursive: true, force: true });
+      return { cleaned: Boolean(safeTempDir) };
     });
 
     return {
@@ -231,5 +235,5 @@ export const transcriptIndexWeb = inngest.createFunction(
       type,
       ...indexed,
     };
-  }
+  },
 );
