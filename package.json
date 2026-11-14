@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",
+    "@joelclaw/memory": "workspace:*",
     "oxfmt": "^0.32.0",
     "oxlint": "^1.47.0",
     "toml": "3.0.0",

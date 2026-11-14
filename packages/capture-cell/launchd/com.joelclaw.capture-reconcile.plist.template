@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.joelclaw.capture-reconcile</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>--env-file=__ENV_FILE__</string>
+    <string>__PACKAGE_DIR__/src/reconcile-cli.mjs</string>
+    <string>--apply</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>__PATH__</string></dict>
+  <key>StartInterval</key><integer>600</integer>
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>__LOG_DIR__/capture-reconcile.log</string>
+  <key>StandardErrorPath</key><string>__LOG_DIR__/capture-reconcile.err</string>
+</dict>
+</plist>

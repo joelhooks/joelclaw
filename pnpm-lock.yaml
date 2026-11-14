@@ -18,6 +18,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.4.4
         version: 2.4.4
+      '@joelclaw/memory':
+        specifier: workspace:*
+        version: link:packages/memory
       oxfmt:
         specifier: ^0.32.0
         version: 0.32.0
