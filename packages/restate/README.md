@@ -122,6 +122,9 @@ bun run packages/restate/src/trigger-dag.ts -- --pipeline health
 # DAG research (real work — web search + vault + memory → LLM synthesis)
 bun run packages/restate/src/trigger-dag.ts -- --pipeline research --topic "Restate vs Temporal"
 
+# Opt into Parallel Search MCP for source excerpts and URLs
+bun run packages/restate/src/trigger-dag.ts -- --pipeline research --search-provider parallel --topic "Restate vs Temporal"
+
 # pi-mono artifacts sync (Typesense corpus + maintainer profile)
 bun run packages/restate/src/trigger-dag.ts -- --pipeline pi-mono-sync --repo badlogic/pi-mono --full-backfill
 
@@ -131,6 +134,30 @@ bun run packages/restate/src/trigger-prd.ts -- --prd ~/Vault/Projects/09-joelcla
 # Deterministic PRD execution (skip markdown planning; load a prebuilt JSON plan)
 bun run packages/restate/src/trigger-prd.ts -- --plan ~/Vault/Projects/09-joelclaw/0217-phase-1-story-1-plan.json --cwd ~/Code/joelhooks/joelclaw
 ```
+
+### Research web search
+
+Research keeps its existing DuckDuckGo search by default. Select
+`--search-provider parallel` to use [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp)
+at `https://search.parallel.ai/mcp`. Anonymous search uses Fast mode and needs no
+account or API key. The worker passes the returned source URLs and excerpts into
+the existing research synthesis prompt. Pi inference, local Vault access and
+optional memory enrichment keep their existing setup.
+
+Use `--search-provider duckduckgo` to select the original provider explicitly, or
+`--search-provider none` to skip the web-search DAG node. An invalid or missing
+provider value fails before submitting the DAG. A Parallel error fails the node;
+it does not silently switch providers. The service has free-tier usage limits.
+
+Custom DAGs can use the same read-only `parallel` handler for search or page
+fetching. Search configuration is
+`{ "objective": "Restate durable execution", "search_queries": ["Restate durable execution"] }`.
+For fetching, use
+`{ "operation": "fetch", "urls": ["https://docs.restate.dev/"], "objective": "Explain durable execution" }`.
+Fetch accepts 1–20 HTTP(S) URLs and an optional objective of at most 200 characters.
+The handler uses the existing node `timeoutMs` control, aborts when the Restate
+attempt completes, and bounds the text supplied to downstream nodes. Existing
+custom DAG handlers and inference settings are unchanged.
 
 ### PRD execution bridge
 
