@@ -1,11 +1,82 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import * as telemetry from "../../observability/emit";
 import { mkdir, rm } from "node:fs/promises";
 import {
   isLocalSnapshotPathWithinRoot,
   parseTypesenseSnapshotSource,
   stageRedisBackupFromCluster,
   stageTypesenseSnapshotForBackup,
+  verifyAgentSessionCaptureBackups,
 } from "./nas-backup";
+
+describe("session audit configuration", () => {
+  test("configured env hosts reach the audit without using event-host defaults", async () => {
+    const previous = process.env.JOELCLAW_SESSION_AUDIT_HOSTS;
+    const measured = spyOn(telemetry, "emitMeasuredOtelEvent").mockResolvedValue({} as never);
+    const emit = spyOn(telemetry, "emitOtelEvent").mockResolvedValue({} as never);
+    const handler = (
+      verifyAgentSessionCaptureBackups as unknown as {
+        fn: (context: unknown) => Promise<unknown>;
+      }
+    ).fn;
+    try {
+      process.env.JOELCLAW_SESSION_AUDIT_HOSTS = " audit-host.example.test ";
+      await handler({ event: { name: "manual", data: {} } });
+      expect(measured).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ hosts: "audit-host.example.test" }),
+        }),
+        expect.any(Function),
+      );
+      expect(emit).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.JOELCLAW_SESSION_AUDIT_HOSTS;
+      else process.env.JOELCLAW_SESSION_AUDIT_HOSTS = previous;
+      mock.restore();
+    }
+  });
+  test("unset or blank hosts log a skip without touching backup storage", async () => {
+    const previous = process.env.JOELCLAW_SESSION_AUDIT_HOSTS;
+    const emit = spyOn(telemetry, "emitOtelEvent").mockResolvedValue({} as never);
+    const handler = (
+      verifyAgentSessionCaptureBackups as unknown as {
+        fn: (context: unknown) => Promise<unknown>;
+      }
+    ).fn;
+    try {
+      for (const value of [undefined, "   "]) {
+        if (value === undefined) delete process.env.JOELCLAW_SESSION_AUDIT_HOSTS;
+        else process.env.JOELCLAW_SESSION_AUDIT_HOSTS = value;
+        const stepNames: string[] = [];
+        const result = await handler({
+          event: {
+            name: "system/agent-session.capture-backup.requested",
+            data: { hosts: "event-host.example.test" },
+          },
+          step: {
+            run: async (name: string, operation: () => Promise<unknown>) => {
+              stepNames.push(name);
+              if (name !== "skip-unconfigured-session-audit") throw new Error("backup forbidden");
+              return operation();
+            },
+          },
+        });
+        expect(result).toEqual({ status: "skipped", reason: "no audit hosts configured" });
+        expect(stepNames).toEqual(["skip-unconfigured-session-audit"]);
+      }
+      expect(emit).toHaveBeenCalledTimes(2);
+      expect(emit).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          action: "system.agent_session.capture_backup.skipped",
+        }),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.JOELCLAW_SESSION_AUDIT_HOSTS;
+      else process.env.JOELCLAW_SESSION_AUDIT_HOSTS = previous;
+      mock.restore();
+    }
+  });
+});
 
 describe("Typesense backup source", () => {
   test("defaults to the native local Typesense source", () => {

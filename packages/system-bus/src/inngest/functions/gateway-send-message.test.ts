@@ -1,47 +1,61 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import type { JournalEvent } from "@joelclaw/message-journal";
-import { __gatewaySendMessageTestUtils } from "./gateway-send-message";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { NonRetriableError } from "inngest";
+import Redis from "ioredis";
+import * as telemetry from "../../observability/emit";
+import { gatewaySendMessage } from "./gateway-send-message";
 
-afterEach(() => {
-  __gatewaySendMessageTestUtils.clear();
-});
+afterEach(() => mock.restore());
 
-describe("gateway/send.message journal anchor", () => {
-  test("records delivery.queued before Redis handoff", async () => {
-    const rows: JournalEvent[] = [];
-    __gatewaySendMessageTestUtils.setWriteOverride(async (row) => {
-      rows.push(row);
+const handler = (
+  gatewaySendMessage as unknown as {
+    fn: (context: unknown) => Promise<unknown>;
+  }
+).fn;
+
+describe("gateway/send.message retired", () => {
+  test("fails non-retriably with producer and flow ID; never queues, publishes, or journals", async () => {
+    const emit = spyOn(telemetry, "emitOtelEvent").mockResolvedValue({} as never);
+    const push = spyOn(Redis.prototype, "rpush").mockImplementation(() => {
+      throw new Error("Redis forbidden");
     });
-
-    await __gatewaySendMessageTestUtils.journalQueuedMessage({
-      messageKey: "gateway-queue:flow-1",
-      flowId: "flow-1",
-      direction: "outbound",
-      eventType: "delivery.queued",
-      producer: "fixture",
-      originSystemId: "test",
-      sourceEventId: "event-1",
-      sourceRef: "gateway/send.message",
-      route: "redis-outbound",
-      reason: "queued.gateway-send-message",
-      telegramChatId: 42,
-      revision: __gatewaySendMessageTestUtils.journalRevision("event-1"),
-      text: "private queued body",
-      deliveryState: "queued",
+    const publish = spyOn(Redis.prototype, "publish").mockImplementation(() => {
+      throw new Error("Redis forbidden");
     });
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      event_type: "delivery.queued",
-      flow_id: "flow-1",
-      text: "private queued body",
-      delivery_state: "queued",
+    const run = mock(async () => {
+      throw new Error("queue step forbidden");
     });
+    const context = {
+      event: {
+        id: "event-1",
+        data: { text: "private body", audit: { producer: "fixture", flowId: "flow-1" } },
+      },
+      step: { run },
+    };
+    await expect(handler(context)).rejects.toBeInstanceOf(NonRetriableError);
+    await expect(handler(context)).rejects.toThrow(
+      "gateway outbound path retired: no consumer since the gateway was removed; use notifyJoel (producer=fixture, flowId=flow-1)",
+    );
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        component: "gateway-send-message",
+        action: "gateway.send.retired",
+        success: false,
+        metadata: { producer: "fixture", flowId: "flow-1", eventId: "event-1" },
+      }),
+    );
+    expect(JSON.stringify(emit.mock.calls)).not.toContain("private body");
+    expect(push).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    const source = await Bun.file(new URL("gateway-send-message.ts", import.meta.url)).text();
+    expect(source).not.toMatch(/ioredis|message-journal|buildQueuedGatewayMessage|rpush|publish/);
   });
 
-  test("derives a stable distinct revision from each source event", () => {
-    const first = __gatewaySendMessageTestUtils.journalRevision("event-1");
-    expect(first).toBe(__gatewaySendMessageTestUtils.journalRevision("event-1"));
-    expect(first).not.toBe(__gatewaySendMessageTestUtils.journalRevision("event-2"));
+  test("falls back to the event ID and stays non-retriable if telemetry fails", async () => {
+    const emit = spyOn(telemetry, "emitOtelEvent").mockRejectedValue(new Error("telemetry down"));
+    await expect(handler({ event: { id: "event-2", data: { text: "fixture" } } })).rejects.toThrow(
+      "producer=gateway/send.message, flowId=event-2",
+    );
+    expect(emit).toHaveBeenCalled();
   });
 });

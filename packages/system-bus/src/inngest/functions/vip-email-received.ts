@@ -10,10 +10,8 @@ import {
   formatRecallLanes,
   runComposedRecallCli,
 } from "@joelclaw/recall";
-import type { GatewaySendMessageData } from "../../lib/channel-delivery-audit";
 import { infer } from "../../lib/inference";
 import { type LlmUsage } from "../../lib/pi-output";
-import { stripOperatorRelayRules, toTelegramHtml } from "../../lib/telegram";
 import * as typesense from "../../lib/typesense";
 import { TodoistTaskAdapter } from "../../tasks";
 import { inngest } from "../client";
@@ -33,14 +31,15 @@ const TOTAL_BUDGET_MS = Number(process.env.JOELCLAW_VIP_TOTAL_BUDGET_MS ?? "9000
 const FRONT_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_FRONT_TIMEOUT_MS ?? "2000");
 const GRANOLA_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GRANOLA_TIMEOUT_MS ?? "2500");
 const MEMORY_RECALL_TIMEOUT_MS = Number(
-  process.env.JOELCLAW_VIP_MEMORY_RECALL_TIMEOUT_MS
-  ?? "15000"
+  process.env.JOELCLAW_VIP_MEMORY_RECALL_TIMEOUT_MS ?? "15000",
 );
 const GITHUB_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GITHUB_TIMEOUT_MS ?? "1500");
 
 const BRIEF_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_TRIAGE_TIMEOUT_MS ?? "20000");
 const OPUS_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_OPUS_TIMEOUT_MS ?? "45000");
-const MIN_OPUS_TIME_REMAINING_MS = Number(process.env.JOELCLAW_VIP_MIN_OPUS_REMAINING_MS ?? "30000");
+const MIN_OPUS_TIME_REMAINING_MS = Number(
+  process.env.JOELCLAW_VIP_MIN_OPUS_REMAINING_MS ?? "30000",
+);
 const MIN_MODEL_BUDGET_MS = 2_000;
 const MODEL_BUDGET_RESERVE_MS = 1_000;
 const GRANOLA_RANGES = (process.env.JOELCLAW_VIP_GRANOLA_RANGES ?? "year")
@@ -52,8 +51,12 @@ const FRONT_MESSAGES_PAGE_SIZE = 25;
 const MAX_LINKS_TO_FOLLOW = 5;
 const MAX_FOLLOWED_LINK_CONTENT_CHARS = 2000;
 const MAX_FRONT_PROMPT_MESSAGES = Number(process.env.JOELCLAW_VIP_PROMPT_FRONT_MESSAGES ?? "12");
-const MAX_FRONT_PROMPT_HEAD_MESSAGES = Number(process.env.JOELCLAW_VIP_PROMPT_FRONT_HEAD_MESSAGES ?? "3");
-const MAX_FRONT_MESSAGE_PROMPT_CHARS = Number(process.env.JOELCLAW_VIP_PROMPT_FRONT_MESSAGE_CHARS ?? "320");
+const MAX_FRONT_PROMPT_HEAD_MESSAGES = Number(
+  process.env.JOELCLAW_VIP_PROMPT_FRONT_HEAD_MESSAGES ?? "3",
+);
+const MAX_FRONT_MESSAGE_PROMPT_CHARS = Number(
+  process.env.JOELCLAW_VIP_PROMPT_FRONT_MESSAGE_CHARS ?? "320",
+);
 const MAX_FOLLOWED_LINKS_FOR_PROMPT = Number(process.env.JOELCLAW_VIP_PROMPT_LINKS ?? "2");
 const MAX_FOLLOWED_LINK_PROMPT_CHARS = Number(process.env.JOELCLAW_VIP_PROMPT_LINK_CHARS ?? "360");
 const MAX_MEMORY_LINES_FOR_PROMPT = Number(process.env.JOELCLAW_VIP_PROMPT_MEMORY_LINES ?? "6");
@@ -61,7 +64,9 @@ const MAX_MEMORY_LINE_PROMPT_CHARS = Number(process.env.JOELCLAW_VIP_PROMPT_MEMO
 const MAX_REPOS_FOR_PROMPT = Number(process.env.JOELCLAW_VIP_PROMPT_GITHUB_REPOS ?? "4");
 const MAX_REPO_LINE_PROMPT_CHARS = Number(process.env.JOELCLAW_VIP_PROMPT_GITHUB_CHARS ?? "160");
 const MAX_ACCESS_GAPS_FOR_PROMPT = Number(process.env.JOELCLAW_VIP_PROMPT_ACCESS_GAPS ?? "6");
-const MAX_ACCESS_GAP_PROMPT_CHARS = Number(process.env.JOELCLAW_VIP_PROMPT_ACCESS_GAP_CHARS ?? "180");
+const MAX_ACCESS_GAP_PROMPT_CHARS = Number(
+  process.env.JOELCLAW_VIP_PROMPT_ACCESS_GAP_CHARS ?? "180",
+);
 const URL_EXTRACT_RE = /https?:\/\/[^\s<>"'`)\]]+/giu;
 const HREF_EXTRACT_RE = /href=["']([^"'#]+)["']/giu;
 const TRACKING_HOST_FRAGMENTS = [
@@ -96,11 +101,6 @@ const NON_CONTENT_EXTENSIONS = [
   ".zip",
   ".ics",
 ];
-const JOEL_EMAILS = new Set([
-  "joelhooks@gmail.com",
-  "joel@egghead.io",
-  "joel@joelhooks.com",
-]);
 // WARNING: Think twice before adding real collaborators here. This auto-archives without review.
 const AUTO_ARCHIVE_NEWSLETTER_SENDERS = new Set<string>();
 
@@ -275,14 +275,22 @@ function isLikelyNewsletter(input: {
 
   const haystack = [input.subject, input.preview, input.bodyPlain].join(" ").toLowerCase();
   const hasUnsubscribe = haystack.includes("unsubscribe");
-  const hasNewsletterLanguage = ["newsletter", "weekly", "upcoming", "events", "view in browser"].some((token) =>
-    haystack.includes(token)
-  );
+  const hasNewsletterLanguage = [
+    "newsletter",
+    "weekly",
+    "upcoming",
+    "events",
+    "view in browser",
+  ].some((token) => haystack.includes(token));
 
   return hasUnsubscribe && hasNewsletterLanguage;
 }
 
-function parseJsonOutput<T>(command: string, args: string[], timeoutMs = 30_000): { ok: boolean; data?: T; error?: string } {
+function parseJsonOutput<T>(
+  command: string,
+  args: string[],
+  timeoutMs = 30_000,
+): { ok: boolean; data?: T; error?: string } {
   const proc = spawnSync(command, args, {
     encoding: "utf-8",
     timeout: timeoutMs,
@@ -311,7 +319,7 @@ function parseJsonOutput<T>(command: string, args: string[], timeoutMs = 30_000)
 function throwIfGranolaRateLimited(rawText: string, context: string): void {
   if (!rawText.toLowerCase().includes("rate limit")) return;
   throw new Error(
-    `Granola rate limited (~1 hour window) during ${context}; retrying: ${rawText.slice(0, 500)}`
+    `Granola rate limited (~1 hour window) during ${context}; retrying: ${rawText.slice(0, 500)}`,
   );
 }
 
@@ -324,7 +332,11 @@ function readFrontToken(): string {
   return process.env.FRONT_API_TOKEN ?? "";
 }
 
-async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchJsonWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -370,7 +382,7 @@ function stripHtmlToText(value: string): string {
       .replace(/&nbsp;/gu, " ")
       .replace(/&amp;/gu, "&")
       .replace(/&lt;/gu, "<")
-      .replace(/&gt;/gu, ">")
+      .replace(/&gt;/gu, ">"),
   );
 }
 
@@ -398,7 +410,11 @@ function frontConversationUrl(conversationId: string): string {
 }
 
 function isJoelEmail(value: string): boolean {
-  return JOEL_EMAILS.has(extractEmailAddress(value));
+  const configuredEmails = (process.env.JOEL_EMAILS ?? "")
+    .split(",")
+    .map(extractEmailAddress)
+    .filter(Boolean);
+  return configuredEmails.includes(extractEmailAddress(value));
 }
 
 function extractPageToken(value: unknown): string | null {
@@ -417,24 +433,27 @@ function normalizeFrontSender(message: Record<string, unknown>): {
 } {
   const author = (message.author ?? {}) as Record<string, unknown>;
   const recipients = Array.isArray(message.recipients)
-    ? message.recipients.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    ? message.recipients.filter(
+        (item): item is Record<string, unknown> => Boolean(item) && typeof item === "object",
+      )
     : [];
   const fromRecipient = recipients.find((recipient) => String(recipient.role ?? "") === "from");
   const senderEmail = extractEmailAddress(
-    String(author.email ?? fromRecipient?.handle ?? author.username ?? fromRecipient?.name ?? "")
+    String(author.email ?? fromRecipient?.handle ?? author.username ?? fromRecipient?.name ?? ""),
   );
   const senderName = normalizeWhitespace(
     String(
-      [author.first_name, author.last_name].filter(Boolean).join(" ")
-      || fromRecipient?.name
-      || author.username
-      || author.email
-      || "unknown"
-    )
+      [author.first_name, author.last_name].filter(Boolean).join(" ") ||
+        fromRecipient?.name ||
+        author.username ||
+        author.email ||
+        "unknown",
+    ),
   );
-  const senderDisplay = senderEmail && senderName && senderName.toLowerCase() !== senderEmail.toLowerCase()
-    ? `${senderName} <${senderEmail}>`
-    : senderName || senderEmail || "unknown";
+  const senderDisplay =
+    senderEmail && senderName && senderName.toLowerCase() !== senderEmail.toLowerCase()
+      ? `${senderName} <${senderEmail}>`
+      : senderName || senderEmail || "unknown";
   return { senderName: senderName || senderEmail || "unknown", senderEmail, senderDisplay };
 }
 
@@ -532,15 +551,17 @@ function isInterestingEmailUrl(rawUrl: string): boolean {
     if (UNSUBSCRIBE_HINTS.some((hint) => combined.includes(hint))) return false;
     if (NON_CONTENT_EXTENSIONS.some((extension) => path.endsWith(extension))) return false;
 
-    const isKnownDocSurface = hostname.includes("docs.google.com")
-      || hostname.includes("notion.so")
-      || hostname.includes("notion.site")
-      || hostname.includes("figma.com");
-    const isContentPage = !combined.includes("utm_")
-      && !combined.includes("signature")
-      && !combined.includes("open.pixel")
-      && !combined.includes("/u/")
-      && path.length > 1;
+    const isKnownDocSurface =
+      hostname.includes("docs.google.com") ||
+      hostname.includes("notion.so") ||
+      hostname.includes("notion.site") ||
+      hostname.includes("figma.com");
+    const isContentPage =
+      !combined.includes("utm_") &&
+      !combined.includes("signature") &&
+      !combined.includes("open.pixel") &&
+      !combined.includes("/u/") &&
+      path.length > 1;
 
     return isKnownDocSurface || isContentPage;
   } catch {
@@ -553,7 +574,9 @@ function extractInterestingUrlsFromEmail(rawBody: string, htmlBody: string): str
     .map(normalizeUrlCandidate)
     .filter((value): value is string => Boolean(value));
 
-  return Array.from(new Set(candidates)).filter(isInterestingEmailUrl).slice(0, MAX_LINKS_TO_FOLLOW);
+  return Array.from(new Set(candidates))
+    .filter(isInterestingEmailUrl)
+    .slice(0, MAX_LINKS_TO_FOLLOW);
 }
 
 function summarizeFollowedLinkContent(link: FollowedLink): string {
@@ -573,7 +596,7 @@ async function fetchFrontThread(conversationId: string): Promise<FrontThreadCont
     const convoRes = await fetchJsonWithTimeout(
       `${FRONT_API}/conversations/${conversationId}`,
       { headers },
-      FRONT_TIMEOUT_MS
+      FRONT_TIMEOUT_MS,
     );
     if (!convoRes.ok) {
       const detail = (await convoRes.text().catch(() => "")).slice(0, 180);
@@ -607,7 +630,9 @@ async function fetchFrontThread(conversationId: string): Promise<FrontThreadCont
         if (messages.length >= MAX_FRONT_MESSAGES) break;
       }
 
-      pageToken = extractPageToken((msgBody._pagination as Record<string, unknown> | undefined)?.next);
+      pageToken = extractPageToken(
+        (msgBody._pagination as Record<string, unknown> | undefined)?.next,
+      );
       if (!pageToken) break;
     }
 
@@ -620,8 +645,10 @@ async function fetchFrontThread(conversationId: string): Promise<FrontThreadCont
     const tags = Array.isArray(convo.tags)
       ? uniqueStrings(
           convo.tags
-            .filter((tag): tag is Record<string, unknown> => Boolean(tag) && typeof tag === "object")
-            .map((tag) => String(tag.name ?? ""))
+            .filter(
+              (tag): tag is Record<string, unknown> => Boolean(tag) && typeof tag === "object",
+            )
+            .map((tag) => String(tag.name ?? "")),
         )
       : [];
 
@@ -642,7 +669,9 @@ async function fetchFrontThread(conversationId: string): Promise<FrontThreadCont
   }
 }
 
-async function archiveFrontConversation(conversationId: string): Promise<{ ok: boolean; error?: string }> {
+async function archiveFrontConversation(
+  conversationId: string,
+): Promise<{ ok: boolean; error?: string }> {
   const token = readFrontToken();
   if (!token) return { ok: false, error: "FRONT_API_TOKEN missing" };
   if (!conversationId) return { ok: false, error: "conversationId missing" };
@@ -659,7 +688,7 @@ async function archiveFrontConversation(conversationId: string): Promise<{ ok: b
         },
         body: JSON.stringify({ status: "archived" }),
       },
-      FRONT_TIMEOUT_MS
+      FRONT_TIMEOUT_MS,
     );
 
     if (res.ok || res.status === 204) return { ok: true };
@@ -684,7 +713,10 @@ function parseGranolaMeetingsResponse(data: unknown): GranolaMeeting[] {
       : [];
 
   return meetings
-    .filter((meeting): meeting is Record<string, unknown> => Boolean(meeting) && typeof meeting === "object")
+    .filter(
+      (meeting): meeting is Record<string, unknown> =>
+        Boolean(meeting) && typeof meeting === "object",
+    )
     .map((meeting) => ({
       id: String(meeting.id ?? ""),
       title: String(meeting.title ?? "Untitled"),
@@ -705,8 +737,15 @@ function tokenizeSubject(subject: string): string[] {
     .slice(0, 8);
 }
 
-function findRelatedMeetings(meetings: GranolaMeeting[], senderName: string, subject: string): GranolaMeeting[] {
-  const senderTokens = senderName.toLowerCase().split(/\s+/g).filter((token) => token.length >= 3);
+function findRelatedMeetings(
+  meetings: GranolaMeeting[],
+  senderName: string,
+  subject: string,
+): GranolaMeeting[] {
+  const senderTokens = senderName
+    .toLowerCase()
+    .split(/\s+/g)
+    .filter((token) => token.length >= 3);
   const subjectTokens = tokenizeSubject(subject);
 
   return meetings.filter((meeting) => {
@@ -730,7 +769,9 @@ function parseVipAnalysis(raw: string): VipAnalysis {
 
   const todos = Array.isArray(data.todos)
     ? data.todos
-        .filter((todo): todo is Record<string, unknown> => Boolean(todo) && typeof todo === "object")
+        .filter(
+          (todo): todo is Record<string, unknown> => Boolean(todo) && typeof todo === "object",
+        )
         .map((todo) => ({
           title: String(todo.title ?? "").trim(),
           description: String(todo.description ?? "").trim(),
@@ -742,7 +783,9 @@ function parseVipAnalysis(raw: string): VipAnalysis {
 
   const missing = Array.isArray(data.missing_information)
     ? data.missing_information
-        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+        .filter(
+          (item): item is Record<string, unknown> => Boolean(item) && typeof item === "object",
+        )
         .map((item) => ({
           item: String(item.item ?? "").trim(),
           why_missing: String(item.why_missing ?? "").trim(),
@@ -753,7 +796,9 @@ function parseVipAnalysis(raw: string): VipAnalysis {
 
   const entities = Array.isArray(data.entity_investigation)
     ? data.entity_investigation
-        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+        .filter(
+          (item): item is Record<string, unknown> => Boolean(item) && typeof item === "object",
+        )
         .map((item) => ({
           entity: String(item.entity ?? "").trim(),
           type: String(item.type ?? "other").trim(),
@@ -772,7 +817,9 @@ function parseVipAnalysis(raw: string): VipAnalysis {
     : [];
 
   return {
-    executive_summary: String(data.executive_summary ?? "").trim() || (todos.length > 0 ? "VIP analysis generated." : "No actionable follow-up required."),
+    executive_summary:
+      String(data.executive_summary ?? "").trim() ||
+      (todos.length > 0 ? "VIP analysis generated." : "No actionable follow-up required."),
     interaction_signals: signals,
     entity_investigation: entities,
     todos,
@@ -785,8 +832,14 @@ async function runModelAnalysis(
   model: string,
   systemPrompt: string,
   prompt: string,
-  timeoutMs: number
-): Promise<{ analysis: VipAnalysis; error?: string; provider?: string; model?: string; usage?: LlmUsage }> {
+  timeoutMs: number,
+): Promise<{
+  analysis: VipAnalysis;
+  error?: string;
+  provider?: string;
+  model?: string;
+  usage?: LlmUsage;
+}> {
   try {
     const result = await infer(prompt, {
       task: "json",
@@ -809,9 +862,12 @@ async function runModelAnalysis(
       env: { ...process.env, TERM: "dumb" },
     });
 
-    const payload = result.data != null
-      ? (typeof result.data === "string" ? result.data : JSON.stringify(result.data))
-      : "";
+    const payload =
+      result.data != null
+        ? typeof result.data === "string"
+          ? result.data
+          : JSON.stringify(result.data)
+        : "";
     return {
       analysis: parseVipAnalysis(payload || result.text),
       provider: result.provider,
@@ -829,7 +885,10 @@ async function runModelAnalysis(
   }
 }
 
-async function runOperatorBrief(prompt: string, timeoutMs: number): Promise<{
+async function runOperatorBrief(
+  prompt: string,
+  timeoutMs: number,
+): Promise<{
   brief: string;
   error?: string;
   provider?: string;
@@ -923,7 +982,10 @@ function shouldEscalateToOpus(input: {
     return { useOpus: true, reason: "email references external links that need synthesis" };
   }
   if (input.relatedMeetings > 0 || input.memoryHits >= 3) {
-    return { useOpus: true, reason: "email has meeting/history context that benefits from deeper synthesis" };
+    return {
+      useOpus: true,
+      reason: "email has meeting/history context that benefits from deeper synthesis",
+    };
   }
   if (hasExecutiveKeywords) {
     return { useOpus: true, reason: "subject contains executive-sensitive keywords" };
@@ -950,21 +1012,31 @@ function buildAnalysisPrompt(input: {
     ? Math.max(0, Math.min(promptMessageCount, Math.floor(MAX_FRONT_PROMPT_HEAD_MESSAGES)))
     : 3;
   const promptTailCount = Math.max(0, promptMessageCount - promptHeadCount);
-  const promptMessages = input.frontContext.messages.length <= promptMessageCount
-    ? input.frontContext.messages
-    : [
-        ...input.frontContext.messages.slice(0, promptHeadCount),
-        ...(promptTailCount > 0 ? input.frontContext.messages.slice(-promptTailCount) : []),
-      ];
-  const omittedMessageCount = Math.max(0, input.frontContext.messages.length - promptMessages.length);
-  const messageLines = promptMessages.map((message) =>
-    `- [${message.createdAtIso}] ${message.senderDisplay}: ${
-      clipPromptText(message.text || "(no text available)", MAX_FRONT_MESSAGE_PROMPT_CHARS)
-    }`
+  const promptMessages =
+    input.frontContext.messages.length <= promptMessageCount
+      ? input.frontContext.messages
+      : [
+          ...input.frontContext.messages.slice(0, promptHeadCount),
+          ...(promptTailCount > 0 ? input.frontContext.messages.slice(-promptTailCount) : []),
+        ];
+  const omittedMessageCount = Math.max(
+    0,
+    input.frontContext.messages.length - promptMessages.length,
+  );
+  const messageLines = promptMessages.map(
+    (message) =>
+      `- [${message.createdAtIso}] ${message.senderDisplay}: ${clipPromptText(
+        message.text || "(no text available)",
+        MAX_FRONT_MESSAGE_PROMPT_CHARS,
+      )}`,
   );
   if (omittedMessageCount > 0) {
     const insertAt = Math.min(promptHeadCount, messageLines.length);
-    messageLines.splice(insertAt, 0, `- … ${omittedMessageCount} middle thread message(s) omitted for prompt budget`);
+    messageLines.splice(
+      insertAt,
+      0,
+      `- … ${omittedMessageCount} middle thread message(s) omitted for prompt budget`,
+    );
   }
   const relatedMeetingLines = input.granolaMeetings.map((meeting) => {
     const when = meeting.date ? ` (${meeting.date})` : "";
@@ -976,7 +1048,9 @@ function buildAnalysisPrompt(input: {
     `  Content: ${clipPromptText(link.content, MAX_FOLLOWED_LINK_PROMPT_CHARS)}`,
   ]);
   if (input.followedLinks.length > promptLinks.length) {
-    followedLinkLines.push(`- … ${input.followedLinks.length - promptLinks.length} additional link(s) omitted for prompt budget`);
+    followedLinkLines.push(
+      `- … ${input.followedLinks.length - promptLinks.length} additional link(s) omitted for prompt budget`,
+    );
   }
 
   const repoLines = input.githubRepos.slice(0, Math.max(1, MAX_REPOS_FOR_PROMPT)).map((repo) => {
@@ -986,24 +1060,32 @@ function buildAnalysisPrompt(input: {
     return clipPromptText(`- ${name}: ${description} ${url}`.trim(), MAX_REPO_LINE_PROMPT_CHARS);
   });
   if (input.githubRepos.length > repoLines.length) {
-    repoLines.push(`- … ${input.githubRepos.length - repoLines.length} additional repo(s) omitted for prompt budget`);
+    repoLines.push(
+      `- … ${input.githubRepos.length - repoLines.length} additional repo(s) omitted for prompt budget`,
+    );
   }
 
   const memoryLines = input.memoryContext
     .slice(0, Math.max(1, MAX_MEMORY_LINES_FOR_PROMPT))
     .map((line) => clipPromptText(line, MAX_MEMORY_LINE_PROMPT_CHARS));
   if (input.memoryContext.length > memoryLines.length) {
-    memoryLines.push(`- … ${input.memoryContext.length - memoryLines.length} additional memory hit(s) omitted for prompt budget`);
+    memoryLines.push(
+      `- … ${input.memoryContext.length - memoryLines.length} additional memory hit(s) omitted for prompt budget`,
+    );
   }
 
   const gapLines = input.accessGaps
     .slice(0, Math.max(1, MAX_ACCESS_GAPS_FOR_PROMPT))
-    .map((gap) => clipPromptText(
-      `- ${gap.item}: ${gap.why_missing}. How to get: ${gap.how_to_get_it}`,
-      MAX_ACCESS_GAP_PROMPT_CHARS,
-    ));
+    .map((gap) =>
+      clipPromptText(
+        `- ${gap.item}: ${gap.why_missing}. How to get: ${gap.how_to_get_it}`,
+        MAX_ACCESS_GAP_PROMPT_CHARS,
+      ),
+    );
   if (input.accessGaps.length > gapLines.length) {
-    gapLines.push(`- … ${input.accessGaps.length - gapLines.length} additional access gap(s) omitted for prompt budget`);
+    gapLines.push(
+      `- … ${input.accessGaps.length - gapLines.length} additional access gap(s) omitted for prompt budget`,
+    );
   }
 
   return [
@@ -1036,6 +1118,7 @@ function buildAnalysisPrompt(input: {
 }
 
 export const __vipEmailReceivedTestUtils = {
+  isJoelEmail,
   clipPromptText,
   buildAnalysisPrompt,
 };
@@ -1097,21 +1180,30 @@ function deriveVipUrgency(input: {
     input.analysis.executive_summary,
     ...input.analysis.todos.flatMap((todo) => [todo.title, todo.description, todo.due ?? ""]),
     ...input.analysis.questions_for_human,
-  ].join(" ").toLowerCase();
+  ]
+    .join(" ")
+    .toLowerCase();
   const topAction = normalizeActionLine(
-    input.analysis.todos[0]?.title
-    ?? input.analysis.questions_for_human[0]
-    ?? input.accessGaps[0]?.item
-    ?? (awaitingJoel
-      ? "Reply with the next decision, answer, or confirmation they need"
-      : "No reply needed unless the thread changes")
+    input.analysis.todos[0]?.title ??
+      input.analysis.questions_for_human[0] ??
+      input.accessGaps[0]?.item ??
+      (awaitingJoel
+        ? "Reply with the next decision, answer, or confirmation they need"
+        : "No reply needed unless the thread changes"),
   );
-  const hasImmediateCue = /\b(within 24h|today|tomorrow|tonight|asap|urgent|deadline|blocking|eod|end of day)\b/u.test(
-    cueText
+  const hasImmediateCue =
+    /\b(within 24h|today|tomorrow|tonight|asap|urgent|deadline|blocking|eod|end of day)\b/u.test(
+      cueText,
+    );
+  const hasNearTermCue = /\b(this week|soon|review|follow up|decision|confirm|approval)\b/u.test(
+    cueText,
   );
-  const hasNearTermCue = /\b(this week|soon|review|follow up|decision|confirm|approval)\b/u.test(cueText);
 
-  if (!awaitingJoel && input.analysis.todos.length === 0 && input.analysis.questions_for_human.length === 0) {
+  if (
+    !awaitingJoel &&
+    input.analysis.todos.length === 0 &&
+    input.analysis.questions_for_human.length === 0
+  ) {
     return {
       label: "✅ Already handled",
       action: "No reply needed unless the thread changes",
@@ -1125,14 +1217,24 @@ function deriveVipUrgency(input: {
     };
   }
 
-  if (awaitingJoel && (input.analysis.todos.length > 0 || input.analysis.questions_for_human.length > 0 || hasNearTermCue)) {
+  if (
+    awaitingJoel &&
+    (input.analysis.todos.length > 0 ||
+      input.analysis.questions_for_human.length > 0 ||
+      hasNearTermCue)
+  ) {
     return {
       label: "🟠 Reply today",
       action: topAction || "Reply today with the next decision or answer",
     };
   }
 
-  if (awaitingJoel || input.analysis.todos.length > 0 || input.analysis.questions_for_human.length > 0 || input.accessGaps.length > 0) {
+  if (
+    awaitingJoel ||
+    input.analysis.todos.length > 0 ||
+    input.analysis.questions_for_human.length > 0 ||
+    input.accessGaps.length > 0
+  ) {
     return {
       label: "🟡 Reply this week",
       action: topAction || "Reply this week after you review the thread",
@@ -1154,7 +1256,10 @@ function buildOpenLoopSentence(input: {
   const topTodo = input.analysis.todos[0];
   if (topTodo) {
     const dueSuffix = topTodo.due ? ` (${topTodo.due})` : "";
-    return ensureSentence(`What's still open is ${topTodo.title}${dueSuffix}`, "What's still open is the next requested follow-up.");
+    return ensureSentence(
+      `What's still open is ${topTodo.title}${dueSuffix}`,
+      "What's still open is the next requested follow-up.",
+    );
   }
 
   const question = input.analysis.questions_for_human[0];
@@ -1182,85 +1287,6 @@ function buildOpenLoopSentence(input: {
   }
 
   return "Nothing materially new appears beyond the latest thread activity.";
-}
-
-function buildFallbackOperatorBrief(input: {
-  senderDisplay: string;
-  subject: string;
-  preview: string;
-  conversationId: string;
-  analysis: VipAnalysis;
-  frontContext: FrontThreadContext;
-  followedLinks: FollowedLink[];
-  accessGaps: MissingInfo[];
-}): string {
-  const urgency = deriveVipUrgency({
-    preview: input.preview,
-    subject: input.subject,
-    analysis: input.analysis,
-    frontContext: input.frontContext,
-    accessGaps: input.accessGaps,
-  });
-  const primaryReason = normalizeActionLine(
-    input.analysis.todos[0]?.title
-    ?? input.analysis.questions_for_human[0]
-    ?? input.accessGaps[0]?.why_missing
-    ?? "the thread is still active"
-  );
-  const opening = ensureSentence(
-    extractFirstSentence(input.analysis.executive_summary)
-      || `This email is about ${input.subject}, and it matters because ${primaryReason}`,
-    `This email is about ${input.subject}, and it matters because ${primaryReason}.`,
-  );
-  const threadArc = ensureSentence(
-    `This thread has ${input.frontContext.messages.length} messages, last moved ${formatRelativeTime(input.frontContext.latestMessage?.createdAt)}, is currently ${input.frontContext.summary.status || "open"}, and ${buildReplyStateSentence(input.frontContext).replace(/[.!?]+$/u, "")}`,
-    `This thread is still active, and ${buildReplyStateSentence(input.frontContext).toLowerCase()}`,
-  );
-  const openLoop = buildOpenLoopSentence({
-    analysis: input.analysis,
-    frontContext: input.frontContext,
-    followedLinks: input.followedLinks,
-    accessGaps: input.accessGaps,
-  });
-
-  return [
-    `## VIP: ${input.senderDisplay} — ${input.subject}`,
-    "",
-    opening,
-    threadArc,
-    openLoop,
-    "",
-    `${urgency.label} ${urgency.action}`,
-    "",
-    `[View in Front](${frontConversationUrl(input.conversationId)})`,
-  ].join("\n");
-}
-
-type GatewayMessageSender = (
-  stepId: string,
-  event: { name: "gateway/send.message"; data: GatewaySendMessageData },
-) => Promise<unknown>;
-
-export function sendVipEmailReceivedToGateway(
-  sendEvent: GatewayMessageSender,
-  text: string,
-  inlineKeyboard?: GatewaySendMessageData["inline_keyboard"],
-): Promise<unknown> {
-  return sendEvent("notify-vip-summary", {
-    name: "gateway/send.message",
-    data: {
-      channel: "telegram",
-      text,
-      audit: { producer: "vip-email-received" },
-      inline_keyboard: inlineKeyboard,
-    },
-  });
-}
-
-function isWellFormedOperatorBrief(value: string): boolean {
-  return value.startsWith("## VIP:")
-    && /(🔴 Reply now|🟠 Reply today|🟡 Reply this week|🟢 FYI|✅ Already handled)/u.test(value)
-    && value.includes("[View in Front]");
 }
 
 /**
@@ -1385,7 +1411,9 @@ export const vipEmailReceived = inngest.createFunction(
             const stdout = normalizeWhitespace((proc.stdout ?? "").trim());
             const stderr = normalizeWhitespace((proc.stderr ?? "").trim());
             if (proc.status !== 0 || !stdout) {
-              errors.push(`${url}: ${(stderr || stdout || `exit ${proc.status ?? "unknown"}`).slice(0, 180)}`);
+              errors.push(
+                `${url}: ${(stderr || stdout || `exit ${proc.status ?? "unknown"}`).slice(0, 180)}`,
+              );
               continue;
             }
             links.push({
@@ -1394,7 +1422,7 @@ export const vipEmailReceived = inngest.createFunction(
             });
           } catch (error) {
             errors.push(
-              `${url}: ${error instanceof Error ? error.message.slice(0, 180) : String(error).slice(0, 180)}`
+              `${url}: ${error instanceof Error ? error.message.slice(0, 180) : String(error).slice(0, 180)}`,
             );
           }
         }
@@ -1404,13 +1432,15 @@ export const vipEmailReceived = inngest.createFunction(
           links,
           errors,
           durationMs: Date.now() - t0,
-          gap: urls.length > 0 && links.length === 0
-            ? {
-                item: "Followed email links",
-                why_missing: errors[0] ?? "defuddle could not extract content from email links",
-                how_to_get_it: "Verify defuddle CLI availability and network access for linked pages",
-              }
-            : null,
+          gap:
+            urls.length > 0 && links.length === 0
+              ? {
+                  item: "Followed email links",
+                  why_missing: errors[0] ?? "defuddle could not extract content from email links",
+                  how_to_get_it:
+                    "Verify defuddle CLI availability and network access for linked pages",
+                }
+              : null,
         };
       }),
       step.run("search-granola-related", async () => {
@@ -1423,7 +1453,7 @@ export const vipEmailReceived = inngest.createFunction(
           const response = parseJsonOutput<Record<string, unknown>>(
             "granola",
             ["meetings", "--range", range],
-            GRANOLA_TIMEOUT_MS
+            GRANOLA_TIMEOUT_MS,
           );
           rangeDurations[range] = Date.now() - rangeStart;
           if (!response.ok) {
@@ -1433,19 +1463,20 @@ export const vipEmailReceived = inngest.createFunction(
           if (!response.data) continue;
           throwIfGranolaRateLimited(
             JSON.stringify(response.data),
-            `vip/search-granola-related:${range}`
+            `vip/search-granola-related:${range}`,
           );
           allMeetings.push(...parseGranolaMeetingsResponse(response.data));
         }
 
         const related = findRelatedMeetings(allMeetings, fromName || from, subject).slice(0, 8);
-        const gap = allMeetings.length === 0
-          ? {
-              item: "Related Granola meetings",
-              why_missing: "Granola CLI returned no usable meeting data",
-              how_to_get_it: "Verify granola CLI auth and local MCP availability",
-            }
-          : null;
+        const gap =
+          allMeetings.length === 0
+            ? {
+                item: "Related Granola meetings",
+                why_missing: "Granola CLI returned no usable meeting data",
+                how_to_get_it: "Verify granola CLI auth and local MCP availability",
+              }
+            : null;
 
         return {
           meetings: related,
@@ -1506,21 +1537,30 @@ export const vipEmailReceived = inngest.createFunction(
         const query = `${fromName || from} ${subject}`.trim();
         const response = parseJsonOutput<GitHubRepo[]>(
           "gh",
-          ["search", "repos", query, "--limit", "5", "--json", "name,description,url,updatedAt,stargazersCount"],
-          GITHUB_TIMEOUT_MS
+          [
+            "search",
+            "repos",
+            query,
+            "--limit",
+            "5",
+            "--json",
+            "name,description,url,updatedAt,stargazersCount",
+          ],
+          GITHUB_TIMEOUT_MS,
         );
 
         return {
           repos: response.ok && response.data ? response.data : [],
           durationMs: Date.now() - t0,
           skipped: false,
-          gap: response.ok || !response.error
-            ? null
-            : {
-                item: "GitHub project search",
-                why_missing: response.error,
-                how_to_get_it: "Authenticate gh CLI and verify network/API access",
-              },
+          gap:
+            response.ok || !response.error
+              ? null
+              : {
+                  item: "GitHub project search",
+                  why_missing: response.error,
+                  how_to_get_it: "Authenticate gh CLI and verify network/API access",
+                },
         };
       }),
     ]);
@@ -1537,17 +1577,18 @@ export const vipEmailReceived = inngest.createFunction(
     if (memoryResult.gap?.item) accessGaps.push(memoryResult.gap as MissingInfo);
     if (githubResult.gap?.item) accessGaps.push(githubResult.gap as MissingInfo);
 
-    const frontContext = (frontResult.context ?? buildFallbackFrontThreadContext({
-      conversationId,
-      messageId: String(event.data.messageId ?? ""),
-      senderName: fromName,
-      senderEmail,
-      senderDisplay,
-      subject,
-      bodyPlain,
-      body,
-      preview,
-    })) as FrontThreadContext;
+    const frontContext = (frontResult.context ??
+      buildFallbackFrontThreadContext({
+        conversationId,
+        messageId: String(event.data.messageId ?? ""),
+        senderName: fromName,
+        senderEmail,
+        senderDisplay,
+        subject,
+        bodyPlain,
+        body,
+        preview,
+      })) as FrontThreadContext;
     const followedLinks = (linkResult.links ?? []) as FollowedLink[];
     const granolaMeetings = (granolaResult.meetings ?? []) as GranolaMeeting[];
     const memoryContext = (memoryResult.lines ?? []) as string[];
@@ -1595,9 +1636,10 @@ export const vipEmailReceived = inngest.createFunction(
     });
     const elapsedBeforeAnalysis = Date.now() - startedAt;
     const remainingBudgetMs = TOTAL_BUDGET_MS - elapsedBeforeAnalysis;
-    const shouldRunOpus = ENABLE_OPUS_ESCALATION
-      && opusDecision.useOpus
-      && remainingBudgetMs >= MIN_OPUS_TIME_REMAINING_MS;
+    const shouldRunOpus =
+      ENABLE_OPUS_ESCALATION &&
+      opusDecision.useOpus &&
+      remainingBudgetMs >= MIN_OPUS_TIME_REMAINING_MS;
 
     if (ENABLE_OPUS_ESCALATION && opusDecision.useOpus && !shouldRunOpus) {
       accessGaps.push({
@@ -1617,7 +1659,7 @@ export const vipEmailReceived = inngest.createFunction(
         model,
         VIP_ANALYSIS_SYSTEM_PROMPT,
         analysisPrompt,
-        timeoutMs
+        timeoutMs,
       );
 
       return {
@@ -1657,7 +1699,8 @@ export const vipEmailReceived = inngest.createFunction(
           return {
             cached: false,
             durationMs: Date.now() - t0,
-            error: error instanceof Error ? error.message.slice(0, 220) : String(error).slice(0, 220),
+            error:
+              error instanceof Error ? error.message.slice(0, 220) : String(error).slice(0, 220),
           };
         }
       },
@@ -1686,7 +1729,9 @@ export const vipEmailReceived = inngest.createFunction(
             `Conversation: ${conversationId}`,
             "",
             todo.description,
-          ].filter(Boolean).join("\n");
+          ]
+            .filter(Boolean)
+            .join("\n");
 
           const task = await taskAdapter.createTask({
             content: `[VIP] ${todo.title}`,
@@ -1699,7 +1744,8 @@ export const vipEmailReceived = inngest.createFunction(
         } catch (error) {
           accessGaps.push({
             item: `Todo creation failed for: ${todo.title}`,
-            why_missing: error instanceof Error ? error.message.slice(0, 180) : String(error).slice(0, 180),
+            why_missing:
+              error instanceof Error ? error.message.slice(0, 180) : String(error).slice(0, 180),
             how_to_get_it: "Check TODOIST_API_TOKEN and todoist-cli availability",
           });
         }
@@ -1710,31 +1756,7 @@ export const vipEmailReceived = inngest.createFunction(
 
     timings["create-comprehensive-todos"] = createdTodos.durationMs;
 
-    const allMissingInfo = [
-      ...analysis.missing_information,
-      ...accessGaps,
-    ];
-
-    const operatorBrief = isWellFormedOperatorBrief(briefResult.brief)
-      ? briefResult.brief
-      : buildFallbackOperatorBrief({
-          senderDisplay,
-          subject,
-          preview,
-          conversationId,
-          analysis,
-          frontContext,
-          followedLinks,
-          accessGaps: allMissingInfo,
-        });
-    const telegramBriefHtml = toTelegramHtml(
-      stripOperatorRelayRules(operatorBrief),
-    );
-
-    await sendVipEmailReceivedToGateway(
-      (stepId, messageEvent) => step.sendEvent(stepId, messageEvent),
-      telegramBriefHtml,
-    );
+    const allMissingInfo = [...analysis.missing_information, ...accessGaps];
 
     // Flowing IDs never enter the legacy Typesense echo/fizzle mutation loop.
     const totalDurationMs = Date.now() - startedAt;
@@ -1757,12 +1779,11 @@ export const vipEmailReceived = inngest.createFunction(
       opusReason: opusDecision.reason,
       cacheStored: cacheResult.cached,
       cacheError: cacheResult.error,
-      telegramQueued: true,
       timings,
       granolaRangeDurations: granolaResult.rangeDurations,
       totalDurationMs,
       budgetMs: TOTAL_BUDGET_MS,
       budgetExceeded: totalDurationMs > TOTAL_BUDGET_MS,
     };
-  }
+  },
 );

@@ -1,9 +1,15 @@
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
-import { DEFAULT_SERVICE_PLACEMENT, NAS_BACKUPS_HDD_ROOT, NAS_BACKUPS_REMOTE_ROOT } from "@joelclaw/endpoint-resolver";
+import {
+  DEFAULT_SERVICE_PLACEMENT,
+  NAS_BACKUPS_HDD_ROOT,
+  NAS_BACKUPS_REMOTE_ROOT,
+} from "@joelclaw/endpoint-resolver";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
 import { buildAgentSessionBackupCommand } from "../../lib/agent-session-backup-command";
@@ -11,11 +17,12 @@ import { runAgentSessionBackup } from "../../lib/agent-session-backup-runner";
 import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
 import { infer } from "../../lib/inference";
 import { assertAllowedModel } from "../../lib/models";
+import { notifyJoel } from "../../lib/notify-joel";
 import { resolveHardAlert, sendHardAlert, stableAlertId } from "../../lib/search-maintenance";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
-const HOME_DIR = process.env.HOME ?? "/Users/joel";
+const HOME_DIR = process.env.HOME ?? homedir();
 
 const BACKUP_ROUTER_CONFIG = loadBackupFailureRouterConfig();
 const NAS_NVME_ROOT = BACKUP_ROUTER_CONFIG.transport.nasNvmeRoot; // fast shared storage (1.78TB NVMe)
@@ -25,23 +32,22 @@ const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const TYPESENSE_POD = "typesense-0";
 const TYPESENSE_NAMESPACE = "joelclaw";
 const TYPESENSE_SNAPSHOT_SOURCE = parseTypesenseSnapshotSource(
-  process.env.TYPESENSE_SNAPSHOT_SOURCE
+  process.env.TYPESENSE_SNAPSHOT_SOURCE,
 );
-const TYPESENSE_DEFAULT_SNAPSHOT_ROOT = TYPESENSE_SNAPSHOT_SOURCE === "local"
-  ? "/tmp/typesense-native-snapshots"
-  : "/data/snapshots";
+const TYPESENSE_DEFAULT_SNAPSHOT_ROOT =
+  TYPESENSE_SNAPSHOT_SOURCE === "local" ? "/tmp/typesense-native-snapshots" : "/data/snapshots";
 const TYPESENSE_SNAPSHOT_ROOT = normalizeSnapshotRoot(
   process.env.TYPESENSE_SNAPSHOT_ROOT,
-  TYPESENSE_DEFAULT_SNAPSHOT_ROOT
+  TYPESENSE_DEFAULT_SNAPSHOT_ROOT,
 );
 const TYPESENSE_SNAPSHOT_FALLBACK_ROOT = normalizeSnapshotRoot(
   process.env.TYPESENSE_SNAPSHOT_FALLBACK_ROOT,
-  TYPESENSE_DEFAULT_SNAPSHOT_ROOT
+  TYPESENSE_DEFAULT_SNAPSHOT_ROOT,
 );
 const TYPESENSE_SNAPSHOT_RETENTION_COUNT = parsePositiveIntEnv(
   "TYPESENSE_SNAPSHOT_RETENTION_COUNT",
   2,
-  1
+  1,
 );
 const TYPESENSE_BACKUP_ROOT = `${NAS_BACKUPS_HDD_ROOT}/typesense`;
 const TYPESENSE_STAGE_ROOT = "/tmp/joelclaw/typesense-snapshots";
@@ -50,7 +56,7 @@ const TYPESENSE_BACKUP_REMOTE_ROOT = `${NAS_BACKUPS_REMOTE_ROOT}/typesense`;
 const REDIS_POD = "redis-0";
 const REDIS_NAMESPACE = "joelclaw";
 const CONFIGURED_K8S_HOST = DEFAULT_SERVICE_PLACEMENT.hosts.find((host) =>
-  host.services.includes("k8s")
+  host.services.includes("k8s"),
 )?.hostname;
 const K8S_OPERATOR_HOST = process.env.K8S_OPERATOR_HOST?.trim() || CONFIGURED_K8S_HOST || "panda";
 const K8S_KUBECTL_PATH = process.env.K8S_KUBECTL_PATH?.trim() || "/opt/homebrew/bin/kubectl";
@@ -79,7 +85,8 @@ const BACKUP_FAILURE_EVENT = "system/backup.failure.detected";
 const SELF_HEALING_REQUEST_EVENT = "system/self.healing.requested";
 const BACKUP_RETRY_REQUEST_EVENT = "system/backup.retry.requested";
 const GATEWAY_SEND_MESSAGE_EVENT = "gateway/send.message";
-const BACKUP_FAILURE_MODEL_ROUTER_ENABLED = process.env.JOELCLAW_BACKUP_FAILURE_MODEL_ROUTER === "1";
+const BACKUP_FAILURE_MODEL_ROUTER_ENABLED =
+  process.env.JOELCLAW_BACKUP_FAILURE_MODEL_ROUTER === "1";
 
 const SESSIONS_BACKUP_ROOT = `${NAS_HDD_ROOT}/sessions`;
 const CLAUDE_PROJECTS_ROOT = `${HOME_DIR}/.claude/projects`;
@@ -91,13 +98,18 @@ const OTEL_EXPORT_ROOT = `${NAS_HDD_ROOT}/otel`;
 
 const MEMORY_LOG_ROOT = `${HOME_DIR}/.joelclaw/workspace/memory`;
 const MEMORY_LOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/logs`;
-const NAS_BACKUP_QUEUE_ROOT = process.env.NAS_BACKUP_QUEUE_ROOT?.trim() || "/tmp/joelclaw/nas-queue";
-const JOELCLAW_REPO_ROOT = process.env.JOELCLAW_REPO_ROOT?.trim() || "/Users/joel/Code/joelhooks/joelclaw";
+const NAS_BACKUP_QUEUE_ROOT =
+  process.env.NAS_BACKUP_QUEUE_ROOT?.trim() || "/tmp/joelclaw/nas-queue";
+const JOELCLAW_REPO_ROOT =
+  process.env.JOELCLAW_REPO_ROOT?.trim() || join(HOME_DIR, "Code", "joelhooks", "joelclaw");
 const AGENT_SESSION_BACKUP_SCRIPT = `${JOELCLAW_REPO_ROOT}/scripts/agent-session-audit-backup.ts`;
 const AGENT_SESSION_BACKUP_ROOT = `${NAS_HDD_ROOT}/sessions`;
 // Local, not on the NAS: the lock must work while the mount is flaky.
 const AGENT_SESSION_BACKUP_LOCK = `${HOME_DIR}/.joelclaw/run/agent-session-backup.lock`;
-const AGENT_SESSION_CENTRAL_URL = process.env.JOELCLAW_SESSION_CAPTURE_URL?.trim() || "http://joels-mac-studio.tail7af24.ts.net:3111";
+const AGENT_SESSION_CENTRAL_URL =
+  process.env.JOELCLAW_SESSION_CAPTURE_URL?.trim() ||
+  process.env.JOELCLAW_CENTRAL_URL?.trim() ||
+  "http://127.0.0.1:3111";
 
 type BackupTarget = "typesense" | "redis";
 export type TypesenseSnapshotSource = "local" | "k8s";
@@ -238,9 +250,10 @@ function buildBackupFailureFlowContext(input: {
   payload: BackupFailureEventData;
 }): BackupFailureFlowContext {
   const attempt = Math.max(0, Math.floor(parseAttempt(input.payload.attempt, 0)));
-  const sourceEventName = typeof input.eventName === "string" && input.eventName.trim().length > 0
-    ? input.eventName.trim()
-    : BACKUP_FAILURE_EVENT;
+  const sourceEventName =
+    typeof input.eventName === "string" && input.eventName.trim().length > 0
+      ? input.eventName.trim()
+      : BACKUP_FAILURE_EVENT;
   return {
     flowContextKey: `${sourceEventName}::${input.payload.targetFunctionId}::${input.payload.target}::attempt-${attempt}`,
     flowTrace: [
@@ -288,7 +301,10 @@ function clampDelayMs(value: number): number {
 
 function estimateRouterDelayMs(attempt: number): number {
   const boundedAttempt = Math.max(0, Math.floor(attempt));
-  const exponential = Math.min(BACKUP_ROUTER_SLEEP_MIN_MS * 2 ** boundedAttempt, BACKUP_ROUTER_SLEEP_MAX_MS);
+  const exponential = Math.min(
+    BACKUP_ROUTER_SLEEP_MIN_MS * 2 ** boundedAttempt,
+    BACKUP_ROUTER_SLEEP_MAX_MS,
+  );
   const jitter = Math.max(0, Math.floor(Math.random() * BACKUP_ROUTER_SLEEP_STEP_MS));
   return clampDelayMs(exponential + jitter);
 }
@@ -340,10 +356,12 @@ function parseJsonFromText(raw: string): unknown | null {
 function normalizeFailureDecision(
   raw: unknown,
   fallbackTarget: BackupFunctionId,
-  fallbackAttempt: number
+  fallbackAttempt: number,
 ): BackupFailureDecision {
   const record = raw as Record<string, unknown>;
-  const actionText = String(record?.action ?? record?.decision ?? record?.route ?? "").toLowerCase();
+  const actionText = String(
+    record?.action ?? record?.decision ?? record?.route ?? "",
+  ).toLowerCase();
   const delayMsCandidate = parseAttempt(record?.delayMs, Number.NaN);
   const delaySecondsCandidate = parseAttempt(record?.delaySeconds, Number.NaN);
   const waitMinutesCandidate = parseAttempt(record?.waitMinutes, Number.NaN);
@@ -351,9 +369,11 @@ function normalizeFailureDecision(
   const routeCandidate = String(record?.routeTo ?? fallbackTarget) as BackupFunctionId | string;
 
   const action: BackupFailureAction =
-    actionText.includes("retry") || actionText.includes("try") ? "retry" :
-      actionText.includes("pause") || actionText.includes("wait") ? "pause" :
-        "escalate";
+    actionText.includes("retry") || actionText.includes("try")
+      ? "retry"
+      : actionText.includes("pause") || actionText.includes("wait")
+        ? "pause"
+        : "escalate";
 
   const confidenceCandidate = Number(record?.confidence);
   const reason =
@@ -375,7 +395,9 @@ function normalizeFailureDecision(
             ? waitHoursCandidate * 60 * 60_000
             : Number.NaN;
 
-  const delayMs = clampDelayMs(Number.isFinite(rawDelay) ? rawDelay : estimateRouterDelayMs(fallbackAttempt));
+  const delayMs = clampDelayMs(
+    Number.isFinite(rawDelay) ? rawDelay : estimateRouterDelayMs(fallbackAttempt),
+  );
 
   return {
     action,
@@ -389,15 +411,20 @@ function normalizeFailureDecision(
 
 function isKnownNonRetryableBackupErrorMessage(error: string): boolean {
   const message = error.toLowerCase();
-  return /copy failed|no typesense snapshot files staged|snapshot failed \(500\)|permission denied|no space left on device/i.test(message);
+  return /copy failed|no typesense snapshot files staged|snapshot failed \(500\)|permission denied|no space left on device/i.test(
+    message,
+  );
 }
 
 function deterministicBackupFailureDecision(
   payload: BackupFailureEventData,
   attempt: number,
-  reasonPrefix = "Deterministic backup guardrail"
+  reasonPrefix = "Deterministic backup guardrail",
 ): BackupFailureDecision {
-  if (attempt >= BACKUP_ROUTER_MAX_RETRIES || isKnownNonRetryableBackupErrorMessage(payload.error)) {
+  if (
+    attempt >= BACKUP_ROUTER_MAX_RETRIES ||
+    isKnownNonRetryableBackupErrorMessage(payload.error)
+  ) {
     return {
       action: "escalate",
       delayMs: 0,
@@ -408,7 +435,9 @@ function deterministicBackupFailureDecision(
     };
   }
 
-  const action: BackupFailureAction = isRetryableBackupError(new Error(payload.error)) ? "retry" : "pause";
+  const action: BackupFailureAction = isRetryableBackupError(new Error(payload.error))
+    ? "retry"
+    : "pause";
   return {
     action,
     delayMs: estimateRouterDelayMs(attempt),
@@ -422,7 +451,7 @@ function deterministicBackupFailureDecision(
 async function analyzeBackupFailureWithPi(
   payload: BackupFailureEventData,
   attempt: number,
-  isRetry: boolean
+  isRetry: boolean,
 ): Promise<BackupFailureDecision> {
   if (!BACKUP_FAILURE_MODEL_ROUTER_ENABLED) {
     return deterministicBackupFailureDecision(payload, attempt);
@@ -479,7 +508,10 @@ async function analyzeBackupFailureWithPi(
       throw new Error(`backup router fallback analysis failed for model ${model}`);
     }
 
-    const decision = parsed === null ? normalizeFailureDecision({}, payload.targetFunctionId, attempt) : normalizeFailureDecision(parsed, payload.targetFunctionId, attempt);
+    const decision =
+      parsed === null
+        ? normalizeFailureDecision({}, payload.targetFunctionId, attempt)
+        : normalizeFailureDecision(parsed, payload.targetFunctionId, attempt);
 
     return {
       ...decision,
@@ -498,7 +530,11 @@ async function analyzeBackupFailureWithPi(
     } catch {
       // fall through to local fallback
     }
-    return deterministicBackupFailureDecision(payload, attempt, "Model analysis unavailable; backup guardrail fallback");
+    return deterministicBackupFailureDecision(
+      payload,
+      attempt,
+      "Model analysis unavailable; backup guardrail fallback",
+    );
   }
 }
 
@@ -506,7 +542,14 @@ type SelfHealingRequestData = {
   sourceFunction: BackupFunctionId;
   targetComponent: string;
   routeToFunction?: BackupFunctionId;
-  domain?: "backup" | "sdk-reachability" | "gateway-bridge" | "gateway-provider" | "otel-pipeline" | "all" | string;
+  domain?:
+    | "backup"
+    | "sdk-reachability"
+    | "gateway-bridge"
+    | "gateway-provider"
+    | "otel-pipeline"
+    | "all"
+    | string;
   problemSummary: string;
   attempt?: number;
   targetEventName?: string;
@@ -521,9 +564,7 @@ type SelfHealingRequestData = {
   context?: Record<string, unknown>;
 };
 
-function summarizeBackupEvidence(
-  evidence: Array<SelfHealingEvidence> | undefined,
-): {
+function summarizeBackupEvidence(evidence: Array<SelfHealingEvidence> | undefined): {
   count: number;
   samples: Array<SelfHealingEvidence>;
   types: string[];
@@ -556,7 +597,7 @@ type BackupFailureOnFailureContext = {
         | {
             name: typeof SELF_HEALING_REQUEST_EVENT;
             data: SelfHealingRequestData;
-          }
+          },
     ) => Promise<unknown>;
   };
 };
@@ -574,6 +615,7 @@ type BackupRouterContext = {
     data?: Record<string, unknown>;
   };
   step: {
+    run: (name: string, operation: () => Promise<void>) => Promise<unknown>;
     sleep: (name: string, duration: string) => Promise<void>;
     sendEvent: (
       id: string,
@@ -589,7 +631,7 @@ type BackupRouterContext = {
         | {
             name: typeof GATEWAY_SEND_MESSAGE_EVENT;
             data: { channel?: string; text: string; audit?: { producer?: string } };
-          }
+          },
     ) => Promise<{ ids: string[] }>;
   };
 };
@@ -601,7 +643,8 @@ function backupFailureAlertText(input: {
   status: "escalated" | "exhausted";
   eventId?: string;
 }): string {
-  const title = input.status === "exhausted" ? "Backup retry budget exhausted" : "Backup failure escalated";
+  const title =
+    input.status === "exhausted" ? "Backup retry budget exhausted" : "Backup failure escalated";
   return [
     `🚨 ${title}`,
     `target: ${input.payload.targetFunctionId}`,
@@ -611,12 +654,14 @@ function backupFailureAlertText(input: {
     `error: ${input.payload.error.slice(0, 500)}`,
     input.eventId ? `event: ${input.eventId}` : undefined,
     "next: fix the storage/snapshot failure before re-enabling retries",
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function createBackupOnFailureHandler(
   targetFunctionId: BackupFunctionId,
-  target: BackupTarget
+  target: BackupTarget,
 ): (context: BackupFailureOnFailureContext) => Promise<void> {
   return async ({ error, event, step }) => {
     const eventData = event.data ?? {};
@@ -626,10 +671,15 @@ function createBackupOnFailureHandler(
       error: stringifyFailureError(error),
       backupFailureDetectedAt: new Date().toISOString(),
       attempt: parseAttempt(eventData?.attempt, 0),
-      transportMode: typeof eventData?.transportMode === "string" ? (eventData.transportMode as BackupMode) : undefined,
+      transportMode:
+        typeof eventData?.transportMode === "string"
+          ? (eventData.transportMode as BackupMode)
+          : undefined,
       transportAttempts: parseAttempt(eventData?.transportAttempts, 0),
       transportDestination:
-        typeof eventData?.transportDestination === "string" ? eventData.transportDestination : undefined,
+        typeof eventData?.transportDestination === "string"
+          ? eventData.transportDestination
+          : undefined,
       retryWindowHours: parseAttempt(eventData?.retryWindowHours, BACKUP_RECOVERY_WINDOW_HOURS),
     };
     const evidence = [
@@ -651,7 +701,10 @@ function createBackupOnFailureHandler(
       sourceEventName: event.name,
       sourceEventId: event.id,
       runContext: flowContext,
-      transportDestination: typeof eventData?.transportDestination === "string" ? eventData.transportDestination : undefined,
+      transportDestination:
+        typeof eventData?.transportDestination === "string"
+          ? eventData.transportDestination
+          : undefined,
       retryWindowHours: parseAttempt(eventData?.retryWindowHours, BACKUP_RECOVERY_WINDOW_HOURS),
       backupFailureDetectedAt: payload.backupFailureDetectedAt,
       attempt: payload.attempt,
@@ -659,7 +712,7 @@ function createBackupOnFailureHandler(
       target,
       evidence,
     };
-    const homeDir = process.env.HOME ?? "/Users/joel";
+    const homeDir = process.env.HOME ?? homedir();
     const selfHealingPayload = {
       sourceFunction: targetFunctionId,
       targetComponent: `backup:${target}`,
@@ -727,7 +780,8 @@ function createBackupOnFailureHandler(
         success: true,
         metadata: {
           runContext: flowContext,
-          reason: "backup failures are owned by deterministic backup failure router to avoid duplicate retry loops",
+          reason:
+            "backup failures are owned by deterministic backup failure router to avoid duplicate retry loops",
           suppressedEventName: SELF_HEALING_REQUEST_EVENT,
           suppressedPayloadSummary: {
             sourceFunction: selfHealingPayload.sourceFunction,
@@ -739,7 +793,9 @@ function createBackupOnFailureHandler(
       });
     } catch (error) {
       const details = stringifyFailureError(error);
-      console.warn(`Failed to emit backup failure event for ${targetFunctionId}: ${event.id ?? "unknown event"}: ${details}`);
+      console.warn(
+        `Failed to emit backup failure event for ${targetFunctionId}: ${event.id ?? "unknown event"}: ${details}`,
+      );
       await emitOtelEvent({
         level: "error",
         source: "worker",
@@ -760,7 +816,9 @@ function createBackupOnFailureHandler(
     if (target === "redis") {
       await step.run("alert-redis-backup-failure", async () => {
         await sendHardAlert({
-          eventId: stableAlertId(`redis-backup-failure:${event.id ?? payload.backupFailureDetectedAt}`),
+          eventId: stableAlertId(
+            `redis-backup-failure:${event.id ?? payload.backupFailureDetectedAt}`,
+          ),
           source: "redis-backup",
           latchKey: REDIS_BACKUP_ALERT_LATCH_KEY,
           quietWindowMs: REDIS_BACKUP_ALERT_QUIET_MS,
@@ -777,7 +835,10 @@ function createBackupOnFailureHandler(
   };
 }
 
-function isRetryEventForFunction(eventData: Record<string, unknown> | undefined, targetFunctionId: BackupFunctionId): boolean {
+function isRetryEventForFunction(
+  eventData: Record<string, unknown> | undefined,
+  targetFunctionId: BackupFunctionId,
+): boolean {
   if (!eventData) return true;
 
   const requestedTarget = String(eventData.targetFunctionId ?? "");
@@ -810,7 +871,9 @@ function normalizeRetryData(raw: Record<string, unknown>): BackupFailureEventDat
     target: normalizeFailureTarget(raw.target),
     error: stringifyFailureError(raw.error ?? "Unknown backup failure"),
     backupFailureDetectedAt:
-      typeof raw.backupFailureDetectedAt === "string" ? raw.backupFailureDetectedAt : new Date().toISOString(),
+      typeof raw.backupFailureDetectedAt === "string"
+        ? raw.backupFailureDetectedAt
+        : new Date().toISOString(),
     attempt: parseAttempt(raw.attempt, 0),
     transportMode:
       typeof raw.transportMode === "string"
@@ -824,33 +887,42 @@ function normalizeRetryData(raw: Record<string, unknown>): BackupFailureEventDat
     transportDestination:
       typeof raw.transportDestination === "string" ? raw.transportDestination : undefined,
     retryWindowHours: parseAttempt(raw.retryWindowHours, BACKUP_RECOVERY_WINDOW_HOURS),
-    context: raw.context && typeof raw.context === "object" ? raw.context as Record<string, unknown> : undefined,
+    context:
+      raw.context && typeof raw.context === "object"
+        ? (raw.context as Record<string, unknown>)
+        : undefined,
   };
 }
 
 function computeRetryDelayMs(attempt: number): number {
-  const scaled = Math.min(BACKUP_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1), BACKUP_RETRY_MAX_MS);
+  const scaled = Math.min(
+    BACKUP_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1),
+    BACKUP_RETRY_MAX_MS,
+  );
   const jitter = Math.max(0, Math.min(1000, Math.floor(scaled * 0.2)));
   return scaled + Math.floor(Math.random() * (jitter + 1));
 }
 
 function isRetryableBackupError(error: RetryError): boolean {
   const message = toText((error as Error)?.message ?? `${error ?? ""}`).toLowerCase();
-  return /operation timed out|timed out|timeout|connection/i.test(message)
-    || /connect.*timed out|no route to host|network is unreachable|econn|ssh:|resource temporarily unavailable/i.test(message)
-    || /input\/output|i\/o error|stale file handle|temporary failure|server is unavailable/i.test(message);
+  return (
+    /operation timed out|timed out|timeout|connection/i.test(message) ||
+    /connect.*timed out|no route to host|network is unreachable|econn|ssh:|resource temporarily unavailable/i.test(
+      message,
+    ) ||
+    /input\/output|i\/o error|stale file handle|temporary failure|server is unavailable/i.test(
+      message,
+    )
+  );
 }
 
 async function checkLocalBackupTarget(path: string): Promise<boolean> {
   const probe = `${path}/.joelclaw-backup-probe-${Date.now()}`;
   try {
-    await runShell(
-      `mkdir -p ${path}`,
-      $`mkdir -p ${path}`.quiet().nothrow()
-    );
+    await runShell(`mkdir -p ${path}`, $`mkdir -p ${path}`.quiet().nothrow());
     await runShell(
       `touch ${probe} && rm -f ${probe}`,
-      $`touch ${probe} && rm -f ${probe}`.quiet().nothrow()
+      $`touch ${probe} && rm -f ${probe}`.quiet().nothrow(),
     );
     return true;
   } catch {
@@ -859,18 +931,23 @@ async function checkLocalBackupTarget(path: string): Promise<boolean> {
 }
 
 async function checkRemoteBackupTarget(path: string): Promise<boolean> {
-  const mkdirResult = await $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`.quiet().nothrow();
+  const mkdirResult = await $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`
+    .quiet()
+    .nothrow();
   if (mkdirResult.exitCode !== 0) return false;
 
   const probe = `${path}/.joelclaw-backup-probe-${Date.now()}`;
-  const probeResult = await $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "touch ${probe} && rm -f ${probe}"`.quiet().nothrow();
+  const probeResult =
+    await $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "touch ${probe} && rm -f ${probe}"`
+      .quiet()
+      .nothrow();
   return probeResult.exitCode === 0;
 }
 
 async function ensureRemoteDirectory(path: string): Promise<void> {
   await runShell(
     `mkdir -p ${path} via remote`,
-    $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`.quiet().nothrow()
+    $`ssh ${NAS_SSH_ARGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`.quiet().nothrow(),
   );
 }
 
@@ -945,7 +1022,10 @@ async function runWithBackupTransport<T>(
     await Bun.sleep(Math.min(computeRetryDelayMs(attempt), remainingMs));
   }
 
-  throw (lastError as Error) ?? new Error(`${label} failed after ${attempts} attempts in ${BACKUP_RECOVERY_WINDOW_HOURS}h`);
+  throw (
+    (lastError as Error) ??
+    new Error(`${label} failed after ${attempts} attempts in ${BACKUP_RECOVERY_WINDOW_HOURS}h`)
+  );
 }
 
 async function copyDirectoryWithFallback(
@@ -961,11 +1041,11 @@ async function copyDirectoryWithFallback(
       async () => {
         await runShell(
           `mkdir -p ${localDestination}`,
-          $`mkdir -p ${localDestination}`.quiet().nothrow()
+          $`mkdir -p ${localDestination}`.quiet().nothrow(),
         );
         await runShell(
           `rsync -az ${source}/ ${localDestination}/`,
-          $`rsync -az ${source}/ ${localDestination}/`.quiet().nothrow()
+          $`rsync -az ${source}/ ${localDestination}/`.quiet().nothrow(),
         );
         return;
       },
@@ -973,10 +1053,12 @@ async function copyDirectoryWithFallback(
         await ensureRemoteDirectory(remoteDestination);
         await runShell(
           `scp -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`,
-          $`scp ${NAS_SSH_ARGS} -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`.quiet().nothrow()
+          $`scp ${NAS_SSH_ARGS} -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`
+            .quiet()
+            .nothrow(),
         );
         return;
-      }
+      },
     );
 
     return { mode, attempts };
@@ -985,7 +1067,7 @@ async function copyDirectoryWithFallback(
     await runShell(`mkdir -p ${queuedPath}`, $`mkdir -p ${queuedPath}`.quiet().nothrow());
     await runShell(
       `rsync -az ${source}/ ${queuedPath}/`,
-      $`rsync -az ${source}/ ${queuedPath}/`.quiet().nothrow()
+      $`rsync -az ${source}/ ${queuedPath}/`.quiet().nothrow(),
     );
     return {
       mode: "queued",
@@ -1010,13 +1092,10 @@ async function copyFileWithFallback(
       localDir,
       remoteDir,
       async () => {
-        await runShell(
-          `mkdir -p ${localDir}`,
-          $`mkdir -p ${localDir}`.quiet().nothrow()
-        );
+        await runShell(`mkdir -p ${localDir}`, $`mkdir -p ${localDir}`.quiet().nothrow());
         await runShell(
           `cp ${source} ${localDestination}`,
-          $`cp ${source} ${localDestination}`.quiet().nothrow()
+          $`cp ${source} ${localDestination}`.quiet().nothrow(),
         );
         return;
       },
@@ -1024,10 +1103,10 @@ async function copyFileWithFallback(
         await ensureRemoteDirectory(remoteDir);
         await runShell(
           `scp ${source} to remote backup`,
-          $`scp ${NAS_SSH_ARGS} ${source} ${NAS_SSH_HOST}:${remoteDestination}`.quiet().nothrow()
+          $`scp ${NAS_SSH_ARGS} ${source} ${NAS_SSH_HOST}:${remoteDestination}`.quiet().nothrow(),
         );
         return;
-      }
+      },
     );
 
     return { mode, attempts };
@@ -1054,7 +1133,7 @@ function commandError(command: string, result: ShellResult): Error {
   const stderr = toText(result.stderr);
   const stdout = toText(result.stdout);
   return new Error(
-    `${command} failed (exit ${result.exitCode})${stderr ? `: ${stderr}` : stdout ? `: ${stdout}` : ""}`
+    `${command} failed (exit ${result.exitCode})${stderr ? `: ${stderr}` : stdout ? `: ${stdout}` : ""}`,
   );
 }
 
@@ -1134,7 +1213,9 @@ export async function stageRedisBackupFromCluster(
     runCommand,
   );
   if (!/background saving (?:started|scheduled)/iu.test(toText(triggerResult.stdout))) {
-    throw new Error(`Redis BGSAVE was not accepted on ${K8S_OPERATOR_HOST}: ${toText(triggerResult.stdout)}`);
+    throw new Error(
+      `Redis BGSAVE was not accepted on ${K8S_OPERATOR_HOST}: ${toText(triggerResult.stdout)}`,
+    );
   }
 
   let lastSaveEpoch = 0;
@@ -1142,7 +1223,17 @@ export async function stageRedisBackupFromCluster(
   for (let poll = 0; poll < maxPolls; poll += 1) {
     const result = await runRedisOperatorCommand(
       `read Redis persistence status via ${K8S_OPERATOR_HOST}`,
-      [K8S_KUBECTL_PATH, "exec", "-n", REDIS_NAMESPACE, REDIS_POD, "--", "redis-cli", "INFO", "persistence"],
+      [
+        K8S_KUBECTL_PATH,
+        "exec",
+        "-n",
+        REDIS_NAMESPACE,
+        REDIS_POD,
+        "--",
+        "redis-cli",
+        "INFO",
+        "persistence",
+      ],
       runCommand,
     );
     const persistence = toText(result.stdout);
@@ -1152,7 +1243,9 @@ export async function stageRedisBackupFromCluster(
     lastSaveEpoch = Number.parseInt(lastSaveMatch?.[1] ?? "0", 10);
     if (!inProgress) {
       if (!succeeded || lastSaveEpoch < beforeLastSaveEpoch) {
-        throw new Error(`Redis BGSAVE finished without a successful persistence status on ${K8S_OPERATOR_HOST}`);
+        throw new Error(
+          `Redis BGSAVE finished without a successful persistence status on ${K8S_OPERATOR_HOST}`,
+        );
       }
       completed = true;
       break;
@@ -1160,7 +1253,9 @@ export async function stageRedisBackupFromCluster(
     await sleep(1_000);
   }
   if (!completed) {
-    throw new Error(`Redis BGSAVE did not finish after ${maxPolls} persistence checks on ${K8S_OPERATOR_HOST}`);
+    throw new Error(
+      `Redis BGSAVE did not finish after ${maxPolls} persistence checks on ${K8S_OPERATOR_HOST}`,
+    );
   }
 
   await runRedisOperatorCommand(
@@ -1226,16 +1321,13 @@ async function ensureNasMounted(): Promise<void> {
   if (result.exitCode !== 0) {
     const stderr = toText(result.stderr);
     throw new NonRetriableError(
-      `NAS mount unavailable at ${NAS_HDD_ROOT}${stderr ? `: ${stderr}` : ""}`
+      `NAS mount unavailable at ${NAS_HDD_ROOT}${stderr ? `: ${stderr}` : ""}`,
     );
   }
 }
 
 async function ensureDir(path: string): Promise<void> {
-  await runShell(
-    `mkdir -p ${path}`,
-    $`mkdir -p ${path}`.quiet().nothrow()
-  );
+  await runShell(`mkdir -p ${path}`, $`mkdir -p ${path}`.quiet().nothrow());
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -1246,26 +1338,33 @@ async function pathExists(path: string): Promise<boolean> {
 async function listFilesOlderThanDays(
   root: string,
   olderThanDays: number,
-  glob?: string
+  glob?: string,
 ): Promise<string[]> {
   if (!(await pathExists(root))) return [];
 
   const result = glob
     ? await runShell(
-      `find ${root} -type f -name ${glob} -mtime +${olderThanDays} -print`,
-      $`find ${root} -type f -name ${glob} -mtime +${olderThanDays} -print`.quiet().nothrow()
-    )
+        `find ${root} -type f -name ${glob} -mtime +${olderThanDays} -print`,
+        $`find ${root} -type f -name ${glob} -mtime +${olderThanDays} -print`.quiet().nothrow(),
+      )
     : await runShell(
-      `find ${root} -type f -mtime +${olderThanDays} -print`,
-      $`find ${root} -type f -mtime +${olderThanDays} -print`.quiet().nothrow()
-    );
+        `find ${root} -type f -mtime +${olderThanDays} -print`,
+        $`find ${root} -type f -mtime +${olderThanDays} -print`.quiet().nothrow(),
+      );
 
   const stdout = toText(result.stdout);
   if (!stdout) return [];
-  return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
-function destinationFromSourceRoot(filePath: string, sourceRoot: string, destinationRoot: string): string {
+function destinationFromSourceRoot(
+  filePath: string,
+  sourceRoot: string,
+  destinationRoot: string,
+): string {
   const sourceRelative = relative(sourceRoot, filePath);
   if (!sourceRelative || sourceRelative.startsWith("..")) {
     return join(destinationRoot, basename(filePath));
@@ -1285,7 +1384,7 @@ async function moveFile(sourcePath: string, targetPath: string): Promise<void> {
   await ensureDir(dirname(targetPath));
   await runShell(
     `mv ${sourcePath} ${targetPath}`,
-    $`mv ${sourcePath} ${targetPath}`.quiet().nothrow()
+    $`mv ${sourcePath} ${targetPath}`.quiet().nothrow(),
   );
 }
 
@@ -1299,7 +1398,7 @@ async function triggerTypesenseSnapshot(snapshotPath: string): Promise<unknown> 
         "X-TYPESENSE-API-KEY": apiKey,
       },
       signal: AbortSignal.timeout(30_000),
-    }
+    },
   );
 
   const responseText = await response.text();
@@ -1319,15 +1418,24 @@ function escapeSingleQuotesForSh(value: string): string {
   return value.replace(/'/g, "'\\''");
 }
 
-export function isLocalSnapshotPathWithinRoot(path: string, root: string, allowRoot = false): boolean {
+export function isLocalSnapshotPathWithinRoot(
+  path: string,
+  root: string,
+  allowRoot = false,
+): boolean {
   const pathFromRoot = relative(root, path);
   if (pathFromRoot.length === 0) return allowRoot;
-  return pathFromRoot !== ".." && !pathFromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`);
+  return (
+    pathFromRoot !== ".." &&
+    !pathFromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
+  );
 }
 
 function assertLocalSnapshotPath(path: string, allowRoot = false): void {
   const roots = [TYPESENSE_SNAPSHOT_ROOT, TYPESENSE_SNAPSHOT_FALLBACK_ROOT];
-  const insideConfiguredRoot = roots.some((root) => isLocalSnapshotPathWithinRoot(path, root, allowRoot));
+  const insideConfiguredRoot = roots.some((root) =>
+    isLocalSnapshotPathWithinRoot(path, root, allowRoot),
+  );
   if (!insideConfiguredRoot) {
     throw new Error(`Refusing local Typesense snapshot path outside configured roots: ${path}`);
   }
@@ -1340,14 +1448,17 @@ async function ensureLocalSnapshotRoot(root: string): Promise<void> {
   if (process.platform === "darwin") {
     const aclState = await $`ls -lde ${root}`.quiet().nothrow();
     const aclText = toText(aclState.stdout);
-    const hasStaffInheritance = aclText.includes("group:staff allow")
-      && aclText.includes("delete_child")
-      && aclText.includes("file_inherit")
-      && aclText.includes("directory_inherit");
+    const hasStaffInheritance =
+      aclText.includes("group:staff allow") &&
+      aclText.includes("delete_child") &&
+      aclText.includes("file_inherit") &&
+      aclText.includes("directory_inherit");
     if (!hasStaffInheritance) {
       await runShell(
         `grant inherited staff cleanup access on ${root}`,
-        $`chmod +a "group:staff allow read,write,execute,delete,append,delete_child,file_inherit,directory_inherit" ${root}`.quiet().nothrow()
+        $`chmod +a "group:staff allow read,write,execute,delete,append,delete_child,file_inherit,directory_inherit" ${root}`
+          .quiet()
+          .nothrow(),
       );
     }
   }
@@ -1360,7 +1471,10 @@ async function pathExistsAtTypesenseSource(path: string): Promise<boolean> {
   }
 
   const escapedPath = escapeSingleQuotesForSh(path);
-  const result = await $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- sh -lc "test -d '${escapedPath}'"`.quiet().nothrow();
+  const result =
+    await $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- sh -lc "test -d '${escapedPath}'"`
+      .quiet()
+      .nothrow();
   return result.exitCode === 0;
 }
 
@@ -1376,7 +1490,9 @@ async function listSnapshotDirsAtTypesenseSource(root: string): Promise<string[]
   const escapedRoot = escapeSingleQuotesForSh(root);
   const result = await runShell(
     `list snapshot dirs under ${root} in ${TYPESENSE_POD}`,
-    $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- sh -lc "find '${escapedRoot}' -mindepth 1 -maxdepth 1 -type d -print"`.quiet().nothrow()
+    $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- sh -lc "find '${escapedRoot}' -mindepth 1 -maxdepth 1 -type d -print"`
+      .quiet()
+      .nothrow(),
   );
 
   const stdout = toText(result.stdout);
@@ -1396,7 +1512,7 @@ export async function stageTypesenseSnapshotForBackup(
   if (source === "local") {
     const snapshotContentProbe = await runShell(
       `find ${snapshotPath} -mindepth 1 -print -quit`,
-      $`find ${snapshotPath} -mindepth 1 -print -quit`.quiet().nothrow()
+      $`find ${snapshotPath} -mindepth 1 -print -quit`.quiet().nothrow(),
     );
     if (!toText(snapshotContentProbe.stdout)) {
       throw new Error(`No Typesense snapshot files found at ${snapshotPath}`);
@@ -1407,12 +1523,14 @@ export async function stageTypesenseSnapshotForBackup(
   await ensureDir(stagedSnapshotPath);
   await runShell(
     `kubectl cp -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD}:${snapshotPath}/. ${stagedSnapshotPath}`,
-    $`kubectl cp -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD}:${snapshotPath}/. ${stagedSnapshotPath}`.quiet().nothrow()
+    $`kubectl cp -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD}:${snapshotPath}/. ${stagedSnapshotPath}`
+      .quiet()
+      .nothrow(),
   );
 
   const snapshotContentProbe = await runShell(
     `find ${stagedSnapshotPath} -mindepth 1 -print -quit`,
-    $`find ${stagedSnapshotPath} -mindepth 1 -print -quit`.quiet().nothrow()
+    $`find ${stagedSnapshotPath} -mindepth 1 -print -quit`.quiet().nothrow(),
   );
   if (!toText(snapshotContentProbe.stdout)) {
     throw new Error(`No Typesense snapshot files staged at ${stagedSnapshotPath}`);
@@ -1420,7 +1538,9 @@ export async function stageTypesenseSnapshotForBackup(
   return { path: stagedSnapshotPath, staged: true };
 }
 
-async function triggerTypesenseSnapshotWithFallback(dateStamp: string): Promise<TypesenseSnapshotSelection> {
+async function triggerTypesenseSnapshotWithFallback(
+  dateStamp: string,
+): Promise<TypesenseSnapshotSelection> {
   const primaryPath = `${TYPESENSE_SNAPSHOT_ROOT}/${dateStamp}`;
   const fallbackPath = `${TYPESENSE_SNAPSHOT_FALLBACK_ROOT}/${dateStamp}`;
   const fallbackDiffers = TYPESENSE_SNAPSHOT_FALLBACK_ROOT !== TYPESENSE_SNAPSHOT_ROOT;
@@ -1469,15 +1589,18 @@ async function triggerTypesenseSnapshotWithFallback(dateStamp: string): Promise<
       error: stringifyFailureError(error),
     });
     const summary = attempts
-      .map((attempt) =>
-        `${attempt.root} (${attempt.path}): ${attempt.ok ? "ok" : attempt.error ?? "failed"}`
+      .map(
+        (attempt) =>
+          `${attempt.root} (${attempt.path}): ${attempt.ok ? "ok" : (attempt.error ?? "failed")}`,
       )
       .join(" | ");
     throw new Error(`Typesense snapshot failed for primary and fallback roots: ${summary}`);
   }
 }
 
-async function cleanupSnapshotAtTypesenseSource(snapshotPath: string): Promise<SnapshotCleanupOutcome> {
+async function cleanupSnapshotAtTypesenseSource(
+  snapshotPath: string,
+): Promise<SnapshotCleanupOutcome> {
   try {
     if (TYPESENSE_SNAPSHOT_SOURCE === "local") {
       assertLocalSnapshotPath(snapshotPath);
@@ -1485,7 +1608,9 @@ async function cleanupSnapshotAtTypesenseSource(snapshotPath: string): Promise<S
     } else {
       await runShell(
         `rm -rf ${snapshotPath} in ${TYPESENSE_POD}`,
-        $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- rm -rf ${snapshotPath}`.quiet().nothrow()
+        $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- rm -rf ${snapshotPath}`
+          .quiet()
+          .nothrow(),
       );
     }
     return {
@@ -1505,7 +1630,7 @@ async function cleanupSnapshotAtTypesenseSource(snapshotPath: string): Promise<S
 
 async function pruneSnapshotRootAtTypesenseSource(
   root: string,
-  retentionCount: number
+  retentionCount: number,
 ): Promise<SnapshotPruneOutcome> {
   const safeRetention = Math.max(1, retentionCount);
   const exists = await pathExistsAtTypesenseSource(root);
@@ -1538,9 +1663,14 @@ async function pruneSnapshotRootAtTypesenseSource(
       continue;
     }
 
-    const result = await $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- rm -rf ${path}`.quiet().nothrow();
+    const result =
+      await $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- rm -rf ${path}`
+        .quiet()
+        .nothrow();
     if (result.exitCode !== 0) {
-      errors.push(`failed ${path}: ${toText(result.stderr) || toText(result.stdout) || `exit ${result.exitCode}`}`);
+      errors.push(
+        `failed ${path}: ${toText(result.stderr) || toText(result.stdout) || `exit ${result.exitCode}`}`,
+      );
     }
   }
 
@@ -1559,7 +1689,7 @@ async function pruneSnapshotRootAtTypesenseSource(
 async function fetchOtelPage(
   cutoffTimestamp: number,
   page: number,
-  perPage: number
+  perPage: number,
 ): Promise<Record<string, unknown>[]> {
   const apiKey = getTypesenseApiKey();
   const params = new URLSearchParams({
@@ -1578,7 +1708,7 @@ async function fetchOtelPage(
         "X-TYPESENSE-API-KEY": apiKey,
       },
       signal: AbortSignal.timeout(30_000),
-    }
+    },
   );
 
   const responseText = await response.text();
@@ -1634,7 +1764,7 @@ async function deleteOtelEvents(cutoffTimestamp: number): Promise<number> {
         "X-TYPESENSE-API-KEY": apiKey,
       },
       signal: AbortSignal.timeout(30_000),
-    }
+    },
   );
 
   const responseText = await response.text();
@@ -1693,7 +1823,10 @@ export const backupTypesense = inngest.createFunction(
       async () => {
         const dateStamp = await step.run("resolve-date-stamp", async () => getDateStamp());
         const snapshotStamp = await step.run("resolve-snapshot-stamp", async () => {
-          const eventSuffix = String(event.id ?? crypto.randomUUID()).replace(/[^A-Za-z0-9_-]/g, "-");
+          const eventSuffix = String(event.id ?? crypto.randomUUID()).replace(
+            /[^A-Za-z0-9_-]/g,
+            "-",
+          );
           return `${dateStamp}-${eventSuffix}`;
         });
         const stagedSnapshotPath = `${TYPESENSE_STAGE_ROOT}/${dateStamp}`;
@@ -1704,7 +1837,7 @@ export const backupTypesense = inngest.createFunction(
           await ensureDir(TYPESENSE_STAGE_ROOT);
           await runShell(
             `rm -rf ${stagedSnapshotPath}`,
-            $`rm -rf ${stagedSnapshotPath}`.quiet().nothrow()
+            $`rm -rf ${stagedSnapshotPath}`.quiet().nothrow(),
           );
           if (TYPESENSE_SNAPSHOT_SOURCE === "local") {
             await ensureLocalSnapshotRoot(TYPESENSE_SNAPSHOT_ROOT);
@@ -1713,22 +1846,18 @@ export const backupTypesense = inngest.createFunction(
         });
 
         const snapshotSelection = await step.run("trigger-snapshot-with-fallback", async () =>
-          triggerTypesenseSnapshotWithFallback(snapshotStamp)
+          triggerTypesenseSnapshotWithFallback(snapshotStamp),
         );
         const snapshotPath = snapshotSelection.snapshotPath;
         const snapshotRoot = snapshotSelection.snapshotRoot;
         const snapshotResult = snapshotSelection.snapshotResult;
 
         const snapshotTransfer = await step.run("copy-snapshot-to-host", async () =>
-          stageTypesenseSnapshotForBackup(snapshotPath, stagedSnapshotPath)
+          stageTypesenseSnapshotForBackup(snapshotPath, stagedSnapshotPath),
         );
 
         const transportResult = await step.run("sync-snapshot-to-nas", async () =>
-          copyDirectoryWithFallback(
-            snapshotTransfer.path,
-            destinationPath,
-            remoteDestinationPath
-          )
+          copyDirectoryWithFallback(snapshotTransfer.path, destinationPath, remoteDestinationPath),
         );
         transportMode = transportResult.mode;
         transportAttempts = transportResult.attempts;
@@ -1739,21 +1868,23 @@ export const backupTypesense = inngest.createFunction(
           if (!snapshotTransfer.staged) return;
           await runShell(
             `rm -rf ${stagedSnapshotPath}`,
-            $`rm -rf ${stagedSnapshotPath}`.quiet().nothrow()
+            $`rm -rf ${stagedSnapshotPath}`.quiet().nothrow(),
           );
         });
 
         const snapshotCleanup = await step.run("cleanup-typesense-snapshot-at-source", async () =>
-          cleanupSnapshotAtTypesenseSource(snapshotPath)
+          cleanupSnapshotAtTypesenseSource(snapshotPath),
         );
 
-        const pruneRoots = [...new Set([TYPESENSE_SNAPSHOT_ROOT, TYPESENSE_SNAPSHOT_FALLBACK_ROOT])];
+        const pruneRoots = [
+          ...new Set([TYPESENSE_SNAPSHOT_ROOT, TYPESENSE_SNAPSHOT_FALLBACK_ROOT]),
+        ];
         const snapshotPrune = await step.run("prune-typesense-snapshot-roots", async () => {
           const outcomes: SnapshotPruneOutcome[] = [];
           for (const root of pruneRoots) {
             const outcome = await pruneSnapshotRootAtTypesenseSource(
               root,
-              TYPESENSE_SNAPSHOT_RETENTION_COUNT
+              TYPESENSE_SNAPSHOT_RETENTION_COUNT,
             );
             outcomes.push(outcome);
           }
@@ -1797,9 +1928,9 @@ export const backupTypesense = inngest.createFunction(
           snapshotPrune,
           destinationPath,
         };
-      }
+      },
     );
-  }
+  },
 );
 
 export const backupRedis = inngest.createFunction(
@@ -1856,11 +1987,15 @@ export const backupRedis = inngest.createFunction(
         });
 
         const source = await step.run("stage-redis-backup-from-cluster", async () =>
-          stageRedisBackupFromCluster(stagingPath)
+          stageRedisBackupFromCluster(stagingPath),
         );
 
         await step.run("copy-redis-rdb-to-nas", async () => {
-          const result = await copyFileWithFallback(stagingPath, destinationPath, remoteDestinationPath);
+          const result = await copyFileWithFallback(
+            stagingPath,
+            destinationPath,
+            remoteDestinationPath,
+          );
           transportMode = result.mode;
           transportAttempts = result.attempts;
           transportQueuedPath = result.queuedPath ?? null;
@@ -1895,9 +2030,9 @@ export const backupRedis = inngest.createFunction(
           transportQueuedReason,
           destinationPath,
         };
-      }
+      },
     );
-  }
+  },
 );
 
 export const backupFailureRouter = inngest.createFunction(
@@ -1908,7 +2043,10 @@ export const backupFailureRouter = inngest.createFunction(
     retries: 2,
   },
   [{ event: BACKUP_FAILURE_EVENT }],
-  async ({ event, step }: BackupRouterContext): Promise<{
+  async ({
+    event,
+    step,
+  }: BackupRouterContext): Promise<{
     status: "escalated" | "scheduled";
     targetFunctionId: BackupFunctionId;
     reason?: string;
@@ -1974,20 +2112,19 @@ export const backupFailureRouter = inngest.createFunction(
             decision,
           },
         });
-        await step.sendEvent("alert-backup-retry-budget-exceeded", {
-          name: "gateway/send.message" as const,
-          data: {
-            channel: "telegram",
-            text: backupFailureAlertText({
+        await step.run("alert-backup-retry-budget-exceeded", () =>
+          notifyJoel({
+            kind: "needs_joel",
+            source: "nas-backup-retry-budget",
+            message: backupFailureAlertText({
               payload,
               decision,
               attempt: retryAttempt,
               status: "exhausted",
               eventId: event.id,
             }),
-            audit: { producer: "nas-backup-retry-budget" },
-          },
-        });
+          }),
+        );
         return {
           status: "escalated",
           reason: `Retry budget exceeded (${retryAttempt} attempts)`,
@@ -2038,20 +2175,19 @@ export const backupFailureRouter = inngest.createFunction(
       },
     });
 
-    await step.sendEvent("alert-backup-failure-escalated", {
-      name: "gateway/send.message" as const,
-      data: {
-        channel: "telegram",
-        text: backupFailureAlertText({
+    await step.run("alert-backup-failure-escalated", () =>
+      notifyJoel({
+        kind: "needs_joel",
+        source: "nas-backup-escalation",
+        message: backupFailureAlertText({
           payload,
           decision,
           attempt,
           status: "escalated",
           eventId: event.id,
         }),
-        audit: { producer: "nas-backup-escalation" },
-      },
-    });
+      }),
+    );
 
     return {
       status: "escalated",
@@ -2059,7 +2195,7 @@ export const backupFailureRouter = inngest.createFunction(
       targetFunctionId: payload.targetFunctionId,
       attempt,
     };
-  }
+  },
 );
 
 export const verifyAgentSessionCaptureBackups = inngest.createFunction(
@@ -2075,13 +2211,25 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
   ],
   async ({ event, step }) => {
     const eventData = (event.data ?? {}) as Record<string, unknown>;
-    const hosts = typeof eventData.hosts === "string" && eventData.hosts.trim().length > 0
-      ? eventData.hosts.trim()
-      : process.env.JOELCLAW_SESSION_AUDIT_HOSTS?.trim() || "flagg,blaine";
+    const hosts = process.env.JOELCLAW_SESSION_AUDIT_HOSTS?.trim() || "";
+    if (!hosts) {
+      await step.run("skip-unconfigured-session-audit", () =>
+        emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "agent-session-capture-backup",
+          action: "system.agent_session.capture_backup.skipped",
+          success: true,
+          metadata: { reason: "JOELCLAW_SESSION_AUDIT_HOSTS is not configured" },
+        }),
+      );
+      return { status: "skipped", reason: "no audit hosts configured" };
+    }
     const repairEnv = eventData.repairEnv !== false;
-    const centralUrl = typeof eventData.centralUrl === "string" && eventData.centralUrl.trim().length > 0
-      ? eventData.centralUrl.trim()
-      : AGENT_SESSION_CENTRAL_URL;
+    const centralUrl =
+      typeof eventData.centralUrl === "string" && eventData.centralUrl.trim().length > 0
+        ? eventData.centralUrl.trim()
+        : AGENT_SESSION_CENTRAL_URL;
 
     const metadata: Record<string, unknown> = {
       schedule: event.name === "inngest/scheduled.timer" ? "daily_515am_pt" : "manual",
@@ -2123,9 +2271,9 @@ export const verifyAgentSessionCaptureBackups = inngest.createFunction(
 
         metadata.receiptPath = receiptPath;
         return { receiptPath, hosts, repairEnv, centralUrl };
-      }
+      },
     );
-  }
+  },
 );
 
 export const rotateSessions = inngest.createFunction(
@@ -2158,10 +2306,10 @@ export const rotateSessions = inngest.createFunction(
         });
 
         const claudeFiles = await step.run("list-claude-sessions", async () =>
-          listFilesOlderThanDays(CLAUDE_PROJECTS_ROOT, 7, "*.jsonl")
+          listFilesOlderThanDays(CLAUDE_PROJECTS_ROOT, 7, "*.jsonl"),
         );
         const piFiles = await step.run("list-pi-sessions", async () =>
-          listFilesOlderThanDays(PI_SESSIONS_ROOT, 7)
+          listFilesOlderThanDays(PI_SESSIONS_ROOT, 7),
         );
 
         const filesToMove = [...claudeFiles, ...piFiles];
@@ -2186,9 +2334,9 @@ export const rotateSessions = inngest.createFunction(
           claudeCount: claudeFiles.length,
           piCount: piFiles.length,
         };
-      }
+      },
     );
-  }
+  },
 );
 
 export const rotateOtel = inngest.createFunction(
@@ -2219,14 +2367,14 @@ export const rotateOtel = inngest.createFunction(
 
         const monthStamp = await step.run("resolve-month-stamp", async () => getMonthStamp());
         const outputPath = `${OTEL_EXPORT_ROOT}/otel-${monthStamp}.jsonl`;
-        const cutoffTimestamp = Date.now() - (90 * 24 * 60 * 60 * 1000);
+        const cutoffTimestamp = Date.now() - 90 * 24 * 60 * 60 * 1000;
 
         await step.run("prepare-otel-dir", async () => {
           await ensureDir(OTEL_EXPORT_ROOT);
         });
 
         const exportedCount = await step.run("export-otel-events", async () =>
-          exportOtelEvents(cutoffTimestamp, outputPath)
+          exportOtelEvents(cutoffTimestamp, outputPath),
         );
 
         const deletedCount = await step.run("delete-exported-otel-events", async () => {
@@ -2246,9 +2394,9 @@ export const rotateOtel = inngest.createFunction(
           exportedCount,
           deletedCount,
         };
-      }
+      },
     );
-  }
+  },
 );
 
 export const rotateLogs = inngest.createFunction(
@@ -2284,13 +2432,17 @@ export const rotateLogs = inngest.createFunction(
         });
 
         const oldLogFiles = await step.run("list-old-memory-logs", async () =>
-          listFilesOlderThanDays(MEMORY_LOG_ROOT, 30)
+          listFilesOlderThanDays(MEMORY_LOG_ROOT, 30),
         );
 
         const movedLogs = await step.run("move-old-memory-logs", async () => {
           let moved = 0;
           for (const filePath of oldLogFiles) {
-            const destinationPath = destinationFromSourceRoot(filePath, MEMORY_LOG_ROOT, MEMORY_LOG_BACKUP_ROOT);
+            const destinationPath = destinationFromSourceRoot(
+              filePath,
+              MEMORY_LOG_ROOT,
+              MEMORY_LOG_BACKUP_ROOT,
+            );
             await moveFile(filePath, destinationPath);
             moved += 1;
           }
@@ -2304,7 +2456,7 @@ export const rotateLogs = inngest.createFunction(
           month: monthStamp,
           movedLogs,
         };
-      }
+      },
     );
-  }
+  },
 );

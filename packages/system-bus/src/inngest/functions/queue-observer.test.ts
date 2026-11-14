@@ -154,9 +154,16 @@ describe("queue observer config and control adapter", () => {
   test("registers cron controller and manual probe as separate functions", async () => {
     const { queueObserver, queueObserverRequested } = await import("./queue-observer");
 
-    expect((queueObserver as any).opts?.triggers).toEqual([{ cron: "TZ=America/Los_Angeles */1 * * * *" }]);
-    expect((queueObserverRequested as any).opts?.triggers).toEqual([{ event: "queue/observer.requested" }]);
-    expect((queueObserverRequested as any).opts?.singleton).toEqual({ key: '"manual"', mode: "skip" });
+    expect((queueObserver as any).opts?.triggers).toEqual([
+      { cron: "TZ=America/Los_Angeles */1 * * * *" },
+    ]);
+    expect((queueObserverRequested as any).opts?.triggers).toEqual([
+      { event: "queue/observer.requested" },
+    ]);
+    expect((queueObserverRequested as any).opts?.singleton).toEqual({
+      key: '"manual"',
+      mode: "skip",
+    });
   });
 
   test("manual probe stays read-only even when enforce mode would auto-apply", async () => {
@@ -171,7 +178,8 @@ describe("queue observer config and control adapter", () => {
       set: async () => "OK",
       mget: async () => [null, null],
     })) as unknown as typeof testUtils.deps.getRedisClient;
-    testUtils.deps.ensureQueueInitialized = (async () => {}) as typeof testUtils.deps.ensureQueueInitialized;
+    testUtils.deps.ensureQueueInitialized =
+      (async () => {}) as typeof testUtils.deps.ensureQueueInitialized;
     testUtils.deps.getQueueStats = (async () => ({
       total: 0,
       byPriority: { P0: 0, P1: 0, P2: 0, P3: 0 },
@@ -179,7 +187,8 @@ describe("queue observer config and control adapter", () => {
       newestTimestamp: null,
     })) as typeof testUtils.deps.getQueueStats;
     testUtils.deps.listMessages = (async () => []) as typeof testUtils.deps.listMessages;
-    testUtils.deps.listActiveQueueFamilyPauses = (async () => []) as typeof testUtils.deps.listActiveQueueFamilyPauses;
+    testUtils.deps.listActiveQueueFamilyPauses =
+      (async () => []) as typeof testUtils.deps.listActiveQueueFamilyPauses;
     testUtils.deps.search = (async () => ({
       found: 0,
       hits: [],
@@ -228,7 +237,10 @@ describe("queue observer config and control adapter", () => {
     const result = await testUtils.runQueueObserverPass({
       step: {
         run: async (_id: string, fn: () => unknown | Promise<unknown>) => await fn(),
-        sendEvent: async (_id: string, payload: { name: string; data: Record<string, unknown> }) => {
+        sendEvent: async (
+          _id: string,
+          payload: { name: string; data: Record<string, unknown> },
+        ) => {
           sendEvents.push(payload);
           return { ids: ["mock-event-id"] };
         },
@@ -253,6 +265,28 @@ describe("queue observer config and control adapter", () => {
     expect(result.reportQueued).toBe(false);
     expect(pauseCalls).toBe(0);
     expect(sendEvents).toEqual([]);
+
+    mockObservedDecision.decision.finalActions = [
+      {
+        kind: "escalate",
+        channel: "telegram",
+        severity: "warn",
+        message: "fixture escalation",
+      },
+    ];
+    const enforced = await testUtils.runQueueObserverPass({
+      step: {
+        run: async (_id: string, fn: () => unknown) => fn(),
+        sendEvent: async () => {
+          throw new Error("retired report send forbidden");
+        },
+      },
+      eventName: "inngest/scheduled.timer",
+      allowAutoApply: true,
+    });
+    expect(enforced.reportQueued).toBe(false);
+    expect(enforced.appliedCount).toBe(0);
+    expect(pauseCalls).toBe(0);
   });
 
   test("applies bounded pause and resume actions and builds one operator report", async () => {
@@ -357,7 +391,9 @@ describe("queue observer config and control adapter", () => {
   });
 
   test("rejects resume when no active pause exists", async () => {
-    testUtils.deps.resumeQueueFamily = (async () => ({ removed: false })) as typeof testUtils.deps.resumeQueueFamily;
+    testUtils.deps.resumeQueueFamily = (async () => ({
+      removed: false,
+    })) as typeof testUtils.deps.resumeQueueFamily;
 
     const result = await testUtils.applyQueueObserverActions({
       redis: {} as never,
