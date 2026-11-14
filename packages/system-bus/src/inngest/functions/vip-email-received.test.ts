@@ -1,46 +1,23 @@
-import { describe, expect, mock, test } from "bun:test";
-import type { GatewaySendMessageData } from "../../lib/channel-delivery-audit";
-import {
-  __vipEmailReceivedTestUtils,
-  sendVipEmailReceivedToGateway,
-} from "./vip-email-received";
+import { describe, expect, test } from "bun:test";
+import { __vipEmailReceivedTestUtils } from "./vip-email-received";
 
-type GatewayMessageEvent = {
-  name: "gateway/send.message";
-  data: GatewaySendMessageData;
-};
-
-describe("vip-email-received delivery", () => {
-  test("queues the message and keyboard with producer attribution", async () => {
-    const calls: Array<[string, GatewayMessageEvent]> = [];
-    const sendEvent = mock(async (stepId: string, event: GatewayMessageEvent) => {
-      calls.push([stepId, event]);
-      return { ids: ["mock-event-id"] };
-    });
-    const inlineKeyboard = [
-      [{ text: "Open VIP email", callback_data: "vip:open:cnv_456" }],
-    ];
-
-    await sendVipEmailReceivedToGateway(
-      sendEvent,
-      "<b>VIP email brief</b>",
-      inlineKeyboard,
-    );
-
-    expect(calls).toEqual([
-      [
-        "notify-vip-summary",
-        {
-          name: "gateway/send.message",
-          data: {
-            channel: "telegram",
-            text: "<b>VIP email brief</b>",
-            audit: { producer: "vip-email-received" },
-            inline_keyboard: inlineKeyboard,
-          },
-        },
-      ],
-    ]);
+describe("vip-email identity configuration", () => {
+  test("reads only configured addresses and defaults to no owner identities", () => {
+    const previous = process.env.JOEL_EMAILS;
+    try {
+      delete process.env.JOEL_EMAILS;
+      expect(__vipEmailReceivedTestUtils.isJoelEmail("owner@example.test")).toBe(false);
+      process.env.JOEL_EMAILS = "   ";
+      expect(__vipEmailReceivedTestUtils.isJoelEmail("")).toBe(false);
+      process.env.JOEL_EMAILS = " Owner@Example.Test, other@example.test, ";
+      expect(__vipEmailReceivedTestUtils.isJoelEmail("Owner <owner@example.test>")).toBe(true);
+      expect(__vipEmailReceivedTestUtils.isJoelEmail("other@example.test")).toBe(true);
+      expect(__vipEmailReceivedTestUtils.isJoelEmail("stranger@example.test")).toBe(false);
+      expect(__vipEmailReceivedTestUtils.isJoelEmail("")).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.JOEL_EMAILS;
+      else process.env.JOEL_EMAILS = previous;
+    }
   });
 });
 
@@ -98,7 +75,10 @@ describe("vip-email-received prompt budgeting", () => {
           participants: ["Alex Example", "Joel Hooks"],
         },
       ],
-      memoryContext: Array.from({ length: 10 }, (_, index) => `Memory hit ${index + 1} ${"history ".repeat(80)}`),
+      memoryContext: Array.from(
+        { length: 10 },
+        (_, index) => `Memory hit ${index + 1} ${"history ".repeat(80)}`,
+      ),
       githubRepos: Array.from({ length: 8 }, (_, index) => ({
         name: `repo-${index + 1}`,
         description: `Repo description ${index + 1} ${"details ".repeat(80)}`,
@@ -115,7 +95,9 @@ describe("vip-email-received prompt budgeting", () => {
     expect(prompt).toContain("Message 3");
     expect(prompt).toContain("Message 20");
     expect(prompt).toContain("middle thread message(s) omitted for prompt budget");
-    expect(prompt).not.toContain("Message 4 body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body");
+    expect(prompt).not.toContain(
+      "Message 4 body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body body",
+    );
     expect(prompt).toContain("additional link(s) omitted for prompt budget");
     expect(prompt).toContain("additional memory hit(s) omitted for prompt budget");
     expect(prompt).toContain("additional repo(s) omitted for prompt budget");

@@ -1,6 +1,5 @@
 import { emitOtelEvent } from "../../observability/emit";
 
-export { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 export { adrPitchExecute } from "./adr-pitch-execute";
 export { agentChainRun } from "./agent-chain-run";
 export { agentDispatch } from "./agent-dispatch";
@@ -35,20 +34,12 @@ export { checkTriggers } from "./check-triggers";
 export { checkVaultSync } from "./check-vault-sync";
 export { contactEnrich } from "./contact-enrich";
 export { contentReviewApply } from "./content-review";
-export {
-  contentPrune,
-  contentSync,
-  contentSyncSchedule,
-  contentVerify,
-} from "./content-sync";
+export { contentPrune, contentSync, contentSyncSchedule, contentVerify } from "./content-sync";
 export { conversationAnnotate } from "./conversation-annotate";
 export { conversationThreadAggregate } from "./conversation-thread-aggregate";
 export { conversationThreadEnrich } from "./conversation-thread-enrich";
 export { conversationThreadStaleSweep } from "./conversation-thread-stale-sweep";
-export {
-  criticalDbScheduledRebuild,
-  criticalDbStalenessCheck,
-} from "./critical-db-maintenance";
+export { criticalDbScheduledRebuild, criticalDbStalenessCheck } from "./critical-db-maintenance";
 export { dailyDigest } from "./daily-digest";
 export {
   clearDeliveryVolumeLatch,
@@ -59,6 +50,7 @@ export {
   PAGE_THRESHOLD,
   TARGET_DELIVERIES_PER_DAY,
 } from "./delivery-volume-meter";
+export { defectWatchWeekly } from "./defect-watch-weekly";
 export { discoveryCapture } from "./discovery-capture";
 export { docsIngest } from "./docs-ingest";
 export {
@@ -73,11 +65,7 @@ export { docsReindexV2 } from "./docs-reindex-v2";
 export { emailNag } from "./email-nag";
 export { embedText } from "./embed";
 export { frictionFix } from "./friction-fix";
-export {
-  frontAssigneeChanged,
-  frontMessageReceived,
-  frontMessageSent,
-} from "./front-notify";
+export { frontAssigneeChanged, frontMessageReceived, frontMessageSent } from "./front-notify";
 export { frontMessageReader } from "./front-reader";
 export {
   functionRegistrationAndRunHealth,
@@ -89,19 +77,13 @@ export {
   createGatewayExternalDeliveryCanary,
   gatewayExternalDeliveryCanary,
 } from "./gateway-external-delivery-canary";
-export {
-  githubPackagePublished,
-  githubWorkflowRunCompleted,
-} from "./github-notify";
+export { githubPackagePublished, githubWorkflowRunCompleted } from "./github-notify";
 export { granolaBackfill } from "./granola-backfill";
 export { heartbeatCron, heartbeatWake } from "./heartbeat";
 export { clusterFunctionDefinitions, clusterFunctionIds } from "./index.cluster";
 export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
 export { knowledgeTurnWrite } from "./knowledge-turn-write";
-export {
-  createLearnerFlowActionFunction,
-  learnerFlowAction,
-} from "./learner-flow-actions";
+export { createLearnerFlowActionFunction, learnerFlowAction } from "./learner-flow-actions";
 export { manifestArchive } from "./manifest-archive";
 export { mediaProcess } from "./media-process";
 export { mediaTranscriptionPipeline } from "./media-transcription-pipeline";
@@ -112,10 +94,7 @@ export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 export { memoryEmbed } from "./memory/embed";
 export { memoryRetroWriter } from "./memory/retro-writer";
 export { memoryRunCaptured } from "./memory/run-captured";
-export {
-  createMessageEventConsumerFunction,
-  messageEventConsumer,
-} from "./message-event-consumer";
+export { createMessageEventConsumerFunction, messageEventConsumer } from "./message-event-consumer";
 export {
   createMessageReactionBridgeFunction,
   createNeatMemoryReactionGradeFunction,
@@ -145,7 +124,6 @@ export { paneSchedule } from "./pane-schedule";
 export { paneScheduleReconcile, partitionPaneScheduleRegistry } from "./pane-schedule-reconcile";
 export { queueObserver, queueObserverRequested } from "./queue-observer";
 export { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
-export { signalReminder } from "./signal-reminder";
 export { slackBackfillBatch, slackChannelBackfill } from "./slack-backfill";
 export { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 export { storyPipeline } from "./story-pipeline";
@@ -156,25 +134,14 @@ export { swarmOrchestrator } from "./swarm-orchestrator";
 export { taskTriage } from "./task-triage";
 export { telegramCallbackReceived } from "./telegram-callback";
 export { telnyxNotify } from "./telnyx-notify";
-export {
-  todoistCommentAdded,
-  todoistTaskCompleted,
-  todoistTaskCreated,
-} from "./todoist-notify";
+export { todoistCommentAdded, todoistTaskCompleted, todoistTaskCreated } from "./todoist-notify";
 export { transcriptIndexWeb } from "./transcript-index-web";
 export { transcriptProcess, transcriptProcessLegacyAlias } from "./transcript-process";
 export { transcriptionAsrChunkRun } from "./transcription-asr-chunk";
 export { transcriptionCleanup } from "./transcription-cleanup";
 export { transcriptionDiarizeRun } from "./transcription-diarize";
-export {
-  captureGrowthNotify,
-  typesenseStartupBudgetCheck,
-} from "./typesense-recovery-alerts";
-export {
-  typesenseBlogSync,
-  typesenseFullSync,
-  typesenseVaultSync,
-} from "./typesense-sync";
+export { captureGrowthNotify, typesenseStartupBudgetCheck } from "./typesense-recovery-alerts";
+export { typesenseBlogSync, typesenseFullSync, typesenseVaultSync } from "./typesense-sync";
 export {
   vercelDeployCanceled,
   vercelDeployCreated,
@@ -184,7 +151,6 @@ export {
 export { videoDownload, videoDownloadLegacyAlias } from "./video-download";
 export { vipEmailThreadsBackfill } from "./vip-email-backfill";
 export { vipEmailReceived } from "./vip-email-received";
-export { vipEmailBrief } from "./vip-morning-brief";
 export { voiceCallCompleted } from "./voice-call-completed";
 export { voiceCallJudge } from "./voice-call-judge";
 export { voiceMissedCall } from "./voice-missed-call";

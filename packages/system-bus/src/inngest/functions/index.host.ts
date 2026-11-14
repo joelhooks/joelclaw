@@ -1,6 +1,5 @@
 import { createVideoFunctions } from "joelclaw-video";
 import { inngest } from "../client";
-import { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 import { adrPitchExecute } from "./adr-pitch-execute";
 import { agentChainRun } from "./agent-chain-run";
 import { agentDispatch } from "./agent-dispatch";
@@ -35,22 +34,15 @@ import { checkTriggers } from "./check-triggers";
 import { checkVaultSync } from "./check-vault-sync";
 import { contactEnrich } from "./contact-enrich";
 import { contentReviewApply } from "./content-review";
-import {
-  contentPrune,
-  contentSync,
-  contentSyncSchedule,
-  contentVerify,
-} from "./content-sync";
+import { contentPrune, contentSync, contentSyncSchedule, contentVerify } from "./content-sync";
 import { conversationAnnotate } from "./conversation-annotate";
 import { conversationThreadAggregate } from "./conversation-thread-aggregate";
 import { conversationThreadEnrich } from "./conversation-thread-enrich";
 import { conversationThreadStaleSweep } from "./conversation-thread-stale-sweep";
-import {
-  criticalDbScheduledRebuild,
-  criticalDbStalenessCheck,
-} from "./critical-db-maintenance";
+import { criticalDbScheduledRebuild, criticalDbStalenessCheck } from "./critical-db-maintenance";
 import { dailyDigest } from "./daily-digest";
 import { dailyTokenUsageReport } from "./daily-token-usage-report";
+import { defectWatchWeekly } from "./defect-watch-weekly";
 import { deliveryVolumeMeter } from "./delivery-volume-meter";
 import { discoveryCapture } from "./discovery-capture";
 import { docsIngest } from "./docs-ingest";
@@ -66,11 +58,7 @@ import { docsReindexV2 } from "./docs-reindex-v2";
 import { emailNag } from "./email-nag";
 import { embedText } from "./embed";
 import { frictionFix } from "./friction-fix";
-import {
-  frontAssigneeChanged,
-  frontMessageReceived,
-  frontMessageSent,
-} from "./front-notify";
+import { frontAssigneeChanged, frontMessageReceived, frontMessageSent } from "./front-notify";
 import { frontMessageReader } from "./front-reader";
 import { functionRegistrationAndRunHealth } from "./function-health";
 import { gatewayBehaviorDailyReview } from "./gateway-behavior-review";
@@ -93,10 +81,7 @@ import { memoryEmbed } from "./memory/embed";
 import { memoryRetroWriter } from "./memory/retro-writer";
 import { memoryRunCaptured } from "./memory/run-captured";
 import { messageEventConsumer } from "./message-event-consumer";
-import {
-  messageReactionBridge,
-  neatMemoryReactionGrade,
-} from "./message-reactions";
+import { messageReactionBridge, neatMemoryReactionGrade } from "./message-reactions";
 import {
   backupFailureRouter,
   backupRedis,
@@ -116,7 +101,6 @@ import { selfHealingGatewayBridge } from "./self-healing-gateway-bridge";
 import { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
 import { selfHealingInvestigator } from "./self-healing-investigator";
 import { selfHealingRouter } from "./self-healing-router";
-import { signalReminder } from "./signal-reminder";
 import { skillGarden } from "./skill-garden";
 import { slackBackfillBatch, slackChannelBackfill } from "./slack-backfill";
 import { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
@@ -131,10 +115,7 @@ import { transcriptProcess, transcriptProcessLegacyAlias } from "./transcript-pr
 import { transcriptionAsrChunkRun } from "./transcription-asr-chunk";
 import { transcriptionCleanup } from "./transcription-cleanup";
 import { transcriptionDiarizeRun } from "./transcription-diarize";
-import {
-  captureGrowthNotify,
-  typesenseStartupBudgetCheck,
-} from "./typesense-recovery-alerts";
+import { captureGrowthNotify, typesenseStartupBudgetCheck } from "./typesense-recovery-alerts";
 import {
   typesenseBlogSync,
   typesenseFullSync,
@@ -150,7 +131,6 @@ import {
 import { videoDownload, videoDownloadLegacyAlias } from "./video-download";
 import { vipEmailThreadsBackfill } from "./vip-email-backfill";
 import { vipEmailReceived } from "./vip-email-received";
-import { vipEmailBrief } from "./vip-morning-brief";
 import { voiceCallCompleted } from "./voice-call-completed";
 import { voiceCallJudge } from "./voice-call-judge";
 import { voiceMissedCall } from "./voice-missed-call";
@@ -177,10 +157,7 @@ function getFunctionId(fn: { opts?: { id?: string } }): string {
 // ADR-0089: Transitional role split.
 // Until cluster-safe ownership is finalized, host worker remains authoritative.
 export const hostFunctionDefinitions = [
-  adrDailyPitch,
-  adrPitchApproved,
   adrPitchExecute,
-  adrPitchRejected,
   gatewaySendMessage,
   gatewayHandleMessage,
   gatewayBehaviorDailyReview,
@@ -282,7 +259,6 @@ export const hostFunctionDefinitions = [
   checkGatewayHealth,
   vipEmailThreadsBackfill,
   vipEmailReceived,
-  vipEmailBrief,
   checkCalendar,
   checkLoops,
   subscriptionCheckFeeds,
@@ -294,13 +270,13 @@ export const hostFunctionDefinitions = [
   selfHealingInngestRuntime,
   dailyDigest,
   dailyTokenUsageReport,
+  defectWatchWeekly,
   deliveryVolumeMeter,
   wikiEditionBuild,
   sleepModeRequested,
   wakeModeRequested,
   paneSchedule,
   paneScheduleReconcile,
-  signalReminder,
   typesenseVaultSyncQueue,
   typesenseVaultSync,
   typesenseBlogSync,

@@ -1,14 +1,23 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
-import { queryUsageRollup, queryUsageTotals, type UsageRollupRow, type UsageTotals } from "../../lib/clickhouse-usage-query";
+import {
+  queryUsageRollup,
+  queryUsageTotals,
+  type UsageRollupRow,
+  type UsageTotals,
+} from "../../lib/clickhouse-usage-query";
 import { type RollupCostSummary, summarizeRollupCost } from "../../lib/model-pricing";
+import { notifyAgent } from "../../lib/notify-agent";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
-const HOME_DIR = process.env.HOME ?? "/Users/joel";
-const GATEWAY_SEND_MESSAGE_EVENT = "gateway/send.message";
+const HOME_DIR = process.env.HOME ?? homedir();
 const REPORT_HOURS = Number.parseInt(process.env.JOELCLAW_DAILY_TOKEN_REPORT_HOURS ?? "24", 10);
-const COMMAND_TIMEOUT_MS = Number.parseInt(process.env.JOELCLAW_DAILY_TOKEN_REPORT_TIMEOUT_MS ?? "45000", 10);
+const COMMAND_TIMEOUT_MS = Number.parseInt(
+  process.env.JOELCLAW_DAILY_TOKEN_REPORT_TIMEOUT_MS ?? "45000",
+  10,
+);
 
 type CommandResult = {
   ok: boolean;
@@ -45,7 +54,9 @@ function parseFirstJsonObject(text: string): Record<string, unknown> | undefined
 
   try {
     const parsed = JSON.parse(trimmed);
-    return typeof parsed === "object" && parsed !== null ? parsed as Record<string, unknown> : undefined;
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : undefined;
   } catch {
     // continue
   }
@@ -56,7 +67,9 @@ function parseFirstJsonObject(text: string): Record<string, unknown> | undefined
 
   try {
     const parsed = JSON.parse(trimmed.slice(start, end + 1));
-    return typeof parsed === "object" && parsed !== null ? parsed as Record<string, unknown> : undefined;
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : undefined;
   } catch {
     return undefined;
   }
@@ -95,7 +108,9 @@ function runJsonCommand(args: string[]): CommandResult {
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined;
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function array(value: unknown): unknown[] {
@@ -124,7 +139,10 @@ const EMPTY_USAGE_TOTALS: UsageTotals = {
   usageCoveragePct: 0,
 };
 
-function sumTokensBy(rows: readonly UsageRollupRow[], key: (row: UsageRollupRow) => string): Array<[string, number]> {
+function sumTokensBy(
+  rows: readonly UsageRollupRow[],
+  key: (row: UsageRollupRow) => string,
+): Array<[string, number]> {
   const buckets = new Map<string, number>();
   for (const row of rows) {
     const bucket = key(row) || "unknown";
@@ -154,8 +172,10 @@ function summarizeUsage(
     topComponents: sumTokensBy(rows, (row) => row.component)
       .slice(0, 5)
       .map(([component, tokens]) => `${component} (${formatTokens(tokens)}tok)`),
-    perMachine: sumTokensBy(rows, (row) => row.systemId)
-      .map(([machine, totalTokens]) => ({ machine, totalTokens })),
+    perMachine: sumTokensBy(rows, (row) => row.systemId).map(([machine, totalTokens]) => ({
+      machine,
+      totalTokens,
+    })),
   };
 }
 
@@ -230,13 +250,17 @@ function scanCodexAutomationHealth(hours: number): AutomationHealth {
 
   for (const file of files) {
     const fileName = file.split("/").pop() ?? "unknown";
-    const name = fileName.replace(/\.jsonl$/u, "").replace(/^\d{4}-\d{2}-\d{2}T[^_]+_?/u, "") || "codex-session";
+    const name =
+      fileName.replace(/\.jsonl$/u, "").replace(/^\d{4}-\d{2}-\d{2}T[^_]+_?/u, "") ||
+      "codex-session";
     names.set(name, (names.get(name) ?? 0) + 1);
 
     if (credits.length >= 8) continue;
     try {
       const text = readFileSync(file, "utf8");
-      const creditMatch = text.match(/"has_credits"\s*:\s*(true|false)[\s\S]{0,400}?"balance"\s*:\s*([0-9.]+)/u);
+      const creditMatch = text.match(
+        /"has_credits"\s*:\s*(true|false)[\s\S]{0,400}?"balance"\s*:\s*([0-9.]+)/u,
+      );
       if (creditMatch) {
         credits.push({
           hasCredits: creditMatch[1] === "true",
@@ -275,16 +299,23 @@ function buildReportText(input: {
   runs: ReturnType<typeof summarizeRuns>;
   automations: AutomationHealth;
 }): string {
-  const creditSummary = input.automations.credits.length > 0
-    ? input.automations.credits.map((item) => `credits=${item.hasCredits ?? "?"} balance=${item.balance ?? "?"}`).join("; ")
-    : "no credit samples";
-  const automationSummary = input.automations.activeNames.length > 0
-    ? input.automations.activeNames.map((item) => `${item.name}:${item.count}`).join(", ")
-    : "none seen";
+  const creditSummary =
+    input.automations.credits.length > 0
+      ? input.automations.credits
+          .map((item) => `credits=${item.hasCredits ?? "?"} balance=${item.balance ?? "?"}`)
+          .join("; ")
+      : "no credit samples";
+  const automationSummary =
+    input.automations.activeNames.length > 0
+      ? input.automations.activeNames.map((item) => `${item.name}:${item.count}`).join(", ")
+      : "none seen";
   const totals = input.usage.totals;
-  const perMachine = input.usage.perMachine.length > 0
-    ? input.usage.perMachine.map((item) => `${item.machine}: ${formatTokens(item.totalTokens)}tok`).join(", ")
-    : "unknown";
+  const perMachine =
+    input.usage.perMachine.length > 0
+      ? input.usage.perMachine
+          .map((item) => `${item.machine}: ${formatTokens(item.totalTokens)}tok`)
+          .join(", ")
+      : "unknown";
 
   return [
     `📊 joelclaw daily token report (${input.hours}h)`,
@@ -301,7 +332,9 @@ function buildReportText(input: {
     `Codex Desktop automation sessions: ${input.automations.sessions} (${automationSummary})`,
     `Codex credit samples: ${creditSummary}`,
     "Guardrail: backup/self-healing backup retries should show deterministic-guardrail, not openai-codex.",
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export const dailyTokenUsageReport = inngest.createFunction(
@@ -321,16 +354,20 @@ export const dailyTokenUsageReport = inngest.createFunction(
           queryUsageRollup({ hours, limit: 5000 }),
         ]);
         const cost = await summarizeRollupCost(rows).catch(() => undefined);
-        const agentTotals = await queryUsageTotals({ hours, source: "agents" }).catch(() => undefined);
+        const agentTotals = await queryUsageTotals({ hours, source: "agents" }).catch(
+          () => undefined,
+        );
         return summarizeUsage(totals, rows, cost, agentTotals);
       } catch (error) {
         return unavailableUsage(error);
       }
     });
     const runsResult = await step.run("collect-inngest-runs", async () =>
-      runJsonCommand(["joelclaw", "runs", "--hours", String(hours), "--count", "500"])
+      runJsonCommand(["joelclaw", "runs", "--hours", String(hours), "--count", "500"]),
     );
-    const automations = await step.run("scan-codex-automation-health", async () => scanCodexAutomationHealth(hours));
+    const automations = await step.run("scan-codex-automation-health", async () =>
+      scanCodexAutomationHealth(hours),
+    );
 
     const runs = summarizeRuns(runsResult);
     const text = buildReportText({ hours, usage, runs, automations });
@@ -350,14 +387,15 @@ export const dailyTokenUsageReport = inngest.createFunction(
       },
     });
 
-    await step.sendEvent("send-token-usage-report", {
-      name: GATEWAY_SEND_MESSAGE_EVENT,
-      data: {
-        channel: "telegram",
-        text,
-        audit: { producer: "daily-token-usage-report" },
-      },
-    });
+    await step.run("send-token-usage-report", () =>
+      notifyAgent({
+        to: "switchboard/ea",
+        quiet: true,
+        source: "daily-token-usage-report",
+        summary: "Daily token usage report",
+        message: text,
+      }),
+    );
 
     return {
       status: "sent",
@@ -366,5 +404,5 @@ export const dailyTokenUsageReport = inngest.createFunction(
       runs,
       automations,
     };
-  }
+  },
 );

@@ -1,14 +1,18 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { notifyAgent } from "../../lib/notify-agent";
+import { notifyJoel, redactJoelMessage } from "../../lib/notify-joel";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
 const execFile = promisify(execFileCallback);
 
-const WIKI_CWD = "/Users/joel/Code/joelhooks/joelclaw-wiki";
+const WIKI_CWD =
+  process.env.JOELCLAW_WIKI_CWD ?? join(homedir(), "Code", "joelhooks", "joelclaw-wiki");
 const COMMAND_TIMEOUT_MS = 600_000;
-const GATEWAY_SEND_MESSAGE_EVENT = "gateway/send.message";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -34,6 +38,8 @@ type BuildStepResult =
       ok: false;
       phase: "build-edition" | "build-static";
       error: string;
+      state?: string;
+      sourceRuns?: SourceRun[];
     };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -68,7 +74,9 @@ function parseEditionBuild(stdout: string): BuildEditionSuccess {
     ok: true,
     result: parsed,
     state,
-    editionId: stringValue(pickField(parsed, state, "editionId")) ?? stringValue(pickField(parsed, state, "id")),
+    editionId:
+      stringValue(pickField(parsed, state, "editionId")) ??
+      stringValue(pickField(parsed, state, "id")),
     written: pickField(parsed, state, "written"),
     loopCount: pickField(parsed, state, "loopCount"),
     observationCount: pickField(parsed, state, "observationCount"),
@@ -82,6 +90,44 @@ function errorMessage(error: unknown): string {
   return "unknown error";
 }
 
+function failedEditionResult(parsed: BuildEditionSuccess): BuildStepResult {
+  const state = typeof parsed.state === "string" ? parsed.state : "unknown";
+  return {
+    ok: false,
+    phase: "build-edition",
+    state,
+    error: redactJoelMessage(`${state}: ${stringValue(parsed.result.error) ?? "no error text"}`),
+    sourceRuns: parsed.sourceRuns
+      .filter((run) => run.status === "failed" || run.status === "blocked")
+      .map((run) => ({ status: run.status, kind: stringValue(run.kind) ?? "unknown" })),
+  };
+}
+
+function buildEditionFailure(error: unknown): BuildStepResult {
+  const stdout = isRecord(error) && typeof error.stdout === "string" ? error.stdout : null;
+  if (stdout !== null) {
+    try {
+      const parsed = parseEditionBuild(stdout);
+      return parsed.state === "exists" ? parsed : failedEditionResult(parsed);
+    } catch {
+      // Invalid stdout is not a successful build.
+    }
+  }
+  return { ok: false, phase: "build-edition", error: redactJoelMessage(errorMessage(error)) };
+}
+
+function buildStaticFailure(error: unknown): BuildStepResult {
+  const stderr =
+    isRecord(error) && typeof error.stderr === "string" ? error.stderr.slice(-600) : "";
+  return {
+    ok: false,
+    phase: "build-static",
+    error: redactJoelMessage(
+      [errorMessage(error).slice(0, 300), stderr].filter(Boolean).join("\n"),
+    ),
+  };
+}
+
 function blockedSourceRuns(sourceRuns: SourceRun[]): SourceRun[] {
   return sourceRuns.filter((entry) => entry.status === "blocked");
 }
@@ -93,12 +139,19 @@ function buildNotification(input: {
 }): string {
   const failures = [input.buildEdition, input.buildStatic]
     .filter((result): result is Extract<BuildStepResult, { ok: false }> => result?.ok === false)
-    .map((result) => result.phase);
+    .map((result) => `${result.phase}: ${result.error}`);
+  const failedRuns = (input.buildEdition.sourceRuns ?? []).filter(
+    (run) => run.status === "failed" || run.status === "blocked",
+  );
+  const sourceKinds = failedRuns.map((run) => `${run.status}: ${String(run.kind)}`);
 
   return [
     "wiki edition build receipt",
     failures.length > 0 ? `failed: ${failures.join(", ")}` : "build: ok",
-    input.blockedCount > 0 ? `blocked source runs: ${input.blockedCount}` : "blocked source runs: 0",
+    input.blockedCount > 0
+      ? `blocked source runs: ${input.blockedCount}`
+      : "blocked source runs: 0",
+    ...(sourceKinds.length > 0 ? [`source run kinds: ${sourceKinds.join(", ")}`] : []),
   ].join("\n");
 }
 
@@ -106,6 +159,8 @@ export const __wikiEditionBuildTestUtils = {
   parseEditionBuild,
   blockedSourceRuns,
   buildNotification,
+  buildEditionFailure,
+  buildStaticFailure,
 };
 
 export const wikiEditionBuild = inngest.createFunction(
@@ -122,29 +177,17 @@ export const wikiEditionBuild = inngest.createFunction(
         const { stdout } = await execFile(
           "bun",
           ["run", "src/cli/wiki.ts", "edition", "build", "--gmail", "--json"],
-          { cwd: WIKI_CWD, timeout: COMMAND_TIMEOUT_MS }
+          { cwd: WIKI_CWD, timeout: COMMAND_TIMEOUT_MS },
         );
         const parsed = parseEditionBuild(stdout);
         // the machine can terminate in failed/cancelled WITHOUT the process
         // crashing — a parseable JSON payload is not success; the state is.
         if (parsed.state === "failed" || parsed.state === "cancelled") {
-          const detail = stringValue(parsed.result.error) ?? String(parsed.state);
-          return { ok: false, phase: "build-edition", error: detail };
+          return failedEditionResult(parsed);
         }
         return parsed;
       } catch (error) {
-        // the CLI exits 1 when today's edition already exists (immutable no-op);
-        // its JSON still lands on stdout — treat state "exists" as success.
-        const stdout = isRecord(error) && typeof error.stdout === "string" ? error.stdout : null;
-        if (stdout !== null) {
-          try {
-            const parsed = parseEditionBuild(stdout);
-            if (parsed.state === "exists") return parsed;
-          } catch {
-            // fall through to the failure below
-          }
-        }
-        return { ok: false, phase: "build-edition", error: errorMessage(error) };
+        return buildEditionFailure(error);
       }
     });
 
@@ -154,12 +197,12 @@ export const wikiEditionBuild = inngest.createFunction(
             await execFile("bun", ["run", "build"], { cwd: WIKI_CWD, timeout: COMMAND_TIMEOUT_MS });
             return buildEdition;
           } catch (error) {
-            return { ok: false, phase: "build-static", error: errorMessage(error) };
+            return buildStaticFailure(error);
           }
         })
       : undefined;
 
-    const sourceRuns = buildEdition.ok ? buildEdition.sourceRuns : [];
+    const sourceRuns = buildEdition.sourceRuns ?? [];
     const blockedRuns = blockedSourceRuns(sourceRuns);
     const failed = !buildEdition.ok || buildStatic?.ok === false;
 
@@ -172,12 +215,19 @@ export const wikiEditionBuild = inngest.createFunction(
         success: !failed,
         error: failed
           ? [buildEdition, buildStatic]
-              .filter((result): result is Extract<BuildStepResult, { ok: false }> => result?.ok === false)
+              .filter(
+                (result): result is Extract<BuildStepResult, { ok: false }> => result?.ok === false,
+              )
               .map((result) => `${result.phase}: ${result.error}`)
               .join("; ")
           : undefined,
         metadata: {
           editionId: buildEdition.ok ? buildEdition.editionId : null,
+          buildState: typeof buildEdition.state === "string" ? buildEdition.state : undefined,
+          failedSourceRunKinds: sourceRuns
+            .filter((run) => run.status === "failed" || run.status === "blocked")
+            .map((run) => ({ status: run.status, kind: stringValue(run.kind) ?? "unknown" })),
+          staticError: buildStatic?.ok === false ? buildStatic.error : undefined,
           blockedSourceRunCount: blockedRuns.length,
           sourceRunCount: sourceRuns.length,
           staticBuilt: buildStatic?.ok === true,
@@ -204,7 +254,7 @@ export const wikiEditionBuild = inngest.createFunction(
         try {
           const raw = await readFile(
             `${WIKI_CWD}/data/editions/${buildEdition.editionId}.json`,
-            "utf8"
+            "utf8",
           );
           const edition = JSON.parse(raw) as {
             lead?: { headline?: string };
@@ -218,20 +268,28 @@ export const wikiEditionBuild = inngest.createFunction(
           return `🗞 ${buildEdition.editionId} — edition built · https://brain.joelclaw.com`;
         }
       });
-      await step.sendEvent("notify-morning-receipt", {
-        name: GATEWAY_SEND_MESSAGE_EVENT,
-        data: { channel: "telegram", text: receipt },
-      });
+      await step.run("notify-morning-receipt", () =>
+        notifyAgent({
+          to: "switchboard/ea",
+          source: "wiki-edition-build",
+          summary: "Wiki edition built",
+          message: receipt,
+        }),
+      );
     }
 
     if (failed || blockedRuns.length > 0) {
-      await step.sendEvent("notify-wiki-edition-build-receipt", {
-        name: GATEWAY_SEND_MESSAGE_EVENT,
-        data: {
-          channel: "telegram",
-          text: buildNotification({ buildEdition, buildStatic, blockedCount: blockedRuns.length }),
-        },
-      });
+      await step.run("notify-wiki-edition-build-receipt", () =>
+        notifyJoel({
+          kind: "needs_joel",
+          source: "wiki-edition-build",
+          message: buildNotification({
+            buildEdition,
+            buildStatic,
+            blockedCount: blockedRuns.length,
+          }),
+        }),
+      );
     }
 
     if (!buildEdition.ok) throw new Error(buildEdition.error);
@@ -243,5 +301,5 @@ export const wikiEditionBuild = inngest.createFunction(
       blockedSourceRunCount: blockedRuns.length,
       sourceRunCount: sourceRuns.length,
     };
-  }
+  },
 );

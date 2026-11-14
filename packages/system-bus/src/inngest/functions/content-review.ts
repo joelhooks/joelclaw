@@ -1,7 +1,6 @@
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi, type FunctionReference } from "convex/server";
 import { NonRetriableError } from "inngest";
-import type { GatewaySendMessageData } from "../../lib/channel-delivery-audit";
 import { infer } from "../../lib/inference";
 import { revalidateContentCache } from "../../lib/revalidate";
 import { inngest } from "../client";
@@ -153,7 +152,10 @@ function stripLoosePostFrontmatter(content: string): string {
 
     if (trimmedLine.length === 0) {
       if (metadataLineCount >= 3) {
-        return lines.slice(index + 1).join("\n").trimStart();
+        return lines
+          .slice(index + 1)
+          .join("\n")
+          .trimStart();
       }
       return content;
     }
@@ -215,32 +217,9 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-type GatewayMessageSender = (
-  stepId: string,
-  event: { name: "gateway/send.message"; data: GatewaySendMessageData },
-) => Promise<unknown>;
-
-export function sendContentReviewToGateway(
-  sendEvent: GatewayMessageSender,
-  text: string,
-  inlineKeyboard?: GatewaySendMessageData["inline_keyboard"],
-): Promise<unknown> {
-  return sendEvent("notify-operator-telegram", {
-    name: "gateway/send.message",
-    data: {
-      channel: "telegram",
-      text,
-      audit: { producer: "content-review" },
-      inline_keyboard: inlineKeyboard,
-    },
-  });
-}
-
 function getConvexClient(): ConvexHttpClient {
   const convexUrl =
-    process.env.CONVEX_URL?.trim() ??
-    process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ??
-    "";
+    process.env.CONVEX_URL?.trim() ?? process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ?? "";
 
   if (!convexUrl) {
     throw new NonRetriableError(
@@ -264,7 +243,10 @@ function toParentResourceId(contentType: SupportedContentType, contentSlug: stri
   return `${contentType}:${contentSlug}`;
 }
 
-function toContentResourceCandidates(contentType: SupportedContentType, contentSlug: string): string[] {
+function toContentResourceCandidates(
+  contentType: SupportedContentType,
+  contentSlug: string,
+): string[] {
   if (contentType === "post") {
     return [`article:${contentSlug}`, `post:${contentSlug}`];
   }
@@ -286,7 +268,14 @@ function toCacheTags(contentType: SupportedContentType, contentSlug: string): st
 
 function toRevalidationPaths(contentType: SupportedContentType, contentSlug: string): string[] {
   if (contentType === "post") {
-    return ["/", `/${contentSlug}`, `/${contentSlug}.md`, `/${contentSlug}/md`, "/feed.xml", "/sitemap.md"];
+    return [
+      "/",
+      `/${contentSlug}`,
+      `/${contentSlug}.md`,
+      `/${contentSlug}/md`,
+      "/feed.xml",
+      "/sitemap.md",
+    ];
   }
   if (contentType === "adr") {
     return ["/adrs", `/adrs/${contentSlug}`, "/feed.xml"];
@@ -380,7 +369,8 @@ async function listLinkedReviewComments(
 ): Promise<ReviewComment[]> {
   const client = getConvexClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ref = (anyApi as any).contentResources.listLinkedReviewComments as FunctionReference<"query">;
+  const ref = (anyApi as any).contentResources
+    .listLinkedReviewComments as FunctionReference<"query">;
   const result = await client.query(ref, {
     parentResourceId,
     status,
@@ -446,7 +436,9 @@ async function updateReviewCommentStatuses(args: {
   return updated;
 }
 
-function feedbackMutationName(status: FeedbackStatus): "markProcessing" | "markApplied" | "markFailed" {
+function feedbackMutationName(
+  status: FeedbackStatus,
+): "markProcessing" | "markApplied" | "markFailed" {
   if (status === "processing") return "markProcessing";
   if (status === "applied") return "markApplied";
   return "markFailed";
@@ -999,7 +991,8 @@ function extractReplacementAssertionsFromText(source: string): ReplacementAssert
 
   const replaceWithPattern =
     /replace\s+["“”']([^"“”']{2,180})["“”']\s+with\s+["“”']([^"“”']{2,180})["“”']/giu;
-  const arrowPattern = /["“”']([^"“”']{2,180})["“”']\s*(?:->|→|to)\s*["“”']([^"“”']{2,180})["“”']/giu;
+  const arrowPattern =
+    /["“”']([^"“”']{2,180})["“”']\s*(?:->|→|to)\s*["“”']([^"“”']{2,180})["“”']/giu;
 
   for (const pattern of [replaceWithPattern, arrowPattern]) {
     let match: RegExpExecArray | null = pattern.exec(source);
@@ -1214,8 +1207,7 @@ export const contentReviewApply = inngest.createFunction(
     retries: 2,
     concurrency: {
       limit: 1,
-      key:
-        'event.data.resourceId ? event.data.resourceId : (event.data.contentType == "post" ? "post:" + event.data.contentSlug : event.data.contentType + ":" + event.data.contentSlug)',
+      key: 'event.data.resourceId ? event.data.resourceId : (event.data.contentType == "post" ? "post:" + event.data.contentSlug : event.data.contentType + ":" + event.data.contentSlug)',
     },
     onFailure: async ({ error, event, step, runId, ...rest }) => {
       const failureInput = parseFailureInput(event.data);
@@ -1381,10 +1373,7 @@ export const contentReviewApply = inngest.createFunction(
         comments: submittedComments,
       });
     });
-    let verificationSummary = summarizeFeedbackVerification(
-      pendingFeedbackItems,
-      verification,
-    );
+    let verificationSummary = summarizeFeedbackVerification(pendingFeedbackItems, verification);
     let retryAttempts = 0;
 
     while (
@@ -1564,19 +1553,6 @@ export const contentReviewApply = inngest.createFunction(
 
       return { notified: true };
     });
-
-    const messageHtml = [
-      "✅ <b>Feedback applied</b>",
-      "",
-      `<a href="https://joelclaw.com/${contentSlug}">${contentSlug}</a>`,
-      "",
-      `${feedbackStatusResult.appliedUpdated} applied · ${feedbackStatusResult.failedUpdated} failed`,
-    ].join("\n");
-
-    await sendContentReviewToGateway(
-      (stepId, messageEvent) => step.sendEvent(stepId, messageEvent),
-      messageHtml,
-    );
 
     return {
       status: "completed",

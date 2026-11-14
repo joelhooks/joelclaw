@@ -49,9 +49,7 @@ const DEFAULT_QUEUE_OBSERVER_FAMILIES = [
   "github/workflow_run.completed",
 ] as const;
 
-const ENFORCE_ELIGIBLE_QUEUE_OBSERVER_AUTO_FAMILIES = [
-  "content/updated",
-] as const;
+const ENFORCE_ELIGIBLE_QUEUE_OBSERVER_AUTO_FAMILIES = ["content/updated"] as const;
 
 const QUEUE_OBSERVER_FAMILY_ALIASES = {
   discovery: ["discovery/noted", "discovery/captured"],
@@ -173,8 +171,13 @@ function parseStringArrayJson(raw: string | null | undefined): string[] {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return [...new Set(parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim()))]
-      .sort((a, b) => a.localeCompare(b));
+    return [
+      ...new Set(
+        parsed
+          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          .map((value) => value.trim()),
+      ),
+    ].sort((a, b) => a.localeCompare(b));
   } catch {
     return [];
   }
@@ -219,9 +222,11 @@ function expandQueueObserverAutoFamilies(raw: string | undefined): Set<string> {
   );
 
   return new Set(
-    [...expanded].filter((family) => ENFORCE_ELIGIBLE_QUEUE_OBSERVER_AUTO_FAMILIES.includes(
-      family as (typeof ENFORCE_ELIGIBLE_QUEUE_OBSERVER_AUTO_FAMILIES)[number],
-    )),
+    [...expanded].filter((family) =>
+      ENFORCE_ELIGIBLE_QUEUE_OBSERVER_AUTO_FAMILIES.includes(
+        family as (typeof ENFORCE_ELIGIBLE_QUEUE_OBSERVER_AUTO_FAMILIES)[number],
+      ),
+    ),
   );
 }
 
@@ -229,7 +234,9 @@ function resolveQueueObserverConfig(env: NodeJS.ProcessEnv = process.env): Queue
   const mode = parseQueueObservationMode(env.QUEUE_OBSERVER_MODE);
   const observeFamilies = expandQueueObserverFamilies(env.QUEUE_OBSERVER_FAMILIES);
   const autoApplyFamilies = new Set(
-    [...expandQueueObserverAutoFamilies(env.QUEUE_OBSERVER_AUTO_FAMILIES)].filter((family) => observeFamilies.has(family)),
+    [...expandQueueObserverAutoFamilies(env.QUEUE_OBSERVER_AUTO_FAMILIES)].filter((family) =>
+      observeFamilies.has(family),
+    ),
   );
 
   return {
@@ -238,7 +245,10 @@ function resolveQueueObserverConfig(env: NodeJS.ProcessEnv = process.env): Queue
     autoApplyFamilies,
     intervalSeconds: Math.max(
       QUEUE_OBSERVER_INTERVAL_SECONDS_MIN,
-      parsePositiveInt(env.QUEUE_OBSERVER_INTERVAL_SECONDS, QUEUE_OBSERVER_INTERVAL_SECONDS_DEFAULT),
+      parsePositiveInt(
+        env.QUEUE_OBSERVER_INTERVAL_SECONDS,
+        QUEUE_OBSERVER_INTERVAL_SECONDS_DEFAULT,
+      ),
     ),
   };
 }
@@ -336,9 +346,7 @@ async function loadOtelWindow<T>(input: {
     include_fields: "timestamp,action,metadata_json",
   });
 
-  return result.hits
-    .map(input.parser)
-    .filter((event): event is T => event !== null);
+  return result.hits.map(input.parser).filter((event): event is T => event !== null);
 }
 
 function familyFromDispatchEvent(event: QueueDispatchEvent): string | undefined {
@@ -346,12 +354,17 @@ function familyFromDispatchEvent(event: QueueDispatchEvent): string | undefined 
 }
 
 function familyFromTriageEvent(event: QueueTriageEvent): string {
-  return asNonEmptyString(event.metadata.family)
-    ?? asNonEmptyString(event.metadata.queueEventName)
-    ?? "unknown";
+  return (
+    asNonEmptyString(event.metadata.family) ??
+    asNonEmptyString(event.metadata.queueEventName) ??
+    "unknown"
+  );
 }
 
-function filterDispatchEvents(events: readonly QueueDispatchEvent[], families: Set<string>): QueueDispatchEvent[] {
+function filterDispatchEvents(
+  events: readonly QueueDispatchEvent[],
+  families: Set<string>,
+): QueueDispatchEvent[] {
   if (families.size === 0) return [...events];
   return events.filter((event) => {
     const family = familyFromDispatchEvent(event);
@@ -359,7 +372,10 @@ function filterDispatchEvents(events: readonly QueueDispatchEvent[], families: S
   });
 }
 
-function filterTriageEvents(events: readonly QueueTriageEvent[], families: Set<string>): QueueTriageEvent[] {
+function filterTriageEvents(
+  events: readonly QueueTriageEvent[],
+  families: Set<string>,
+): QueueTriageEvent[] {
   if (families.size === 0) return [...events];
   return events.filter((event) => families.has(familyFromTriageEvent(event)));
 }
@@ -377,16 +393,19 @@ function deriveDepthSnapshot(messages: readonly StoredMessage[]): QueueDepthSnap
   let newestTimestamp: number | null = null;
 
   for (const message of messages) {
-    const label = message.priority === Priority.P0
-      ? "P0"
-      : message.priority === Priority.P1
-        ? "P1"
-        : message.priority === Priority.P2
-          ? "P2"
-          : "P3";
+    const label =
+      message.priority === Priority.P0
+        ? "P0"
+        : message.priority === Priority.P1
+          ? "P1"
+          : message.priority === Priority.P2
+            ? "P2"
+            : "P3";
     byPriority[label] += 1;
-    oldestTimestamp = oldestTimestamp == null ? message.timestamp : Math.min(oldestTimestamp, message.timestamp);
-    newestTimestamp = newestTimestamp == null ? message.timestamp : Math.max(newestTimestamp, message.timestamp);
+    oldestTimestamp =
+      oldestTimestamp == null ? message.timestamp : Math.min(oldestTimestamp, message.timestamp);
+    newestTimestamp =
+      newestTimestamp == null ? message.timestamp : Math.max(newestTimestamp, message.timestamp);
   }
 
   return {
@@ -412,11 +431,12 @@ function summarizeDispatchWindow(
     started: started.length,
     failed: failed.length,
     queueLatencyP95Ms: percentile(waitTimes, 0.95),
-    drainerState: depth.total > 0 && started.length === 0
-      ? "down"
-      : failed.length > 0 || ((percentile(waitTimes, 0.95) ?? 0) > 5_000)
-        ? "degraded"
-        : "healthy",
+    drainerState:
+      depth.total > 0 && started.length === 0
+        ? "down"
+        : failed.length > 0 || (percentile(waitTimes, 0.95) ?? 0) > 5_000
+          ? "degraded"
+          : "healthy",
     throughputPerMinute: Number((started.length / Math.max(1, hours * 60)).toFixed(2)),
   } as const;
 }
@@ -441,7 +461,9 @@ function summarizeTriageWindow(events: readonly QueueTriageEvent[]) {
     failed: failed.length,
     fallbacks: fallbacks.length,
     fallbackByReason: Object.fromEntries([...fallbackByReason.entries()]),
-    routeMismatches: completed.filter((event) => asNonEmptyString(event.metadata.routeCheck) === "mismatch").length,
+    routeMismatches: completed.filter(
+      (event) => asNonEmptyString(event.metadata.routeCheck) === "mismatch",
+    ).length,
     latencyMs: {
       p50: percentile(latencySamples, 0.5),
       p95: percentile(latencySamples, 0.95),
@@ -456,7 +478,10 @@ function isQuietHours(): boolean {
 }
 
 async function loadGatewaySummary(redis: Pick<Redis, "mget">) {
-  const [sleepRaw, mutedRaw] = await redis.mget(SYSTEM_SLEEP_KEY, GATEWAY_HEALTH_MUTED_CHANNELS_KEY);
+  const [sleepRaw, mutedRaw] = await redis.mget(
+    SYSTEM_SLEEP_KEY,
+    GATEWAY_HEALTH_MUTED_CHANNELS_KEY,
+  );
   return {
     sleepMode: typeof sleepRaw === "string" && sleepRaw.trim().length > 0,
     quietHours: isQuietHours(),
@@ -492,7 +517,10 @@ async function gateQueueObserverCadence(
   };
 }
 
-function filterObservedMessages(messages: readonly StoredMessage[], families: Set<string>): StoredMessage[] {
+function filterObservedMessages(
+  messages: readonly StoredMessage[],
+  families: Set<string>,
+): StoredMessage[] {
   if (families.size === 0) return [...messages];
   return messages.filter((message) => {
     const family = asNonEmptyString(message.payload?.name);
@@ -520,14 +548,14 @@ async function buildLiveQueueObservation(input: {
 }) {
   await queueObserverDeps.ensureQueueInitialized();
   const stats = await queueObserverDeps.getQueueStats();
-  const messages = stats.total > 0
-    ? await queueObserverDeps.listMessages(stats.total)
-    : [];
+  const messages = stats.total > 0 ? await queueObserverDeps.listMessages(stats.total) : [];
   const observedMessages = filterObservedMessages(messages, input.observeFamilies);
   const depth = deriveDepthSnapshot(observedMessages);
-  const activePauses = (await queueObserverDeps.listActiveQueueFamilyPauses(input.redis, {
-    config: DEFAULT_QUEUE_CONTROL_CONFIG,
-  })).filter((pause) => input.observeFamilies.size === 0 || input.observeFamilies.has(pause.family));
+  const activePauses = (
+    await queueObserverDeps.listActiveQueueFamilyPauses(input.redis, {
+      config: DEFAULT_QUEUE_CONTROL_CONFIG,
+    })
+  ).filter((pause) => input.observeFamilies.size === 0 || input.observeFamilies.has(pause.family));
 
   const [dispatchEvents, triageEvents, gateway] = await Promise.all([
     loadOtelWindow({
@@ -583,9 +611,9 @@ function buildQueueObserverReport(input: {
   escalationActions: readonly Extract<QueueObserverAction, { kind: "escalate" }>[];
 }): QueueObserverReport | null {
   if (
-    input.appliedActions.length === 0
-    && input.rejectedActions.length === 0
-    && input.escalationActions.length === 0
+    input.appliedActions.length === 0 &&
+    input.rejectedActions.length === 0 &&
+    input.escalationActions.length === 0
   ) {
     return null;
   }
@@ -601,7 +629,9 @@ function buildQueueObserverReport(input: {
     for (const action of input.appliedActions) {
       switch (action.kind) {
         case "pause_family":
-          lines.push(`- pause ${action.family} for ${Math.round(action.ttlMs / 60_000)}m — ${action.reason}`);
+          lines.push(
+            `- pause ${action.family} for ${Math.round(action.ttlMs / 60_000)}m — ${action.reason}`,
+          );
           break;
         case "resume_family":
           lines.push(`- resume ${action.family} — ${action.reason}`);
@@ -737,10 +767,7 @@ async function applyQueueObserverActions(input: {
 
 type QueueObserverStep = {
   run(id: string, fn: () => unknown): Promise<any>;
-  sendEvent(
-    id: string,
-    payload: { name: string; data: Record<string, unknown> },
-  ): Promise<unknown>;
+  sendEvent(id: string, payload: { name: string; data: Record<string, unknown> }): Promise<unknown>;
 };
 
 async function runQueueObserverPass(input: {
@@ -753,7 +780,10 @@ async function runQueueObserverPass(input: {
   const redis = queueObserverDeps.getRedisClient();
   const eventData = (input.eventData ?? {}) as { hours?: unknown; limit?: unknown };
   const hours = Math.max(1, parsePositiveInt(eventData.hours, DEFAULT_WINDOW_HOURS));
-  const limit = Math.min(DEFAULT_LIMIT, Math.max(1, parsePositiveInt(eventData.limit, DEFAULT_LIMIT)));
+  const limit = Math.min(
+    DEFAULT_LIMIT,
+    Math.max(1, parsePositiveInt(eventData.limit, DEFAULT_LIMIT)),
+  );
   const manualRequest = input.eventName === "queue/observer.requested";
   const trigger = manualRequest ? "manual" : "cron";
   const autoApplyEnabled = input.allowAutoApply && config.mode === "enforce";
@@ -771,7 +801,7 @@ async function runQueueObserverPass(input: {
 
   if (!manualRequest) {
     const cadence = await input.step.run("gate-cadence", async () =>
-      gateQueueObserverCadence(redis, config.intervalSeconds)
+      gateQueueObserverCadence(redis, config.intervalSeconds),
     );
     if (!cadence.shouldRun) {
       return {
@@ -793,7 +823,7 @@ async function runQueueObserverPass(input: {
       observeFamilies: config.observeFamilies,
       hours,
       limit,
-    })
+    }),
   );
 
   await emitQueueObserveStarted({
@@ -823,29 +853,12 @@ async function runQueueObserverPass(input: {
         decision,
         actor: "queue-observer",
         config,
-      })
+      }),
     );
     decision = {
       ...decision,
       appliedCount: applyResult.appliedActions.length,
     };
-  }
-
-  if (applyResult.report) {
-    await input.step.sendEvent("send-queue-observer-report", {
-      name: "gateway/send.message",
-      data: {
-        channel: "telegram",
-        text: applyResult.report.text,
-        audit: { producer: "queue-observer" },
-      },
-    });
-    if (applyResult.report.escalationCount > 0) {
-      decision = {
-        ...decision,
-        appliedCount: decision.appliedCount + applyResult.report.escalationCount,
-      };
-    }
   }
 
   if (observed.failedError) {
@@ -881,7 +894,7 @@ async function runQueueObserverPass(input: {
     finalActions: decision.finalActions,
     appliedCount: decision.appliedCount,
     fallbackReason: decision.fallbackReason ?? null,
-    reportQueued: applyResult.report != null,
+    reportQueued: false,
     queuedDepth: live.snapshot.totals.depth,
     activePauses: live.snapshot.control.activePauses,
   };
