@@ -102,6 +102,8 @@ function fixtureRoute(root: string) {
   registerRunCaptureRoute(app, {
     authenticate: async () => ({ user_id: "user", machine_id: "machine", did: null }),
     writeRunBlob,
+    sourceCursorClaimDir: join(root, "cursor-claims"),
+    captureCell: { mode: "off", shadow: async () => {} },
     sendCaptured: async (event) => events.push(event as CapturedEvent),
     now: () => Date.UTC(2026, 6, 20),
   });
@@ -313,10 +315,20 @@ describe("Typesense reboot recovery source-cursor verification", () => {
     const sourceA = `sha256:${"a".repeat(64)}`;
     const sourceB = `sha256:${"b".repeat(64)}`;
 
-    expect((await post(app, body({ runId: "a".repeat(26), jsonl: line("A"), source: sourceA, from: 0 }))).status).toBe(202);
-    expect((await post(app, body({ runId: "b".repeat(26), jsonl: line("B"), source: sourceB, from: 0 }))).status).toBe(202);
-    expect((await post(app, body({ runId: "c".repeat(26), jsonl: line("legacy A") }))).status).toBe(202);
-    expect((await post(app, body({ runId: "d".repeat(26), jsonl: line("legacy B") }))).status).toBe(202);
+    expect(
+      (await post(app, body({ runId: "a".repeat(26), jsonl: line("A"), source: sourceA, from: 0 })))
+        .status,
+    ).toBe(202);
+    expect(
+      (await post(app, body({ runId: "b".repeat(26), jsonl: line("B"), source: sourceB, from: 0 })))
+        .status,
+    ).toBe(202);
+    expect((await post(app, body({ runId: "c".repeat(26), jsonl: line("legacy A") }))).status).toBe(
+      202,
+    );
+    expect((await post(app, body({ runId: "d".repeat(26), jsonl: line("legacy B") }))).status).toBe(
+      202,
+    );
     expect(events).toHaveLength(4);
 
     const databasePath = join(root, "sessions.db");
@@ -459,9 +471,9 @@ describe("Typesense reboot recovery source-cursor verification", () => {
 
     const db = new Database(databasePath, { readonly: true, strict: true });
     expect(db.query("SELECT count(*) AS count FROM runs").get()).toEqual({ count: 1 });
-    expect(
-      db.query("SELECT count(*) AS count FROM chunks WHERE text = 'repeated'").get(),
-    ).toEqual({ count: 1 });
+    expect(db.query("SELECT count(*) AS count FROM chunks WHERE text = 'repeated'").get()).toEqual({
+      count: 1,
+    });
     db.close(false);
   });
 });

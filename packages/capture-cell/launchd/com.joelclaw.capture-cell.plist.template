@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Template only: not installed by anything in this repo. Replace every
+  __PLACEHOLDER__ before use. Keep the token out of version control: put it
+  in the installed copy only, readable by the service user alone.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.joelclaw.capture-cell</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__BUN_PATH__</string>
+    <string>run</string>
+    <string>__REPO_DIR__/packages/capture-cell/src/cli.ts</string>
+    <string>serve</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO_DIR__/packages/capture-cell</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>CAPTURE_CELL_MODE</key>
+    <string>both</string>
+    <key>CAPTURE_CELL_PORT</key>
+    <string>__CAPTURE_CELL_PORT__</string>
+    <key>CAPTURE_CELL_TOKEN</key>
+    <string>__CAPTURE_CELL_TOKEN__</string>
+    <key>CAPTURE_CELL_DB</key>
+    <string>__HOME__/.joelclaw/capture-cell/outbox.db</string>
+    <key>SESSION_INDEX_PATH</key>
+    <string>__HOME__/.joelclaw/search/sessions.db</string>
+    <key>CAPTURE_CELL_READ_TIMEOUT_MS</key>
+    <string>3000</string>
+    <key>CAPTURE_CELL_WAL_STOP_BYTES</key>
+    <string>2147483648</string>
+    <key>OTEL_EMIT_URL</key>
+    <string>__OTEL_EMIT_URL__</string>
+    <key>OTEL_EMIT_TOKEN</key>
+    <string>__OTEL_EMIT_TOKEN__</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.joelclaw/logs/capture-cell.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.joelclaw/logs/capture-cell.err.log</string>
+</dict>
+</plist>

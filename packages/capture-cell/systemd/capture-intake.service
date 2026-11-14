@@ -1,0 +1,27 @@
+[Unit]
+Description=Durable capture intake
+After=network.target
+
+[Service]
+Type=simple
+User=capture-intake
+Group=capture-intake
+WorkingDirectory=/opt/capture-intake
+EnvironmentFile=/etc/capture-intake/env
+ExecStart=/opt/capture-intake/bin/bun /opt/capture-intake/capture-intake.js serve
+Restart=always
+RestartSec=3
+MemoryMax=1536M
+MemorySwapMax=0
+CPUQuota=90%
+StateDirectory=capture-intake
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/capture-intake
+
+[Install]
+WantedBy=multi-user.target

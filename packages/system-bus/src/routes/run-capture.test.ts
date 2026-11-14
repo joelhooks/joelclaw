@@ -32,12 +32,14 @@ function captureBody(runId: string, jsonl: string, fromOffset = 0) {
 
 function fixtureApp() {
   fixtureRoot = mkdtempSync(join(tmpdir(), "run-capture-route-"));
-  process.env.MEMORY_RUN_STORE = fixtureRoot;
+  process.env.MEMORY_RUN_STORE = join(fixtureRoot, "runs");
   const events: unknown[] = [];
   const app = new Hono();
   registerRunCaptureRoute(app, {
     authenticate: async () => ({ user_id: "user", machine_id: "machine", did: null }),
     writeRunBlob,
+    sourceCursorClaimDir: join(fixtureRoot, "cursor-claims"),
+    captureCell: { mode: "off", shadow: async () => {} },
     sendCaptured: async (event) => {
       events.push(event);
     },
@@ -136,14 +138,9 @@ describe("POST /api/runs redelivery", () => {
       run_id: firstRunId,
       to_offset: prefix.to_offset,
     });
-    expect(
-      (
-        await post(
-          app,
-          captureBody(suffixRunId, suffixText, prefix.to_offset),
-        )
-      ).status,
-    ).toBe(202);
+    expect((await post(app, captureBody(suffixRunId, suffixText, prefix.to_offset))).status).toBe(
+      202,
+    );
 
     expect(events).toHaveLength(3);
     const databasePath = join(fixtureRoot as string, "sessions.db");

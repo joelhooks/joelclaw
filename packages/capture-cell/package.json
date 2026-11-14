@@ -1,0 +1,32 @@
+{
+  "name": "@joelclaw/capture-cell",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "capture-cell": "src/cli.ts",
+    "capture-intake": "src/intake/cli.ts"
+  },
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./intake": "./src/intake/stream.ts",
+    "./intake/server": "./src/intake/server.ts",
+    "./intake/store": "./src/intake/store.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "test": "bun test",
+    "serve": "bun run src/cli.ts serve"
+  },
+  "dependencies": {
+    "@joelclaw/memory": "workspace:*",
+    "@joelclaw/telemetry": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "hono": "^4.11.9",
+    "typescript": "5.9.2"
+  }
+}

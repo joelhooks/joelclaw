@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { type InboxResult, isSandboxExecutionResult } from "@joelclaw/agent-execution";
 import { MACHINES_COLLECTION, writeRunBlob } from "@joelclaw/memory";
@@ -49,7 +50,9 @@ if (SHOULD_LEASE_WEBHOOK_SECRETS) {
           console.log(`[secrets] loaded ${env} from agent-secrets`);
         }
       } catch {
-        console.warn(`[secrets] ⚠️ failed to load ${env} — ${secret} webhook verification will fail`);
+        console.warn(
+          `[secrets] ⚠️ failed to load ${env} — ${secret} webhook verification will fail`,
+        );
       }
     }
   }
@@ -57,18 +60,9 @@ if (SHOULD_LEASE_WEBHOOK_SECRETS) {
   console.log("[secrets] skipping local webhook secret leasing in cluster worker role");
 }
 
-import {
-  emitInngestRegistryLoaded,
-  runProductionFunctionHealthCheck,
-} from "./inngest/functions";
-import {
-  clusterFunctionDefinitions,
-  clusterFunctionIds,
-} from "./inngest/functions/index.cluster";
-import {
-  hostFunctionDefinitions,
-  hostFunctionIds,
-} from "./inngest/functions/index.host";
+import { emitInngestRegistryLoaded, runProductionFunctionHealthCheck } from "./inngest/functions";
+import { clusterFunctionDefinitions, clusterFunctionIds } from "./inngest/functions/index.cluster";
+import { hostFunctionDefinitions, hostFunctionIds } from "./inngest/functions/index.host";
 import { enqueueRegisteredQueueEvent } from "./lib/queue";
 import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
 import {
@@ -81,6 +75,8 @@ import {
 } from "./lib/internal-auth";
 import { type MemoryIdentity, registerRunCaptureRoute } from "./routes/run-capture";
 import { createCaptureIdentityResolver } from "./routes/run-capture-auth";
+import { captureCellFromEnv } from "./routes/run-capture-cell";
+import { RunCaptureOutbox } from "./routes/run-capture-outbox";
 import { registerRunHealthRoute } from "./routes/run-health";
 
 const app = new Hono();
@@ -89,14 +85,19 @@ const WORKER_STARTED_AT = new Date().toISOString();
 const WORKER_CWD = process.cwd();
 const LEGACY_WORKER_CLONE_FRAGMENT = "/Code/system-bus-worker/";
 const LEGACY_WORKER_CLONE_DETECTED = WORKER_CWD.includes(LEGACY_WORKER_CLONE_FRAGMENT);
-const INTERNAL_AGENT_INBOX_DIR = join(process.env.HOME ?? "/Users/joel", ".joelclaw", "workspace", "inbox");
+const INTERNAL_AGENT_INBOX_DIR = join(
+  process.env.HOME ?? homedir(),
+  ".joelclaw",
+  "workspace",
+  "inbox",
+);
 const INTERNAL_AGENT_ACK_DIR = join(INTERNAL_AGENT_INBOX_DIR, "ack");
 const INTERNAL_AGENT_POLL_MS = 2_000;
 const INTERNAL_AGENT_MAX_TIMEOUT_MS = 60 * 60_000;
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const RUN_CAPTURE_AUTH_DATABASE =
   process.env.RUN_CAPTURE_AUTH_DATABASE ??
-  join(process.env.HOME ?? "/Users/joel", ".joelclaw", "capture-auth.db");
+  join(process.env.HOME ?? homedir(), ".joelclaw", "capture-auth.db");
 const RUN_CAPTURE_AUTH_SYNC_INTERVAL_MS = 5 * 60_000;
 type WorkerRole = "host" | "cluster";
 type FunctionDefinition = { opts?: { id?: string } };
@@ -129,26 +130,21 @@ const WORKER_ROLE = parseWorkerRole(process.env.WORKER_ROLE);
 let lastRegistrationAt = WORKER_STARTED_AT;
 const configuredServeHost = process.env.INNGEST_SERVE_HOST?.trim();
 const useInngestConnectMode = ["1", "true", "yes"].includes(
-  (process.env.INNGEST_CONNECT_MODE ?? "").trim().toLowerCase()
+  (process.env.INNGEST_CONNECT_MODE ?? "").trim().toLowerCase(),
 );
 const serveHost = configuredServeHost
   ? configuredServeHost
-  : (WORKER_ROLE === "host" ? "http://host.docker.internal:3111" : undefined);
+  : WORKER_ROLE === "host"
+    ? "http://host.docker.internal:3111"
+    : undefined;
 
 const registeredFunctions = (
-  WORKER_ROLE === "cluster"
-    ? clusterFunctionDefinitions
-    : hostFunctionDefinitions
+  WORKER_ROLE === "cluster" ? clusterFunctionDefinitions : hostFunctionDefinitions
 ) as any[];
-const duplicateFunctionIds = findDuplicateIds([
-  ...hostFunctionIds,
-  ...clusterFunctionIds,
-]);
+const duplicateFunctionIds = findDuplicateIds([...hostFunctionIds, ...clusterFunctionIds]);
 
 // Derive function names from the actual array — no stale hardcoded list
-const functionNames = registeredFunctions.map(
-  (fn) => getFunctionId(fn as FunctionDefinition)
-);
+const functionNames = registeredFunctions.map((fn) => getFunctionId(fn as FunctionDefinition));
 void emitInngestRegistryLoaded(functionNames).catch((error) => {
   console.warn("[otel] failed to emit registry snapshot", error);
 });
@@ -185,7 +181,10 @@ function verifyInternalToken(c: any) {
     });
   }
   if (decision.allow) return null;
-  return c.json({ error: decision.status === 503 ? "Internal auth not configured" : "Unauthorized" }, decision.status ?? 401);
+  return c.json(
+    { error: decision.status === 503 ? "Internal auth not configured" : "Unauthorized" },
+    decision.status ?? 401,
+  );
 }
 
 async function readAgentResult(requestId: string): Promise<Record<string, unknown> | null> {
@@ -218,7 +217,13 @@ function writeAgentResultSnapshot(result: InboxResult): string {
 }
 
 function normalizeInboxStatusFromExecutionState(state: string): InboxResult["status"] {
-  return state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : state === "running" ? "running" : "failed";
+  return state === "completed"
+    ? "completed"
+    : state === "cancelled"
+      ? "cancelled"
+      : state === "running"
+        ? "running"
+        : "failed";
 }
 
 function readAgentResultStatus(result: Record<string, unknown> | null): string | undefined {
@@ -276,9 +281,7 @@ let captureAuthLastCount: number | null = null;
 function synchronizeCaptureIdentityRegistry(): Promise<void> {
   if (!process.env.TYPESENSE_API_KEY) {
     if (captureIdentityResolver.count() === 0) {
-      console.warn(
-        "[capture-auth] local registry is empty and TYPESENSE_API_KEY is unavailable",
-      );
+      console.warn("[capture-auth] local registry is empty and TYPESENSE_API_KEY is unavailable");
     }
     return Promise.resolve();
   }
@@ -328,10 +331,43 @@ async function authenticateRunCapture(c: any): Promise<MemoryIdentity | null> {
   return lookupMemoryIdentity(token);
 }
 
+const runCaptureOutbox = new RunCaptureOutbox({
+  path:
+    process.env.RUN_CAPTURE_RETRY_DATABASE ?? join(homedir(), ".joelclaw", "run-capture-retry.db"),
+  send: (event) => inngest.send(event),
+  telemetry: {
+    emit(action, detail, extra) {
+      const failed = action.endsWith("give_up") || action.endsWith("loop_failed");
+      void emitOtelEvent({
+        level: failed ? "error" : "info",
+        source: "system-bus",
+        component: "run-capture",
+        action,
+        success: !failed && !action.endsWith("failed"),
+        metadata: { detail, ...extra },
+      }).catch(() => undefined);
+    },
+  },
+});
+runCaptureOutbox.start();
+
 registerRunCaptureRoute(app, {
   authenticate: authenticateRunCapture,
   writeRunBlob,
+  outbox: runCaptureOutbox,
   sendCaptured: (event) => inngest.send(event),
+  captureCell: captureCellFromEnv(process.env, (failure) => {
+    void emitOtelEvent({
+      level: "warn",
+      source: "system-bus",
+      component: "run-capture",
+      action: "capture.cell.shadow.post_failed",
+      success: false,
+      error: failure.reason,
+      duration_ms: failure.duration_ms,
+      metadata: { run_id: failure.run_id },
+    }).catch(() => undefined);
+  }),
 });
 
 registerRunHealthRoute(app);
@@ -374,14 +410,18 @@ app.get("/", (c) =>
       "media/received": "Process media from channels → vision/transcribe → notify gateway",
       "todoist/*": "Todoist webhook events (comment.added, task.completed, task.created)",
       "front/*": "Front webhook events (message.received, message.sent, assignee.changed)",
-      "vip/email.received": "VIP email deep-dive workflow (Opus + meetings + memory + GitHub + todos)",
-      "vercel/*": "Vercel webhook events (deploy.succeeded, deploy.error, deploy.created, deploy.canceled)",
+      "vip/email.received":
+        "VIP email deep-dive workflow (Opus + meetings + memory + GitHub + todos)",
+      "vercel/*":
+        "Vercel webhook events (deploy.succeeded, deploy.error, deploy.created, deploy.canceled)",
       "github/*": "GitHub webhook events (workflow_run.completed, package.published)",
-      "x/account_activity.received": "X webhook account activity events (posts, likes, follows, DMs, etc.)",
+      "x/account_activity.received":
+        "X webhook account activity events (posts, likes, follows, DMs, etc.)",
       "meeting/noted": "Analyze meeting → extract action items, decisions, people (ADR-0055)",
       "granola/backfill.requested": "Backfill all historical Granola meetings (ADR-0055)",
       "memory/digest.created": "Structured daily digest generated from raw daily memory log",
-      "notification/call.requested": "Place outbound call via Telnyx, fallback to SMS if unanswered",
+      "notification/call.requested":
+        "Place outbound call via Telnyx, fallback to SMS if unanswered",
       "nas/soak.review.requested": "Evaluate NAS soak gates vs ADR-0088 and notify gateway",
     },
     observability: {
@@ -390,7 +430,7 @@ app.get("/", (c) =>
     queue: {
       admissionEndpoint: "/internal/queue/enqueue",
     },
-  })
+  }),
 );
 
 // Internal ingest endpoint so gateway can emit events through the single worker write path.
@@ -406,8 +446,18 @@ app.post("/observability/emit", async (c) => {
   const result = await emitValidatedOtelEvent(payload);
   if (!result.stored && !result.dropped) {
     return c.json(
-      { ok: false, error: result.error ?? result.forward?.error ?? result.clickhouse.error ?? result.clickhouse.queueError ?? result.typesense.error ?? "store_failed", result },
-      500
+      {
+        ok: false,
+        error:
+          result.error ??
+          result.forward?.error ??
+          result.clickhouse.error ??
+          result.clickhouse.queueError ??
+          result.typesense.error ??
+          "store_failed",
+        result,
+      },
+      500,
     );
   }
   return c.json({ ok: true, result });
@@ -426,7 +476,8 @@ app.post("/internal/queue/enqueue", async (c) => {
   const source = typeof (payload as any).source === "string" ? (payload as any).source.trim() : "";
   const data = (payload as any).data;
   const metadata = (payload as any).metadata;
-  const eventId = typeof (payload as any).eventId === "string" ? (payload as any).eventId.trim() : undefined;
+  const eventId =
+    typeof (payload as any).eventId === "string" ? (payload as any).eventId.trim() : undefined;
   const priority = (payload as any).priority;
 
   if (!name || !source) {
@@ -467,13 +518,15 @@ app.post("/internal/agent-dispatch", async (c) => {
     return c.json({ ok: false, error: "Invalid payload" }, 400);
   }
 
-  const requestId = typeof (payload as any).requestId === "string" ? (payload as any).requestId.trim() : "";
+  const requestId =
+    typeof (payload as any).requestId === "string" ? (payload as any).requestId.trim() : "";
   const task = typeof (payload as any).task === "string" ? (payload as any).task.trim() : "";
   const tool = typeof (payload as any).tool === "string" ? (payload as any).tool.trim() : "";
   const timeoutSecondsRaw = (payload as any).timeout;
-  const timeoutSeconds = typeof timeoutSecondsRaw === "number" && Number.isFinite(timeoutSecondsRaw)
-    ? Math.max(60, Math.min(timeoutSecondsRaw, INTERNAL_AGENT_MAX_TIMEOUT_MS / 1000))
-    : 600;
+  const timeoutSeconds =
+    typeof timeoutSecondsRaw === "number" && Number.isFinite(timeoutSecondsRaw)
+      ? Math.max(60, Math.min(timeoutSecondsRaw, INTERNAL_AGENT_MAX_TIMEOUT_MS / 1000))
+      : 600;
 
   if (!requestId || !task || !tool) {
     return c.json({ ok: false, error: "Missing required fields: requestId, task, tool" }, 400);
@@ -484,14 +537,21 @@ app.post("/internal/agent-dispatch", async (c) => {
   // callers may ask for it; remote callers default to the sandbox.
   if (!isLoopbackAddress(callerAddress(c))) {
     if (requestPayload.executionMode === "host") {
-      return c.json({ ok: false, error: "Host execution is only available to loopback callers; use executionMode \"sandbox\"" }, 403);
+      return c.json(
+        {
+          ok: false,
+          error:
+            'Host execution is only available to loopback callers; use executionMode "sandbox"',
+        },
+        403,
+      );
     }
     requestPayload.executionMode = "sandbox";
   }
   const existingResult = await readAgentResult(requestId);
   const existingStatus = readAgentResultStatus(existingResult);
-  const shouldDedupe = isTerminalState(existingStatus)
-    || isFreshRunningResult(existingResult, timeoutSeconds);
+  const shouldDedupe =
+    isTerminalState(existingStatus) || isFreshRunningResult(existingResult, timeoutSeconds);
 
   if (shouldDedupe) {
     await emitOtelEvent({
@@ -598,8 +658,10 @@ app.post("/internal/agent-result", async (c) => {
         : {}),
     executionMode: existing?.executionMode ?? "sandbox",
     sandboxBackend: payload.backend ?? existing?.sandboxBackend ?? "k8s",
-    ...(payload.job ?? existing?.job ? { job: payload.job ?? existing?.job } : {}),
-    ...(payload.artifacts ?? existing?.artifacts ? { artifacts: payload.artifacts ?? existing?.artifacts } : {}),
+    ...((payload.job ?? existing?.job) ? { job: payload.job ?? existing?.job } : {}),
+    ...((payload.artifacts ?? existing?.artifacts)
+      ? { artifacts: payload.artifacts ?? existing?.artifacts }
+      : {}),
     ...(payload.artifacts?.logs || existing?.logs || payload.output || payload.error
       ? {
           logs: {
@@ -674,8 +736,11 @@ function shouldSkipInngestSignatureValidation(): boolean {
   const explicit = process.env.INNGEST_DEV?.trim().toLowerCase();
   if (explicit === "1" || explicit === "true") return true;
 
-  const endpoint = process.env.INNGEST_URL ?? process.env.INNGEST_BASE_URL ?? "http://localhost:8288";
-  const isLocalEndpoint = /(^|\/\/)(localhost|127\.0\.0\.1|host\.docker\.internal)(:|\/|$)/.test(endpoint);
+  const endpoint =
+    process.env.INNGEST_URL ?? process.env.INNGEST_BASE_URL ?? "http://localhost:8288";
+  const isLocalEndpoint = /(^|\/\/)(localhost|127\.0\.0\.1|host\.docker\.internal)(:|\/|$)/.test(
+    endpoint,
+  );
   if (isLocalEndpoint) return true;
   if (explicit === "0" || explicit === "false") return false;
   return false;
@@ -759,65 +824,60 @@ function summarizeInngestBody(rawBody: string | null): Record<string, unknown> |
   }
 }
 
-app.on(
-  ["PATCH", "OPTIONS", "DELETE"],
-  "/api/inngest",
-  (c) => {
-    c.header("Allow", INNGEST_ALLOWED_METHODS);
-    return c.json(
-      {
-        ok: false,
-        error: "Method not allowed",
-        allowedMethods: INNGEST_ALLOWED_METHODS.split(", "),
-      },
-      405
-    );
+app.on(["PATCH", "OPTIONS", "DELETE"], "/api/inngest", (c) => {
+  c.header("Allow", INNGEST_ALLOWED_METHODS);
+  return c.json(
+    {
+      ok: false,
+      error: "Method not allowed",
+      allowedMethods: INNGEST_ALLOWED_METHODS.split(", "),
+    },
+    405,
+  );
+});
+
+app.on(["GET", "POST", "PUT"], "/api/inngest", async (c) => {
+  const start = Date.now();
+  if (c.req.method === "PUT") {
+    lastRegistrationAt = new Date().toISOString();
   }
-);
 
-app.on(
-  ["GET", "POST", "PUT"],
-  "/api/inngest",
-  async (c) => {
-    const start = Date.now();
-    if (c.req.method === "PUT") {
-      lastRegistrationAt = new Date().toISOString();
+  const query = parseQueryMap(c.req.raw);
+  const rawBody = await c.req.raw
+    .clone()
+    .text()
+    .catch(() => null);
+  const bodySummary = summarizeInngestBody(rawBody);
+  const fnId = query.fnId;
+
+  const response = await inngestApiHandler(c);
+  const status = response.status;
+
+  if (c.req.method === "POST" || c.req.method === "PUT") {
+    if (status >= 400 || !fnId) {
+      const elapsedMs = Date.now() - start;
+      const remote = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
+      console.warn("[inngest:req]", {
+        method: c.req.method,
+        path: c.req.path,
+        status,
+        remote,
+        fnId: fnId ?? "missing",
+        runId: query.runId ?? "missing",
+        stepId: query.stepId ?? "missing",
+        probe: query.probe ?? "missing",
+        query,
+        bodySummary,
+        elapsedMs,
+        contentType: c.req.header("content-type") ?? "unknown",
+        userAgent: c.req.header("user-agent") ?? "unknown",
+        requestId: c.req.header("x-request-id") ?? c.req.header("x-inngest-request-id") ?? null,
+      });
     }
-
-    const query = parseQueryMap(c.req.raw);
-    const rawBody = await c.req.raw.clone().text().catch(() => null);
-    const bodySummary = summarizeInngestBody(rawBody);
-    const fnId = query.fnId;
-
-    const response = await inngestApiHandler(c);
-    const status = response.status;
-
-    if (c.req.method === "POST" || c.req.method === "PUT") {
-      if (status >= 400 || !fnId) {
-        const elapsedMs = Date.now() - start;
-        const remote = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
-        console.warn("[inngest:req]", {
-          method: c.req.method,
-          path: c.req.path,
-          status,
-          remote,
-          fnId: fnId ?? "missing",
-          runId: query.runId ?? "missing",
-          stepId: query.stepId ?? "missing",
-          probe: query.probe ?? "missing",
-          query,
-          bodySummary,
-          elapsedMs,
-          contentType: c.req.header("content-type") ?? "unknown",
-          userAgent: c.req.header("user-agent") ?? "unknown",
-          requestId: c.req.header("x-request-id") ?? c.req.header("x-inngest-request-id") ?? null,
-        });
-      }
-    }
-
-    return response;
   }
-);
+
+  return response;
+});
 
 serveOnHosts({
   hosts: resolveBindHosts(),
@@ -868,7 +928,7 @@ if (useInngestConnectMode) {
 }
 if (duplicateFunctionIds.length > 0) {
   console.warn(
-    `[worker] duplicate function ids detected across roles: ${duplicateFunctionIds.join(", ")}`
+    `[worker] duplicate function ids detected across roles: ${duplicateFunctionIds.join(", ")}`,
   );
 }
 setTimeout(() => {
