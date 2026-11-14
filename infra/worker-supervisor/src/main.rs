@@ -71,7 +71,7 @@ impl Default for Config {
                 "src/serve.ts".to_string(),
             ],
             port: 3111,
-            health_endpoint: "/api/inngest".to_string(),
+            health_endpoint: "/".to_string(),
             sync_endpoint: "/api/inngest".to_string(),
             log_stdout: "~/.local/log/system-bus-worker.log".to_string(),
             log_stderr: "~/.local/log/system-bus-worker.err".to_string(),
@@ -381,7 +381,7 @@ fn run_supervisor(config: Config) -> Result<(), DynError> {
 
         let mut child = spawn_worker(&config, &env_overrides)?;
 
-        let outcome = monitor_child(&config, &mut child, &mut backoff_secs)?;
+        let outcome = monitor_child(&config, &mut child, &mut backoff_secs, &env_overrides)?;
         if outcome == SessionOutcome::Shutdown {
             return Ok(());
         }
@@ -395,10 +395,31 @@ fn run_supervisor(config: Config) -> Result<(), DynError> {
     }
 }
 
+fn sync_function_registry(
+    env_overrides: &HashMap<String, String>,
+    inherited_drain: Option<&str>,
+    sync: impl FnOnce() -> bool,
+) {
+    // Command inherits the supervisor environment unless the env file overrides it.
+    let drain_enabled = env_overrides
+        .get("INNGEST_DRAIN_ENABLED")
+        .map(String::as_str)
+        .or(inherited_drain)
+        == Some("1");
+    if drain_enabled {
+        eprintln!("[worker-supervisor] function registry sync skipped for drain");
+    } else if sync() {
+        eprintln!("[worker-supervisor] function registry sync succeeded");
+    } else {
+        eprintln!("[worker-supervisor] WARNING: function registry sync failed");
+    }
+}
+
 fn monitor_child(
     config: &Config,
     child: &mut Child,
     backoff_secs: &mut u64,
+    env_overrides: &HashMap<String, String>,
 ) -> Result<SessionOutcome, DynError> {
     let start = Instant::now();
     let mut synced = false;
@@ -418,16 +439,18 @@ fn monitor_child(
         }
 
         if !synced && start.elapsed() >= Duration::from_secs(config.startup_sync_delay_secs) {
-            if http_request_ok(
-                "PUT",
-                config.port,
-                &config.sync_endpoint,
-                Duration::from_secs(config.http_timeout_secs),
-            ) {
-                eprintln!("[worker-supervisor] function registry sync succeeded");
-            } else {
-                eprintln!("[worker-supervisor] WARNING: function registry sync failed");
-            }
+            sync_function_registry(
+                env_overrides,
+                env::var("INNGEST_DRAIN_ENABLED").ok().as_deref(),
+                || {
+                    http_request_ok(
+                        "PUT",
+                        config.port,
+                        &config.sync_endpoint,
+                        Duration::from_secs(config.http_timeout_secs),
+                    )
+                },
+            );
             synced = true;
             last_health_check = Instant::now();
         }
@@ -806,6 +829,44 @@ fn kill_processes_on_port(config: &Config) -> Result<(), DynError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drain_skips_startup_sync_using_effective_child_env() {
+        for (override_value, inherited, expected_calls) in [
+            (None, None, 1),
+            (None, Some("1"), 0),
+            (None, Some("0"), 1),
+            (Some("1"), None, 0),
+            (Some("1"), Some("0"), 0),
+            (Some("0"), Some("1"), 1),
+            (Some(""), Some("1"), 1),
+            (Some("true"), Some("1"), 1),
+            (Some(" 1 "), Some("1"), 1),
+        ] {
+            let mut overrides = HashMap::new();
+            if let Some(value) = override_value {
+                overrides.insert("INNGEST_DRAIN_ENABLED".to_string(), value.to_string());
+            }
+            let mut calls = 0;
+            sync_function_registry(&overrides, inherited, || {
+                calls += 1;
+                true
+            });
+            assert_eq!(
+                calls, expected_calls,
+                "override={override_value:?}, inherited={inherited:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn health_defaults_to_root_and_toml_override_is_preserved() {
+        let mut config = Config::default();
+        assert_eq!(config.health_endpoint, "/");
+        assert_eq!(config.sync_endpoint, "/api/inngest");
+        apply_toml_overrides(&mut config, "health_endpoint = \"/custom-health\"").unwrap();
+        assert_eq!(config.health_endpoint, "/custom-health");
+    }
 
     #[test]
     fn listener_pids_and_worker_identity_exclude_clients() {

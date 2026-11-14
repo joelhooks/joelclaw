@@ -11,7 +11,7 @@ WORKER_PLIST="${SCRIPT_DIR}/../../launchd/com.joel.system-bus-worker.plist"
 ! grep -q '<key>UserName</key>' "${HEALTH_PLIST}"
 grep -q '<string>com.joel.system-bus-worker</string>' "${WORKER_PLIST}"
 
-TEST_ROOT="$(mktemp -d /tmp/session-index-health-test.XXXXXX)"
+TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/session-index-health-test.XXXXXX")"
 export TEST_ROOT
 mkdir -p "${TEST_ROOT}/bin" "${TEST_ROOT}/runs/joel/2026-07" "${TEST_ROOT}/state"
 printf '%s\n' '{"captured_at":2000000000000}' >"${TEST_ROOT}/runs/joel/2026-07/canary.metadata.json"
@@ -25,6 +25,8 @@ printf '%s\n' '1' >"${TEST_ROOT}/fail-recovery"
 printf '%s\n' '0' >"${TEST_ROOT}/fail-otel"
 printf '%s\n' '0' >"${TEST_ROOT}/fail-inngest"
 printf '%s\n' '0' >"${TEST_ROOT}/fail-typesense"
+printf '%s\n' '0' >"${TEST_ROOT}/worker-curl-rc"
+printf '%s\n' '{"status":"running","count":1}' >"${TEST_ROOT}/worker-body.json"
 printf 'api-key = test-key\n' >"${TEST_ROOT}/typesense.ini"
 
 cat >"${TEST_ROOT}/bin/curl" <<'MOCK'
@@ -40,6 +42,15 @@ case "$*" in
     ;;
   *127.0.0.1:8288/health*) [ "$(cat "${TEST_ROOT}/fail-inngest")" = "0" ] ;;
   *127.0.0.1:8108/collections*) [ "$(cat "${TEST_ROOT}/fail-typesense")" = "0" ] ;;
+  */api/inngest*)
+    # Unsigned SDK GETs fail during drain; this must never be our health probe.
+    printf '%s\n' sdk-get >>"${TEST_ROOT}/sdk-gets.log"
+    exit 22
+    ;;
+  */)
+    cat "${TEST_ROOT}/worker-body.json"
+    exit "$(cat "${TEST_ROOT}/worker-curl-rc")"
+    ;;
   *) exit 0 ;;
 esac
 MOCK
@@ -55,6 +66,7 @@ MOCK
 chmod +x "${TEST_ROOT}/bin/curl" "${TEST_ROOT}/bin/launchctl" "${TEST_ROOT}/bin/sqlite3"
 
 run_probe() {
+  probe_rc=0
   PATH="${TEST_ROOT}/bin:${PATH}" \
   STATE_DIR="${TEST_ROOT}/state" \
   EMIT_TOKEN_HEADER_FILE="${TEST_ROOT}/emit-token.header" \
@@ -66,7 +78,7 @@ run_probe() {
   RECOVER_AFTER_FAILURES=3 \
   RECOVERY_COOLDOWN_SECONDS=900 \
   INDEX_PROGRESS_WINDOW_SECONDS=900 \
-  sh "${SCRIPT_DIR}/session-index-health.sh" >>"${TEST_ROOT}/probe.log" 2>&1 || true
+  sh "${SCRIPT_DIR}/session-index-health.sh" >>"${TEST_ROOT}/probe.log" 2>&1 || probe_rc=$?
 }
 
 kick_count() {
@@ -182,4 +194,79 @@ printf '%s\n' 'degraded:index_lag_exceeded' >"${TEST_ROOT}/state/pending-otel-st
 run_probe
 [ "$(tail -1 "${TEST_ROOT}/otel-headers.log")" = "header" ]
 
-printf 'PASS session-index-health system-domain recovery, scoped cooldown, retry, OTEL delivery, and backlog deferral (%s)\n' "${TEST_ROOT}"
+# Root worker health must pass only for a running worker with a positive numeric
+# function count. All commands above and below use mocks, never live services.
+printf '%s\n' '1|2000000000000' >"${TEST_ROOT}/indexed.txt"
+assert_worker_probe() {
+  expected_rc="$1"
+  expected_reason="$2"
+  run_probe
+  [ "${probe_rc}" -eq "${expected_rc}" ]
+  python3 - "${TEST_ROOT}/state/latest.json" "${expected_reason}" <<'PY'
+import json, sys
+with open(sys.argv[1]) as receipt:
+    assert json.load(receipt)["reason"] == sys.argv[2]
+PY
+}
+
+assert_worker_probe 0 current
+printf '%s\n' '{"status":"running","count":0}' >"${TEST_ROOT}/worker-body.json"
+assert_worker_probe 1 worker_unavailable
+# curl -f returns 22 for HTTP 401, and 7 for connection refused. Even a valid
+# body cannot turn a failed request into a healthy worker.
+printf '%s\n' '{"status":"running","count":1}' >"${TEST_ROOT}/worker-body.json"
+printf '%s\n' '22' >"${TEST_ROOT}/worker-curl-rc"
+assert_worker_probe 1 worker_unavailable
+printf '%s\n' '7' >"${TEST_ROOT}/worker-curl-rc"
+assert_worker_probe 1 worker_unavailable
+printf '%s\n' '0' >"${TEST_ROOT}/worker-curl-rc"
+for body in \
+  '{"status":"starting","count":1}' \
+  '{"status":"running","count":-1}' \
+  '{"status":"running","count":"1"}' \
+  '{"status":"running","count":true}' \
+  '{"status":"running"}' \
+  '{"status":"running","count":Infinity}' \
+  '[]' 'not-json' ''; do
+  printf '%s\n' "${body}" >"${TEST_ROOT}/worker-body.json"
+  assert_worker_probe 1 worker_unavailable
+done
+# Formatting and unrelated keys do not change the health contract.
+printf '%s\n' '{ "count": 2, "extra": true, "status": "running" }' >"${TEST_ROOT}/worker-body.json"
+assert_worker_probe 0 current
+[ ! -s "${TEST_ROOT}/sdk-gets.log" ]
+
+# Exercise the actual worker decision with only curl and grep on PATH. Other
+# probe tasks already use Python, but worker availability must not depend on it.
+worker_check="$(sed -n '/^worker_ok() {/,/^}/p' "${SCRIPT_DIR}/session-index-health.sh")"
+[ -n "${worker_check}" ]
+SHELL_BIN="$(command -v sh)"
+mkdir -p "${TEST_ROOT}/minimal-bin"
+ln -s "$(command -v grep)" "${TEST_ROOT}/minimal-bin/grep"
+cat >"${TEST_ROOT}/minimal-bin/curl" <<'MOCK'
+#!/bin/sh
+printf '%s\n' "${WORKER_TEST_BODY}"
+exit "${WORKER_TEST_CURL_RC}"
+MOCK
+chmod +x "${TEST_ROOT}/minimal-bin/curl"
+assert_worker_without_python() {
+  expected_rc="$1"
+  worker_rc=0
+  PATH="${TEST_ROOT}/minimal-bin" \
+  WORKER_TEST_BODY="$2" \
+  WORKER_TEST_CURL_RC="$3" \
+  WORKER_URL="unused" \
+  "${SHELL_BIN}" -c '
+    if command -v python3 >/dev/null 2>&1; then exit 99; fi
+    eval "$1"
+    worker_ok
+  ' sh "${worker_check}" || worker_rc=$?
+  [ "${worker_rc}" -eq "${expected_rc}" ]
+}
+assert_worker_without_python 0 '{"status":"running","count":12}' 0
+assert_worker_without_python 1 '{"status":"running","count":0}' 0
+assert_worker_without_python 1 '{"status":"running","count":12}' 22
+assert_worker_without_python 1 '{"status":"running","count":12}' 7
+assert_worker_without_python 1 '<html>not JSON</html>' 0
+
+printf 'PASS session-index-health recovery, cooldown, OTEL, backlog deferral, drain-safe worker health, and curl/grep-only PATH (running/count, zero, 401, connection refused, non-JSON) (%s)\n' "${TEST_ROOT}"
