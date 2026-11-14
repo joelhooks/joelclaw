@@ -1,21 +1,20 @@
 {
   "name": "@joelclaw/system-bus",
+  "private": true,
+  "files": [
+    "src",
+    "start.sh",
+    "index.ts"
+  ],
+  "type": "module",
   "module": "src/serve.ts",
   "scripts": {
     "dev": "bun run --watch src/serve.ts",
     "start": "bun run src/serve.ts"
   },
-  "type": "module",
-  "private": true,
-  "devDependencies": {
-    "@inngest/test": "^0.1.9",
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
   "dependencies": {
     "@joelclaw/agent-execution": "workspace:*",
+    "@joelclaw/capture-cell": "workspace:*",
     "@joelclaw/email": "workspace:^",
     "@joelclaw/endpoint-resolver": "workspace:*",
     "@joelclaw/incident-latch": "workspace:*",
@@ -54,9 +53,11 @@
     "unified": "^11.0.5",
     "zod": "^4.3.6"
   },
-  "files": [
-    "src",
-    "start.sh",
-    "index.ts"
-  ]
+  "devDependencies": {
+    "@inngest/test": "^0.1.9",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
 }

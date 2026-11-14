@@ -12,6 +12,8 @@ export interface RawJsonlEntry {
   uuid?: string;
   parentUuid?: string | null;
   timestamp?: string;
+  role?: string;
+  content?: unknown;
   message?: {
     role?: string;
     content?: string | unknown[];
@@ -21,7 +23,7 @@ export interface RawJsonlEntry {
   [key: string]: unknown;
 }
 
-export type JsonlFormat = "claude-code" | "pi";
+export type JsonlFormat = "claude-code" | "pi" | "grok";
 
 const CLAUDE_META_TYPES = new Set([
   "permission-mode",
@@ -75,8 +77,7 @@ function extractTextFromContent(content: unknown): {
     } else if (partType === "tool_result" || partType === "toolResult") {
       hasToolResult = true;
       const inner = p.content ?? p.text ?? p;
-      const text =
-        typeof inner === "string" ? inner : JSON.stringify(inner);
+      const text = typeof inner === "string" ? inner : JSON.stringify(inner);
       parts.push(`[tool_result] ${text}`);
     }
   }
@@ -106,6 +107,16 @@ export function detectFormat(entries: RawJsonlEntry[]): JsonlFormat {
   // pi's "message" shape with role=user|assistant|toolResult vs claude-code's top-level type=user|assistant
   for (const entry of entries.slice(0, 50)) {
     if (entry.type === "message") return "pi";
+    if (
+      entry.type === "tool_result" ||
+      entry.type === "backend_tool_call" ||
+      (entry.type === "reasoning" && entry.content !== undefined) ||
+      ((entry.type === "user" || entry.type === "assistant") &&
+        entry.message?.role === undefined &&
+        entry.content !== undefined)
+    ) {
+      return "grok";
+    }
     if (entry.type === "user" || entry.type === "assistant") return "claude-code";
   }
   return "claude-code";
@@ -120,12 +131,9 @@ function extractTurnsClaudeCode(entries: RawJsonlEntry[]): Turn[] {
     const ts = entry.timestamp ? Date.parse(entry.timestamp) : Date.now();
 
     if (entry.type === "user" && entry.message?.role === "user") {
-      const { text, hasToolResult } = extractTextFromContent(
-        entry.message.content
-      );
+      const { text, hasToolResult } = extractTextFromContent(entry.message.content);
       if (!text.trim()) continue;
-      const role: Role =
-        hasToolResult || entry.toolUseResult !== undefined ? "tool" : "user";
+      const role: Role = hasToolResult || entry.toolUseResult !== undefined ? "tool" : "user";
       const clipped = text.slice(0, 32000);
       turns.push({
         role,
@@ -133,10 +141,7 @@ function extractTurnsClaudeCode(entries: RawJsonlEntry[]): Turn[] {
         started_at: ts,
         token_estimate: estimateTokens(clipped),
       });
-    } else if (
-      entry.type === "assistant" &&
-      entry.message?.role === "assistant"
-    ) {
+    } else if (entry.type === "assistant" && entry.message?.role === "assistant") {
       const { text, hasToolUse } = extractTextFromContent(entry.message.content);
       if (!text.trim()) continue;
       const role: Role = hasToolUse ? "tool" : "assistant";
@@ -148,6 +153,69 @@ function extractTurnsClaudeCode(entries: RawJsonlEntry[]): Turn[] {
         token_estimate: estimateTokens(clipped),
       });
     }
+  }
+  return turns;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function textValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(textValue).filter(Boolean).join("\n");
+  const record = recordValue(value);
+  if (!record) return value == null ? "" : String(value);
+
+  const content = record.content ?? record.text;
+  if (content !== undefined) {
+    const text = textValue(content);
+    if (text) return text;
+  }
+
+  const summary = record.summary;
+  if (summary !== undefined) {
+    const text = textValue(summary);
+    if (text) return text;
+  }
+
+  return JSON.stringify(record);
+}
+
+function timestampValue(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value < 10_000_000_000 ? value * 1_000 : value;
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+function extractTurnsGrok(entries: RawJsonlEntry[]): Turn[] {
+  const turns: Turn[] = [];
+  for (const entry of entries) {
+    const role: Role | undefined =
+      entry.type === "user"
+        ? "user"
+        : entry.type === "assistant" || entry.type === "reasoning"
+          ? "assistant"
+          : entry.type === "tool_result" || entry.type === "backend_tool_call"
+            ? "tool"
+            : undefined;
+    if (!role) continue;
+
+    const text = textValue(entry.content ?? entry.text ?? entry.message).trim();
+    if (!text) continue;
+    turns.push({
+      role,
+      text: text.slice(0, 32000),
+      started_at: timestampValue(entry.timestamp),
+      token_estimate: estimateTokens(text),
+    });
   }
   return turns;
 }
@@ -179,14 +247,11 @@ function extractTurnsPi(entries: RawJsonlEntry[]): Turn[] {
   return turns;
 }
 
-export function extractTurns(
-  entries: RawJsonlEntry[],
-  format?: JsonlFormat
-): Turn[] {
+export function extractTurns(entries: RawJsonlEntry[], format?: JsonlFormat): Turn[] {
   const fmt = format ?? detectFormat(entries);
-  return fmt === "pi"
-    ? extractTurnsPi(entries)
-    : extractTurnsClaudeCode(entries);
+  if (fmt === "pi") return extractTurnsPi(entries);
+  if (fmt === "grok") return extractTurnsGrok(entries);
+  return extractTurnsClaudeCode(entries);
 }
 
 export interface ChunkCandidate {

@@ -875,6 +875,9 @@ export type Events = {
         | "pi"
         | "claude-code"
         | "codex"
+        | "cursor"
+        | "grok"
+        | "opencode"
         | "loop"
         | "workload-stage"
         | "gateway"
@@ -981,10 +984,12 @@ export type Events = {
         sleepMaxMs?: number;
         sleepStepMs?: number;
       };
-      evidence?: Array<{
-        type: string;
-        detail: string;
-      }> | string[];
+      evidence?:
+        | Array<{
+            type: string;
+            detail: string;
+          }>
+        | string[];
       context?: Record<string, unknown>;
       playbook?: {
         actions?: Array<string>;
@@ -997,7 +1002,14 @@ export type Events = {
       owner?: string;
       deadlineAt?: string;
       fallbackAction?: "escalate" | "manual";
-      domain?: "sdk-reachability" | "backup" | "gateway-bridge" | "gateway-provider" | "otel-pipeline" | "all" | string;
+      domain?:
+        | "sdk-reachability"
+        | "backup"
+        | "gateway-bridge"
+        | "gateway-provider"
+        | "otel-pipeline"
+        | "all"
+        | string;
       reason?: string;
       requestedBy?: string;
       lookbackMinutes?: number;
@@ -1013,7 +1025,14 @@ export type Events = {
       attempt: number;
       nextAttempt: number;
       targetEventName: string;
-      domain?: "sdk-reachability" | "backup" | "gateway-bridge" | "gateway-provider" | "otel-pipeline" | "all" | string;
+      domain?:
+        | "sdk-reachability"
+        | "backup"
+        | "gateway-bridge"
+        | "gateway-provider"
+        | "otel-pipeline"
+        | "all"
+        | string;
       routeToFunction?: "system/backup.typesense" | "system/backup.redis" | string;
       targetFunctionId?: "system/backup.typesense" | "system/backup.redis";
       target?: "typesense" | "redis" | string;
@@ -1023,10 +1042,12 @@ export type Events = {
         sleepMaxMs?: number;
         sleepStepMs?: number;
       };
-      evidence?: Array<{
-        type: string;
-        detail: string;
-      }> | string[];
+      evidence?:
+        | Array<{
+            type: string;
+            detail: string;
+          }>
+        | string[];
       context?: Record<string, unknown>;
       playbook?: {
         actions?: Array<string>;
@@ -1073,10 +1094,12 @@ export type Events = {
       routeToFunction?: "system/backup.typesense" | "system/backup.redis" | string;
       confidence?: number;
       model?: string;
-      evidence?: Array<{
-        type: string;
-        detail: string;
-      }> | string[];
+      evidence?:
+        | Array<{
+            type: string;
+            detail: string;
+          }>
+        | string[];
       playbook?: {
         actions?: Array<string>;
         restart?: Array<string>;
@@ -1111,10 +1134,12 @@ export type Events = {
         sleepMaxMs?: number;
         sleepStepMs?: number;
       };
-      evidence?: Array<{
-        type: string;
-        detail: string;
-      }> | string[];
+      evidence?:
+        | Array<{
+            type: string;
+            detail: string;
+          }>
+        | string[];
       context?: Record<string, unknown>;
       playbook?: {
         actions?: Array<string>;
@@ -2251,8 +2276,11 @@ function shouldUseInngestDevMode(): boolean {
   const explicit = process.env.INNGEST_DEV?.trim().toLowerCase();
   if (explicit === "1" || explicit === "true") return true;
 
-  const endpoint = process.env.INNGEST_URL ?? process.env.INNGEST_BASE_URL ?? "http://localhost:8288";
-  const isLocalEndpoint = /(^|\/\/)(localhost|127\.0\.0\.1|host\.docker\.internal)(:|\/|$)/.test(endpoint);
+  const endpoint =
+    process.env.INNGEST_URL ?? process.env.INNGEST_BASE_URL ?? "http://localhost:8288";
+  const isLocalEndpoint = /(^|\/\/)(localhost|127\.0\.0\.1|host\.docker\.internal)(:|\/|$)/.test(
+    endpoint,
+  );
   if (isLocalEndpoint) return true;
   if (explicit === "0" || explicit === "false") return false;
   return false;
