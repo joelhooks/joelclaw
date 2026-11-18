@@ -13,6 +13,9 @@ const execFile = promisify(execFileCallback);
 const WIKI_CWD =
   process.env.JOELCLAW_WIKI_CWD ?? join(homedir(), "Code", "joelhooks", "joelclaw-wiki");
 const COMMAND_TIMEOUT_MS = 600_000;
+// The static site build prerenders every Brain page and outgrew 10 minutes in
+// November 2026, so the edition JSON was saved while the served site went stale.
+const SITE_BUILD_TIMEOUT_MS = 1_800_000;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -194,7 +197,7 @@ export const wikiEditionBuild = inngest.createFunction(
     const buildStatic = buildEdition.ok
       ? await step.run("build-static", async (): Promise<BuildStepResult> => {
           try {
-            await execFile("bun", ["run", "build"], { cwd: WIKI_CWD, timeout: COMMAND_TIMEOUT_MS });
+            await execFile("bun", ["run", "build"], { cwd: WIKI_CWD, timeout: SITE_BUILD_TIMEOUT_MS });
             return buildEdition;
           } catch (error) {
             return buildStaticFailure(error);
