@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the voice worker probe every 15 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

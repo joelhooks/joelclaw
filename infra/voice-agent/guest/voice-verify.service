@@ -1,0 +1,19 @@
+[Unit]
+Description=joelclaw voice worker probe (guest)
+After=voice-agent.service
+
+[Service]
+Type=oneshot
+User=voiceworker
+Group=voiceworker
+# Read voice-agent's journal for the slow-init check.
+SupplementaryGroups=systemd-journal
+WorkingDirectory=/opt/voice-agent
+EnvironmentFile=/etc/voice-agent/env
+Environment=HOME=/var/lib/voiceworker
+Environment=JOELCLAW_VOICE_CONFIG=/etc/voice-agent/cfg/voice-agent.yaml
+Environment=HF_HOME=/var/lib/voiceworker/.cache/huggingface
+Environment=HF_HUB_OFFLINE=1
+ExecStart=/opt/voice-agent/.venv/bin/python guest/verify.py
+TimeoutStartSec=120
+NoNewPrivileges=yes
