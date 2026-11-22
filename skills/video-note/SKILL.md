@@ -9,6 +9,8 @@ tags: [joelclaw, video, notes, publishing, obsidian]
 
 # Video Note Publishing
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Transform video notes from `/Users/joel/Vault/Resources/videos/` into published MDX notes on the joelclaw.com site at `apps/web/content/`.
 
 ## Source format
@@ -21,7 +23,7 @@ source: https://www.youtube.com/watch?v=ID
 channel: Channel Name
 published: YYYY-MM-DD
 duration: "HH:MM:SS"
-nas_path: /volume1/home/joel/video/...
+nas_path: <nas-hdd-export>/joel/video/...
 transcribed: YYYY-MM-DD
 tags:
   - video

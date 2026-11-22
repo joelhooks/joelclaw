@@ -1,6 +1,8 @@
 # ClickHouse access-control cutover
 
-Status: **prepared, not applied**. This runbook changes live credentials and access on three-body and Flagg. Run it only in an approved operator window with Joel present. Repository preparation does not authorize live changes.
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
+Status: **prepared, not applied**. This runbook changes live credentials and access on NAS and central host. Run it only in an approved operator window with Joel present. Repository preparation does not authorize live changes.
 
 ## Goal and current baseline
 
@@ -8,12 +10,12 @@ Move Central's OTEL writes to `otel_runtime` and operator reads to `otel_reader`
 
 The 2026-10-03 inspection found:
 
-- Flagg uses `com.joelclaw.clickhouse-tunnel` at `http://127.0.0.1:18123` to reach ClickHouse on three-body.
+- central host uses `com.joelclaw.clickhouse-tunnel` at `http://127.0.0.1:18123` to reach ClickHouse on NAS.
 - Central has `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, and `CLICKHOUSE_OTEL_TABLE`, but no user/password; it writes as passwordless `default`.
 - The complete `scoped-users.xml` policy has not been applied. Installing it first would cut off the writer.
 - ClickHouse has had memory failures and a large queued OTEL backlog. A running tunnel, `/ping`, or `stored:true` is not proof of a successful insert. Resolve store failures before narrowing `default`.
 
-The direct NAS LAN URL is not a Flagg default. Use the tunnel for credential-bearing requests. Keep ClickHouse off Tailscale Serve/Funnel. Verify live paths, container name, active XML fragments, and Compose service before applying; old proof paths are not deployment discovery.
+The direct NAS LAN URL is not a central host default. Use the tunnel for credential-bearing requests. Keep ClickHouse off Tailscale Serve/Funnel. Verify live paths, container name, active XML fragments, and Compose service before applying; old proof paths are not deployment discovery.
 
 ## Prepared files
 
@@ -39,7 +41,7 @@ One operator performs these steps in order. Keep a secret-free receipt with time
 
 Verify the existing tunnel listens only on `127.0.0.1:18123`; do not start a duplicate. Inspect ClickHouse version, active users/config and grants through the current operator connection. Record `count(), max(timestamp)` from `joelclaw.otel_events`, the OTEL outbox count, and recent worker errors. Count a large spool asynchronously rather than blocking the operator.
 
-Back up the actual three-body Compose files, `users.d/`, `config.d/`, and existing hash file to a timestamped private directory. Preserve ownership and mode. Do not touch ClickHouse data directories. On Flagg, back up `~/.config/system-bus.env`, the reader env file if present, and `~/.joelclaw/config.toml`. Record whether each file existed so rollback can remove a newly created config by moving it aside rather than inventing an empty replacement.
+Back up the actual NAS Compose files, `users.d/`, `config.d/`, and existing hash file to a timestamped private directory. Preserve ownership and mode. Do not touch ClickHouse data directories. On central host, back up `~/.config/system-bus.env`, the reader env file if present, and `~/.joelclaw/config.toml`. Record whether each file existed so rollback can remove a newly created config by moving it aside rather than inventing an empty replacement.
 
 **Rollback:** none needed; this step is read-only apart from private backups. If baseline queries fail, stop before applying ACL changes. Recover the store first.
 
@@ -60,13 +62,13 @@ Store the two OTEL plaintext values in agent-secrets under exactly:
 
 Use the current agent-secrets CLI help for its secure input/storage interface; do not pass passwords in argv or print lease results. If these names exist, preserve their prior values and consumers before rotating. Generate a separate default password for the later restriction step and keep it in the approved private operator store. Journal passwords are not required for the staged OTEL rollout.
 
-Compute lowercase SHA-256 digests from each value using `printf '%s'` (no newline). Populate a private copy of the hash env example, mode `0600`. The staged policies require `CLICKHOUSE_OTEL_RUNTIME_PASSWORD_SHA256`, `CLICKHOUSE_OTEL_READER_PASSWORD_SHA256`, and, at step 6, `CLICKHOUSE_DEFAULT_PASSWORD_SHA256`. Validate each used hash is exactly 64 lowercase hex characters. Copy only hashes to three-body. Lease plaintext into private Flagg config copies without logging it. Clear temporary shell values after use.
+Compute lowercase SHA-256 digests from each value using `printf '%s'` (no newline). Populate a private copy of the hash env example, mode `0600`. The staged policies require `CLICKHOUSE_OTEL_RUNTIME_PASSWORD_SHA256`, `CLICKHOUSE_OTEL_READER_PASSWORD_SHA256`, and, at step 6, `CLICKHOUSE_DEFAULT_PASSWORD_SHA256`. Validate each used hash is exactly 64 lowercase hex characters. Copy only hashes to NAS. Lease plaintext into private central host config copies without logging it. Clear temporary shell values after use.
 
 **Rollback:** before any consumer switches, restore previous secret values if rotated; revoke leases and retire only newly created unused credentials. Retain the old credentials until all consumers have passed verification. Never overwrite an existing secret without its recovery copy.
 
 ### 3. Install hashes and add users, preserving default
 
-Install the hash env file and Compose override on three-body, keeping the file mode `0600`. Run `docker compose config --quiet` in the verified active Compose directory, not `docker compose config` (which can print hashes).
+Install the hash env file and Compose override on NAS, keeping the file mode `0600`. Run `docker compose config --quiet` in the verified active Compose directory, not `docker compose config` (which can print hashes).
 
 Add **only** `users.d/otel-users.xml`. Keep the existing live fragment defining `default` unchanged. Do not install `scoped-users.xml` or `restricted-default.xml` yet. Inventory all active fragments for duplicate users/profiles and stop if either OTEL name already exists with a conflicting definition. Recreate the verified ClickHouse service if necessary for Docker to load the new hash environment; inspect access-config errors immediately.
 
@@ -91,7 +93,7 @@ Keep the file mode `0600`. The placeholder above is explanatory, not a shell com
 
 Configure the OTEL capability TOML with `otel_reader`. Populate a private reader env file from `otel-reader.env.example` using `clickhouse_otel_reader_password`. Direct usage queries already forward `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`; they do not read capability TOML. Run them in a subshell sourcing that reader file so the runtime password cannot leak into the operator shell. `CLICKHOUSE_QUERY_URL` takes precedence over `CLICKHOUSE_URL`, then defaults to the tunnel; verify any override deliberately.
 
-**Rollback:** restore the Flagg env/TOML/reader backups (move new files aside when previously absent) and reload the owning service. Leave additive users available while investigating. Default is still unchanged, so the prior writer configuration remains valid.
+**Rollback:** restore the central host env/TOML/reader backups (move new files aside when previously absent) and reload the owning service. Leave additive users available while investigating. Default is still unchanged, so the prior writer configuration remains valid.
 
 ### 5. Gate on a real write and scoped readback
 

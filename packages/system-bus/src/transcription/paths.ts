@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-export const MEDIA_ROOT = "/Volumes/badass-media/";
+const mediaMount = (process.env.JOELCLAW_MEDIA_MOUNT?.trim() || "/Volumes/nas-media").replace(/\/+$/u, "");
+if (!mediaMount.startsWith("/") || mediaMount.split("/").some((part) => part === "." || part === "..")) {
+  throw new Error("JOELCLAW_MEDIA_MOUNT must be an absolute mount directory, not a filesystem root");
+}
+export const MEDIA_ROOT = `${mediaMount}/`;
 export const DEFAULT_RIG_ROOT = "/Users/joel/Code/joelhooks/transcript-rig";
 
 export function rigRoot(): string {

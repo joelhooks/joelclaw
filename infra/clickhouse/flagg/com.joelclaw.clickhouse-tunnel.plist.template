@@ -23,8 +23,8 @@
     <string>-o</string>
     <string>StrictHostKeyChecking=yes</string>
     <string>-L</string>
-    <string>127.0.0.1:18123:192.168.1.163:8123</string>
-    <string>joel@three-body</string>
+    <string>127.0.0.1:18123:clickhouse.example.invalid:8123</string>
+    <string>ssh-user@nas.example.invalid</string>
   </array>
 
   <key>RunAtLoad</key>
@@ -40,8 +40,8 @@
   <integer>10</integer>
 
   <key>StandardOutPath</key>
-  <string>/Users/joel/.joelclaw/logs/clickhouse-tunnel.out.log</string>
+  <string>/path/to/home/.joelclaw/logs/clickhouse-tunnel.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/joel/.joelclaw/logs/clickhouse-tunnel.err.log</string>
+  <string>/path/to/home/.joelclaw/logs/clickhouse-tunnel.err.log</string>
 </dict>
 </plist>

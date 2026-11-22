@@ -14,8 +14,6 @@
     <dict>
         <key>HOME</key>
         <string>/Users/joel</string>
-        <key>SYSTEM_BUS_CENTRAL_HOST</key>
-        <string>flagg</string>
         <key>SYSTEM_BUS_CENTRAL_PORT</key>
         <string>3111</string>
         <key>SYSTEM_BUS_LOCAL_PORT</key>

@@ -11,15 +11,19 @@ case "${1:-}" in
   *) echo "Unknown argument: $1" >&2; exit 64 ;;
 esac
 
-TARGET_USER="${TARGET_USER:-joel}"
+TARGET_USER="${TARGET_USER:-${SUDO_USER:-$(id -un)}}"
+if [ "$TARGET_USER" = root ]; then
+  echo "Set TARGET_USER to the non-root runtime owner; refusing to select root"
+  exit 1
+fi
 TARGET_GROUP="${TARGET_GROUP:-staff}"
 TARGET_HOME="${TARGET_HOME:-/Users/${TARGET_USER}}"
 TARGET_UID="$(id -u "$TARGET_USER")"
 REPO_ROOT="${REPO_ROOT:-${TARGET_HOME}/Code/joelhooks/joelclaw}"
 SYSTEM_DAEMONS_DIR="/Library/LaunchDaemons"
 LAUNCH_AGENTS_DIR="${TARGET_HOME}/Library/LaunchAgents"
-SERVICE_PLACEMENT_FILE="${REPO_ROOT}/packages/endpoint-resolver/config/service-placement.json"
-HOSTNAME_SHORT="$(printf '%s' "${JOELCLAW_HOSTNAME_OVERRIDE:-$(hostname -s)}" | tr '[:upper:]' '[:lower:]')"
+SERVICE_PLACEMENT_FILE="${JOELCLAW_SERVICE_PLACEMENT_FILE:-${TARGET_HOME}/.config/joelclaw/service-placement.json}"
+HOSTNAME_SHORT="$(printf '%s' "${JOELCLAW_HOSTNAME_OVERRIDE:-$(hostname -s)}" | tr '[:upper:]' '[:lower:]' | cut -d. -f1)"
 JQ_BIN="${JQ_BIN:-/opt/homebrew/bin/jq}"
 AGENT_SECRETS_SERVICE_USER="${AGENT_SECRETS_SERVICE_USER:-joelclaw}"
 AGENT_SECRETS_SOCKET_GROUP="${AGENT_SECRETS_SOCKET_GROUP:-joelclaw-secrets}"
@@ -51,12 +55,17 @@ CRITICAL_LABELS=()
   exit 1
 }
 [ -f "$SERVICE_PLACEMENT_FILE" ] || {
-  echo "Missing service placement config: $SERVICE_PLACEMENT_FILE"
+  echo "Missing private service placement config: $SERVICE_PLACEMENT_FILE"
   exit 1
 }
 
-HEADLESS_RUNTIME_HOST="$($JQ_BIN -r '(first(.hosts[] | select(.services | index("joelclaw-headless-runtime")) | .hostname) // "") | ascii_downcase' "$SERVICE_PLACEMENT_FILE")"
-K8S_HOST="$($JQ_BIN -r '(first(.hosts[] | select(.services | index("k8s")) | .hostname) // "") | ascii_downcase' "$SERVICE_PLACEMENT_FILE")"
+"$JQ_BIN" -e 'type == "object" and .version == 1 and (.hosts | type == "array") and all(.hosts[]; (.hostname | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9.-]*$")) and (.services | type == "array" and all(.[]; . == "k8s" or . == "joelclaw-headless-runtime")))' "$SERVICE_PLACEMENT_FILE" >/dev/null || {
+  echo "Invalid private service placement config"
+  exit 1
+}
+
+HEADLESS_RUNTIME_HOST="$($JQ_BIN -r '(first(.hosts[] | select(.services | index("joelclaw-headless-runtime")) | .hostname) // "") | ascii_downcase | (split(".")[0] // "")' "$SERVICE_PLACEMENT_FILE")"
+K8S_HOST="$($JQ_BIN -r '(first(.hosts[] | select(.services | index("k8s")) | .hostname) // "") | ascii_downcase | (split(".")[0] // "")' "$SERVICE_PLACEMENT_FILE")"
 
 if [ "$HOSTNAME_SHORT" = "$HEADLESS_RUNTIME_HOST" ]; then
   CRITICAL_LABELS+=("${HEADLESS_RUNTIME_LABELS[@]}")
@@ -375,8 +384,10 @@ stop_manual_fallbacks() {
     pkill -f 'autossh .*127\.0\.0\.1:6379' >/dev/null 2>&1 || true
     pkill -f '127\.0\.0\.1:16443:10\.5\.0\.2:6443' >/dev/null 2>&1 || true
     pkill -f '127\.0\.0\.1:15000:10\.5\.0\.2:50000' >/dev/null 2>&1 || true
-    cancel_mux_forward '16443:10.5.0.2:6443'
-    cancel_mux_forward '127.0.0.1:15000:10.5.0.2:50000'
+    if [ -n "${KUBE_OPERATOR_TARGET_NODE:-}" ]; then
+      cancel_mux_forward "16443:${KUBE_OPERATOR_TARGET_NODE}:${KUBE_OPERATOR_TARGET_KUBE_PORT:-6443}"
+      cancel_mux_forward "127.0.0.1:15000:${KUBE_OPERATOR_TARGET_NODE}:${KUBE_OPERATOR_TARGET_TALOS_PORT:-50000}"
+    fi
     pkill -f 'svc/typesense 8108:8108' >/dev/null 2>&1 || true
   fi
 }

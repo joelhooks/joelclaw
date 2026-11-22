@@ -1,9 +1,4 @@
 {
   "version": 1,
-  "hosts": [
-    {
-      "hostname": "flagg",
-      "services": ["joelclaw-headless-runtime"]
-    }
-  ]
+  "hosts": []
 }

@@ -10,6 +10,8 @@ disable-model-invocation: true
 
 # PDF Brain Ingest v2 (ADR-0234)
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Staged artifact-chain pipeline with durable NAS storage, nomic embeddings, and workload queue orchestration.
 
 ## Pipeline v2 Architecture
@@ -139,14 +141,14 @@ If the batch stalls or books fail:
 
 - **Primary**: opendataloader-pdf v2.0.0 (Java-based, #1 in benchmarks, 0.90 accuracy)
 - **Fallback**: pypdf (basic text extraction if Java unavailable)
-- **Requires**: Java 11+ (OpenJDK 25 installed on panda, PATH configured in worker start.sh)
+- **Requires**: Java 11+ (OpenJDK 25 installed on retired host, PATH configured in worker start.sh)
 - **Speed**: ~2.5s per book on M4 Pro
 
 ## Embedding Model
 
 - **v2**: nomic-embed-text via ollama (GPU-accelerated on M4 Pro, 768-dim, retrieval-tuned). Pre-computed at ingest time, stored as raw float[] vectors. ~150x faster than Typesense CPU auto-embed.
 - **v1**: `ts/all-MiniLM-L12-v2` — 384-dim, general-purpose, Typesense auto-embed (legacy, still in `docs_chunks`)
-- Ollama runs on panda at `localhost:11434`. System-bus-worker (host process) embeds at ingest time.
+- Ollama runs on retired host at `localhost:11434`. System-bus-worker (host process) embeds at ingest time.
 
 ## Chunking Strategy (ADR-0234)
 

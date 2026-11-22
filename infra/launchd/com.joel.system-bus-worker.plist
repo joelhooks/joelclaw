@@ -36,7 +36,7 @@
         <key>OTEL_STORE</key>
         <string>forward</string>
         <key>OTEL_FORWARD_URL</key>
-        <string>http://flagg:3111/observability/emit</string>
+        <string>http://127.0.0.1:3111/observability/emit</string>
         <key>OTEL_FORWARD_TIMEOUT_MS</key>
         <string>2500</string>
         <key>OTEL_TYPESENSE_PROJECTION</key>

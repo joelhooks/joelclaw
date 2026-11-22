@@ -1,5 +1,7 @@
 # Adding a New Webhook Provider — Full Checklist
 
+For private topology, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders before running commands.
+
 Step-by-step for wiring a new external service's webhooks into the joelclaw gateway.
 
 ## 1. Create Provider Adapter
@@ -199,7 +201,7 @@ joelclaw inngest restart-worker --register
 
 ## 7. Register Webhook URL with External Service
 
-Public URL pattern: `https://panda.tail7af24.ts.net/webhooks/{provider}`
+Public URL pattern: `https://<tailnet-host>/webhooks/{provider}`
 
 Tailscale Funnel must be configured:
 

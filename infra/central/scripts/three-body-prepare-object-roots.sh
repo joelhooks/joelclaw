@@ -1,12 +1,16 @@
 #!/bin/sh
 set -eu
 
-HOT_PATH="${HOT_PATH:-/volume2/data/s3}"
-COLD_PATH="${COLD_PATH:-/volume1/joelclaw/s3}"
-FLAGG_UID="${FLAGG_UID:-502}"
-FLAGG_GID="${FLAGG_GID:-20}"
-FLAGG_GROUP="${FLAGG_GROUP:-staff}"
-FLAGG_USER="${FLAGG_USER:-joelclaw}"
+if [ "${1:-}" = --help ]; then
+  printf '%s\n' 'Set HOT_PATH, COLD_PATH, NAS_SERVICE_UID, NAS_SERVICE_GID, NAS_SERVICE_GROUP and NAS_SERVICE_USER.'
+  exit 0
+fi
+HOT_PATH="${HOT_PATH:?set the private hot object path}"
+COLD_PATH="${COLD_PATH:?set the private cold object path}"
+NAS_SERVICE_UID="${NAS_SERVICE_UID:-${FLAGG_UID:?set NAS_SERVICE_UID}}"
+NAS_SERVICE_GID="${NAS_SERVICE_GID:-${FLAGG_GID:?set NAS_SERVICE_GID}}"
+NAS_SERVICE_GROUP="${NAS_SERVICE_GROUP:-${FLAGG_GROUP:?set NAS_SERVICE_GROUP}}"
+NAS_SERVICE_USER="${NAS_SERVICE_USER:-${FLAGG_USER:?set NAS_SERVICE_USER}}"
 # Proof mode is intentionally broad to bypass NAS/NFS id-map weirdness during Gate 5 proof.
 # Harden after MinIO data-plane proof if NAS id mapping behaves.
 PROOF_MODE="${PROOF_MODE:-2777}"
@@ -19,32 +23,32 @@ if [ "$(id -u)" != "0" ]; then
 fi
 
 ensure_group() {
-  if getent group "$FLAGG_GID" >/dev/null 2>&1; then
-    echo "group gid ${FLAGG_GID} exists: $(getent group "$FLAGG_GID")"
-  elif getent group "$FLAGG_GROUP" >/dev/null 2>&1; then
-    echo "group ${FLAGG_GROUP} exists with different gid: $(getent group "$FLAGG_GROUP")"
+  if getent group "$NAS_SERVICE_GID" >/dev/null 2>&1; then
+    echo "group gid ${NAS_SERVICE_GID} exists: $(getent group "$NAS_SERVICE_GID")"
+  elif getent group "$NAS_SERVICE_GROUP" >/dev/null 2>&1; then
+    echo "group ${NAS_SERVICE_GROUP} exists with different gid: $(getent group "$NAS_SERVICE_GROUP")"
   else
-    echo "creating group ${FLAGG_GROUP} gid=${FLAGG_GID}"
-    /usr/builtin/sbin/groupadd -g "$FLAGG_GID" "$FLAGG_GROUP"
+    echo "creating group ${NAS_SERVICE_GROUP} gid=${NAS_SERVICE_GID}"
+    /usr/builtin/sbin/groupadd -g "$NAS_SERVICE_GID" "$NAS_SERVICE_GROUP"
   fi
 }
 
 ensure_user() {
-  if getent passwd "$FLAGG_UID" >/dev/null 2>&1; then
-    echo "user uid ${FLAGG_UID} exists: $(getent passwd "$FLAGG_UID")"
-  elif getent passwd "$FLAGG_USER" >/dev/null 2>&1; then
-    echo "user ${FLAGG_USER} exists with different uid: $(getent passwd "$FLAGG_USER")"
+  if getent passwd "$NAS_SERVICE_UID" >/dev/null 2>&1; then
+    echo "user uid ${NAS_SERVICE_UID} exists: $(getent passwd "$NAS_SERVICE_UID")"
+  elif getent passwd "$NAS_SERVICE_USER" >/dev/null 2>&1; then
+    echo "user ${NAS_SERVICE_USER} exists with different uid: $(getent passwd "$NAS_SERVICE_USER")"
   else
-    echo "creating user ${FLAGG_USER} uid=${FLAGG_UID} gid=${FLAGG_GID}"
+    echo "creating user ${NAS_SERVICE_USER} uid=${NAS_SERVICE_UID} gid=${NAS_SERVICE_GID}"
     /usr/builtin/sbin/useradd \
-      -u "$FLAGG_UID" \
-      -g "$FLAGG_GID" \
+      -u "$NAS_SERVICE_UID" \
+      -g "$NAS_SERVICE_GID" \
       -G users \
       -M \
       -N \
       -s /bin/false \
-      -c "Flagg joelclaw NFS identity" \
-      "$FLAGG_USER"
+      -c "Central joelclaw NFS identity" \
+      "$NAS_SERVICE_USER"
   fi
 }
 
@@ -57,10 +61,10 @@ ensure_group
 ensure_user
 
 for path in "$HOT_PATH" "$COLD_PATH"; do
-  echo "preparing $path for Flagg service uid:gid ${FLAGG_UID}:${FLAGG_GID} mode=${mode}"
+  echo "preparing $path for Central service uid:gid ${NAS_SERVICE_UID}:${NAS_SERVICE_GID} mode=${mode}"
   mkdir -p "$path"
-  rm -rf "$path/.joelclaw-flagg-nas-proof"
-  chown -R "${FLAGG_UID}:${FLAGG_GID}" "$path"
+  rm -rf "$path/.joelclaw-nas-proof"
+  chown -R "${NAS_SERVICE_UID}:${NAS_SERVICE_GID}" "$path"
   chmod -R u+rwX,g+rwX "$path"
   chmod "$mode" "$path"
   ls -ldn "$path"

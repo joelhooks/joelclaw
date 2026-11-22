@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NAS_BACKUPS_ROOT="${JOELCLAW_NAS_BACKUPS_HDD_ROOT:-/Volumes/backups/services/joelclaw}"
+NAS_BACKUPS_ROOT="${JOELCLAW_NAS_BACKUPS_HDD_ROOT:-/Volumes/nas-backups/joelclaw}"
 ARCHIVE_ROOT="${SYSTEM_LOG_ARCHIVE_ROOT:-${NAS_BACKUPS_ROOT}/slog/archive}"
-SOURCE="panda:~/Vault/system/system-log.jsonl"
+SOURCE="${SYSTEM_LOG_ARCHIVE_SOURCE:?set a private scp source for the archived system log}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 SNAPSHOT="${ARCHIVE_ROOT}/system-log-panda-${STAMP}.jsonl"
 RECEIPT="${SNAPSHOT}.receipt.json"
@@ -41,7 +41,7 @@ fi
 cat > "${RECEIPT}.partial" <<EOF
 {
   "ok": true,
-  "source": "panda:~/Vault/system/system-log.jsonl",
+  "source": "configured archive source",
   "snapshotPath": "${SNAPSHOT}",
   "archivedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "lineCount": ${DOC_COUNT},

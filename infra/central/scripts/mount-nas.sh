@@ -119,6 +119,7 @@ status_one() {
 
 case "$ACTION" in
   mount)
+    require_nas_config
     require_root
     require_command route
     require_command ifconfig
@@ -129,21 +130,21 @@ case "$ACTION" in
     assert_10gbe_route
     mount_one nas-nvme "$CENTRAL_NAS_NVME_EXPORT" "$CENTRAL_NAS_NVME_MOUNT"
     mount_one nas-hdd "$CENTRAL_NAS_HDD_EXPORT" "$CENTRAL_NAS_HDD_MOUNT"
-    mount_one badass-media "$CENTRAL_NAS_MEDIA_EXPORT" "$CENTRAL_NAS_MEDIA_MOUNT"
-    log "NAS mounts ready: nas-nvme, nas-hdd, badass-media"
+    mount_one nas-media "$CENTRAL_NAS_MEDIA_EXPORT" "$CENTRAL_NAS_MEDIA_MOUNT"
+    log "NAS mounts ready: nas-nvme, nas-hdd, nas-media"
     ;;
   status)
     require_command mount
     status=0
     status_one nas-nvme "$CENTRAL_NAS_NVME_MOUNT" || status=1
     status_one nas-hdd "$CENTRAL_NAS_HDD_MOUNT" || status=1
-    status_one badass-media "$CENTRAL_NAS_MEDIA_MOUNT" || status=1
+    status_one nas-media "$CENTRAL_NAS_MEDIA_MOUNT" || status=1
     exit "$status"
     ;;
   unmount)
     require_root
     require_command umount
-    unmount_one badass-media "$CENTRAL_NAS_MEDIA_MOUNT"
+    unmount_one nas-media "$CENTRAL_NAS_MEDIA_MOUNT"
     unmount_one nas-hdd "$CENTRAL_NAS_HDD_MOUNT"
     unmount_one nas-nvme "$CENTRAL_NAS_NVME_MOUNT"
     ;;

@@ -1,5 +1,7 @@
 # joelclaw Architecture
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 ## Overview
 
 joelclaw is a personal AI infrastructure monorepo built around event-driven workflows, always-on gateway services, and sandboxed agent execution. The system follows hexagonal architecture principles (ADR-0144), with heavy logic in standalone packages behind interfaces.
@@ -21,7 +23,7 @@ joelclaw is a personal AI infrastructure monorepo built around event-driven work
 ### Infrastructure Layer
 
 ```
-┌─ Mac Mini "Panda" (M4 Pro, 64GB, always-on) ──────────────────────┐
+┌─ Mac Mini "<retired-host>" (M4 Pro, 64GB, always-on) ──────────────────────┐
 │                                                                     │
 │  Colima VM (VZ framework, aarch64, grpc port-forwarder, 24 GiB)     │
 │    └─ Talos v1.12.4 container (18 GiB cap) → k8s v1.35.0 (single node) │
@@ -40,7 +42,7 @@ joelclaw is a personal AI infrastructure monorepo built around event-driven work
 │                                                                     │
 │  Operator access: direct Colima ports 6443 (kube) / 50000 (Talos)   │
 │  Gateway daemon (pi session, always-on, Redis event bridge)         │
-│  NAS "three-body" (ASUSTOR, 10GbE NFS, 64TB RAID5 + 1.9TB NVMe)  │
+│  NAS "<nas>" (ASUSTOR, 10GbE NFS, 64TB RAID5 + 1.9TB NVMe)  │
 │  Tailscale mesh (all devices)                                       │
 └─────────────────────────────────────────────────────────────────────┘
 ```

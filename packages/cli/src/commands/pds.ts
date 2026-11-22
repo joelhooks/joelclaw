@@ -8,7 +8,7 @@ import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
 
 const PDS_URL = (process.env.PDS_URL ?? "http://localhost:9627").replace(/\/$/, "")
-const DEFAULT_PDS_HANDLE = process.env.PDS_JOEL_HANDLE ?? "joel.pds.panda.tail7af24.ts.net"
+const DEFAULT_PDS_HANDLE = process.env.PDS_JOEL_HANDLE?.trim() ?? ""
 const SESSION_CACHE_PATH = process.env.PDS_SESSION_PATH ?? join(homedir(), ".joelclaw", "pds-session.json")
 const SESSION_MAX_AGE_MS = 90 * 60 * 1000
 const REQUEST_TIMEOUT_MS = 5_000

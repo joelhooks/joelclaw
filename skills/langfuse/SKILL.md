@@ -11,7 +11,9 @@ tags:
 
 # Langfuse — decommissioned 2026-07-09
 
-Langfuse is gone. It was never migrated to Flagg, its traces API 429'd/422'd under real query load (2026-07 backup/self-healing token-drain post-mortem), and every code path was removed from this repo (`grep -ri langfuse packages/ apps/` returns zero).
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
+Langfuse is gone. It was never migrated to central host, its traces API 429'd/422'd under real query load (2026-07 backup/self-healing token-drain post-mortem), and every code path was removed from this repo (`grep -ri langfuse packages/ apps/` returns zero).
 
 ## Where usage observability lives now
 

@@ -15,8 +15,7 @@ import {
   getReviewSubmitRatelimit,
 } from "@/lib/review-submit-guard";
 
-const DEFAULT_INNGEST_EVENT_URL = "https://panda.tail7af24.ts.net/webhooks/joelclaw";
-const INNGEST_EVENT_URL = process.env.INNGEST_EVENT_URL ?? DEFAULT_INNGEST_EVENT_URL;
+const INNGEST_EVENT_URL = process.env.INNGEST_EVENT_URL?.trim();
 const JOELCLAW_WEBHOOK_SECRET = process.env.JOELCLAW_WEBHOOK_SECRET;
 
 export async function POST(request: Request) {
@@ -47,6 +46,9 @@ export async function POST(request: Request) {
 
     let res: Response;
     try {
+      if (!INNGEST_EVENT_URL) {
+        throw new Error("INNGEST_EVENT_URL is not configured");
+      }
       if (!JOELCLAW_WEBHOOK_SECRET) {
         throw new Error("JOELCLAW_WEBHOOK_SECRET is not configured");
       }

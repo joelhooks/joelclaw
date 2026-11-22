@@ -187,7 +187,7 @@ export function createStreamInboundPublisher(options: StreamInboundPublisherOpti
   const machineId = options.machineId
     ?? process.env.JOELCLAW_MACHINE_ID?.trim()
     ?? process.env.HOSTNAME?.trim()
-    ?? "flagg";
+    ?? "gateway";
   return {
     publishEvent: async (event: InboundEvent): Promise<void> => {
       let workRequest: InboundReceivedPayload["workRequest"];

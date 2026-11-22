@@ -15,7 +15,6 @@ import { api } from "@/lib/convex-api";
 
 type NetworkNode = {
   publicName: string;
-  privateName?: string;
   status: string;
   specs: string[];
   role: string;
@@ -143,8 +142,7 @@ export default function NetworkPage() {
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Network</h1>
         <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
-          Always-on personal infrastructure. <span className="text-claw">Overlook</span> runs the cluster, agents,
-          and all pipelines. <span className="text-neutral-300">Blaine</span> bridges telephony. <span className="text-neutral-300">Derry</span> holds 64 TB of archive. Everything connected via encrypted WireGuard mesh.
+          Runtime, service, and storage status.
         </p>
       </header>
 
@@ -192,10 +190,9 @@ async function NetworkSections() {
     listByType("network_stack"),
   ]);
 
-  const nodeOrder = ["Overlook", "Blaine", "Derry", "Flagg", "Todash"];
   const nodes = nodeDocs
     .map((doc) => doc.fields as unknown as NetworkNode)
-    .sort((a, b) => nodeOrder.indexOf(a.publicName) - nodeOrder.indexOf(b.publicName));
+    .sort((a, b) => a.publicName.localeCompare(b.publicName));
 
   const podOrder = ["inngest-0", "redis-0", "typesense-0", "bluesky-pds", "livekit-server"];
   const k8sPods = podDocs
@@ -267,7 +264,6 @@ async function NetworkSections() {
                   />
                   <div className="min-w-0">
                     <h3 className="text-base font-semibold text-neutral-100">{node.publicName}</h3>
-                    {node.privateName && <p className="font-mono text-xs text-neutral-600">{node.privateName}</p>}
                   </div>
                 </div>
 

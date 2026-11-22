@@ -17,7 +17,9 @@ disable-model-invocation: true
 
 # Local Convex
 
-Operate Joel's local self-hosted Convex setup. This is not generic Convex advice. It is the local joelclaw path: Central Postgres for database state and Garage on `three-body` for S3-compatible object storage. The custom MinIO install is now a rollback/reference path. ASUSTOR MinIO CE is only a temporary smoke-test reference.
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
+Operate Joel's local self-hosted Convex setup. This is not generic Convex advice. It is the local joelclaw path: Central Postgres for database state and Garage on `<nas>` for S3-compatible object storage. The custom MinIO install is now a rollback/reference path. ASUSTOR MinIO CE is only a temporary smoke-test reference.
 
 ## Canonical Sources
 
@@ -32,9 +34,9 @@ If those disagree, prefer the brain project note for current truth, then verify 
 
 ## Current Local Topology
 
-- NAS host: `three-body`
-- Tailnet IP: `100.67.156.41`
-- Prefer the tailnet IP in machine config and smoke tests. Treat `three-body` as a human label, not the Convex S3 endpoint.
+- NAS host: `<nas>`
+- Tailnet IP: `<tailnet-ip>`
+- Prefer the tailnet IP in machine config and smoke tests. Treat `<nas>` as a human label, not the Convex S3 endpoint.
 - NAS model: `AS6508T`
 - ADM: `5.1.3.RI81`
 - Database state: Central Postgres, not NAS storage.
@@ -45,27 +47,27 @@ If those disagree, prefer the brain project note for current truth, then verify 
   - TCP: `127.0.0.1:5432`
   - socket: `/Users/Shared/joelclaw/run/.s.PGSQL.5432`
   - auth: local socket uses peer auth; TCP uses SCRAM password auth.
-- Canonical object storage: Garage on `three-body`.
-- Garage S3 API: `http://100.67.156.41:39100`
-- Garage data: `/volume1/joelclaw/s3/garage/data`
-- Garage metadata: `/volume1/joelclaw/s3/garage/meta`
-- Garage snapshots: `/volume1/joelclaw/s3/garage/snapshots`
-- Garage Compose path on NAS: `/volume1/joelclaw/s3/garage-compose/compose.yaml`
-- Garage Convex S3 env on NAS: `/volume1/joelclaw/s3/garage-compose/convex-s3.env`
-- Garage redacted Convex S3 env on NAS: `/volume1/joelclaw/s3/garage-compose/convex-s3.redacted.env`
+- Canonical object storage: Garage on `<nas>`.
+- Garage S3 API: `http://<tailnet-ip>:<service-port>`
+- Garage data: `<nas-hdd-export>/s3/garage/data`
+- Garage metadata: `<nas-hdd-export>/s3/garage/meta`
+- Garage snapshots: `<nas-hdd-export>/s3/garage/snapshots`
+- Garage Compose path on NAS: `<nas-export>/s3/garage-compose/compose.yaml`
+- Garage Convex S3 env on NAS: `<nas-hdd-export>/s3/garage-compose/convex-s3.env`
+- Garage redacted Convex S3 env on NAS: `<nas-hdd-export>/s3/garage-compose/convex-s3.redacted.env`
 
 Custom MinIO is a rollback/reference path, not canonical:
 
-- Custom MinIO API: `http://100.67.156.41:39000`
-- Custom MinIO console: `http://100.67.156.41:39001`
-- Custom MinIO data: `/volume1/joelclaw/s3/minio/data`
-- Custom MinIO Compose path on NAS: `/volume1/joelclaw/s3/minio-compose/compose.yaml`
-- Custom MinIO Convex S3 env on NAS: `/volume1/joelclaw/s3/minio-compose/convex-s3.env`
+- Custom MinIO API: `http://<tailnet-ip>:<service-port>`
+- Custom MinIO console: `http://<tailnet-ip>:<service-port>`
+- Custom MinIO data: `<nas-hdd-export>/s3/minio/data`
+- Custom MinIO Compose path on NAS: `<nas-export>/s3/minio-compose/compose.yaml`
+- Custom MinIO Convex S3 env on NAS: `<nas-hdd-export>/s3/minio-compose/convex-s3.env`
 
 ASUSTOR MinIO CE is not canonical:
 
-- CE API: `http://100.67.156.41:29990`
-- CE console: `http://100.67.156.41:29991`
+- CE API: `http://<tailnet-ip>:<service-port>`
+- CE console: `http://<tailnet-ip>:<service-port>`
 - CE data: `/share/MinIOCE/data`
 - CE login verified during setup: `minioadmin / minioadminPassWD9001`
 - CE exists only as a temporary smoke-test reference and should be uninstalled after the custom path is proven through Convex.
@@ -86,10 +88,10 @@ Use the generated secret values from the NAS env file. Do not print them in chat
 
 ```sh
 AWS_REGION=usw2
-S3_ENDPOINT_URL=http://100.67.156.41:39100
+S3_ENDPOINT_URL=http://<tailnet-ip>:<service-port>
 AWS_S3_FORCE_PATH_STYLE=true
-AWS_ACCESS_KEY_ID=<from /volume1/joelclaw/s3/garage-compose/convex-s3.env>
-AWS_SECRET_ACCESS_KEY=<from /volume1/joelclaw/s3/garage-compose/convex-s3.env>
+AWS_ACCESS_KEY_ID=<from <nas-hdd-export>/s3/garage-compose/convex-s3.env>
+AWS_SECRET_ACCESS_KEY=<from <nas-hdd-export>/s3/garage-compose/convex-s3.env>
 S3_STORAGE_EXPORTS_BUCKET=joelclaw-local-usw2-convex-exports
 S3_STORAGE_SNAPSHOT_IMPORTS_BUCKET=joelclaw-local-usw2-convex-snapshot-imports
 S3_STORAGE_MODULES_BUCKET=joelclaw-local-usw2-convex-modules
@@ -102,9 +104,9 @@ S3_STORAGE_SEARCH_BUCKET=joelclaw-local-usw2-convex-search
 Prefer checks that do not reveal secrets:
 
 ```sh
-tailscale ping --timeout=5s --c 2 three-body
-nc -vz -w 5 100.67.156.41 39100
-curl -sS -m 5 -o /tmp/garage-root.out -w '%{http_code}\n' http://100.67.156.41:39100/
+tailscale ping --timeout=5s --c 2 <nas>
+nc -vz -w 5 <tailnet-ip> <object-api-port>
+curl -sS -m 5 -o /tmp/garage-root.out -w '%{http_code}\n' http://<tailnet-ip>:<service-port>/
 ```
 
 Garage does not allow anonymous S3 access; a `403 AccessDenied` response from `/` proves the API is reachable.
@@ -112,25 +114,25 @@ Garage does not allow anonymous S3 access; a `403 AccessDenied` response from `/
 For MinIO rollback/reference only:
 
 ```sh
-curl -fsS -m 5 http://100.67.156.41:39000/minio/health/ready
-nc -vz -w 5 100.67.156.41 39000
-nc -vz -w 5 100.67.156.41 39001
+curl -fsS -m 5 http://<tailnet-ip>:<service-port>/minio/health/ready
+nc -vz -w 5 <tailnet-ip> <s3-api-port>
+nc -vz -w 5 <tailnet-ip> <object-console-port>
 ```
 
 For CE reference only:
 
 ```sh
-curl -fsS -m 5 http://100.67.156.41:29990/minio/health/ready
+curl -fsS -m 5 http://<tailnet-ip>:<service-port>/minio/health/ready
 ```
 
 ## NAS Access Rules
 
-- Use one SSH session at a time. `three-body` has reset SSH handshakes after bursts of concurrent probes.
+- Use one SSH session at a time. `<nas>` has reset SSH handshakes after bursts of concurrent probes.
 - Back off after `kex_exchange_identification` or `Not allowed at this time`; do not hammer SSH.
-- `joel@three-body` can inspect system state.
+- `<ssh-user>@<nas>` can inspect system state.
 - `joel` is in `administrators`, but Docker socket access is still denied because `/var/run/docker.sock` is `root:root` with mode `660`.
 - Docker operations require `sudo` or an ADM/admin path.
-- Do not probe `admin@three-body` or `root@three-body` repeatedly; earlier bad auth contributed to lockout symptoms.
+- Do not probe `admin@<nas>` or `root@<nas>` repeatedly; earlier bad auth contributed to lockout symptoms.
 
 ## Central Postgres Rules
 
@@ -151,20 +153,20 @@ sudo -u joelclaw psql -h /Users/Shared/joelclaw/run -p 5432 -d postgres
 The Garage installer has already completed successfully. Re-run it only to reconcile the service after intentional edits:
 
 ```sh
-ssh -t joel@three-body 'sudo sh /volume1/joelclaw/s3/install-three-body-convex-garage.sh'
+ssh -t <ssh-user>@<nas> 'sudo sh <nas-export>/s3/install-three-body-convex-garage.sh'
 ```
 
 The installer:
 
 - runs `joelclaw-garage` separately from custom MinIO and ASUSTOR MinIO CE,
-- uses S3 API port `39100`,
-- writes data under `/volume1/joelclaw/s3/garage/data`,
-- writes metadata under `/volume1/joelclaw/s3/garage/meta`,
-- writes metadata snapshots under `/volume1/joelclaw/s3/garage/snapshots`,
+- uses S3 API port `<object-api-port>`,
+- writes data under `<nas-hdd-export>/s3/garage/data`,
+- writes metadata under `<nas-hdd-export>/s3/garage/meta`,
+- writes metadata snapshots under `<nas-hdd-export>/s3/garage/snapshots`,
 - uses a pinned amd64 Garage image digest,
 - generates Garage admin/RPC tokens and Convex-specific S3 credentials on the NAS,
 - creates the five Convex buckets,
-- writes `/volume1/joelclaw/s3/garage-compose/convex-s3.env`,
+- writes `<nas-hdd-export>/s3/garage-compose/convex-s3.env`,
 - mirrors existing objects from custom MinIO into Garage,
 - runs an upload/read/delete smoke test through the Convex-specific credentials.
 
@@ -180,7 +182,7 @@ The current projectless setup staged a local runner at:
 
 Important files:
 
-- `prepare-env.sh` imports `/volume1/joelclaw/s3/garage-compose/convex-s3.env` from the NAS and writes a local `.env` without printing secrets.
+- `prepare-env.sh` imports `<nas-hdd-export>/s3/garage-compose/convex-s3.env` from the NAS and writes a local `.env` without printing secrets.
 - `prepare-env.sh` preserves the existing `CONVEX_POSTGRES_PASSWORD` and `INSTANCE_SECRET` when switching S3 endpoints; do not rotate database credentials just to change object storage.
 - `bootstrap-postgres.sh` creates/updates the `convex` Postgres role and `joelclaw_convex` database via `sudo -u joelclaw`.
 - `compose.yaml` starts `ghcr.io/get-convex/convex-backend` and `ghcr.io/get-convex/convex-dashboard`.
@@ -284,7 +286,7 @@ The healthy self-hosted backend `/version` response is currently `unknown`.
 - Never paste Garage admin/RPC tokens, Convex Garage credentials, root MinIO credentials, or Convex MinIO credentials into chat.
 - Never commit `.env`, `convex-s3.env`, admin tokens, root credentials, access keys, or secret keys.
 - It is okay to read and report the redacted env file.
-- If a command must use secrets, prefer running it on `three-body` where the env file already lives.
+- If a command must use secrets, prefer running it on `<nas>` where the env file already lives.
 - If copying env values to another host, use the existing secret-management path for that project, not ad hoc notes.
 
 ## Operating Sequence
@@ -292,7 +294,7 @@ The healthy self-hosted backend `/version` response is currently `unknown`.
 When asked to wire or debug local Convex:
 
 1. Read the brain project note.
-2. Verify Garage S3 API reachability on `39100`.
+2. Verify Garage S3 API reachability on `<object-api-port>`.
 3. Verify whether Convex env is pointing at Garage by IP, not MinIO CE and not the tailnet alias.
 4. Confirm Central Postgres is the DB target; do not move Postgres state to NAS.
 5. Run a Convex-level export/import or file upload smoke test.
@@ -302,10 +304,10 @@ When asked to wire or debug local Convex:
 
 ## Gotchas
 
-- The old CE smoke-test buckets do not prove the durable path. Only Garage on `39100` counts for the current canonical path.
+- The old CE smoke-test buckets do not prove the durable path. Only Garage on `<object-api-port>` counts for the current canonical path.
 - Do not expose Convex with `0.0.0.0` just because Docker port binding is convenient. Use selected LAN/tailnet forwards.
 - Tailscale Serve has unrelated routes on this node; do not reset the whole Serve config when only changing Convex ports.
 - The dashboard bakes in one public deployment URL. Keep separate LAN and tailnet dashboard instances if both access paths need to work cleanly.
 - The NAS SSH service is sensitive to rapid probes. Parallel SSH commands can cause resets.
 - Garage image availability can change; if changing image tags, verify current registry availability and pin a digest.
-- Do not silently switch to local Flagg SSD object storage for Convex durability. The object storage target is NAS-backed Garage.
+- Do not silently switch to local central host SSD object storage for Convex durability. The object storage target is NAS-backed Garage.

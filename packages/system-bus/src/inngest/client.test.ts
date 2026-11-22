@@ -52,7 +52,7 @@ describe("MEM-2 client event schema acceptance tests", () => {
 
   test("supports docs/ingest.requested with docs metadata", async () => {
     const ingestData: Events["docs/ingest.requested"]["data"] = {
-      nasPath: "/Volumes/services/joelclaw/books/programming/example.pdf",
+      nasPath: "/Volumes/nas-services/joelclaw/books/programming/example.pdf",
       title: "Example Document",
       tags: ["programming", "ai"],
       storageCategory: "programming",
@@ -68,7 +68,7 @@ describe("MEM-2 client event schema acceptance tests", () => {
     expect(result).toMatchObject({
       name: "docs/ingest.requested",
       data: {
-        nasPath: "/Volumes/services/joelclaw/books/programming/example.pdf",
+        nasPath: "/Volumes/nas-services/joelclaw/books/programming/example.pdf",
         title: "Example Document",
       },
     });
@@ -76,7 +76,7 @@ describe("MEM-2 client event schema acceptance tests", () => {
 
   test("supports docs/ingest.requested with filePath fallback", async () => {
     const ingestData: Events["docs/ingest.requested"]["data"] = {
-      filePath: "/Volumes/services/joelclaw/books/programming/example.pdf",
+      filePath: "/Volumes/nas-services/joelclaw/books/programming/example.pdf",
       title: "Example Document",
       tags: ["programming", "ai"],
       storageCategory: "programming",
@@ -92,7 +92,7 @@ describe("MEM-2 client event schema acceptance tests", () => {
     expect(result).toMatchObject({
       name: "docs/ingest.requested",
       data: {
-        filePath: "/Volumes/services/joelclaw/books/programming/example.pdf",
+        filePath: "/Volumes/nas-services/joelclaw/books/programming/example.pdf",
         title: "Example Document",
       },
     });
@@ -127,7 +127,7 @@ describe("MEM-2 client event schema acceptance tests", () => {
   test("supports pipeline/book.downloaded with selection metadata", async () => {
     const downloaded: Events["pipeline/book.downloaded"]["data"] = {
       title: "Designing Data-Intensive Applications",
-      nasPath: "/volume1/services/joelclaw/books/aa-book/2026/ddia.pdf",
+      nasPath: "/exports/services/joelclaw/books/aa-book/2026/ddia.pdf",
       md5: "0123456789abcdef0123456789abcdef",
       query: "designing data-intensive applications",
       selectedBy: "inference",

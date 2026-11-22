@@ -12,7 +12,7 @@ TARGET_PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 ENV_FILE="${HOME}/.config/system-bus.env"
 BINARY="${TYPESENSE_BOOKS_BINARY:-/opt/homebrew/opt/typesense-server@30.2/bin/typesense-server}"
 HEALTH_URL="http://127.0.0.1:8110/health"
-TAILNET_HEALTH_URL="${TYPESENSE_BOOKS_TAILNET_HEALTH_URL:-http://joels-mac-studio.tail7af24.ts.net:8110/health}"
+TAILNET_HEALTH_URL="${TYPESENSE_BOOKS_TAILNET_HEALTH_URL:?set the private Typesense books health URL}"
 # Replaying the 241k-vector book index can take 25-30 minutes after a cold boot.
 HEALTH_ATTEMPTS="${TYPESENSE_BOOKS_HEALTH_ATTEMPTS:-2400}"
 # The job supports Aqua auto-load and explicit Background/user-domain bootstrap.

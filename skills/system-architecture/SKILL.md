@@ -15,6 +15,8 @@ tags:
 
 # System Architecture (Canonical Topology)
 
+For private topology, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders before running commands.
+
 This skill is the **single source of truth** for joelclaw system wiring.
 
 Freshness notes:
@@ -100,119 +102,13 @@ This refresh folds in work from:
 
 ---
 
-## 0) Current Operator Map
+## 0) Operator map
 
-The old mental model was "Panda is joelclaw." That is no longer precise enough.
+See `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill for current host assignments, accounts, storage, and private service addresses. Do not infer placement from this skill's historical process examples.
 
-Use these terms:
+## 1) Verify host placement
 
-| Term                | Meaning                                                                                        | Current truth                                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Network             | Users + Machines coordinated by one Central                                                    | Logical boundary, not the tailnet/k8s cluster                                                                          |
-| Central             | single authoritative joelclaw service for the Network                                          | Flagg is authoritative for agent-mail and Run capture; verify remaining service families individually during migration |
-| Central host target | Machine consolidating Central responsibilities                                                 | Flagg / Mac Studio, `machine_id=mac-studio-central`                                                                    |
-| Relay Machine       | machine that hosts account-bound/local-hardware-bound relays while delegating state to Central | Panda becomes this after cutover; satellites stay thin                                                                 |
-| Satellite Machine   | thin local Pi/Codex/Claude runner with capture/search/repair hooks                             | Blaine and Flagg bootstrap through `scripts/setup-satellite-rig.sh`                                                    |
-| Run                 | one captured agent invocation                                                                  | raw JSONL + metadata first, SQLite FTS is the live search index                                                        |
-| Conversation        | sibling Run label for an interactive context                                                   | not the source of truth                                                                                                |
-| Project Thread      | private `#brain-joel` operator workroom for a bounded objective                                | coordination only; does not authorize public replies                                                                   |
-
-Current authority split (verified 2026-07-10):
-
-- **Flagg is authoritative for agent-mail and Run capture ingress.** The agent-mail daemon binds Flagg loopback; Blaine and Panda use SSH connector LaunchAgents so every `joelclaw mail` client reaches the same mailbox without exposing the service on the tailnet.
-- **Panda is migration debt plus Relay responsibilities.** Its independent agent-mail daemon and Talon are removed. A reboot-survivable SSH connector now binds Panda IPv4 loopback `127.0.0.1:3111` and forwards legacy `/api/runs` and `/webhooks` ingress to Flagg. The legacy system worker still owns the IPv6 listener until its system LaunchDaemon is booted out with sudo.
-- **Satellites stay thin**. They run Pi/Codex/Claude, local capture hooks, and connectors to Central. Do not install independent stateful Central services on a satellite without a specific reason.
-- **SQLite indexes Runs**. NAS/local Run blobs are the source of truth; `sessions.db` is the compact live FTS index. The retired Typesense `runs_dev` and `run_chunks_dev` collections must not be recreated.
-- **Flagg splits book search from the operational Typesense node.** The system LaunchDaemon on `127.0.0.1:8108` holds operational projections. The user LaunchAgent `com.joelclaw.typesense-books` on `127.0.0.1:8110` holds `docs` and `docs_chunks_v2`. `DOCS_TYPESENSE_URL` routes book readers and writers. A tailnet-only TCP forward exposes `8110` to Blaine.
-- **The book node is not a replica.** A Typesense replica would copy every collection and repeat the same memory and startup cost. The separate process gives book indexing its own failure and restart boundary.
-
-Cutover rule: avoid split-brain. Panda and Flagg must not both accept authoritative writes for the same Central service family. Gate 5 permits shadow smoke tests and migration rehearsal, but authority flips only inside an approved freeze/cutover window.
-
----
-
-## 1) Physical Topology
-
-### Legacy Central snapshot: Panda
-
-```text
-Mac Mini "Panda" (host macOS)
-├─ launchd services (gateway, worker supervisor, caddy, talon, agent-mail, etc.)
-├─ Colima VM (driver: VZ, arch: aarch64, runtime: docker, VM IP: 192.168.64.2)
-│  └─ Talos node: joelclaw-controlplane-1 (k8s v1.35.0, internal IP 10.5.0.2)
-│     ├─ namespace: joelclaw
-│     │  ├─ inngest (StatefulSet + NodePort 8288/8289)
-│     │  ├─ redis (StatefulSet + NodePort 6379)
-│     │  ├─ typesense (StatefulSet + ClusterIP 8108)
-│     │  ├─ restate (StatefulSet + NodePort 8080/9070/9071)
-│     │  ├─ system-bus-worker (Deployment + ClusterIP 3111)
-│     │  ├─ restate-worker (Deployment + ClusterIP 9080; full agent image + Firecracker)
-│     │  ├─ dkron (StatefulSet + ClusterIP 8080)
-│     │  ├─ docs-api (Deployment + NodePort 3838)
-│     │  ├─ livekit-server (Deployment + NodePort 7880/7881)
-│     │  ├─ bluesky-pds (Deployment + NodePort 3000)
-│     │  └─ minio (StatefulSet + NodePort 30900/30901)
-│     └─ namespace: aistor
-│        ├─ aistor operator (Deployments: adminjob-operator, object-store-operator)
-│        └─ aistor-s3 object store (StatefulSet + NodePort 31000/31001)
-├─ Caddy reverse proxy (tailnet HTTPS fan-in)
-├─ Gateway daemon (embedded pi session)
-├─ Firecracker substrate (requires Colima nestedVirtualization=true for /dev/kvm; OFF by default — unstable under load)
-└─ NAS "three-body" (NFS tiers per ADR-0088)
-```
-
-### Flagg shadow / next Central target
-
-```text
-Mac Studio "Flagg" (host macOS; target Central host)
-├─ system tailscaled path required for cutover
-├─ Central Service Account: joelclaw:staff
-├─ service root: /Users/Shared/joelclaw/
-│  ├─ services/{redis,typesense,inngest,minio}/
-│  ├─ backups/central/
-│  ├─ logs/central/
-│  └─ src/joelclaw/ (service-owned checkout)
-├─ shadow Compose stack (not authoritative)
-│  ├─ Redis 7-alpine
-│  ├─ Typesense 30.1
-│  ├─ Inngest self-hosted
-│  ├─ Restate 1.6.2 (Docker named volume for data)
-│  └─ MinIO smoke surface
-├─ system LaunchDaemon templates
-│  ├─ com.joelclaw.central.colima
-│  ├─ com.joelclaw.central.compose
-│  ├─ com.joelclaw.central.health
-│  └─ com.joelclaw.central.nas-mounts
-├─ Chorus/Rhizomatic (parked historical canary)
-│  ├─ no session briefing injection and no live claims
-│  ├─ com.joelclaw.chorus-rhizomatic may remain loaded only until steering completes the sudo stop
-│  └─ old 4821/7331 endpoints are historical troubleshooting context, not active dependencies
-└─ NAS "three-body" proof path
-   ├─ /Volumes/nas-nvme -> three-body:/volume2/data
-   └─ /Volumes/three-body -> three-body:/volume1/joelclaw
-```
-
-Flagg Gate 4 is complete: shadow Central recovered after hard reboot with no GUI login. Gate 5 is not complete until Flagg owns Central state, workers, endpoints, and verification while Panda is frozen as rollback-only.
-
-### Known runtime endpoints
-
-- Colima VM IP: `192.168.64.2` (`colima status --json`)
-- Kubernetes API (stable operator tunnel): `https://127.0.0.1:16443`
-- Talos API (stable operator tunnel): `127.0.0.1:15000`
-- Tailnet hostnames seen in config:
-  - `panda.tail7af24.ts.net` (Caddy routes)
-  - `pds.panda.tail7af24.ts.net` (PDS values)
-  - `flagg.tail7af24.ts.net` (Mac Studio shadow / target Central host)
-  - `blaine.tail7af24.ts.net` (satellite)
-- Current live Run capture URL for satellites:
-  - `https://panda.tail7af24.ts.net/api/runs`
-  - served by Panda host system-bus worker on `localhost:3111`
-  - do **not** use `http://panda:3000` or `http://panda.tail7af24.ts.net:3000`; Panda has no durable Central web listener there.
-
-### Tailscale mesh state
-
-- `tailscale status --json` failed in this environment: **UNKNOWN — needs manual verification**
-
----
+Check the installation's private service-placement file against the current hostname and service status. Run `infra/install-critical-launchdaemons.sh --plan` where the launchd installer applies. Verify the expected job in its launch domain and prove a request reaches the service before calling it healthy. A tailnet name alone proves neither route locality nor service ownership.
 
 ## 2) Process Inventory (Long-Running)
 
@@ -232,7 +128,7 @@ Flagg Gate 4 is complete: shadow Central recovered after hard reboot with no GUI
 | `com.joel.system-bus-worker`     |                 running |                        75292 | Host worker supervisor (`worker-supervisor`)                                                                | supervises child bun on 3111                            |
 | `com.joel.restate-worker`        | retired / rollback-only |                            — | Historical host Restate wrapper (`scripts/restate/start.sh`)                                                | superseded by `deployment/restate-worker` on 9080       |
 | `com.joel.gateway`               |                 running |                        81275 | Gateway daemon (`packages/gateway/src/daemon.ts`)                                                           | WS `:3018`, Redis bridge                                |
-| `com.joel.caddy`                 |                 running |                         9347 | Reverse proxy                                                                                               | 3443, 5443, 6443, 7443, 8290, 8443, 9443                |
+| `com.joel.caddy`                 |                 running |                         9347 | Reverse proxy                                                                                               | <worker-ingress-port>, <docs-ingress-port>, 6443, <pds-ingress-port>, <ingress-port>, 8443, <event-ingress-port>                |
 | `com.joel.talon`                 |                 running |                        96359 | Infra watchdog                                                                                              | health `127.0.0.1:9999`                                 |
 | `com.joel.agent-secrets`         |                 running |                        98048 | Secret lease daemon                                                                                         | no public port                                          |
 | `com.joel.imsg-rpc`              |                 running |                        61110 | iMessage JSON-RPC socket daemon                                                                             | Unix socket `/tmp/imsg.sock`                            |
@@ -258,7 +154,7 @@ These labels are part of the Flagg Central shadow/cutover scaffold. They are not
 | `com.joelclaw.central.colima`     | system LaunchDaemon | starts the dedicated `joelclaw-central` Colima/Docker substrate as service infrastructure      | Docker socket under `/Users/joelclaw/.colima/joelclaw-central/docker.sock` |
 | `com.joelclaw.central.compose`    | system LaunchDaemon | starts the shadow Central Compose stack                                                        | Redis, Typesense, Inngest, Restate, MinIO bound to `127.0.0.1` by default  |
 | `com.joelclaw.central.health`     | system LaunchDaemon | bounded health + recovery state machine                                                        | `health.sh` can invoke `recover.sh --all` after repeated degraded passes   |
-| `com.joelclaw.central.nas-mounts` | system LaunchDaemon | mounts/verifies Flagg NAS tiers                                                                | `/Volumes/nas-nvme`, `/Volumes/three-body`                                 |
+| `com.joelclaw.central.nas-mounts` | system LaunchDaemon | mounts/verifies Flagg NAS tiers                                                                | `/Volumes/nas-nvme`, `<nas-mount>`                                 |
 | `com.joelclaw.chorus-rhizomatic`  | system LaunchDaemon | **Parked historical canary**; no briefing injection or live claims; stop pending steering sudo | Old endpoint `127.0.0.1:4821/mcp`; old satellite tunnel `127.0.0.1:7331`   |
 
 Flagg reboot acceptance rule: Central is not eligible for cutover until `infra/central/scripts/reboot-proof.sh` passes from another machine after hard reboot with no GUI login.
@@ -298,7 +194,7 @@ Source: `infra/worker-supervisor/src/main.rs`
 
 ## Node
 
-- `joelclaw-controlplane-1` (Talos v1.12.4, k8s v1.35.0, internal IP `10.5.0.2`)
+- `joelclaw-controlplane-1` (Talos v1.12.4, k8s v1.35.0, internal IP `<private-ip>`)
 
 ## Core services
 
@@ -316,7 +212,7 @@ Source: `infra/worker-supervisor/src/main.rs`
 | bluesky-pds                     | Deployment (Helm-managed)           | NodePort                                                   | 3000             | 3000                                                                | AT Proto PDS                                                        |
 | minio                           | StatefulSet                         | ClusterIP + NodePort                                       | 9000, 9001       | 30900, 30901                                                        | Legacy local S3-compatible runtime                                  |
 | aistor-s3-api (`aistor` ns)     | NodePort service (operator-managed) | NodePort                                                   | 443, 9000        | 31000 (+ dynamic management NodePort)                               | AIStor S3 API (TLS + management)                                    |
-| aistor-s3-console (`aistor` ns) | NodePort service (operator-managed) | NodePort                                                   | 9443             | 31001                                                               | AIStor web console                                                  |
+| aistor-s3-console (`aistor` ns) | NodePort service (operator-managed) | NodePort                                                   | <event-ingress-port>             | 31001                                                               | AIStor web console                                                  |
 
 ### Restate / Firecracker runtime note
 
@@ -329,8 +225,8 @@ Source: `infra/worker-supervisor/src/main.rs`
 
 ### Control-plane access
 
-- kube API exposed locally at `127.0.0.1:16443` via `com.joel.kube-operator-access` (`ssh -S none -o ControlPath=none -L 16443:10.5.0.2:6443`)
-- Talos API exposed locally at `127.0.0.1:15000` via the same daemon (`ssh -S none -o ControlPath=none -L 15000:10.5.0.2:50000`)
+- kube API exposed locally at `127.0.0.1:16443` via `com.joel.kube-operator-access` (`ssh -S none -o ControlPath=none -L 16443:<private-ip>:<service-port>`)
+- Talos API exposed locally at `127.0.0.1:15000` via the same daemon (`ssh -S none -o ControlPath=none -L 15000:<private-ip>:<service-port>`)
 - NodePort/runtime app ports still come from Colima/Lima forwarding; the operator daemon exists specifically because the direct host-published 6443 path was not boring after the rebuild
 
 ---
@@ -399,7 +295,7 @@ Kubernetes cluster worker manifest sets:
 - `TYPESENSE_URL=http://typesense:8108`
 - image: `ghcr.io/joelhooks/system-bus-worker:d7dd7788` (recorded after Inngest SDK advisory hardening)
 
-Panda host worker config should advertise an SDK callback URL the Inngest pod can actually reach. Current docs call out `INNGEST_SERVE_HOST=http://100.93.201.72:3111` on Panda. Do not assume `host.lima.internal` or `host.docker.internal` works from inside Talos unless a live pod-to-host probe proves it.
+Panda host worker config should advertise an SDK callback URL the Inngest pod can actually reach. Current docs call out `INNGEST_SERVE_HOST=http://<tailnet-ip>:<service-port>` on Panda. Do not assume `host.lima.internal` or `host.docker.internal` works from inside Talos unless a live pod-to-host probe proves it.
 
 ## Registration mechanics
 
@@ -441,7 +337,7 @@ From index comments + function lists:
    - Codex hook/helper via `scripts/joelclaw-capture-codex-session.js`
    - server-side runtimes can call capture inline instead of shelling through a hook.
 2. The hook posts JSON to Central:
-   - current live URL for satellites: `POST https://panda.tail7af24.ts.net/api/runs`
+   - current live URL for satellites: `POST https://<tailnet-host>/api/runs`
    - Panda serves this through the host system-bus worker on `localhost:3111`
    - auth: `Authorization: Bearer <~/.joelclaw/auth.json token>`
 3. `packages/system-bus/src/serve.ts` validates the bearer token against the persistent local SQLite registry `~/.joelclaw/capture-auth.db`. The worker refreshes this four-row registry from Typesense `machines_dev` in the background every five minutes. Known-token requests never wait for Typesense; an unknown token gets one bounded migration lookup.
@@ -528,53 +424,11 @@ exists.
 
 ---
 
-## 5) Port Map (Canonical)
+## 5) Resolve a service endpoint
 
-> Exposure sources: k8s service manifests, Caddyfile, `kubectl get svc`, `lsof` listeners.
+Use the local runtime config or the private operator map to find the port and listener address. Keep container ports, host loopback listeners, SSH forward ports, and external ingress separate. A healthy loopback service does not prove that a proxy, tunnel, or webhook can reach it.
 
-|                   Port | Listener / owner                                                       | What it is                                                                                         | Exposure path                                                                                                                          |
-| ---------------------: | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-|                   3111 | host bun worker                                                        | host system-bus worker HTTP (`/`, `/api/inngest`, `/api/runs`, `/webhooks`, `/observability/emit`) | local host; proxied via Caddy 3443 + webhook path via 8443; Run capture currently exposed at `https://panda.tail7af24.ts.net/api/runs` |
-|                   8080 | ssh forward (Colima) -> restate                                        | Restate ingress / workflow API                                                                     | NodePort + host forward                                                                                                                |
-|                   8288 | ssh forward (Colima) -> Inngest svc                                    | Inngest API + dashboard backend                                                                    | NodePort + host forward; proxied via Caddy 9443                                                                                        |
-|                   8289 | ssh forward (Colima) -> Inngest ws                                     | Inngest connect websocket                                                                          | NodePort + host forward; proxied via Caddy 8290                                                                                        |
-|                   6379 | ssh forward (Colima) -> Redis                                          | Redis                                                                                              | NodePort + host forward                                                                                                                |
-|                   8108 | Flagg system LaunchDaemon; historical Panda NodePort                   | Operational Typesense API                                                                          | non-book projections; tailnet-only TCP forward from Flagg                                                                              |
-|                   8110 | Flagg user LaunchAgent `com.joelclaw.typesense-books`                  | Book Typesense API                                                                                 | `docs` + `docs_chunks_v2`; tailnet-only TCP forward from Flagg                                                                         |
-|                   9070 | ssh forward (Colima) -> restate                                        | Restate admin API                                                                                  | NodePort + host forward                                                                                                                |
-|                   9071 | ssh forward (Colima) -> restate                                        | Restate metrics                                                                                    | NodePort + host forward                                                                                                                |
-|                   9080 | k8s `restate-worker` service                                           | Restate worker HTTP (`dagOrchestrator`, `dagWorker`, queue drainer)                                | ClusterIP only                                                                                                                         |
-| random high local port | transient `kubectl port-forward` (CLI-managed) -> `svc/dkron-svc:8080` | Dkron HTTP API                                                                                     | ClusterIP only; short-lived operator tunnel                                                                                            |
-|                   3838 | ssh forward (Colima) -> docs-api                                       | docs-api HTTP                                                                                      | NodePort + host forward; proxied via Caddy 5443                                                                                        |
-|                   7880 | ssh forward (Colima) -> livekit-server                                 | LiveKit signaling                                                                                  | NodePort 7880; proxied via Caddy 7443                                                                                                  |
-|                   7881 | ssh forward (Colima) -> livekit-server                                 | LiveKit RTC TCP                                                                                    | NodePort 7881                                                                                                                          |
-|                   3000 | k8s bluesky-pds NodePort                                               | Bluesky PDS HTTP                                                                                   | NodePort 3000                                                                                                                          |
-|                  30900 | k8s minio-nodeport                                                     | Legacy MinIO S3 API (HTTP)                                                                         | NodePort 30900                                                                                                                         |
-|                  30901 | k8s minio-nodeport                                                     | Legacy MinIO console (HTTP)                                                                        | NodePort 30901                                                                                                                         |
-|                  31000 | k8s aistor-s3-api (`aistor` ns)                                        | AIStor S3 API (TLS)                                                                                | NodePort 31000                                                                                                                         |
-|                  31001 | k8s aistor-s3-console (`aistor` ns)                                    | AIStor console (TLS)                                                                               | NodePort 31001                                                                                                                         |
-|                   3443 | Caddy                                                                  | HTTPS reverse proxy to `localhost:3111`                                                            | tailnet HTTPS                                                                                                                          |
-|                   5443 | Caddy                                                                  | HTTPS reverse proxy to `localhost:3838`                                                            | tailnet HTTPS                                                                                                                          |
-|                   7443 | Caddy                                                                  | HTTPS reverse proxy to `localhost:7880`                                                            | tailnet HTTPS                                                                                                                          |
-|                   9443 | Caddy                                                                  | HTTPS reverse proxy to `localhost:8288`                                                            | tailnet HTTPS                                                                                                                          |
-|                   8290 | Caddy                                                                  | HTTPS reverse proxy to `localhost:8289`                                                            | tailnet HTTPS                                                                                                                          |
-|                   8443 | Caddy (HTTP)                                                           | webhook/public ingress router                                                                      | expected Funnel target                                                                                                                 |
-|                   6443 | Caddy                                                                  | reverse proxy to local 6333 (Qdrant)                                                               | tailnet HTTPS                                                                                                                          |
-|                   3018 | gateway daemon                                                         | gateway websocket stream port                                                                      | local                                                                                                                                  |
-|                   9999 | talon                                                                  | Talon health endpoint                                                                              | local `127.0.0.1`                                                                                                                      |
-|                   8765 | agent-mail HTTP service                                                | MCP agent-mail API                                                                                 | local `127.0.0.1`                                                                                                                      |
-|                   4821 | Flagg `com.joelclaw.chorus-rhizomatic`                                 | parked historical Chorus service; not a live memory dependency                                     | Stop pending steering sudo                                                                                                             |
-|                   7331 | historical satellite tunnel to Flagg Chorus                            | parked; not a live client route                                                                    | Old path: local `127.0.0.1:7331/mcp` -> Flagg `127.0.0.1:4821/mcp`                                                                     |
-|                  15000 | `com.joel.kube-operator-access`                                        | Talos API                                                                                          | stable local talosctl endpoint                                                                                                         |
-|                  16443 | `com.joel.kube-operator-access`                                        | Kubernetes API                                                                                     | stable local kubectl endpoint                                                                                                          |
-
-### Notes
-
-- Host NodePort exposure appears through an `ssh` listener process (Colima portForwarder=ssh).
-- Exact per-port ssh forward command line is **UNKNOWN — needs manual verification** (process introspection restricted in this environment).
-- Numeric ports such as `6379`, `8108`, `8288`, `8289`, `8080`, `9070`, `9071`, `9000`, and `9001` can refer to Panda live k8s/NodePort surfaces or Flagg shadow Compose loopback surfaces depending on the host. Check `hostname`, `CENTRAL_BIND_ADDR`, `JOELCLAW_CENTRAL_URL`, and the current shell env before diagnosing.
-
----
+For CLI probes, `@joelclaw/endpoint-resolver` can try localhost, a discovered or explicitly configured VM address, and cluster service DNS. Check the returned endpoint class and probe receipts. See [private runtime configuration](../../docs/private-runtime-config.md) for the environment overrides.
 
 ## 6) Storage Topology
 
@@ -644,16 +498,16 @@ From current runtime code:
 Tiering policy:
 
 - Tier 1 local SSD (hot runtime state)
-- Tier 2 NAS NVMe (`/Volumes/nas-nvme` ↔ `/volume2/data`)
-- Tier 3 NAS HDD (`/Volumes/three-body`)
+- Tier 2 NAS NVMe (`/Volumes/nas-nvme` ↔ `<nas-export>`)
+- Tier 3 NAS HDD (`<nas-mount>`)
 
 ### Access paths
 
 | From              | NVMe tier (1.5TB)   | HDD tier (56TB)       | Method                      |
 | ----------------- | ------------------- | --------------------- | --------------------------- |
-| macOS host        | `/Volumes/nas-nvme` | `/Volumes/three-body` | NFS mount via LaunchDaemon  |
-| k8s pods          | PVC `nas-nvme`      | PVC `nas-hdd`         | NFS PV (192.168.1.163)      |
-| host-worker funcs | `/Volumes/nas-nvme` | `/Volumes/three-body` | Direct path (runs on macOS) |
+| macOS host        | `/Volumes/nas-nvme` | `<nas-mount>` | NFS mount via LaunchDaemon  |
+| k8s pods          | PVC `nas-nvme`      | PVC `nas-hdd`         | NFS PV (<nas-lan-ip>)      |
+| host-worker funcs | `/Volumes/nas-nvme` | `<nas-mount>` | Direct path (runs on macOS) |
 
 ### k8s ↔ NAS networking
 
@@ -661,9 +515,9 @@ k8s pods reach the NAS via a LAN route through the Colima col0 bridge:
 `Talos → Docker NAT → VM col0 → macOS (ip.forwarding=1) → LAN → NAS`
 
 The VZ NAT on eth0 does NOT forward LAN traffic. Route persisted in Colima provision + colima-tunnel script:
-`ip route replace 192.168.1.0/24 via 192.168.64.1 dev col0`
+`ip route replace <nas-lan-cidr> via <vm-gateway> dev <vm-interface>`
 
-**Always use IP 192.168.1.163, never hostname three-body** — DNS doesn't resolve from k8s.
+**Always use IP <nas-lan-ip>, never the NAS SSH alias** — DNS doesn't resolve from k8s.
 
 Degradation contract (ADR-0187):
 
@@ -681,10 +535,10 @@ Degradation contract (ADR-0187):
   - Restate: Docker named volume `${CENTRAL_RESTATE_VOLUME:-joelclaw-central-restate-data}` because macOS/Colima bind mounts reject Restate's Unix socket writes under `/restate-data`
 - Flagg NAS object-storage proof paths:
   - hot: `/Volumes/nas-nvme/s3`
-  - cold: `/Volumes/three-body/s3`
+  - cold: `<nas-mount>/s3`
 - Current proved NAS route:
-  - Flagg interface `en0`, IP `192.168.1.10`, `10Gbase-T`
-  - `three-body` IP `192.168.1.163`
+  - Central LAN interface, local address, and expected link speed from private configuration
+  - `three-body` IP `<private-ip>`
   - MTU `1500` is the proved safe Gate 5 state; jumbo `9000` caused an NFS blackhole and is follow-up work.
 - `CENTRAL_REQUIRE_NAS=1` should only be set after mount proof passes.
 
@@ -704,51 +558,12 @@ Degradation contract (ADR-0187):
 
 ---
 
-## 7) Networking Topology
+## 7) Verify network paths
 
-## Central / Relay / Satellite routing rule
-
-- Live Central URL for capture hooks today: `https://panda.tail7af24.ts.net`.
-- Satellites post Run capture to `/api/runs` on that URL and may use `JOELCLAW_TYPESENSE_URL=http://panda:8108` for direct search/admin helpers.
-- Flagg shadow services bind to `127.0.0.1` by default and must not be exposed over Tailscale/LAN until cutover planning says so.
-- There is no live Rhizomatic/Chorus routing exception. The old Flagg service and satellite tunnels are parked historical cleanup surfaces.
-
-## Caddy reverse proxy routes (from `~/.local/caddy/Caddyfile`)
-
-- `https://panda.tail7af24.ts.net:9443` -> `localhost:8288` (Inngest)
-- `https://panda.tail7af24.ts.net:8290` -> `localhost:8289` (Inngest connect)
-- `https://panda.tail7af24.ts.net:3443` -> `localhost:3111` (worker)
-- `https://panda.tail7af24.ts.net:5443` -> `localhost:3838` (docs-api)
-- `https://panda.tail7af24.ts.net:7443` -> `localhost:7880` (LiveKit)
-- `https://panda.tail7af24.ts.net:6443` -> `localhost:6333` (Qdrant)
-- `http://localhost:8443` path router:
-  - `/webhooks/*` -> `localhost:3111`
-  - fallback -> `localhost:8288`
-
-## Tailscale + Funnel
-
-- Config comments and ADR-0051 describe Funnel path `:443 -> localhost:8443`.
-- Runtime `tailscale status` unavailable here: **UNKNOWN — needs manual verification**.
-
-## External webhook ingress
-
-Expected path:
-
-1. Internet provider -> Tailscale Funnel :443
-2. Funnel -> local `:8443`
-3. Caddy path route `/webhooks/*` -> worker `:3111`
-4. worker `/webhooks/:provider` verifies + emits Inngest event
-
-## Run capture ingress
-
-Expected path:
-
-1. Machine hook reads `JOELCLAW_CENTRAL_URL` (satellite setup exports `https://panda.tail7af24.ts.net`)
-2. hook sends `POST /api/runs` with bearer token from `~/.joelclaw/auth.json`
-3. Tailscale/Funnel/Caddy path reaches Panda host worker `localhost:3111`
-4. worker writes Run blob and emits `memory/run.captured`
-
----
+1. Look up the approved route and listener in the private operator map. Do not guess a port or reconstruct a tailnet URL from an old host name.
+2. Prove the direct service health check on its own host. Then verify the tunnel or ingress independently against the expected status and body.
+3. For webhook paths, verify both the receiver's signature check and the resulting event or delivery receipt. A generic HTTP 200 is not sufficient.
+4. For run capture, use the configured `JOELCLAW_CENTRAL_URL` and the owning capture runbook. Verify authenticated `/api/runs/health` and queue/readback separately. Do not publish the private origin or auth material.
 
 ## 8) CLI Wiring (Command Tree → Endpoint Surface)
 
@@ -1079,7 +894,7 @@ Use `recall` and the current `session-search` contract. Keep private queries in 
 cd ~/Code/joelhooks/joelclaw
 ./infra/central/scripts/preflight.sh
 ./infra/central/scripts/health.sh
-ssh joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
+ssh <ssh-user>@<private-host> 'cd <shared-root>/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
 
 # NAS proof when explicitly working Gate 5 storage
 sudo -u joelclaw -H env NAS_EXPECTED_INTERFACE=en0 NAS_EXPECTED_MTU=1500 \

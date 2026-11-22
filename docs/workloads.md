@@ -1,5 +1,7 @@
 # Workloads
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Canonical operator/design doc for **ADR-0217 Phase 4** as currently shipped.
 
 This document defines the canonical vocabulary, schema, and front door for **agent-first coding/repo workloads** in joelclaw, plus the proven runtime behavior as of **2026-03-17**. When design intent and shipped runtime behavior diverge, shipped truth wins.
@@ -124,7 +126,7 @@ Use one of these for coding/repo work unless the task clearly needs a new class:
 
 | backend         | Meaning                         |
 | --------------- | ------------------------------- |
-| `host`          | direct local execution on Panda |
+| `host`          | direct local execution on retired host |
 | `local-sandbox` | isolated local sandbox          |
 | `k8s-sandbox`   | isolated cluster-backed sandbox |
 | `queue`         | queued/durable dispatch path    |

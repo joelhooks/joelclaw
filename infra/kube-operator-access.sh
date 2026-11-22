@@ -7,7 +7,11 @@ TARGET_HOME="${HOME:-/Users/joel}"
 MODE="${KUBE_OPERATOR_MODE:-direct}"
 SSH_CONFIG="${KUBE_OPERATOR_SSH_CONFIG:-${TARGET_HOME}/.colima/_lima/colima/ssh.config}"
 SSH_HOST="${KUBE_OPERATOR_SSH_HOST:-lima-colima}"
-TARGET_NODE="${KUBE_OPERATOR_TARGET_NODE:-10.5.0.2}"
+k8s_env="${JOELCLAW_K8S_ENV_FILE:-$HOME/.config/joelclaw/k8s.env}"
+if [ -r "$k8s_env" ]; then
+  . "$k8s_env"
+fi
+TARGET_NODE="${KUBE_OPERATOR_TARGET_NODE:?set KUBE_OPERATOR_TARGET_NODE in the private k8s env}"
 LOCAL_KUBE_PORT="${KUBE_OPERATOR_LOCAL_KUBE_PORT:-6443}"
 LOCAL_TALOS_PORT="${KUBE_OPERATOR_LOCAL_TALOS_PORT:-50000}"
 # A stale installed launchd plist may still export 16443/15000 from the old SSH-tunnel era.

@@ -1,8 +1,22 @@
 #!/bin/zsh
 set -euo pipefail
 
+if [[ ${1:-} == --help ]]; then
+  printf '%s\n' 'Set SYSTEM_BUS_CENTRAL_HOST to the private Central SSH target.' \
+    'Load settings from ~/.config/joelclaw/tunnels.env or the process env.'
+  exit 0
+fi
+tunnel_env="${JOELCLAW_TUNNELS_ENV_FILE:-$HOME/.config/joelclaw/tunnels.env}"
+if [[ -r "$tunnel_env" ]]; then
+  source "$tunnel_env"
+fi
+
 LOCAL_PORT="${SYSTEM_BUS_LOCAL_PORT:-3111}"
-CENTRAL_HOST="${SYSTEM_BUS_CENTRAL_HOST:-flagg}"
+CENTRAL_HOST="${SYSTEM_BUS_CENTRAL_HOST:?set the private Central SSH target}"
+if [[ "$CENTRAL_HOST" == -* ]]; then
+  printf '%s\n' 'Invalid Central SSH target' >&2
+  exit 2
+fi
 CENTRAL_PORT="${SYSTEM_BUS_CENTRAL_PORT:-3111}"
 
 exec /usr/bin/ssh \

@@ -9,13 +9,15 @@ tags: [joelclaw, webhooks, integrations, signatures, inngest]
 
 # Webhook Gateway Operations
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Manage the joelclaw webhook gateway — add providers, debug delivery, register with external services.
 
 ## Architecture
 
 ```
 External Service → hooks.joelclaw.com → narrow Vercel raw-body proxy
-  → Flagg Tailscale Funnel :10000 → Worker :3111 → /webhooks/:provider
+  → <central-host> Tailscale Funnel :10000 → Worker :3111 → /webhooks/:provider
   → verifySignature() → normalizePayload() → (queue pilot or direct Inngest event) → notify function → gateway
 ```
 
@@ -25,7 +27,7 @@ Stable provider URL target:
 https://hooks.joelclaw.com/webhooks/<provider>
 ```
 
-The ingress is intentionally narrow: it preserves raw bodies/signature headers and only proxies `/webhooks/:provider`. Provider registrations still using Panda are migration work; do not declare a provider migrated until a real signed delivery succeeds through the stable URL.
+The ingress is intentionally narrow: it preserves raw bodies/signature headers and only proxies `/webhooks/:provider`. Provider registrations still using retired host are migration work; do not declare a provider migrated until a real signed delivery succeeds through the stable URL.
 
 - **ADR-0048**: Webhook Gateway for External Service Integration
 - **Gateway skill**: Use `gateway push`/`gateway test` patterns for delivery checks
@@ -34,8 +36,8 @@ The ingress is intentionally narrow: it preserves raw bodies/signature headers a
 
 | Provider | Events | Signature | Legacy/current registration until verified migrated |
 |----------|--------|-----------|------------|
-| todoist | comment.added, task.completed, task.created | HMAC-SHA256 (`x-todoist-hmac-sha256`) | `https://panda.tail7af24.ts.net/webhooks/todoist` |
-| front | message.received, message.sent, assignee.changed | HMAC-SHA1 (`x-front-signature`) | `https://panda.tail7af24.ts.net/webhooks/front` |
+| todoist | comment.added, task.completed, task.created | HMAC-SHA256 (`x-todoist-hmac-sha256`) | `https://<tailnet-host>/webhooks/todoist` |
+| front | message.received, message.sent, assignee.changed | HMAC-SHA1 (`x-front-signature`) | `https://<tailnet-host>/webhooks/front` |
 | vercel | deploy.succeeded, deploy.error, deploy.created, deploy.canceled | HMAC-SHA1 (`x-vercel-signature`) | `https://hooks.joelclaw.com/webhooks/vercel` |
 | github | workflow_run.completed, package.published | HMAC-SHA256 (`x-hub-signature-256`) | `https://hooks.joelclaw.com/webhooks/github` |
 

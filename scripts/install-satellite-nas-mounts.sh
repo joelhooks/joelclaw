@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install durable NAS mounts on a thin satellite Mac such as Blaine.
+# Install durable NAS mounts on a thin satellite Mac.
 # Run on the satellite with sudo from a joelclaw checkout:
 #   sudo ./scripts/install-satellite-nas-mounts.sh --bootstrap
 
 ACTION="${1:---no-bootstrap}"
 case "$ACTION" in
+  --help) printf '%s\n' "Usage: sudo $0 [--bootstrap|--no-bootstrap]" \
+    "Set NAS_IP and CENTRAL_NAS_{NVME,HDD,MEDIA}_EXPORT (see the satellite setup runbook)."; exit 0 ;;
   --bootstrap|--no-bootstrap) ;;
   *) echo "usage: sudo $0 [--bootstrap|--no-bootstrap]" >&2; exit 2 ;;
 esac
@@ -42,16 +44,18 @@ ENV_FILE="${ENV_FILE:-${CENTRAL_DIR}/.env}"
 LOG_DIR="${CENTRAL_LOG_DIR:-${SHARED_ROOT}/logs/central}"
 PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 
-NAS_HOST="${NAS_HOST:-192.168.1.163}"
-NAS_IP="${NAS_IP:-192.168.1.163}"
+NAS_IP="${NAS_IP:?set the private NAS LAN address}"
+NAS_HOST="${NAS_HOST:-$NAS_IP}"
 NAS_EXPECTED_INTERFACE="${NAS_EXPECTED_INTERFACE:-en9}"
 NAS_EXPECTED_MEDIA="${NAS_EXPECTED_MEDIA:-10Gbase-T}"
 NAS_EXPECTED_MTU="${NAS_EXPECTED_MTU:-8192}"
 NAS_NFS_OPTIONS="${NAS_NFS_OPTIONS:-rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128}"
-CENTRAL_NAS_NVME_EXPORT="${CENTRAL_NAS_NVME_EXPORT:-${NAS_IP}:/volume2/data}"
+CENTRAL_NAS_NVME_EXPORT="${CENTRAL_NAS_NVME_EXPORT:?set the private NVMe export}"
 CENTRAL_NAS_NVME_MOUNT="${CENTRAL_NAS_NVME_MOUNT:-/Volumes/nas-nvme}"
-CENTRAL_NAS_HDD_EXPORT="${CENTRAL_NAS_HDD_EXPORT:-${NAS_IP}:/volume1/joelclaw}"
-CENTRAL_NAS_HDD_MOUNT="${CENTRAL_NAS_HDD_MOUNT:-/Volumes/three-body}"
+CENTRAL_NAS_HDD_EXPORT="${CENTRAL_NAS_HDD_EXPORT:?set the private HDD export}"
+CENTRAL_NAS_HDD_MOUNT="${CENTRAL_NAS_HDD_MOUNT:-/Volumes/nas-hdd}"
+CENTRAL_NAS_MEDIA_EXPORT="${CENTRAL_NAS_MEDIA_EXPORT:?set the private media export}"
+CENTRAL_NAS_MEDIA_MOUNT="${CENTRAL_NAS_MEDIA_MOUNT:-/Volumes/nas-media}"
 CENTRAL_MINIO_HOT_DATA="${CENTRAL_MINIO_HOT_DATA:-${CENTRAL_NAS_NVME_MOUNT}/s3}"
 CENTRAL_MINIO_COLD_DATA="${CENTRAL_MINIO_COLD_DATA:-${CENTRAL_NAS_HDD_MOUNT}/s3}"
 SERVICE_USER="${SERVICE_USER:-joel}"
@@ -126,6 +130,8 @@ CENTRAL_NAS_NVME_EXPORT=${CENTRAL_NAS_NVME_EXPORT}
 CENTRAL_NAS_NVME_MOUNT=${CENTRAL_NAS_NVME_MOUNT}
 CENTRAL_NAS_HDD_EXPORT=${CENTRAL_NAS_HDD_EXPORT}
 CENTRAL_NAS_HDD_MOUNT=${CENTRAL_NAS_HDD_MOUNT}
+CENTRAL_NAS_MEDIA_EXPORT=${CENTRAL_NAS_MEDIA_EXPORT}
+CENTRAL_NAS_MEDIA_MOUNT=${CENTRAL_NAS_MEDIA_MOUNT}
 CENTRAL_MINIO_HOT_DATA=${CENTRAL_MINIO_HOT_DATA}
 CENTRAL_MINIO_COLD_DATA=${CENTRAL_MINIO_COLD_DATA}
 EOF
@@ -196,9 +202,9 @@ EOF
 }
 
 prepare_mount_points() {
-  mkdir -p "$CENTRAL_NAS_NVME_MOUNT" "$CENTRAL_NAS_HDD_MOUNT" "$LOG_DIR"
-  chown root:wheel "$CENTRAL_NAS_NVME_MOUNT" "$CENTRAL_NAS_HDD_MOUNT"
-  chmod 755 "$CENTRAL_NAS_NVME_MOUNT" "$CENTRAL_NAS_HDD_MOUNT"
+  mkdir -p "$CENTRAL_NAS_NVME_MOUNT" "$CENTRAL_NAS_HDD_MOUNT" "$CENTRAL_NAS_MEDIA_MOUNT" "$LOG_DIR"
+  chown root:wheel "$CENTRAL_NAS_NVME_MOUNT" "$CENTRAL_NAS_HDD_MOUNT" "$CENTRAL_NAS_MEDIA_MOUNT"
+  chmod 755 "$CENTRAL_NAS_NVME_MOUNT" "$CENTRAL_NAS_HDD_MOUNT" "$CENTRAL_NAS_MEDIA_MOUNT"
   log "prepared mount points: ${CENTRAL_NAS_NVME_MOUNT}, ${CENTRAL_NAS_HDD_MOUNT}"
 }
 

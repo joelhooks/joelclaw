@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn node_schedulable_allows_single_node_control_plane_taint() {
         assert!(is_node_schedulable(
-            "{\"podCIDR\":\"10.244.0.0/24\",\"taints\":[{\"effect\":\"NoSchedule\",\"key\":\"node-role.kubernetes.io/control-plane\"}]}"
+            "{\"podCIDR\":\"192.0.2.0/24\",\"taints\":[{\"effect\":\"NoSchedule\",\"key\":\"node-role.kubernetes.io/control-plane\"}]}"
         ));
     }
 

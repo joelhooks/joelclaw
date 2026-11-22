@@ -1,7 +1,7 @@
 ---
 name: session-search
 displayName: Session Search
-description: Search captured agent Runs and raw local/remote Pi sessions, especially flagg sessions, using the joelclaw sessions bridge. Use when the user asks to search sessions, find prior flagg/Panda/pi/codex/claude context, recover conversation history, verify session indexing, or bypass stale rag_search_sessions/Typesense results.
+description: Search captured agent Runs and raw local/remote Pi sessions, especially central host sessions, using the joelclaw sessions bridge. Use when the user asks to search sessions, find prior flagg/Panda/pi/codex/claude context, recover conversation history, verify session indexing, or bypass stale rag_search_sessions/Typesense results.
 version: 0.1.0
 author: joel
 tags:
@@ -13,6 +13,8 @@ tags:
 ---
 
 # Session evidence
+
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
 
 Use `recall` through Executor's saved memory connection first. This skill handles exact session evidence and capture/index diagnosis when those are part of the request.
 

@@ -200,7 +200,7 @@ export async function drainDeliverDecisions(
       text,
       flowId: event.flowId ?? `decision:${event._id}`,
       origin: {
-        machineId: event.origin?.machineId ?? "flagg",
+        machineId: event.origin?.machineId ?? process.env.JOELCLAW_MACHINE_ID?.trim() ?? "gateway",
         producer: "gateway-transport-executor",
       },
       ...(event.correlationId ? { correlationId: event.correlationId } : {}),

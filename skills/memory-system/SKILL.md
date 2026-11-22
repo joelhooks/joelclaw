@@ -14,6 +14,8 @@ tags:
 
 # Memory System
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Use the current `recall` and `session-search` contracts through the saved memory integration. Private queries belong in structured MCP arguments. All raw session searches, extracts, and local transcript summaries require a scope-bound `evidenceDrilldownReceipt`; stale or empty projections do not grant access. The command history below does not waive this boundary.
 
 The joelclaw memory system in one breath: accepted Runs remain immutable
@@ -113,7 +115,7 @@ patience, not breakage.
 renderer)? Excluded (sections `captures`/`compaction-dumps`/`people`/
 `private-family-health`, or `privacy: sensitive`)? Raw `{...}` in prose
 outside code spans breaks the page at prerender — backtick-escape braces.
-Then build on flagg and 200-check the exact URL. Relative `.svx` links
+Then build on central host and 200-check the exact URL. Relative `.svx` links
 and `[[root/slug]]` wikilinks both compile to page URLs.
 
 **"Is the observer even running?"** `launchctl list | grep joelclaw` —

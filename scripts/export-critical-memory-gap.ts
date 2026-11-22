@@ -11,7 +11,7 @@ const COLLECTION = "memory_observations"
 const DEFAULT_FROM = "2026-06-01T00:00:00.000Z"
 const TYPESENSE_URL = (process.env.TYPESENSE_URL || "http://localhost:8108").replace(/\/$/u, "")
 const NAS_BACKUPS_ROOT =
-  process.env.JOELCLAW_NAS_BACKUPS_HDD_ROOT?.trim() || "/Volumes/backups/services/joelclaw"
+  process.env.JOELCLAW_NAS_BACKUPS_HDD_ROOT?.trim() || "/Volumes/nas-backups/joelclaw"
 const DEFAULT_ARCHIVE_ROOT = join(NAS_BACKUPS_ROOT, "typesense", "retired-memory-observations")
 const PAGE_SIZE = 100
 const MAX_PAGES = 250

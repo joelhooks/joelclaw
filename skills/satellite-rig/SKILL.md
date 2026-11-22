@@ -1,7 +1,7 @@
 ---
 name: satellite-rig
 displayName: Satellite Rig
-description: "Set up and repair thin joelclaw satellite Machines such as blaine/Dark-Tower. Use when adding joelclaw CLI, Typesense access, session search/capture, Central relay, or satellite health on non-Panda machines. Triggers: satellite, blaine, Dark-Tower, setup joelclaw on another machine, Typesense access on satellite, joelclaw satellite health."
+description: "Set up and repair thin joelclaw satellite Machines such as blaine/Dark-Tower. Use when adding joelclaw CLI, Typesense access, session search/capture, Central relay, or satellite health on non-Panda machines. Triggers: satellite, satellite host, Dark-Tower, setup joelclaw on another machine, Typesense access on satellite, joelclaw satellite health."
 version: 0.1.0
 author: joel
 tags:
@@ -15,6 +15,8 @@ disable-model-invocation: true
 ---
 
 # Satellite setup and repair
+
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
 
 A satellite is a thin client of configured Central services. It owns local connectors, capture/outbox durability, credentials, and backup freshness; it does not gain a duplicate gateway or cluster merely because it needs access.
 

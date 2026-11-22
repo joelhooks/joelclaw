@@ -1,5 +1,7 @@
 # Typesense book node
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 The book node keeps the large vector index out of the operational Typesense process.
 
 - Operational node: `127.0.0.1:8108`
@@ -9,9 +11,11 @@ The book node keeps the large vector index out of the operational Typesense proc
 - Data: `~/.joelclaw/typesense-books/data`
 - Config: `~/.config/joelclaw/typesense-books.ini`
 
-Install or update it on Flagg:
+Install or update it on central host:
 
 ```bash
+: "${TYPESENSE_BOOKS_TAILNET_HEALTH_URL:?Load the approved private health URL}"
+export TYPESENSE_BOOKS_TAILNET_HEALTH_URL
 infra/central/native/install-typesense-books.sh
 curl -fsS http://127.0.0.1:8110/health
 ```

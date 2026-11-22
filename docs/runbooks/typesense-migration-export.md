@@ -1,6 +1,8 @@
 # Typesense Migration Export Runbook
 
-Use this when Panda is being replaced or rebuilt and Typesense data must move first.
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
+Use this when retired host is being replaced or rebuilt and Typesense data must move first.
 
 ## What matters
 
@@ -71,7 +73,7 @@ PY
 
 A small delta in high-churn collections like `otel_events` means writes happened while the live export was running. If an exact cut is required, pause writers first: gateway/system-bus/other OTEL emitters. For most machine migrations, the JSONL export is the portable source of truth and a tiny OTEL delta is acceptable.
 
-## Latest Panda export
+## Latest retired host export
 
 Created 2026-05-30 after the reboot recovery:
 
@@ -102,8 +104,8 @@ BUNDLE="20260530T224230Z-post-reboot-migration.tar.gz"
 EXPECTED_SHA="085fa65fad4c3d890000719db51a67254dcce7597f917733e7da94d567bb6579"
 mkdir -p "$DEST"
 rsync -avP --partial --append-verify \
-  "joel@panda:/Users/joel/.local/share/typesense-exports/${BUNDLE}" \
-  "joel@panda:/Users/joel/.local/share/typesense-exports/${BUNDLE}.sha256" \
+  "<ssh-user>@<retired-host>:~/.local/share/typesense-exports/${BUNDLE}" \
+  "<ssh-user>@<retired-host>:~/.local/share/typesense-exports/${BUNDLE}.sha256" \
   "$DEST/"
 cd "$DEST"
 test "$(shasum -a 256 "$BUNDLE" | awk '{print $1}')" = "$EXPECTED_SHA"

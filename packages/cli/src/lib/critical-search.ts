@@ -635,8 +635,8 @@ async function exportTypesenseCollection(input: {
 }
 
 function latestMemoryArchive(): string | undefined {
-  const root = "/Volumes/three-body/backups/typesense/retired-memory-observations"
-  if (!existsSync(root)) return undefined
+  const root = process.env.JOELCLAW_RETIRED_MEMORY_ARCHIVE_ROOT?.trim()
+  if (!root || !existsSync(root)) return undefined
   return readdirSync(root)
     .filter((name) => /^memory_observations-.*\.jsonl$/u.test(name))
     .sort()
@@ -1293,8 +1293,9 @@ export async function buildCriticalDb(options: BuildOptions = {}): Promise<Criti
   const started = performance.now()
   const currentHost = hostname().toLowerCase()
   const shortHost = currentHost.split(".")[0]
-  if (!options.allowNonFlagg && shortHost !== "flagg") {
-    throw new Error(`critical.db is single-writer on flagg; refusing write on ${currentHost}`)
+  const writerHost = process.env.JOELCLAW_CRITICAL_DB_WRITER_HOST?.trim().toLowerCase().split(".")[0]
+  if (!options.allowNonFlagg && (!writerHost || shortHost !== writerHost)) {
+    throw new Error("Set JOELCLAW_CRITICAL_DB_WRITER_HOST to authorize this single-writer build")
   }
   const now = options.now ?? new Date()
   const dbPath = resolve(options.dbPath ?? process.env.JOELCLAW_CRITICAL_DB ?? DEFAULT_CRITICAL_DB_PATH)

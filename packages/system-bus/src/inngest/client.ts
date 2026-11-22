@@ -44,7 +44,7 @@ type TranscriptRequestedData = {
 type MediaTranscriptionRequestedData = {
   /** Stable caller-generated idempotency/cancellation key. */
   requestId: string;
-  /** Flagg-local path under the mounted /Volumes/badass-media share. */
+  /** Path under the configured local media mount. */
   sourcePath: string;
   publish?: boolean;
   index?: boolean;

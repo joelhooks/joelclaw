@@ -9,6 +9,8 @@ tags: [elixir, beam, otp, koko, agent]
 
 # Koko Development
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Use this skill when working on the Koko Elixir project — the BEAM co-resident agent alongside joelclaw.
 
 ## When to Use
@@ -24,7 +26,7 @@ Triggers: `koko`, `elixir agent`, `beam`, `otp`, `shadow executor`, `koko worklo
 ## Project Location
 
 - **Repo**: `~/Code/joelhooks/koko` ([github.com/joelhooks/koko](https://github.com/joelhooks/koko))
-- **Host**: Overlook (Mac Mini M4 Pro), accessible via `ssh joel@panda`
+- **Host**: Overlook (Mac Mini M4 Pro), accessible via `ssh <ssh-user>@<retired-host>`
 - **AGENTS.md**: Full context in repo root
 
 ## ADR Awareness
@@ -71,7 +73,7 @@ Koko.events_seen()
 mix format
 
 # Remote (from another machine)
-ssh joel@panda "cd ~/Code/joelhooks/koko && mix run --no-halt"
+ssh <ssh-user>@<retired-host> "cd ~/Code/joelhooks/koko && mix run --no-halt"
 ```
 
 ## OTP Patterns to Follow

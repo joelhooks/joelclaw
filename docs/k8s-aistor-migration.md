@@ -1,5 +1,7 @@
 # AIStor Migration Runbook (k8s)
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Date: 2026-03-04
 
 ## Why this exists
@@ -49,13 +51,14 @@ Do **not** deploy AIStor objectstore into `joelclaw` unless intentionally cuttin
 
 Legacy MinIO remains on `minio/minio:latest` for rollback because source-only-era release tag `RELEASE.2025-10-15T17-29-55Z` is not pullable from Docker Hub in this cluster.
 
-Legacy rollback storage mounts the exported NAS root (`/volume1/joelclaw`) via NFSv3 and uses `subPath: s3` inside the pod. The NAS export itself does not expose `/volume1/joelclaw/s3` directly.
+Legacy rollback storage mounts the exported NAS root (`<nas-hdd-export>`) via NFSv3 and uses `subPath: s3` inside the pod. The NAS export itself does not expose `<nas-hdd-export>/s3` directly.
 
 If that happens:
 
 ```bash
 helm uninstall aistor-primary -n joelclaw
-kubectl apply -f k8s/minio-pv.yaml -f k8s/minio.yaml
+bash k8s/render-nas-pv.sh minio | kubectl apply -f -
+kubectl apply -f k8s/minio.yaml
 ./k8s/reconcile-aistor.sh
 ```
 

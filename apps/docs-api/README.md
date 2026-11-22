@@ -1,5 +1,7 @@
 # docs-api
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Typesense-backed docs REST API for joelclaw.
 
 ## Routes
@@ -37,7 +39,9 @@ All routes except `/health` require:
 - `TYPESENSE_API_KEY` (required)
 - `PDF_BRAIN_API_TOKEN` (required)
 - `DOCS_CHUNKS_COLLECTION` (default `docs_chunks_v2`)
-- `DOCS_ARTIFACTS_DIR` (default `/Volumes/services/joelclaw/docs-artifacts`)
+- `DOCS_ARTIFACTS_DIR` (required; local document artifact directory)
+- `DOCS_ARTIFACTS_SSH_HOST` (optional; enables SSH fallback)
+- `DOCS_ARTIFACTS_SSH_ROOT` (required when `DOCS_ARTIFACTS_SSH_HOST` is set; remote document artifact directory)
 
 ## Notes
 

@@ -152,7 +152,7 @@ export async function routeNotifySendToSlimTransport(
         dependencies.machineId
           ?? process.env.JOELCLAW_MACHINE_ID?.trim()
           ?? process.env.HOSTNAME?.trim()
-          ?? "flagg",
+          ?? "gateway",
       ),
       evidence: event.payload,
     };

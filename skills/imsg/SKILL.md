@@ -9,9 +9,11 @@ tags: [joelclaw, messaging, imessage, sms, communication]
 
 # iMessage
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Read and send iMessages and SMS from the terminal via the `imsg` CLI.
 
-## Setup (Panda)
+## Setup (retired host)
 
 - **Messages.app signed in as**: the agent Apple ID (see USER.md)
 - **Joel's iMessage address**: see USER.md → `imessage`
@@ -83,9 +85,9 @@ brew install steipete/tap/imsg
 
 CLI by [steipete](https://github.com/steipete/imsg). Adopted per ADR-0067.
 
-## Flagg: imsg via Executor
+## central host: imsg via Executor
 
-On Flagg, do not call `imsg` from a terminal for reads. Use Executor's saved connection, which runs a signed service that holds the Full Disk Access grant.
+On central host, do not call `imsg` from a terminal for reads. Use Executor's saved connection, which runs a signed service that holds the Full Disk Access grant.
 
 - Address: `tools.imsg.org.flaggImsg.<tool>`. Discover with `tools.search({ namespace: "imsg", query: "" })`.
 - Tools: `imsg_status`, `imsg_chats`, `imsg_group`, `imsg_history`, `imsg_send`. Call `imsg_status` first.

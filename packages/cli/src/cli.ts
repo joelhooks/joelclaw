@@ -196,12 +196,12 @@ const root = Command.make("joelclaw", {}, () =>
             search:
               "joelclaw search <query> [-c collection] [-n limit] [-f filter] [--semantic]",
             satellite:
-              "joelclaw satellite {health|repair-request} [--notify] [--central-ssh joel@panda]",
+              "joelclaw satellite {health|repair-request} [--notify] [--central-ssh <ssh-target>]",
             observations: "joelclaw observations index [--rebuild]",
             observer:
               "joelclaw observer {status|resolve [target]|cycle [--execute] [--no-rotate]}",
             sessions:
-              "joelclaw sessions search <query> [--raw] [--source typesense|local|ssh|both] [--extract] [--machine host] [--ssh-target joel@flagg]",
+              "joelclaw sessions search <query> [--raw] [--source typesense|local|ssh|both] [--extract] [--machine host] [--ssh-target <ssh-target>]",
             session:
               "joelclaw session search <query> (alias for sessions)",
             docs: "joelclaw docs {add|search|context|list|show|status|enrich|reindex}",

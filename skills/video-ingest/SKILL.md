@@ -5,6 +5,8 @@ description: "Download, transcribe, and summarize videos via the Inngest pipelin
 
 # Video Ingest — via Inngest Pipeline
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Videos are ingested through the Inngest event bus. **Do not run yt-dlp, mlx-whisper, scp, or create vault notes manually.** The pipeline handles everything: download → NAS transfer → transcription → vault note → summary enrichment.
 
 ## Quick Start
@@ -147,7 +149,7 @@ joelclaw send content/summarize.requested -d '{"vaultPath":"/Users/joel/Vault/Re
 
 | What | Location |
 |------|----------|
-| Video + metadata | NAS: `/volume1/home/joel/video/YYYY/SLUG/` |
+| Video + metadata | NAS: `<nas-hdd-export>/joel/video/YYYY/SLUG/` |
 | Vault note | `~/Vault/Resources/videos/SLUG.md` |
 | Daily note link | `~/Vault/Daily/YYYY-MM-DD.md` under `## Videos` |
 | Runtime telemetry | `joelclaw otel` (`otel_events` in Typesense/ClickHouse) |

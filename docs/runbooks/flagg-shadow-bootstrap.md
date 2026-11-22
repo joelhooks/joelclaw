@@ -1,8 +1,10 @@
-# Flagg shadow bootstrap runbook
+# central host shadow bootstrap runbook
 
-Flagg is the Mac Studio target for ADR-0246: Mac Studio Central runtime migration.
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
 
-This runbook is for **shadow bootstrap only**. It does not cut over Central, freeze Panda writes, create split-brain, or make Flagg authoritative.
+central host is the Mac Studio target for ADR-0246: Mac Studio Central runtime migration.
+
+This runbook is for **shadow bootstrap only**. It does not cut over Central, freeze retired host writes, create split-brain, or make central host authoritative.
 
 ## Current reviewed state
 
@@ -10,10 +12,10 @@ Reviewed: 2026-05-27 by `MintySprocket`.
 
 Current host facts after Gate 2 system Tailscale proof:
 
-- macOS hostname: `flagg.localdomain`
-- Tailscale DNS name: `flagg.tail7af24.ts.net.`
-- Tailscale short name: `flagg`
-- Tailscale IP: `100.127.252.116`
+- macOS hostname: `<central-host>.localdomain`
+- Tailscale DNS name: `<tailnet-host>.`
+- Tailscale short name: `<central-host>`
+- Tailscale IP: `<tailnet-ip>`
 - system `tailscaled` LaunchDaemon: installed and authenticated
 - GUI Tailscale NetworkExtension: removed from active runtime after no-login reboot proof, but may briefly reappear if macOS still has the old system extension registered; use `disable-gui-tailscale-system-extension.sh` if verify fails
 - macOS: 26.3 / 25D125
@@ -67,7 +69,7 @@ These directories currently exist and are locked to `0700`, owned by `joel` unti
 
 ### Non-interactive SSH PATH
 
-Flagg SSH sessions originally started with:
+central host SSH sessions originally started with:
 
 ```text
 /usr/bin:/bin:/usr/sbin:/sbin
@@ -87,7 +89,7 @@ A backup was written next to the original file as `~/.zshenv.pre-derry-bootstrap
 Verification:
 
 ```bash
-ssh joel@flagg 'command -v bun; command -v brew; command -v joelclaw; joelclaw --version'
+ssh <ssh-user>@<central-host> 'command -v bun; command -v brew; command -v joelclaw; joelclaw --version'
 ```
 
 Expected:
@@ -104,10 +106,10 @@ Expected:
 Created without sudo:
 
 ```bash
-ssh joel@flagg 'for d in /Users/Shared/joelclaw /Users/Shared/joelclaw/services /Users/Shared/joelclaw/src /Users/Shared/joelclaw/logs /Users/Shared/joelclaw/backups /Users/Shared/joelclaw/run; do mkdir -p "$d" && chmod 700 "$d"; done'
+ssh <ssh-user>@<central-host> 'for d in <shared-root> <shared-root>/services <shared-root>/src <shared-root>/logs <shared-root>/backups <shared-root>/run; do mkdir -p "$d" && chmod 700 "$d"; done'
 ```
 
-Tool audit written on Flagg:
+Tool audit written on central host:
 
 ```text
 /Users/Shared/joelclaw/run/tool-audit-20260527T082953.txt
@@ -167,7 +169,7 @@ account gate complete
 receipt check verified by Joel
 ```
 
-Result: Gate 1 is complete. The service account exists, `clawadmin` is the separate admin backstop, and the final account-gate run was verified. Do not demote `joel` yet; treat that as a later hardening step after Flagg is stable and boring.
+Result: Gate 1 is complete. The service account exists, `clawadmin` is the separate admin backstop, and the final account-gate run was verified. Do not demote `joel` yet; treat that as a later hardening step after central host is stable and boring.
 
 Repo-managed helper script:
 
@@ -175,7 +177,7 @@ Repo-managed helper script:
 infra/central/setup-macos-account-gate.sh
 ```
 
-The helper has also been copied into Flagg's working tree at:
+The helper has also been copied into central host's working tree at:
 
 ```text
 ~/Code/joelhooks/joelclaw/infra/central/setup-macos-account-gate.sh
@@ -185,7 +187,7 @@ Remote dry-run verification passed with the expected blocker: no separate non-Jo
 
 Known first-run behavior on macOS 26.3: `dscl . -create /Users/joelclaw` may print `eDSPermissionError` while still creating the local directory record. The helper is idempotent and now treats that partial-create as recoverable. If you hit that error, pull/reset the latest repo and rerun the same command; it should detect the existing record, create `/Users/joelclaw`, and continue.
 
-What it does when run with sudo on Flagg:
+What it does when run with sudo on central host:
 
 - creates a hidden Standard `joelclaw` service user with no password hash,
 - ensures `joelclaw` is not in the admin group,
@@ -201,7 +203,7 @@ For future receipt checks, avoid zsh expanding a private `0700` path before `sud
 sudo zsh -c 'ls -lt /Users/Shared/joelclaw/run/account-gate-*.txt | head -3'
 ```
 
-Do not demote `joel` yet. The admin backstop is verified, but demotion is a later hardening step after Flagg is stable and boring.
+Do not demote `joel` yet. The admin backstop is verified, but demotion is a later hardening step after central host is stable and boring.
 
 ### Gate 2 — repo-managed runtime assets
 
@@ -210,33 +212,33 @@ Status: scaffolded in `infra/central/` on 2026-05-27.
 Contents:
 
 - `compose.yaml` for Redis, Typesense, Inngest, Restate, and MinIO shadow services.
-- `.env.example` with placeholders only. Copy to `.env` on Flagg and replace locally; never commit `.env`.
+- `.env.example` with placeholders only. Copy to `.env` on central host and replace locally; never commit `.env`.
 - `scripts/preflight.sh` for account/env/tool checks.
 - `scripts/start-colima.sh`, `start.sh`, `stop.sh`, `status.sh`, and `health.sh`.
 - `scripts/backup.sh` and `restore.sh` for shadow filesystem snapshot/restore.
 - `launchd/*.plist.template` for future system LaunchDaemon install under `UserName=joelclaw`.
 - `README.md` with the operator path.
 
-Default service binds are local-only (`127.0.0.1`). Do not expose Flagg services over Tailscale/LAN until cutover planning explicitly says so.
+Default service binds are local-only (`127.0.0.1`). Do not expose central host services over Tailscale/LAN until cutover planning explicitly says so.
 
-The pillar: Flagg Central must survive a hard reboot with **no GUI login**. If services require Joel, `clawadmin`, Screen Sharing, Terminal, auto-login, the GUI Tailscale app, or a manual `colima start`, they are not Central infrastructure. They are dev toys wearing a fake moustache.
+The pillar: central host Central must survive a hard reboot with **no GUI login**. If services require Joel, `clawadmin`, Screen Sharing, Terminal, auto-login, the GUI Tailscale app, or a manual `colima start`, they are not Central infrastructure. They are dev toys wearing a fake moustache.
 
-Flagg should use the open-source `tailscaled` system LaunchDaemon (`com.tailscale.tailscaled`) rather than the GUI/login-session Tailscale path. The repo-managed local migration helper is:
+central host should use the open-source `tailscaled` system LaunchDaemon (`com.tailscale.tailscaled`) rather than the GUI/login-session Tailscale path. The repo-managed local migration helper is:
 
 ```bash
 sudo ./infra/central/scripts/install-system-tailscaled.sh
 ```
 
-Run it locally on Flagg, not over the Tailscale SSH session it is replacing. It may print an auth URL for the new system-daemon node.
+Run it locally on central host, not over the Tailscale SSH session it is replacing. It may print an auth URL for the new system-daemon node.
 
 Known gotcha from first migration attempt: the normal `tailscale` command can still talk to the stale GUI NetworkExtension. Target the system daemon explicitly when debugging:
 
 ```bash
 /opt/homebrew/bin/tailscale --socket=/var/run/tailscaled.socket status
-/opt/homebrew/bin/tailscale --socket=/var/run/tailscaled.socket up --hostname=flagg --operator=joel --ssh --accept-routes
+/opt/homebrew/bin/tailscale --socket=/var/run/tailscaled.socket up --hostname=<central-host> --operator=joel --ssh --accept-routes
 ```
 
-If `verify-system-tailscaled.sh` reports that the GUI network extension is still running, reboot Flagg and verify again before any GUI login. The GUI app has been moved out of `/Applications`, so it should not come back after reboot.
+If `verify-system-tailscaled.sh` reports that the GUI network extension is still running, reboot central host and verify again before any GUI login. The GUI app has been moved out of `/Applications`, so it should not come back after reboot.
 
 Rollback helper:
 
@@ -244,18 +246,18 @@ Rollback helper:
 sudo ./infra/central/scripts/rollback-system-tailscaled.sh
 ```
 
-The real runtime owner is `joelclaw`, not the `joel` dev account. Start/stop scripts are intended for the future service-owned checkout at `/Users/Shared/joelclaw/src/joelclaw` via launchd or a batched admin command. Running them from Joel's dev shell would recreate the Panda coupling ADR-0246 is trying to kill. Bad trade. Don't.
+The real runtime owner is `joelclaw`, not the `joel` dev account. Start/stop scripts are intended for the future service-owned checkout at `<shared-root>/src/joelclaw` via launchd or a batched admin command. Running them from Joel's dev shell would recreate the retired host coupling ADR-0246 is trying to kill. Bad trade. Don't.
 
 Gate 2 now includes `scripts/reboot-proof.sh`. It is expected to fail until Gate 3 installs system LaunchDaemons, system tailscaled, and the shadow stack. It becomes mandatory before Gate 5.
 
-Next non-sudo check on Flagg after pulling the latest repo:
+Next non-sudo check on central host after pulling the latest repo:
 
 ```bash
 cd /Users/joel/Code/joelhooks/joelclaw
 ./infra/central/scripts/preflight.sh
 ```
 
-Verified on Flagg after syncing commit `3a1798b6`:
+Verified on central host after syncing commit `3a1798b6`:
 
 ```text
 ok   service user exists
@@ -290,7 +292,7 @@ Optional/dev-only:
 
 - `claude`
 
-Repo-managed Gate 3 command sequence on Flagg:
+Repo-managed Gate 3 command sequence on central host:
 
 ```bash
 cd /Users/joel/Code/joelhooks/joelclaw
@@ -310,11 +312,11 @@ Gate 3 is not complete until system LaunchDaemons are installed in `/Library/Lau
 
 ### Gate 4 — shadow runtime
 
-Start Flagg services without touching Panda's active Central writes.
+Start central host services without touching retired host's active Central writes.
 
 Shadow mode is read/verify only unless a migration step explicitly authorizes a controlled write.
 
-If Gate 4 health fails, run the repo-managed diagnostic script locally on Flagg instead of pasting shell blocks:
+If Gate 4 health fails, run the repo-managed diagnostic script locally on central host instead of pasting shell blocks:
 
 ```bash
 sudo ./infra/central/scripts/diagnose.sh
@@ -334,13 +336,13 @@ Required checks:
 - Typesense health passes.
 - Inngest health passes.
 - Restate health passes.
-- `system-bus-worker` can start against Flagg services.
+- `system-bus-worker` can start against central host services.
 - OTEL emit/query works.
 - Run capture/search path from ADR-0243 works in a shadow-safe way.
-- Hard-reboot/no-login proof passes from Panda before any GUI login on Flagg:
+- Hard-reboot/no-login proof passes from retired host before any GUI login on central host:
 
 ```bash
-ssh joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
+ssh <ssh-user>@<central-host> 'cd <shared-root>/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
 ```
 
 Expected:
@@ -349,13 +351,13 @@ Expected:
 PASS: Central recovered after hard reboot with no GUI login.
 ```
 
-Gate 4 shadow runtime proof passed on 2026-05-28 after the Restate named-volume fix (`38bed86c`). Verified from Panda with `console_user=root`; system `tailscaled`, Colima, Compose, and Health LaunchDaemons loaded; post-boot logs were written; and Redis, Typesense, Inngest, Restate, and MinIO passed health.
+Gate 4 shadow runtime proof passed on 2026-05-28 after the Restate named-volume fix (`38bed86c`). Verified from retired host with `console_user=root`; system `tailscaled`, Colima, Compose, and Health LaunchDaemons loaded; post-boot logs were written; and Redis, Typesense, Inngest, Restate, and MinIO passed health.
 
 ### Gate 5 — staged migration and cutover
 
 Cutover needs a separate go/no-go confirmation.
 
-Use `docs/runbooks/flagg-gate5-staged-migration.md` for the staged service smoke-test and cutover plan. The allowed shape is staged proof, atomic authority: test services individually, but do not leave Panda and Flagg sharing authoritative Central ownership.
+Use `docs/runbooks/flagg-gate5-staged-migration.md` for the staged service smoke-test and cutover plan. The allowed shape is staged proof, atomic authority: test services individually, but do not leave retired host and central host sharing authoritative Central ownership.
 
 Do not perform it from this runbook.
 
@@ -364,13 +366,13 @@ Do not perform it from this runbook.
 Remove PATH block from `~/.zshenv` using the `JOELCLAW_DERRY_BOOTSTRAP_PATH` markers, or restore the backup:
 
 ```bash
-ssh joel@flagg 'ls -1t ~/.zshenv.pre-derry-bootstrap-*.bak | head -1'
+ssh <ssh-user>@<central-host> 'ls -1t ~/.zshenv.pre-derry-bootstrap-*.bak | head -1'
 ```
 
 Remove the temporary service root only if it contains no useful audit artifacts:
 
 ```bash
-ssh joel@flagg 'rm -rf /Users/Shared/joelclaw'
+ssh <ssh-user>@<central-host> 'rm -rf <shared-root>'
 ```
 
 Do not remove it after real service state lands there.

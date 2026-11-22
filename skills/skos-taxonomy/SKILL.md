@@ -9,7 +9,9 @@ tags: [joelclaw, skos, taxonomy, agents, typesense, retrieval, knowledge]
 
 # SKOS Taxonomist
 
-Design operational taxonomies with SKOS so Panda and all sub-agents classify work consistently, retrieve better context, and avoid tag soup.
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
+Design operational taxonomies with SKOS so retired host and all sub-agents classify work consistently, retrieve better context, and avoid tag soup.
 
 This skill is for execution, not theory: define concepts, classify agent data, validate constraints, and wire taxonomy fields into Typesense.
 
@@ -76,7 +78,7 @@ Define a dedicated scheme for workload classification:
 
 jcw:scheme:workload:v1 a skos:ConceptScheme ;
   skos:prefLabel "JoelClaw Workload Taxonomy v1"@en ;
-  skos:definition "Operational workload taxonomy for Panda and sub-agents."@en ;
+  skos:definition "Operational workload taxonomy for <retired-host> and sub-agents."@en ;
   skos:hasTopConcept
     jcw:concept:platform,
     jcw:concept:integration,

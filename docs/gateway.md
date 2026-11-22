@@ -1,6 +1,8 @@
 # Agent Comms Gateway operations
 
-The Agent Comms Gateway is the sole comms policy owner. It runs on flagg as one long-lived Claude Code session plus a zero-policy driver. A separate slim transport daemon owns platform mechanics.
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
+The Agent Comms Gateway is the sole comms policy owner. It runs on central host as one long-lived Claude Code session plus a zero-policy driver. A separate slim transport daemon owns platform mechanics.
 
 The gateway agent pins Claude Sonnet 4.6. It handles fast comms judgment and dispatches harder work to Herdr workers:
 
@@ -15,7 +17,7 @@ MESSAGE_EVENT_CONVEX_URL=http://127.0.0.1:3210 \
 
 `infra/agent-comms-driver-daemon.sh` builds this command into `GATEWAY_SUCCESSOR_COMMAND`. The driver package default is still bare `claude`; start the driver through the launcher, not the package command, so successors never land on the shared login.
 
-Do not use the moving `sonnet` alias here. Pin `MESSAGE_EVENT_CONVEX_URL` locally so a stale fleet `JOELCLAW_CENTRAL_URL` cannot send the plugin to the ghost `flagg` node. A Herdr-restored bare `claude --resume` process is not healthy because it lacks the gateway plugin tools.
+Do not use the moving `sonnet` alias here. Pin `MESSAGE_EVENT_CONVEX_URL` locally so a stale fleet `JOELCLAW_CENTRAL_URL` cannot send the plugin to the ghost `<central-host>` node. A Herdr-restored bare `claude --resume` process is not healthy because it lacks the gateway plugin tools.
 
 The gateway lives in Herdr's `default` session, inside workspace `[jc] gateway agent`. Its stable pane label is `📨 gateway loop`. Other automation stays in the named `system` session. After a reboot, the gateway starts only after Joel logs into the Mac; until then transport delivers raw fallback messages.
 

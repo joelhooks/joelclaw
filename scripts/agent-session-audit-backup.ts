@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-type HostName = "flagg" | "blaine";
+type HostName = "local" | "satellite";
 
 type HostConfig = {
   name: HostName;
@@ -78,8 +78,8 @@ type HostReport = {
 };
 
 const hosts: Record<HostName, HostConfig> = {
-  flagg: { name: "flagg" },
-  blaine: { name: "blaine", ssh: "joel@blaine" },
+  local: { name: "local" },
+  satellite: { name: "satellite", ssh: process.env.JOELCLAW_SESSION_AUDIT_SATELLITE_SSH },
 };
 
 const sources: SourceConfig[] = [
@@ -105,8 +105,14 @@ for (let i = 2; i < process.argv.length; i += 1) {
   else args.set(rawKey, true);
 }
 
+if (args.has("help")) {
+  console.log("Usage: bun scripts/agent-session-audit-backup.ts [--hosts local,satellite] [--central-url URL] [--backup-root PATH]");
+  console.log("Set JOELCLAW_SESSION_AUDIT_SATELLITE_SSH before selecting satellite.");
+  process.exit(0);
+}
+
 const hostList = String(
-  args.get("hosts") || process.env.JOELCLAW_SESSION_AUDIT_HOSTS?.trim() || "flagg,blaine",
+  args.get("hosts") || process.env.JOELCLAW_SESSION_AUDIT_HOSTS?.trim() || "local",
 )
   .split(",")
   .map((host) => host.trim())
@@ -117,9 +123,13 @@ if (unknownHosts.length > 0) {
     `Unknown or retired audit host(s): ${unknownHosts.join(", ")}. Known hosts: ${Object.keys(hosts).join(", ")}.`,
   );
 }
-const backupRoot = String(args.get("backup-root") || "/Volumes/services/joelclaw/sessions");
+if (hostList.includes("satellite") && !hosts.satellite.ssh) {
+  throw new Error("Set JOELCLAW_SESSION_AUDIT_SATELLITE_SSH before auditing a satellite");
+}
+const backupRoot = String(args.get("backup-root") || process.env.JOELCLAW_SESSION_AUDIT_BACKUP_ROOT || "");
+if (!backupRoot.startsWith("/")) throw new Error("Set an absolute --backup-root or JOELCLAW_SESSION_AUDIT_BACKUP_ROOT");
 const centralUrl = String(
-  args.get("central-url") || "http://joels-mac-studio.tail7af24.ts.net:3111",
+  args.get("central-url") || process.env.JOELCLAW_CENTRAL_URL || "http://127.0.0.1:3111",
 ).replace(/\/$/, "");
 const repairEnv = Boolean(args.get("repair-env"));
 const sync = args.get("sync") !== false && args.get("sync") !== "false";

@@ -8,6 +8,8 @@ related:
 
 # PRD: Rhizomatic Network Canary v1
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Build a public `joelhooks/pi-rhizomatic` package and a Flagg-hosted memory canary proving Pi, Claude, and Codex can all use the same Rhizomatic/Chorus store through runtime-native surfaces.
 
 ## Current shape
@@ -19,12 +21,12 @@ The real backend path for joelclaw is Myk's Chorus HTTP MCP server:
 - upstream checkout: `/Users/Shared/joelclaw/upstream/rhizomatic`
 - launchd service: `com.joelclaw.chorus-rhizomatic`
 - service identity: `joelclaw:staff`
-- endpoint on Flagg: `127.0.0.1:4821/mcp`
+- endpoint on central host: `127.0.0.1:4821/mcp`
 - store: `/Users/Shared/joelclaw/services/rhizomatic/chorus-memory.jsonl`
-- clients on Blaine/Panda: launchd SSH tunnel from local `127.0.0.1:7331` to Flagg `127.0.0.1:4821`
-- Flagg clients: direct `127.0.0.1:4821/mcp`
+- clients on Blaine/Panda: launchd SSH tunnel from local `127.0.0.1:7331` to central host `127.0.0.1:4821`
+- central host clients: direct `127.0.0.1:4821/mcp`
 
-The earlier `packages/rhizomatic-service` fake reference service proved launchd mechanics, but it is no longer the active canary backend. `com.joelclaw.rhizomatic` is disabled on Flagg; the public package keeps its local reference service only for local/dev canaries.
+The earlier `packages/rhizomatic-service` fake reference service proved launchd mechanics, but it is no longer the active canary backend. `com.joelclaw.rhizomatic` is disabled on central host; the public package keeps its local reference service only for local/dev canaries.
 
 ## Success criteria
 
@@ -35,8 +37,8 @@ The earlier `packages/rhizomatic-service` fake reference service proved launchd 
 - Package ships generic Claude and Codex hook helpers.
 - Package supports `backend: "chorus-http"` for Myk's Chorus HTTP MCP server.
 - Package keeps a local reference HTTP service for non-joelclaw dev/canary use only.
-- Flagg runs upstream Chorus under launchd with a private token and persistent store.
-- Blaine, Flagg, and Panda all pass a Pi/Claude/Codex-style canary against the same Chorus store.
+- central host runs upstream Chorus under launchd with a private token and persistent store.
+- satellite host, central host, and retired host all pass a Pi/Claude/Codex-style canary against the same Chorus store.
 
 ## Evidence
 
@@ -54,7 +56,7 @@ npm run check
 npm run pack:dry
 ```
 
-Flagg service proof:
+central host service proof:
 
 ```text
 com.joelclaw.chorus-rhizomatic = running
@@ -87,7 +89,7 @@ Each returned:
 }
 ```
 
-Runtime hook probes on Blaine, Flagg, and Panda returned `chorus-mcp-http-adapter` receipts for begin/stop.
+Runtime hook probes on satellite host, central host, and retired host returned `chorus-mcp-http-adapter` receipts for begin/stop.
 
 ## Follow-up hardening
 

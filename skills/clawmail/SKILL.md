@@ -20,6 +20,8 @@ tags:
 
 # Clawmail
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Canonical agent coordination contract for joelclaw.
 
 `joelclaw mail` is the **only** supported mail access surface for pi agents.
@@ -29,10 +31,10 @@ Do not call `mcp_agent_mail` HTTP endpoints directly from agent prompts or role 
 
 Agent-mail is a **Central service**, not a mailbox per machine:
 
-- **Flagg** hosts the authoritative daemon on `127.0.0.1:8765`.
-- **Blaine and Panda** run `com.joelclaw.agent-mail-tunnel`, forwarding their local `127.0.0.1:8765` to Flagg over SSH.
+- **central host** hosts the authoritative daemon on `127.0.0.1:8765`.
+- **satellite host and retired host** run `com.joelclaw.agent-mail-tunnel`, forwarding their local `127.0.0.1:8765` to central host over SSH.
 - Satellite/Relay clients keep using the default local URL. The tunnel preserves the CLI contract without exposing the unauthenticated service on the tailnet.
-- Do not start an independent agent-mail daemon on a satellite. A healthy client must report the same mailbox/project counts as Flagg.
+- Do not start an independent agent-mail daemon on a satellite. A healthy client must report the same mailbox/project counts as central host.
 
 Tracked connector assets:
 
