@@ -248,7 +248,7 @@ describe("otel store adapter", () => {
         },
         forwardEvent: async () => {
           forwarded += 1;
-          return { attempted: true, accepted: true, endpoint: "http://flagg:3111/observability/emit", status: 200 };
+          return { attempted: true, accepted: true, endpoint: "http://central.test:3111/observability/emit", status: 200 };
         },
       }
     );

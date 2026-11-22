@@ -1,5 +1,7 @@
 # joelclaw CLI
 
+For private topology, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders before running commands.
+
 Canonical operator interface for joelclaw.
 
 ## Contract
@@ -52,7 +54,7 @@ const otel = await client.otelSearch("gateway", { hours: 1, limit: 20 });
 CLI health probes for Inngest and worker resolve endpoints in this order:
 
 1. `localhost`
-2. discovered Colima VM IP (`JOELCLAW_COLIMA_VM_IP`, fallback `192.168.64.2`)
+2. discovered Colima VM IP (`JOELCLAW_COLIMA_VM_IP`, fallback `<private-ip>`)
 3. k8s service DNS (`*.joelclaw.svc.cluster.local`)
 
 Probe detail strings include the selected endpoint class (`localhost|vm|svc_dns`) and skipped-candidate counts.
@@ -193,7 +195,7 @@ joelclaw docs
 Semantics:
 
 - active chunk search collection is switchable via `DOCS_CHUNKS_COLLECTION` and now defaults to `docs_chunks_v2`
-- markdown + summary read durable artifacts from `DOCS_ARTIFACTS_DIR` (default `/Volumes/services/joelclaw/docs-artifacts`)
+- markdown + summary read durable artifacts from `DOCS_ARTIFACTS_DIR` (default `<nas-mount>/docs-artifacts`)
 - `docs status` reports both `docs_chunks` (v1) and `docs_chunks_v2` plus artifact directory availability
 - agentic expansion flow is `docs search` → `docs context` → `docs markdown` / `docs summary`
 
@@ -705,8 +707,8 @@ joelclaw sessions inspect <session-id-or-path> --around <regex> [--before N] [--
 joelclaw sessions signals [--kind friction|preference|decision|praise|mode-mismatch|any] [--source local|ssh|both] [--machine dark-wizard] [--since 14d] [--limit N] [--sample N] [--review-out path.jsonl] [--evaluate] [--format json|ndjson]
 joelclaw sessions friction [--source local|ssh|both] [--machine dark-wizard] [--since 14d] [--limit N]
 
-joelclaw satellite health [--notify] [--central-ssh joel@panda] [--priority high]
-joelclaw satellite repair-request [--central-ssh joel@panda] [--priority high]
+joelclaw satellite health [--notify] [--central-ssh <ssh-user>@<private-host>] [--priority high]
+joelclaw satellite repair-request [--central-ssh <ssh-user>@<private-host>] [--priority high]
 
 joelclaw subscribe {list|add|remove|check|summary}
 ```
@@ -734,7 +736,7 @@ Semantics:
 - Source metadata uses `rawReturned` for pre-dedupe raw source count and `emittedHits` / `emittedChunks` for top-level emitted counts.
 - `joelclaw session ...` is a singular alias for `joelclaw sessions ...`.
 - `sessions signals` mines role-aware high-signal user turns from raw local/remote Pi transcripts. It is ADR-0247-backed and starts deterministic: user turns are the primary signal source; assistant/tool turns are bounded evidence context. `--kind friction` detects correction/frustration/output-quality signals, including Joel's strong-emphasis profanity where it is attached to critique. `sessions friction` is an alias for `sessions signals --kind friction`. `--sample N` balances candidates across signal categories; `--review-out path.jsonl` writes a tiny golden-set review file with stable `hitId`, turnKind, prediction, improvement route, evidence, and empty review fields. `--evaluate` adds a small routing summary by improvement surface/kind/turnKind/confidence/review priority. V1 excludes task payloads, source material, and handoffs by default so friction analysis focuses on operator intent, review feedback, and approvals. `--kind mode-mismatch` finds cases where agents picked the wrong execution shape: inline vs background, visual vs response, durable Inngest vs ad-hoc script, or feedback-blocking vs async. `--format ndjson` streams `meta`, `hit`, and `summary` rows for deep scans without building one huge envelope.
-- `satellite health` is the thin-Machine self-check surface. It verifies local prerequisites like `python3`, `jq`, `joelclaw`, raw Pi session storage, and local session search JSON. With `--notify`, degraded health is relayed to Central via SSH (`--central-ssh`, default `joel@panda`) using `joelclaw notify send --type satellite/repair.requested`; this lets a satellite ask the gateway for repair without local Redis/secrets.
+- `satellite health` is the thin-Machine self-check surface. It verifies local prerequisites like `python3`, `jq`, `joelclaw`, raw Pi session storage, and local session search JSON. With `--notify`, degraded health is relayed to Central via SSH (`--central-ssh`, default `<ssh-user>@<private-host>`) using `joelclaw notify send --type satellite/repair.requested`; this lets a satellite ask the gateway for repair without local Redis/secrets.
 - `satellite repair-request` always sends the Central gateway a repair request with the local probe payload.
 - New satellite Machines should use `scripts/setup-satellite-rig.sh` plus `docs/runbooks/satellite-rig-setup.md`. The bootstrap keeps satellites thin: repo + CLI + skills + raw session search + Central repair relay. It writes `~/.local/bin/joelclaw` as a wrapper that sources `~/.config/system-bus.env`, so Typesense and PDF Brain docs-api credentials work over non-interactive SSH without installing Panda's agent-secrets stack. Do not install Panda's k8s/Inngest/Redis/gateway stack on a satellite by default.
 - Software surfaces should route OTEL through this command contract (or shared CLI ingest helper), not ad-hoc raw HTTP calls.

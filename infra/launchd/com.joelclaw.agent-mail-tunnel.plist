@@ -14,8 +14,6 @@
     <dict>
         <key>HOME</key>
         <string>/Users/joel</string>
-        <key>AGENT_MAIL_CENTRAL_HOST</key>
-        <string>flagg</string>
         <key>AGENT_MAIL_CENTRAL_PORT</key>
         <string>8765</string>
         <key>AGENT_MAIL_LOCAL_PORT</key>

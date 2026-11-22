@@ -14,6 +14,8 @@ tags:
 
 # Agent Session Capture Backup
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Use this skill when Joel asks whether agent activity is being captured, indexed, or backed up across machines.
 
 ## Canonical surfaces
@@ -28,18 +30,18 @@ Transcript/raw activity sources:
 
 NAS audit mirror:
 
-- `/Volumes/services/joelclaw/sessions/<machine>/<source-key>/...`
-- receipts: `/Volumes/services/joelclaw/sessions/receipts/*.json`
+- `<nas-services-mount>/joelclaw/sessions/<machine>/<source-key>/...`
+- receipts: `<nas-services-mount>/joelclaw/sessions/receipts/*.json`
 
 The separate additive raw archive has full and priority server receipts plus local steward receipts. For its root and receipt paths, see the private operator map. Do not confuse this archive with the cross-machine audit mirror. An hourly priority job, `com.joelclaw.raw-transcript-backup`, is being added; verify its deployment and fresh receipts before treating it as active.
 
 Capture routing:
 
-- Flagg capture uses loopback: `http://127.0.0.1:3111/api/runs`; health: `http://127.0.0.1:3111/api/runs/health`.
+- central host capture uses loopback: `http://127.0.0.1:3111/api/runs`; health: `http://127.0.0.1:3111/api/runs/health`.
 - A local capture endpoint override file is being added; see the private operator map for its path and deployment status.
-- Satellites need an approved reachable Central address. Never configure a satellite with Flagg's loopback URL.
+- Satellites need an approved reachable Central address. Never configure a satellite with central host's loopback URL.
 
-Panda is retired, not a live capture host, Central, or relay. Remove it from routine host lists. Capture authentication uses Flagg's persistent local `~/.joelclaw/capture-auth.db`; Typesense `machines_dev` is only its enrollment/migration mirror.
+retired host is retired, not a live capture host, Central, or relay. Remove it from routine host lists. Capture authentication uses central host's persistent local `~/.joelclaw/capture-auth.db`; Typesense `machines_dev` is only its enrollment/migration mirror.
 
 ## Manual verification / repair
 
@@ -47,9 +49,9 @@ From `~/Code/joelhooks/joelclaw-runtime`, this Flagg-only metadata audit writes 
 
 ```bash
 bun scripts/agent-session-audit-backup.ts \
-  --hosts flagg \
+  --hosts <central-host> \
   --central-url http://127.0.0.1:3111 \
-  --backup-root /Volumes/services/joelclaw/sessions \
+  --backup-root <nas-services-mount>/joelclaw/sessions \
   --sync=false
 ```
 
@@ -75,11 +77,11 @@ Host worker function:
 - manual event: `system/agent-session.capture-backup.requested`
 - daily cron: `TZ=America/Los_Angeles 15 5 * * *`
 
-Manual trigger for a requested Flagg backup:
+Manual trigger for a requested central host backup:
 
 ```bash
 joelclaw send system/agent-session.capture-backup.requested -d '{
-  "hosts": "flagg",
+  "hosts": "<central-host>",
   "centralUrl": "http://127.0.0.1:3111",
   "repairEnv": false
 }'
@@ -92,12 +94,12 @@ The scheduled worker syncs backups even with `repairEnv:false`; this is not meta
 - Every active machine reports `centralHealthOk=true`.
 - Every local transcript source has a fresh per-source receipt confirming successful backup. Counts and preserved mtimes alone do not prove parity; partial rsync is not verified completion.
 - Each active machine/runtime has reconciled namespaced outbox, replay checkpoint, stored hash, and index coverage. An empty legacy outbox is not a green verdict. Covered queued files may remain on disk.
-- Audit receipts are written daily under `/Volumes/services/joelclaw/sessions/receipts`. Raw archive coverage needs its separate full/priority and local steward receipts; see the private operator map.
-- A recent receipt covers Flagg and Blaine with fresh Pi, Claude, Codex, `runs-dev`, and outbox metadata. An unreachable host or failed source sync remains unverified.
+- Audit receipts are written daily under `<nas-services-mount>/joelclaw/sessions/receipts`. Raw archive coverage needs its separate full/priority and local steward receipts; see the private operator map.
+- A recent receipt covers central host and satellite host with fresh Pi, Claude, Codex, `runs-dev`, and outbox metadata. An unreachable host or failed source sync remains unverified.
 
 ## Gotchas
 
-- Panda is retired. Historical Central/relay instructions do not authorize routing or repair work there.
+- retired host is retired. Historical Central/relay instructions do not authorize routing or repair work there.
 - Use current service configuration and fresh receipts for capture routing. Historical host names and endpoint examples are not current authority.
 - Backups must be copies, not rotations. Do not delete or move live transcript files during backup.
 - Outbox replay is a repair operation. Keep it bounded and leave receipts.

@@ -7,7 +7,7 @@
   <string>com.joelclaw.local-convex.lan-forwarder</string>
 
   <key>UserName</key>
-  <string>joel</string>
+  <string>replace-with-service-user</string>
   <key>GroupName</key>
   <string>staff</string>
 
@@ -23,9 +23,9 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
-    <string>/Users/joel</string>
+    <string>/path/to/service-home</string>
     <key>LAN_BIND_IP</key>
-    <string>192.168.1.10</string>
+    <string>replace-with-bind-ip</string>
   </dict>
 
   <key>RunAtLoad</key>

@@ -1,6 +1,24 @@
 #!/bin/bash
 set -euo pipefail
 
+if [[ ${1:-} == --help ]]; then
+  printf '%s\n' 'Usage: bash infra/k8s-reboot-heal.sh' \
+    'Configure NAS_CIDR, NAS_GATEWAY, NAS_INTERFACE and NAS_HOST in ~/.config/joelclaw/k8s.env.'
+  exit 0
+fi
+k8s_env="${JOELCLAW_K8S_ENV_FILE:-$HOME/.config/joelclaw/k8s.env}"
+if [[ -r "$k8s_env" ]]; then
+  source "$k8s_env"
+fi
+: "${NAS_CIDR:?set NAS_CIDR in the private k8s env}" "${NAS_GATEWAY:?set NAS_GATEWAY}" \
+  "${NAS_INTERFACE:?set NAS_INTERFACE}" "${NAS_HOST:?set NAS_HOST}"
+if [[ ! $NAS_CIDR =~ ^[0-9.]+/[0-9]+$ || ! $NAS_GATEWAY =~ ^[0-9.]+$ ||
+      ! $NAS_INTERFACE =~ ^[a-zA-Z0-9_.-]+$ || ! $NAS_HOST =~ ^[a-zA-Z0-9_.-]+$ ||
+      ! ${NAS_NFS_PORT:-2049} =~ ^[0-9]+$ ]]; then
+  printf '%s\n' 'Invalid NAS route settings in the private k8s env.' >&2
+  exit 2
+fi
+
 # Ensure homebrew + local bins in PATH (launchd has minimal PATH)
 export PATH="/opt/homebrew/bin:/Users/joel/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
@@ -37,7 +55,7 @@ run_colima_proof_snapshot() {
   ensure_colima_proof_incident_id
 
   if ! SLOG_SESSION_ID="${SLOG_SESSION_ID:-FeralPigeon}" \
-    SLOG_SYSTEM_ID="${SLOG_SYSTEM_ID:-panda}" \
+    SLOG_SYSTEM_ID="${SLOG_SYSTEM_ID:-$(hostname -s)}" \
     "$COLIMA_PROOF_SCRIPT" snapshot \
       --incident-id "$COLIMA_PROOF_INCIDENT_ID" \
       --phase "$phase" \
@@ -51,7 +69,7 @@ run_colima_proof_snapshot() {
   fi
 }
 
-COLIMA_DOCKER_HOST="unix:///Users/joel/.colima/default/docker.sock"
+COLIMA_DOCKER_HOST="${COLIMA_DOCKER_HOST:-unix://$HOME/.colima/default/docker.sock}"
 COLIMA_SSH_CONFIG="$HOME/.colima/_lima/colima/ssh.config"
 COLIMA_SSH_HOST="lima-colima"
 TALOS_CONTAINER_NAME="${TALOS_CONTAINER_NAME:-joelclaw-controlplane-1}"
@@ -76,11 +94,7 @@ COLIMA_UNHEALTHY_STREAK="0"
 LAST_COLIMA_UNHEALTHY_EPOCH=""
 LAST_COLIMA_FORCE_CYCLE_EPOCH=""
 LAST_COLIMA_FAILED_RECOVERY_EPOCH=""
-NAS_CIDR="192.168.1.0/24"
-NAS_GATEWAY="192.168.64.1"
-NAS_INTERFACE="col0"
-NAS_HOST="192.168.1.163"
-NAS_NFS_PORT="2049"
+NAS_NFS_PORT="${NAS_NFS_PORT:-2049}"
 FLANNEL_SUBNET_EVENT_WINDOW_SECS="${FLANNEL_SUBNET_EVENT_WINDOW_SECS:-300}"
 COLIMA_PROOF_SCRIPT="$HOME/Code/joelhooks/joelclaw/infra/colima-proof.sh"
 COLIMA_PROOF_HYPOTHESIS_ID="${COLIMA_PROOF_HYPOTHESIS_ID:-H1-usernet}"

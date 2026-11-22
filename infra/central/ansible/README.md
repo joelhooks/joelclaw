@@ -1,6 +1,8 @@
-# Flagg Central Ansible scaffold
+# central host Central Ansible scaffold
 
-Tiny host-IaC layer for Flagg Central. This intentionally wraps the existing repo-managed scripts and launchd templates instead of replacing them with a giant config-management swamp.
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
+Tiny host-IaC layer for central host Central. This intentionally wraps the existing repo-managed scripts and launchd templates instead of replacing them with a giant config-management swamp.
 
 ## Why Ansible here
 
@@ -11,7 +13,7 @@ Tiny host-IaC layer for Flagg Central. This intentionally wraps the existing rep
 
 ## Install tools
 
-Ansible is not currently installed on Flagg. Bootstrap from Joel's account:
+Ansible is not currently installed on central host. Bootstrap from Joel's account:
 
 ```bash
 brew install ansible

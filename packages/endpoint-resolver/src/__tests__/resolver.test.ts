@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildServiceHealthCandidates,
-  DEFAULT_COLIMA_VM_IP,
   discoverColimaVmIp,
   resolveEndpoint,
 } from "../resolver";
@@ -25,14 +24,20 @@ describe("endpoint resolver candidate ordering", () => {
     ]);
   });
 
-  test("uses fallback vm ip when discovery fails", () => {
+  test("returns no VM IP when discovery and configuration are absent", () => {
     const vmIp = discoverColimaVmIp({
       env: {},
       bypassCache: true,
       commandRunner: () => null,
     });
 
-    expect(vmIp).toBe(DEFAULT_COLIMA_VM_IP);
+    expect(vmIp).toBeUndefined();
+  });
+
+  test("uses the caller-supplied fallback after failed discovery", () => {
+    expect(discoverColimaVmIp({
+      env: {}, bypassCache: true, commandRunner: () => null, fallbackIp: "192.0.2.12",
+    })).toBe("192.0.2.12");
   });
 });
 

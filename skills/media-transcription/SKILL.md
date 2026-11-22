@@ -1,7 +1,7 @@
 ---
 name: media-transcription
-displayName: Media Transcription (badass-media)
-description: "Run, monitor, cancel, and resume the durable media transcription pipeline (media-transcription-pipeline-v2) for raw meeting media on /Volumes/badass-media. Use when the user asks to transcribe a meeting or media file from the NAS, check transcription progress, cancel a transcription, resume a failed/partial run, or debug ASR/diarization actors. Flagg-host-only execution."
+displayName: Media Transcription (media share)
+description: "Run, monitor, cancel, and resume the durable media transcription pipeline (media-transcription-pipeline-v2) for raw meeting media on <media-mount>. Use when the user asks to transcribe a meeting or media file from the NAS, check transcription progress, cancel a transcription, resume a failed/partial run, or debug ASR/diarization actors. Flagg-host-only execution."
 version: 1.0.0
 author: Joel Hooks
 tags:
@@ -14,6 +14,8 @@ tags:
 
 # Media Transcription
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Durable, event-driven transcription of raw meeting media on the NAS. Inngest
 orchestrates; MLX Whisper (chunked ASR) and pyannote (whole-file diarization)
 run as **detached local actor processes** — no Inngest step ever holds a
@@ -23,29 +25,29 @@ request-bound 2h timeouts and Whisper hallucination loops (design receipt:
 
 ## Where it runs (hard constraints)
 
-- **Flagg host worker only** (`hostFunctionDefinitions`, launchd
+- **central host host worker only** (`hostFunctionDefinitions`, launchd
   `com.joel.system-bus-worker`). Needs the direct NFS mount
-  `/Volumes/badass-media` and the rig checkout.
+  `<media-mount>` and the rig checkout.
 - Local inference implementation: `~/Code/joelhooks/transcript-rig`
   (public repo `joelhooks/transcript-rig`; override path with
   `TRANSCRIPT_RIG_ROOT`). Raw media on the NAS is immutable — the pipeline
   only writes derived artifacts.
-- From any other fleet machine: send the event (Inngest routes it to flagg's
-  worker) or SSH to flagg to inspect on-disk state.
+- From any other fleet machine: send the event (Inngest routes it to central host's
+  worker) or SSH to central host to inspect on-disk state.
 
 ## Start a transcription
 
 ```bash
 joelclaw send media/transcription.requested -d '{
   "requestId": "req-'$(uuidgen | tr 'A-Z' 'a-z')'",
-  "sourcePath": "/Volumes/badass-media/joel/meetings/<meeting-dir>"
+  "sourcePath": "<media-mount>/joel/meetings/<meeting-dir>"
 }'
 ```
 
 - `requestId` is the idempotency key — **always mint a fresh one**; a reused
   id is silently deduped. Optional flags: `"publish": false`, `"index": false`
   (both default true).
-- `sourcePath` must be under `/Volumes/badass-media/` or the run fails
+- `sourcePath` must be under `<media-mount>/` or the run fails
   NonRetriable.
 
 ## Monitor
@@ -55,7 +57,7 @@ joelclaw send media/transcription.requested -d '{
   widget (`packages/pi-extensions/inngest-monitor`).
 - Progress events: `media/transcription.chunk.completed` (per chunk, with
   index/total/cached), terminal `media/transcription.completed` or `.failed`.
-- On-disk truth (flagg): `<rig>/.transcript-rig-work/<artifactId>/`
+- On-disk truth (central host): `<rig>/.transcript-rig-work/<artifactId>/`
   - `orchestration/plan.v1.json` — chunk plan (requestId, tracks, chunk ids)
   - `orchestration/actors/<chunkId>/status.v1.json` — actor heartbeat/state
   - `orchestration/actors/<chunkId>/actor.log` — inference stdout/stderr

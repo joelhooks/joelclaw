@@ -13,6 +13,8 @@ tags: [joelclaw, pds, atproto, k8s, operations]
 
 # PDS — AT Protocol Personal Data Server
 
+For private topology, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders before running commands.
+
 ## Current truth
 
 - Helm release: `bluesky-pds`
@@ -21,7 +23,7 @@ tags: [joelclaw, pds, atproto, k8s, operations]
 - Health URL: `http://localhost:9627/xrpc/_health`
 - Host port: `9627`
 - Service `nodePort`: `3000`
-- Handle: `joel.pds.panda.tail7af24.ts.net`
+- Handle: `<tailnet-host>`
 - Current DID: `did:plc:5w6ablyvahugobsj7n57yjmm`
 
 ## CLI surface
@@ -90,7 +92,7 @@ curl -fsS -X POST http://localhost:9627/xrpc/com.atproto.server.createAccount \
   -H 'content-type: application/json' \
   -d "$(jq -nc \
     --arg email 'joelhooks@gmail.com' \
-    --arg handle 'joel.pds.panda.tail7af24.ts.net' \
+    --arg handle '<tailnet-host>' \
     --arg password "$JOEL_PASSWORD" \
     --arg inviteCode "$INVITE_CODE" \
     '{email:$email,handle:$handle,password:$password,inviteCode:$inviteCode}')"

@@ -1,26 +1,33 @@
 #!/usr/bin/env bash
-# joelclaw postboot system check -- read-only health sweep for Flagg/Panda split
+# joelclaw postboot system check -- read-only health sweep
 set -u
 set -o pipefail
+
+if [[ ${1:-} == --help ]]; then
+  printf '%s\n' 'Usage: bash postboot.sh' \
+    'Set NAS_IP, CUSTOM_MINIO_URL, CUSTOM_MINIO_CONSOLE_URL, CE_MINIO_URL,' \
+    'TAILNET_CONVEX_URL and POSTBOOT_RUN_CAPTURE_HEALTH_URL for private probes.'
+  exit 0
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${JOELCLAW_REPO_DIR:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 CENTRAL_SCRIPTS="${REPO_DIR}/infra/central/scripts"
 SERVICE_REPO="${SERVICE_REPO:-/Users/Shared/joelclaw/src/joelclaw}"
 SERVICE_CENTRAL_SCRIPTS="${SERVICE_REPO}/infra/central/scripts"
-LOCAL_CONVEX_DIR="${LOCAL_CONVEX_DIR:-/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/local-convex}"
+LOCAL_CONVEX_DIR="${LOCAL_CONVEX_DIR:-}"
 SYSTEM_ENV="${SYSTEM_ENV:-${HOME}/.config/system-bus.env}"
 
-NAS_IP="${NAS_IP:-192.168.1.163}"
+NAS_IP="${NAS_IP:-}"
 NAS_EXPECTED_INTERFACE="${NAS_EXPECTED_INTERFACE:-en0}"
 NAS_EXPECTED_MTU="${NAS_EXPECTED_MTU:-8192}"
-CUSTOM_MINIO_URL="${CUSTOM_MINIO_URL:-http://100.67.156.41:39000}"
-CUSTOM_MINIO_CONSOLE_URL="${CUSTOM_MINIO_CONSOLE_URL:-http://100.67.156.41:39001}"
-CE_MINIO_URL="${CE_MINIO_URL:-http://100.67.156.41:29990}"
+CUSTOM_MINIO_URL="${CUSTOM_MINIO_URL:-}"
+CUSTOM_MINIO_CONSOLE_URL="${CUSTOM_MINIO_CONSOLE_URL:-}"
+CE_MINIO_URL="${CE_MINIO_URL:-}"
 LOCAL_CONVEX_URL="${LOCAL_CONVEX_URL:-http://127.0.0.1:3210}"
 LOCAL_CONVEX_DASHBOARD="${LOCAL_CONVEX_DASHBOARD:-http://127.0.0.1:6791}"
 CONVEX_PROXY_URL="${CONVEX_PROXY_URL:-http://127.0.0.1:13210}"
-TAILNET_CONVEX_URL="${TAILNET_CONVEX_URL:-http://100.99.76.47:3210}"
+TAILNET_CONVEX_URL="${TAILNET_CONVEX_URL:-}"
 POSTGRES_SOCKET="${POSTGRES_SOCKET:-/Users/Shared/joelclaw/run/.s.PGSQL.5432}"
 POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
@@ -153,9 +160,11 @@ json_ok() {
 }
 
 run_capture_ok() {
-  python3 - <<'PY'
+  [[ ${POSTBOOT_RUN_CAPTURE_HEALTH_URL:-} == https://* ]] || { echo "set POSTBOOT_RUN_CAPTURE_HEALTH_URL to the private HTTPS endpoint"; return 1; }
+  python3 - "$POSTBOOT_RUN_CAPTURE_HEALTH_URL" <<'PY'
 import json
 import os
+import sys
 import urllib.request
 
 auth_path = os.path.expanduser("~/.joelclaw/auth.json")
@@ -163,7 +172,7 @@ with open(auth_path, "r", encoding="utf-8") as f:
     token = json.load(f).get("token", "")
 
 req = urllib.request.Request(
-    "https://panda.tail7af24.ts.net/api/runs/health",
+    sys.argv[1],
     headers={"Authorization": "Bearer " + token},
 )
 
@@ -220,13 +229,13 @@ authority_shape_ok() {
     "${central_url:-<unset>}" \
     "${typesense_url:-<unset>}"
 
-  if [[ "$host" == "flagg" || "$host" == "flagg.localdomain" ]]; then
+  if [[ -n ${POSTBOOT_CENTRAL_HOSTNAME:-} && "$host" == "$POSTBOOT_CENTRAL_HOSTNAME" ]]; then
     case "$central_url" in
-      http://localhost:3111|http://127.0.0.1:3111|http://joels-mac-studio.tail7af24.ts.net:3111) ;;
+      http://localhost:3111|http://127.0.0.1:3111|"${POSTBOOT_CENTRAL_URL:-http://localhost:3111}") ;;
       *) return 1 ;;
     esac
     case "$typesense_url" in
-      http://localhost:8108|http://127.0.0.1:8108|http://joels-mac-studio.tail7af24.ts.net:8108) ;;
+      http://localhost:8108|http://127.0.0.1:8108|"${POSTBOOT_TYPESENSE_URL:-http://localhost:8108}") ;;
       *) return 1 ;;
     esac
   fi
@@ -234,6 +243,7 @@ authority_shape_ok() {
 
 nas_route_ok() {
   local route iface mtu
+  [[ -n "$NAS_IP" ]] || { echo "set NAS_IP to the private LAN address"; return 1; }
   route="$(route -n get "$NAS_IP" 2>/dev/null)"
   iface="$(awk '/interface:/ {print $2; exit}' <<<"$route")"
   mtu="$(awk '
@@ -337,11 +347,7 @@ probe warn 'joelclaw Inngest CLI' json_ok 'joelclaw inngest status' joelclaw inn
 
 configured_inngest="$(env_value INNGEST_URL || true)"
 if [[ -z "$configured_inngest" ]]; then
-  if [[ "$(hostname -s 2>/dev/null || hostname)" == "flagg" ]]; then
-    configured_inngest="http://panda:8288"
-  else
-    configured_inngest="http://127.0.0.1:8288"
-  fi
+  configured_inngest="http://127.0.0.1:8288"
 fi
 probe required 'Inngest direct /health' http_ok "${configured_inngest%/}/health"
 probe required 'Run capture health' run_capture_ok
@@ -376,7 +382,7 @@ probe warn 'Convex tailnet forward' convex_version_ok "$TAILNET_CONVEX_URL"
 probe warn 'Convex heavy smoke gate' convex_heavy_smoke
 probe warn 'Convex origin proxy launchd' launchd_user_ok com.joelclaw.convex-origin-proxy
 
-probe warn 'Flagg shadow central health' "${CENTRAL_SCRIPTS}/health.sh"
+probe warn 'shadow Central health' "${CENTRAL_SCRIPTS}/health.sh"
 probe warn 'legacy full health gate' run_full_health_if_requested
 
 printf '\n====================================================\n'

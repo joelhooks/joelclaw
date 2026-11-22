@@ -12,7 +12,7 @@ image:
 pds:
   config:
     # Tailscale hostname — private, not internet-reachable
-    hostname: "pds.panda.tail7af24.ts.net"
+    hostname: "pds.example.invalid" # Override in the private Helm values.
     secrets:
       # Stored in agent-secrets: pds_jwt_secret, pds_admin_password, pds_plc_rotation_key
       # Use: secrets lease pds_admin_password

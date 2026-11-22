@@ -149,15 +149,15 @@ require_command launchctl
 require_command nc
 require_command python3
 
-printf 'Flagg Central health (read-only)\n'
+printf 'Central health (read-only)\n'
 probe 'nas mounts verified' "${SCRIPT_DIR}/verify-nas.sh"
 probe 'redis ping' redis_ok
 probe 'postgres accepting connections' postgres_ok
 probe 'typesense /health' http_ok "http://${CENTRAL_BIND_ADDR}:8108/health"
 probe 'inngest /health' http_ok "http://${CENTRAL_BIND_ADDR}:8288/health"
 probe 'system-bus functions registered' system_bus_registered
-probe 'executor app' http_ok "http://${CENTRAL_BIND_ADDR}:4788/health"
-probe 'executor dashboard' http_ok "http://${CENTRAL_BIND_ADDR}:4789/"
+probe 'executor app' http_ok "${CENTRAL_EXECUTOR_HEALTH_URL:-}"
+probe 'executor dashboard' http_ok "${CENTRAL_EXECUTOR_DASHBOARD_URL:-}"
 probe 'wiki local' http_ok "http://${CENTRAL_BIND_ADDR}:8790/"
 probe 'Brain paper' http_ok "${BRAIN_PAPER_URL}"
 probe 'agent-mail' http_ok "http://${CENTRAL_BIND_ADDR}:8765/"

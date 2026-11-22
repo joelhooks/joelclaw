@@ -1,3 +1,4 @@
+# Render this template with k8s/render-nas-pv.sh before applying.
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -13,8 +14,8 @@ spec:
     - tcp
     - resvport
   nfs:
-    server: three-body
-    path: /volume1/joelclaw
+    server: "${K8S_NAS_HOST}"
+    path: "${K8S_NAS_MINIO_EXPORT}"
   persistentVolumeReclaimPolicy: Retain
 ---
 apiVersion: v1

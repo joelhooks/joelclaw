@@ -65,7 +65,7 @@ spec:
               cpu: 500m
               memory: 512Mi
 ---
-# NodePort 3838 is intentional to preserve Caddy mapping :5443 -> localhost:3838.
+# NodePort 3838 is intentional to preserve the configured reverse-proxy target.
 # Ensure Talos/Colima host port mappings include 3838 -> 3838.
 apiVersion: v1
 kind: Service

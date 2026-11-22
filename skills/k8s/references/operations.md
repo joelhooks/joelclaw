@@ -1,5 +1,7 @@
 # k8s Operations Reference
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 ## Port Mapping Details
 
 Traffic path: `Mac:port → Lima SSH tunnel → Docker port map → Talos NodePort → Pod`
@@ -142,7 +144,7 @@ Colima starts via launchd (`com.joel.colima`) through `infra/colima-start.sh`. T
 
 **Resource invariant first:** the stable Colima profile is currently `cpu: 8`, `memory: 24`, `disk: 100`, `portForwarder: grpc` (see `~/.colima/default/colima.yaml`). If the profile drifts down to `4/8`, Docker can refuse to restart `joelclaw-controlplane-1` with `range of CPUs is from 0.01 to 4.00`, leaving the whole cluster down after reboot. The repo-managed `infra/launchd/com.joel.colima.plist` must stay aligned at `8 / 24 / 100 / grpc` so boot automation does not reintroduce the drift or the ssh-mode service-port failure. The Talos container cap must also be reasserted to `18g` after churn.
 
-**Boot-safe critical daemons (ADR-0240):** if Panda needs the host control plane to survive headless reboots, install the critical system daemons once:
+**Boot-safe critical daemons (ADR-0240):** if retired host needs the host control plane to survive headless reboots, install the critical system daemons once:
 
 ```bash
 sudo ~/Code/joelhooks/joelclaw/infra/install-critical-launchdaemons.sh
@@ -172,14 +174,14 @@ This installs the repo-managed plists directly into `/Library/LaunchDaemons/`, r
 
 `com.joelclaw.agent-mail` is launched via `infra/agent-mail-daemon.sh`, not by hardcoding the third-party checkout path into the plist. The daemon script expects the joelclaw-managed `joelhooks/mcp_agent_mail` fork; a legacy on-disk directory name is acceptable only if that checkout's `origin` remote points at `joelhooks/mcp_agent_mail`.
 
-Do **not** try to bootstrap user LaunchAgents into `user/$UID` from a system daemon anymore. That ADR-0239 bridge was not earned on Panda; `launchctl bootstrap user/501 ...` kept failing with `Input/output error`.
+Do **not** try to bootstrap user LaunchAgents into `user/$UID` from a system daemon anymore. That ADR-0239 bridge was not earned on retired host; `launchctl bootstrap user/501 ...` kept failing with `Input/output error`.
 
 **⚠️ launchd PATH requirement**: The Colima plist MUST include `EnvironmentVariables` with `PATH` containing `/opt/homebrew/bin`. Colima internally shells to `limactl` which is a Homebrew formula. Without this, launchd recovery silently fails (Feb 2026 incident: 6 days of silent failures). Same applies to `k8s-reboot-heal.sh` — it exports PATH at the top as belt-and-suspenders.
 
 ```bash
 launchctl print system/com.joel.kube-operator-access | rg 'state =|pid =|last exit code'
 kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}{"\n"}'
-talosctl config info | rg 'Endpoints|Nodes|127.0.0.1:50000|10.5.0.2'
+talosctl config info | rg 'Endpoints|Nodes|127.0.0.1:50000|<private-ip>'
 kubectl get nodes
 curl -k https://127.0.0.1:6443/readyz?verbose
 kubectl get pods -n joelclaw
@@ -300,7 +302,7 @@ talosctl cluster create docker \
   --exposed-ports "3111:3111/tcp,6379:6379/tcp,7880:7880/tcp,7881:7881/tcp,8108:8108/tcp,8288:8288/tcp,8289:8289/tcp,9627:3000/tcp" \
   --workers 0 \
   --config-patch @/tmp/talos-patch.yaml \
-  --subnet "10.5.0.0/24"
+  --subnet "<private-cidr>"
 
 # 5. Fix kubeconfig context
 kubectl config use-context admin@joelclaw-1
@@ -309,7 +311,7 @@ kubectl config use-context admin@joelclaw-1
 TALOS_PORT=$(talosctl config info 2>&1 | grep Endpoints | awk -F: '{print $NF}')
 
 # 7. Allow low NodePorts
-talosctl -e 127.0.0.1:$TALOS_PORT -n 10.5.0.2 patch machineconfig --patch @- <<'PATCH'
+talosctl -e 127.0.0.1:$TALOS_PORT -n <private-ip> patch machineconfig --patch @- <<'PATCH'
 cluster:
   apiServer:
     extraArgs:
@@ -332,7 +334,8 @@ kubectl label namespace joelclaw \
   pod-security.kubernetes.io/enforce=privileged --overwrite
 
 # 11. Deploy core services
-kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/
+# Apply the reviewed resource manifests individually. Do not apply the directory:
+# Render NAS PV templates with k8s/render-nas-pv.sh before applying them.
 
 # 12. Deploy LiveKit (Helm + reconcile patches)
 ~/Code/joelhooks/joelclaw/k8s/reconcile-livekit.sh joelclaw
@@ -350,30 +353,30 @@ launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker
 ## Caddy HTTPS Proxy (Tailscale)
 
 Caddyfile: `~/.local/caddy/Caddyfile`
-TLS certs: `~/.local/certs/panda.tail7af24.ts.net.{crt,key}`
+TLS certs: `~/.local/certs/<tailnet-host>.{crt,key}`
 
 | URL | Backend |
 |-----|---------|
-| `https://panda.tail7af24.ts.net:9443` | Inngest dashboard (8288) |
-| `https://panda.tail7af24.ts.net:8290` | Inngest WS connect (8289) |
-| `https://panda.tail7af24.ts.net:3443` | Worker (3111) |
-| `panda.tail7af24.ts.net:6379` | Redis (direct TCP, no TLS) |
-| `https://panda.tail7af24.ts.net:7443` | LiveKit WSS signaling (7880) |
+| `https://<tailnet-host>:<service-port>` | Inngest dashboard (8288) |
+| `https://<tailnet-host>:<service-port>` | Inngest WS connect (8289) |
+| `https://<tailnet-host>:<service-port>` | Worker (3111) |
+| `<tailnet-host>:<service-port>` | Redis (direct TCP, no TLS) |
+| `https://<tailnet-host>:<service-port>` | LiveKit WSS signaling (7880) |
 | `http://localhost:8443` | Funnel webhook gateway → worker/inngest |
 
-Tailscale Funnel: `panda.tail7af24.ts.net:443` → `localhost:3111` (public internet webhooks).
+Tailscale Funnel: `<tailnet-host>:<service-port>` → `localhost:3111` (public internet webhooks).
 
 ## Talos-Specific Commands
 
 ```bash
 # Dashboard (live TUI)
-talosctl -e 127.0.0.1:64785 -n 10.5.0.2 dashboard
+talosctl -e 127.0.0.1:64785 -n <private-ip> dashboard
 
 # Kubelet logs
-talosctl -e 127.0.0.1:64785 -n 10.5.0.2 logs kubelet
+talosctl -e 127.0.0.1:64785 -n <private-ip> logs kubelet
 
 # Machine config
-talosctl -e 127.0.0.1:64785 -n 10.5.0.2 get machineconfig -o yaml
+talosctl -e 127.0.0.1:64785 -n <private-ip> get machineconfig -o yaml
 
 # Config info (endpoints, cert expiry)
 talosctl config info
@@ -419,7 +422,7 @@ livekit  https://helm.livekit.io     # LiveKit server
 |-------|---------|------|
 | `com.joel.colima` | Colima VM | — |
 | `com.joel.system-bus-worker` | Inngest worker | 3111 |
-| `com.joel.caddy` | HTTPS proxy | 443/8290/3443/8443 |
+| `com.joel.caddy` | HTTPS proxy | 443/<ingress-port>/<worker-ingress-port>/8443 |
 | `com.joel.gateway` | Pi gateway daemon | — (Redis pub/sub) |
 
 ## Known Issues
@@ -432,7 +435,7 @@ livekit  https://helm.livekit.io     # LiveKit server
 
 4. **No metrics-server** — `kubectl top` doesn't work. Install if needed: `kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml`.
 
-5. **`serveHost` in serve.ts** — Host worker must advertise a callback URL reachable from the Inngest pod. On Panda that is the host worker's Tailscale URL (`INNGEST_SERVE_HOST=http://100.93.201.72:3111`); do not use `host.lima.internal` or `host.docker.internal` unless a live pod-to-host probe proves it reaches macOS. Cluster worker should leave `INNGEST_SERVE_HOST` unset/empty in connect mode.
+5. **`serveHost` in serve.ts** — Host worker must advertise a callback URL reachable from the Inngest pod. On retired host that is the host worker's Tailscale URL (`INNGEST_SERVE_HOST=http://<tailnet-ip>:<service-port>`); do not use `host.lima.internal` or `host.docker.internal` unless a live pod-to-host probe proves it reaches macOS. Cluster worker should leave `INNGEST_SERVE_HOST` unset/empty in connect mode.
 
 6. **Control-plane taint can reappear after reboot** — Single-node workloads may remain `Pending` with `untolerated taint(s)` until `node-role.kubernetes.io/control-plane:NoSchedule` is removed again.
 
@@ -440,7 +443,7 @@ livekit  https://helm.livekit.io     # LiveKit server
 
 9. **Talos container has no shell** — No bash, no /bin/sh, no busybox. Cannot `docker exec` into `joelclaw-controlplane-1`. Use `talosctl` for node operations. Kernel modules must be loaded at the Colima VM level via SSH: `ssh lima-colima "sudo modprobe br_netfilter"`.
 
-7. **LiveKit hostNetwork probe target** — With `hostNetwork: true`, probing pod IP (`10.5.0.2`) can fail even while LiveKit serves on `127.0.0.1:7880`, causing CrashLoopBackOff (`exit code 0`, then kubelet SIGTERM on failed liveness/startup checks). Keep probe host pinned to loopback and use `Recreate` strategy for single-node hostPort scheduling:
+7. **LiveKit hostNetwork probe target** — With `hostNetwork: true`, probing pod IP (`<private-ip>`) can fail even while LiveKit serves on `127.0.0.1:7880`, causing CrashLoopBackOff (`exit code 0`, then kubelet SIGTERM on failed liveness/startup checks). Keep probe host pinned to loopback and use `Recreate` strategy for single-node hostPort scheduling:
 
 ```bash
 kubectl patch deployment livekit-server -n joelclaw --type='strategic' -p '{

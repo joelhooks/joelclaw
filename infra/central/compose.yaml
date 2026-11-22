@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
     command:
       - --data-dir=/data
-      - --api-key=${TYPESENSE_API_KEY:-replace-with-flagg-shadow-typesense-key}
+      - --api-key=${TYPESENSE_API_KEY:-replace-with-shadow-typesense-key}
       - --api-address=0.0.0.0
       - --api-port=8108
       - --enable-search-analytics=true
@@ -52,8 +52,8 @@ services:
       - 0.0.0.0
     environment:
       INNGEST_SQLITE_DIR: /var/lib/inngest
-      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:-replace-with-flagg-shadow-inngest-event-key}
-      INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:-replace-with-flagg-shadow-inngest-signing-key}
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:-replace-with-shadow-inngest-event-key}
+      INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:-replace-with-shadow-inngest-signing-key}
     ports:
       - "${CENTRAL_BIND_ADDR:-127.0.0.1}:8288:8288"
       - "${CENTRAL_BIND_ADDR:-127.0.0.1}:8289:8289"
@@ -80,8 +80,8 @@ services:
       - --console-address
       - :9001
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-replace-with-flagg-shadow-minio-user}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-replace-with-flagg-shadow-minio-password}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-replace-with-shadow-minio-user}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-replace-with-shadow-minio-password}
     ports:
       - "${CENTRAL_BIND_ADDR:-127.0.0.1}:9000:9000"
       - "${CENTRAL_BIND_ADDR:-127.0.0.1}:9001:9001"

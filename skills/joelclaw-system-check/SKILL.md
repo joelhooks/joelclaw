@@ -10,6 +10,8 @@ disable-model-invocation: true
 
 # joelclaw System Health Check
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Run `scripts/postboot.sh` for the read-only postboot/daily topology sweep. It checks the Flagg/Panda authority split, NAS mounts, NFS tuning, custom NAS MinIO, Central Postgres, local Convex, Typesense, Inngest, and shadow Central health without printing secrets. The daily automation also reviews recent Codex infra transcripts so completed work does not stay trapped in chat.
 
 ## Migration caveat — 2026-07-09
@@ -22,7 +24,7 @@ Health needs to become lane-based:
 - **Relay lane**: Panda-only leftovers such as iMessage/account-bound relays, legacy webhook/callback surfaces, and explicit decommission blockers.
 - **Satellite lane**: Blaine/other Machines' `JOELCLAW_CENTRAL_URL`, outbox backlog, fresh capture timestamps, and transcript backup freshness.
 
-Until that rewrite lands, read red Panda/k8s/PDS checks as migration TODOs, not proof that Flagg Central is dead.
+Until that rewrite lands, read red Panda/k8s/PDS checks as migration TODOs, not proof that central host Central is dead.
 
 ```bash
 ~/Code/joelhooks/joelclaw-runtime/skills/joelclaw-system-check/scripts/postboot.sh
@@ -51,35 +53,35 @@ Default posture:
 - Does not run the Convex write/read/delete smoke unless `POSTBOOT_HEAVY=1`.
 - Does not run the legacy full `health.sh` unless `POSTBOOT_RUN_FULL_HEALTH=1`.
 - Never prints raw `.env`, MinIO keys, Convex admin keys, or Postgres URLs with passwords.
-- Treats custom NAS MinIO on `100.67.156.41:39000` as canonical.
-- Treats ASUSTOR MinIO CE on `29990` as a warning/reference surface only.
-- On Flagg, expects `JOELCLAW_CENTRAL_URL` and direct Typesense helpers to still point at Panda until explicit Central cutover.
+- Treats custom NAS MinIO on `<tailnet-ip>:<service-port>` as canonical.
+- Treats ASUSTOR MinIO CE on `<reference-s3-port>` as a warning/reference surface only.
+- On central host, expects `JOELCLAW_CENTRAL_URL` and direct Typesense helpers to still point at retired host until explicit Central cutover.
 
 Critical checks:
 
 | Check | What Green Means |
 | --- | --- |
-| authority split env | Flagg still points Central capture/search at Panda while Flagg is shadow |
-| Inngest direct health | the authoritative Inngest endpoint responds on `/health`; on Flagg this falls back to `http://panda:8288` if `INNGEST_URL` is unset |
-| Run capture health | Panda `/api/runs/health` returns `ok=true` with local Machine auth |
+| authority split env | central host still points Central capture/search at retired host while central host is shadow |
+| Inngest direct health | the authoritative Inngest endpoint responds on `/health`; on central host this falls back to `http://<private-host>:<service-port>` if `INNGEST_URL` is unset |
+| Run capture health | retired host `/api/runs/health` returns `ok=true` with local Machine auth |
 | Typesense configured health | configured Typesense endpoint responds on `/health` |
 | NAS launchd label | `system/com.joelclaw.central.nas-mounts` is loaded with no failing last exit |
-| NAS route 10GbE/MTU | route to `192.168.1.163` uses `en0` and MTU `8192` |
-| NAS mounts status | `/Volumes/nas-nvme` and `/Volumes/three-body` are mounted from LAN IP exports |
+| NAS route 10GbE/MTU | route to `<private-ip>` uses `en0` and MTU `8192` |
+| NAS mounts status | `<nas-nvme-mount>` and `<nas-hdd-mount>` are mounted from LAN IP exports |
 | NAS verifier write probe | service checkout `verify-nas.sh` passes |
 | NFS tuned options | live mounts show `rsize=524288,wsize=524288,readahead=128` |
-| custom MinIO ready/live | custom NAS MinIO responds on `39000` |
+| custom MinIO ready/live | custom NAS MinIO responds on `<s3-api-port>` |
 | Central Postgres | socket, TCP, and readiness checks pass |
 | local Convex | backend `/version` and dashboard respond |
 
 Warning/reference checks:
 
-- custom MinIO console TCP on `39001`
-- ASUSTOR MinIO CE readiness on `29990`
+- custom MinIO console TCP on `<object-console-port>`
+- ASUSTOR MinIO CE readiness on `<reference-s3-port>`
 - aggregate `joelclaw status` and `joelclaw inngest status` CLI wrappers, because those can reveal local env drift even when the authoritative endpoint is healthy
 - Convex LAN and tailnet forwards
 - local Convex LAN forwarder LaunchAgent
-- Flagg shadow Central health
+- central host shadow Central health
 - gated heavy checks
 
 If `postboot.sh` fails, fix critical failures first. Do not chase warning/reference failures before the required path is green.
@@ -142,15 +144,15 @@ Active Codex automation:
 
 ## Agent Session Capture + NAS Backup Check
 
-Use the `agent-session-capture-backup` skill when the check needs proof that Pi/Claude/Codex transcript activity is captured and backed up across Flagg, Blaine, and Panda.
+Use the `agent-session-capture-backup` skill when the check needs proof that Pi/Claude/Codex transcript activity is captured and backed up across central host, satellite host, and retired host.
 
 Fast audit/repair command from `~/Code/joelhooks/joelclaw`:
 
 ```bash
 bun scripts/agent-session-audit-backup.ts \
-  --hosts flagg,blaine,panda \
-  --central-url http://joels-mac-studio.tail7af24.ts.net:3111 \
-  --backup-root /Volumes/three-body/sessions \
+  --hosts <central-host>,<satellite-host>,<retired-host> \
+  --central-url http://<tailnet-host>:<service-port> \
+  --backup-root <nas-hdd-mount>/sessions \
   --repair-env \
   --sync=true \
   --replay-outbox \
@@ -163,9 +165,9 @@ Daily durable workflow:
 - function: `system/agent-session.capture-backup.verify`
 - event: `system/agent-session.capture-backup.requested`
 - cron: `TZ=America/Los_Angeles 15 5 * * *`
-- receipts: `/Volumes/three-body/sessions/receipts/*.json`
+- receipts: `<nas-hdd-mount>/sessions/receipts/*.json`
 
-Treat stale or empty `/Volumes/three-body/sessions` as a critical backup failure even when `runs_dev` Typesense indexes are fresh. Typesense is derived; raw transcripts and run blobs are the source of truth.
+Treat stale or empty `<nas-hdd-mount>/sessions` as a critical backup failure even when `runs_dev` Typesense indexes are fresh. Typesense is derived; raw transcripts and run blobs are the source of truth.
 
 ## When to Run
 

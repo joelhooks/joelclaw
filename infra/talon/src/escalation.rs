@@ -256,7 +256,7 @@ pub fn run_sos(
     let failed_list = failed_probe_names(failed_probes);
     let summary = sos_summary(failed_probes);
     let message = format!(
-        "🚨 TALON SOS: {summary}. Failed probes: {failed_list}. SSH to panda and investigate."
+        "🚨 TALON SOS: {summary}. Failed probes: {failed_list}. Check the configured runtime host and investigate."
     );
 
     log::error("sending SOS escalation via telegram + imsg/osascript");

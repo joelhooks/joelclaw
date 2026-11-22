@@ -67,7 +67,10 @@ spec:
             - name: OTEL_STORE
               value: "forward"
             - name: OTEL_FORWARD_URL
-              value: "http://flagg:3111/observability/emit"
+              valueFrom:
+                configMapKeyRef:
+                  name: system-bus-placement
+                  key: OTEL_FORWARD_URL
             - name: OTEL_FORWARD_TIMEOUT_MS
               value: "2500"
             - name: OTEL_TYPESENSE_PROJECTION

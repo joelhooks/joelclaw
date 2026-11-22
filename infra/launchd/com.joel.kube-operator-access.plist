@@ -31,8 +31,6 @@
         <string>6443</string>
         <key>KUBE_OPERATOR_LOCAL_TALOS_PORT</key>
         <string>50000</string>
-        <key>KUBE_OPERATOR_TARGET_NODE</key>
-        <string>10.5.0.2</string>
     </dict>
 
     <key>RunAtLoad</key>

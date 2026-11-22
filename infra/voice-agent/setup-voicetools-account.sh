@@ -143,7 +143,7 @@ sudo install -o root -g wheel -m 0644 "$TMP/sha" "$GATE.sha"
 
 # 5. sshd: syntax test, then prove scope. joel's effective config must not
 # change, and _voicetools must get every restriction. Any miss: remove, exit.
-effective() { sudo sshd -T -C "user=$1,host=x,addr=100.64.0.1" 2>/dev/null | sort; }
+effective() { sudo sshd -T -C "user=$1,host=x,addr=192.0.2.10" 2>/dev/null | sort; }
 effective joel > "$TMP/joel.before"
 [ -s "$TMP/joel.before" ] || { echo "sshd -T printed nothing for joel; not touching sshd" >&2; exit 1; }
 printf '%s\n' "$SSHD_BLOCK" > "$TMP/sshd.conf"

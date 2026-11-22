@@ -1,5 +1,7 @@
 # `system-bus.config.json` template
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Copy this content to `~/.joelclaw/system-bus.config.json` and tune only the values you need.
 Environment variables always override file values at runtime.
 
@@ -21,8 +23,8 @@ Environment variables always override file values at runtime.
       "nasRetryMaxMs": 120000,
       "nasSshHost": "joel@nas.example",
       "nasSshFlags": "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
-      "nasHddRoot": "/Volumes/services/joelclaw",
-      "nasNvmeRoot": "/Volumes/fast"
+      "nasHddRoot": "<nas-services-mount>/joelclaw",
+      "nasNvmeRoot": "<nas-fast-mount>"
     }
   },
   "backupFailureRouter": {
@@ -40,8 +42,8 @@ Environment variables always override file values at runtime.
     "nasRetryMaxMs": 120000,
     "nasSshHost": "joel@nas.example",
     "nasSshFlags": "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
-    "nasHddRoot": "/Volumes/services/joelclaw",
-    "nasNvmeRoot": "/Volumes/fast"
+    "nasHddRoot": "<nas-services-mount>/joelclaw",
+    "nasNvmeRoot": "<nas-fast-mount>"
   }
 }
 ```

@@ -1,7 +1,7 @@
 ---
 name: wzrrd-video
 displayName: wzrrd Video
-description: "Publish videos to wzrrd.sh watch pages from anywhere in the fleet. Covers the joelclaw publish event on flagg, the wzrrd CLI upload door, status/trace/revoke, Pro entitlements, and debugging. Use when publishing a video, checking encode/transcription progress, embedding video in Brain notes, or debugging the video pipeline."
+description: "Publish videos to wzrrd.sh watch pages from anywhere in the fleet. Covers the joelclaw publish event on central host, the wzrrd CLI upload door, status/trace/revoke, Pro entitlements, and debugging. Use when publishing a video, checking encode/transcription progress, embedding video in Brain notes, or debugging the video pipeline."
 version: 1.0.0
 author: joel
 tags:
@@ -13,12 +13,14 @@ tags:
 
 # wzrrd video
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Videos publish to `https://wzrrd.sh/v/<slug>` — player, transcript on the page, subtitles in
 six languages (en/es/pt/fr/de/ja) generated automatically. The pipeline is fully
 Cloudflare-native (R2 originals → Stream encode → durable Workflow → Deepgram + Workers AI);
-flagg is just a client. Unlisted by default: the unguessable URL is the share link.
+central host is just a client. Unlisted by default: the unguessable URL is the share link.
 
-## Publish from flagg (the joelclaw door)
+## Publish from central host (the joelclaw door)
 
 ```bash
 joelclaw send video/publish.requested -d '{"path":"/abs/file.mp4","title":"...","actor":"<who>"}'
@@ -44,7 +46,7 @@ a 403 "Pro feature" means ask Joel. Full agent instructions ship in the public
 ```bash
 wzrrd video status <slug>      # Workflow phase history
 wzrrd video trace <slug>       # Analytics Engine wide events (cloud side)
-joelclaw video trace <slug>    # ClickHouse handoff forensics (flagg side)
+joelclaw video trace <slug>    # ClickHouse handoff forensics (<central-host> side)
 wzrrd video transcribe <slug> [--force]
 wzrrd video revoke <slug>      # page 404s; Stream copy + R2 original deleted
 ```

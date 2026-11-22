@@ -9,9 +9,13 @@ import { emitMeasuredOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
 
-const DARK_WIZARD = "joel@100.86.171.79";
-const CLANKER = "joel@100.95.167.75";
-const THREE_BODY = NAS_HDD_ROOT; // historical name; now the maturin joelclaw tree
+function archiveSshTarget(name: "MANIFEST_ARCHIVE_PRIMARY_SSH" | "MANIFEST_ARCHIVE_FALLBACK_SSH"): string {
+  const target = process.env[name]?.trim();
+  if (!target || !/^(?:[\w.-]+@)?[a-zA-Z0-9][a-zA-Z0-9.-]*$/.test(target)) {
+    throw new NonRetriableError(`Set ${name} to a private SSH target`);
+  }
+  return target;
+}
 const TMP_MANIFEST_PATH = "/tmp/manifest.clean.jsonl";
 const DEFAULT_MANIFEST_PATH = `${process.env.HOME}/Documents/manifest.clean.jsonl`;
 const REDIS_KEY = "manifest:archive:state";
@@ -195,10 +199,10 @@ function isBookCategory(value: string): value is BookCategory {
 export function getDestPath(entry: ManifestEntry): string {
   const filename = sanitizeFilename(entry.filename);
   if (entry.sourcePath.includes("/clawd/podcasts/")) {
-    return join(THREE_BODY, "podcasts", filename);
+    return join(NAS_HDD_ROOT, "podcasts", filename);
   }
   return join(
-    THREE_BODY,
+    NAS_HDD_ROOT,
     "books",
     getCategoryDir(entry.enrichmentCategory),
     filename,
@@ -366,8 +370,9 @@ async function resolveManifestPath(requestedPath: unknown): Promise<string> {
 async function processFile(
   entry: ManifestEntry,
   dryRun: boolean,
+  sourceHosts: { primary: string; fallback: string },
 ): Promise<FileResult> {
-  const srcHost = entry.sourceExists ? DARK_WIZARD : CLANKER;
+  const srcHost = entry.sourceExists ? sourceHosts.primary : sourceHosts.fallback;
   const src = `${srcHost}:${entry.sourcePath}`;
   const dest = getDestPath(entry);
   const bytes = normalizeBytes(entry.sourceSizeBytes);
@@ -429,6 +434,10 @@ export const manifestArchive = inngest.createFunction(
   [{ event: "manifest/archive.requested" }],
   async ({ event, step }) => {
     const dryRun = event.data.dryRun ?? true;
+    const sourceHosts = {
+      primary: archiveSshTarget("MANIFEST_ARCHIVE_PRIMARY_SSH"),
+      fallback: archiveSshTarget("MANIFEST_ARCHIVE_FALLBACK_SSH"),
+    };
     const eventData = event.data as {
       maxEntries?: unknown;
       manifestPath?: unknown;
@@ -460,14 +469,14 @@ export const manifestArchive = inngest.createFunction(
         },
         async () => ({ phase: "start" }),
       );
-      const nasCheck = await $`ls ${THREE_BODY}`.quiet().nothrow();
+      const nasCheck = await $`ls ${NAS_HDD_ROOT}`.quiet().nothrow();
       if (nasCheck.exitCode !== 0) {
         throw new NonRetriableError(
-          `NAS mount not accessible at ${THREE_BODY}: ${toText(nasCheck.stderr || nasCheck.stdout)}`,
+          `NAS mount not accessible at ${NAS_HDD_ROOT}: ${toText(nasCheck.stderr || nasCheck.stdout)}`,
         );
       }
 
-      for (const host of [DARK_WIZARD, CLANKER]) {
+      for (const host of Object.values(sourceHosts)) {
         const sshCheck =
           await $`ssh -o BatchMode=yes -o ConnectTimeout=5 ${host} echo ok`
             .quiet()
@@ -505,7 +514,7 @@ export const manifestArchive = inngest.createFunction(
     for (const entry of entries) {
       const result = await step.run(
         `file-${entry.id}`,
-        async () => processFile(entry, dryRun),
+        async () => processFile(entry, dryRun, sourceHosts),
       );
       results.push(result);
     }
@@ -530,11 +539,11 @@ export const manifestArchive = inngest.createFunction(
 
     for (const item of planned) {
       if (!item.dest) continue;
-      if (item.dest.includes(`${THREE_BODY}/podcasts/`)) {
+      if (item.dest.includes(`${NAS_HDD_ROOT}/podcasts/`)) {
         podcasts += 1;
         continue;
       }
-      const booksPrefix = `${THREE_BODY}/books/`;
+      const booksPrefix = `${NAS_HDD_ROOT}/books/`;
       if (!item.dest.includes(booksPrefix)) continue;
       const route = item.dest.slice(item.dest.indexOf(booksPrefix) + booksPrefix.length);
       const category = route.split("/")[0] ?? "uncategorized";

@@ -68,6 +68,9 @@ function notifyCentral(input: { centralSsh: string; priority: string; summary: s
   const context = JSON.stringify(input.context).replace(/'/g, "'\\''")
   const message = input.summary.replace(/'/g, "'\\''")
   const remote = `JOELCLAW=$(command -v joelclaw || command -v ~/.local/bin/joelclaw || command -v ~/.bun/bin/joelclaw); "$JOELCLAW" notify send '${message}' --priority ${input.priority} --source satellite-health --type satellite/repair.requested --context '${context}'`
+  if (!/^(?:[\w.-]+@)?[a-zA-Z0-9][a-zA-Z0-9.-]*$/.test(input.centralSsh)) {
+    return { ok: false, detail: "Set --central-ssh or JOELCLAW_CENTRAL_SSH to the private Central SSH target" }
+  }
   const result = run("ssh", [input.centralSsh, remote], 30_000)
   return {
     ok: result.ok,
@@ -81,7 +84,7 @@ const notifyOpt = Options.boolean("notify").pipe(
 )
 
 const centralSshOpt = Options.text("central-ssh").pipe(
-  Options.withDefault("joel@panda"),
+  Options.withDefault(process.env.JOELCLAW_CENTRAL_SSH?.trim() ?? ""),
   Options.withDescription("SSH target for Central Machine notification relay"),
 )
 
@@ -131,7 +134,7 @@ const repairRequestCmd = Command.make(
     })
 
     if (!notification.ok) {
-      yield* Console.log(respondError("satellite repair-request", notification.detail, "SATELLITE_NOTIFY_FAILED", "Verify SSH to Central and that joelclaw notify works there: ssh joel@panda 'joelclaw notify send test --priority normal'", [
+      yield* Console.log(respondError("satellite repair-request", notification.detail, "SATELLITE_NOTIFY_FAILED", "Verify the configured Central SSH target and notification service", [
         { command: "joelclaw satellite health", description: "Inspect local health without notification" },
       ]))
       return

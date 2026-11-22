@@ -1,7 +1,5 @@
 import { spawnSync } from "node:child_process";
 
-export const DEFAULT_COLIMA_VM_IP = "192.168.64.2";
-
 export type EndpointClass = "localhost" | "vm" | "svc_dns";
 export type HealthService = "inngest" | "worker" | "typesense";
 
@@ -105,9 +103,9 @@ const SERVICE_HEALTH_DEFAULTS: Record<
 
 let cachedColimaVmIp: { value: string; capturedAtMs: number } | null = null;
 
-export function discoverColimaVmIp(options: ColimaIpOptions = {}): string {
+export function discoverColimaVmIp(options: ColimaIpOptions = {}): string | undefined {
   const env = options.env ?? process.env;
-  const fallbackIp = options.fallbackIp ?? DEFAULT_COLIMA_VM_IP;
+  const fallbackIp = options.fallbackIp;
   const nowMs = options.nowMs ?? Date.now();
   const cacheTtlMs = options.cacheTtlMs ?? 30_000;
 
@@ -125,7 +123,7 @@ export function discoverColimaVmIp(options: ColimaIpOptions = {}): string {
   const discovered = parseColimaVmIp(runner());
   const resolvedIp = discovered ?? fallbackIp;
 
-  cachedColimaVmIp = { value: resolvedIp, capturedAtMs: nowMs };
+  if (resolvedIp) cachedColimaVmIp = { value: resolvedIp, capturedAtMs: nowMs };
   return resolvedIp;
 }
 
@@ -135,11 +133,11 @@ export function buildEndpointCandidates(options: BuildEndpointCandidatesOptions)
   const vmIp =
     options.vmIp
     ?? discoverColimaVmIp({
-      fallbackIp: options.vmFallbackIp ?? DEFAULT_COLIMA_VM_IP,
+      fallbackIp: options.vmFallbackIp,
     });
 
-  const vmUrl = new URL(localhostUrl.toString());
-  vmUrl.hostname = vmIp;
+  const vmUrl = vmIp ? new URL(localhostUrl.toString()) : undefined;
+  if (vmUrl && vmIp) vmUrl.hostname = vmIp;
 
   const probePaths =
     options.probePaths && options.probePaths.length > 0
@@ -152,9 +150,9 @@ export function buildEndpointCandidates(options: BuildEndpointCandidatesOptions)
 
   const candidateInputs: Array<{ endpointClass: EndpointClass; baseUrl: URL }> = [
     { endpointClass: "localhost", baseUrl: localhostUrl },
-    { endpointClass: "vm", baseUrl: vmUrl },
-    { endpointClass: "svc_dns", baseUrl: serviceDnsUrl },
   ];
+  if (vmUrl) candidateInputs.push({ endpointClass: "vm", baseUrl: vmUrl });
+  candidateInputs.push({ endpointClass: "svc_dns", baseUrl: serviceDnsUrl });
 
   return candidateInputs.map(({ endpointClass, baseUrl }) => {
     const probeUrls = dedupe(

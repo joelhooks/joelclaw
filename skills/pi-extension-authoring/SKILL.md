@@ -14,6 +14,8 @@ disable-model-invocation: true
 
 # Pi Extension Authoring
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Use this before changing Pi extension code or debugging Pi startup warnings.
 
 ## Canonical surfaces
@@ -123,7 +125,7 @@ pi -p --no-session --no-context-files --model openai-codex/gpt-5.6-sol "Reply wi
 
 Clean untracked npm lockfiles generated inside git package checkouts when the package does not track them.
 
-If multiple `pi` binaries exist, verify they resolve to the same version. On Panda, `~/.bun/bin/pi` should be a symlink to `~/.local/bin/pi`; Bun's global installer can lag behind npm because of `minimum-release-age`.
+If multiple `pi` binaries exist, verify they resolve to the same version. On retired host, `~/.bun/bin/pi` should be a symlink to `~/.local/bin/pi`; Bun's global installer can lag behind npm because of `minimum-release-age`.
 
 ## Common fixes
 

@@ -1,8 +1,10 @@
-# Flagg Central runtime scaffold
+# central host Central runtime scaffold
+
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
 
 Repo-managed runtime assets for ADR-0246 Gate 2: Mac Studio Central shadow bootstrap.
 
-This directory does **not** cut over Central. Panda remains authoritative until an explicit whole-Central cutover gate is approved.
+This directory does **not** cut over Central. retired host remains authoritative until an explicit whole-Central cutover gate is approved.
 
 ## Non-negotiable reboot pillar
 
@@ -17,7 +19,7 @@ Proof means:
 - after the machine reboots, another machine can SSH in and run `infra/central/scripts/reboot-proof.sh`;
 - `reboot-proof.sh` passes, including `console_user=root`, system tailscaled health, launchd labels loaded, post-boot logs, and service health.
 
-If this proof fails, Flagg is not eligible for cutover. Full stop.
+If this proof fails, central host is not eligible for cutover. Full stop.
 
 ## Shape
 
@@ -50,15 +52,15 @@ Restate data uses a Docker named volume inside the Colima VM (`CENTRAL_RESTATE_V
 
 Shadow MinIO may use `/Users/Shared/joelclaw/services/minio` only for isolated smoke tests. That path is **not** the Gate 5 object-storage target.
 
-For cutover, MinIO should be an S3-compatible facade over `three-body` NAS tiers:
+For cutover, MinIO should be an S3-compatible facade over `<nas>` NAS tiers:
 
-| Tier | Flagg mount | NAS path | Role |
+| Tier | central host mount | NAS path | Role |
 | --- | --- | --- | --- |
-| Tier 1 local SSD | `/Users/Shared/joelclaw/services/*` | Flagg internal SSD | Redis, Inngest, Restate, active Typesense, scratch/cache |
-| NAS NVMe warm/hot | `/Volumes/nas-nvme` | `192.168.1.163:/volume2/data` | fast shared artifacts, snapshots, models, docs artifacts, sessions, transcripts, hot object data |
-| NAS HDD cold | `/Volumes/three-body` | `192.168.1.163:/volume1/joelclaw` | archives, books, video/media refs, bulk/cold object data |
+| Tier 1 local SSD | `<shared-root>/services/*` | central host internal SSD | Redis, Inngest, Restate, active Typesense, scratch/cache |
+| NAS NVMe warm/hot | `<nas-nvme-mount>` | `<private-ip>:<nas-nvme-export>` | fast shared artifacts, snapshots, models, docs artifacts, sessions, transcripts, hot object data |
+| NAS HDD cold | `<nas-hdd-mount>` | `<private-ip>:<nas-hdd-export>` | archives, books, video/media refs, bulk/cold object data |
 
-`three-body` as a hostname is for SSH/admin convenience. Persistent NFS data mounts use the NAS LAN IP. On Flagg, `three-body` can resolve through Tailscale/MagicDNS, which makes the client source a tailnet address while the ASUSTOR NFS exports expect LAN clients such as `192.168.1.10`.
+`<nas>` as a hostname is for SSH/admin convenience. Persistent NFS data mounts use the NAS LAN IP. On central host, `<nas>` can resolve through Tailscale/MagicDNS, which makes the client source a tailnet address while the ASUSTOR NFS exports expect LAN clients such as `<private-ip>`.
 
 Do not blend NAS NVMe and NAS HDD into one opaque MinIO erasure set. Keep tier boundaries visible. Preferred Gate 5 shape is either:
 
@@ -67,18 +69,18 @@ Do not blend NAS NVMe and NAS HDD into one opaque MinIO erasure set. Keep tier b
 
 Before cutover, prove:
 
-- Flagg routes `three-body` traffic over the 10GbE interface, not Tailscale/Wi-Fi;
+- central host routes `<nas>` traffic over the 10GbE interface, not Tailscale/Wi-Fi;
 - NFS export strings and reachability checks use the NAS LAN IP, not MagicDNS;
 - MTU/NFS tuning matches ADR-0088 or the reason for divergence is documented;
-- `/Volumes/nas-nvme` and `/Volumes/three-body` survive hard reboot/no-login;
+- `<nas-nvme-mount>` and `<nas-hdd-mount>` survive hard reboot/no-login;
 - read/write latency and throughput are good enough for the selected tier;
-- MinIO bucket/object smoke tests write to the NAS-backed path, not local Flagg SSD.
+- MinIO bucket/object smoke tests write to the NAS-backed path, not local central host SSD.
 
 NAS mount lifecycle is an explicit state machine, not boolean soup:
 
 ```text
 boot/kickstart
-  -> wait_for_route(en0, three-body:2049)
+  -> wait_for_route(en0, <nas>:2049)
   -> assert_10gbe_media
   -> mount_nas_nvme
   -> mount_nas_hdd
@@ -101,28 +103,28 @@ sudo ./infra/central/scripts/mount-nas.sh mount
 sudo ./infra/central/scripts/mount-nas.sh unmount
 
 # Prepare object roots on the NAS. This avoids fragile pasted one-liners.
-# Copy or stage this script to three-body, then run it from the admin shell:
+# Copy or stage this script to <nas>, then run it from the admin shell:
 sudo sh /tmp/three-body-prepare-object-roots.sh
 
 # Gate 5 proof receipt: route/media/MTU/mounts plus 64 MiB write/read probes against the hot/cold object paths.
 ./infra/central/scripts/verify-nas.sh --write-probe --benchmark-mib 64
 ```
 
-`verify-nas.sh` intentionally writes under `CENTRAL_MINIO_HOT_DATA` and `CENTRAL_MINIO_COLD_DATA`, not the export roots. If those paths are missing or not writable by `joelclaw`, the fix belongs on `three-body` NAS permissions/ACLs, not by making Flagg write random proof files at the mount root.
+`verify-nas.sh` intentionally writes under `CENTRAL_MINIO_HOT_DATA` and `CENTRAL_MINIO_COLD_DATA`, not the export roots. If those paths are missing or not writable by `joelclaw`, the fix belongs on `<nas>` NAS permissions/ACLs, not by making central host write random proof files at the mount root.
 
-For NFSv3, numeric ownership matters. Flagg's service identity is `uid=502`, `gid=20`. The helper script `infra/central/scripts/three-body-prepare-object-roots.sh` creates a real `joelclaw`/`staff` identity on `three-body` if uid `502` / gid `20` are absent, then prepares `/volume2/data/s3` and `/volume1/joelclaw/s3` for that identity. It defaults to `2777` for proof mode because the NAS export/id-map layer has already shown weird permission behavior even with `502:20` + `2770`. After proof, retry with `USE_FINAL_MODE=1 sudo sh /tmp/three-body-prepare-object-roots.sh` if we want to harden to `2770`.
+For NFSv3, numeric ownership matters. central host's service identity is `uid=502`, `gid=20`. The helper script `infra/central/scripts/three-body-prepare-object-roots.sh` creates a real `joelclaw`/`staff` identity on `<nas>` if uid `502` / gid `20` are absent, then prepares `<nas-nvme-export>/s3` and `<nas-hdd-export>/s3` for that identity. It defaults to `2777` for proof mode because the NAS export/id-map layer has already shown weird permission behavior even with `502:20` + `2770`. After proof, retry with `USE_FINAL_MODE=1 sudo sh /tmp/three-body-prepare-object-roots.sh` if we want to harden to `2770`.
 
-ASUSTOR ADM NFS privileges also matter beyond POSIX mode. For Flagg's client rule on both shared folders `data` and `joelclaw`, the working proof setting is `Privilege: Read & Write`, `root Mapping: admin (999)`, `Asynchronous: Yes`, and `Allow connections from non-reserved ports` enabled. This generates `root_squash,anonuid=999,anongid=999,insecure` for `192.168.1.10` and allowed Flagg `joelclaw` writes. The earlier `root (0)` / `no_root_squash` export looked correct but still returned `Operation not permitted` from macOS NFS.
+ASUSTOR ADM NFS privileges also matter beyond POSIX mode. For central host's client rule on both shared folders `data` and `joelclaw`, the working proof setting is `Privilege: Read & Write`, `root Mapping: admin (999)`, `Asynchronous: Yes`, and `Allow connections from non-reserved ports` enabled. This generates `root_squash,anonuid=999,anongid=999,insecure` for `<private-ip>` and allowed central host `joelclaw` writes. The earlier `root (0)` / `no_root_squash` export looked correct but still returned `Operation not permitted` from macOS NFS.
 
-Flagg also hit an NFS blackhole when `en0`/route MTU was set to `9000`: full 9000-byte jumbo ping failed while smaller traffic worked, and hard NFS mounts wedged. A bounded 2026-06-17 retest proved a practical jumbo ceiling: Flagg can set route MTU `9000`, but `ping -D -s 8972 192.168.1.163` still fails; setting Flagg `Ethernet` to MTU `8192` makes `ping -D -s 8164 192.168.1.163` pass with 0% loss and `8165` fail as expected. The safe route MTU is now `8192`; full `9000` remains a switch/NAS path follow-up.
+central host also hit an NFS blackhole when `en0`/route MTU was set to `9000`: full 9000-byte jumbo ping failed while smaller traffic worked, and hard NFS mounts wedged. A bounded 2026-06-17 retest proved a practical jumbo ceiling: central host can set route MTU `9000`, but `ping -D -s 8972 <private-ip>` still fails; setting central host `Ethernet` to MTU `8192` makes `ping -D -s 8164 <private-ip>` pass with 0% loss and `8165` fail as expected. The safe route MTU is now `8192`; full `9000` remains a switch/NAS path follow-up.
 
 The current NFS performance default is tuned for the safe `8192` MTU path: `rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128`. A 512 MiB sweep picked 512K request sizes over 1M because 1M regressed the HDD tier. The final 8192-MTU 1024 MiB proof was roughly `614 MiB/s` write / `1018 MiB/s` read on NVMe and `552 MiB/s` write / `925 MiB/s` read on HDD. Do not enable `async` on the macOS client side as a casual performance knob; it is a data-loss tradeoff.
 
-2026-06-17 correction: the mount scripts previously defaulted `CENTRAL_NAS_*_EXPORT` to `three-body:/...` and checked NFS reachability through `NAS_HOST`. On Flagg that hostname resolved to `three-body.tail7af24.ts.net` / `100.67.156.41`, so launchd could pass a route check while mounting over the wrong data plane and hitting NFS permission errors. The defaults now use `NAS_IP` (`192.168.1.163`) for export strings and NFS reachability checks.
+2026-06-17 correction: the mount scripts previously defaulted `CENTRAL_NAS_*_EXPORT` to `<nas>:/...` and checked NFS reachability through `NAS_HOST`. On central host that hostname resolved to `<tailnet-host>` / `<tailnet-ip>`, so launchd could pass a route check while mounting over the wrong data plane and hitting NFS permission errors. The defaults now use `NAS_IP` (`<private-ip>`) for export strings and NFS reachability checks.
 
-2026-06-17 live repair: macOS Local Network privacy was also blocking the first direct LAN probes from the invoking app. After allowing local-network access, the root `com.joelclaw.central.nas-mounts` LaunchDaemon was installed/bootstrapped, both NFS tiers mounted over `192.168.1.163`, and `verify-nas.sh --write-probe --benchmark-mib 64` passed. The service checkout at `/Users/Shared/joelclaw/src/joelclaw` now carries `NAS_EXPECTED_MTU=8192` plus the 512K NFS transfer defaults, and its verifier passed with `expected_mtu=8192`.
+2026-06-17 live repair: macOS Local Network privacy was also blocking the first direct LAN probes from the invoking app. After allowing local-network access, the root `com.joelclaw.central.nas-mounts` LaunchDaemon was installed/bootstrapped, both NFS tiers mounted over `<private-ip>`, and `verify-nas.sh --write-probe --benchmark-mib 64` passed. The service checkout at `<shared-root>/src/joelclaw` now carries `NAS_EXPECTED_MTU=8192` plus the 512K NFS transfer defaults, and its verifier passed with `expected_mtu=8192`.
 
-If permissions were changed on `three-body` while Flagg had the NFS exports mounted, first sync the latest helper scripts into the service checkout, then remount before rerunning the proof so macOS drops any stale NFS access-cache verdict:
+If permissions were changed on `<nas>` while central host had the NFS exports mounted, first sync the latest helper scripts into the service checkout, then remount before rerunning the proof so macOS drops any stale NFS access-cache verdict:
 
 ```bash
 cd /Users/joel/Code/joelhooks/joelclaw
@@ -185,9 +187,9 @@ This checks the account gate, system tailscaled, local env file, service root, a
 
 ## System tailscaled migration
 
-Flagg Central should not depend on the GUI Tailscale app or a logged-in user session.
+central host Central should not depend on the GUI Tailscale app or a logged-in user session.
 
-Run this **locally on Flagg**, not over SSH:
+Run this **locally on central host**, not over SSH:
 
 ```bash
 cd /Users/joel/Code/joelhooks/joelclaw
@@ -200,7 +202,7 @@ The script:
 - quits/disables the GUI login-session Tailscale path,
 - moves `/Applications/Tailscale.app` into `/Users/Shared/joelclaw/backups/`,
 - runs `tailscaled install-system-daemon`,
-- runs `tailscale --socket=/var/run/tailscaled.socket up --hostname=flagg --operator=joel --ssh --accept-routes`,
+- runs `tailscale --socket=/var/run/tailscaled.socket up --hostname=central host --operator=joel --ssh --accept-routes`,
 - writes a receipt under `/Users/Shared/joelclaw/run/`.
 
 If it prints an auth URL, open it locally and approve the new node. The old GUI node may remain in the tailnet until removed from the admin console.
@@ -211,7 +213,7 @@ Important: the normal `tailscale` command may still talk to a stale GUI NetworkE
 /opt/homebrew/bin/tailscale --socket=/var/run/tailscaled.socket status
 ```
 
-If verification says the GUI network extension is still running, reboot Flagg and verify again before any GUI login. The GUI app was moved out of `/Applications`, so it should not come back after reboot.
+If verification says the GUI network extension is still running, reboot central host and verify again before any GUI login. The GUI app was moved out of `/Applications`, so it should not come back after reboot.
 
 Rollback:
 
@@ -251,7 +253,7 @@ sudo ./infra/central/scripts/recover.sh --all --passes 3
 
 It restarts the shadow Compose services as `joelclaw`, writes a timestamped receipt under `/Users/Shared/joelclaw/logs/central/`, and only exits 0 after consecutive green health passes.
 
-`health.sh` is a read-only reporter. It checks the native Flagg services, Run index freshness, local operator surfaces, and NAS mounts. It never writes recovery state or restarts a service. Use `recover.sh` explicitly for the old shadow Compose recovery path; it is not called by `health.sh`.
+`health.sh` is a read-only reporter. It checks the native central host services, Run index freshness, local operator surfaces, and NAS mounts. It never writes recovery state or restarts a service. Use `recover.sh` explicitly for the old shadow Compose recovery path; it is not called by `health.sh`.
 
 After Gate 3 installs Colima/Docker and mirrors the repo into `/Users/Shared/joelclaw/src/joelclaw`, the service-user commands are:
 
@@ -317,17 +319,17 @@ cd /Users/Shared/joelclaw/src/joelclaw
 sudo -u joelclaw -H ./infra/central/scripts/smoke/run.sh
 ```
 
-The harness performs isolated temp writes against Flagg shadow services only: Redis temp key, Typesense temp collection, Inngest smoke event, Restate port/admin reachability, and MinIO temp bucket/object. Receipts are written under `/Users/Shared/joelclaw/logs/central/smoke/`.
+The harness performs isolated temp writes against central host shadow services only: Redis temp key, Typesense temp collection, Inngest smoke event, Restate port/admin reachability, and MinIO temp bucket/object. Receipts are written under `<shared-root>/logs/central/smoke/`.
 
-This does not freeze Panda, flip endpoints, or make Flagg authoritative.
+This does not freeze retired host, flip endpoints, or make central host authoritative.
 
 ## Hard reboot proof
 
 After Gate 3 installs LaunchDaemons and starts the shadow stack, the acceptance test is:
 
 ```bash
-# From Panda, before any GUI login on Flagg after reboot:
-ssh joel@flagg 'cd /Users/Shared/joelclaw/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
+# From <retired-host>, before any GUI login on <central-host> after reboot:
+ssh <ssh-user>@<central-host> 'cd <shared-root>/src/joelclaw && ./infra/central/scripts/reboot-proof.sh'
 ```
 
 Expected final line:
@@ -336,7 +338,7 @@ Expected final line:
 PASS: Central recovered after hard reboot with no GUI login.
 ```
 
-If the proof requires logging into Flagg first, it failed. We do not rationalize that away.
+If the proof requires logging into central host first, it failed. We do not rationalize that away.
 
 ## Sudo discipline
 

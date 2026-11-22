@@ -11,7 +11,7 @@ import { resolveTypesenseApiKey } from "../packages/cli/src/typesense-auth"
 const COLLECTION = "memory_observations"
 const TYPESENSE_URL = (process.env.TYPESENSE_URL || "http://localhost:8108").replace(/\/$/u, "")
 const NAS_BACKUPS_ROOT =
-  process.env.JOELCLAW_NAS_BACKUPS_HDD_ROOT?.trim() || "/Volumes/backups/services/joelclaw"
+  process.env.JOELCLAW_NAS_BACKUPS_HDD_ROOT?.trim() || "/Volumes/nas-backups/joelclaw"
 const DEFAULT_ARCHIVE_ROOT = join(NAS_BACKUPS_ROOT, "typesense", "retired-memory-observations")
 
 function hasFlag(flag: string): boolean {

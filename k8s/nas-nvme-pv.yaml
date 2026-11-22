@@ -1,7 +1,7 @@
 # NAS NVMe tier — NFS-backed PersistentVolume (ADR-0088 Phase 2)
-# Provides k8s access to three-body NAS NVMe RAID1 at /volume2/data
-# Requires: LAN route in Colima VM (ip route 192.168.1.0/24 via 192.168.64.1 dev col0)
-# Subdirs: backups/, typesense/, models/, redis/, otel/, sessions/, transcripts/
+# Render this template with k8s/render-nas-pv.sh before applying.
+# See .brain/resources/operator-network-context.svx in the private dark-wizard repo
+# and the tailnet-topology skill for the export and VM route.
 ---
 apiVersion: v1
 kind: PersistentVolume
@@ -17,8 +17,8 @@ spec:
     - ReadWriteMany
   persistentVolumeReclaimPolicy: Retain
   nfs:
-    server: 192.168.1.163
-    path: /volume2/data
+    server: "${K8S_NAS_HOST}"
+    path: "${K8S_NAS_NVME_EXPORT}"
   mountOptions:
     - nfsvers=3
     - tcp

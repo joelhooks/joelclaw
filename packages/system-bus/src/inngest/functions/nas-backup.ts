@@ -58,7 +58,7 @@ const REDIS_NAMESPACE = "joelclaw";
 const CONFIGURED_K8S_HOST = DEFAULT_SERVICE_PLACEMENT.hosts.find((host) =>
   host.services.includes("k8s"),
 )?.hostname;
-const K8S_OPERATOR_HOST = process.env.K8S_OPERATOR_HOST?.trim() || CONFIGURED_K8S_HOST || "panda";
+const K8S_OPERATOR_HOST = process.env.K8S_OPERATOR_HOST?.trim() || CONFIGURED_K8S_HOST || "";
 const K8S_KUBECTL_PATH = process.env.K8S_KUBECTL_PATH?.trim() || "/opt/homebrew/bin/kubectl";
 const K8S_OPERATOR_SSH_FLAGS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8"];
 const REDIS_BACKUP_ALERT_LATCH_KEY = "backup:redis";
@@ -731,7 +731,7 @@ function createBackupOnFailureHandler(
       playbook: {
         actions: ["route to backup retry event after structured decision"],
         restart: [
-          "Verify NAS mount via `stat /Volumes/services/joelclaw`",
+          "Verify the configured NAS mount is available",
           "Validate SSH access to configured NAS host",
         ],
         notify: ["joelclaw OTEL"],
@@ -1167,6 +1167,9 @@ async function defaultRedisSourceCommandRunner(
 }
 
 function redisOperatorCommand(remoteCommand: string[]): string[] {
+  if (!/^(?:[\w.-]+@)?[a-zA-Z0-9][a-zA-Z0-9.-]*$/.test(K8S_OPERATOR_HOST)) {
+    throw new Error("Set K8S_OPERATOR_HOST or configure a private k8s placement");
+  }
   return ["ssh", ...K8S_OPERATOR_SSH_FLAGS, K8S_OPERATOR_HOST, ...remoteCommand];
 }
 

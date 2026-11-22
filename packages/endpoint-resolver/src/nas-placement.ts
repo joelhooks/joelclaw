@@ -23,30 +23,30 @@ export const NAS_SSH_HOST =
 /** Local SMB mount of the joelclaw service tree. */
 export const NAS_HDD_ROOT =
   firstEnv("JOELCLAW_NAS_HDD_ROOT", "SELF_HEALING_NAS_HDD_ROOT", "NAS_HDD_ROOT") ||
-  "/Volumes/services/joelclaw";
+  "/Volumes/nas-services/joelclaw";
 
 /** Same tree as seen over SSH on the NAS itself. */
 export const NAS_REMOTE_ROOT =
-  firstEnv("JOELCLAW_NAS_REMOTE_ROOT") || "/volume1/services/joelclaw";
+  firstEnv("JOELCLAW_NAS_REMOTE_ROOT") || "/exports/services/joelclaw";
 
 /** Local SMB mount of the fast NVMe share. */
 export const NAS_NVME_ROOT =
   firstEnv("JOELCLAW_NAS_NVME_ROOT", "SELF_HEALING_NAS_NVME_ROOT", "NAS_NVME_ROOT") ||
-  "/Volumes/fast";
+  "/Volumes/nas-fast";
 
 /** Local SMB mount of service backups (typesense, redis, slog, ...). */
 export const NAS_BACKUPS_HDD_ROOT =
-  firstEnv("JOELCLAW_NAS_BACKUPS_HDD_ROOT") || "/Volumes/backups/services/joelclaw";
+  firstEnv("JOELCLAW_NAS_BACKUPS_HDD_ROOT") || "/Volumes/nas-backups/joelclaw";
 
 /** Service backups as seen over SSH on the NAS itself. */
 export const NAS_BACKUPS_REMOTE_ROOT =
-  firstEnv("JOELCLAW_NAS_BACKUPS_REMOTE_ROOT") || "/volume1/backups/services/joelclaw";
+  firstEnv("JOELCLAW_NAS_BACKUPS_REMOTE_ROOT") || "/exports/backups/joelclaw";
 
 /** Mounts the system-health check expects on the central host. */
 export const NAS_EXPECTED_MOUNTS: readonly { readonly name: string; readonly path: string }[] = [
-  { name: "services", path: "/Volumes/services" },
-  { name: "backups", path: "/Volumes/backups" },
-  { name: "fast", path: "/Volumes/fast" },
+  { name: "services", path: firstEnv("JOELCLAW_NAS_SERVICES_MOUNT") || "/Volumes/nas-services" },
+  { name: "backups", path: firstEnv("JOELCLAW_NAS_BACKUPS_MOUNT") || "/Volumes/nas-backups" },
+  { name: "fast", path: NAS_NVME_ROOT },
 ];
 
 export const DOCS_ARTIFACTS_DIR =

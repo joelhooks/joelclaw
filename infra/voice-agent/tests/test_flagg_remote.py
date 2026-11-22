@@ -189,7 +189,7 @@ class RemoteRunTest(unittest.TestCase):
             self.assertEqual(flagg_remote.wrap(["joelclaw", "status"]), (["joelclaw", "status"], None))
 
     def test_ssh_pins_key_and_host_key_whatever_the_config(self) -> None:
-        argv = flagg_remote.ssh_argv("voice-tools@flagg")
+        argv = flagg_remote.ssh_argv("voice-tools@voice-host.example.invalid")
         joined = " ".join(argv)
         self.assertIn("-F none", joined)
         for opt in ("IdentitiesOnly=yes", "StrictHostKeyChecking=yes", f"IdentityFile={flagg_remote.KEY}",
@@ -206,11 +206,11 @@ class RemoteRunTest(unittest.TestCase):
             seen["argv"], seen["input"], seen["timeout"] = argv, kw.get("input"), kw.get("timeout")
             return subprocess.CompletedProcess(argv, 255, stdout="", stderr="ssh: connect timed out")
 
-        with patch.dict("os.environ", {"VOICE_FLAGG_HOST": "voice-tools@flagg"}), patch.object(main.subprocess, "run", fake), patch.object(main, "_speak_cover"):
+        with patch.dict("os.environ", {"VOICE_FLAGG_HOST": "voice-tools@voice-host.example.invalid"}), patch.object(main.subprocess, "run", fake), patch.object(main, "_speak_cover"):
             out = main._run(["joelclaw", "status"], 3)
         self.assertEqual(out, main.FLAGG_UNREACHABLE)
         self.assertEqual(seen["argv"][0], "ssh")
-        self.assertEqual(seen["argv"][-1], "voice-tools@flagg")
+        self.assertEqual(seen["argv"][-1], "voice-tools@voice-host.example.invalid")
         self.assertEqual(json.loads(seen["input"]), ["joelclaw", "status"])
         self.assertGreaterEqual(seen["timeout"], 10)
 

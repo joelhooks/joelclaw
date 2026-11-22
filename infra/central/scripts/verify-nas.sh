@@ -217,6 +217,7 @@ require_command ifconfig
 require_command mount
 require_command nc
 
+require_nas_config
 printf 'NAS verification\n'
 printf 'host=%s user=%s nas_host=%s nas_ip=%s expected_interface=%s expected_media=%s expected_mtu=%s\n' \
   "$(hostname)" "$(id -un)" "$NAS_HOST" "$NAS_IP" "$NAS_EXPECTED_INTERFACE" "$NAS_EXPECTED_MEDIA" "$NAS_EXPECTED_MTU"
@@ -233,9 +234,9 @@ probe 'nas-nvme mounted' mounted_at "$CENTRAL_NAS_NVME_MOUNT"
 probe 'nas-nvme mount is nfs' mount_is_nfs "$CENTRAL_NAS_NVME_MOUNT"
 probe 'nas-hdd mounted' mounted_at "$CENTRAL_NAS_HDD_MOUNT"
 probe 'nas-hdd mount is nfs' mount_is_nfs "$CENTRAL_NAS_HDD_MOUNT"
-probe 'badass-media mounted' mounted_at "$CENTRAL_NAS_MEDIA_MOUNT"
-probe 'badass-media mount is nfs' mount_is_nfs "$CENTRAL_NAS_MEDIA_MOUNT"
-warn_probe 'badass-media mount writable' path_writable "$CENTRAL_NAS_MEDIA_MOUNT"
+probe 'NAS media mounted' mounted_at "$CENTRAL_NAS_MEDIA_MOUNT"
+probe 'NAS media mount is nfs' mount_is_nfs "$CENTRAL_NAS_MEDIA_MOUNT"
+warn_probe 'NAS media mount writable' path_writable "$CENTRAL_NAS_MEDIA_MOUNT"
 probe 'nas-mounts LaunchDaemon plist installed' launchd_plist_installed
 warn_probe 'nas-mounts LaunchDaemon recently active (log freshness)' launchd_recent_activity
 if [[ "$(id -u)" == "0" ]]; then

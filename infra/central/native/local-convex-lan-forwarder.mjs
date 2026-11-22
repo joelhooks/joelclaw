@@ -1,6 +1,9 @@
 import net from "node:net";
 
-const bindAddress = process.env.LAN_BIND_IP ?? "192.168.1.10";
+const bindAddress = process.env.LAN_BIND_IP;
+if (net.isIP(bindAddress ?? "") !== 4 || bindAddress === "0.0.0.0") {
+  throw new Error("Set LAN_BIND_IP to the explicit IPv4 bind address");
+}
 const targets = [
   { name: "convex-backend", listenPort: 3210, targetPort: 3210 },
   { name: "convex-site", listenPort: 3211, targetPort: 3211 },

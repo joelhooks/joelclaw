@@ -1,5 +1,7 @@
 # Prompt Architecture
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Canonical map of how joelclaw agents understand who they are, which role they are in, and how prompt layers compose.
 
 ## Layer order
@@ -42,7 +44,7 @@ A session handle does **not** change identity or role. It just tells the system 
 
 | Role | File | Purpose |
 |---|---|---|
-| `system` | `roles/system.md` | Default interactive pi role on Panda; whole-system stewardship |
+| `system` | `roles/system.md` | Default interactive pi role on retired host; whole-system stewardship |
 | `gateway` | `roles/gateway.md` | Operator-facing triage and orchestration |
 | `codex-worker` | `roles/codex-worker.md` | Bounded implementation worker |
 | `loop-worker` | `roles/loop-worker.md` | Pipeline implementation worker |

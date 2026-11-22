@@ -20,23 +20,21 @@ COLIMA_DOCKER_SOCKET="${COLIMA_DOCKER_SOCKET:-${SERVICE_HOME}/.colima/${COLIMA_P
 CENTRAL_RESTATE_VOLUME="${CENTRAL_RESTATE_VOLUME:-joelclaw-central-restate-data}"
 CENTRAL_BIND_ADDR="${CENTRAL_BIND_ADDR:-127.0.0.1}"
 CENTRAL_REQUIRE_NAS="${CENTRAL_REQUIRE_NAS:-0}"
-NAS_HOST="${NAS_HOST:-three-body}"
-NAS_IP="${NAS_IP:-192.168.1.163}"
+NAS_HOST="${NAS_HOST:-}"
+NAS_IP="${NAS_IP:-}"
 NAS_EXPECTED_INTERFACE="${NAS_EXPECTED_INTERFACE:-en0}"
 NAS_EXPECTED_MEDIA="${NAS_EXPECTED_MEDIA:-10Gbase-T}"
 NAS_EXPECTED_MTU="${NAS_EXPECTED_MTU:-8192}"
 NAS_NFS_OPTIONS="${NAS_NFS_OPTIONS:-rw,resvport,nfsvers=3,tcp,soft,intr,timeo=10,retrans=2,rsize=524288,wsize=524288,dsize=65536,readahead=128}"
-# Use the LAN IP for persistent NFS mounts. On Flagg, `three-body` resolves
-# through Tailscale/MagicDNS, which is useful for SSH/admin but wrong for
-# shelf-local NAS data mounts scoped to 192.168.1.0/24 exports.
-CENTRAL_NAS_NVME_EXPORT="${CENTRAL_NAS_NVME_EXPORT:-${NAS_IP}:/volume2/data}"
+# Supply the LAN address in each NFS export; do not use an SSH/MagicDNS alias.
+CENTRAL_NAS_NVME_EXPORT="${CENTRAL_NAS_NVME_EXPORT:-}"
 CENTRAL_NAS_NVME_MOUNT="${CENTRAL_NAS_NVME_MOUNT:-/Volumes/nas-nvme}"
-CENTRAL_NAS_HDD_EXPORT="${CENTRAL_NAS_HDD_EXPORT:-${NAS_IP}:/volume1/joelclaw}"
-CENTRAL_NAS_HDD_MOUNT="${CENTRAL_NAS_HDD_MOUNT:-/Volumes/three-body}"
+CENTRAL_NAS_HDD_EXPORT="${CENTRAL_NAS_HDD_EXPORT:-}"
+CENTRAL_NAS_HDD_MOUNT="${CENTRAL_NAS_HDD_MOUNT:-/Volumes/nas-hdd}"
 # Direct 10GbE media path for transcription/editing workloads. Do not stage
 # large media through SSH or local copies when this mount is healthy.
-CENTRAL_NAS_MEDIA_EXPORT="${CENTRAL_NAS_MEDIA_EXPORT:-${NAS_IP}:/volume1/badass-media}"
-CENTRAL_NAS_MEDIA_MOUNT="${CENTRAL_NAS_MEDIA_MOUNT:-/Volumes/badass-media}"
+CENTRAL_NAS_MEDIA_EXPORT="${CENTRAL_NAS_MEDIA_EXPORT:-}"
+CENTRAL_NAS_MEDIA_MOUNT="${CENTRAL_NAS_MEDIA_MOUNT:-/Volumes/nas-media}"
 CENTRAL_MINIO_HOT_DATA="${CENTRAL_MINIO_HOT_DATA:-${CENTRAL_NAS_NVME_MOUNT}/s3}"
 CENTRAL_MINIO_COLD_DATA="${CENTRAL_MINIO_COLD_DATA:-${CENTRAL_NAS_HDD_MOUNT}/s3}"
 
@@ -78,6 +76,13 @@ require_env_file() {
   if [[ ! -f "$ENV_FILE" ]]; then
     fail "missing ${ENV_FILE}; copy ${ENV_EXAMPLE} to .env and replace placeholders"
   fi
+}
+
+require_nas_config() {
+  local key
+  for key in NAS_IP CENTRAL_NAS_NVME_EXPORT CENTRAL_NAS_HDD_EXPORT CENTRAL_NAS_MEDIA_EXPORT; do
+    [[ -n "${!key}" && "${!key}" != 192.0.2.10* ]] || fail "set ${key} in the private Central .env"
+  done
 }
 
 configure_docker_host() {

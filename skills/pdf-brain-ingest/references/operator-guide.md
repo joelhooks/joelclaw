@@ -1,5 +1,7 @@
 # PDF-Brain Ingest Operator Guide (Joelclaw)
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Date: 2026-02-23  
 Scope: Ingest new `pdf`/`md` files into the `docs` + `docs_chunks` memory pipeline on joelclaw.
 
@@ -140,7 +142,7 @@ joelclaw otel search "docs.taxonomy.classify.timeout" --hours 24
 ### Stuck running at validate step with NAS paths
 
 Symptom in run trace:
-- `validate-file` retries/fails with `EINTR: interrupted system call, open '/Volumes/three-body/...`
+- `validate-file` retries/fails with `EINTR: interrupted system call, open '<nas-hdd-mount>/...`
 
 Find quickly:
 

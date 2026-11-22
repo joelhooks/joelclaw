@@ -6,7 +6,7 @@ Architecture (ADR-0043):
   STT: Deepgram  |  LLM: Claude Sonnet 4.6 via OpenRouter  |  TTS: ElevenLabs
   VAD: Silero     |  Tools: @function_tool → shell commands
 
-SIP path: Telnyx (+13606051697) → clanker-001:5060 → LiveKit SIP → this agent
+SIP path: telephony carrier → configured SIP bridge → LiveKit SIP → this agent
 """
 
 import asyncio

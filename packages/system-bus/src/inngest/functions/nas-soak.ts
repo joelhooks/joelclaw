@@ -24,7 +24,7 @@ const REVIEW_TASK_PROJECT = "Agent Work";
 const NAS_SMB_AUTHORITY = NAS_SSH_HOST || "nas-not-configured";
 const NAS_NVME_MOUNT = NAS_NVME_ROOT;
 const NAS_NVME_SRC = `//${NAS_SMB_AUTHORITY}/fast`;
-const NAS_HDD_MOUNT = "/Volumes/services";
+const NAS_HDD_MOUNT = process.env.JOELCLAW_NAS_SERVICES_MOUNT?.trim() || "/Volumes/nas-services";
 const NAS_HDD_SRC = `//${NAS_SMB_AUTHORITY}/services`;
 
 // ADR-0088 revisit thresholds.

@@ -40,7 +40,7 @@ let mockRunRig = async (
 };
 
 // Stub the orchestrator's injectable rig deps so this test never spawns
-// transcript-rig or touches /Volumes/badass-media (mutable closures reset per
+// transcript-rig or touches /Volumes/nas-media (mutable closures reset per
 // test). Property assignment beats mock.module(): it stays local to this
 // module instance instead of patching the process-wide registry.
 const realPipelineDeps = { ...pipelineDeps };
@@ -120,7 +120,7 @@ describe("mediaTranscriptionPipeline (v2)", () => {
           name: "media/transcription.requested",
           data: {
             requestId: "req-blocked",
-            sourcePath: "/Volumes/badass-media/meetings/example.m4a",
+            sourcePath: "/Volumes/nas-media/meetings/example.m4a",
           },
         } as any,
       ],
@@ -144,7 +144,7 @@ describe("mediaTranscriptionPipeline (v2)", () => {
           name: "media/transcription.requested",
           data: {
             requestId: "req-happy",
-            sourcePath: "/Volumes/badass-media/meetings/example.m4a",
+            sourcePath: "/Volumes/nas-media/meetings/example.m4a",
           },
         } as any,
       ],

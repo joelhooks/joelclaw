@@ -10,6 +10,8 @@ disable-model-invocation: true
 
 # joelclaw — CLI & Event Bus
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 The `joelclaw` CLI is the primary operator interface to the entire joelclaw system: event bus (Inngest), gateway, observability (OTEL), agent loops, subscriptions, and more. Built with `@effect/cli`, returns HATEOAS JSON envelopes.
 
 **If the CLI crashes, that's the highest priority fix.**
@@ -42,7 +44,7 @@ Build: `bun build packages/cli/src/cli.ts --compile --outfile ~/.bun/bin/joelcla
         ↕ NodePort on localhost
 
 Gateway daemon (always-on pi session, Redis event bridge)
-NAS "three-body" (ASUSTOR, 10GbE NFS, 64TB RAID5 + NVMe cache)
+NAS "<nas>" (ASUSTOR, 10GbE NFS, 64TB RAID5 + NVMe cache)
 Vault ~/Vault (Obsidian, PARA method — ADRs, system log, contacts)
 ```
 

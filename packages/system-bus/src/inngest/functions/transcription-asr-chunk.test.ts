@@ -54,7 +54,7 @@ function baseEventData(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     requestId: "req-1",
     artifactId: "artifact-1",
-    sourcePath: "/Volumes/badass-media/meetings/example.m4a",
+    sourcePath: "/Volumes/nas-media/meetings/example.m4a",
     rigRoot: tempRoot,
     sourceId: "src-1",
     chunkId: "chunk-1",

@@ -1,6 +1,6 @@
 ---
-- name: Manage Flagg Central shadow runtime host state
-  hosts: flagg
+- name: Manage Central shadow runtime host state
+  hosts: central
   gather_facts: true
   become: true
 

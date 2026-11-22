@@ -1,6 +1,6 @@
 <clickhouse>
   <!--
-    Final combined access policy for the three-body ClickHouse instance.
+    Final combined access policy for the private ClickHouse instance.
     Do not install this as the first OTEL cutover step: it restricts default.
     Stage otel-users.xml first, prove the runtime write and reader readback,
     then replace the old default fragment with restricted-default.xml.
@@ -8,8 +8,8 @@
     never load it alongside the staged fragments (duplicate identities).
 
     Password values are SHA-256 hashes supplied by docker-compose.override.yml.
-    Flagg reaches these users through the SSH tunnel in infra/clickhouse/flagg/;
-    the ClickHouse server therefore sees a NAS-local source address. Direct
+    Clients reach these users through an SSH tunnel; the ClickHouse server
+    sees the tunnel's source address. Set CLICKHOUSE_TUNNEL_SOURCE_IP to that address. Direct
     credential-bearing HTTP over the LAN is intentionally not allowed.
   -->
   <users>
@@ -18,7 +18,7 @@
       <networks>
         <ip>127.0.0.1</ip>
         <ip>::1</ip>
-        <ip>192.168.1.163</ip>
+        <ip from_env="CLICKHOUSE_TUNNEL_SOURCE_IP" />
       </networks>
       <profile>restricted_default</profile>
       <quota>default</quota>
@@ -32,7 +32,7 @@
       <networks>
         <ip>127.0.0.1</ip>
         <ip>::1</ip>
-        <ip>192.168.1.163</ip>
+        <ip from_env="CLICKHOUSE_TUNNEL_SOURCE_IP" />
       </networks>
       <profile>migration_admin</profile>
       <quota>default</quota>
@@ -50,7 +50,7 @@
       <networks>
         <ip>127.0.0.1</ip>
         <ip>::1</ip>
-        <ip>192.168.1.163</ip>
+        <ip from_env="CLICKHOUSE_TUNNEL_SOURCE_IP" />
       </networks>
       <profile>insert_only</profile>
       <quota>default</quota>
@@ -64,7 +64,7 @@
       <networks>
         <ip>127.0.0.1</ip>
         <ip>::1</ip>
-        <ip>192.168.1.163</ip>
+        <ip from_env="CLICKHOUSE_TUNNEL_SOURCE_IP" />
       </networks>
       <profile>read_only</profile>
       <quota>default</quota>
@@ -83,7 +83,7 @@
       <networks>
         <ip>127.0.0.1</ip>
         <ip>::1</ip>
-        <ip>192.168.1.163</ip>
+        <ip from_env="CLICKHOUSE_TUNNEL_SOURCE_IP" />
       </networks>
       <profile>otel_runtime</profile>
       <quota>default</quota>
@@ -101,7 +101,7 @@
       <networks>
         <ip>127.0.0.1</ip>
         <ip>::1</ip>
-        <ip>192.168.1.163</ip>
+        <ip from_env="CLICKHOUSE_TUNNEL_SOURCE_IP" />
       </networks>
       <profile>read_only</profile>
       <quota>default</quota>

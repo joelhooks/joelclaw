@@ -17,6 +17,7 @@ import { aggregateChunkAsr, writeAggregatedAsr } from "../../transcription/aggre
 import { buildPlan } from "../../transcription/chunking";
 import {
   chunkJobId,
+  MEDIA_ROOT,
   planPath,
   rigDiarizationPath,
   rigDiarizationWavPath,
@@ -24,7 +25,6 @@ import {
 } from "../../transcription/paths";
 import {
   DEFAULT_RIG_ROOT,
-  MEDIA_ROOT,
   recordStage,
   runRig,
   verifyMediaMount,

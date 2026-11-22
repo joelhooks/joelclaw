@@ -1,28 +1,30 @@
 # OTEL ClickHouse cutover
 
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
 Status: active recovery/cutover. ClickHouse is the canonical raw OTEL/log store behind the existing `/observability/emit` API. Typesense is no longer allowed to be the raw OTEL sink; at most it can receive a bounded/searchable projection after retention and query cutoffs are proven.
 
 ## Target shape
 
 ```txt
 callers
-  -> POST /observability/emit on Flagg
+  -> POST /observability/emit on <central-host>
   -> system-bus OTEL store
-  -> ClickHouse on three-body
+  -> ClickHouse on <nas>
 
 Panda/old Central endpoints are relay-only:
 
-callers on Panda
-  -> POST /observability/emit on Panda or `joelclaw otel emit`
-  -> forward to `http://flagg:3111/observability/emit`
-  -> Flagg writes/queues to ClickHouse
+callers on <retired-host>
+  -> POST /observability/emit on <retired-host> or `joelclaw otel emit`
+  -> forward to `http://<private-host>:<service-port>/observability/emit`
+  -> <central-host> writes/queues to ClickHouse
 ```
 
 Do not send random callers directly to ClickHouse. Keep `/observability/emit` and `emitOtelEvent` as the canonical ingest path.
 
 ## Runtime endpoints
 
-Flagg runtime endpoint through the existing SSH tunnel (not the NAS LAN URL):
+central host runtime endpoint through the existing SSH tunnel (not the NAS LAN URL):
 
 ```txt
 CLICKHOUSE_URL=http://127.0.0.1:18123
@@ -41,8 +43,8 @@ restrict `default`. Do not install the combined policy first.
 NAS proof paths:
 
 ```txt
-three-body:/volume2/data/clickhouse-proof
-three-body:/volume1/joelclaw/backups/clickhouse-proof
+<nas>:<nas-nvme-export>/clickhouse-proof
+<nas>:<nas-hdd-export>/backups/clickhouse-proof
 ```
 
 ## Flags
@@ -62,9 +64,9 @@ CLICKHOUSE_USER=otel_runtime
 CLICKHOUSE_PASSWORD=<private lease of clickhouse_otel_runtime_password>
 OTEL_CLICKHOUSE_TTL_DAYS=180
 
-# Relay hosts such as Panda
+# Relay hosts such as <retired-host>
 OTEL_STORE=forward
-OTEL_FORWARD_URL=http://flagg:3111/observability/emit
+OTEL_FORWARD_URL=http://<private-host>:<service-port>/observability/emit
 OTEL_FORWARD_TIMEOUT_MS=2500
 ```
 
@@ -97,7 +99,7 @@ When `OTEL_STORE=clickhouse`:
 - ClickHouse write failure writes the event to the local outbox.
 - If the outbox write succeeds, `/observability/emit` returns `stored: true` with `clickhouse.queued: true`.
 - The outbox drains opportunistically after later successful ClickHouse writes.
-- Forward mode never writes to local Typesense or local ClickHouse. It makes a short HTTP POST to the Flagg ingest URL and reports that forward result.
+- Forward mode never writes to local Typesense or local ClickHouse. It makes a short HTTP POST to the central host ingest URL and reports that forward result.
 - For launchd/service installs, set `OTEL_OUTBOX_DIR` to a directory that the worker user can create and write. Do not assume `/Users/Shared/joelclaw` is writable from a user LaunchAgent.
 
 This means `stored` means “accepted durably,” not necessarily “already visible in ClickHouse.”
@@ -123,7 +125,7 @@ The script leases `typesense_api_key` via `agent-secrets` if `TYPESENSE_API_KEY`
    ```sh
    sudo sh ~/clickhouse-proof/restart-proof.sh
    ```
-2. The tunnel answers `/ping` from Flagg. This proves reachability only; a normal ingest canary must report `clickhouse.written:true` and its exact ID must read back through `otel_reader` before declaring the store healthy.
+2. The tunnel answers `/ping` from central host. This proves reachability only; a normal ingest canary must report `clickhouse.written:true` and its exact ID must read back through `otel_reader` before declaring the store healthy.
 3. `joelclaw otel list --adapter clickhouse-otel --hours 24` returns recent events.
 4. `joelclaw otel stats --adapter clickhouse-otel --hours 24` returns sane totals.
 5. Dual-write window compares ClickHouse vs Typesense counts by day/source/level.
@@ -135,7 +137,7 @@ The script leases `typesense_api_key` via `agent-secrets` if `TYPESENSE_API_KEY`
 ## Things to avoid
 
 - No raw OTEL writes to Typesense.
-- No ClickHouse hot data over Flagg NFS.
+- No ClickHouse hot data over central host NFS.
 - No direct client writes to ClickHouse outside the worker ingest path.
 - No broad `q=*` health probes against `otel_events`; use ClickHouse aggregations or leave the probe disabled.
 - No claiming canonical cutover if the outbox cannot drain.

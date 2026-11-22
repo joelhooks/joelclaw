@@ -1,49 +1,19 @@
+import { readFile } from "node:fs/promises";
 import { pushContentResource } from "../src/lib/convex";
+
+function isNetworkNode(value: unknown): value is { publicName: string } {
+  return typeof value === "object" && value !== null && "publicName" in value &&
+    typeof value.publicName === "string" && value.publicName.trim().length > 0;
+}
 
 // ADR-0085: One-time seed for data-driven network page contentResources.
 async function seedNetwork(): Promise<void> {
-  const nodes = [
-    {
-      publicName: "Overlook",
-      privateName: "panda",
-      status: "Online",
-      specs: ["Mac Mini M4 Pro", "14-core CPU", "20-core GPU", "64GB unified", "1TB NVMe"],
-      role: "Control plane.",
-      services: [],
-    },
-    {
-      publicName: "Blaine",
-      privateName: "clanker-001",
-      status: "Online",
-      specs: ["Ubuntu 24.04", "16GB RAM", "309GB disk"],
-      role: "Library + SIP bridge.",
-      services: [],
-    },
-    {
-      publicName: "Derry",
-      privateName: "three-body",
-      status: "Online",
-      specs: ["Synology NAS", "Intel Atom C3538", "8GB RAM", "64TB RAID"],
-      role: "Archive.",
-      services: [],
-    },
-    {
-      publicName: "Flagg",
-      privateName: "dark-wizard",
-      status: "Online",
-      specs: ["MacBook Pro", "Apple Silicon"],
-      role: "Primary dev machine.",
-      services: [],
-    },
-    {
-      publicName: "Todash",
-      privateName: "nightmare-router",
-      status: "Idle",
-      specs: ["Linux router"],
-      role: "Tailscale exit node, idle.",
-      services: [],
-    },
-  ];
+  const path = process.env.JOELCLAW_NETWORK_NODES_FILE?.trim();
+  if (!path) throw new Error("Set JOELCLAW_NETWORK_NODES_FILE to the private network seed JSON");
+  const nodes: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (!Array.isArray(nodes) || !nodes.every(isNetworkNode)) {
+    throw new Error("Expected an array of network nodes with a publicName");
+  }
 
   const pods = [
     {

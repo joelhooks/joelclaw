@@ -2,8 +2,13 @@
 set -euo pipefail
 
 # Bootstrap a thin joelclaw satellite Machine.
-# Run on the satellite itself, e.g. from Panda once SSH works:
-#   ssh joel@blaine 'bash -s' < scripts/setup-satellite-rig.sh
+# Run on the satellite itself after exporting its private configuration.
+if [[ ${1:-} == --help ]]; then
+  printf '%s\n' 'Usage: bash scripts/setup-satellite-rig.sh' \
+    'Required: JOELCLAW_CENTRAL_SSH, JOELCLAW_CENTRAL_URL, JOELCLAW_TYPESENSE_URL,' \
+    'JOELCLAW_DOCS_TYPESENSE_URL and JOELCLAW_DOCS_API_URL (see the satellite setup runbook).'
+  exit 0
+fi
 
 REPO_URL="${JOELCLAW_REPO_URL:-git@github.com:joelhooks/joelclaw.git}"
 REPO_DIR="${JOELCLAW_REPO_DIR:-$HOME/Code/joelhooks/joelclaw}"
@@ -12,11 +17,11 @@ JC_SLACK_REPO_DIR="${JC_SLACK_REPO_DIR:-$HOME/Code/joelhooks/jc-slack}"
 if [[ "$JC_SLACK_REPO_DIR" != /* ]]; then
   JC_SLACK_REPO_DIR="$(pwd -P)/$JC_SLACK_REPO_DIR"
 fi
-CENTRAL_SSH="${JOELCLAW_CENTRAL_SSH:-joel@panda}"
-CENTRAL_URL="${JOELCLAW_CENTRAL_URL:-http://joels-mac-studio.tail7af24.ts.net:3111}"
-SATELLITE_TYPESENSE_URL="${TYPESENSE_URL:-${JOELCLAW_TYPESENSE_URL:-http://joels-mac-studio.tail7af24.ts.net:8108}}"
-SATELLITE_DOCS_TYPESENSE_URL="${DOCS_TYPESENSE_URL:-${JOELCLAW_DOCS_TYPESENSE_URL:-http://joels-mac-studio.tail7af24.ts.net:8110}}"
-SATELLITE_DOCS_API_URL="${DOCS_API_URL:-${JOELCLAW_DOCS_API_URL:-http://joels-mac-studio.tail7af24.ts.net:3838}}"
+CENTRAL_SSH="${JOELCLAW_CENTRAL_SSH:?set the private Central SSH target}"
+CENTRAL_URL="${JOELCLAW_CENTRAL_URL:?set the private Central service URL}"
+SATELLITE_TYPESENSE_URL="${TYPESENSE_URL:-${JOELCLAW_TYPESENSE_URL:?set the private Typesense URL}}"
+SATELLITE_DOCS_TYPESENSE_URL="${DOCS_TYPESENSE_URL:-${JOELCLAW_DOCS_TYPESENSE_URL:?set the private docs Typesense URL}}"
+SATELLITE_DOCS_API_URL="${DOCS_API_URL:-${JOELCLAW_DOCS_API_URL:?set the private docs API URL}}"
 SKIP_GIT_SYNC="${JOELCLAW_SKIP_GIT_SYNC:-false}"
 
 say() { printf '\n==> %s\n' "$*"; }

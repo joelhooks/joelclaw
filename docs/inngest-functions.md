@@ -1,5 +1,7 @@
 # Inngest Functions
 
+For private topology, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders before running commands.
+
 Canonical notes for `packages/system-bus/src/inngest/functions/`.
 
 ## Contract
@@ -40,7 +42,7 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 - Keep the four durable steps stable: `convert-pdf` → `classify-summarize` → `chunk` → `index-typesense`. Re-runs should reuse artifacts whenever `skipExistingArtifacts` is true.
 - Reuse `docs-ingest.ts` helpers for PDF extraction, taxonomy classification, chunk-record building, and Typesense schema setup instead of re-implementing classification logic in multiple places.
 - `docs_chunks_v2` is the new retrieval collection. It uses Typesense auto-embedding with `ts/nomic-embed-text-v1.5`; leave `docs_chunks` intact until cutover is complete.
-- Batch orchestration now flows through `docs-reindex-batch`, which resolves PDF targets (provided paths, collection records, or `/Volumes/three-body/books` scan) and dispatches `docs/reindex-v2.requested` in batches of 10.
+- Batch orchestration now flows through `docs-reindex-batch`, which resolves PDF targets (provided paths, collection records, or `<nas-mount>/books` scan) and dispatches `docs/reindex-v2.requested` in batches of 10.
 
 ## Key reliability flows
 
@@ -142,7 +144,7 @@ Operational boundary for Phase 1:
 - Phase 3 Story 4 now has a live cluster-worker runtime path in `packages/system-bus/src/inngest/functions/queue-observer.ts`:
   - the durable cron controller stays on `queue/observer` (`TZ=America/Los_Angeles */1 * * * *`), while manual `queue/observer.requested` probes now run through a separate `queue/observer-requested` function so operator requests do not queue behind the cron pass.
   - `memory/observe-session`, `queue/observer`, `queue/observer-requested`, and `check/memory-review` are owned by the cluster worker so callbacks stay inside Kubernetes via `http://system-bus-worker:3111`; they must not depend on host-only filesystem, GUI, or local CLI state. `memory/observe-session` must tolerate missing host-only model tooling by using deterministic extraction/embedding fallbacks while still writing canonical Typesense records. The cluster deployment must override `TYPESENSE_URL=http://typesense:8108`; inherited host `localhost:8108` config is wrong inside the pod.
-  - Host-owned functions must advertise an SDK callback URL that the Inngest pod can actually reach. On Panda the host worker uses `INNGEST_SERVE_HOST=http://100.93.201.72:3111`; `host.lima.internal`/`host.docker.internal` are not valid unless a live pod-to-host probe proves the alias reaches macOS.
+  - Host-owned functions must advertise an SDK callback URL that the Inngest pod can actually reach. On Panda the host worker uses `INNGEST_SERVE_HOST=http://<tailnet-ip>:<service-port>`; `host.lima.internal`/`host.docker.internal` are not valid unless a live pod-to-host probe proves the alias reaches macOS.
   - runtime flags are `QUEUE_OBSERVER_MODE=off|dry-run|enforce`, `QUEUE_OBSERVER_FAMILIES=discovery,content,subscriptions,github`, `QUEUE_OBSERVER_AUTO_FAMILIES=content`, and `QUEUE_OBSERVER_INTERVAL_SECONDS` (currently clamped to 60s minimum on the durable cron path).
   - both paths build the same bounded snapshot and call Sonnet through `infer()`, but only the cron controller may auto-apply `pause_family`, `resume_family`, and `escalate`; manual probes are read-only even if the configured mode is `enforce`.
   - the shared observer short-circuits deterministic noops for both truly empty queues and empty queues that only still have active pauses hanging around, so the cron path does not waste a full model call on obvious nothing-to-do snapshots.
@@ -467,7 +469,7 @@ Do **not** mutate `main.db` without a point-in-time backup.
   - `runs_dev`
   - SQLite `sessions.db` for full transcript search (`run_chunks_dev` retired 2026-07-20)
 - source of truth: `~/.joelclaw/runs-dev/<user>/<yyyy-mm>/<run-id>.jsonl` plus `.metadata.json`
-- live ingest endpoint while Panda is Central: `POST https://panda.tail7af24.ts.net/api/runs`, served by the host system-bus worker on `localhost:3111` through Tailscale Funnel root proxy. This mirrors the web app ADR-0243 route because no durable `localhost:3000` Central web listener currently exists on Panda.
+- live ingest endpoint while Panda is Central: `POST https://<tailnet-host>/api/runs`, served by the host system-bus worker on `localhost:3111` through Tailscale Funnel root proxy. This mirrors the web app ADR-0243 route because no durable `localhost:3000` Central web listener currently exists on Panda.
 - auth: satellite hooks send `Authorization: Bearer <~/.joelclaw/auth.json token>`; the worker hashes the token and resolves identity from persistent local SQLite `~/.joelclaw/capture-auth.db`. A five-minute background sync mirrors the four Machine records from Typesense `machines_dev`; known-token requests do not call Typesense.
 - recovery rule: if raw run blobs exist but Typesense is stale, restart Inngest only after logging the restart, force worker registration with `PUT /api/inngest`, then backfill missing blobs with:
 
@@ -516,7 +518,7 @@ Watchdog extension:
 - the source adapter supports native Flagg Typesense (`local`, default) and the retired pod path (`k8s`).
 - native snapshots stay on local scratch storage until the backup transport copies them to NAS.
 - backup transport now uses a three-tier write policy:
-  1. local NAS mount (`/Volumes/three-body`)
+  1. local NAS mount (`<nas-mount>`)
   2. direct remote copy over SSH/SCP to NAS
   3. local deferred queue spool (when both NAS paths are unavailable)
 - after successful sync/defer:

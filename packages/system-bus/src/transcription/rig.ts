@@ -6,9 +6,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import { emitOtelEvent } from "../observability/emit";
+import { MEDIA_ROOT } from "./paths";
 
 export const DEFAULT_RIG_ROOT = "/Users/joel/Code/joelhooks/transcript-rig";
-export const MEDIA_ROOT = "/Volumes/badass-media/";
+
 
 export type RigResult = {
   artifactId?: string;
@@ -96,14 +97,14 @@ export async function verifyMediaMount(sourcePath: string): Promise<{
     proc.exited,
   ]);
   const mounted =
-    code === 0 && mounts.includes(" on /Volumes/badass-media (nfs");
+    code === 0 && mounts.includes(` on ${MEDIA_ROOT.slice(0, -1)} (nfs`);
   if (mounted && pathExists) return { available: true };
   return {
     available: false,
     blocker: {
       code: "mount_unavailable",
       message:
-        "Flagg requires the direct 10GbE NFS mount /Volumes/badass-media; SSH staging and local raw copies are forbidden",
+        "Transcription requires the configured direct NFS media mount; SSH staging and local raw copies are forbidden",
       retryable: true,
     },
   };

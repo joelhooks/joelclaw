@@ -1,7 +1,7 @@
 ---
 name: garage
 displayName: Garage
-description: "Operate Joel's Garage S3-compatible object storage on three-body. Use for Garage, Convex Garage, Garage S3, three-body Garage, port 39100, Garage buckets, and MinIO-to-Garage migration."
+description: "Operate Joel's Garage S3-compatible object storage on NAS. Use for Garage, Convex Garage, Garage S3, NAS Garage, port <object-api-port>, Garage buckets, and MinIO-to-Garage migration."
 version: 0.1.0
 author: joel
 tags:
@@ -9,7 +9,7 @@ tags:
   - garage
   - s3
   - convex
-  - three-body
+  - NAS
   - asustor
   - docker
   - storage
@@ -18,7 +18,9 @@ disable-model-invocation: true
 
 # Garage
 
-Operate Joel's canonical S3-compatible object storage for local self-hosted Convex. This is not generic Garage advice. The canonical path is the Docker/Compose Garage service running on the ASUSTOR NAS `three-body`.
+For private addresses, accounts, ports, and host roles, see `.brain/resources/operator-network-context.svx` in the private dark-wizard repo and the `tailnet-topology` skill. Replace angle-bracket placeholders with the configured values before running commands.
+
+Operate Joel's canonical S3-compatible object storage for local self-hosted Convex. This is not generic Garage advice. The canonical path is the Docker/Compose Garage service running on the ASUSTOR NAS `<nas>`.
 
 Custom MinIO is now a rollback/reference path. ASUSTOR MinIO CE is only a smoke-test/reference instance.
 
@@ -30,33 +32,33 @@ Use this skill when Joel mentions:
 - Convex Garage
 - Garage S3
 - S3-compatible object storage for local Convex
-- `three-body` Garage
-- port `39100`
+- `<nas>` Garage
+- port `<object-api-port>`
 - Garage buckets, keys, env wiring, smoke tests, or MinIO-to-Garage migration
 
-If the task is about the full local Convex runtime, also read the `local-convex` skill. If the task is about general ASUSTOR storage, NFS, SMB, RAID, or NAS health, also read the `three-body` skill. If the task is explicitly about MinIO rollback or CE cleanup, also read the `minio` skill.
+If the task is about the full local Convex runtime, also read the `local-convex` skill. If the task is about general ASUSTOR storage, NFS, SMB, RAID, or NAS health, also read the `<nas>` skill. If the task is explicitly about MinIO rollback or CE cleanup, also read the `minio` skill.
 
 ## Current Topology
 
 Host:
 
-- NAS label: `three-body`
-- Tailnet IP: `100.67.156.41`
+- NAS label: `<nas>`
+- Tailnet IP: `<tailnet-ip>`
 - Prefer the IP in machine config and smoke tests, not the tailnet alias.
 - NAS model: ASUSTOR AS6508T
 - ADM: `5.1.3.RI81`
 
 Canonical Garage:
 
-- S3 API: `http://100.67.156.41:39100`
-- Data: `/volume1/joelclaw/s3/garage/data`
-- Metadata: `/volume1/joelclaw/s3/garage/meta`
-- Metadata snapshots: `/volume1/joelclaw/s3/garage/snapshots`
-- Compose file: `/volume1/joelclaw/s3/garage-compose/compose.yaml`
-- Garage config: `/volume1/joelclaw/s3/garage-compose/garage.toml`
-- Convex S3 env: `/volume1/joelclaw/s3/garage-compose/convex-s3.env`
-- Redacted env: `/volume1/joelclaw/s3/garage-compose/convex-s3.redacted.env`
-- Installer on NAS: `/volume1/joelclaw/s3/install-three-body-convex-garage.sh`
+- S3 API: `http://<tailnet-ip>:<service-port>`
+- Data: `<nas-hdd-export>/s3/garage/data`
+- Metadata: `<nas-hdd-export>/s3/garage/meta`
+- Metadata snapshots: `<nas-hdd-export>/s3/garage/snapshots`
+- Compose file: `<nas-export>/s3/garage-compose/compose.yaml`
+- Garage config: `<nas-hdd-export>/s3/garage-compose/garage.toml`
+- Convex S3 env: `<nas-hdd-export>/s3/garage-compose/convex-s3.env`
+- Redacted env: `<nas-hdd-export>/s3/garage-compose/convex-s3.redacted.env`
+- Installer on NAS: `<nas-export>/s3/install-three-body-convex-garage.sh`
 - Local installer copy: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/outputs/install-three-body-convex-garage.sh`
 - Image: `dxflrs/garage@sha256:dac0c92add4f1a0b41035e94b41036a270ffbe88a37c7ac9c3f19e6dc5bdccf2`
 
@@ -68,8 +70,8 @@ Read these before mutating the setup:
 
 - Project note: `/Users/joel/.brain/projects/convex-self-hosting-local.svx`
 - Local installer: `/Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/outputs/install-three-body-convex-garage.sh`
-- NAS compose file: `/volume1/joelclaw/s3/garage-compose/compose.yaml`
-- NAS redacted env: `/volume1/joelclaw/s3/garage-compose/convex-s3.redacted.env`
+- NAS compose file: `<nas-export>/s3/garage-compose/compose.yaml`
+- NAS redacted env: `<nas-hdd-export>/s3/garage-compose/convex-s3.redacted.env`
 
 If sources disagree, prefer the brain project note, then verify live state with redaction-safe health checks. Do not print raw env files to resolve disagreement.
 
@@ -104,12 +106,12 @@ Redact first, then report.
 
 ## NAS Access Rules
 
-Use one SSH session to `three-body` at a time. NAS SSH is sensitive to bursts and can reset handshakes after rapid parallel probes.
+Use one SSH session to `<nas>` at a time. NAS SSH is sensitive to bursts and can reset handshakes after rapid parallel probes.
 
 Default read-only SSH shape:
 
 ```sh
-ssh -o BatchMode=yes -o ConnectTimeout=8 joel@three-body 'uptime; pwd'
+ssh -o BatchMode=yes -o ConnectTimeout=8 <ssh-user>@<nas> 'uptime; pwd'
 ```
 
 Operational rules:
@@ -125,8 +127,8 @@ Operational rules:
 Prefer network checks that do not require credentials:
 
 ```sh
-nc -vz -w 5 100.67.156.41 39100
-curl -sS -m 5 -o /tmp/garage-root.out -w '%{http_code}\n' http://100.67.156.41:39100/
+nc -vz -w 5 <tailnet-ip> <object-api-port>
+curl -sS -m 5 -o /tmp/garage-root.out -w '%{http_code}\n' http://<tailnet-ip>:<service-port>/
 sed -n '1,3p' /tmp/garage-root.out
 ```
 
@@ -135,26 +137,26 @@ Garage does not support anonymous S3 access; `403 AccessDenied` from `/` proves 
 Redaction-safe env check:
 
 ```sh
-ssh joel@three-body 'awk -F= "/^(AWS_REGION|S3_ENDPOINT_URL|AWS_S3_FORCE_PATH_STYLE|S3_STORAGE_)/ {print}" /volume1/joelclaw/s3/garage-compose/convex-s3.env'
+ssh <ssh-user>@<nas> 'awk -F= "/^(AWS_REGION|S3_ENDPOINT_URL|AWS_S3_FORCE_PATH_STYLE|S3_STORAGE_)/ {print}" <nas-hdd-export>/s3/garage-compose/convex-s3.env'
 ```
 
 Presence-only secret check:
 
 ```sh
-ssh joel@three-body 'awk -F= "/^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)=/ {print $1\"=<present>\"}" /volume1/joelclaw/s3/garage-compose/convex-s3.env'
+ssh <ssh-user>@<nas> 'awk -F= "/^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)=/ {print $1\"=<present>\"}" <nas-hdd-export>/s3/garage-compose/convex-s3.env'
 ```
 
 Service checks usually need sudo:
 
 ```sh
-ssh joel@three-body 'sudo docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" | grep -Ei "garage|39100" || true'
-ssh joel@three-body 'cd /volume1/joelclaw/s3/garage-compose && sudo docker compose ps'
+ssh <ssh-user>@<nas> 'sudo docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" | grep -Ei "garage|<object-api-port>" || true'
+ssh <ssh-user>@<nas> 'cd <nas-hdd-export>/s3/garage-compose && sudo docker compose ps'
 ```
 
 Do not run logs without a reason. If logs are needed, bound them and redact:
 
 ```sh
-ssh joel@three-body 'cd /volume1/joelclaw/s3/garage-compose && sudo docker compose logs --tail=120 garage'
+ssh <ssh-user>@<nas> 'cd <nas-hdd-export>/s3/garage-compose && sudo docker compose logs --tail=120 garage'
 ```
 
 ## Convex Buckets
@@ -169,7 +171,7 @@ Garage should have these Convex buckets:
 
 Bucket rules:
 
-- Perform bucket operations against `http://100.67.156.41:39100`.
+- Perform bucket operations against `http://<tailnet-ip>:<service-port>`.
 - Use Convex-specific credentials for Convex bucket checks.
 - Do not create extra buckets unless the requesting workload names them.
 - Do not delete buckets or objects without explicit authorization and a backup/recovery note.
@@ -181,10 +183,10 @@ Convex should point at the Garage IP endpoint:
 
 ```sh
 AWS_REGION=usw2
-S3_ENDPOINT_URL=http://100.67.156.41:39100
+S3_ENDPOINT_URL=http://<tailnet-ip>:<service-port>
 AWS_S3_FORCE_PATH_STYLE=true
-AWS_ACCESS_KEY_ID=<from /volume1/joelclaw/s3/garage-compose/convex-s3.env>
-AWS_SECRET_ACCESS_KEY=<from /volume1/joelclaw/s3/garage-compose/convex-s3.env>
+AWS_ACCESS_KEY_ID=<from <nas-hdd-export>/s3/garage-compose/convex-s3.env>
+AWS_SECRET_ACCESS_KEY=<from <nas-hdd-export>/s3/garage-compose/convex-s3.env>
 S3_STORAGE_EXPORTS_BUCKET=joelclaw-local-usw2-convex-exports
 S3_STORAGE_SNAPSHOT_IMPORTS_BUCKET=joelclaw-local-usw2-convex-snapshot-imports
 S3_STORAGE_MODULES_BUCKET=joelclaw-local-usw2-convex-modules
@@ -194,7 +196,7 @@ S3_STORAGE_SEARCH_BUCKET=joelclaw-local-usw2-convex-search
 
 Validation rules:
 
-- `S3_ENDPOINT_URL` must be `http://100.67.156.41:39100`.
+- `S3_ENDPOINT_URL` must be `http://<tailnet-ip>:<service-port>`.
 - `AWS_S3_FORCE_PATH_STYLE` must be true.
 - Bucket names must match the custom Convex buckets above.
 - Do not use the tailnet alias in durable machine config.
@@ -205,9 +207,9 @@ Validation rules:
 When wiring or debugging Garage for local Convex:
 
 1. Read the brain project note and this skill.
-2. Verify Garage reachability on `39100`.
+2. Verify Garage reachability on `<object-api-port>`.
 3. Validate the redacted Convex env shape.
-4. Confirm local Convex backend runtime env has `S3_ENDPOINT_URL=http://100.67.156.41:39100`.
+4. Confirm local Convex backend runtime env has `S3_ENDPOINT_URL=http://<tailnet-ip>:<service-port>`.
 5. Run the Convex-level smoke:
 
 ```sh
@@ -215,14 +217,14 @@ cd /Users/joel/Documents/Codex/2026-06-17/we-re-setting-up-durable-self/work/loc
 ./smoke-self-hosted-convex.sh
 ```
 
-6. Verify the smoke export ZIP contains `custom-garage` and `http://100.67.156.41:39100`.
+6. Verify the smoke export ZIP contains `custom-garage` and `http://<tailnet-ip>:<service-port>`.
 7. Capture durable discoveries back to the brain project note if facts changed.
 
 ## Gotchas
 
 - Garage is not MinIO with a different name; it uses its own key/bucket permission model instead of S3 bucket policies.
 - Garage does not support anonymous S3 access; `403 AccessDenied` from `/` is expected.
-- The Garage S3 API is `39100`; custom MinIO is `39000`; CE is `29990`.
+- The Garage S3 API is `<object-api-port>`; custom MinIO is `<s3-api-port>`; CE is `<reference-s3-port>`.
 - A green MinIO or CE check does not prove Garage.
 - Docker socket access on ADM may require `sudo`.
 - NAS SSH can react badly to rapid probes. Slow down before assuming the service is broken.
