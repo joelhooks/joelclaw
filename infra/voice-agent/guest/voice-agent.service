@@ -1,0 +1,26 @@
+[Unit]
+Description=joelclaw voice agent (LiveKit worker)
+Wants=network-online.target
+After=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+User=voiceworker
+Group=voiceworker
+WorkingDirectory=/opt/voice-agent
+# Secrets plus VOICE_FLAGG_HOST (the tool gate), written by push-env.sh.
+EnvironmentFile=/etc/voice-agent/env
+Environment=HOME=/var/lib/voiceworker
+Environment=JOELCLAW_VOICE_CONFIG=/etc/voice-agent/cfg/voice-agent.yaml
+Environment=HF_HOME=/var/lib/voiceworker/.cache/huggingface
+Environment=HF_HUB_OFFLINE=1
+Environment=PYTHONUNBUFFERED=1
+# The venv is built by `uv sync --frozen` on uv-managed CPython 3.14; run it directly so
+# nothing can re-resolve or recreate it at start.
+ExecStart=/opt/voice-agent/.venv/bin/python main.py start
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
