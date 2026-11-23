@@ -74,7 +74,10 @@ import {
   serveOnHosts,
 } from "./lib/internal-auth";
 import { type MemoryIdentity, registerRunCaptureRoute } from "./routes/run-capture";
-import { createCaptureIdentityResolver } from "./routes/run-capture-auth";
+import {
+  authenticateCaptureBearer,
+  createCaptureIdentityResolver,
+} from "./routes/run-capture-auth";
 import { captureCellFromEnv } from "./routes/run-capture-cell";
 import { RunCaptureOutbox } from "./routes/run-capture-outbox";
 import { registerRunHealthRoute } from "./routes/run-health";
@@ -312,23 +315,12 @@ const captureAuthSyncTimer = setInterval(
 );
 captureAuthSyncTimer.unref();
 
-async function lookupMemoryIdentity(token: string): Promise<MemoryIdentity | null> {
-  if (token === "dev-joel-panda") {
-    return {
-      user_id: "joel",
-      machine_id: "panda",
-      did: "did:plc:5w6ablyvahugobsj7n57yjmm",
-    };
-  }
-  return captureIdentityResolver.lookup(token);
-}
-
+// Only the capture identity registry authenticates. No literal bearer is ever accepted.
 async function authenticateRunCapture(c: any): Promise<MemoryIdentity | null> {
-  const header = c.req.header("authorization") as string | undefined;
-  if (!header?.startsWith("Bearer ")) return null;
-  const token = header.slice("Bearer ".length).trim();
-  if (!token) return null;
-  return lookupMemoryIdentity(token);
+  return authenticateCaptureBearer(
+    captureIdentityResolver,
+    c.req.header("authorization") as string | undefined,
+  );
 }
 
 const runCaptureOutbox = new RunCaptureOutbox({

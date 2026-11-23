@@ -39,6 +39,20 @@ export type CaptureIdentityResolver = {
   synchronize: () => Promise<number>;
 };
 
+/**
+ * Authenticate a run-capture request from its Authorization header. Only the registry decides: a token that it
+ * doesn't hold is refused, with no development or fallback literal.
+ */
+export async function authenticateCaptureBearer(
+  resolver: Pick<CaptureIdentityResolver, "lookup">,
+  header: string | undefined,
+): Promise<MemoryIdentity | null> {
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice("Bearer ".length).trim();
+  if (!token) return null;
+  return resolver.lookup(token);
+}
+
 function positiveInteger(value: number | undefined, fallback: number): number {
   return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : fallback;
 }
