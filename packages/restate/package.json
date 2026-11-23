@@ -18,6 +18,7 @@
     "@joelclaw/agent-execution": "workspace:*",
     "@joelclaw/queue": "workspace:*",
     "@joelclaw/recall": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.26.0",
     "@restatedev/restate-sdk": "^1.10.4",
     "@restatedev/restate-sdk-clients": "^1.10.4",
     "ioredis": "^5.6.1"
