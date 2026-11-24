@@ -65,7 +65,7 @@ jobs:
     name: Deploy to Local K8s (self-hosted)
     # No self-hosted runner serves this job, so every push queued it for GitHub's
     # 24-hour maximum. It now runs only when the repository variable
-    # SELF_HOSTED_DEPLOY is "true"; deploys are completed locally (sync-system-bus).
+    # SELF_HOSTED_DEPLOY is "true"; deploys are completed locally.
     if: vars.SELF_HOSTED_DEPLOY == 'true'
     runs-on: self-hosted
     needs: build-and-push
